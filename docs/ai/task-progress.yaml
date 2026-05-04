@@ -177,8 +177,8 @@ stages:
       - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events/stream
     verification_result: passed
     branch: stage/stage-05-task-event-store
-    commit_sha: pending_commit
-    pr_url: pending_pr
+    commit_sha: c24064ff3cad1f9c3adfe717d248ef54f394867c
+    pr_url: https://github.com/luohao0308/harness/pull/3
     merged_at: null
     notes: "Task and Event Store foundation is implemented with SQLAlchemy models, Alembic migration, append-only EventStore, Task API, Events API, SSE endpoint, and tests proving TASK_CREATED sequence starts at 1. PR is pending review."
     next_stage: stage-06-planner-executor
