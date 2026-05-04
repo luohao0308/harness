@@ -1,8 +1,8 @@
-current_stage: stage-12-runtime-product-completion
+current_stage: stage-13-website-code-integration
 current_status: ready_for_review
-last_updated_at: 2026-05-04T20:21:17Z
+last_updated_at: 2026-05-04T21:40:02Z
 last_updated_by: Harness Agent
-next_stage: stage-13-website-code-integration
+next_stage: completed
 
 stages:
   - id: stage-01-git-github
@@ -534,25 +534,67 @@ stages:
     branch: stage/stage-12-runtime-product-completion
     commit_sha: dc0cf2f1fd7e27bdb91ec6076c4d7b2ee63c72e7
     pr_url: https://github.com/luohao0308/harness/pull/10
-    merged_at: null
+    merged_at: 2026-05-04T20:23:53Z
     notes: "Runtime product surface is implemented and verified: task cancel/resume/result/replay, model/tool audit records, filesystem/http tools, settings APIs, ADMIN_ACTION audit rows, Chinese OpenAPI JSON/YAML, default Chinese console, Chinese/English switch, settings, sandboxes, observability, replay, result, and audit panels."
     next_stage: stage-13-website-code-integration
 
   - id: stage-13-website-code-integration
     document: docs/ai/14-stage-13-website-code-integration.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T20:21:17Z
     completed_at: null
-    changed_files: []
+    changed_files:
+      - .gitignore
+      - apps/web-site/.dockerignore
+      - apps/web-site/.env.example
+      - apps/web-site/Dockerfile
+      - apps/web-site/app/architecture/page.tsx
+      - apps/web-site/app/contact/page.tsx
+      - apps/web-site/app/deployment/page.tsx
+      - apps/web-site/app/docs/page.tsx
+      - apps/web-site/app/globals.css
+      - apps/web-site/app/layout.tsx
+      - apps/web-site/app/page.tsx
+      - apps/web-site/app/product/page.tsx
+      - apps/web-site/app/security/page.tsx
+      - apps/web-site/app/solutions/page.tsx
+      - apps/web-site/components/ConsolePreview.tsx
+      - apps/web-site/components/Contact.tsx
+      - apps/web-site/components/Deployment.tsx
+      - apps/web-site/components/Docs.tsx
+      - apps/web-site/components/Homepage.tsx
+      - apps/web-site/components/MarketingArchitecture.tsx
+      - apps/web-site/components/MarketingShell.tsx
+      - apps/web-site/components/Product.tsx
+      - apps/web-site/components/Security.tsx
+      - apps/web-site/components/Solutions.tsx
+      - apps/web-site/components/shared.tsx
+      - apps/web-site/components/site-links.ts
+      - apps/web-site/next-env.d.ts
+      - apps/web-site/next.config.mjs
+      - apps/web-site/package-lock.json
+      - apps/web-site/package.json
+      - apps/web-site/postcss.config.mjs
+      - apps/web-site/public/openapi.json
+      - apps/web-site/public/openapi.yaml
+      - apps/web-site/tailwind.config.ts
+      - apps/web-site/tsconfig.json
+      - deploy/docker-compose/docker-compose.yml
+      - deploy/nginx/agent-harness.conf
+      - docs/human/07-deployment-operations.md
+      - docs/human/10-task-progress.md
+      - docs/qa/test-strategy.md
+      - docs/runbooks/deployment.md
+      - docs/runbooks/local-development.md
     verification_commands:
       - cd apps/web-site && npm run lint
       - cd apps/web-site && npm run build
       - docker compose -f deploy/docker-compose/docker-compose.yml config
       - python3 scripts/validate-docs.py
-    verification_result: pending
+    verification_result: passed
     branch: stage/stage-13-website-code-integration
-    commit_sha: null
-    pr_url: null
+    commit_sha: 1101c3ccd39f4f7b0301d0051bc122507710e6e0
+    pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Pending stage for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Verification commands passed after adding the site .dockerignore and rebuilding the website image and compose stack."
     next_stage: completed

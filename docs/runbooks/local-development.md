@@ -72,6 +72,13 @@ URL:
 http://localhost:3000
 ```
 
+Docker Compose 入口：
+
+```text
+Website: http://127.0.0.1:3000
+Grafana: http://127.0.0.1:3001
+```
+
 ## Console
 
 ```bash

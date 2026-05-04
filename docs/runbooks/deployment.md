@@ -48,19 +48,21 @@ Verify:
 docker compose -f deploy/docker-compose/docker-compose.yml ps
 curl --noproxy '*' http://127.0.0.1:8000/health
 curl --noproxy '*' http://127.0.0.1:8000/metrics
+curl --noproxy '*' http://127.0.0.1:3000
 curl --noproxy '*' http://127.0.0.1:8080/health
 curl --noproxy '*' http://127.0.0.1:9091/-/healthy
-curl --noproxy '*' http://127.0.0.1:3000/api/health
+curl --noproxy '*' http://127.0.0.1:3001/api/health
 ```
 
 Default local endpoints:
 
 ```text
 API: http://127.0.0.1:8000
+Website: http://127.0.0.1:3000
 Console: http://127.0.0.1:5173
 Nginx: http://127.0.0.1:8080
 Prometheus: http://127.0.0.1:9091
-Grafana: http://127.0.0.1:3000
+Grafana: http://127.0.0.1:3001
 ```
 
 ## systemd Install

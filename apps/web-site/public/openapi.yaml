@@ -1,0 +1,1499 @@
+openapi: 3.1.0
+info:
+  title: 企业级 AI Agent Harness API
+  description: 用于企业级 AI Agent Harness 平台的任务、事件、沙箱、审计和设置 API。
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      tags:
+      - health
+      summary: 健康检查
+      description: 返回 API 服务健康状态。
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Health Health Get
+  /api/tasks:
+    post:
+      tags:
+      - tasks
+      summary: 创建任务
+      description: 创建一条新的任务记录，并写入 TASK_CREATED 事件。
+      operationId: create_task_api_tasks_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - tasks
+      summary: 查询任务列表
+      description: 按组织查询任务列表，支持状态过滤和分页大小。
+      operationId: list_tasks_api_tasks_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}:
+    get:
+      tags:
+      - tasks
+      summary: 查询任务详情
+      description: 返回指定任务的完整基础信息。
+      operationId: get_task_api_tasks__task_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/start:
+    post:
+      tags:
+      - tasks
+      summary: 启动任务
+      description: 将 CREATED 或 FAILED 任务启动为运行态。
+      operationId: start_task_api_tasks__task_id__start_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/cancel:
+    post:
+      tags:
+      - tasks
+      summary: 取消任务
+      description: 将当前任务状态切换为 CANCELLED，并写入 TASK_CANCELLED 事件。
+      operationId: cancel_task_api_tasks__task_id__cancel_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/resume:
+    post:
+      tags:
+      - tasks
+      summary: 恢复任务
+      description: 将 FAILED 或 CANCELLED 任务恢复为 RUNNING，并写入 TASK_RESUMED 事件。
+      operationId: resume_task_api_tasks__task_id__resume_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/result:
+    get:
+      tags:
+      - tasks
+      summary: 查询任务结果
+      description: 返回任务状态、摘要、执行计划、产物列表和最后事件序号。
+      operationId: get_task_result_api_tasks__task_id__result_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResultResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/replay:
+    post:
+      tags:
+      - tasks
+      summary: 重放任务状态
+      description: 根据事件流和快照重放任务状态，返回故障点和诊断摘要。
+      operationId: replay_task_api_tasks__task_id__replay_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplayRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/model-calls:
+    get:
+      tags:
+      - tasks
+      summary: 查询模型调用
+      description: 返回当前任务关联的模型调用审计列表。
+      operationId: list_model_calls_api_tasks__task_id__model_calls_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelCallPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/tool-calls:
+    get:
+      tags:
+      - tasks
+      summary: 查询工具调用
+      description: 返回当前任务关联的工具调用审计列表。
+      operationId: list_tool_calls_api_tasks__task_id__tool_calls_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolCallPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/events:
+    get:
+      tags:
+      - events
+      summary: 查询任务事件
+      description: 返回指定任务的事件溯源流，支持从指定序号之后读取。
+      operationId: list_task_events_api_tasks__task_id__events_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      - name: after_sequence
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: After Sequence
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/events/stream:
+    get:
+      tags:
+      - events
+      summary: 订阅任务事件流
+      description: 通过 Server-Sent Events 持续推送任务事件。
+      operationId: stream_task_events_api_tasks__task_id__events_stream_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      - name: after_sequence
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: After Sequence
+      - name: Last-Event-ID
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last-Event-Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/settings/models:
+    get:
+      tags:
+      - settings
+      summary: 查询模型设置
+      description: 返回模型网关、供应商、限流和健康状态。
+      operationId: get_model_settings_api_settings_models_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelSettingsResponse'
+      security:
+      - HTTPBearer: []
+    put:
+      tags:
+      - settings
+      summary: 更新模型设置
+      description: 仅 admin 可更新模型网关设置。
+      operationId: update_model_settings_api_settings_models_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelSettingsResponse'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelSettingsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/settings/policies:
+    get:
+      tags:
+      - settings
+      summary: 查询策略设置
+      description: 返回工具风险、审批规则、沙箱规则和审计要求。
+      operationId: get_policy_settings_api_settings_policies_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicySettingsResponse'
+      security:
+      - HTTPBearer: []
+    put:
+      tags:
+      - settings
+      summary: 更新策略设置
+      description: 仅 admin 可更新策略设置。
+      operationId: update_policy_settings_api_settings_policies_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicySettingsResponse'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicySettingsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/tasks/{task_id}/subagents:
+    get:
+      tags:
+      - subagents
+      summary: 查询任务子 Agent
+      description: 返回指定任务派生出的子 Agent 列表。
+      operationId: list_task_subagents_api_tasks__task_id__subagents_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents/{subagent_id}:
+    get:
+      tags:
+      - subagents
+      summary: 查询子 Agent 详情
+      description: 返回单个子 Agent 的状态与上下文。
+      operationId: get_subagent_api_subagents__subagent_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: subagent_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Subagent Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents/{subagent_id}/cancel:
+    post:
+      tags:
+      - subagents
+      summary: 取消子 Agent
+      description: 取消仍在运行或等待中的子 Agent。
+      operationId: cancel_subagent_api_subagents__subagent_id__cancel_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: subagent_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Subagent Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/sandboxes:
+    get:
+      tags:
+      - sandboxes
+      summary: 查询沙箱列表
+      description: 返回当前组织可见的容器沙箱实例列表。
+      operationId: list_sandboxes_api_sandboxes_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxPage'
+      security:
+      - HTTPBearer: []
+  /api/sandboxes/warm-pool:
+    get:
+      tags:
+      - sandboxes
+      summary: 查询 WarmPool 状态
+      description: 返回预热池容量、命中与失败统计。
+      operationId: get_warm_pool_api_sandboxes_warm_pool_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WarmPoolResponse'
+      security:
+      - HTTPBearer: []
+  /api/sandboxes/{sandbox_id}:
+    get:
+      tags:
+      - sandboxes
+      summary: 查询沙箱详情
+      description: 返回单个沙箱实例的运行状态。
+      operationId: get_sandbox_api_sandboxes__sandbox_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: sandbox_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Sandbox Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/sandboxes/{sandbox_id}/terminate:
+    post:
+      tags:
+      - sandboxes
+      summary: 终止沙箱
+      description: 销毁指定沙箱实例。
+      operationId: terminate_sandbox_api_sandboxes__sandbox_id__terminate_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: sandbox_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Sandbox Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    EventPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/EventResponse'
+          type: array
+          title: Items
+          description: 事件列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: EventPage
+    EventResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 事件 ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        agent_run_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Run Id
+          description: Agent 运行 ID
+        sequence:
+          type: integer
+          title: Sequence
+          description: 事件序号
+        event_type:
+          type: string
+          title: Event Type
+          description: 事件类型
+        payload_json:
+          additionalProperties: true
+          type: object
+          title: Payload Json
+          description: 事件载荷
+        actor_type:
+          type: string
+          title: Actor Type
+          description: 来源类型
+        actor_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor Id
+          description: 来源 ID
+        trace_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Trace Id
+          description: 追踪 ID
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+      type: object
+      required:
+      - id
+      - task_id
+      - sequence
+      - event_type
+      - payload_json
+      - actor_type
+      - created_at
+      title: EventResponse
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    ModelCallPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ModelCallResponse'
+          type: array
+          title: Items
+          description: 模型调用列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: ModelCallPage
+    ModelCallResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 模型调用 ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        agent_run_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Run Id
+          description: Agent 运行 ID
+        model_provider:
+          type: string
+          title: Model Provider
+          description: 模型供应商
+        model_name:
+          type: string
+          title: Model Name
+          description: 模型名称
+        status:
+          type: string
+          title: Status
+          description: 调用状态
+        prompt_tokens:
+          type: integer
+          title: Prompt Tokens
+          description: 提示词 token 数
+        completion_tokens:
+          type: integer
+          title: Completion Tokens
+          description: 输出 token 数
+        duration_ms:
+          type: integer
+          title: Duration Ms
+          description: 耗时（毫秒）
+        request_json:
+          additionalProperties: true
+          type: object
+          title: Request Json
+          description: 请求内容
+        response_json:
+          additionalProperties: true
+          type: object
+          title: Response Json
+          description: 响应内容
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+          description: 错误信息
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+      type: object
+      required:
+      - id
+      - task_id
+      - model_provider
+      - model_name
+      - status
+      - prompt_tokens
+      - completion_tokens
+      - duration_ms
+      - request_json
+      - response_json
+      - created_at
+      title: ModelCallResponse
+    ModelSettingsResponse:
+      properties:
+        default_provider:
+          type: string
+          title: Default Provider
+          description: 默认供应商
+        default_model:
+          type: string
+          title: Default Model
+          description: 默认模型
+        providers:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Providers
+          description: 供应商列表
+        rate_limits:
+          additionalProperties: true
+          type: object
+          title: Rate Limits
+          description: 限流信息
+        health:
+          additionalProperties: true
+          type: object
+          title: Health
+          description: 健康状态
+      type: object
+      required:
+      - default_provider
+      - default_model
+      - providers
+      - rate_limits
+      - health
+      title: ModelSettingsResponse
+    PolicySettingsResponse:
+      properties:
+        risk_levels:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Risk Levels
+          description: 风险等级
+        approvals:
+          additionalProperties: true
+          type: object
+          title: Approvals
+          description: 审批规则
+        sandbox:
+          additionalProperties: true
+          type: object
+          title: Sandbox
+          description: 沙箱规则
+        audit:
+          additionalProperties: true
+          type: object
+          title: Audit
+          description: 审计规则
+      type: object
+      required:
+      - risk_levels
+      - approvals
+      - sandbox
+      - audit
+      title: PolicySettingsResponse
+    ReplayRequest:
+      properties:
+        sequence:
+          anyOf:
+          - type: integer
+            minimum: 1.0
+          - type: 'null'
+          title: Sequence
+          description: 重放到指定事件序号
+      type: object
+      title: ReplayRequest
+    ReplayResponse:
+      properties:
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        sequence:
+          type: integer
+          title: Sequence
+          description: 重放序号
+        state_summary:
+          type: string
+          title: State Summary
+          description: 状态摘要
+        failure_point:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Failure Point
+          description: 故障点
+        diagnosis:
+          type: string
+          title: Diagnosis
+          description: 诊断结论
+        requires_manual_review:
+          type: boolean
+          title: Requires Manual Review
+          description: 是否需要人工复核
+      type: object
+      required:
+      - task_id
+      - sequence
+      - state_summary
+      - diagnosis
+      - requires_manual_review
+      title: ReplayResponse
+    SandboxPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SandboxResponse'
+          type: array
+          title: Items
+          description: 沙箱列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: SandboxPage
+    SandboxResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 沙箱 ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        container_id:
+          type: string
+          title: Container Id
+          description: 容器 ID
+        image:
+          type: string
+          title: Image
+          description: 镜像
+        status:
+          type: string
+          title: Status
+          description: 沙箱状态
+        cpu_limit:
+          type: string
+          title: Cpu Limit
+          description: CPU 限制
+        memory_limit_mb:
+          type: integer
+          title: Memory Limit Mb
+          description: 内存限制（MB）
+        network_enabled:
+          type: boolean
+          title: Network Enabled
+          description: 是否启用网络
+        warm_pool_reused:
+          type: boolean
+          title: Warm Pool Reused
+          description: 是否复用 WarmPool
+      type: object
+      required:
+      - id
+      - task_id
+      - container_id
+      - image
+      - status
+      - cpu_limit
+      - memory_limit_mb
+      - network_enabled
+      - warm_pool_reused
+      title: SandboxResponse
+    SubagentPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SubagentResponse'
+          type: array
+          title: Items
+          description: 子 Agent 列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: SubagentPage
+    SubagentResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 子 Agent ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        parent_agent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Agent Id
+          description: 父 Agent ID
+        agent_type:
+          type: string
+          title: Agent Type
+          description: Agent 类型
+        status:
+          type: string
+          title: Status
+          description: 子 Agent 状态
+        context_json:
+          additionalProperties: true
+          type: object
+          title: Context Json
+          description: 上下文
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+          description: 开始时间
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+          description: 完成时间
+        timeout_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Timeout At
+          description: 超时时间
+      type: object
+      required:
+      - id
+      - task_id
+      - agent_type
+      - status
+      - context_json
+      title: SubagentResponse
+    TaskArtifact:
+      properties:
+        name:
+          type: string
+          title: Name
+          description: 产物名称
+        artifact_type:
+          type: string
+          title: Artifact Type
+          description: 产物类型
+        description:
+          type: string
+          title: Description
+          description: 产物说明
+        status:
+          type: string
+          title: Status
+          description: 产物状态
+      type: object
+      required:
+      - name
+      - artifact_type
+      - description
+      - status
+      title: TaskArtifact
+    TaskCreateRequest:
+      properties:
+        title:
+          type: string
+          minLength: 1
+          title: Title
+          description: 任务标题
+        goal:
+          type: string
+          minLength: 1
+          title: Goal
+          description: 任务目标
+        model_provider:
+          type: string
+          title: Model Provider
+          description: 模型供应商
+        model_name:
+          type: string
+          title: Model Name
+          description: 模型名称
+        max_runtime_seconds:
+          type: integer
+          title: Max Runtime Seconds
+          description: 最大运行秒数
+          default: 1800
+        max_subagents:
+          type: integer
+          title: Max Subagents
+          description: 最大子 Agent 数
+          default: 5
+        enable_sandbox:
+          type: boolean
+          title: Enable Sandbox
+          description: 是否启用容器沙箱
+          default: true
+        enable_network:
+          type: boolean
+          title: Enable Network
+          description: 是否启用网络访问
+          default: false
+      type: object
+      required:
+      - title
+      - goal
+      - model_provider
+      - model_name
+      title: TaskCreateRequest
+    TaskPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/TaskResponse'
+          type: array
+          title: Items
+          description: 任务列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: TaskPage
+    TaskResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 任务 ID
+        title:
+          type: string
+          title: Title
+          description: 任务标题
+        goal:
+          type: string
+          title: Goal
+          description: 任务目标
+        status:
+          type: string
+          title: Status
+          description: 任务状态
+        model_provider:
+          type: string
+          title: Model Provider
+          description: 模型供应商
+        model_name:
+          type: string
+          title: Model Name
+          description: 模型名称
+        max_runtime_seconds:
+          type: integer
+          title: Max Runtime Seconds
+          description: 最大运行秒数
+        max_subagents:
+          type: integer
+          title: Max Subagents
+          description: 最大子 Agent 数
+        enable_sandbox:
+          type: boolean
+          title: Enable Sandbox
+          description: 是否启用容器沙箱
+        enable_network:
+          type: boolean
+          title: Enable Network
+          description: 是否启用网络访问
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+          description: 更新时间
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+          description: 完成时间
+      type: object
+      required:
+      - id
+      - title
+      - goal
+      - status
+      - model_provider
+      - model_name
+      - max_runtime_seconds
+      - max_subagents
+      - enable_sandbox
+      - enable_network
+      - created_at
+      - updated_at
+      title: TaskResponse
+    TaskResultResponse:
+      properties:
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        status:
+          type: string
+          title: Status
+          description: 任务状态
+        summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Summary
+          description: 结果摘要
+        execution_plan:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Execution Plan
+          description: 执行计划
+        artifacts:
+          items:
+            $ref: '#/components/schemas/TaskArtifact'
+          type: array
+          title: Artifacts
+          description: 产物列表
+        last_sequence:
+          type: integer
+          title: Last Sequence
+          description: 最后事件序号
+        pending:
+          type: boolean
+          title: Pending
+          description: 是否仍在运行
+      type: object
+      required:
+      - task_id
+      - status
+      - artifacts
+      - last_sequence
+      - pending
+      title: TaskResultResponse
+    ToolCallPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ToolCallResponse'
+          type: array
+          title: Items
+          description: 工具调用列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: ToolCallPage
+    ToolCallResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 工具调用 ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        agent_run_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Run Id
+          description: Agent 运行 ID
+        tool_name:
+          type: string
+          title: Tool Name
+          description: 工具名称
+        status:
+          type: string
+          title: Status
+          description: 调用状态
+        risk_level:
+          type: string
+          title: Risk Level
+          description: 风险等级
+        requires_sandbox:
+          type: boolean
+          title: Requires Sandbox
+          description: 是否需要沙箱
+        sandbox_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Sandbox Id
+          description: 沙箱 ID
+        duration_ms:
+          type: integer
+          title: Duration Ms
+          description: 耗时（毫秒）
+        input_json:
+          additionalProperties: true
+          type: object
+          title: Input Json
+          description: 输入内容
+        output_json:
+          additionalProperties: true
+          type: object
+          title: Output Json
+          description: 输出内容
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+          description: 错误信息
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+      type: object
+      required:
+      - id
+      - task_id
+      - tool_name
+      - status
+      - risk_level
+      - requires_sandbox
+      - duration_ms
+      - input_json
+      - output_json
+      - created_at
+      title: ToolCallResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WarmPoolResponse:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+          description: 是否启用
+        min_size:
+          type: integer
+          title: Min Size
+          description: 最小数量
+        max_size:
+          type: integer
+          title: Max Size
+          description: 最大数量
+        idle:
+          type: integer
+          title: Idle
+          description: 空闲数量
+        busy:
+          type: integer
+          title: Busy
+          description: 忙碌数量
+        failed:
+          type: integer
+          title: Failed
+          description: 失败数量
+        hit_total:
+          type: integer
+          title: Hit Total
+          description: 命中总数
+        miss_total:
+          type: integer
+          title: Miss Total
+          description: 未命中总数
+      type: object
+      required:
+      - enabled
+      - min_size
+      - max_size
+      - idle
+      - busy
+      - failed
+      - hit_total
+      - miss_total
+      title: WarmPoolResponse
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer
