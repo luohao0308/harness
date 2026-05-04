@@ -1,6 +1,6 @@
 current_stage: stage-12-runtime-product-completion
-current_status: in_progress
-last_updated_at: 2026-05-04T20:18:49Z
+current_status: ready_for_review
+last_updated_at: 2026-05-04T20:21:17Z
 last_updated_by: codex
 next_stage: stage-13-website-code-integration
 
@@ -453,7 +453,7 @@ stages:
 
   - id: stage-12-runtime-product-completion
     document: docs/ai/13-stage-12-runtime-product-completion.md
-    status: in_progress
+    status: ready_for_review
     started_at: 2026-05-04T19:35:57Z
     completed_at: null
     changed_files:
@@ -532,8 +532,8 @@ stages:
       - python3 scripts/validate-docs.py
     verification_result: passed
     branch: stage/stage-12-runtime-product-completion
-    commit_sha: null
-    pr_url: null
+    commit_sha: dc0cf2f1fd7e27bdb91ec6076c4d7b2ee63c72e7
+    pr_url: https://github.com/luohao0308/harness/pull/10
     merged_at: null
     notes: "Runtime product surface is implemented and verified: task cancel/resume/result/replay, model/tool audit records, filesystem/http tools, settings APIs, ADMIN_ACTION audit rows, Chinese OpenAPI JSON/YAML, default Chinese console, Chinese/English switch, settings, sandboxes, observability, replay, result, and audit panels."
     next_stage: stage-13-website-code-integration
