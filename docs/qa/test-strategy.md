@@ -165,16 +165,23 @@ postgres connectivity
 redis connectivity
 grafana reachable
 loki reachable
+nginx health
+nginx api proxy
+nginx sse proxy
+prometheus reachable on 9091
 ```
 
 Command:
 
 ```bash
-cd deploy/docker-compose
-docker compose config
-docker compose up -d
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/metrics
+docker compose -f deploy/docker-compose/docker-compose.yml config
+docker compose -f deploy/docker-compose/docker-compose.yml up -d --build
+curl --noproxy '*' http://127.0.0.1:8000/health
+curl --noproxy '*' http://127.0.0.1:8000/metrics
+curl --noproxy '*' http://127.0.0.1:8080/health
+curl --noproxy '*' http://127.0.0.1:8080/api/tasks -H "Authorization: Bearer dev-engineer-token"
+curl --noproxy '*' http://127.0.0.1:9091/-/healthy
+curl --noproxy '*' http://127.0.0.1:3000/api/health
 ```
 
 ## Release Gate
@@ -189,4 +196,3 @@ docker compose config passed
 docs validation passed
 security policy checks passed
 ```
-

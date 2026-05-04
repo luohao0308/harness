@@ -67,20 +67,20 @@ def test_warm_pool_prewarm_acquire_and_release(db_session: Session) -> None:
     fake_client = FakeDockerClient()
     manager = WarmPoolManager(docker_manager=DockerManager(client=fake_client))
 
-    manager.prewarm()
+    manager.prewarm(session=db_session)
 
     assert WARM_POOL_MIN_SIZE == 3
     assert WARM_POOL_MAX_SIZE == 10
     assert WARM_POOL_IDLE_TTL_SECONDS == 600
     assert len(fake_client.containers.run_calls) == 3
-    assert manager.status().idle == 3
+    assert manager.status(session=db_session).idle == 3
 
     sandbox = manager.acquire(session=db_session, task_id=task.id)
 
     assert sandbox.warm_pool_reused is True
-    assert manager.status().hit_total == 1
-    assert manager.status().idle == 2
-    assert manager.status().busy == 1
+    assert manager.status(session=db_session).hit_total == 1
+    assert manager.status(session=db_session).idle == 2
+    assert manager.status(session=db_session).busy == 1
     events = EventStore(db_session).list_by_task(task_id=task.id)
     assert [event.event_type for event in events] == [
         "SANDBOX_REQUESTED",
@@ -90,6 +90,6 @@ def test_warm_pool_prewarm_acquire_and_release(db_session: Session) -> None:
 
     manager.release(session=db_session, sandbox=sandbox)
 
-    assert manager.status().idle == 3
-    assert manager.status().busy == 0
+    assert manager.status(session=db_session).idle == 3
+    assert manager.status(session=db_session).busy == 0
     assert EventStore(db_session).list_by_task(task_id=task.id)[-1].event_type == "SANDBOX_RELEASED"

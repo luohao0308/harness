@@ -12,6 +12,8 @@ from app.db.models import Base  # noqa: E402
 from app.db.session import get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
 
+AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
+
 
 @pytest.fixture()
 def db_session() -> Generator[Session, None, None]:

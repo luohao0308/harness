@@ -62,6 +62,7 @@ STAGE_FILES = [
     "docs/ai/09-stage-08-dramatiq-subagent.md",
     "docs/ai/10-stage-09-sandbox-warmpool.md",
     "docs/ai/11-stage-10-observability-deployment.md",
+    "docs/ai/12-stage-11-review-p1-hardening.md",
 ]
 
 
