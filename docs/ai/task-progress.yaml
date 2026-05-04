@@ -1,8 +1,8 @@
-current_stage: stage-10-observability-deployment
-current_status: completed
-last_updated_at: 2026-05-04T14:20:39Z
+current_stage: stage-11-review-p1-hardening
+current_status: in_progress
+last_updated_at: 2026-05-04T17:02:02Z
 last_updated_by: codex
-next_stage: completed
+next_stage: stage-11-review-p1-hardening
 
 stages:
   - id: stage-01-git-github
@@ -374,4 +374,79 @@ stages:
     pr_url: https://github.com/luohao0308/harness/pull/8
     merged_at: 2026-05-04T14:20:39Z
     notes: "Prometheus /metrics, required counters/gauges/histograms, JSON stdout logging fields, sensitive log redaction, OpenTelemetry trace middleware, trace_id propagation to agent_events, Docker Compose services, Prometheus/Loki/OTel configs, Grafana dashboard JSON, systemd units, and Nginx SSE proxy buffering settings are implemented. PR was merged into develop; all planned stages are complete."
+    next_stage: stage-11-review-p1-hardening
+
+  - id: stage-11-review-p1-hardening
+    document: docs/ai/12-stage-11-review-p1-hardening.md
+    status: in_progress
+    started_at: 2026-05-04T15:41:17Z
+    completed_at: null
+    changed_files:
+      - .env.example
+      - .gitignore
+      - README.md
+      - apps/agent-console/.env.example
+      - apps/agent-console/Dockerfile
+      - apps/agent-console/nginx.conf
+      - apps/agent-console/src/features/events/useTaskEventStream.ts
+      - apps/agent-console/src/features/tasks/api.ts
+      - deploy/docker-compose/.env.example
+      - deploy/docker-compose/docker-compose.yml
+      - deploy/nginx/agent-harness.conf
+      - deploy/systemd/agent-warm-pool.service
+      - docs/ai/12-stage-11-review-p1-hardening.md
+      - docs/ai/README.md
+      - docs/ai/reference/architecture-and-decisions.md
+      - docs/ai/task-progress.yaml
+      - docs/api/openapi.yaml
+      - docs/human/03-system-architecture.md
+      - docs/human/07-deployment-operations.md
+      - docs/human/10-task-progress.md
+      - docs/qa/test-strategy.md
+      - docs/runbooks/deployment.md
+      - docs/runbooks/local-development.md
+      - scripts/validate-docs.py
+      - services/agent-runtime/Dockerfile
+      - services/api-server/alembic/versions/20260504_0002_create_warm_pool_containers.py
+      - services/api-server/app/api/events.py
+      - services/api-server/app/api/sandboxes.py
+      - services/api-server/app/api/subagents.py
+      - services/api-server/app/api/tasks.py
+      - services/api-server/app/db/models.py
+      - services/api-server/app/events/event_store.py
+      - services/api-server/app/main.py
+      - services/api-server/app/sandbox/warm_pool.py
+      - services/api-server/app/security/__init__.py
+      - services/api-server/app/security/auth.py
+      - services/api-server/app/workers/warm_pool_service.py
+      - services/api-server/tests/conftest.py
+      - services/api-server/tests/test_auth.py
+      - services/api-server/tests/test_event_store.py
+      - services/api-server/tests/test_events_stream.py
+      - services/api-server/tests/test_observability.py
+      - services/api-server/tests/test_planner_executor.py
+      - services/api-server/tests/test_sandbox.py
+      - services/api-server/tests/test_subagents.py
+      - services/api-server/tests/test_tasks.py
+      - services/api-server/tests/test_warm_pool.py
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:////tmp/harness_stage11.db .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm run lint && npm run build
+      - docker compose -f deploy/docker-compose/docker-compose.yml config
+      - python3 scripts/validate-docs.py
+      - docker compose -f deploy/docker-compose/docker-compose.yml up -d --build api-server agent-worker sandbox-worker warm-pool agent-console nginx
+      - docker compose -f deploy/docker-compose/docker-compose.yml ps
+      - curl --noproxy '*' --fail http://127.0.0.1:8000/health
+      - curl --noproxy '*' --fail http://127.0.0.1:8080/health
+      - curl --noproxy '*' --fail http://127.0.0.1:9091/-/healthy
+      - curl --noproxy '*' --fail http://127.0.0.1:3000/api/health
+      - "browser check: open http://127.0.0.1:5173/tasks and verify Docker E2E Final is visible with zero browser errors"
+    verification_result: passed
+    branch: stage/stage-11-review-p1-hardening
+    commit_sha: null
+    pr_url: null
+    merged_at: null
+    notes: "All five P1 review findings are implemented and locally verified. Docker Compose is running with API 8000, Console 5173, Nginx 8080, Prometheus 9091, Grafana 3000, Loki 3100, OTel 4317/4318, Postgres, Redis, agent-worker, sandbox-worker, and warm-pool. Browser console showed Docker E2E Final visible and zero error or warning logs. Awaiting user confirmation to push the branch and create the PR."
     next_stage: completed

@@ -1,4 +1,11 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
+
+function authHeaders(): HeadersInit {
+  return {
+    Authorization: `Bearer ${DEV_BEARER_TOKEN}`,
+  };
+}
 
 export type TaskStatus =
   | "CREATED"
@@ -51,7 +58,7 @@ export type AgentEvent = {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
     ...init,
   });
   if (!response.ok) {
@@ -86,5 +93,6 @@ export async function listTaskEvents(taskId: string) {
 }
 
 export function taskEventStreamUrl(taskId: string) {
-  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream`;
+  const params = new URLSearchParams({ access_token: DEV_BEARER_TOKEN });
+  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
 }

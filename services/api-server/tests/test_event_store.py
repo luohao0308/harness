@@ -1,6 +1,9 @@
-from sqlalchemy.orm import Session
+from concurrent.futures import ThreadPoolExecutor
 
-from app.db.models import Task, utc_now
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.db.models import Base, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 
@@ -39,3 +42,46 @@ def test_event_store_assigns_task_local_sequence(db_session: Session) -> None:
     assert first.sequence == 1
     assert second.sequence == 2
     assert [event.sequence for event in events] == [1, 2]
+
+
+def test_event_store_assigns_unique_sequences_under_concurrent_writes(tmp_path) -> None:
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'events.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(bind=engine)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    with SessionLocal() as session:
+        task = Task(
+            title="Concurrent demo",
+            goal="Write events concurrently",
+            status="RUNNING",
+            model_provider="openai-compatible",
+            model_name="default",
+            max_runtime_seconds=1800,
+            max_subagents=5,
+            enable_sandbox=True,
+            enable_network=False,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        session.add(task)
+        session.commit()
+        task_id = task.id
+
+    def append_event(index: int) -> int:
+        with SessionLocal() as session:
+            event = EventStore(session).append(
+                task_id=task_id,
+                event_type=EventType.SUBAGENT_PROGRESS,
+                payload_json={"index": index},
+            )
+            sequence = event.sequence
+            session.commit()
+            return sequence
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        sequences = list(executor.map(append_event, range(10)))
+
+    assert sorted(sequences) == list(range(1, 11))

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.logging import JsonFormatter
 from app.main import app
+from tests.conftest import AUTH_HEADERS
 
 
 def test_metrics_endpoint_exposes_required_metrics() -> None:
@@ -55,7 +56,7 @@ def test_request_trace_id_is_written_to_events() -> None:
 
     created = client.post(
         "/api/tasks",
-        headers={"x-trace-id": "trace-from-test"},
+        headers={**AUTH_HEADERS, "x-trace-id": "trace-from-test"},
         json={
             "title": "Trace demo",
             "goal": "Verify trace propagation",
@@ -65,7 +66,7 @@ def test_request_trace_id_is_written_to_events() -> None:
     )
     task_id = created.json()["id"]
 
-    events = client.get(f"/api/tasks/{task_id}/events").json()["items"]
+    events = client.get(f"/api/tasks/{task_id}/events", headers=AUTH_HEADERS).json()["items"]
 
     assert created.headers["x-trace-id"] == "trace-from-test"
     assert events[0]["trace_id"] == "trace-from-test"

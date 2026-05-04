@@ -11,17 +11,30 @@ from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.observability.metrics import agent_tasks_running, agent_tasks_total
+from app.security.auth import Principal
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+
+
+def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task:
+    task = session.execute(
+        select(Task).where(Task.id == task_id, Task.organization_id == organization_id)
+    ).scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return task
 
 
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(
     request: TaskCreateRequest,
     session: DbSession,
+    principal: Principal,
 ) -> Task:
     task = Task(
+        organization_id=principal.organization_id,
+        created_by=principal.user_id,
         title=request.title,
         goal=request.goal,
         status="CREATED",
@@ -50,10 +63,11 @@ def create_task(
 @router.get("", response_model=TaskPage)
 def list_tasks(
     session: DbSession,
+    principal: Principal,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> TaskPage:
-    statement = select(Task)
+    statement = select(Task).where(Task.organization_id == principal.organization_id)
     if status_filter is not None:
         statement = statement.where(Task.status == status_filter)
     statement = statement.order_by(Task.created_at.desc()).limit(limit)
@@ -62,18 +76,13 @@ def list_tasks(
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
-def get_task(task_id: str, session: DbSession) -> Task:
-    task = session.get(Task, task_id)
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return task
+def get_task(task_id: str, session: DbSession, principal: Principal) -> Task:
+    return get_owned_task(task_id, session, principal.organization_id)
 
 
 @router.post("/{task_id}/start", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
-def start_task(task_id: str, session: DbSession) -> Task:
-    task = session.get(Task, task_id)
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
+    task = get_owned_task(task_id, session, principal.organization_id)
     if task.status not in {"CREATED", "FAILED"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task cannot be started")
 

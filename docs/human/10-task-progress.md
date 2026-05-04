@@ -5,9 +5,9 @@
 ## 当前状态
 
 ```text
-当前阶段：阶段 10 监控、日志、部署
-当前状态：completed
-下一步：全部阶段已完成
+当前阶段：阶段 11 Review P1 Production Hardening
+当前状态：in_progress
+下一步：本地提交后确认推送分支并创建 PR
 ```
 
 ## 状态说明
@@ -34,7 +34,8 @@ failed：验证失败
 | 07 | React 控制台 | completed | stage/stage-07-react-console | https://github.com/luohao0308/harness/pull/5 | passed | PR 已合并到 develop。 |
 | 08 | Dramatiq Subagent | completed | stage/stage-08-dramatiq-subagent | https://github.com/luohao0308/harness/pull/6 | passed | PR 已合并到 develop。 |
 | 09 | Docker Sandbox 与 WarmPool | completed | stage/stage-09-sandbox-warmpool | https://github.com/luohao0308/harness/pull/7 | passed | PR 已合并到 develop。 |
-| 10 | 监控、日志、部署 | completed | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | PR 已合并到 develop；全部阶段已完成。 |
+| 10 | 监控、日志、部署 | completed | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | PR 已合并到 develop。 |
+| 11 | Review P1 Production Hardening | in_progress | stage/stage-11-review-p1-hardening | 待创建 | passed | 5 个 P1 已修复；Docker Compose、API、Nginx、SSE、WarmPool、前端浏览器、Prometheus、Grafana 均已通过本地验收。 |
 
 ## 阶段完成定义
 
@@ -59,6 +60,19 @@ task-progress.yaml 的 merged_at 已填写
 本看板状态已更新
 ```
 
+## 当前 Docker 验收结果
+
+```text
+API: http://127.0.0.1:8000/health passed
+Console: http://127.0.0.1:5173/tasks passed
+Nginx: http://127.0.0.1:8080/health passed
+Nginx SSE: /api/tasks/{task_id}/events/stream passed
+Prometheus: http://127.0.0.1:9091/-/healthy passed
+Grafana: http://127.0.0.1:3000/api/health passed
+WarmPool: idle=3 passed
+Browser console: zero error or warning logs
+```
+
 ## 历史补录说明
 
-阶段 01-03 在 PR 规则建立前已经完成，使用 `legacy_no_pr` 标记。阶段 04 及之后必须走阶段分支、提交、推送、PR、用户合并流程。
+阶段 01-03 在 PR 规则建立前已经完成，使用 `legacy_no_pr` 标记。阶段 04 及之后必须走阶段分支、提交、推送、PR、用户合并流程。阶段 11 是阶段 10 完成后的 review 修复阶段，必须关闭全部 P1 后进入 `ready_for_review`。
