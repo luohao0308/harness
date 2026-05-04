@@ -12,6 +12,12 @@ from sqlalchemy.orm import Session
 from app.db.models import SandboxInstance, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.observability.metrics import (
+    sandbox_command_duration_seconds,
+    sandbox_command_timeout_total,
+    sandbox_containers_running,
+    sandbox_containers_total,
+)
 from app.sandbox.policies import (
     DEFAULT_SANDBOX_CPUS,
     DEFAULT_SANDBOX_IMAGE,
@@ -142,6 +148,8 @@ class DockerManager:
         )
         session.add(sandbox)
         session.flush()
+        sandbox_containers_total.inc()
+        sandbox_containers_running.inc()
         event_store.append(
             task_id=task_id,
             agent_run_id=agent_run_id,
@@ -226,11 +234,13 @@ class DockerManager:
                     "stderr_preview": stderr[:1000],
                 },
             )
+            sandbox_command_duration_seconds.observe(duration_ms / 1000)
             sandbox.status = "IDLE"
             session.flush()
             return result
         except TimeoutError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
+            sandbox_command_timeout_total.inc()
             sandbox.status = "IDLE"
             event_store.append(
                 task_id=sandbox.task_id,
@@ -265,6 +275,7 @@ class DockerManager:
             pass
         sandbox.status = "DESTROYED"
         sandbox.destroyed_at = utc_now()
+        sandbox_containers_running.dec()
         EventStore(session).append(
             task_id=sandbox.task_id,
             agent_run_id=sandbox.agent_run_id,

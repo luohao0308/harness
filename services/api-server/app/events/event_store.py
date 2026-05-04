@@ -1,6 +1,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.tracing import get_current_trace_id
 from app.db.models import AgentEvent
 from app.events.event_types import EventType
 
@@ -31,7 +32,7 @@ class EventStore:
             payload_json=payload_json,
             actor_type=actor_type,
             actor_id=actor_id,
-            trace_id=trace_id,
+            trace_id=trace_id or get_current_trace_id(),
         )
         self.session.add(event)
         self.session.flush()
