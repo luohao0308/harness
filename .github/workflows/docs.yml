@@ -1,0 +1,31 @@
+name: Docs
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check required AI docs
+        run: |
+          test -f docs/ai/README.md
+          test -f docs/ai/01-task-progress.md
+          test -f docs/ai/task-progress.yaml
+
+      - name: Check docs avoid loose wording
+        run: |
+          if grep -RInE "TODO|待定|稍后|可能|也许|大概|暂定|视情况|等等" docs/ai docs/api docs/evals docs/security docs/qa docs/demo docs/runbooks; then
+            exit 1
+          fi
+
+      - name: Check stage terminology
+        run: |
+          grep -RIn "阶段 01" docs/ai/02-stage-01-git-github.md
+          grep -RIn "stage-01-git-github" docs/ai/task-progress.yaml

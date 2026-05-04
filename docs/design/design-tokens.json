@@ -1,0 +1,62 @@
+{
+  "color": {
+    "background": {
+      "page": "#f7f8fa",
+      "panel": "#ffffff",
+      "inverse": "#111827"
+    },
+    "surface": {
+      "primary": "#ffffff",
+      "secondary": "#f3f4f6",
+      "elevated": "#ffffff"
+    },
+    "text": {
+      "primary": "#111827",
+      "secondary": "#4b5563",
+      "muted": "#6b7280",
+      "inverse": "#ffffff"
+    },
+    "border": {
+      "default": "#e5e7eb",
+      "strong": "#d1d5db",
+      "focus": "#2563eb"
+    },
+    "status": {
+      "CREATED": "#64748b",
+      "PLANNING": "#2563eb",
+      "RUNNING": "#0891b2",
+      "WAITING_SUBAGENTS": "#7c3aed",
+      "FAILED": "#dc2626",
+      "COMPLETED": "#16a34a",
+      "CANCELLED": "#6b7280",
+      "PENDING": "#f59e0b",
+      "SUCCESS": "#16a34a",
+      "TIMEOUT": "#ea580c"
+    }
+  },
+  "spacing": {
+    "xs": "4px",
+    "sm": "8px",
+    "md": "16px",
+    "lg": "24px",
+    "xl": "32px"
+  },
+  "radius": {
+    "sm": "4px",
+    "md": "6px",
+    "lg": "8px"
+  },
+  "shadow": {
+    "panel": "0 1px 2px rgba(16, 24, 40, 0.06)"
+  },
+  "font": {
+    "sans": "Inter, ui-sans-serif, system-ui",
+    "mono": "JetBrains Mono, ui-monospace, SFMono-Regular"
+  },
+  "layout": {
+    "consoleSidebarWidth": "248px",
+    "contentMaxWidth": "1440px",
+    "panelGap": "16px"
+  }
+}
+

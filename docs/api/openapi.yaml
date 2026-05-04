@@ -1,0 +1,580 @@
+openapi: 3.1.0
+info:
+  title: Enterprise AI Agent Harness API
+  version: 1.0.0
+  description: Production API contract for the enterprise AI Agent Harness platform.
+servers:
+  - url: /api
+security:
+  - bearerAuth: []
+paths:
+  /tasks:
+    post:
+      operationId: createTask
+      summary: Create task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskCreateRequest"
+      responses:
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    get:
+      operationId: listTasks
+      summary: List tasks
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: cursor
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPage"
+  /tasks/{task_id}:
+    get:
+      operationId: getTask
+      summary: Get task
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+  /tasks/{task_id}/start:
+    post:
+      operationId: startTask
+      summary: Start task
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "202":
+          description: Task started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskStartResponse"
+  /tasks/{task_id}/cancel:
+    post:
+      operationId: cancelTask
+      summary: Cancel task
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "202":
+          description: Task cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+  /tasks/{task_id}/resume:
+    post:
+      operationId: resumeTask
+      summary: Resume task
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "202":
+          description: Task resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResumeResponse"
+  /tasks/{task_id}/result:
+    get:
+      operationId: getTaskResult
+      summary: Get task result
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResultResponse"
+  /tasks/{task_id}/events:
+    get:
+      operationId: listTaskEvents
+      summary: List task events
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - name: after_sequence
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Event page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventPage"
+  /tasks/{task_id}/events/stream:
+    get:
+      operationId: streamTaskEvents
+      summary: Stream task events
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Server-sent event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /tasks/{task_id}/replay:
+    post:
+      operationId: replayTask
+      summary: Replay task events
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplayRequest"
+      responses:
+        "200":
+          description: Replayed state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReplayResponse"
+  /tasks/{task_id}/subagents:
+    get:
+      operationId: listTaskSubagents
+      summary: List task subagents
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Subagent page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubagentPage"
+  /subagents/{subagent_id}:
+    get:
+      operationId: getSubagent
+      summary: Get subagent
+      parameters:
+        - $ref: "#/components/parameters/SubagentId"
+      responses:
+        "200":
+          description: Subagent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubagentResponse"
+  /subagents/{subagent_id}/cancel:
+    post:
+      operationId: cancelSubagent
+      summary: Cancel subagent
+      parameters:
+        - $ref: "#/components/parameters/SubagentId"
+      responses:
+        "202":
+          description: Subagent cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubagentResponse"
+  /sandboxes:
+    get:
+      operationId: listSandboxes
+      summary: List sandboxes
+      responses:
+        "200":
+          description: Sandbox page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxPage"
+  /sandboxes/warm-pool:
+    get:
+      operationId: getWarmPool
+      summary: Get WarmPool status
+      responses:
+        "200":
+          description: WarmPool status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarmPoolResponse"
+  /sandboxes/{sandbox_id}:
+    get:
+      operationId: getSandbox
+      summary: Get sandbox
+      parameters:
+        - $ref: "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Sandbox
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxResponse"
+  /sandboxes/{sandbox_id}/terminate:
+    post:
+      operationId: terminateSandbox
+      summary: Terminate sandbox
+      parameters:
+        - $ref: "#/components/parameters/SandboxId"
+      responses:
+        "202":
+          description: Sandbox terminated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxResponse"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+    SubagentId:
+      name: subagent_id
+      in: path
+      required: true
+      schema:
+        type: string
+    SandboxId:
+      name: sandbox_id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TaskNotFound:
+      description: Task not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    TaskStatus:
+      type: string
+      enum:
+        - CREATED
+        - PLANNING
+        - RUNNING
+        - WAITING_SUBAGENTS
+        - FAILED
+        - COMPLETED
+        - CANCELLED
+    TaskCreateRequest:
+      type: object
+      required:
+        - title
+        - goal
+        - model_provider
+        - model_name
+      properties:
+        title:
+          type: string
+        goal:
+          type: string
+        model_provider:
+          type: string
+        model_name:
+          type: string
+        max_runtime_seconds:
+          type: integer
+          default: 1800
+        max_subagents:
+          type: integer
+          default: 5
+        enable_sandbox:
+          type: boolean
+          default: true
+        enable_network:
+          type: boolean
+          default: false
+    TaskResponse:
+      type: object
+      required:
+        - id
+        - title
+        - goal
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        goal:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        model_provider:
+          type: string
+        model_name:
+          type: string
+        max_runtime_seconds:
+          type: integer
+        max_subagents:
+          type: integer
+        enable_sandbox:
+          type: boolean
+        enable_network:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    TaskPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskResponse"
+        next_cursor:
+          type:
+            - string
+            - "null"
+    TaskStartResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+    TaskResumeResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        resume_from_step:
+          type: string
+    TaskResultResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        summary:
+          type: string
+        artifacts:
+          type: array
+          items:
+            type: object
+    EventResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        task_id:
+          type: string
+        agent_run_id:
+          type:
+            - string
+            - "null"
+        sequence:
+          type: integer
+        event_type:
+          type: string
+        payload:
+          type: object
+        actor_type:
+          type: string
+        actor_id:
+          type:
+            - string
+            - "null"
+        trace_id:
+          type:
+            - string
+            - "null"
+        created_at:
+          type: string
+          format: date-time
+    EventPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventResponse"
+        next_cursor:
+          type:
+            - string
+            - "null"
+    ReplayRequest:
+      type: object
+      properties:
+        sequence:
+          type: integer
+    ReplayResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+        sequence:
+          type: integer
+        state:
+          type: object
+    SubagentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        task_id:
+          type: string
+        parent_agent_id:
+          type:
+            - string
+            - "null"
+        agent_type:
+          type: string
+        status:
+          type: string
+          enum:
+            - PENDING
+            - RUNNING
+            - SUCCESS
+            - FAILED
+            - TIMEOUT
+            - CANCELLED
+        started_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        timeout_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    SubagentPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubagentResponse"
+    SandboxResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        task_id:
+          type: string
+        container_id:
+          type: string
+        image:
+          type: string
+        status:
+          type: string
+        cpu_limit:
+          type: string
+        memory_limit_mb:
+          type: integer
+        network_enabled:
+          type: boolean
+        warm_pool_reused:
+          type: boolean
+    SandboxPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SandboxResponse"
+    WarmPoolResponse:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        min_size:
+          type: integer
+        max_size:
+          type: integer
+        idle:
+          type: integer
+        busy:
+          type: integer
+        failed:
+          type: integer
+        hit_total:
+          type: integer
+        miss_total:
+          type: integer
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+            details:
+              type: object
+
