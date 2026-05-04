@@ -74,3 +74,33 @@ class SubagentResponse(BaseModel):
 class SubagentPage(BaseModel):
     items: list[SubagentResponse]
     next_cursor: str | None = None
+
+
+class SandboxResponse(BaseModel):
+    id: str
+    task_id: str
+    container_id: str
+    image: str
+    status: str
+    cpu_limit: str
+    memory_limit_mb: int
+    network_enabled: bool
+    warm_pool_reused: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SandboxPage(BaseModel):
+    items: list[SandboxResponse]
+    next_cursor: str | None = None
+
+
+class WarmPoolResponse(BaseModel):
+    enabled: bool
+    min_size: int
+    max_size: int
+    idle: int
+    busy: int
+    failed: int
+    hit_total: int
+    miss_total: int
