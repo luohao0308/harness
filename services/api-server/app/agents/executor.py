@@ -9,6 +9,7 @@ from app.db.models import ExecutionPlan as ExecutionPlanModel
 from app.db.models import Task, TaskStep, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.observability.metrics import agent_tasks_failed_total
 
 
 class Executor:
@@ -58,6 +59,7 @@ class Executor:
                     event_type=EventType.TASK_FAILED,
                     payload_json={"failed_step": step.key, "summary": result.summary},
                 )
+                agent_tasks_failed_total.inc()
                 self.session.flush()
                 return task
 

@@ -2,6 +2,12 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
+from app.observability.metrics import (
+    model_calls_total,
+    model_tokens_input_total,
+    model_tokens_output_total,
+)
+
 
 class ModelMessage(BaseModel):
     role: str
@@ -29,6 +35,9 @@ class ModelGateway(Protocol):
 
 class MockModelGateway:
     def complete(self, request: ModelRequest) -> ModelResponse:
+        model_calls_total.inc()
+        model_tokens_input_total.inc(0)
+        model_tokens_output_total.inc(0)
         return ModelResponse(
             content="{}",
             model_provider=request.model_provider,
