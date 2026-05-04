@@ -1,8 +1,8 @@
-current_stage: stage-07-react-console
+current_stage: stage-08-dramatiq-subagent
 current_status: ready_for_review
-last_updated_at: 2026-05-04T13:05:08Z
+last_updated_at: 2026-05-04T13:31:13Z
 last_updated_by: Harness Agent
-next_stage: stage-08-dramatiq-subagent
+next_stage: stage-09-sandbox-warmpool
 
 stages:
   - id: stage-01-git-github
@@ -218,9 +218,9 @@ stages:
 
   - id: stage-07-react-console
     document: docs/ai/08-stage-07-react-console.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T12:49:30Z
-    completed_at: null
+    completed_at: 2026-05-04T13:17:57Z
     changed_files:
       - apps/agent-console/package.json
       - apps/agent-console/package-lock.json
@@ -250,23 +250,38 @@ stages:
     branch: stage/stage-07-react-console
     commit_sha: e2742014c5cc6cf373fd14f04cf4c26207076513
     pr_url: https://github.com/luohao0308/harness/pull/5
-    merged_at: null
-    notes: "React + Vite + TypeScript + Tailwind console implemented using the supplied Figma React export as implementation reference. Routes, task API client, EventSource SSE hook, task list, task create, task detail, ExecutionPlanPanel, EventTimeline, SubagentPanel, SandboxPanel, TaskResultPanel, and placeholder operational routes are present. PR is pending review."
+    merged_at: 2026-05-04T13:17:57Z
+    notes: "React + Vite + TypeScript + Tailwind console implemented using the supplied Figma React export as implementation reference. Routes, task API client, EventSource SSE hook, task list, task create, task detail, ExecutionPlanPanel, EventTimeline, SubagentPanel, SandboxPanel, TaskResultPanel, and placeholder operational routes are present. PR was merged into develop."
     next_stage: stage-08-dramatiq-subagent
 
   - id: stage-08-dramatiq-subagent
     document: docs/ai/09-stage-08-dramatiq-subagent.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T13:18:30Z
     completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    branch: null
-    commit_sha: null
-    pr_url: null
+    changed_files:
+      - services/api-server/app/agents/subagent_manager.py
+      - services/api-server/app/api/schemas.py
+      - services/api-server/app/api/subagents.py
+      - services/api-server/app/main.py
+      - services/api-server/app/workers/__init__.py
+      - services/api-server/app/workers/broker.py
+      - services/api-server/app/workers/subagent_worker.py
+      - services/api-server/tests/test_subagents.py
+      - docs/ai/task-progress.yaml
+      - docs/human/10-task-progress.md
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && .venv/bin/python -m dramatiq --help
+      - cd services/api-server && .venv/bin/python -c "from app.workers.broker import broker; from app.workers.subagent_worker import run_subagent; print(type(broker).__name__, run_subagent.actor_name)"
+      - scripts/check-docs.sh
+    verification_result: passed
+    branch: stage/stage-08-dramatiq-subagent
+    commit_sha: 484e2cf961e9804a9672a9f81ae908c6c681f8bf
+    pr_url: https://github.com/luohao0308/harness/pull/6
     merged_at: null
-    notes: ""
+    notes: "Dramatiq RedisBroker, subagent worker actor, SubagentManager, list/detail/cancel APIs, fixed concurrency limit 5, fixed timeout 900, and subagent tests are implemented. PR is pending review."
     next_stage: stage-09-sandbox-warmpool
 
   - id: stage-09-sandbox-warmpool
