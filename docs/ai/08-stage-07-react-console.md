@@ -21,6 +21,7 @@
 
 必须先读取 docs/ai/00-execution-protocol.md、docs/ai/01-task-progress.md、docs/ai/task-progress.yaml、docs/ai/reference/frontend-spec.md、docs/ai/reference/data-events-api.md、docs/design/figma-production-brief.md 和 docs/design/design-tokens.json。
 只执行阶段 07，不进入阶段 08。
+阶段开始前必须创建阶段分支，验证通过后 commit、push 并创建 PR。
 
 执行内容：
 1. 初始化 apps/agent-console，技术栈为 React + Vite + TypeScript + Tailwind CSS + shadcn/ui。
@@ -36,6 +37,12 @@
 11. 任务详情页必须实时展示事件流。
 12. 执行 npm run lint 和 npm run build。
 13. 更新 docs/ai/task-progress.yaml，把 stage-07-react-console 标记为 completed。
+
+PR 与进度要求：
+- 阶段分支必须推送到 origin。
+- 阶段变更必须创建 Pull Request。
+- branch、commit_sha、pr_url 写入 docs/ai/task-progress.yaml。
+- 人读进度 docs/human/10-task-progress.md 必须同步更新。
 
 验收标准：
 - 控制台项目存在。

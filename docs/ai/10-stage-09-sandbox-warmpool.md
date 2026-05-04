@@ -20,6 +20,7 @@
 
 必须先读取 docs/ai/00-execution-protocol.md、docs/ai/01-task-progress.md、docs/ai/task-progress.yaml、docs/ai/reference/architecture-and-decisions.md、docs/ai/reference/runtime-deployment-spec.md 和 docs/ai/reference/data-events-api.md。
 只执行阶段 09，不进入阶段 10。
+阶段开始前必须创建阶段分支，验证通过后 commit、push 并创建 PR。
 
 执行内容：
 1. 创建 app/sandbox/docker_manager.py。
@@ -37,6 +38,12 @@
 13. GET /api/sandboxes、GET /api/sandboxes/{sandbox_id}、GET /api/sandboxes/warm-pool、POST /api/sandboxes/{sandbox_id}/terminate 必须存在。
 14. 创建测试覆盖 DockerManager 参数、Shell 工具走 Docker、WarmPool acquire/release。
 15. 更新 docs/ai/task-progress.yaml，把 stage-09-sandbox-warmpool 标记为 completed。
+
+PR 与进度要求：
+- 阶段分支必须推送到 origin。
+- 阶段变更必须创建 Pull Request。
+- branch、commit_sha、pr_url 写入 docs/ai/task-progress.yaml。
+- 人读进度 docs/human/10-task-progress.md 必须同步更新。
 
 验收标准：
 - DockerManager 存在。

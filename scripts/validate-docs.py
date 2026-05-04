@@ -25,6 +25,7 @@ REQUIRED_FILES = [
     "docs/ai/00-execution-protocol.md",
     "docs/ai/01-task-progress.md",
     "docs/ai/task-progress.yaml",
+    "docs/human/10-task-progress.md",
     "docs/ai/reference/architecture-and-decisions.md",
     "docs/ai/reference/data-events-api.md",
     "docs/ai/reference/frontend-spec.md",
@@ -111,6 +112,7 @@ def check_stage_docs() -> None:
 
 def check_progress_alignment() -> None:
     yaml_text = read_text(ROOT / "docs/ai/task-progress.yaml")
+    human_text = read_text(ROOT / "docs/human/10-task-progress.md")
     stage_ids = re.findall(r"stage-\d{2}-[a-z0-9-]+", yaml_text)
     for rel in STAGE_FILES:
         if rel not in yaml_text:
@@ -118,6 +120,14 @@ def check_progress_alignment() -> None:
     for stage_id in sorted(set(stage_ids)):
         if yaml_text.count(stage_id) < 2:
             fail(f"{stage_id} has incomplete progress metadata")
+    for required_field in ["branch:", "commit_sha:", "pr_url:", "merged_at:"]:
+        if required_field not in yaml_text:
+            fail(f"task-progress.yaml missing {required_field}")
+    for label in ["ready_for_review", "PR", "当前阶段"]:
+        if label not in human_text:
+            fail(f"human progress missing {label}")
+    if "legacy_no_pr" not in human_text:
+        fail("human progress missing legacy_no_pr explanation")
 
 
 def check_reference_links() -> None:
