@@ -5,9 +5,9 @@
 ## 当前状态
 
 ```text
-当前阶段：阶段 08 Dramatiq Subagent
+当前阶段：阶段 09 Docker Sandbox 与 WarmPool
 当前状态：ready_for_review
-下一步：等待用户合并阶段 08 PR；合并后进入阶段 09
+下一步：等待用户合并阶段 09 PR；合并后进入阶段 10
 ```
 
 ## 状态说明
@@ -32,8 +32,8 @@ failed：验证失败
 | 05 | Task 与 Event Store | completed | stage/stage-05-task-event-store | https://github.com/luohao0308/harness/pull/3 | passed | PR 已合并到 develop。 |
 | 06 | Planner 与 Executor | completed | stage/stage-06-planner-executor | https://github.com/luohao0308/harness/pull/4 | passed | PR 已合并到 develop。 |
 | 07 | React 控制台 | completed | stage/stage-07-react-console | https://github.com/luohao0308/harness/pull/5 | passed | PR 已合并到 develop。 |
-| 08 | Dramatiq Subagent | ready_for_review | stage/stage-08-dramatiq-subagent | https://github.com/luohao0308/harness/pull/6 | passed | RedisBroker、Dramatiq worker、SubagentManager、列表、详情、取消 API 与测试已完成，等待 PR 合并。 |
-| 09 | Docker Sandbox 与 WarmPool | pending | null | null | null | 等待阶段 08 合并。 |
+| 08 | Dramatiq Subagent | completed | stage/stage-08-dramatiq-subagent | https://github.com/luohao0308/harness/pull/6 | passed | PR 已合并到 develop。 |
+| 09 | Docker Sandbox 与 WarmPool | ready_for_review | stage/stage-09-sandbox-warmpool | https://github.com/luohao0308/harness/pull/7 | passed | DockerManager、Shell 工具、WarmPool、沙箱 API 与测试已完成，等待 PR 合并。 |
 | 10 | 监控、日志、部署 | pending | null | null | null | 等待阶段 09 合并。 |
 
 ## 阶段完成定义
