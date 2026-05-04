@@ -1,8 +1,8 @@
-current_stage: stage-08-dramatiq-subagent
+current_stage: stage-09-sandbox-warmpool
 current_status: ready_for_review
-last_updated_at: 2026-05-04T13:31:13Z
+last_updated_at: 2026-05-04T13:46:08Z
 last_updated_by: codex
-next_stage: stage-09-sandbox-warmpool
+next_stage: stage-10-observability-deployment
 
 stages:
   - id: stage-01-git-github
@@ -256,9 +256,9 @@ stages:
 
   - id: stage-08-dramatiq-subagent
     document: docs/ai/09-stage-08-dramatiq-subagent.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T13:18:30Z
-    completed_at: null
+    completed_at: 2026-05-04T13:34:57Z
     changed_files:
       - services/api-server/app/agents/subagent_manager.py
       - services/api-server/app/api/schemas.py
@@ -280,23 +280,42 @@ stages:
     branch: stage/stage-08-dramatiq-subagent
     commit_sha: 484e2cf961e9804a9672a9f81ae908c6c681f8bf
     pr_url: https://github.com/luohao0308/harness/pull/6
-    merged_at: null
-    notes: "Dramatiq RedisBroker, subagent worker actor, SubagentManager, list/detail/cancel APIs, fixed concurrency limit 5, fixed timeout 900, and subagent tests are implemented. PR is pending review."
+    merged_at: 2026-05-04T13:34:57Z
+    notes: "Dramatiq RedisBroker, subagent worker actor, SubagentManager, list/detail/cancel APIs, fixed concurrency limit 5, fixed timeout 900, and subagent tests are implemented. PR was merged into develop."
     next_stage: stage-09-sandbox-warmpool
 
   - id: stage-09-sandbox-warmpool
     document: docs/ai/10-stage-09-sandbox-warmpool.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T13:35:30Z
     completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    branch: null
-    commit_sha: null
-    pr_url: null
+    changed_files:
+      - services/api-server/app/api/sandboxes.py
+      - services/api-server/app/api/schemas.py
+      - services/api-server/app/main.py
+      - services/api-server/app/sandbox/__init__.py
+      - services/api-server/app/sandbox/docker_manager.py
+      - services/api-server/app/sandbox/policies.py
+      - services/api-server/app/sandbox/warm_pool.py
+      - services/api-server/app/tools/registry.py
+      - services/api-server/app/tools/shell.py
+      - services/api-server/tests/test_sandbox.py
+      - services/api-server/tests/test_warm_pool.py
+      - docs/ai/task-progress.yaml
+      - docs/human/10-task-progress.md
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && rg -n "subprocess" app/tools app/sandbox
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage09_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --fail --silent http://127.0.0.1:8000/api/sandboxes/warm-pool
+      - scripts/check-docs.sh
+    verification_result: passed
+    branch: stage/stage-09-sandbox-warmpool
+    commit_sha: e14dd194cbc30c928e77f951af9657b68161985f
+    pr_url: https://github.com/luohao0308/harness/pull/7
     merged_at: null
-    notes: ""
+    notes: "Docker Sandbox runtime is implemented with Docker SDK container creation, fixed defaults memory 1024m, cpus 1.0, network none, non-root user, command timeout enforcement, stdout/stderr/exit_code/duration capture, sandbox events, WarmPool MIN_SIZE 3 MAX_SIZE 10 IDLE_TTL_SECONDS 600, WarmPool status API, sandbox list/detail/terminate APIs, and tests using a fake Docker client. The subprocess search produced no matches in app/tools or app/sandbox. PR is pending review."
     next_stage: stage-10-observability-deployment
 
   - id: stage-10-observability-deployment
