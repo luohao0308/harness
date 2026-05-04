@@ -1,8 +1,8 @@
-current_stage: stage-04-backend-foundation
+current_stage: stage-05-task-event-store
 current_status: ready_for_review
-last_updated_at: 2026-05-04T12:20:08Z
+last_updated_at: 2026-05-04T12:33:56Z
 last_updated_by: codex
-next_stage: stage-05-task-event-store
+next_stage: stage-06-planner-executor
 
 stages:
   - id: stage-01-git-github
@@ -110,9 +110,9 @@ stages:
 
   - id: stage-04-backend-foundation
     document: docs/ai/05-stage-04-backend-foundation.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T12:12:00Z
-    completed_at: null
+    completed_at: 2026-05-04T12:23:53Z
     changed_files:
       - services/api-server/pyproject.toml
       - services/api-server/app/__init__.py
@@ -139,23 +139,48 @@ stages:
     branch: stage/stage-04-backend-foundation
     commit_sha: 7474e68e16d739b4c884f70cf4928079af175480
     pr_url: https://github.com/luohao0308/harness/pull/2
-    merged_at: null
-    notes: "FastAPI backend foundation is implemented with Python 3.11 project metadata, settings, JSON logging, SQLAlchemy session, health route, OpenAPI generation, and health tests. PR is pending review."
+    merged_at: 2026-05-04T12:23:53Z
+    notes: "FastAPI backend foundation is implemented with Python 3.11 project metadata, settings, JSON logging, SQLAlchemy session, health route, OpenAPI generation, and health tests. PR was merged into develop."
     next_stage: stage-05-task-event-store
 
   - id: stage-05-task-event-store
     document: docs/ai/06-stage-05-task-event-store.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T12:24:30Z
     completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    branch: null
-    commit_sha: null
-    pr_url: null
+    changed_files:
+      - services/api-server/alembic.ini
+      - services/api-server/alembic/env.py
+      - services/api-server/alembic/script.py.mako
+      - services/api-server/alembic/versions/20260504_0001_create_task_event_tables.py
+      - services/api-server/app/api/events.py
+      - services/api-server/app/api/schemas.py
+      - services/api-server/app/api/tasks.py
+      - services/api-server/app/db/models.py
+      - services/api-server/app/db/session.py
+      - services/api-server/app/events/__init__.py
+      - services/api-server/app/events/event_store.py
+      - services/api-server/app/events/event_types.py
+      - services/api-server/app/main.py
+      - services/api-server/tests/conftest.py
+      - services/api-server/tests/test_event_store.py
+      - services/api-server/tests/test_tasks.py
+      - docs/ai/task-progress.yaml
+      - docs/human/10-task-progress.md
+    verification_commands:
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage05_verify.db .venv/bin/alembic upgrade head
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage05_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --fail -X POST http://127.0.0.1:8000/api/tasks -H "Content-Type: application/json" -d '{"title":"Demo","goal":"Analyze project","model_provider":"openai-compatible","model_name":"default","max_runtime_seconds":1800,"max_subagents":5,"enable_sandbox":true,"enable_network":false}'
+      - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events
+      - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events/stream
+    verification_result: passed
+    branch: stage/stage-05-task-event-store
+    commit_sha: pending_commit
+    pr_url: pending_pr
     merged_at: null
-    notes: ""
+    notes: "Task and Event Store foundation is implemented with SQLAlchemy models, Alembic migration, append-only EventStore, Task API, Events API, SSE endpoint, and tests proving TASK_CREATED sequence starts at 1. PR is pending review."
     next_stage: stage-06-planner-executor
 
   - id: stage-06-planner-executor

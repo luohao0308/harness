@@ -5,9 +5,9 @@
 ## 当前状态
 
 ```text
-当前阶段：阶段 04 FastAPI 后端基础
+当前阶段：阶段 05 Task 与 Event Store
 当前状态：ready_for_review
-下一步：等待用户合并阶段 04 PR；合并后进入阶段 05
+下一步：等待用户合并阶段 05 PR；合并后进入阶段 06
 ```
 
 ## 状态说明
@@ -28,8 +28,8 @@ failed：验证失败
 | 01 | GitHub 与 Git 初始化 | completed | legacy_no_pr | legacy_no_pr | passed | 历史补录阶段：Git 仓库、模板、工作流和忽略规则已建立。 |
 | 02 | Figma 设计源 | completed | legacy_no_pr | legacy_no_pr | passed | 历史补录阶段：设计 brief、tokens、页面清单已建立。 |
 | 03 | 仓库脚手架 | completed | legacy_no_pr | legacy_no_pr | passed | 历史补录阶段：Monorepo 目录、环境样例和检查脚本已建立。 |
-| 04 | FastAPI 后端基础 | ready_for_review | stage/stage-04-backend-foundation | https://github.com/luohao0308/harness/pull/2 | passed | FastAPI 基础、配置、JSON 日志、数据库 session、健康检查和测试已完成，等待 PR 合并。 |
-| 05 | Task 与 Event Store | pending | null | null | null | 等待阶段 04 合并。 |
+| 04 | FastAPI 后端基础 | completed | stage/stage-04-backend-foundation | https://github.com/luohao0308/harness/pull/2 | passed | PR 已合并到 develop。 |
+| 05 | Task 与 Event Store | ready_for_review | stage/stage-05-task-event-store | pending_pr | passed | Task API、Event API、Alembic 迁移、append-only Event Store 和 SSE endpoint 已完成，等待 PR 合并。 |
 | 06 | Planner 与 Executor | pending | null | null | null | 等待阶段 05 合并。 |
 | 07 | React 控制台 | pending | null | null | null | 等待阶段 06 合并。 |
 | 08 | Dramatiq Subagent | pending | null | null | null | 等待阶段 07 合并。 |
