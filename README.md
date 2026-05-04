@@ -10,6 +10,102 @@ Model + Harness = Agent
 
 Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、恢复、审计、监控和部署。平台目标是把大模型能力工程化为企业环境中的任务执行系统。
 
+## 产品功能范围
+
+本平台交付的是企业 Agent 运行时和控制台，不只是任务列表页面。完整功能范围如下：
+
+| 功能域 | 用户可见能力 | 技术实现落点 |
+|---|---|---|
+| 任务生命周期 | 创建任务、查看任务、启动任务、取消任务、恢复任务、查看结果 | Task API、Task 状态机、Event Store、OpenAPI |
+| 计划与执行 | 将目标拆解为执行计划，按步骤执行，保留步骤状态 | Planner、Executor、execution_plans、task_steps |
+| 事件流 | 实时查看任务事件、断线重连、按 sequence 继续读取 | append-only agent_events、SSE、Last-Event-ID、after_sequence |
+| Replay 与恢复 | 按事件序号重放任务状态，定位失败点，生成调试摘要 | replay service、task_snapshots、Replay API |
+| Subagent 并发 | 查看子 Agent、跟踪子任务、取消子 Agent | Dramatiq worker、agent_runs、Subagent API |
+| 工具执行 | shell、文件、HTTP、测试、Git 等工具按策略执行 | Tool Registry、Policy Engine、Docker Sandbox |
+| 模型调用审计 | 查看模型供应商、模型名、token、延迟、失败与 fallback | Model Gateway、model_calls、MODEL_* 事件 |
+| 工具调用审计 | 查看工具入参、结果、耗时、策略拒绝、超时和失败 | tool_calls、TOOL_* 事件、POLICY_* 事件 |
+| 沙箱治理 | 查看沙箱实例、预热池、运行状态、终止沙箱 | Sandbox API、WarmPool、Docker manager |
+| 模型设置 | 管理模型网关、供应商、限流、健康状态 | Settings API、admin RBAC、控制台 settings/models |
+| 策略设置 | 管理工具风险、审批规则、沙箱规则、审计要求 | Settings API、Policy Matrix、控制台 settings/policies |
+| 观测与运营 | 查看任务吞吐、失败率、资源、模型与工具指标 | Prometheus、Grafana、Loki、OpenTelemetry |
+| 控制台本地化 | 默认中文，顶栏切换中文/English，技术值保留原值并展示中文说明 | React Console i18n、frontend-spec、Figma brief |
+| OpenAPI 导入 | 输出中文 OpenAPI YAML/JSON，支持 Swagger/Postman/Apifox 导入 | docs/api/openapi.yaml、docs/api/openapi.json、FastAPI schema |
+
+## 实现契约
+
+研发执行必须以契约文件为准，README 只做总入口和功能地图。
+
+| 契约 | 事实源 |
+|---|---|
+| API 路径、请求、响应、安全方案 | [OpenAPI YAML](./docs/api/openapi.yaml) |
+| API 人读说明 | [OpenAPI 契约](./docs/api/openapi-contract.md) |
+| 数据表、字段、索引、关系 | [数据库 Schema YAML](./docs/ai/reference/database-schema.yaml) |
+| 事件枚举、Event Store 规则 | [数据、事件与 API](./docs/ai/reference/data-events-api.md) |
+| 工具列表、输入输出、风险等级 | [Tool Registry YAML](./docs/ai/reference/tool-registry.yaml) |
+| 工具治理规则 | [Tool Registry 契约](./docs/ai/reference/tool-registry-spec.md) |
+| 角色权限、工具策略、管理权限 | [安全策略矩阵](./docs/ai/reference/security-policy-matrix.md) |
+| Planner、Executor、Subagent、Replay Prompt | [运行时 Agent Prompts](./docs/ai/reference/runtime-agent-prompts.md) |
+| 前端路由、组件、中文文案规则 | [前端规格](./docs/ai/reference/frontend-spec.md) |
+| 设计源与页面清单 | [Figma 生产 Brief](./docs/design/figma-production-brief.md) 与 [页面清单](./docs/design/page-inventory.md) |
+| 使用流程与功能联动 | [网站使用流程](./docs/human/11-website-usage-flow.md) 与 [功能文档目录](./docs/human/features/README.md) |
+| 部署、运行时目录、指标、日志 | [运行时与部署规格](./docs/ai/reference/runtime-deployment-spec.md) |
+| 阶段执行状态 | [机器可读任务进度](./docs/ai/task-progress.yaml) |
+
+## 当前实现状态
+
+```text
+当前阶段：阶段 11 Review P1 Production Hardening
+当前状态：ready_for_review
+当前 PR：https://github.com/luohao0308/harness/pull/9
+下一阶段：阶段 12 Runtime Product Completion
+后续阶段：阶段 13 Website Code Integration
+```
+
+阶段 11 已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、控制台后端能力展示和中文 OpenAPI JSON 导入镜像。阶段 12 固定补齐原始产品与运行时文档中仍未完整落地的功能面，包括：
+
+```text
+POST /api/tasks/{task_id}/cancel
+POST /api/tasks/{task_id}/resume
+GET  /api/tasks/{task_id}/result
+POST /api/tasks/{task_id}/replay
+GET  /api/tasks/{task_id}/model-calls
+GET  /api/tasks/{task_id}/tool-calls
+GET  /api/settings/models
+PUT  /api/settings/models
+GET  /api/settings/policies
+PUT  /api/settings/policies
+model_calls table
+tool_calls table
+filesystem tools
+http tools
+settings models page
+settings policies page
+replay debug view
+model/tool audit panels
+resource usage chart
+default Chinese UI
+Chinese / English switch
+```
+
+当前代码落地状态：
+
+| 要求 | 当前状态 | 证据 |
+|---|---|---|
+| 官网使用 Next.js | 未实现 | `apps/web-site` 当前只有 `.env.example`，没有 `package.json`、Next.js app、页面和构建脚本 |
+| 控制台使用 React + Vite | 已实现 | `apps/agent-console/package.json` 使用 Vite、React、TypeScript、Tailwind CSS |
+| 后端使用 Python 3.11 + FastAPI | 已实现 | `services/api-server/pyproject.toml` 固定 `requires-python ==3.11.*` 并依赖 FastAPI |
+| 异步任务使用 Dramatiq | 已实现 | `services/api-server/app/workers/subagent_worker.py` 和 Docker Compose `agent-worker` 使用 Dramatiq |
+| 数据库使用 PostgreSQL 16 | 已接入 | Docker Compose 使用 `postgres:16-alpine`，后端使用 SQLAlchemy 与 Alembic |
+| 缓存与队列使用 Redis 7 | 已接入 | Docker Compose 使用 `redis:7-alpine`，后端依赖 Redis 与 Dramatiq broker |
+| 容器沙箱使用 Docker SDK for Python | 已实现基础能力 | 后端依赖 `docker`，存在 Docker manager、WarmPool、shell 工具沙箱路径 |
+| 日志使用 Loki | 已接入部署配置 | Docker Compose 包含 Loki，监控目录包含 `loki.yml` |
+| 监控使用 Prometheus + Grafana | 已接入 | Docker Compose 包含 Prometheus 和 Grafana，后端提供 `/metrics` |
+| 设计稿使用 Figma | 文档已约束，外部设计源未纳入仓库 | `docs/design` 中有 Figma production brief、page inventory、design tokens |
+| Gemini/H5 产物只作为视觉参考和文案参考 | 文档已约束 | 生产前端必须由 React/Next.js 组件实现，不复制 AI 生成 H5 |
+| 文档统一使用阶段、首个交付版、集成演示版和企业版 | 部分完成 | 阶段术语已覆盖；首个交付版、集成演示版、企业版主要出现在架构和交付文档，README 仍需显式纳入术语口径 |
+
+未实现项不得在 README、OpenAPI、控制台页面中表述为已完成能力。官网代码由用户提供，阶段 13 负责接入、构建、后端联动和部署接入；阶段 12 聚焦运行时产品补齐和控制台功能补齐。
+
 ## 固定技术栈
 
 ```text
@@ -50,6 +146,8 @@ ORM：SQLAlchemy 2.0
 - [路线图与验收](./docs/human/08-roadmap-acceptance.md)
 - [技术落地流程](./docs/human/09-technology-operation-flows.md)
 - [任务进度看板](./docs/human/10-task-progress.md)
+- [网站使用流程](./docs/human/11-website-usage-flow.md)
+- [功能文档目录](./docs/human/features/README.md)
 
 AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，强调唯一事实源、固定目录、接口契约、事件枚举、任务顺序和禁止事项。
 
@@ -70,6 +168,8 @@ AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，�
 - [阶段 09：Docker Sandbox 与 WarmPool](./docs/ai/10-stage-09-sandbox-warmpool.md)
 - [阶段 10：监控、日志、部署](./docs/ai/11-stage-10-observability-deployment.md)
 - [阶段 11：Review P1 Production Hardening](./docs/ai/12-stage-11-review-p1-hardening.md)
+- [阶段 12：Runtime Product Completion](./docs/ai/13-stage-12-runtime-product-completion.md)
+- [阶段 13：Website Code Integration](./docs/ai/14-stage-13-website-code-integration.md)
 - [运行时 Agent Prompts](./docs/ai/reference/runtime-agent-prompts.md)
 - [Tool Registry 契约](./docs/ai/reference/tool-registry-spec.md)
 - [Tool Registry YAML](./docs/ai/reference/tool-registry.yaml)
@@ -143,6 +243,17 @@ harness/
 阶段 09：Docker Sandbox 与 WarmPool
 阶段 10：监控、日志、部署
 阶段 11：Review P1 Production Hardening
+阶段 12：Runtime Product Completion
+阶段 13：Website Code Integration
+```
+
+## 交付版本术语
+
+```text
+阶段：工程执行顺序，必须按 docs/ai/task-progress.yaml 推进。
+首个交付版：Docker Compose + systemd + Nginx + PostgreSQL + Redis + Prometheus + Grafana + Loki 的单环境交付形态。
+集成演示版：接入 OpenAI-compatible Model Gateway、完整控制台演示、端到端任务链路和观测演示。
+企业版：多组织、多用户、完整 RBAC、API Key 管理、审计导出、私有模型接入、Webhook、成本统计、备份与恢复。
 ```
 
 ## 对外表述

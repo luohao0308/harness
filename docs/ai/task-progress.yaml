@@ -1,8 +1,8 @@
-current_stage: stage-11-review-p1-hardening
+current_stage: stage-12-runtime-product-completion
 current_status: ready_for_review
-last_updated_at: 2026-05-04T17:13:15Z
+last_updated_at: 2026-05-04T20:21:17Z
 last_updated_by: Harness Agent
-next_stage: completed
+next_stage: stage-13-website-code-integration
 
 stages:
   - id: stage-01-git-github
@@ -378,7 +378,7 @@ stages:
 
   - id: stage-11-review-p1-hardening
     document: docs/ai/12-stage-11-review-p1-hardening.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T15:41:17Z
     completed_at: null
     changed_files:
@@ -445,8 +445,114 @@ stages:
       - "browser check: open http://127.0.0.1:5173/tasks and verify Docker E2E Final is visible with zero browser errors"
     verification_result: passed
     branch: stage/stage-11-review-p1-hardening
-    commit_sha: 7af7ba9
+    commit_sha: 8931a50
     pr_url: https://github.com/luohao0308/harness/pull/9
+    merged_at: 2026-05-04T17:16:56Z
+    notes: "All five P1 review findings are implemented and verified. Docker Compose is running with API 8000, Console 5173, Nginx 8080, Prometheus 9091, Grafana 3000, Loki 3100, OTel 4317/4318, Postgres, Redis, agent-worker, sandbox-worker, and warm-pool. Browser console showed Docker E2E Final visible and zero error or warning logs. Additional review follow-up exposed backend subagent, sandbox, WarmPool, observability, and metrics capabilities in the console; generated docs/api/openapi.json as an import mirror; localized OpenAPI human-facing metadata to Chinese; and clarified Bearer Token usage. Implementation commits include 8f783eb and c14ec28; PR #9 was created and then merged."
+    next_stage: stage-12-runtime-product-completion
+
+  - id: stage-12-runtime-product-completion
+    document: docs/ai/13-stage-12-runtime-product-completion.md
+    status: ready_for_review
+    started_at: 2026-05-04T19:35:57Z
+    completed_at: null
+    changed_files:
+      - README.md
+      - apps/agent-console/src/app/ConsoleShell.tsx
+      - apps/agent-console/src/app/routes.tsx
+      - apps/agent-console/src/features/events/components/EventTimeline.tsx
+      - apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx
+      - apps/agent-console/src/features/policies/components/PolicyBadge.tsx
+      - apps/agent-console/src/features/sandboxes/components/SandboxPanel.tsx
+      - apps/agent-console/src/features/sandboxes/pages/SandboxesPage.tsx
+      - apps/agent-console/src/features/settings/pages/ModelSettingsPage.tsx
+      - apps/agent-console/src/features/settings/pages/PolicySettingsPage.tsx
+      - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
+      - apps/agent-console/src/features/tasks/api.ts
+      - apps/agent-console/src/features/tasks/components/ExecutionPlanPanel.tsx
+      - apps/agent-console/src/features/tasks/components/ModelCallPanel.tsx
+      - apps/agent-console/src/features/tasks/components/ResourceUsageChart.tsx
+      - apps/agent-console/src/features/tasks/components/TaskResultPanel.tsx
+      - apps/agent-console/src/features/tasks/components/TaskStatusBadge.tsx
+      - apps/agent-console/src/features/tasks/pages/TaskCreatePage.tsx
+      - apps/agent-console/src/features/tasks/pages/TaskDetailPage.tsx
+      - apps/agent-console/src/features/tasks/pages/TaskListPage.tsx
+      - apps/agent-console/src/lib/labels.ts
+      - apps/agent-console/src/stores/consoleStore.ts
+      - docs/ai/README.md
+      - docs/ai/13-stage-12-runtime-product-completion.md
+      - docs/ai/14-stage-13-website-code-integration.md
+      - docs/ai/reference/frontend-spec.md
+      - docs/ai/task-progress.yaml
+      - docs/api/openapi.json
+      - docs/api/openapi.yaml
+      - docs/design/figma-production-brief.md
+      - docs/design/page-inventory.md
+      - docs/human/10-task-progress.md
+      - docs/human/11-website-usage-flow.md
+      - docs/human/README.md
+      - docs/human/features/01-task-lifecycle.md
+      - docs/human/features/02-planner-executor.md
+      - docs/human/features/03-event-sourcing-replay.md
+      - docs/human/features/04-subagent-orchestration.md
+      - docs/human/features/05-sandbox-warmpool.md
+      - docs/human/features/06-model-tool-audit.md
+      - docs/human/features/07-settings-observability.md
+      - docs/human/features/08-website-console-openapi.md
+      - docs/human/features/README.md
+      - scripts/validate-docs.py
+      - services/api-server/alembic/versions/20260504_0003_create_model_tool_calls.py
+      - services/api-server/app/agents/executor.py
+      - services/api-server/app/api/events.py
+      - services/api-server/app/api/health.py
+      - services/api-server/app/api/sandboxes.py
+      - services/api-server/app/api/schemas.py
+      - services/api-server/app/api/settings.py
+      - services/api-server/app/api/subagents.py
+      - services/api-server/app/api/tasks.py
+      - services/api-server/app/db/models.py
+      - services/api-server/app/events/replay.py
+      - services/api-server/app/main.py
+      - services/api-server/app/security/auth.py
+      - services/api-server/app/tools/filesystem.py
+      - services/api-server/app/tools/http.py
+      - services/api-server/app/tools/registry.py
+      - services/api-server/tests/test_health.py
+      - services/api-server/tests/test_planner_executor.py
+      - services/api-server/tests/test_sandbox.py
+      - services/api-server/tests/test_settings.py
+      - services/api-server/tests/test_tasks.py
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:////tmp/harness_stage12_verify.db .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - docker compose -f deploy/docker-compose/docker-compose.yml config
+      - python3 scripts/validate-docs.py
+    verification_result: passed
+    branch: stage/stage-12-runtime-product-completion
+    commit_sha: dc0cf2f1fd7e27bdb91ec6076c4d7b2ee63c72e7
+    pr_url: https://github.com/luohao0308/harness/pull/10
     merged_at: null
-    notes: "All five P1 review findings are implemented and verified. Docker Compose is running with API 8000, Console 5173, Nginx 8080, Prometheus 9091, Grafana 3000, Loki 3100, OTel 4317/4318, Postgres, Redis, agent-worker, sandbox-worker, and warm-pool. Browser console showed Docker E2E Final visible and zero error or warning logs. Implementation commit is 8f783eb, progress commit is 7af7ba9, and PR #9 was created for user review."
+    notes: "Runtime product surface is implemented and verified: task cancel/resume/result/replay, model/tool audit records, filesystem/http tools, settings APIs, ADMIN_ACTION audit rows, Chinese OpenAPI JSON/YAML, default Chinese console, Chinese/English switch, settings, sandboxes, observability, replay, result, and audit panels."
+    next_stage: stage-13-website-code-integration
+
+  - id: stage-13-website-code-integration
+    document: docs/ai/14-stage-13-website-code-integration.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands:
+      - cd apps/web-site && npm run lint
+      - cd apps/web-site && npm run build
+      - docker compose -f deploy/docker-compose/docker-compose.yml config
+      - python3 scripts/validate-docs.py
+    verification_result: pending
+    branch: stage/stage-13-website-code-integration
+    commit_sha: null
+    pr_url: null
+    merged_at: null
+    notes: "Pending stage for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry."
     next_stage: completed

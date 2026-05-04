@@ -12,8 +12,8 @@ export function TaskCreatePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [payload, setPayload] = useState<TaskCreatePayload>({
-    title: "Analyze repository",
-    goal: "Analyze this Python project and produce findings",
+    title: "分析代码仓库",
+    goal: "分析当前 Python 项目并生成发现清单",
     model_provider: "openai-compatible",
     model_name: "default",
     max_runtime_seconds: 1800,
@@ -36,27 +36,27 @@ export function TaskCreatePage() {
   }
 
   return (
-    <ConsoleShell title="Tasks / New">
+    <ConsoleShell title="任务 / 新建">
       <div className="mx-auto max-w-4xl p-6">
         <Card>
           <CardHeader>
             <div>
-              <div className="text-[11px] tracking-widest text-slate-500">CREATE TASK</div>
+              <div className="text-[11px] tracking-widest text-slate-500">创建任务</div>
               <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
-                Configure an agent run
+                配置一次 Agent 执行
               </h1>
             </div>
           </CardHeader>
           <form onSubmit={submit} className="grid gap-5 p-5">
             <label className="grid gap-1.5 text-sm text-slate-700">
-              Title
+              标题
               <Input
                 value={payload.title}
                 onChange={(event) => setPayload({ ...payload, title: event.target.value })}
               />
             </label>
             <label className="grid gap-1.5 text-sm text-slate-700">
-              Goal
+              目标
               <Textarea
                 value={payload.goal}
                 onChange={(event) => setPayload({ ...payload, goal: event.target.value })}
@@ -64,7 +64,7 @@ export function TaskCreatePage() {
             </label>
             <div className="grid grid-cols-2 gap-4">
               <label className="grid gap-1.5 text-sm text-slate-700">
-                Model provider
+                模型供应商
                 <Input
                   value={payload.model_provider}
                   onChange={(event) =>
@@ -73,14 +73,14 @@ export function TaskCreatePage() {
                 />
               </label>
               <label className="grid gap-1.5 text-sm text-slate-700">
-                Model name
+                模型名称
                 <Input
                   value={payload.model_name}
                   onChange={(event) => setPayload({ ...payload, model_name: event.target.value })}
                 />
               </label>
               <label className="grid gap-1.5 text-sm text-slate-700">
-                Max runtime seconds
+                最大运行秒数
                 <Input
                   type="number"
                   value={payload.max_runtime_seconds}
@@ -90,7 +90,7 @@ export function TaskCreatePage() {
                 />
               </label>
               <label className="grid gap-1.5 text-sm text-slate-700">
-                Max subagents
+                最大子 Agent 数
                 <Input
                   type="number"
                   value={payload.max_subagents}
@@ -109,7 +109,7 @@ export function TaskCreatePage() {
                     setPayload({ ...payload, enable_sandbox: event.target.checked })
                   }
                 />
-                Enable sandbox
+                启用沙箱
               </label>
               <label className="inline-flex items-center gap-2">
                 <input
@@ -119,15 +119,15 @@ export function TaskCreatePage() {
                     setPayload({ ...payload, enable_network: event.target.checked })
                   }
                 />
-                Enable network
+                启用网络
               </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
               <Button type="button" onClick={() => navigate("/tasks")}>
-                Cancel
+                取消
               </Button>
               <Button type="submit" variant="primary" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Creating..." : "Create task"}
+                {createMutation.isPending ? "创建中..." : "创建任务"}
               </Button>
             </div>
           </form>
