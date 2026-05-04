@@ -16,13 +16,17 @@ export function useTaskEventStream(taskId: string | undefined) {
     eventSource.onopen = () => setConnected(true);
     eventSource.onerror = () => setConnected(false);
     eventSource.onmessage = (message) => {
-      const parsed = JSON.parse(message.data) as AgentEvent;
-      setEvents((current) => {
-        if (current.some((event) => event.sequence === parsed.sequence)) {
-          return current;
-        }
-        return [...current, parsed].sort((left, right) => left.sequence - right.sequence);
-      });
+      try {
+        const parsed = JSON.parse(message.data) as AgentEvent;
+        setEvents((current) => {
+          if (current.some((event) => event.sequence === parsed.sequence)) {
+            return current;
+          }
+          return [...current, parsed].sort((left, right) => left.sequence - right.sequence);
+        });
+      } catch {
+        setConnected(false);
+      }
     };
 
     return () => {

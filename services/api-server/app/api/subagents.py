@@ -6,15 +6,18 @@ from sqlalchemy.orm import Session
 
 from app.agents.subagent_manager import SubagentManager
 from app.api.schemas import SubagentPage, SubagentResponse
-from app.db.models import AgentRun
+from app.api.tasks import get_owned_task
+from app.db.models import AgentRun, Task
 from app.db.session import get_db_session
+from app.security.auth import Principal
 
 router = APIRouter(tags=["subagents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
 @router.get("/tasks/{task_id}/subagents", response_model=SubagentPage)
-def list_task_subagents(task_id: str, session: DbSession) -> SubagentPage:
+def list_task_subagents(task_id: str, session: DbSession, principal: Principal) -> SubagentPage:
+    get_owned_task(task_id, session, principal.organization_id)
     statement = (
         select(AgentRun)
         .where(AgentRun.task_id == task_id, AgentRun.agent_type == "subagent")
@@ -23,12 +26,25 @@ def list_task_subagents(task_id: str, session: DbSession) -> SubagentPage:
     return SubagentPage(items=list(session.execute(statement).scalars()))
 
 
-@router.get("/subagents/{subagent_id}", response_model=SubagentResponse)
-def get_subagent(subagent_id: str, session: DbSession) -> AgentRun:
-    agent_run = session.get(AgentRun, subagent_id)
-    if agent_run is None or agent_run.agent_type != "subagent":
+def get_owned_subagent(subagent_id: str, session: Session, principal: Principal) -> AgentRun:
+    statement = (
+        select(AgentRun)
+        .join(Task, Task.id == AgentRun.task_id)
+        .where(
+            AgentRun.id == subagent_id,
+            AgentRun.agent_type == "subagent",
+            Task.organization_id == principal.organization_id,
+        )
+    )
+    agent_run = session.execute(statement).scalar_one_or_none()
+    if agent_run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subagent not found")
     return agent_run
+
+
+@router.get("/subagents/{subagent_id}", response_model=SubagentResponse)
+def get_subagent(subagent_id: str, session: DbSession, principal: Principal) -> AgentRun:
+    return get_owned_subagent(subagent_id, session, principal)
 
 
 @router.post(
@@ -36,10 +52,8 @@ def get_subagent(subagent_id: str, session: DbSession) -> AgentRun:
     response_model=SubagentResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def cancel_subagent(subagent_id: str, session: DbSession) -> AgentRun:
-    agent_run = session.get(AgentRun, subagent_id)
-    if agent_run is None or agent_run.agent_type != "subagent":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subagent not found")
+def cancel_subagent(subagent_id: str, session: DbSession, principal: Principal) -> AgentRun:
+    agent_run = get_owned_subagent(subagent_id, session, principal)
     cancelled = SubagentManager(session).cancel(agent_run)
     session.commit()
     session.refresh(cancelled)

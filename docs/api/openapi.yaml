@@ -1,580 +1,1249 @@
-openapi: 3.1.0
-info:
-  title: Enterprise AI Agent Harness API
-  version: 1.0.0
-  description: Production API contract for the enterprise AI Agent Harness platform.
-servers:
-  - url: /api
-security:
-  - bearerAuth: []
-paths:
-  /tasks:
-    post:
-      operationId: createTask
-      summary: Create task
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TaskCreateRequest"
-      responses:
-        "201":
-          description: Task created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-    get:
-      operationId: listTasks
-      summary: List tasks
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-        - name: cursor
-          in: query
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Task page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskPage"
-  /tasks/{task_id}:
-    get:
-      operationId: getTask
-      summary: Get task
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "200":
-          description: Task
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskResponse"
-        "404":
-          $ref: "#/components/responses/TaskNotFound"
-  /tasks/{task_id}/start:
-    post:
-      operationId: startTask
-      summary: Start task
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "202":
-          description: Task started
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskStartResponse"
-  /tasks/{task_id}/cancel:
-    post:
-      operationId: cancelTask
-      summary: Cancel task
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "202":
-          description: Task cancelled
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskResponse"
-  /tasks/{task_id}/resume:
-    post:
-      operationId: resumeTask
-      summary: Resume task
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "202":
-          description: Task resumed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskResumeResponse"
-  /tasks/{task_id}/result:
-    get:
-      operationId: getTaskResult
-      summary: Get task result
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "200":
-          description: Task result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TaskResultResponse"
-  /tasks/{task_id}/events:
-    get:
-      operationId: listTaskEvents
-      summary: List task events
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-        - name: after_sequence
-          in: query
-          schema:
-            type: integer
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 100
-      responses:
-        "200":
-          description: Event page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EventPage"
-  /tasks/{task_id}/events/stream:
-    get:
-      operationId: streamTaskEvents
-      summary: Stream task events
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "200":
-          description: Server-sent event stream
-          content:
-            text/event-stream:
-              schema:
-                type: string
-  /tasks/{task_id}/replay:
-    post:
-      operationId: replayTask
-      summary: Replay task events
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReplayRequest"
-      responses:
-        "200":
-          description: Replayed state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReplayResponse"
-  /tasks/{task_id}/subagents:
-    get:
-      operationId: listTaskSubagents
-      summary: List task subagents
-      parameters:
-        - $ref: "#/components/parameters/TaskId"
-      responses:
-        "200":
-          description: Subagent page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SubagentPage"
-  /subagents/{subagent_id}:
-    get:
-      operationId: getSubagent
-      summary: Get subagent
-      parameters:
-        - $ref: "#/components/parameters/SubagentId"
-      responses:
-        "200":
-          description: Subagent
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SubagentResponse"
-  /subagents/{subagent_id}/cancel:
-    post:
-      operationId: cancelSubagent
-      summary: Cancel subagent
-      parameters:
-        - $ref: "#/components/parameters/SubagentId"
-      responses:
-        "202":
-          description: Subagent cancelled
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SubagentResponse"
-  /sandboxes:
-    get:
-      operationId: listSandboxes
-      summary: List sandboxes
-      responses:
-        "200":
-          description: Sandbox page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxPage"
-  /sandboxes/warm-pool:
-    get:
-      operationId: getWarmPool
-      summary: Get WarmPool status
-      responses:
-        "200":
-          description: WarmPool status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WarmPoolResponse"
-  /sandboxes/{sandbox_id}:
-    get:
-      operationId: getSandbox
-      summary: Get sandbox
-      parameters:
-        - $ref: "#/components/parameters/SandboxId"
-      responses:
-        "200":
-          description: Sandbox
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxResponse"
-  /sandboxes/{sandbox_id}/terminate:
-    post:
-      operationId: terminateSandbox
-      summary: Terminate sandbox
-      parameters:
-        - $ref: "#/components/parameters/SandboxId"
-      responses:
-        "202":
-          description: Sandbox terminated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SandboxResponse"
-components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-  parameters:
-    TaskId:
-      name: task_id
-      in: path
-      required: true
-      schema:
-        type: string
-    SubagentId:
-      name: subagent_id
-      in: path
-      required: true
-      schema:
-        type: string
-    SandboxId:
-      name: sandbox_id
-      in: path
-      required: true
-      schema:
-        type: string
-  responses:
-    ValidationError:
-      description: Validation error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    TaskNotFound:
-      description: Task not found
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-  schemas:
-    TaskStatus:
-      type: string
-      enum:
-        - CREATED
-        - PLANNING
-        - RUNNING
-        - WAITING_SUBAGENTS
-        - FAILED
-        - COMPLETED
-        - CANCELLED
-    TaskCreateRequest:
-      type: object
-      required:
-        - title
-        - goal
-        - model_provider
-        - model_name
-      properties:
-        title:
-          type: string
-        goal:
-          type: string
-        model_provider:
-          type: string
-        model_name:
-          type: string
-        max_runtime_seconds:
-          type: integer
-          default: 1800
-        max_subagents:
-          type: integer
-          default: 5
-        enable_sandbox:
-          type: boolean
-          default: true
-        enable_network:
-          type: boolean
-          default: false
-    TaskResponse:
-      type: object
-      required:
-        - id
-        - title
-        - goal
-        - status
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        title:
-          type: string
-        goal:
-          type: string
-        status:
-          $ref: "#/components/schemas/TaskStatus"
-        model_provider:
-          type: string
-        model_name:
-          type: string
-        max_runtime_seconds:
-          type: integer
-        max_subagents:
-          type: integer
-        enable_sandbox:
-          type: boolean
-        enable_network:
-          type: boolean
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-        completed_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-    TaskPage:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/TaskResponse"
-        next_cursor:
-          type:
-            - string
-            - "null"
-    TaskStartResponse:
-      type: object
-      properties:
-        task_id:
-          type: string
-        status:
-          $ref: "#/components/schemas/TaskStatus"
-    TaskResumeResponse:
-      type: object
-      properties:
-        task_id:
-          type: string
-        status:
-          $ref: "#/components/schemas/TaskStatus"
-        resume_from_step:
-          type: string
-    TaskResultResponse:
-      type: object
-      properties:
-        task_id:
-          type: string
-        status:
-          $ref: "#/components/schemas/TaskStatus"
-        summary:
-          type: string
-        artifacts:
-          type: array
-          items:
-            type: object
-    EventResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        task_id:
-          type: string
-        agent_run_id:
-          type:
-            - string
-            - "null"
-        sequence:
-          type: integer
-        event_type:
-          type: string
-        payload:
-          type: object
-        actor_type:
-          type: string
-        actor_id:
-          type:
-            - string
-            - "null"
-        trace_id:
-          type:
-            - string
-            - "null"
-        created_at:
-          type: string
-          format: date-time
-    EventPage:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/EventResponse"
-        next_cursor:
-          type:
-            - string
-            - "null"
-    ReplayRequest:
-      type: object
-      properties:
-        sequence:
-          type: integer
-    ReplayResponse:
-      type: object
-      properties:
-        task_id:
-          type: string
-        sequence:
-          type: integer
-        state:
-          type: object
-    SubagentResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        task_id:
-          type: string
-        parent_agent_id:
-          type:
-            - string
-            - "null"
-        agent_type:
-          type: string
-        status:
-          type: string
-          enum:
-            - PENDING
-            - RUNNING
-            - SUCCESS
-            - FAILED
-            - TIMEOUT
-            - CANCELLED
-        started_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        completed_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        timeout_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-    SubagentPage:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/SubagentResponse"
-    SandboxResponse:
-      type: object
-      properties:
-        id:
-          type: string
-        task_id:
-          type: string
-        container_id:
-          type: string
-        image:
-          type: string
-        status:
-          type: string
-        cpu_limit:
-          type: string
-        memory_limit_mb:
-          type: integer
-        network_enabled:
-          type: boolean
-        warm_pool_reused:
-          type: boolean
-    SandboxPage:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/SandboxResponse"
-    WarmPoolResponse:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        min_size:
-          type: integer
-        max_size:
-          type: integer
-        idle:
-          type: integer
-        busy:
-          type: integer
-        failed:
-          type: integer
-        hit_total:
-          type: integer
-        miss_total:
-          type: integer
-    ErrorResponse:
-      type: object
-      properties:
-        error:
-          type: object
-          properties:
-            code:
-              type: string
-            message:
-              type: string
-            request_id:
-              type: string
-            details:
-              type: object
-
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Enterprise AI Agent Harness API",
+    "description": "API server for the Enterprise AI Agent Harness Platform.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Create Task",
+        "operationId": "create_task_api_tasks_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "List Tasks",
+        "operationId": "list_tasks_api_tasks_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Get Task",
+        "operationId": "get_task_api_tasks__task_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/start": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Start Task",
+        "operationId": "start_task_api_tasks__task_id__start_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "List Task Events",
+        "operationId": "list_task_events_api_tasks__task_id__events_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "after_sequence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Sequence"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/events/stream": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Stream Task Events",
+        "operationId": "stream_task_events_api_tasks__task_id__events_stream_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "after_sequence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Sequence"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/subagents": {
+      "get": {
+        "tags": [
+          "subagents"
+        ],
+        "summary": "List Task Subagents",
+        "operationId": "list_task_subagents_api_tasks__task_id__subagents_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubagentPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subagents/{subagent_id}": {
+      "get": {
+        "tags": [
+          "subagents"
+        ],
+        "summary": "Get Subagent",
+        "operationId": "get_subagent_api_subagents__subagent_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subagent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subagent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubagentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subagents/{subagent_id}/cancel": {
+      "post": {
+        "tags": [
+          "subagents"
+        ],
+        "summary": "Cancel Subagent",
+        "operationId": "cancel_subagent_api_subagents__subagent_id__cancel_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subagent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Subagent Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubagentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sandboxes": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "List Sandboxes",
+        "operationId": "list_sandboxes_api_sandboxes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/sandboxes/warm-pool": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Get Warm Pool",
+        "operationId": "get_warm_pool_api_sandboxes_warm_pool_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarmPoolResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/sandboxes/{sandbox_id}": {
+      "get": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Get Sandbox",
+        "operationId": "get_sandbox_api_sandboxes__sandbox_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sandbox_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sandbox Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sandboxes/{sandbox_id}/terminate": {
+      "post": {
+        "tags": [
+          "sandboxes"
+        ],
+        "summary": "Terminate Sandbox",
+        "operationId": "terminate_sandbox_api_sandboxes__sandbox_id__terminate_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "sandbox_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sandbox Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "EventPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "EventPage"
+      },
+      "EventResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "agent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Run Id"
+          },
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          },
+          "event_type": {
+            "type": "string",
+            "title": "Event Type"
+          },
+          "payload_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload Json"
+          },
+          "actor_type": {
+            "type": "string",
+            "title": "Actor Type"
+          },
+          "actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "agent_run_id",
+          "sequence",
+          "event_type",
+          "payload_json",
+          "actor_type",
+          "actor_id",
+          "trace_id",
+          "created_at"
+        ],
+        "title": "EventResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "SandboxPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SandboxResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "SandboxPage"
+      },
+      "SandboxResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "container_id": {
+            "type": "string",
+            "title": "Container Id"
+          },
+          "image": {
+            "type": "string",
+            "title": "Image"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "cpu_limit": {
+            "type": "string",
+            "title": "Cpu Limit"
+          },
+          "memory_limit_mb": {
+            "type": "integer",
+            "title": "Memory Limit Mb"
+          },
+          "network_enabled": {
+            "type": "boolean",
+            "title": "Network Enabled"
+          },
+          "warm_pool_reused": {
+            "type": "boolean",
+            "title": "Warm Pool Reused"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "container_id",
+          "image",
+          "status",
+          "cpu_limit",
+          "memory_limit_mb",
+          "network_enabled",
+          "warm_pool_reused"
+        ],
+        "title": "SandboxResponse"
+      },
+      "SubagentPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubagentResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "SubagentPage"
+      },
+      "SubagentResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "parent_agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Agent Id"
+          },
+          "agent_type": {
+            "type": "string",
+            "title": "Agent Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "context_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context Json"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "timeout_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "parent_agent_id",
+          "agent_type",
+          "status",
+          "context_json",
+          "started_at",
+          "completed_at",
+          "timeout_at"
+        ],
+        "title": "SubagentResponse"
+      },
+      "TaskCreateRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Title"
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Goal"
+          },
+          "model_provider": {
+            "type": "string",
+            "title": "Model Provider"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "max_runtime_seconds": {
+            "type": "integer",
+            "title": "Max Runtime Seconds",
+            "default": 1800
+          },
+          "max_subagents": {
+            "type": "integer",
+            "title": "Max Subagents",
+            "default": 5
+          },
+          "enable_sandbox": {
+            "type": "boolean",
+            "title": "Enable Sandbox",
+            "default": true
+          },
+          "enable_network": {
+            "type": "boolean",
+            "title": "Enable Network",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "goal",
+          "model_provider",
+          "model_name"
+        ],
+        "title": "TaskCreateRequest"
+      },
+      "TaskPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "TaskPage"
+      },
+      "TaskResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "goal": {
+            "type": "string",
+            "title": "Goal"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "model_provider": {
+            "type": "string",
+            "title": "Model Provider"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "max_runtime_seconds": {
+            "type": "integer",
+            "title": "Max Runtime Seconds"
+          },
+          "max_subagents": {
+            "type": "integer",
+            "title": "Max Subagents"
+          },
+          "enable_sandbox": {
+            "type": "boolean",
+            "title": "Enable Sandbox"
+          },
+          "enable_network": {
+            "type": "boolean",
+            "title": "Enable Network"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "goal",
+          "status",
+          "model_provider",
+          "model_name",
+          "max_runtime_seconds",
+          "max_subagents",
+          "enable_sandbox",
+          "enable_network",
+          "created_at",
+          "updated_at",
+          "completed_at"
+        ],
+        "title": "TaskResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "WarmPoolResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "min_size": {
+            "type": "integer",
+            "title": "Min Size"
+          },
+          "max_size": {
+            "type": "integer",
+            "title": "Max Size"
+          },
+          "idle": {
+            "type": "integer",
+            "title": "Idle"
+          },
+          "busy": {
+            "type": "integer",
+            "title": "Busy"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "hit_total": {
+            "type": "integer",
+            "title": "Hit Total"
+          },
+          "miss_total": {
+            "type": "integer",
+            "title": "Miss Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "min_size",
+          "max_size",
+          "idle",
+          "busy",
+          "failed",
+          "hit_total",
+          "miss_total"
+        ],
+        "title": "WarmPoolResponse"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

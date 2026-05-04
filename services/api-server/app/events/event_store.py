@@ -1,9 +1,23 @@
+from threading import RLock
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.tracing import get_current_trace_id
-from app.db.models import AgentEvent
+from app.db.models import AgentEvent, Task
 from app.events.event_types import EventType
+
+_sequence_locks: dict[str, RLock] = {}
+_sequence_locks_guard = RLock()
+
+
+def _task_sequence_lock(task_id: str) -> RLock:
+    with _sequence_locks_guard:
+        lock = _sequence_locks.get(task_id)
+        if lock is None:
+            lock = RLock()
+            _sequence_locks[task_id] = lock
+        return lock
 
 
 class EventStore:
@@ -21,22 +35,26 @@ class EventStore:
         agent_run_id: str | None = None,
         trace_id: str | None = None,
     ) -> AgentEvent:
-        max_sequence = self.session.execute(
-            select(func.max(AgentEvent.sequence)).where(AgentEvent.task_id == task_id)
-        ).scalar_one()
-        event = AgentEvent(
-            task_id=task_id,
-            agent_run_id=agent_run_id,
-            sequence=(max_sequence or 0) + 1,
-            event_type=event_type.value,
-            payload_json=payload_json,
-            actor_type=actor_type,
-            actor_id=actor_id,
-            trace_id=trace_id or get_current_trace_id(),
-        )
-        self.session.add(event)
-        self.session.flush()
-        return event
+        with _task_sequence_lock(task_id):
+            self.session.execute(
+                select(Task.id).where(Task.id == task_id).with_for_update()
+            ).scalar_one()
+            max_sequence = self.session.execute(
+                select(func.max(AgentEvent.sequence)).where(AgentEvent.task_id == task_id)
+            ).scalar_one()
+            event = AgentEvent(
+                task_id=task_id,
+                agent_run_id=agent_run_id,
+                sequence=(max_sequence or 0) + 1,
+                event_type=event_type.value,
+                payload_json=payload_json,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                trace_id=trace_id or get_current_trace_id(),
+            )
+            self.session.add(event)
+            self.session.flush()
+            return event
 
     def list_by_task(
         self,

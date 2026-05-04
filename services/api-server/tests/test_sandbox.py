@@ -12,6 +12,7 @@ from app.events.event_store import EventStore
 from app.main import app
 from app.sandbox.docker_manager import DockerManager
 from app.tools.shell import ShellTool, ShellToolRequest
+from tests.conftest import AUTH_HEADERS
 
 
 @dataclass
@@ -57,6 +58,8 @@ class FakeDockerClient:
 
 def create_task(db_session: Session) -> Task:
     task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
         title="Sandbox demo",
         goal="Run isolated command",
         status="RUNNING",
@@ -140,18 +143,18 @@ def test_sandbox_api_list_warm_pool_get_and_terminate(
 
     client = TestClient(app)
 
-    listed = client.get("/api/sandboxes")
+    listed = client.get("/api/sandboxes", headers=AUTH_HEADERS)
     assert listed.status_code == 200
     assert listed.json()["items"][0]["id"] == sandbox.id
 
-    warm_pool = client.get("/api/sandboxes/warm-pool")
+    warm_pool = client.get("/api/sandboxes/warm-pool", headers=AUTH_HEADERS)
     assert warm_pool.status_code == 200
     assert warm_pool.json()["min_size"] == 3
 
-    fetched = client.get(f"/api/sandboxes/{sandbox.id}")
+    fetched = client.get(f"/api/sandboxes/{sandbox.id}", headers=AUTH_HEADERS)
     assert fetched.status_code == 200
 
-    terminated = client.post(f"/api/sandboxes/{sandbox.id}/terminate")
+    terminated = client.post(f"/api/sandboxes/{sandbox.id}/terminate", headers=AUTH_HEADERS)
     assert terminated.status_code == 202
     assert terminated.json()["status"] == "DESTROYED"
     refreshed = db_session.get(SandboxInstance, sandbox.id)

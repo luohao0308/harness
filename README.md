@@ -69,6 +69,7 @@ AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，�
 - [阶段 08：Dramatiq Subagent](./docs/ai/09-stage-08-dramatiq-subagent.md)
 - [阶段 09：Docker Sandbox 与 WarmPool](./docs/ai/10-stage-09-sandbox-warmpool.md)
 - [阶段 10：监控、日志、部署](./docs/ai/11-stage-10-observability-deployment.md)
+- [阶段 11：Review P1 Production Hardening](./docs/ai/12-stage-11-review-p1-hardening.md)
 - [运行时 Agent Prompts](./docs/ai/reference/runtime-agent-prompts.md)
 - [Tool Registry 契约](./docs/ai/reference/tool-registry-spec.md)
 - [Tool Registry YAML](./docs/ai/reference/tool-registry.yaml)
@@ -141,6 +142,7 @@ harness/
 阶段 08：Dramatiq Subagent
 阶段 09：Docker Sandbox 与 WarmPool
 阶段 10：监控、日志、部署
+阶段 11：Review P1 Production Hardening
 ```
 
 ## 对外表述

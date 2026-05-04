@@ -45,8 +45,9 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 Verify:
 
 ```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/metrics
+curl --noproxy '*' http://127.0.0.1:8000/health
+curl --noproxy '*' http://127.0.0.1:8000/metrics
+curl --noproxy '*' http://127.0.0.1:8000/api/tasks -H "Authorization: Bearer dev-engineer-token"
 ```
 
 ## Agent Worker
@@ -151,4 +152,3 @@ sudo usermod -aG docker "$USER"
 ```
 
 Re-login after group change.
-

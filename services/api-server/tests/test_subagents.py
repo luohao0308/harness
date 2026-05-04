@@ -6,10 +6,13 @@ from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, execute_subagent
+from tests.conftest import AUTH_HEADERS
 
 
 def create_task(db_session: Session) -> Task:
     task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
         title="Demo",
         goal="Analyze project",
         status="RUNNING",
@@ -84,13 +87,13 @@ def test_subagent_api_list_get_and_cancel(db_session: Session) -> None:
 
     client = TestClient(app)
 
-    listed = client.get(f"/api/tasks/{task.id}/subagents")
+    listed = client.get(f"/api/tasks/{task.id}/subagents", headers=AUTH_HEADERS)
     assert listed.status_code == 200
     assert listed.json()["items"][0]["id"] == subagent.id
 
-    fetched = client.get(f"/api/subagents/{subagent.id}")
+    fetched = client.get(f"/api/subagents/{subagent.id}", headers=AUTH_HEADERS)
     assert fetched.status_code == 200
 
-    cancelled = client.post(f"/api/subagents/{subagent.id}/cancel")
+    cancelled = client.post(f"/api/subagents/{subagent.id}/cancel", headers=AUTH_HEADERS)
     assert cancelled.status_code == 202
     assert cancelled.json()["status"] == "CANCELLED"

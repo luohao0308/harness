@@ -1,4 +1,7 @@
+from urllib.parse import urlsplit, urlunsplit
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.events import router as events_router
 from app.api.health import router as health_router
@@ -6,10 +9,30 @@ from app.api.metrics import router as metrics_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
+from app.core.config import get_settings
 from app.core.logging import configure_json_logging
 from app.core.tracing import OpenTelemetryTraceMiddleware
 
 configure_json_logging()
+settings = get_settings()
+
+
+def build_cors_origins() -> list[str]:
+    configured_origins = {
+        str(settings.console_base_url).rstrip("/"),
+        str(settings.app_base_url).rstrip("/"),
+        str(settings.api_base_url).rstrip("/"),
+    }
+    origins = set(configured_origins)
+    local_aliases = {"localhost": "127.0.0.1", "127.0.0.1": "localhost"}
+    for origin in configured_origins:
+        parsed = urlsplit(origin)
+        alias = local_aliases.get(parsed.hostname or "")
+        if alias is None:
+            continue
+        netloc = parsed.netloc.replace(parsed.hostname or "", alias, 1)
+        origins.add(urlunsplit((parsed.scheme, netloc, "", "", "")))
+    return sorted(origins)
 
 app = FastAPI(
     title="Enterprise AI Agent Harness API",
@@ -17,6 +40,13 @@ app = FastAPI(
     description="API server for the Enterprise AI Agent Harness Platform.",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=build_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.add_middleware(OpenTelemetryTraceMiddleware)
 
 app.include_router(health_router)
