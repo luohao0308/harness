@@ -7,7 +7,7 @@
 ```text
 当前阶段：阶段 11 Review P1 Production Hardening
 当前状态：in_progress
-下一步：本地提交后确认推送分支并创建 PR
+下一步：确认推送分支并创建 PR
 ```
 
 ## 状态说明
@@ -35,7 +35,7 @@ failed：验证失败
 | 08 | Dramatiq Subagent | completed | stage/stage-08-dramatiq-subagent | https://github.com/luohao0308/harness/pull/6 | passed | PR 已合并到 develop。 |
 | 09 | Docker Sandbox 与 WarmPool | completed | stage/stage-09-sandbox-warmpool | https://github.com/luohao0308/harness/pull/7 | passed | PR 已合并到 develop。 |
 | 10 | 监控、日志、部署 | completed | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | PR 已合并到 develop。 |
-| 11 | Review P1 Production Hardening | in_progress | stage/stage-11-review-p1-hardening | 待创建 | passed | 5 个 P1 已修复；Docker Compose、API、Nginx、SSE、WarmPool、前端浏览器、Prometheus、Grafana 均已通过本地验收。 |
+| 11 | Review P1 Production Hardening | in_progress | stage/stage-11-review-p1-hardening | 待创建 | passed | 5 个 P1 已修复；本地提交 8f783eb；Docker Compose、API、Nginx、SSE、WarmPool、前端浏览器、Prometheus、Grafana 均已通过本地验收。 |
 
 ## 阶段完成定义
 

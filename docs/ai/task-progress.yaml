@@ -445,8 +445,8 @@ stages:
       - "browser check: open http://127.0.0.1:5173/tasks and verify Docker E2E Final is visible with zero browser errors"
     verification_result: passed
     branch: stage/stage-11-review-p1-hardening
-    commit_sha: null
+    commit_sha: 8f783eb
     pr_url: null
     merged_at: null
-    notes: "All five P1 review findings are implemented and locally verified. Docker Compose is running with API 8000, Console 5173, Nginx 8080, Prometheus 9091, Grafana 3000, Loki 3100, OTel 4317/4318, Postgres, Redis, agent-worker, sandbox-worker, and warm-pool. Browser console showed Docker E2E Final visible and zero error or warning logs. Awaiting user confirmation to push the branch and create the PR."
+    notes: "All five P1 review findings are implemented and locally verified. Docker Compose is running with API 8000, Console 5173, Nginx 8080, Prometheus 9091, Grafana 3000, Loki 3100, OTel 4317/4318, Postgres, Redis, agent-worker, sandbox-worker, and warm-pool. Browser console showed Docker E2E Final visible and zero error or warning logs. Local implementation commit is 8f783eb. Awaiting user confirmation to push the branch and create the PR."
     next_stage: completed
