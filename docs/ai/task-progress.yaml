@@ -1,8 +1,8 @@
-current_stage: stage-02-figma-design
+current_stage: stage-03-repository-scaffold
 current_status: pending
-last_updated_at: 2026-05-04T11:47:54Z
+last_updated_at: 2026-05-04T11:53:41Z
 last_updated_by: codex
-next_stage: stage-02-figma-design
+next_stage: stage-03-repository-scaffold
 
 stages:
   - id: stage-01-git-github
@@ -39,13 +39,21 @@ stages:
 
   - id: stage-02-figma-design
     document: docs/ai/03-stage-02-figma-design.md
-    status: pending
-    started_at: null
-    completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    notes: ""
+    status: completed
+    started_at: 2026-05-04T11:52:03Z
+    completed_at: 2026-05-04T11:53:41Z
+    changed_files:
+      - docs/design/figma-production-brief.md
+      - docs/design/design-tokens.json
+      - docs/design/page-inventory.md
+      - docs/ai/task-progress.yaml
+    verification_commands:
+      - test -f docs/design/figma-production-brief.md
+      - test -f docs/design/design-tokens.json
+      - test -f docs/design/page-inventory.md
+      - rg -n "Task Detail|Event Timeline|Subagent|Sandbox|WarmPool|Next.js|React" docs/design
+    verification_result: passed
+    notes: "Figma production brief, design tokens, and page inventory are complete for website and console design source requirements. Figma is documented as the design source of truth; Gemini/H5 outputs are restricted to reference use."
     next_stage: stage-03-repository-scaffold
 
   - id: stage-03-repository-scaffold
