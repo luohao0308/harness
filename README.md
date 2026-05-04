@@ -88,6 +88,44 @@ AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，�
 - [排障 Runbook](./docs/runbooks/troubleshooting.md)
 - [ADR 目录](./docs/adr/0001-record-architecture-decisions.md)
 
+## 项目结构
+
+```text
+harness/
+├─ README.md
+├─ .env.example
+├─ docs/
+│  ├─ ai/
+│  ├─ human/
+│  ├─ design/
+│  ├─ api/
+│  ├─ evals/
+│  ├─ security/
+│  ├─ qa/
+│  ├─ demo/
+│  ├─ runbooks/
+│  └─ adr/
+├─ apps/
+│  ├─ web-site/
+│  │  └─ .env.example
+│  └─ agent-console/
+│     └─ .env.example
+├─ services/
+│  ├─ api-server/
+│  │  └─ .env.example
+│  └─ sandbox-worker/
+├─ deploy/
+│  ├─ docker-compose/
+│  │  └─ .env.example
+│  ├─ systemd/
+│  ├─ nginx/
+│  └─ monitoring/
+└─ scripts/
+   ├─ check-docs.sh
+   ├─ check-env.sh
+   └─ validate-docs.py
+```
+
 ## 执行顺序
 
 ```text
