@@ -248,8 +248,8 @@ stages:
       - cd apps/agent-console && rg -n "EventSource|ExecutionPlanPanel|EventTimeline|SubagentPanel|SandboxPanel" src
     verification_result: passed
     branch: stage/stage-07-react-console
-    commit_sha: pending_commit
-    pr_url: pending_pr
+    commit_sha: e2742014c5cc6cf373fd14f04cf4c26207076513
+    pr_url: https://github.com/luohao0308/harness/pull/5
     merged_at: null
     notes: "React + Vite + TypeScript + Tailwind console implemented using the supplied Figma React export as implementation reference. Routes, task API client, EventSource SSE hook, task list, task create, task detail, ExecutionPlanPanel, EventTimeline, SubagentPanel, SandboxPanel, TaskResultPanel, and placeholder operational routes are present. PR is pending review."
     next_stage: stage-08-dramatiq-subagent

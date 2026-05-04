@@ -31,7 +31,7 @@ failed：验证失败
 | 04 | FastAPI 后端基础 | completed | stage/stage-04-backend-foundation | https://github.com/luohao0308/harness/pull/2 | passed | PR 已合并到 develop。 |
 | 05 | Task 与 Event Store | completed | stage/stage-05-task-event-store | https://github.com/luohao0308/harness/pull/3 | passed | PR 已合并到 develop。 |
 | 06 | Planner 与 Executor | completed | stage/stage-06-planner-executor | https://github.com/luohao0308/harness/pull/4 | passed | PR 已合并到 develop。 |
-| 07 | React 控制台 | ready_for_review | stage/stage-07-react-console | pending_pr | passed | React + Vite 控制台、任务 API client、SSE hook、任务列表、创建页、详情页和运行时面板已完成，等待 PR 合并。 |
+| 07 | React 控制台 | ready_for_review | stage/stage-07-react-console | https://github.com/luohao0308/harness/pull/5 | passed | React + Vite 控制台、任务 API client、SSE hook、任务列表、创建页、详情页和运行时面板已完成，等待 PR 合并。 |
 | 08 | Dramatiq Subagent | pending | null | null | null | 等待阶段 07 合并。 |
 | 09 | Docker Sandbox 与 WarmPool | pending | null | null | null | 等待阶段 08 合并。 |
 | 10 | 监控、日志、部署 | pending | null | null | null | 等待阶段 09 合并。 |
