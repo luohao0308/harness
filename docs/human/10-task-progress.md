@@ -6,8 +6,8 @@
 
 ```text
 当前阶段：阶段 10 监控、日志、部署
-当前状态：ready_for_review
-下一步：等待用户合并阶段 10 PR；合并后全部阶段完成
+当前状态：completed
+下一步：全部阶段已完成
 ```
 
 ## 状态说明
@@ -34,7 +34,7 @@ failed：验证失败
 | 07 | React 控制台 | completed | stage/stage-07-react-console | https://github.com/luohao0308/harness/pull/5 | passed | PR 已合并到 develop。 |
 | 08 | Dramatiq Subagent | completed | stage/stage-08-dramatiq-subagent | https://github.com/luohao0308/harness/pull/6 | passed | PR 已合并到 develop。 |
 | 09 | Docker Sandbox 与 WarmPool | completed | stage/stage-09-sandbox-warmpool | https://github.com/luohao0308/harness/pull/7 | passed | PR 已合并到 develop。 |
-| 10 | 监控、日志、部署 | ready_for_review | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | /metrics、JSON 日志、trace、Docker Compose、Prometheus、Grafana、Loki、OTel、systemd 和 Nginx 配置已完成，等待 PR 合并。 |
+| 10 | 监控、日志、部署 | completed | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | PR 已合并到 develop；全部阶段已完成。 |
 
 ## 阶段完成定义
 
