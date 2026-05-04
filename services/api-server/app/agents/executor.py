@@ -6,7 +6,7 @@ from app.agents.planner import DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
 from app.db.models import ExecutionPlan as ExecutionPlanModel
-from app.db.models import Task, TaskStep, utc_now
+from app.db.models import ModelCall, Task, TaskStep, ToolCall, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.observability.metrics import agent_tasks_failed_total
@@ -25,6 +25,29 @@ class Executor:
             task_id=task.id,
             event_type=EventType.PLAN_REQUESTED,
             payload_json={"task_id": task.id, "goal": task.goal},
+        )
+        model_call = ModelCall(
+            task_id=task.id,
+            model_provider=task.model_provider,
+            model_name=task.model_name,
+            status="SUCCESS",
+            prompt_tokens=0,
+            completion_tokens=0,
+            duration_ms=0,
+            request_json={"goal": task.goal, "planner": "deterministic"},
+            response_json={"mode": "mock"},
+            created_at=utc_now(),
+        )
+        self.session.add(model_call)
+        self.session.flush()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.MODEL_CALLED,
+            payload_json={
+                "model_call_id": model_call.id,
+                "model_provider": task.model_provider,
+                "model_name": task.model_name,
+            },
         )
 
         try:
@@ -45,6 +68,11 @@ class Executor:
             task_id=task.id,
             event_type=EventType.PLAN_GENERATED,
             payload_json={"plan_id": plan_row.id, "plan": plan.model_dump()},
+        )
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.MODEL_RESPONSE_RECEIVED,
+            payload_json={"model_call_id": model_call.id, "plan_id": plan_row.id},
         )
 
         task.status = "RUNNING"
@@ -113,6 +141,35 @@ class Executor:
             event_type=EventType.STEP_STARTED,
             payload_json={"step_id": step_row.id, "step_key": step.key},
         )
+        tool_name = "run_shell" if step.requires_sandbox else "read_file"
+        tool_call = ToolCall(
+            task_id=task.id,
+            tool_name=tool_name,
+            status="SUCCESS",
+            risk_level="high" if step.requires_sandbox else "low",
+            requires_sandbox=step.requires_sandbox,
+            duration_ms=0,
+            input_json={"step_key": step.key, "description": step.description},
+            output_json={"summary": "mock tool execution"},
+            created_at=utc_now(),
+        )
+        self.session.add(tool_call)
+        self.session.flush()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.POLICY_CHECKED,
+            payload_json={
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_name,
+                "allowed": True,
+                "requires_sandbox": step.requires_sandbox,
+            },
+        )
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.TOOL_CALLED,
+            payload_json={"tool_call_id": tool_call.id, "tool_name": tool_name},
+        )
 
         trace = ReActTrace(
             reason=Reason(step_key=step.key, summary=f"Execute {step.description}"),
@@ -123,12 +180,21 @@ class Executor:
             step_key=step.key,
             status="STEP_COMPLETED",
             summary=trace.observe.status,
-            tool_calls=[],
+            tool_calls=[{"tool_call_id": tool_call.id, "tool_name": tool_name}],
             next_action="continue",
         )
 
         step_row.status = result.status
         step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.TOOL_RESULT_RECEIVED,
+            payload_json={
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_name,
+                "status": "SUCCESS",
+            },
+        )
         self.event_store.append(
             task_id=task.id,
             event_type=EventType.STEP_COMPLETED,

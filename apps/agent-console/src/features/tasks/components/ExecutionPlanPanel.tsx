@@ -18,13 +18,13 @@ export function ExecutionPlanPanel({ events }: { events: AgentEvent[] }) {
   return (
     <Card>
       <CardHeader>
-        <div className="text-[11px] tracking-widest text-slate-500">EXECUTION PLAN</div>
+        <div className="text-[11px] tracking-widest text-slate-500">执行计划</div>
         <span className="font-mono text-[10px] text-slate-400">{steps.length} steps</span>
       </CardHeader>
       <div className="space-y-1 p-2">
         {steps.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-            Plan appears after the task starts.
+            任务启动后这里会显示规划结果。
           </div>
         ) : (
           steps.map((step, index) => {

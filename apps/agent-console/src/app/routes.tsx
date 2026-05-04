@@ -1,6 +1,9 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
-import { PlaceholderPage } from "../features/tasks/pages/PlaceholderPage";
+import { ObservabilityPage } from "../features/observability/pages/ObservabilityPage";
+import { SandboxesPage } from "../features/sandboxes/pages/SandboxesPage";
+import { ModelSettingsPage } from "../features/settings/pages/ModelSettingsPage";
+import { PolicySettingsPage } from "../features/settings/pages/PolicySettingsPage";
 import { TaskCreatePage } from "../features/tasks/pages/TaskCreatePage";
 import { TaskDetailPage } from "../features/tasks/pages/TaskDetailPage";
 import { TaskListPage } from "../features/tasks/pages/TaskListPage";
@@ -12,8 +15,8 @@ export const router = createBrowserRouter([
   { path: "/tasks/:taskId", element: <TaskDetailPage /> },
   { path: "/tasks/:taskId/events", element: <TaskDetailPage focus="events" /> },
   { path: "/tasks/:taskId/subagents", element: <TaskDetailPage focus="subagents" /> },
-  { path: "/sandboxes", element: <PlaceholderPage title="Sandboxes" /> },
-  { path: "/observability", element: <PlaceholderPage title="Observability" chart /> },
-  { path: "/settings/models", element: <PlaceholderPage title="Model Settings" /> },
-  { path: "/settings/policies", element: <PlaceholderPage title="Policy Settings" /> },
+  { path: "/sandboxes", element: <SandboxesPage /> },
+  { path: "/observability", element: <ObservabilityPage /> },
+  { path: "/settings/models", element: <ModelSettingsPage /> },
+  { path: "/settings/policies", element: <PolicySettingsPage /> },
 ]);
