@@ -6,9 +6,9 @@
 
 ```text
 当前阶段：阶段 12 Runtime Product Completion
-当前状态：in_progress
+当前状态：ready_for_review
 当前验证：passed
-下一步：补齐运行时产品接口、数据、审计、控制台页面、中文默认和中英文切换；阶段 12 完成后进入阶段 13 Website Code Integration
+下一步：等待 PR 合并后进入阶段 13 Website Code Integration
 ```
 
 ## 状态说明
@@ -37,7 +37,7 @@ failed：验证失败
 | 09 | Docker Sandbox 与 WarmPool | completed | stage/stage-09-sandbox-warmpool | https://github.com/luohao0308/harness/pull/7 | passed | PR 已合并到 develop。 |
 | 10 | 监控、日志、部署 | completed | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | PR 已合并到 develop。 |
 | 11 | Review P1 Production Hardening | completed | stage/stage-11-review-p1-hardening | https://github.com/luohao0308/harness/pull/9 | passed | 5 个 P1 已修复；PR #9 已合并；Docker Compose、API、Nginx、SSE、WarmPool、前端浏览器、Prometheus、Grafana 均已通过验收；后续补充已将 Subagent、Sandbox、WarmPool、Observability 后端能力展示到控制台，并生成中文 OpenAPI JSON 导入镜像。 |
-| 12 | Runtime Product Completion | in_progress | stage/stage-12-runtime-product-completion | null | passed | 已补齐 task cancel/resume/result/replay、model_calls、tool_calls、filesystem/http tools、settings API、ADMIN_ACTION 审计、控制台 settings/replay/result/observability 页面、默认中文、中英文切换和中文 OpenAPI JSON/YAML。 |
+| 12 | Runtime Product Completion | ready_for_review | stage/stage-12-runtime-product-completion | https://github.com/luohao0308/harness/pull/10 | passed | 已补齐 task cancel/resume/result/replay、model_calls、tool_calls、filesystem/http tools、settings API、ADMIN_ACTION 审计、控制台 settings/replay/result/observability 页面、默认中文、中英文切换和中文 OpenAPI JSON/YAML。 |
 | 13 | Website Code Integration | pending | stage/stage-13-website-code-integration | null | pending | 新增规划阶段：接收用户提供的官网前端代码，保留视觉结构，完成 Next.js 工程化、后端接入、控制台导流、OpenAPI 入口、文档入口和部署接入。 |
 
 ## 阶段完成定义
