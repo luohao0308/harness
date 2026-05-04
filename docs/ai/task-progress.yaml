@@ -210,8 +210,8 @@ stages:
       - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events
     verification_result: passed
     branch: stage/stage-06-planner-executor
-    commit_sha: pending_commit
-    pr_url: pending_pr
+    commit_sha: daf326bb413e4c2212e223af14deff953211f0d8
+    pr_url: https://github.com/luohao0308/harness/pull/4
     merged_at: null
     notes: "Deterministic Planner, Model Gateway interface, Tool Registry, ReAct data structures, and Executor start-task loop are implemented. Starting a task persists execution_plans/task_steps and appends PLAN_REQUESTED, PLAN_GENERATED, STEP_STARTED, STEP_COMPLETED, and TASK_COMPLETED events. PR is pending review."
     next_stage: stage-07-react-console
