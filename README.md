@@ -49,6 +49,7 @@ ORM：SQLAlchemy 2.0
 - [部署与运营](./docs/human/07-deployment-operations.md)
 - [路线图与验收](./docs/human/08-roadmap-acceptance.md)
 - [技术落地流程](./docs/human/09-technology-operation-flows.md)
+- [任务进度看板](./docs/human/10-task-progress.md)
 
 AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，强调唯一事实源、固定目录、接口契约、事件枚举、任务顺序和禁止事项。
 
@@ -57,6 +58,7 @@ AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，�
 - [执行协议](./docs/ai/00-execution-protocol.md)
 - [任务进度](./docs/ai/01-task-progress.md)
 - [机器可读任务进度](./docs/ai/task-progress.yaml)
+- [人读任务进度看板](./docs/human/10-task-progress.md)
 - [阶段 01：GitHub 与 Git 初始化](./docs/ai/02-stage-01-git-github.md)
 - [阶段 02：Figma 设计源](./docs/ai/03-stage-02-figma-design.md)
 - [阶段 03：仓库脚手架](./docs/ai/04-stage-03-repository-scaffold.md)

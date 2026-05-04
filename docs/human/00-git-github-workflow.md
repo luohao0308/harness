@@ -136,6 +136,42 @@ git commit -m "feat(scope): summary"
 git push -u origin feat/<short-name>
 ```
 
+## 5.1 阶段开发流程
+
+AI 执行阶段任务时必须使用阶段分支：
+
+```text
+stage/<stage-id>
+```
+
+阶段开始：
+
+```bash
+git fetch origin
+git checkout develop
+git pull --ff-only origin develop
+git checkout -b stage/stage-04-backend-foundation
+```
+
+阶段验证通过后：
+
+```bash
+git status --short
+git add <changed-files>
+git commit -m "feat(stage-04-backend-foundation): complete backend foundation"
+git push -u origin stage/stage-04-backend-foundation
+gh pr create --base develop --head stage/stage-04-backend-foundation --title "feat(stage-04-backend-foundation): complete backend foundation" --body-file .github/pull_request_template.md
+```
+
+PR 创建后，AI 必须更新：
+
+```text
+docs/ai/task-progress.yaml
+docs/human/10-task-progress.md
+```
+
+PR 合并前，AI 不进入下一阶段。
+
 ## 6. Pull Request 流程
 
 PR 目标分支：

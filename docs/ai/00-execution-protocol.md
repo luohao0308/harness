@@ -22,9 +22,14 @@ AI 每次执行任务时必须按以下顺序运行：
 9. 读取该阶段 Required Context 列出的参考文档
 10. 执行阶段任务
 11. 执行阶段 Verification Commands
-12. 更新 docs/ai/task-progress.yaml
-13. 输出阶段完成摘要
-14. 停止，等待下一次指令；连续执行模式下再读取下一阶段文档
+12. 执行 git status --short
+13. 创建阶段 commit
+14. 推送阶段分支到 origin
+15. 创建 Pull Request
+16. 更新 docs/ai/task-progress.yaml
+17. 更新 docs/human/10-task-progress.md
+18. 输出阶段完成摘要
+19. 停止，等待用户合并 PR；连续执行模式下也必须等待当前 PR 合并后再进入下一阶段
 ```
 
 ## 任务进度更新规则
@@ -38,6 +43,9 @@ completed_at
 changed_files
 verification_commands
 verification_result
+branch
+commit_sha
+pr_url
 notes
 next_stage
 ```
@@ -49,14 +57,49 @@ next_stage
 ```text
 pending
 in_progress
+ready_for_review
 completed
 blocked
 failed
 ```
 
+## 分支与 PR 规则
+
+每个阶段必须独立分支开发：
+
+```text
+stage/<stage-id>
+```
+
+阶段开始命令：
+
+```bash
+git fetch origin
+git checkout develop
+git pull --ff-only origin develop
+git checkout -b stage/<stage-id>
+```
+
+验证通过后必须提交、推送、创建 PR：
+
+```bash
+git status --short
+git add <changed-files>
+git commit -m "feat(<stage-id>): complete stage"
+git push -u origin stage/<stage-id>
+gh pr create --base develop --head stage/<stage-id> --title "feat(<stage-id>): complete stage" --body-file .github/pull_request_template.md
+```
+
+没有 GitHub CLI 时，AI 必须推送分支并在输出中提供 GitHub Web 创建 PR 的 URL。
+
+阶段创建 PR 后，阶段状态写为 `ready_for_review`。用户合并 PR 后，阶段状态写为 `completed`，再进入下一阶段。历史补录阶段使用 `legacy_no_pr` 填写 branch、commit_sha、pr_url、merged_at；新阶段禁止使用 `legacy_no_pr`。
+
 ## 禁止事项
 
 - 禁止跳过任务进度更新。
+- 禁止在 main 分支或 develop 分支直接开发阶段任务。
+- 禁止未创建 PR 就把阶段标记为 completed。
+- 禁止在 PR 未合并时进入下一阶段。
 - 禁止在未读取阶段文档时执行阶段任务。
 - 禁止把多个阶段混成一次大改。
 - 禁止更换固定技术栈。
@@ -88,6 +131,9 @@ AI 完成每个阶段后，必须输出：
 变更文件：
 验证命令：
 验证结果：
+分支：
+Commit：
+PR：
 下一阶段：
 ```
 

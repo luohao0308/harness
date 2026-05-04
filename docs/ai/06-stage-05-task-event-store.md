@@ -18,6 +18,7 @@
 
 必须先读取 docs/ai/00-execution-protocol.md、docs/ai/01-task-progress.md、docs/ai/task-progress.yaml 和 docs/ai/reference/data-events-api.md。
 只执行阶段 05，不进入阶段 06。
+阶段开始前必须创建阶段分支，验证通过后 commit、push 并创建 PR。
 
 执行内容：
 1. 创建 SQLAlchemy 模型 tasks、execution_plans、task_steps、agent_runs、agent_events、sandbox_instances。
@@ -31,6 +32,12 @@
 9. 创建 Pydantic schemas。
 10. 创建测试：创建任务时写入 TASK_CREATED，事件 sequence 从 1 开始。
 11. 更新 docs/ai/task-progress.yaml，把 stage-05-task-event-store 标记为 completed。
+
+PR 与进度要求：
+- 阶段分支必须推送到 origin。
+- 阶段变更必须创建 Pull Request。
+- branch、commit_sha、pr_url 写入 docs/ai/task-progress.yaml。
+- 人读进度 docs/human/10-task-progress.md 必须同步更新。
 
 验收标准：
 - Alembic migration 通过。
