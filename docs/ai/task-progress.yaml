@@ -1,6 +1,6 @@
 current_stage: stage-10-observability-deployment
-current_status: ready_for_review
-last_updated_at: 2026-05-04T14:18:05Z
+current_status: completed
+last_updated_at: 2026-05-04T14:20:39Z
 last_updated_by: codex
 next_stage: completed
 
@@ -320,9 +320,9 @@ stages:
 
   - id: stage-10-observability-deployment
     document: docs/ai/11-stage-10-observability-deployment.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T13:54:10Z
-    completed_at: null
+    completed_at: 2026-05-04T14:20:39Z
     changed_files:
       - deploy/docker-compose/docker-compose.yml
       - deploy/monitoring/prometheus.yml
@@ -372,6 +372,6 @@ stages:
     branch: stage/stage-10-observability-deployment
     commit_sha: 412e714ad5a1eec7a243af143b728cd52386e6a1
     pr_url: https://github.com/luohao0308/harness/pull/8
-    merged_at: null
-    notes: "Prometheus /metrics, required counters/gauges/histograms, JSON stdout logging fields, sensitive log redaction, OpenTelemetry trace middleware, trace_id propagation to agent_events, Docker Compose services, Prometheus/Loki/OTel configs, Grafana dashboard JSON, systemd units, and Nginx SSE proxy buffering settings are implemented. PR is pending review."
+    merged_at: 2026-05-04T14:20:39Z
+    notes: "Prometheus /metrics, required counters/gauges/histograms, JSON stdout logging fields, sensitive log redaction, OpenTelemetry trace middleware, trace_id propagation to agent_events, Docker Compose services, Prometheus/Loki/OTel configs, Grafana dashboard JSON, systemd units, and Nginx SSE proxy buffering settings are implemented. PR was merged into develop; all planned stages are complete."
     next_stage: completed
