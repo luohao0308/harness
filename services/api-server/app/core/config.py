@@ -1,0 +1,29 @@
+from functools import lru_cache
+
+from pydantic import AnyHttpUrl, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_env: str = Field(default="development", alias="APP_ENV")
+    app_base_url: AnyHttpUrl = Field(default="http://localhost:3000", alias="APP_BASE_URL")
+    console_base_url: AnyHttpUrl = Field(default="http://localhost:5173", alias="CONSOLE_BASE_URL")
+    api_base_url: AnyHttpUrl = Field(default="http://localhost:8000", alias="API_BASE_URL")
+    database_url: str = Field(
+        default="postgresql+psycopg://agent:agent@localhost:5432/agent_harness",
+        alias="DATABASE_URL",
+    )
+    redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
+    model_gateway_base_url: AnyHttpUrl = Field(
+        default="http://localhost:8000/mock-model",
+        alias="MODEL_GATEWAY_BASE_URL",
+    )
+    model_gateway_api_key: str = Field(default="replace-me", alias="MODEL_GATEWAY_API_KEY")
+    docker_host: str = Field(default="unix:///var/run/docker.sock", alias="DOCKER_HOST")
+
+    model_config = SettingsConfigDict(case_sensitive=True, extra="ignore")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

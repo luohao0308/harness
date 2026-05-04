@@ -1,8 +1,8 @@
 current_stage: stage-04-backend-foundation
-current_status: pending
-last_updated_at: 2026-05-04T12:00:18Z
+current_status: ready_for_review
+last_updated_at: 2026-05-04T12:20:08Z
 last_updated_by: codex
-next_stage: stage-04-backend-foundation
+next_stage: stage-05-task-event-store
 
 stages:
   - id: stage-01-git-github
@@ -110,17 +110,37 @@ stages:
 
   - id: stage-04-backend-foundation
     document: docs/ai/05-stage-04-backend-foundation.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T12:12:00Z
     completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    branch: null
-    commit_sha: null
-    pr_url: null
+    changed_files:
+      - services/api-server/pyproject.toml
+      - services/api-server/app/__init__.py
+      - services/api-server/app/main.py
+      - services/api-server/app/api/__init__.py
+      - services/api-server/app/api/health.py
+      - services/api-server/app/core/__init__.py
+      - services/api-server/app/core/config.py
+      - services/api-server/app/core/logging.py
+      - services/api-server/app/db/__init__.py
+      - services/api-server/app/db/session.py
+      - services/api-server/tests/test_health.py
+      - docs/ai/task-progress.yaml
+      - docs/human/10-task-progress.md
+    verification_commands:
+      - cd services/api-server && /Users/luohao/.local/bin/uv venv --python /Users/luohao/.local/bin/python3.11 .venv
+      - cd services/api-server && /Users/luohao/.local/bin/uv pip install -e '.[dev]'
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --fail http://127.0.0.1:8000/health
+      - curl --fail http://127.0.0.1:8000/openapi.json
+    verification_result: passed
+    branch: stage/stage-04-backend-foundation
+    commit_sha: 7474e68e16d739b4c884f70cf4928079af175480
+    pr_url: https://github.com/luohao0308/harness/pull/2
     merged_at: null
-    notes: ""
+    notes: "FastAPI backend foundation is implemented with Python 3.11 project metadata, settings, JSON logging, SQLAlchemy session, health route, OpenAPI generation, and health tests. PR is pending review."
     next_stage: stage-05-task-event-store
 
   - id: stage-05-task-event-store
