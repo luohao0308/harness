@@ -1,6 +1,6 @@
 current_stage: stage-13-website-code-integration
-current_status: in_progress
-last_updated_at: 2026-05-04T21:07:35Z
+current_status: ready_for_review
+last_updated_at: 2026-05-04T21:40:02Z
 last_updated_by: Harness Agent
 next_stage: completed
 
@@ -540,7 +540,7 @@ stages:
 
   - id: stage-13-website-code-integration
     document: docs/ai/14-stage-13-website-code-integration.md
-    status: in_progress
+    status: ready_for_review
     started_at: 2026-05-04T20:21:17Z
     completed_at: null
     changed_files:
@@ -593,8 +593,8 @@ stages:
       - python3 scripts/validate-docs.py
     verification_result: passed
     branch: stage/stage-13-website-code-integration
-    commit_sha: null
-    pr_url: null
+    commit_sha: 1101c3ccd39f4f7b0301d0051bc122507710e6e0
+    pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
     notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Verification commands passed after adding the site .dockerignore and rebuilding the website image and compose stack."
     next_stage: completed
