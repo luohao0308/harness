@@ -1,0 +1,137 @@
+current_stage: stage-02-figma-design
+current_status: pending
+last_updated_at: 2026-05-04T11:47:54Z
+last_updated_by: Harness Agent
+next_stage: stage-02-figma-design
+
+stages:
+  - id: stage-01-git-github
+    document: docs/ai/02-stage-01-git-github.md
+    status: completed
+    started_at: 2026-05-04T11:41:43Z
+    completed_at: 2026-05-04T11:43:30Z
+    changed_files:
+      - .gitignore
+      - .github/pull_request_template.md
+      - .github/ISSUE_TEMPLATE/feature.yml
+      - .github/ISSUE_TEMPLATE/bug.yml
+      - .github/ISSUE_TEMPLATE/docs.yml
+      - .github/workflows/docs.yml
+      - .github/workflows/frontend.yml
+      - .github/workflows/backend.yml
+      - .github/workflows/docker.yml
+      - docs/ai/task-progress.yaml
+    verification_commands:
+      - git status --short
+      - test -f .gitignore
+      - test -f .github/pull_request_template.md
+      - test -f .github/ISSUE_TEMPLATE/feature.yml
+      - test -f .github/ISSUE_TEMPLATE/bug.yml
+      - test -f .github/ISSUE_TEMPLATE/docs.yml
+      - test -f .github/workflows/docs.yml
+      - test -f .github/workflows/frontend.yml
+      - test -f .github/workflows/backend.yml
+      - test -f .github/workflows/docker.yml
+      - git remote -v
+    verification_result: passed
+    notes: "Git repository initialized on main branch and connected to https://github.com/luohao0308/harness.git. GitHub PR template, Issue templates, placeholder workflows, and expanded ignore rules are present. README.md already contains AI docs and GitHub workflow entry links."
+    next_stage: stage-02-figma-design
+
+  - id: stage-02-figma-design
+    document: docs/ai/03-stage-02-figma-design.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-03-repository-scaffold
+
+  - id: stage-03-repository-scaffold
+    document: docs/ai/04-stage-03-repository-scaffold.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-04-backend-foundation
+
+  - id: stage-04-backend-foundation
+    document: docs/ai/05-stage-04-backend-foundation.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-05-task-event-store
+
+  - id: stage-05-task-event-store
+    document: docs/ai/06-stage-05-task-event-store.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-06-planner-executor
+
+  - id: stage-06-planner-executor
+    document: docs/ai/07-stage-06-planner-executor.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-07-react-console
+
+  - id: stage-07-react-console
+    document: docs/ai/08-stage-07-react-console.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-08-dramatiq-subagent
+
+  - id: stage-08-dramatiq-subagent
+    document: docs/ai/09-stage-08-dramatiq-subagent.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-09-sandbox-warmpool
+
+  - id: stage-09-sandbox-warmpool
+    document: docs/ai/10-stage-09-sandbox-warmpool.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: stage-10-observability-deployment
+
+  - id: stage-10-observability-deployment
+    document: docs/ai/11-stage-10-observability-deployment.md
+    status: pending
+    started_at: null
+    completed_at: null
+    changed_files: []
+    verification_commands: []
+    verification_result: null
+    notes: ""
+    next_stage: completed

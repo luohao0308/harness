@@ -1,0 +1,162 @@
+version: 1.0.0
+metadata_schema:
+  required:
+    - name
+    - description
+    - category
+    - input_schema
+    - output_schema
+    - risk_level
+    - requires_sandbox
+    - network_policy
+    - timeout_seconds
+    - allowed_roles
+    - audit_level
+    - idempotent
+risk_levels:
+  low: read-only, no network, no file mutation
+  medium: read workspace files, generate reports, limited network metadata
+  high: shell command, file write, package install, test execution
+  critical: secret access, external deployment, destructive command, git push
+mandatory_sandbox_tools:
+  - run_shell
+  - run_tests
+  - install_package
+  - write_file
+  - apply_patch
+  - git_command
+  - network_request
+tools:
+  - name: read_file
+    description: Read a workspace file
+    category: filesystem
+    risk_level: low
+    requires_sandbox: false
+    network_policy: none
+    timeout_seconds: 10
+    allowed_roles:
+      - admin
+      - engineer
+    audit_level: standard
+    idempotent: true
+    input_schema:
+      path: string
+    output_schema:
+      content: string
+      size_bytes: integer
+  - name: list_files
+    description: List workspace files
+    category: filesystem
+    risk_level: low
+    requires_sandbox: false
+    network_policy: none
+    timeout_seconds: 10
+    allowed_roles:
+      - admin
+      - engineer
+    audit_level: standard
+    idempotent: true
+    input_schema:
+      root: string
+      glob: string
+    output_schema:
+      files: array
+  - name: write_file
+    description: Write a workspace file
+    category: filesystem
+    risk_level: high
+    requires_sandbox: true
+    network_policy: none
+    timeout_seconds: 30
+    allowed_roles:
+      - admin
+      - engineer
+    audit_level: elevated
+    idempotent: false
+    input_schema:
+      path: string
+      content: string
+    output_schema:
+      path: string
+      bytes_written: integer
+  - name: run_shell
+    description: Run shell command in Docker Sandbox
+    category: shell
+    risk_level: high
+    requires_sandbox: true
+    network_policy: none
+    timeout_seconds: 60
+    allowed_roles:
+      - admin
+      - engineer
+    audit_level: elevated
+    idempotent: false
+    input_schema:
+      command: string
+      cwd: string
+      timeout_seconds: integer
+    output_schema:
+      exit_code: integer
+      stdout_preview: string
+      stderr_preview: string
+      duration_ms: integer
+  - name: run_tests
+    description: Run tests in Docker Sandbox
+    category: shell
+    risk_level: high
+    requires_sandbox: true
+    network_policy: none
+    timeout_seconds: 300
+    allowed_roles:
+      - admin
+      - engineer
+    audit_level: elevated
+    idempotent: true
+    input_schema:
+      command: string
+      cwd: string
+    output_schema:
+      exit_code: integer
+      passed: integer
+      failed: integer
+      stdout_preview: string
+      stderr_preview: string
+  - name: network_request
+    description: Perform restricted network request
+    category: network
+    risk_level: high
+    requires_sandbox: true
+    network_policy: restricted
+    timeout_seconds: 30
+    allowed_roles:
+      - admin
+    audit_level: critical
+    idempotent: false
+    input_schema:
+      method: string
+      url: string
+      headers: object
+      body: object
+    output_schema:
+      status_code: integer
+      body_preview: string
+  - name: git_command
+    description: Run git command in Docker Sandbox
+    category: git
+    risk_level: high
+    requires_sandbox: true
+    network_policy: restricted
+    timeout_seconds: 120
+    allowed_roles:
+      - admin
+      - engineer
+    audit_level: elevated
+    idempotent: false
+    input_schema:
+      args: array
+      cwd: string
+    output_schema:
+      exit_code: integer
+      stdout_preview: string
+      stderr_preview: string
+

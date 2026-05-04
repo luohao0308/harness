@@ -1,0 +1,35 @@
+name: Frontend
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build web site when present
+        working-directory: apps/web-site
+        if: ${{ hashFiles('apps/web-site/package.json') != '' }}
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Build agent console when present
+        working-directory: apps/agent-console
+        if: ${{ hashFiles('apps/agent-console/package.json') != '' }}
+        run: |
+          npm ci
+          npm run lint
+          npm run build

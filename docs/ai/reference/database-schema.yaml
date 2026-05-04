@@ -1,0 +1,126 @@
+version: 1.0.0
+tables:
+  tasks:
+    primary_key: id
+    columns:
+      id: uuid
+      organization_id: uuid nullable
+      created_by: uuid nullable
+      title: text
+      goal: text
+      status: text
+      model_provider: text
+      model_name: text
+      max_runtime_seconds: integer
+      max_subagents: integer
+      enable_sandbox: boolean
+      enable_network: boolean
+      created_at: timestamptz
+      updated_at: timestamptz
+      completed_at: timestamptz nullable
+    indexes:
+      - tasks_status_created_at_idx
+      - tasks_created_by_created_at_idx
+  execution_plans:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+    columns:
+      id: uuid
+      task_id: uuid
+      version: integer
+      status: text
+      plan_json: jsonb
+      created_at: timestamptz
+  task_steps:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+      plan_id: execution_plans.id
+    columns:
+      id: uuid
+      task_id: uuid
+      plan_id: uuid
+      step_key: text
+      description: text
+      status: text
+      execution_mode: text
+      assigned_agent_id: uuid nullable
+      started_at: timestamptz nullable
+      completed_at: timestamptz nullable
+      error_message: text nullable
+  agent_runs:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+      parent_agent_id: agent_runs.id
+    columns:
+      id: uuid
+      task_id: uuid
+      parent_agent_id: uuid nullable
+      agent_type: text
+      status: text
+      context_json: jsonb
+      started_at: timestamptz nullable
+      completed_at: timestamptz nullable
+      timeout_at: timestamptz nullable
+  agent_events:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+      agent_run_id: agent_runs.id
+    columns:
+      id: uuid
+      task_id: uuid
+      agent_run_id: uuid nullable
+      sequence: bigint
+      event_type: text
+      payload_json: jsonb
+      actor_type: text
+      actor_id: text nullable
+      trace_id: text nullable
+      created_at: timestamptz
+    unique_indexes:
+      - agent_events_task_sequence_uidx
+    indexes:
+      - agent_events_task_created_at_idx
+      - agent_events_event_type_created_at_idx
+      - agent_events_agent_run_sequence_idx
+    mutation:
+      insert: allowed
+      update: forbidden
+      delete: forbidden
+  sandbox_instances:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+      agent_run_id: agent_runs.id
+    columns:
+      id: uuid
+      task_id: uuid
+      agent_run_id: uuid nullable
+      container_id: text
+      image: text
+      status: text
+      cpu_limit: text
+      memory_limit_mb: integer
+      network_enabled: boolean
+      warm_pool_reused: boolean
+      created_at: timestamptz
+      destroyed_at: timestamptz nullable
+  task_snapshots:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+    columns:
+      id: uuid
+      task_id: uuid
+      sequence: bigint
+      state_json: jsonb
+      created_at: timestamptz
+migration_rules:
+  migration_tool: alembic
+  downgrade_required: true
+  event_store_append_only: true
+  snapshot_frequency_events: 100
+

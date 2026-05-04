@@ -1,0 +1,117 @@
+version: 1.0.0
+eval_suite: agent-harness-runtime-prompts
+cases:
+  - id: planner-basic-repository-analysis
+    prompt: planner
+    input:
+      goal: Analyze this Python project, run tests, and produce findings.
+      context:
+        repository_type: python
+        network_enabled: false
+      available_tools:
+        - list_files
+        - read_file
+        - run_tests
+      policy:
+        max_subagents: 5
+        sandbox_required_for_shell: true
+      previous_events: []
+    expected:
+      output_json: true
+      min_steps: 3
+      max_steps: 8
+      required_step_keys:
+        - inspect_project
+      required_fields:
+        - summary
+        - steps
+      sandbox_required_for:
+        - run_tests
+
+  - id: executor-shell-tool-policy
+    prompt: executor
+    input:
+      task_id: task_123
+      step:
+        key: run_tests
+        execution_mode: sync
+        requires_sandbox: true
+      task_state:
+        status: RUNNING
+      tool_registry:
+        run_tests:
+          requires_sandbox: true
+          risk_level: high
+      policy:
+        enable_network: false
+    expected:
+      required_events:
+        - STEP_STARTED
+        - POLICY_CHECKED
+        - TOOL_CALLED
+        - TOOL_RESULT_RECEIVED
+      forbidden:
+        - host_shell_execution
+
+  - id: recovery-resume-from-last-stable-step
+    prompt: recovery
+    input:
+      task_id: task_123
+      events:
+        - sequence: 1
+          event_type: TASK_CREATED
+        - sequence: 2
+          event_type: PLAN_GENERATED
+        - sequence: 3
+          event_type: STEP_STARTED
+          payload:
+            step_key: inspect_project
+        - sequence: 4
+          event_type: STEP_COMPLETED
+          payload:
+            step_key: inspect_project
+        - sequence: 5
+          event_type: STEP_STARTED
+          payload:
+            step_key: run_tests
+      snapshots: []
+    expected:
+      recovered_status: RUNNING
+      resume_from_step: run_tests
+      required_event:
+        - TASK_RESUMED
+
+  - id: replay-debugger-tool-timeout
+    prompt: replay_debugger
+    input:
+      task_id: task_123
+      sequence: 7
+      events:
+        - sequence: 1
+          event_type: TASK_CREATED
+        - sequence: 2
+          event_type: PLAN_GENERATED
+        - sequence: 3
+          event_type: STEP_STARTED
+          payload:
+            step_key: run_tests
+        - sequence: 4
+          event_type: TOOL_CALLED
+          payload:
+            tool_name: run_tests
+        - sequence: 5
+          event_type: TOOL_TIMEOUT
+          payload:
+            tool_name: run_tests
+        - sequence: 6
+          event_type: STEP_FAILED
+          payload:
+            step_key: run_tests
+        - sequence: 7
+          event_type: TASK_FAILED
+    expected:
+      failure_point_event: TOOL_TIMEOUT
+      diagnosis_contains:
+        - run_tests
+        - timeout
+

@@ -1,0 +1,105 @@
+version: 1.0.0
+prompt_family: agent-harness
+prompts:
+  planner:
+    version: 1.0.0
+    input_schema:
+      goal: string
+      context: object
+      available_tools: array
+      policy: object
+      previous_events: array
+    output_schema:
+      summary: string
+      steps: array
+    required_events:
+      - PLAN_REQUESTED
+      - PLAN_GENERATED
+      - PLAN_REJECTED
+  executor:
+    version: 1.0.0
+    input_schema:
+      task_id: string
+      step: object
+      task_state: object
+      tool_registry: object
+      policy: object
+    output_schema:
+      step_key: string
+      status: string
+      summary: string
+      tool_calls: array
+      next_action: string
+    required_events:
+      - STEP_STARTED
+      - TOOL_CALLED
+      - TOOL_RESULT_RECEIVED
+      - STEP_COMPLETED
+      - STEP_FAILED
+  subagent:
+    version: 1.0.0
+    input_schema:
+      agent_run_id: string
+      task_id: string
+      parent_agent_id: string
+      assignment: object
+      timeout_seconds: integer
+    output_schema:
+      agent_run_id: string
+      status: string
+      summary: string
+      findings: array
+      artifacts: array
+      parent_recommendation: string
+    required_events:
+      - SUBAGENT_STARTED
+      - SUBAGENT_PROGRESS
+      - SUBAGENT_COMPLETED
+      - SUBAGENT_FAILED
+      - SUBAGENT_TIMEOUT
+  tool_use:
+    version: 1.0.0
+    input_schema:
+      tool_name: string
+      input: object
+      policy: object
+    output_schema:
+      tool_name: string
+      input: object
+      requires_sandbox: boolean
+      risk_level: string
+      timeout_seconds: integer
+      audit_level: string
+    required_events:
+      - POLICY_CHECKED
+      - TOOL_CALLED
+      - TOOL_RESULT_RECEIVED
+  recovery:
+    version: 1.0.0
+    input_schema:
+      task_id: string
+      events: array
+      snapshots: array
+    output_schema:
+      task_id: string
+      last_sequence: integer
+      recovered_status: string
+      resume_from_step: string
+      actions: array
+      requires_manual_review: boolean
+    required_events:
+      - TASK_RESUMED
+  replay_debugger:
+    version: 1.0.0
+    input_schema:
+      task_id: string
+      events: array
+      sequence: integer
+    output_schema:
+      task_id: string
+      sequence: integer
+      state_summary: string
+      failure_point: object
+      diagnosis: string
+      next_debug_actions: array
+

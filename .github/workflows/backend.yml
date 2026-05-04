@@ -1,0 +1,65 @@
+name: Backend
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: harness
+          POSTGRES_PASSWORD: harness
+          POSTGRES_DB: harness
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U harness"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        if: ${{ hashFiles('services/api-server/pyproject.toml') != '' }}
+        working-directory: services/api-server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run Alembic migrations
+        if: ${{ hashFiles('services/api-server/alembic.ini') != '' }}
+        working-directory: services/api-server
+        env:
+          DATABASE_URL: postgresql+psycopg://harness:harness@localhost:5432/harness
+          REDIS_URL: redis://localhost:6379/0
+        run: alembic upgrade head
+
+      - name: Run pytest
+        if: ${{ hashFiles('services/api-server/pyproject.toml') != '' }}
+        working-directory: services/api-server
+        env:
+          DATABASE_URL: postgresql+psycopg://harness:harness@localhost:5432/harness
+          REDIS_URL: redis://localhost:6379/0
+        run: pytest

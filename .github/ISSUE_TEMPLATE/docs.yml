@@ -1,0 +1,27 @@
+name: Documentation
+description: Request a documentation correction or addition.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Link or path to the affected document.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Requested Change
+      description: Describe the exact documentation issue.
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: Reason
+      description: Explain why the change is needed.
+    validations:
+      required: true
