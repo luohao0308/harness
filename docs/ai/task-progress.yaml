@@ -137,8 +137,8 @@ stages:
       - curl --fail http://127.0.0.1:8000/openapi.json
     verification_result: passed
     branch: stage/stage-04-backend-foundation
-    commit_sha: pending_commit
-    pr_url: pending_pr
+    commit_sha: 7474e68e16d739b4c884f70cf4928079af175480
+    pr_url: https://github.com/luohao0308/harness/pull/2
     merged_at: null
     notes: "FastAPI backend foundation is implemented with Python 3.11 project metadata, settings, JSON logging, SQLAlchemy session, health route, OpenAPI generation, and health tests. PR is pending review."
     next_stage: stage-05-task-event-store
