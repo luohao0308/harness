@@ -22,10 +22,11 @@ Docker Compose 默认入口：
 
 ```text
 API: http://127.0.0.1:8000
+Website: http://127.0.0.1:3000
 Console: http://127.0.0.1:5173
 Nginx: http://127.0.0.1:8080
 Prometheus: http://127.0.0.1:9091
-Grafana: http://127.0.0.1:3000
+Grafana: http://127.0.0.1:3001
 Loki: http://127.0.0.1:3100
 ```
 
