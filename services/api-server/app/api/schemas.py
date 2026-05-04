@@ -55,3 +55,22 @@ class EventResponse(BaseModel):
 class EventPage(BaseModel):
     items: list[EventResponse]
     next_cursor: str | None = None
+
+
+class SubagentResponse(BaseModel):
+    id: str
+    task_id: str
+    parent_agent_id: str | None
+    agent_type: str
+    status: str
+    context_json: dict
+    started_at: datetime | None
+    completed_at: datetime | None
+    timeout_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubagentPage(BaseModel):
+    items: list[SubagentResponse]
+    next_cursor: str | None = None
