@@ -34,6 +34,13 @@ class ToolRegistry(BaseModel):
                 timeout_seconds=60,
             ),
             ToolMetadata(
+                name="run_shell",
+                description="Run shell command in Docker Sandbox.",
+                risk_level="high",
+                requires_sandbox=True,
+                timeout_seconds=60,
+            ),
+            ToolMetadata(
                 name="summarize_context",
                 description="Summarize already available task context.",
                 risk_level="low",
