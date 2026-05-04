@@ -15,7 +15,12 @@ router = APIRouter(tags=["subagents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
-@router.get("/tasks/{task_id}/subagents", response_model=SubagentPage)
+@router.get(
+    "/tasks/{task_id}/subagents",
+    response_model=SubagentPage,
+    summary="查询任务子 Agent",
+    description="返回指定任务派生出的子 Agent 列表。",
+)
 def list_task_subagents(task_id: str, session: DbSession, principal: Principal) -> SubagentPage:
     get_owned_task(task_id, session, principal.organization_id)
     statement = (
@@ -38,11 +43,16 @@ def get_owned_subagent(subagent_id: str, session: Session, principal: Principal)
     )
     agent_run = session.execute(statement).scalar_one_or_none()
     if agent_run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subagent not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="子 Agent 未找到")
     return agent_run
 
 
-@router.get("/subagents/{subagent_id}", response_model=SubagentResponse)
+@router.get(
+    "/subagents/{subagent_id}",
+    response_model=SubagentResponse,
+    summary="查询子 Agent 详情",
+    description="返回单个子 Agent 的状态与上下文。",
+)
 def get_subagent(subagent_id: str, session: DbSession, principal: Principal) -> AgentRun:
     return get_owned_subagent(subagent_id, session, principal)
 
@@ -51,6 +61,8 @@ def get_subagent(subagent_id: str, session: DbSession, principal: Principal) -> 
     "/subagents/{subagent_id}/cancel",
     response_model=SubagentResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    summary="取消子 Agent",
+    description="取消仍在运行或等待中的子 Agent。",
 )
 def cancel_subagent(subagent_id: str, session: DbSession, principal: Principal) -> AgentRun:
     agent_run = get_owned_subagent(subagent_id, session, principal)

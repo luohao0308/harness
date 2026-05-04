@@ -1,18 +1,31 @@
 import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Download, Play } from "lucide-react";
+import { Ban, ChevronRight, Download, Play, RotateCcw } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Card, CardHeader } from "../../../components/ui/card";
+import { enabledLabel } from "../../../lib/labels";
 import { EventTimeline } from "../../events/components/EventTimeline";
 import { useTaskEventStream } from "../../events/useTaskEventStream";
+import { PolicyBadge } from "../../policies/components/PolicyBadge";
 import { SandboxPanel } from "../../sandboxes/components/SandboxPanel";
 import { SubagentPanel } from "../../subagents/components/SubagentPanel";
-import { getTask, listTaskEvents, startTask } from "../api";
+import {
+  cancelTask,
+  getTask,
+  getTaskResult,
+  listModelCalls,
+  listTaskEvents,
+  listToolCalls,
+  replayTask,
+  resumeTask,
+  startTask,
+} from "../api";
 import { ExecutionPlanPanel } from "../components/ExecutionPlanPanel";
+import { ModelCallPanel } from "../components/ModelCallPanel";
+import { ResourceUsageChart } from "../components/ResourceUsageChart";
 import { TaskResultPanel } from "../components/TaskResultPanel";
 import { TaskStatusBadge } from "../components/TaskStatusBadge";
 
@@ -29,6 +42,21 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     queryFn: () => listTaskEvents(taskId!),
     enabled: Boolean(taskId),
   });
+  const resultQuery = useQuery({
+    queryKey: ["task-result", taskId],
+    queryFn: () => getTaskResult(taskId!),
+    enabled: Boolean(taskId),
+  });
+  const modelCallsQuery = useQuery({
+    queryKey: ["model-calls", taskId],
+    queryFn: () => listModelCalls(taskId!),
+    enabled: Boolean(taskId),
+  });
+  const toolCallsQuery = useQuery({
+    queryKey: ["tool-calls", taskId],
+    queryFn: () => listToolCalls(taskId!),
+    enabled: Boolean(taskId),
+  });
   const stream = useTaskEventStream(taskId);
   const startMutation = useMutation({
     mutationFn: () => startTask(taskId!),
@@ -36,6 +64,27 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
     },
+  });
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelTask(taskId!),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+    },
+  });
+  const resumeMutation = useMutation({
+    mutationFn: () => resumeTask(taskId!),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["model-calls", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["tool-calls", taskId] });
+    },
+  });
+  const replayMutation = useMutation({
+    mutationFn: () => replayTask(taskId!, events.at(-1)?.sequence),
   });
 
   useEffect(() => {
@@ -54,17 +103,17 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
 
   if (!task) {
     return (
-      <ConsoleShell title="Tasks / Detail">
-        <div className="p-6 text-sm text-slate-500">Loading task...</div>
+      <ConsoleShell title="任务 / 详情">
+        <div className="p-6 text-sm text-slate-500">任务加载中...</div>
       </ConsoleShell>
     );
   }
 
   return (
-    <ConsoleShell title={`Tasks / ${task.id.slice(0, 8)}`}>
+    <ConsoleShell title={`任务 / ${task.id.slice(0, 8)}`}>
       <div className="border-b border-slate-200 bg-white px-6 py-5">
         <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
-          <Link to="/tasks">Tasks</Link>
+          <Link to="/tasks">任务</Link>
           <ChevronRight className="h-3 w-3" />
           <span className="font-mono">{task.id.slice(0, 8)}</span>
         </div>
@@ -75,23 +124,24 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 {task.title}
               </h1>
               <TaskStatusBadge status={task.status} />
-              {task.enable_sandbox && <Badge tone="purple">sandbox enabled</Badge>}
+              {task.enable_sandbox && <Badge tone="purple">沙箱已启用</Badge>}
+              <PolicyBadge requiresSandbox={task.enable_sandbox} />
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-5 text-xs text-slate-500">
               <span>
-                Model <span className="text-slate-800">{task.model_name}</span>
+                模型 <span className="text-slate-800">{task.model_name}</span>
               </span>
               <span>
-                Subagents <span className="font-mono text-slate-800">{task.max_subagents}</span>
+                子 Agent <span className="font-mono text-slate-800">{task.max_subagents}</span>
               </span>
               <span>
-                Runtime{" "}
+                运行上限{" "}
                 <span className="font-mono text-slate-800">{task.max_runtime_seconds}s</span>
               </span>
               <span>
-                Network{" "}
+                网络{" "}
                 <span className={task.enable_network ? "text-amber-600" : "text-slate-800"}>
-                  {task.enable_network ? "enabled" : "disabled"}
+                  {enabledLabel(task.enable_network)}
                 </span>
               </span>
             </div>
@@ -101,10 +151,23 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               onClick={() => startMutation.mutate()}
               disabled={startMutation.isPending || task.status !== "CREATED"}
             >
-              <Play className="h-3.5 w-3.5" /> Start
+              <Play className="h-3.5 w-3.5" /> 启动
+            </Button>
+            <Button
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending || !["CREATED", "RUNNING", "FAILED"].includes(task.status)}
+              variant="danger"
+            >
+              <Ban className="h-3.5 w-3.5" /> 取消
+            </Button>
+            <Button
+              onClick={() => resumeMutation.mutate()}
+              disabled={resumeMutation.isPending || !["FAILED", "CANCELLED"].includes(task.status)}
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> 恢复
             </Button>
             <Button variant="primary">
-              <Download className="h-3.5 w-3.5" /> Export Audit
+              <Download className="h-3.5 w-3.5" /> 导出审计
             </Button>
           </div>
         </div>
@@ -116,31 +179,38 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
         </section>
         <section className={focus === "events" ? "col-span-9" : "col-span-6"}>
           <EventTimeline events={events} connected={stream.connected} />
+          <div className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-xs">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-semibold text-slate-900">重放调试</span>
+              <Button onClick={() => replayMutation.mutate()} disabled={replayMutation.isPending}>
+                <RotateCcw className="h-3.5 w-3.5" /> 重放当前序号
+              </Button>
+            </div>
+            <div className="text-slate-500">
+              {replayMutation.data?.state_summary ?? "将当前最后事件序号作为重放输入。"}
+            </div>
+            {replayMutation.data?.diagnosis && (
+              <div className="mt-1 text-slate-500">{replayMutation.data.diagnosis}</div>
+            )}
+          </div>
         </section>
         {focus !== "events" && (
           <section className="col-span-3 space-y-3">
             <SubagentPanel />
             <SandboxPanel enabled={task.enable_sandbox} />
-            <Card>
-              <CardHeader>
-                <div className="text-[11px] tracking-widest text-slate-500">MODEL CALLS</div>
-              </CardHeader>
-              <div className="space-y-1 p-3 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">provider</span>
-                  <span className="font-mono">{task.model_provider}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">model</span>
-                  <span className="font-mono">{task.model_name}</span>
-                </div>
-              </div>
-            </Card>
+            <ModelCallPanel
+              modelCalls={modelCallsQuery.data?.items ?? []}
+              toolCalls={toolCallsQuery.data?.items ?? []}
+            />
+            <ResourceUsageChart
+              modelCallCount={modelCallsQuery.data?.items.length ?? 0}
+              toolCallCount={toolCallsQuery.data?.items.length ?? 0}
+            />
           </section>
         )}
       </div>
       <div className="px-4 pb-6">
-        <TaskResultPanel task={task} />
+        <TaskResultPanel task={task} result={resultQuery.data} />
       </div>
     </ConsoleShell>
   );

@@ -56,13 +56,91 @@ export type AgentEvent = {
   created_at: string;
 };
 
+export type ModelSettings = {
+  default_provider: string;
+  default_model: string;
+  providers: Array<Record<string, unknown>>;
+  rate_limits: Record<string, unknown>;
+  health: Record<string, unknown>;
+};
+
+export type PolicySettings = {
+  risk_levels: Array<Record<string, unknown>>;
+  approvals: Record<string, unknown>;
+  sandbox: Record<string, unknown>;
+  audit: Record<string, unknown>;
+};
+
+export type WarmPool = {
+  enabled: boolean;
+  min_size: number;
+  max_size: number;
+  idle: number;
+  busy: number;
+  failed: number;
+  hit_total: number;
+  miss_total: number;
+};
+
+export type TaskResult = {
+  task_id: string;
+  status: TaskStatus;
+  summary: string | null;
+  execution_plan: Record<string, unknown> | null;
+  artifacts: Array<{
+    name: string;
+    artifact_type: string;
+    description: string;
+    status: string;
+  }>;
+  last_sequence: number;
+  pending: boolean;
+};
+
+export type ReplayResult = {
+  task_id: string;
+  sequence: number;
+  state_summary: string;
+  failure_point: Record<string, unknown> | null;
+  diagnosis: string;
+  requires_manual_review: boolean;
+};
+
+export type ModelCall = {
+  id: string;
+  model_provider: string;
+  model_name: string;
+  status: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  duration_ms: number;
+  created_at: string;
+};
+
+export type ToolCall = {
+  id: string;
+  tool_name: string;
+  status: string;
+  risk_level: string;
+  requires_sandbox: boolean;
+  duration_ms: number;
+  created_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
     ...init,
   });
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    let detail = "";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      detail = payload.detail ? `：${payload.detail}` : "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(`请求失败 ${response.status}${detail}`);
   }
   return response.json() as Promise<T>;
 }
@@ -86,13 +164,56 @@ export async function startTask(taskId: string) {
   return request<Task>(`/api/tasks/${taskId}/start`, { method: "POST" });
 }
 
+export async function cancelTask(taskId: string) {
+  return request<Task>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+}
+
+export async function resumeTask(taskId: string) {
+  return request<Task>(`/api/tasks/${taskId}/resume`, { method: "POST" });
+}
+
+export async function getTaskResult(taskId: string) {
+  return request<TaskResult>(`/api/tasks/${taskId}/result`);
+}
+
+export async function replayTask(taskId: string, sequence?: number) {
+  return request<ReplayResult>(`/api/tasks/${taskId}/replay`, {
+    method: "POST",
+    body: JSON.stringify({ sequence }),
+  });
+}
+
 export async function listTaskEvents(taskId: string) {
   return request<{ items: AgentEvent[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/events`,
   );
 }
 
+export async function listModelCalls(taskId: string) {
+  return request<{ items: ModelCall[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/model-calls`,
+  );
+}
+
+export async function listToolCalls(taskId: string) {
+  return request<{ items: ToolCall[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/tool-calls`,
+  );
+}
+
 export function taskEventStreamUrl(taskId: string) {
   const params = new URLSearchParams({ access_token: DEV_BEARER_TOKEN });
   return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+}
+
+export async function getModelSettings() {
+  return request<ModelSettings>("/api/settings/models");
+}
+
+export async function getPolicySettings() {
+  return request<PolicySettings>("/api/settings/policies");
+}
+
+export async function getWarmPool() {
+  return request<WarmPool>("/api/sandboxes/warm-pool");
 }

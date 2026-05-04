@@ -17,7 +17,12 @@ router = APIRouter(prefix="/tasks/{task_id}/events", tags=["events"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
-@router.get("", response_model=EventPage)
+@router.get(
+    "",
+    response_model=EventPage,
+    summary="查询任务事件",
+    description="返回指定任务的事件溯源流，支持从指定序号之后读取。",
+)
 def list_task_events(
     task_id: str,
     session: DbSession,
@@ -34,7 +39,11 @@ def list_task_events(
     return EventPage(items=events)
 
 
-@router.get("/stream")
+@router.get(
+    "/stream",
+    summary="订阅任务事件流",
+    description="通过 Server-Sent Events 持续推送任务事件。",
+)
 def stream_task_events(
     request: Request,
     task_id: str,

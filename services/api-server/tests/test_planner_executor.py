@@ -43,10 +43,18 @@ def test_start_task_generates_plan_steps_and_completion_events(db_session: Sessi
     assert event_types == [
         "TASK_CREATED",
         "PLAN_REQUESTED",
+        "MODEL_CALLED",
         "PLAN_GENERATED",
+        "MODEL_RESPONSE_RECEIVED",
         "STEP_STARTED",
+        "POLICY_CHECKED",
+        "TOOL_CALLED",
+        "TOOL_RESULT_RECEIVED",
         "STEP_COMPLETED",
         "STEP_STARTED",
+        "POLICY_CHECKED",
+        "TOOL_CALLED",
+        "TOOL_RESULT_RECEIVED",
         "STEP_COMPLETED",
         "TASK_COMPLETED",
     ]

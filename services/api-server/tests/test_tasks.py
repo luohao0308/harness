@@ -63,3 +63,50 @@ def test_tasks_require_bearer_token() -> None:
     response = client.get("/api/tasks")
 
     assert response.status_code == 401
+
+
+def test_task_cancel_resume_result_replay_and_audit_endpoints() -> None:
+    client = TestClient(app)
+    created = client.post(
+        "/api/tasks",
+        headers=AUTH_HEADERS,
+        json={
+            "title": "Runtime completion",
+            "goal": "Exercise stage 12 task APIs",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+        },
+    ).json()
+    task_id = created["id"]
+
+    cancelled = client.post(f"/api/tasks/{task_id}/cancel", headers=AUTH_HEADERS)
+    assert cancelled.status_code == 202
+    assert cancelled.json()["status"] == "CANCELLED"
+
+    replay_cancelled = client.post(
+        f"/api/tasks/{task_id}/replay",
+        headers=AUTH_HEADERS,
+        json={},
+    )
+    assert replay_cancelled.status_code == 200
+    assert replay_cancelled.json()["task_id"] == task_id
+    assert "CANCELLED" in replay_cancelled.json()["state_summary"]
+
+    resumed = client.post(f"/api/tasks/{task_id}/resume", headers=AUTH_HEADERS)
+    assert resumed.status_code == 202
+    assert resumed.json()["status"] == "COMPLETED"
+
+    result = client.get(f"/api/tasks/{task_id}/result", headers=AUTH_HEADERS)
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["task_id"] == task_id
+    assert payload["status"] == "COMPLETED"
+    assert payload["last_sequence"] >= 1
+    assert payload["artifacts"][0]["name"] == "result.md"
+
+    model_calls = client.get(f"/api/tasks/{task_id}/model-calls", headers=AUTH_HEADERS)
+    tool_calls = client.get(f"/api/tasks/{task_id}/tool-calls", headers=AUTH_HEADERS)
+    assert model_calls.status_code == 200
+    assert model_calls.json()["items"][0]["model_provider"] == "openai-compatible"
+    assert tool_calls.status_code == 200
+    assert tool_calls.json()["items"][0]["tool_name"] == "read_file"
