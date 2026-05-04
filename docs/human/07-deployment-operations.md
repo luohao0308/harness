@@ -18,6 +18,19 @@ OpenTelemetry Collector
 
 首个交付版不包含 Kubernetes。
 
+Docker Compose 默认入口：
+
+```text
+API: http://127.0.0.1:8000
+Console: http://127.0.0.1:5173
+Nginx: http://127.0.0.1:8080
+Prometheus: http://127.0.0.1:9091
+Grafana: http://127.0.0.1:3000
+Loki: http://127.0.0.1:3100
+```
+
+`NGINX_HTTP_PORT` 固定控制 Nginx 宿主端口，默认值为 `8080`。`PROMETHEUS_PORT` 固定控制 Prometheus 宿主端口，默认值为 `9091`。
+
 ## Docker Sandbox
 
 Agent 高风险工具全部进入 Docker 容器。
@@ -58,10 +71,8 @@ WARM_POOL_CONTAINER_IMAGE=agent-runtime:latest
 容器状态：
 
 ```text
-CREATING
 IDLE
 BUSY
-DRAINING
 FAILED
 DESTROYED
 ```

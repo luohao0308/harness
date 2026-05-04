@@ -39,16 +39,28 @@ cp .env.example /opt/agent-harness/shared/.env
 Start:
 
 ```bash
-cd deploy/docker-compose
-docker compose --env-file /opt/agent-harness/shared/.env up -d
+docker compose --env-file /opt/agent-harness/shared/.env -f deploy/docker-compose/docker-compose.yml up -d --build
 ```
 
 Verify:
 
 ```bash
-docker compose ps
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/metrics
+docker compose -f deploy/docker-compose/docker-compose.yml ps
+curl --noproxy '*' http://127.0.0.1:8000/health
+curl --noproxy '*' http://127.0.0.1:8000/metrics
+curl --noproxy '*' http://127.0.0.1:8080/health
+curl --noproxy '*' http://127.0.0.1:9091/-/healthy
+curl --noproxy '*' http://127.0.0.1:3000/api/health
+```
+
+Default local endpoints:
+
+```text
+API: http://127.0.0.1:8000
+Console: http://127.0.0.1:5173
+Nginx: http://127.0.0.1:8080
+Prometheus: http://127.0.0.1:9091
+Grafana: http://127.0.0.1:3000
 ```
 
 ## systemd Install
@@ -83,16 +95,16 @@ cd /opt/agent-harness/current
 git fetch origin
 git checkout main
 git pull --ff-only origin main
-docker compose -f deploy/docker-compose/docker-compose.yml pull
-docker compose -f deploy/docker-compose/docker-compose.yml up -d
-alembic -c services/api-server/alembic.ini upgrade head
+docker compose -f deploy/docker-compose/docker-compose.yml up -d --build
 ```
+
+Docker Compose 执行 `db-migrate` 一次性服务，迁移完成后 API、worker 和 WarmPool 服务启动。
 
 ## Post Deployment Verification
 
 ```bash
-curl https://<domain>/api/health
-curl https://<domain>/api/metrics
+curl https://<domain>/health
+curl https://<domain>/metrics
 docker compose -f deploy/docker-compose/docker-compose.yml ps
 ```
 
@@ -110,4 +122,3 @@ Loki verification:
 query by service="api-server"
 query by task_id
 ```
-

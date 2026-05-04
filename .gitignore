@@ -46,6 +46,7 @@ secrets/
 Thumbs.db
 *.log
 logs/
+*.db
 
 tmp/
 artifacts/

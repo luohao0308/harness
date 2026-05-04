@@ -18,6 +18,7 @@
 11. [阶段 08：Dramatiq Subagent](./09-stage-08-dramatiq-subagent.md)
 12. [阶段 09：Docker Sandbox 与 WarmPool](./10-stage-09-sandbox-warmpool.md)
 13. [阶段 10：监控、日志、部署](./11-stage-10-observability-deployment.md)
+14. [阶段 11：Review P1 Production Hardening](./12-stage-11-review-p1-hardening.md)
 
 ## 参考规格
 

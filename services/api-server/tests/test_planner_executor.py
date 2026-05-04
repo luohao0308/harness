@@ -4,12 +4,14 @@ from sqlalchemy.orm import Session
 
 from app.db.models import ExecutionPlan, TaskStep
 from app.main import app
+from tests.conftest import AUTH_HEADERS
 
 
 def test_start_task_generates_plan_steps_and_completion_events(db_session: Session) -> None:
     client = TestClient(app)
     created = client.post(
         "/api/tasks",
+        headers=AUTH_HEADERS,
         json={
             "title": "Demo",
             "goal": "Analyze project",
@@ -18,7 +20,7 @@ def test_start_task_generates_plan_steps_and_completion_events(db_session: Sessi
         },
     ).json()
 
-    response = client.post(f"/api/tasks/{created['id']}/start")
+    response = client.post(f"/api/tasks/{created['id']}/start", headers=AUTH_HEADERS)
 
     assert response.status_code == 202
     started = response.json()
@@ -36,7 +38,7 @@ def test_start_task_generates_plan_steps_and_completion_events(db_session: Sessi
     )
     assert [step.status for step in steps] == ["STEP_COMPLETED", "STEP_COMPLETED"]
 
-    events = client.get(f"/api/tasks/{created['id']}/events").json()["items"]
+    events = client.get(f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS).json()["items"]
     event_types = [event["event_type"] for event in events]
     assert event_types == [
         "TASK_CREATED",
@@ -53,6 +55,6 @@ def test_start_task_generates_plan_steps_and_completion_events(db_session: Sessi
 def test_start_task_rejects_missing_task() -> None:
     client = TestClient(app)
 
-    response = client.post("/api/tasks/missing/start")
+    response = client.post("/api/tasks/missing/start", headers=AUTH_HEADERS)
 
     assert response.status_code == 404

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.conftest import AUTH_HEADERS
 
 
 def test_create_task_writes_task_created_event() -> None:
@@ -8,6 +9,7 @@ def test_create_task_writes_task_created_event() -> None:
 
     response = client.post(
         "/api/tasks",
+        headers=AUTH_HEADERS,
         json={
             "title": "Demo",
             "goal": "Analyze project",
@@ -24,7 +26,7 @@ def test_create_task_writes_task_created_event() -> None:
     task = response.json()
     assert task["status"] == "CREATED"
 
-    events_response = client.get(f"/api/tasks/{task['id']}/events")
+    events_response = client.get(f"/api/tasks/{task['id']}/events", headers=AUTH_HEADERS)
 
     assert events_response.status_code == 200
     events = events_response.json()["items"]
@@ -36,6 +38,7 @@ def test_events_stream_endpoint_exists() -> None:
     client = TestClient(app)
     created = client.post(
         "/api/tasks",
+        headers=AUTH_HEADERS,
         json={
             "title": "Demo",
             "goal": "Analyze project",
@@ -44,8 +47,19 @@ def test_events_stream_endpoint_exists() -> None:
         },
     ).json()
 
-    response = client.get(f"/api/tasks/{created['id']}/events/stream")
+    response = client.get(
+        f"/api/tasks/{created['id']}/events/stream?once=true",
+        headers=AUTH_HEADERS,
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "TASK_CREATED" in response.text
+
+
+def test_tasks_require_bearer_token() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/tasks")
+
+    assert response.status_code == 401

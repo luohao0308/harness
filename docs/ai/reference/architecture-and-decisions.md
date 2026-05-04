@@ -103,10 +103,8 @@ CANCELLED
 Sandbox：
 
 ```text
-CREATING
 IDLE
 BUSY
-RELEASING
 DESTROYED
 FAILED
 ```
@@ -126,4 +124,3 @@ direct_model_sdk_usage_in_business_code: forbidden
 ai_generated_h5_as_production_code: forbidden
 delivery_stage_terms_required: true
 ```
-

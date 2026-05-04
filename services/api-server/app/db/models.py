@@ -133,6 +133,28 @@ class SandboxInstance(Base):
     destroyed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WarmPoolContainer(Base):
+    __tablename__ = "warm_pool_containers"
+    __table_args__ = (
+        UniqueConstraint("container_id", name="warm_pool_containers_container_id_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    container_id: Mapped[str] = mapped_column(Text, nullable=False)
+    image: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    locked_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    sandbox_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sandbox_instances.id"),
+        nullable=True,
+        index=True,
+    )
+    idle_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class TaskSnapshot(Base):
     __tablename__ = "task_snapshots"
 
