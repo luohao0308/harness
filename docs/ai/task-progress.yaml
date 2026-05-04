@@ -1,8 +1,8 @@
-current_stage: stage-09-sandbox-warmpool
+current_stage: stage-10-observability-deployment
 current_status: ready_for_review
-last_updated_at: 2026-05-04T13:46:08Z
+last_updated_at: 2026-05-04T14:18:05Z
 last_updated_by: Harness Agent
-next_stage: stage-10-observability-deployment
+next_stage: completed
 
 stages:
   - id: stage-01-git-github
@@ -286,9 +286,9 @@ stages:
 
   - id: stage-09-sandbox-warmpool
     document: docs/ai/10-stage-09-sandbox-warmpool.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T13:35:30Z
-    completed_at: null
+    completed_at: 2026-05-04T13:53:34Z
     changed_files:
       - services/api-server/app/api/sandboxes.py
       - services/api-server/app/api/schemas.py
@@ -314,21 +314,64 @@ stages:
     branch: stage/stage-09-sandbox-warmpool
     commit_sha: e14dd194cbc30c928e77f951af9657b68161985f
     pr_url: https://github.com/luohao0308/harness/pull/7
-    merged_at: null
-    notes: "Docker Sandbox runtime is implemented with Docker SDK container creation, fixed defaults memory 1024m, cpus 1.0, network none, non-root user, command timeout enforcement, stdout/stderr/exit_code/duration capture, sandbox events, WarmPool MIN_SIZE 3 MAX_SIZE 10 IDLE_TTL_SECONDS 600, WarmPool status API, sandbox list/detail/terminate APIs, and tests using a fake Docker client. The subprocess search produced no matches in app/tools or app/sandbox. PR is pending review."
+    merged_at: 2026-05-04T13:53:34Z
+    notes: "Docker Sandbox runtime is implemented with Docker SDK container creation, fixed defaults memory 1024m, cpus 1.0, network none, non-root user, command timeout enforcement, stdout/stderr/exit_code/duration capture, sandbox events, WarmPool MIN_SIZE 3 MAX_SIZE 10 IDLE_TTL_SECONDS 600, WarmPool status API, sandbox list/detail/terminate APIs, and tests using a fake Docker client. The subprocess search produced no matches in app/tools or app/sandbox. PR was merged into develop."
     next_stage: stage-10-observability-deployment
 
   - id: stage-10-observability-deployment
     document: docs/ai/11-stage-10-observability-deployment.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T13:54:10Z
     completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    branch: null
-    commit_sha: null
-    pr_url: null
+    changed_files:
+      - deploy/docker-compose/docker-compose.yml
+      - deploy/monitoring/prometheus.yml
+      - deploy/monitoring/loki.yml
+      - deploy/monitoring/otel-collector.yml
+      - deploy/monitoring/grafana-dashboard-agent-harness.json
+      - deploy/nginx/agent-harness.conf
+      - deploy/systemd/agent-api.service
+      - deploy/systemd/agent-worker.service
+      - deploy/systemd/agent-sandbox-worker.service
+      - deploy/systemd/agent-warm-pool.service
+      - services/api-server/Dockerfile
+      - services/api-server/app/agents/executor.py
+      - services/api-server/app/agents/model_gateway.py
+      - services/api-server/app/agents/subagent_manager.py
+      - services/api-server/app/api/metrics.py
+      - services/api-server/app/api/tasks.py
+      - services/api-server/app/core/logging.py
+      - services/api-server/app/core/tracing.py
+      - services/api-server/app/events/event_store.py
+      - services/api-server/app/main.py
+      - services/api-server/app/observability/__init__.py
+      - services/api-server/app/observability/metrics.py
+      - services/api-server/app/sandbox/docker_manager.py
+      - services/api-server/app/sandbox/warm_pool.py
+      - services/api-server/app/workers/subagent_worker.py
+      - services/api-server/tests/test_observability.py
+      - docs/ai/task-progress.yaml
+      - docs/human/10-task-progress.md
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage10_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --fail --silent http://127.0.0.1:8000/metrics
+      - cd deploy/docker-compose && docker compose config
+      - test -f deploy/monitoring/prometheus.yml
+      - test -f deploy/monitoring/loki.yml
+      - test -f deploy/monitoring/otel-collector.yml
+      - test -f deploy/monitoring/grafana-dashboard-agent-harness.json
+      - test -f deploy/nginx/agent-harness.conf
+      - test -f deploy/systemd/agent-api.service
+      - test -f deploy/systemd/agent-worker.service
+      - test -f deploy/systemd/agent-sandbox-worker.service
+      - test -f deploy/systemd/agent-warm-pool.service
+      - scripts/check-docs.sh
+    verification_result: passed
+    branch: stage/stage-10-observability-deployment
+    commit_sha: 412e714ad5a1eec7a243af143b728cd52386e6a1
+    pr_url: https://github.com/luohao0308/harness/pull/8
     merged_at: null
-    notes: ""
+    notes: "Prometheus /metrics, required counters/gauges/histograms, JSON stdout logging fields, sensitive log redaction, OpenTelemetry trace middleware, trace_id propagation to agent_events, Docker Compose services, Prometheus/Loki/OTel configs, Grafana dashboard JSON, systemd units, and Nginx SSE proxy buffering settings are implemented. PR is pending review."
     next_stage: completed
