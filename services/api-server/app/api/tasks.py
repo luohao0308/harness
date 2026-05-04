@@ -10,6 +10,7 @@ from app.db.models import Task, utc_now
 from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.observability.metrics import agent_tasks_running, agent_tasks_total
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -35,6 +36,7 @@ def create_task(
     )
     session.add(task)
     session.flush()
+    agent_tasks_total.inc()
     EventStore(session).append(
         task_id=task.id,
         event_type=EventType.TASK_CREATED,
@@ -76,6 +78,8 @@ def start_task(task_id: str, session: DbSession) -> Task:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task cannot be started")
 
     started = Executor(session).start_task(task)
+    if started.status == "RUNNING":
+        agent_tasks_running.inc()
     session.commit()
     session.refresh(started)
     return started

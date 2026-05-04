@@ -1,0 +1,111 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api-server
+    ports:
+      - "80:80"
+    volumes:
+      - ../nginx/agent-harness.conf:/etc/nginx/conf.d/default.conf:ro
+
+  api-server:
+    image: agent-harness-api-server:latest
+    build:
+      context: ../../services/api-server
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - postgres
+      - redis
+      - otel-collector
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    ports:
+      - "8000:8000"
+
+  agent-worker:
+    image: agent-harness-api-server:latest
+    depends_on:
+      - api-server
+      - redis
+      - postgres
+    command: python -m dramatiq app.workers.subagent_worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+
+  sandbox-worker:
+    image: agent-harness-api-server:latest
+    depends_on:
+      - api-server
+      - redis
+      - postgres
+    command: python -m dramatiq --queues subagents app.workers.subagent_worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-workspaces:/var/lib/agent-harness/workspaces
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agent_harness
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ../monitoring/grafana-dashboard-agent-harness.json:/var/lib/grafana/dashboards/agent-harness.json:ro
+
+  loki:
+    image: grafana/loki:3.2.1
+    command: -config.file=/etc/loki/loki.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ../monitoring/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.113.0
+    command:
+      - --config=/etc/otel-collector.yml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ../monitoring/otel-collector.yml:/etc/otel-collector.yml:ro
+
+volumes:
+  agent-workspaces:
+  loki-data:
+  postgres-data:
+  redis-data:

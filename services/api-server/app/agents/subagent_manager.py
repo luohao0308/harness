@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.observability.metrics import agent_subagents_queued
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, timeout_at_from_now
 
 SUBAGENT_CONCURRENCY_LIMIT = 5
@@ -47,6 +48,7 @@ class SubagentManager:
         )
         self.session.add(agent_run)
         self.session.flush()
+        agent_subagents_queued.inc()
         self.event_store.append(
             task_id=task.id,
             agent_run_id=agent_run.id,
