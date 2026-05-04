@@ -1,8 +1,8 @@
-current_stage: stage-05-task-event-store
+current_stage: stage-06-planner-executor
 current_status: ready_for_review
-last_updated_at: 2026-05-04T12:33:56Z
+last_updated_at: 2026-05-04T12:44:12Z
 last_updated_by: codex
-next_stage: stage-06-planner-executor
+next_stage: stage-07-react-console
 
 stages:
   - id: stage-01-git-github
@@ -145,9 +145,9 @@ stages:
 
   - id: stage-05-task-event-store
     document: docs/ai/06-stage-05-task-event-store.md
-    status: ready_for_review
+    status: completed
     started_at: 2026-05-04T12:24:30Z
-    completed_at: null
+    completed_at: 2026-05-04T12:38:37Z
     changed_files:
       - services/api-server/alembic.ini
       - services/api-server/alembic/env.py
@@ -179,23 +179,41 @@ stages:
     branch: stage/stage-05-task-event-store
     commit_sha: c24064ff3cad1f9c3adfe717d248ef54f394867c
     pr_url: https://github.com/luohao0308/harness/pull/3
-    merged_at: null
-    notes: "Task and Event Store foundation is implemented with SQLAlchemy models, Alembic migration, append-only EventStore, Task API, Events API, SSE endpoint, and tests proving TASK_CREATED sequence starts at 1. PR is pending review."
+    merged_at: 2026-05-04T12:38:37Z
+    notes: "Task and Event Store foundation is implemented with SQLAlchemy models, Alembic migration, append-only EventStore, Task API, Events API, SSE endpoint, and tests proving TASK_CREATED sequence starts at 1. PR was merged into develop."
     next_stage: stage-06-planner-executor
 
   - id: stage-06-planner-executor
     document: docs/ai/07-stage-06-planner-executor.md
-    status: pending
-    started_at: null
+    status: ready_for_review
+    started_at: 2026-05-04T12:39:20Z
     completed_at: null
-    changed_files: []
-    verification_commands: []
-    verification_result: null
-    branch: null
-    commit_sha: null
-    pr_url: null
+    changed_files:
+      - services/api-server/app/agents/__init__.py
+      - services/api-server/app/agents/schemas.py
+      - services/api-server/app/agents/planner.py
+      - services/api-server/app/agents/model_gateway.py
+      - services/api-server/app/agents/react_engine.py
+      - services/api-server/app/agents/executor.py
+      - services/api-server/app/tools/__init__.py
+      - services/api-server/app/tools/registry.py
+      - services/api-server/app/api/tasks.py
+      - services/api-server/tests/test_planner_executor.py
+      - docs/ai/task-progress.yaml
+      - docs/human/10-task-progress.md
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage06_verify.db .venv/bin/alembic upgrade head
+      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage06_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --fail -X POST http://127.0.0.1:8000/api/tasks/{task_id}/start
+      - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events
+    verification_result: passed
+    branch: stage/stage-06-planner-executor
+    commit_sha: pending_commit
+    pr_url: pending_pr
     merged_at: null
-    notes: ""
+    notes: "Deterministic Planner, Model Gateway interface, Tool Registry, ReAct data structures, and Executor start-task loop are implemented. Starting a task persists execution_plans/task_steps and appends PLAN_REQUESTED, PLAN_GENERATED, STEP_STARTED, STEP_COMPLETED, and TASK_COMPLETED events. PR is pending review."
     next_stage: stage-07-react-console
 
   - id: stage-07-react-console
