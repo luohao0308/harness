@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.executor import Executor
 from app.api.schemas import TaskCreateRequest, TaskPage, TaskResponse
 from app.db.models import Task, utc_now
 from app.db.session import get_db_session
@@ -64,3 +65,17 @@ def get_task(task_id: str, session: DbSession) -> Task:
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+
+@router.post("/{task_id}/start", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
+def start_task(task_id: str, session: DbSession) -> Task:
+    task = session.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    if task.status not in {"CREATED", "FAILED"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task cannot be started")
+
+    started = Executor(session).start_task(task)
+    session.commit()
+    session.refresh(started)
+    return started
