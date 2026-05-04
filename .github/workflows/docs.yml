@@ -18,6 +18,7 @@ jobs:
           test -f docs/ai/README.md
           test -f docs/ai/01-task-progress.md
           test -f docs/ai/task-progress.yaml
+          test -f docs/human/10-task-progress.md
 
       - name: Check docs avoid loose wording
         run: |
