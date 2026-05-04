@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app.db.models import SandboxInstance, utc_now
+from app.observability.metrics import (
+    warm_pool_busy_containers,
+    warm_pool_hit_total,
+    warm_pool_idle_containers,
+    warm_pool_miss_total,
+)
 from app.sandbox.docker_manager import DockerManager
 from app.sandbox.policies import DEFAULT_SANDBOX_IMAGE
 
@@ -68,6 +74,7 @@ class WarmPoolManager:
         if self._idle:
             pooled = self._idle.pop(0)
             self._hit_total += 1
+            warm_pool_hit_total.inc()
             sandbox = self.docker_manager.record_allocated_container(
                 session=session,
                 task_id=task_id,
@@ -80,6 +87,7 @@ class WarmPoolManager:
             return sandbox
 
         self._miss_total += 1
+        warm_pool_miss_total.inc()
         sandbox = self.docker_manager.create_sandbox(
             session=session,
             task_id=task_id,
@@ -99,6 +107,8 @@ class WarmPoolManager:
 
     def status(self) -> WarmPoolStatus:
         self._prune_expired()
+        warm_pool_idle_containers.set(self.idle_count)
+        warm_pool_busy_containers.set(self.busy_count)
         return WarmPoolStatus(
             enabled=True,
             min_size=self.min_size,

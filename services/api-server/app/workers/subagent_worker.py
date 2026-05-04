@@ -10,6 +10,7 @@ from app.db.models import AgentRun, utc_now
 from app.db.session import SessionLocal
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.observability.metrics import agent_subagents_failed_total, agent_subagents_running
 from app.workers.broker import broker
 
 DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 900
@@ -48,6 +49,7 @@ def _execute_subagent_with_session(
     event_store = EventStore(session)
     agent_run.status = "RUNNING"
     agent_run.started_at = utc_now()
+    agent_subagents_running.inc()
     event_store.append(
         task_id=agent_run.task_id,
         agent_run_id=agent_run.id,
@@ -59,6 +61,7 @@ def _execute_subagent_with_session(
         if simulate_timeout:
             agent_run.status = "TIMEOUT"
             agent_run.completed_at = utc_now()
+            agent_subagents_running.dec()
             event_store.append(
                 task_id=agent_run.task_id,
                 agent_run_id=agent_run.id,
@@ -74,6 +77,7 @@ def _execute_subagent_with_session(
         time.sleep(0)
         agent_run.status = "SUCCESS"
         agent_run.completed_at = utc_now()
+        agent_subagents_running.dec()
         event_store.append(
             task_id=agent_run.task_id,
             agent_run_id=agent_run.id,
@@ -85,6 +89,8 @@ def _execute_subagent_with_session(
     except Exception:
         agent_run.status = "FAILED"
         agent_run.completed_at = utc_now()
+        agent_subagents_running.dec()
+        agent_subagents_failed_total.inc()
         event_store.append(
             task_id=agent_run.task_id,
             agent_run_id=agent_run.id,
