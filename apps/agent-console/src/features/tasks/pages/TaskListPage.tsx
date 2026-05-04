@@ -7,15 +7,16 @@ import { Dot } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { enabledLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import { listTasks } from "../api";
 import { TaskStatusBadge } from "../components/TaskStatusBadge";
 
 const statCards = [
-  ["Running tasks", "12", "+3 vs 1h", "running"],
-  ["Failed today", "4", "0.6% rate", "failed"],
-  ["Avg duration", "6m 12s", "p95 18m", "neutral"],
-  ["WarmPool hit rate", "94.2%", "target >= 90%", "success"],
+  ["运行任务", "12", "较 1 小时前 +3", "running"],
+  ["今日失败", "4", "失败率 0.6%", "failed"],
+  ["平均耗时", "6m 12s", "p95 18m", "neutral"],
+  ["WarmPool 命中率", "94.2%", "目标 >= 90%", "success"],
 ] as const;
 
 export function TaskListPage() {
@@ -23,7 +24,7 @@ export function TaskListPage() {
   const tasks = tasksQuery.data?.items ?? [];
 
   return (
-    <ConsoleShell title="Tasks">
+    <ConsoleShell title="任务">
       <div className="mx-auto max-w-[1440px] p-6">
         <div className="mb-5 grid grid-cols-4 gap-3">
           {statCards.map(([title, value, subtitle, tone]) => (
@@ -40,7 +41,7 @@ export function TaskListPage() {
 
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs">
-            {["Status: any", "Owner: any", "Model: any", "Created: 24h", "Sandbox: enabled"].map(
+            {["状态：全部", "负责人：全部", "模型：全部", "创建：24h", "沙箱：已启用"].map(
               (filter) => (
                 <Button key={filter} className="gap-1.5">
                   <Filter className="h-3 w-3" /> {filter}
@@ -49,7 +50,7 @@ export function TaskListPage() {
             )}
           </div>
           <span className="text-xs text-slate-500">
-            {tasksQuery.isLoading ? "Loading tasks..." : `Showing ${tasks.length} tasks`}
+            {tasksQuery.isLoading ? "任务加载中..." : `当前显示 ${tasks.length} 个任务`}
           </span>
         </div>
 
@@ -57,13 +58,13 @@ export function TaskListPage() {
           <Table>
             <thead className="bg-slate-50 text-slate-500">
               <tr>
-                <Th>Task Name</Th>
-                <Th>Status</Th>
-                <Th>Model</Th>
-                <Th>Sandbox</Th>
-                <Th>Network</Th>
-                <Th>Created</Th>
-                <Th>Updated</Th>
+                <Th>任务名称</Th>
+                <Th>状态</Th>
+                <Th>模型</Th>
+                <Th>沙箱</Th>
+                <Th>网络</Th>
+                <Th>创建时间</Th>
+                <Th>更新时间</Th>
                 <Th />
               </tr>
             </thead>
@@ -85,9 +86,9 @@ export function TaskListPage() {
                     <TaskStatusBadge status={task.status} />
                   </Td>
                   <Td className="font-mono text-slate-600">{task.model_name}</Td>
-                  <Td className="text-slate-600">{task.enable_sandbox ? "enabled" : "-"}</Td>
+                  <Td className="text-slate-600">{enabledLabel(task.enable_sandbox)}</Td>
                   <Td className={task.enable_network ? "text-amber-600" : "text-slate-500"}>
-                    {task.enable_network ? "enabled" : "disabled"}
+                    {enabledLabel(task.enable_network)}
                   </Td>
                   <Td className="font-mono text-slate-500">{formatShortDate(task.created_at)}</Td>
                   <Td className="font-mono text-slate-500">{formatShortDate(task.updated_at)}</Td>
@@ -96,7 +97,7 @@ export function TaskListPage() {
                       <Link to={`/tasks/${task.id}`} className="hover:text-slate-700">
                         <ArrowUpRight className="h-3.5 w-3.5" />
                       </Link>
-                      <button className="hover:text-slate-700" aria-label="More actions">
+                      <button className="hover:text-slate-700" aria-label="更多操作">
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -106,17 +107,17 @@ export function TaskListPage() {
               {!tasksQuery.isLoading && tasks.length === 0 && (
                 <tr>
                   <Td colSpan={8} className="py-12 text-center text-slate-500">
-                    No tasks yet. Create one to see the event stream.
+                    暂无任务。创建任务后将在这里看到事件流。
                   </Td>
                 </tr>
               )}
             </tbody>
           </Table>
           <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/40 px-3 py-2 text-[11px] text-slate-500">
-            <span>auto-refresh via query invalidation</span>
+            <span>通过查询缓存失效自动刷新</span>
             <div className="flex gap-1">
-              <Button>Prev</Button>
-              <Button>Next</Button>
+              <Button>上一页</Button>
+              <Button>下一页</Button>
             </div>
           </div>
         </Card>

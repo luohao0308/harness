@@ -39,6 +39,7 @@ REQUIRED_FILES = [
     "docs/ai/reference/database-schema.yaml",
     "docs/api/openapi-contract.md",
     "docs/api/openapi.yaml",
+    "docs/api/openapi.json",
     "docs/evals/prompt-eval-cases.yaml",
     "docs/evals/prompt-eval-runbook.md",
     "docs/runbooks/local-development.md",
@@ -49,6 +50,16 @@ REQUIRED_FILES = [
     "docs/security/threat-model.md",
     "docs/qa/test-strategy.md",
     "docs/demo/e2e-demo-script.md",
+    "docs/human/11-website-usage-flow.md",
+    "docs/human/features/README.md",
+    "docs/human/features/01-task-lifecycle.md",
+    "docs/human/features/02-planner-executor.md",
+    "docs/human/features/03-event-sourcing-replay.md",
+    "docs/human/features/04-subagent-orchestration.md",
+    "docs/human/features/05-sandbox-warmpool.md",
+    "docs/human/features/06-model-tool-audit.md",
+    "docs/human/features/07-settings-observability.md",
+    "docs/human/features/08-website-console-openapi.md",
 ]
 
 STAGE_FILES = [
@@ -63,6 +74,8 @@ STAGE_FILES = [
     "docs/ai/10-stage-09-sandbox-warmpool.md",
     "docs/ai/11-stage-10-observability-deployment.md",
     "docs/ai/12-stage-11-review-p1-hardening.md",
+    "docs/ai/13-stage-12-runtime-product-completion.md",
+    "docs/ai/14-stage-13-website-code-integration.md",
 ]
 
 
@@ -92,6 +105,9 @@ def check_blocked_terms() -> None:
             files.extend(path for path in target.rglob("*") if path.is_file())
     for path in files:
         text = read_text(path)
+        for marker in ["<<<<<<<", "=======", ">>>>>>>"]:
+            if marker in text:
+                fail(f"merge conflict marker found in {path.relative_to(ROOT)}")
         for term in BLOCKED_TERMS:
             if term in text:
                 fail(f"blocked term found in {path.relative_to(ROOT)}")
@@ -148,6 +164,8 @@ def check_reference_links() -> None:
         "../security/threat-model.md",
         "../qa/test-strategy.md",
         "../demo/e2e-demo-script.md",
+        "../human/11-website-usage-flow.md",
+        "../human/features/README.md",
         "../runbooks/local-development.md",
     ]:
         if rel not in readme:

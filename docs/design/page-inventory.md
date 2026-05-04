@@ -29,6 +29,37 @@
 | Model Settings | `/settings/models` | agent-console | React | ModelCallPanel, gateway status, limits |
 | Policy Settings | `/settings/policies` | agent-console | React | PolicyBadge, risk levels, approval rules |
 
+## Console Language
+
+| Item | Required Value |
+|---|---|
+| Default locale | `zh-CN` |
+| Fallback locale | `en-US` |
+| Switch labels | `中文` / `English` |
+| Switch location | Console top bar |
+| Required behavior | 默认展示中文，切换后同一组页面文案展示英文 |
+
+技术字段保留原值：
+
+```text
+任务 ID
+事件类型
+接口路径
+枚举值
+指标名
+镜像名
+模型名
+容器 ID
+```
+
+技术字段展示规则：
+
+```text
+原始值必须保留。
+中文模式必须附带中文含义、描述或标签。
+英文模式必须保留同等信息量。
+```
+
 ## Component Inventory
 
 | Component | Figma Source | Frontend Target | States |

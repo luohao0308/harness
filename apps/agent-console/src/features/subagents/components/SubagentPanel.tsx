@@ -2,11 +2,12 @@ import { GitBranch } from "lucide-react";
 
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { statusLabel } from "../../../lib/labels";
 
 const subagents = [
-  ["subagent-1", "dependency review", "PENDING"],
-  ["subagent-2", "test analysis", "PENDING"],
-  ["subagent-3", "log review", "PENDING"],
+  ["subagent-1", "依赖审查", "PENDING"],
+  ["subagent-2", "测试分析", "PENDING"],
+  ["subagent-3", "日志检查", "PENDING"],
 ];
 
 export function SubagentPanel() {
@@ -14,7 +15,7 @@ export function SubagentPanel() {
     <Card>
       <CardHeader>
         <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
-          <GitBranch className="h-3 w-3" /> SUBAGENTS
+          <GitBranch className="h-3 w-3" /> 子 Agent
         </div>
         <span className="font-mono text-[10px] text-slate-400">0 / 5</span>
       </CardHeader>
@@ -28,7 +29,7 @@ export function SubagentPanel() {
               <div className="font-mono text-xs text-slate-800">{id}</div>
               <div className="text-[10px] text-slate-500">{label}</div>
             </div>
-            <Badge tone={statusTone(status)}>{status}</Badge>
+            <Badge tone={statusTone(status)}>{statusLabel(status)}</Badge>
           </div>
         ))}
       </div>

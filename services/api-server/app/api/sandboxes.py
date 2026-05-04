@@ -18,7 +18,12 @@ docker_manager = DockerManager()
 warm_pool_manager = WarmPoolManager(docker_manager=docker_manager)
 
 
-@router.get("/sandboxes", response_model=SandboxPage)
+@router.get(
+    "/sandboxes",
+    response_model=SandboxPage,
+    summary="查询沙箱列表",
+    description="返回当前组织可见的容器沙箱实例列表。",
+)
 def list_sandboxes(session: DbSession, principal: Principal) -> SandboxPage:
     statement = (
         select(SandboxInstance)
@@ -29,7 +34,12 @@ def list_sandboxes(session: DbSession, principal: Principal) -> SandboxPage:
     return SandboxPage(items=list(session.execute(statement).scalars()))
 
 
-@router.get("/sandboxes/warm-pool", response_model=WarmPoolResponse)
+@router.get(
+    "/sandboxes/warm-pool",
+    response_model=WarmPoolResponse,
+    summary="查询 WarmPool 状态",
+    description="返回预热池容量、命中与失败统计。",
+)
 def get_warm_pool(session: DbSession, principal: Principal) -> WarmPoolResponse:
     _ = principal
     return WarmPoolResponse.model_validate(warm_pool_manager.status(session=session).__dict__)
@@ -46,11 +56,16 @@ def get_owned_sandbox(sandbox_id: str, session: Session, principal: Principal) -
     )
     sandbox = session.execute(statement).scalar_one_or_none()
     if sandbox is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sandbox not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="沙箱未找到")
     return sandbox
 
 
-@router.get("/sandboxes/{sandbox_id}", response_model=SandboxResponse)
+@router.get(
+    "/sandboxes/{sandbox_id}",
+    response_model=SandboxResponse,
+    summary="查询沙箱详情",
+    description="返回单个沙箱实例的运行状态。",
+)
 def get_sandbox(sandbox_id: str, session: DbSession, principal: Principal) -> SandboxInstance:
     return get_owned_sandbox(sandbox_id, session, principal)
 
@@ -59,6 +74,8 @@ def get_sandbox(sandbox_id: str, session: DbSession, principal: Principal) -> Sa
     "/sandboxes/{sandbox_id}/terminate",
     response_model=SandboxResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    summary="终止沙箱",
+    description="销毁指定沙箱实例。",
 )
 def terminate_sandbox(sandbox_id: str, session: DbSession, principal: Principal) -> SandboxInstance:
     sandbox = get_owned_sandbox(sandbox_id, session, principal)

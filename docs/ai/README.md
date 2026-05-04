@@ -19,6 +19,8 @@
 12. [阶段 09：Docker Sandbox 与 WarmPool](./10-stage-09-sandbox-warmpool.md)
 13. [阶段 10：监控、日志、部署](./11-stage-10-observability-deployment.md)
 14. [阶段 11：Review P1 Production Hardening](./12-stage-11-review-p1-hardening.md)
+15. [阶段 12：Runtime Product Completion](./13-stage-12-runtime-product-completion.md)
+16. [阶段 13：Website Code Integration](./14-stage-13-website-code-integration.md)
 
 ## 参考规格
 
@@ -40,6 +42,8 @@
 - [安全威胁模型](../security/threat-model.md)
 - [QA 测试策略](../qa/test-strategy.md)
 - [端到端 Demo 剧本](../demo/e2e-demo-script.md)
+- [网站使用流程](../human/11-website-usage-flow.md)
+- [功能文档目录](../human/features/README.md)
 - [本地开发 Runbook](../runbooks/local-development.md)
 - [部署 Runbook](../runbooks/deployment.md)
 - [迁移 Runbook](../runbooks/migrations.md)

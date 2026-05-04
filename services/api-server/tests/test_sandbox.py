@@ -11,6 +11,7 @@ from app.db.models import SandboxInstance, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
 from app.sandbox.docker_manager import DockerManager
+from app.tools.registry import ToolRegistry
 from app.tools.shell import ShellTool, ShellToolRequest
 from tests.conftest import AUTH_HEADERS
 
@@ -128,6 +129,22 @@ def test_shell_tool_runs_command_through_docker_and_records_result(
         "SANDBOX_COMMAND_STARTED",
         "SANDBOX_COMMAND_COMPLETED",
     ]
+
+
+def test_tool_registry_matches_stage12_required_tools() -> None:
+    registry = ToolRegistry.default()
+
+    assert set(registry.tools) == {
+        "read_file",
+        "list_files",
+        "write_file",
+        "run_shell",
+        "run_tests",
+        "network_request",
+        "git_command",
+    }
+    for name in ["write_file", "run_shell", "run_tests", "network_request", "git_command"]:
+        assert registry.tools[name].requires_sandbox is True
 
 
 def test_sandbox_api_list_warm_pool_get_and_terminate(
