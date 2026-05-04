@@ -5,9 +5,9 @@
 ## 当前状态
 
 ```text
-当前阶段：阶段 05 Task 与 Event Store
+当前阶段：阶段 06 Planner 与 Executor
 当前状态：ready_for_review
-下一步：等待用户合并阶段 05 PR；合并后进入阶段 06
+下一步：等待用户合并阶段 06 PR；合并后进入阶段 07
 ```
 
 ## 状态说明
@@ -29,8 +29,8 @@ failed：验证失败
 | 02 | Figma 设计源 | completed | legacy_no_pr | legacy_no_pr | passed | 历史补录阶段：设计 brief、tokens、页面清单已建立。 |
 | 03 | 仓库脚手架 | completed | legacy_no_pr | legacy_no_pr | passed | 历史补录阶段：Monorepo 目录、环境样例和检查脚本已建立。 |
 | 04 | FastAPI 后端基础 | completed | stage/stage-04-backend-foundation | https://github.com/luohao0308/harness/pull/2 | passed | PR 已合并到 develop。 |
-| 05 | Task 与 Event Store | ready_for_review | stage/stage-05-task-event-store | https://github.com/luohao0308/harness/pull/3 | passed | Task API、Event API、Alembic 迁移、append-only Event Store 和 SSE endpoint 已完成，等待 PR 合并。 |
-| 06 | Planner 与 Executor | pending | null | null | null | 等待阶段 05 合并。 |
+| 05 | Task 与 Event Store | completed | stage/stage-05-task-event-store | https://github.com/luohao0308/harness/pull/3 | passed | PR 已合并到 develop。 |
+| 06 | Planner 与 Executor | ready_for_review | stage/stage-06-planner-executor | pending_pr | passed | deterministic Planner、Model Gateway 接口、Tool Registry、ReAct 数据结构和 start task 执行闭环已完成，等待 PR 合并。 |
 | 07 | React 控制台 | pending | null | null | null | 等待阶段 06 合并。 |
 | 08 | Dramatiq Subagent | pending | null | null | null | 等待阶段 07 合并。 |
 | 09 | Docker Sandbox 与 WarmPool | pending | null | null | null | 等待阶段 08 合并。 |
