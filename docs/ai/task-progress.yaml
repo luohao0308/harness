@@ -34,6 +34,10 @@ stages:
       - test -f .github/workflows/docker.yml
       - git remote -v
     verification_result: passed
+    branch: legacy_no_pr
+    commit_sha: legacy_no_pr
+    pr_url: legacy_no_pr
+    merged_at: legacy_no_pr
     notes: "Git repository initialized on main branch and connected to https://github.com/luohao0308/harness.git. GitHub PR template, Issue templates, placeholder workflows, and expanded ignore rules are present. README.md already contains AI docs and GitHub workflow entry links."
     next_stage: stage-02-figma-design
 
@@ -53,6 +57,10 @@ stages:
       - test -f docs/design/page-inventory.md
       - rg -n "Task Detail|Event Timeline|Subagent|Sandbox|WarmPool|Next.js|React" docs/design
     verification_result: passed
+    branch: legacy_no_pr
+    commit_sha: legacy_no_pr
+    pr_url: legacy_no_pr
+    merged_at: legacy_no_pr
     notes: "Figma production brief, design tokens, and page inventory are complete for website and console design source requirements. Figma is documented as the design source of truth; Gemini/H5 outputs are restricted to reference use."
     next_stage: stage-03-repository-scaffold
 
@@ -93,6 +101,10 @@ stages:
       - test -x scripts/check-docs.sh
       - test -x scripts/check-env.sh
     verification_result: passed
+    branch: legacy_no_pr
+    commit_sha: legacy_no_pr
+    pr_url: legacy_no_pr
+    merged_at: legacy_no_pr
     notes: "Fixed monorepo directories, environment examples, executable check scripts, and README project structure are present. No business logic was implemented."
     next_stage: stage-04-backend-foundation
 
@@ -104,6 +116,10 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: stage-05-task-event-store
 
@@ -115,6 +131,10 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: stage-06-planner-executor
 
@@ -126,6 +146,10 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: stage-07-react-console
 
@@ -137,6 +161,10 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: stage-08-dramatiq-subagent
 
@@ -148,6 +176,10 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: stage-09-sandbox-warmpool
 
@@ -159,6 +191,10 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: stage-10-observability-deployment
 
@@ -170,5 +206,9 @@ stages:
     changed_files: []
     verification_commands: []
     verification_result: null
+    branch: null
+    commit_sha: null
+    pr_url: null
+    merged_at: null
     notes: ""
     next_stage: completed

@@ -18,6 +18,7 @@
 
 必须先读取 docs/ai/00-execution-protocol.md、docs/ai/01-task-progress.md、docs/ai/task-progress.yaml 和 docs/ai/reference/architecture-and-decisions.md。
 只执行阶段 03，不进入阶段 04。
+阶段开始前必须创建阶段分支，验证通过后 commit、push 并创建 PR。
 
 执行内容：
 1. 创建固定目录 apps/web-site、apps/agent-console、services/api-server、services/sandbox-worker、deploy/docker-compose、deploy/systemd、deploy/nginx、deploy/monitoring、scripts。
@@ -30,6 +31,12 @@
 8. 更新 README.md 的项目结构部分，确保目录与实际一致。
 9. 执行验证命令。
 10. 更新 docs/ai/task-progress.yaml，把 stage-03-repository-scaffold 标记为 completed。
+
+PR 与进度要求：
+- 阶段分支必须推送到 origin。
+- 阶段变更必须创建 Pull Request。
+- branch、commit_sha、pr_url 写入 docs/ai/task-progress.yaml。
+- 人读进度 docs/human/10-task-progress.md 必须同步更新。
 
 验收标准：
 - 固定目录全部存在。
