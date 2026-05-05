@@ -113,6 +113,12 @@ const executionModeLabels: Record<string, string> = {
   async: "异步执行",
 };
 
+const plannerSourceLabels: Record<string, string> = {
+  llm: "LLM 计划",
+  llm_repaired: "LLM 修复计划",
+  deterministic: "确定性计划",
+};
+
 export function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -157,4 +163,8 @@ export function settingsKeyLabel(key: string) {
 
 export function executionModeLabel(mode: string) {
   return executionModeLabels[mode] ?? mode;
+}
+
+export function plannerSourceLabel(source: string) {
+  return plannerSourceLabels[source] ?? source;
 }

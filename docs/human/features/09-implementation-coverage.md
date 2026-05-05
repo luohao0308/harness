@@ -100,7 +100,7 @@
 
 | 能力 | 当前缺口 | 目标结果 |
 |---|---|---|
-| Planner | 已接入模型 JSON 计划解析，解析失败回退确定性计划 | 增强 Prompt、结构重试和计划版本对比 |
+| Planner | 已接入模型 JSON 计划解析、一次结构修复、确定性回退和计划来源展示 | 增强 Prompt 和计划版本对比 |
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 级恢复编排 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id 和 Subagent 状态链路 | 增强时间线中的并行执行拓扑 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |

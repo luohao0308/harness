@@ -74,7 +74,7 @@ docs/SPEC.md
 | 功能域 | 用户能力 | 已落地接口 | 当前状态 |
 |---|---|---|---|
 | 任务生命周期 | 创建、查看、启动、取消、恢复、结果 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}`、`POST /api/tasks/{task_id}/start`、`POST /api/tasks/{task_id}/cancel`、`POST /api/tasks/{task_id}/resume`、`GET /api/tasks/{task_id}/result` | 已落地 |
-| 计划与执行 | 查看计划、步骤、同步执行、异步派生 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/start` | 基础落地，已支持模型 JSON 计划解析 |
+| 计划与执行 | 查看计划、步骤、同步执行、异步派生 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/start` | 基础落地，已支持模型 JSON 计划解析、一次修复和来源展示 |
 | 同步执行 | Executor 直接执行 step | `GET /api/tasks/{task_id}/steps`、`GET /api/tasks/{task_id}/events` | 基础落地 |
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
@@ -130,7 +130,7 @@ docs/SPEC.md
 
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
-| LLM Planner 增强 | 已解析模型 JSON 计划，Prompt 重试和版本对比仍需增强 | `docs/human/features/02-planner-executor.md` |
+| LLM Planner 增强 | 已解析模型 JSON 计划并支持一次结构修复，Prompt 和版本对比仍需增强 | `docs/human/features/02-planner-executor.md` |
 | Worker 级恢复 | 长任务跨进程恢复仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
 | Subagent 工具链执行 | worker 已回写 assignment 摘要，模型、工具、沙箱组合执行仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | 父任务聚合子 Agent 结果 | 任务结果摘要对异步输出聚合不足 | `docs/human/features/04-subagent-orchestration.md` |
@@ -163,7 +163,7 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 补 LLM Planner 结构重试和计划版本对比
+1. 补 LLM Planner Prompt 增强和计划版本对比
 2. 补 Subagent worker 工具链执行和父任务结果聚合
 3. 补 Worker 级恢复编排
 4. 增强 Loki 采集、Grafana provisioning 和真实 OTel Trace 查询

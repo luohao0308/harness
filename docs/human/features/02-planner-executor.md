@@ -69,6 +69,8 @@ POST /api/tasks/{task_id}/tools/execute
 | `can_spawn_subagent=true` | `execution_plans.plan_json.steps[]` | 该步骤允许异步派生 |
 | `assigned_agent_id` | `task_steps` | 异步步骤绑定的 `agent_runs.id` |
 | `agent_runs.status` | `agent_runs` | 子 Agent 状态 |
+| `planner_source` | `execution_plans.plan_json`、Plan API | `llm`、`llm_repaired`、`deterministic` |
+| `planner_attempts` | `execution_plans.plan_json`、Plan API | 计划生成尝试次数 |
 
 ## 事件模型
 
@@ -156,6 +158,8 @@ agent_subagents_running
 | 计划查询接口 | 已落地 | `GET /api/tasks/{task_id}/plan` |
 | 步骤查询接口 | 已落地 | `GET /api/tasks/{task_id}/steps` |
 | LLM Planner | 基础落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
+| LLM Planner 结构重试 | 基础落地 | 第一次模型计划非法时，自动请求修复一次 |
+| 计划来源展示 | 基础落地 | Plan API 和控制台展示 `planner_source`、`planner_attempts` |
 | 异步步骤识别 | 基础落地 | 模型 JSON 或关键词触发 async 步骤 |
 | Executor 步骤执行 | 基础落地 | 同步步骤写入工具审计与事件 |
 | Subagent 派生 | 基础落地 | async 步骤写入 `agent_runs` 并请求 Dramatiq 入队 |
@@ -166,7 +170,7 @@ agent_subagents_running
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| LLM Planner 增强 | 当前已解析模型 JSON，计划质量仍依赖供应商输出 | 增强 Prompt、结构重试和计划版本对比 |
+| LLM Planner 增强 | 当前已解析模型 JSON，并支持一次结构修复 | 增强 Prompt 和计划版本对比 |
 | 步骤级断点续跑 | Worker 崩溃后的执行恢复仍需增强 | 以 Replay state 驱动 Worker 恢复 |
 | 异步执行可视化 | 基础落地，已展示中文标签、派生子 Agent ID 和状态 | 增强时间线中的并行执行拓扑 |
 
@@ -174,7 +178,7 @@ agent_subagents_running
 
 ```text
 1. 固化 Plan / Step schema
-2. 增强 LLM Planner Prompt 与结构重试
+2. 增强 LLM Planner Prompt
 3. 增加计划版本对比
 4. 增强 Executor ReAct 循环
 5. 补 Worker 级恢复与验收测试
@@ -189,6 +193,7 @@ agent_subagents_running
 - 异步步骤在计划和步骤接口中显示 `execution_mode=async`。
 - 异步步骤必须生成 `agent_runs` 记录，并在 Subagent 面板展示。
 - 异步步骤在执行计划面板展示关联子 Agent ID 和状态。
+- Plan API 返回计划来源和尝试次数。
 - 工具动作不绕过 Tool Registry。
 - 高风险动作不绕过 Sandbox。
 - 事件流能还原执行顺序。

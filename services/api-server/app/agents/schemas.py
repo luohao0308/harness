@@ -15,6 +15,8 @@ class PlanStep(BaseModel):
 class ExecutionPlan(BaseModel):
     summary: str = Field(min_length=1)
     steps: list[PlanStep] = Field(min_length=1)
+    planner_source: Literal["llm", "llm_repaired", "deterministic"] = "deterministic"
+    planner_attempts: int = Field(default=1, ge=1)
 
     model_config = ConfigDict(extra="forbid")
 

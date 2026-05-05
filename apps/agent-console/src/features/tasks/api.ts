@@ -208,6 +208,8 @@ export type TaskPlan = {
   version: number;
   status: string;
   summary: string | null;
+  planner_source: string;
+  planner_attempts: number;
   plan_json: Record<string, unknown>;
   steps: TaskPlanStep[];
   created_at: string;

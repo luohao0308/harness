@@ -92,6 +92,8 @@ class TaskPlanResponse(BaseModel):
     version: int = Field(description="计划版本")
     status: str = Field(description="计划状态")
     summary: str | None = Field(default=None, description="计划摘要")
+    planner_source: str = Field(description="计划来源")
+    planner_attempts: int = Field(description="计划生成尝试次数")
     plan_json: dict = Field(description="计划原始 JSON")
     steps: list[TaskPlanStepState] = Field(description="计划步骤状态")
     created_at: datetime = Field(description="创建时间")

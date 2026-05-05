@@ -4,7 +4,7 @@ import type { AgentEvent, Subagent, TaskPlan } from "../api";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
-import { executionModeLabel, statusLabel } from "../../../lib/labels";
+import { executionModeLabel, plannerSourceLabel, statusLabel } from "../../../lib/labels";
 
 type PlanStep = {
   key?: string;
@@ -44,7 +44,10 @@ export function ExecutionPlanPanel({
     <Card>
       <CardHeader>
         <div className="text-[11px] tracking-widest text-slate-500">执行计划</div>
-        <span className="font-mono text-[10px] text-slate-400">{steps.length} steps</span>
+        <span className="font-mono text-[10px] text-slate-400">
+          {steps.length} steps
+          {plan ? ` · ${plannerSourceLabel(plan.planner_source)} · ${plan.planner_attempts} 次` : ""}
+        </span>
       </CardHeader>
       <div className="space-y-1 p-2">
         {steps.length === 0 ? (

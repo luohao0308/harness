@@ -1944,6 +1944,14 @@ components:
           - type: 'null'
           title: Summary
           description: 计划摘要
+        planner_source:
+          type: string
+          title: Planner Source
+          description: 计划来源
+        planner_attempts:
+          type: integer
+          title: Planner Attempts
+          description: 计划生成尝试次数
         plan_json:
           additionalProperties: true
           type: object
@@ -1966,6 +1974,8 @@ components:
       - task_id
       - version
       - status
+      - planner_source
+      - planner_attempts
       - plan_json
       - steps
       - created_at

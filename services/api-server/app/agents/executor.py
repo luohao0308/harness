@@ -65,10 +65,33 @@ class Executor:
             self.session.flush()
             return task
 
-        try:
-            plan = ExecutionPlan.model_validate(
-                self.planner.create_plan(task, model_content=planner_response.content)
+        plan = self.planner.parse_model_plan(
+            planner_response.content,
+            planner_source="llm",
+            planner_attempts=1,
+        )
+        if plan is None and not self._is_empty_mock_plan(planner_response.content):
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.PLAN_REJECTED,
+                payload_json={
+                    "reason": "model_plan_schema_invalid",
+                    "attempt": 1,
+                    "content_preview": planner_response.content[:500],
+                },
             )
+            repair_response = self._repair_plan(task=task, invalid_content=planner_response.content)
+            if repair_response is not None:
+                plan = self.planner.parse_model_plan(
+                    repair_response.content,
+                    planner_source="llm_repaired",
+                    planner_attempts=2,
+                )
+        if plan is None:
+            plan = self.planner.create_plan(task)
+
+        try:
+            plan = ExecutionPlan.model_validate(plan)
         except ValidationError as exc:
             task.status = "FAILED"
             task.updated_at = utc_now()
@@ -168,6 +191,38 @@ class Executor:
         )
         self.session.flush()
         return task
+
+    def _repair_plan(self, *, task: Task, invalid_content: str):
+        try:
+            return AuditedModelGateway(session=self.session, task_id=task.id).complete(
+                ModelRequest(
+                    model_provider=task.model_provider,
+                    model_name=task.model_name,
+                    messages=[
+                        ModelMessage(
+                            role="system",
+                            content=(
+                                "Repair the previous Planner output. Return only valid JSON "
+                                "with summary and steps. Each step must include key, "
+                                "description, execution_mode sync or async, requires_sandbox, "
+                                "and can_spawn_subagent."
+                            ),
+                        ),
+                        ModelMessage(
+                            role="user",
+                            content=(
+                                "Task goal:\n"
+                                f"{task.goal}\n\nInvalid Planner output:\n{invalid_content}"
+                            ),
+                        ),
+                    ],
+                )
+            )
+        except ModelGatewayError:
+            return None
+
+    def _is_empty_mock_plan(self, content: str) -> bool:
+        return content.strip() in {"", "{}"}
 
     def _persist_plan(self, task: Task, plan: ExecutionPlan) -> ExecutionPlanModel:
         max_version = self.session.execute(

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.model_gateway import ModelRequest, ModelResponse
 from app.agents.planner import DeterministicPlanner
 from app.db.models import AgentRun, ExecutionPlan, Task, TaskStep
 from app.main import app
@@ -49,6 +50,71 @@ def test_planner_uses_model_generated_sync_and_async_steps(db_session: Session) 
 
     assert [step.execution_mode for step in plan.steps] == ["sync", "async"]
     assert plan.steps[1].can_spawn_subagent is True
+    assert plan.planner_source == "llm"
+    assert plan.planner_attempts == 1
+
+
+def test_start_task_repairs_invalid_model_plan(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class FakeGateway:
+        calls = 0
+
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def complete(self, request_payload: ModelRequest) -> ModelResponse:
+            FakeGateway.calls += 1
+            if FakeGateway.calls == 1:
+                content = "not json"
+            else:
+                content = """
+                {
+                  "summary": "修复后的计划",
+                  "steps": [
+                    {
+                      "key": "inspect_after_repair",
+                      "description": "修复后同步检查",
+                      "execution_mode": "sync",
+                      "requires_sandbox": false,
+                      "can_spawn_subagent": false
+                    }
+                  ]
+                }
+                """
+            return ModelResponse(
+                content=content,
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={},
+                raw_response={"mode": "fake"},
+            )
+
+    monkeypatch.setattr("app.agents.executor.AuditedModelGateway", FakeGateway)
+    client = TestClient(app)
+    created = client.post(
+        "/api/tasks",
+        headers=AUTH_HEADERS,
+        json={
+            "title": "Repair",
+            "goal": "修复模型计划",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+        },
+    ).json()
+
+    response = client.post(f"/api/tasks/{created['id']}/start", headers=AUTH_HEADERS)
+
+    assert response.status_code == 202
+    plan = db_session.execute(
+        select(ExecutionPlan).where(ExecutionPlan.task_id == created["id"])
+    ).scalar_one()
+    assert plan.plan_json["planner_source"] == "llm_repaired"
+    assert plan.plan_json["planner_attempts"] == 2
+    assert plan.plan_json["steps"][0]["key"] == "inspect_after_repair"
+    events = client.get(f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS).json()["items"]
+    assert "PLAN_REJECTED" in [event["event_type"] for event in events]
 
 
 def test_start_task_generates_plan_steps_and_completion_events(db_session: Session) -> None:

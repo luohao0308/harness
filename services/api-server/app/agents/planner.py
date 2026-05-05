@@ -17,10 +17,23 @@ class DeterministicPlanner:
 
     def create_plan(self, task: Task, model_content: str | None = None) -> ExecutionPlan:
         if model_content:
-            plan = self._plan_from_model_content(model_content)
+            plan = self.parse_model_plan(model_content, planner_source="llm", planner_attempts=1)
             if plan is not None:
                 return plan
         return self._deterministic_plan(task)
+
+    def parse_model_plan(
+        self,
+        model_content: str,
+        *,
+        planner_source: str,
+        planner_attempts: int,
+    ) -> ExecutionPlan | None:
+        return self._plan_from_model_content(
+            model_content,
+            planner_source=planner_source,
+            planner_attempts=planner_attempts,
+        )
 
     def _deterministic_plan(self, task: Task) -> ExecutionPlan:
         goal_text = f"{task.title} {task.goal}".lower()
@@ -68,17 +81,29 @@ class DeterministicPlanner:
         plan = ExecutionPlan(
             summary=f"{task.goal}",
             steps=steps,
+            planner_source="deterministic",
+            planner_attempts=1,
         )
         return ExecutionPlan.model_validate(plan.model_dump())
 
-    def _plan_from_model_content(self, model_content: str) -> ExecutionPlan | None:
+    def _plan_from_model_content(
+        self,
+        model_content: str,
+        *,
+        planner_source: str,
+        planner_attempts: int,
+    ) -> ExecutionPlan | None:
         parsed = self._parse_model_json(model_content)
         if parsed is None:
             return None
         candidate = parsed.get("plan") if isinstance(parsed.get("plan"), dict) else parsed
         if not isinstance(candidate, dict):
             return None
-        normalized = self._normalize_plan(candidate)
+        normalized = self._normalize_plan(
+            candidate,
+            planner_source=planner_source,
+            planner_attempts=planner_attempts,
+        )
         try:
             return ExecutionPlan.model_validate(normalized)
         except ValidationError:
@@ -104,7 +129,13 @@ class DeterministicPlanner:
                 return None
         return parsed if isinstance(parsed, dict) else None
 
-    def _normalize_plan(self, candidate: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_plan(
+        self,
+        candidate: dict[str, Any],
+        *,
+        planner_source: str,
+        planner_attempts: int,
+    ) -> dict[str, Any]:
         steps = candidate.get("steps")
         if not isinstance(steps, list):
             steps = []
@@ -135,6 +166,8 @@ class DeterministicPlanner:
         return {
             "summary": str(candidate.get("summary") or "LLM generated execution plan"),
             "steps": normalized_steps,
+            "planner_source": planner_source,
+            "planner_attempts": planner_attempts,
         }
 
     def _normalize_step_key(self, value: str, index: int) -> str:

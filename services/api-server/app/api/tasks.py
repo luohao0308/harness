@@ -283,6 +283,8 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
         version=plan.version,
         status=plan.status,
         summary=plan.plan_json.get("summary"),
+        planner_source=str(plan.plan_json.get("planner_source", "deterministic")),
+        planner_attempts=int(plan.plan_json.get("planner_attempts", 1) or 1),
         plan_json=plan.plan_json,
         steps=steps,
         created_at=plan.created_at,
