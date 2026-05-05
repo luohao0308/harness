@@ -8,9 +8,23 @@ import type { Subagent } from "../../tasks/api";
 function subagentLabel(subagent: Subagent) {
   const label = subagent.context_json.label;
   const goal = subagent.context_json.goal;
+  const description = subagent.context_json.description;
   if (typeof label === "string" && label.length > 0) return label;
   if (typeof goal === "string" && goal.length > 0) return goal;
+  if (typeof description === "string" && description.length > 0) return description;
   return "子任务执行";
+}
+
+function subagentStepKey(subagent: Subagent) {
+  const stepKey = subagent.context_json.step_key;
+  return typeof stepKey === "string" && stepKey.length > 0 ? stepKey : null;
+}
+
+function subagentResultSummary(subagent: Subagent) {
+  const result = subagent.context_json.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const summary = (result as Record<string, unknown>).summary;
+  return typeof summary === "string" && summary.length > 0 ? summary : null;
 }
 
 export function SubagentPanel({
@@ -42,13 +56,30 @@ export function SubagentPanel({
         {subagents.map((subagent) => (
           <div
             key={subagent.id}
-            className="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1.5"
+            className="rounded-md border border-slate-100 px-2 py-1.5"
           >
-            <div>
-              <div className="font-mono text-xs text-slate-800">{subagent.id.slice(0, 8)}</div>
-              <div className="text-[10px] text-slate-500">{subagentLabel(subagent)}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-mono text-xs text-slate-800">{subagent.id.slice(0, 8)}</div>
+                <div className="truncate text-[10px] text-slate-500">{subagentLabel(subagent)}</div>
+              </div>
+              <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
             </div>
-            <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
+            <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+              {subagentStepKey(subagent) && (
+                <>
+                  <span>来源步骤</span>
+                  <span className="font-mono text-slate-700">{subagentStepKey(subagent)}</span>
+                </>
+              )}
+              {subagent.started_at && <span>已启动</span>}
+              {subagent.timeout_at && <span>超时保护已设置</span>}
+            </div>
+            {subagentResultSummary(subagent) && (
+              <div className="mt-1 line-clamp-2 text-[10px] text-slate-500">
+                {subagentResultSummary(subagent)}
+              </div>
+            )}
           </div>
         ))}
       </div>

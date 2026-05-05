@@ -1,6 +1,7 @@
-import { CheckCircle2, Clock } from "lucide-react";
+import { CheckCircle2, Clock, GitBranch } from "lucide-react";
 
-import type { AgentEvent, TaskPlan } from "../api";
+import type { AgentEvent, Subagent, TaskPlan } from "../api";
+import { Badge } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
 import { executionModeLabel, statusLabel } from "../../../lib/labels";
@@ -11,17 +12,30 @@ type PlanStep = {
   description: string;
   execution_mode: string;
   status?: string;
+  can_spawn_subagent?: boolean;
+  assigned_agent_id?: string | null;
 };
 
-export function ExecutionPlanPanel({ events, plan }: { events: AgentEvent[]; plan?: TaskPlan }) {
+export function ExecutionPlanPanel({
+  events,
+  plan,
+  subagents = [],
+}: {
+  events: AgentEvent[];
+  plan?: TaskPlan;
+  subagents?: Subagent[];
+}) {
   const generated = events.find((event) => event.event_type === "PLAN_GENERATED");
   const eventPlan = generated?.payload_json.plan as { steps?: PlanStep[] } | undefined;
+  const subagentsById = new Map(subagents.map((subagent) => [subagent.id, subagent]));
   const steps: PlanStep[] =
     plan?.steps.map((step) => ({
       step_key: step.step_key,
       description: step.description,
       execution_mode: step.execution_mode,
       status: step.status,
+      can_spawn_subagent: step.can_spawn_subagent,
+      assigned_agent_id: step.assigned_agent_id,
     })) ??
     eventPlan?.steps ??
     [];
@@ -53,6 +67,18 @@ export function ExecutionPlanPanel({ events, plan }: { events: AgentEvent[]; pla
             );
             const status = step.status ?? (completed ? "COMPLETED" : running ? "RUNNING" : "PENDING");
             const tone = statusTone(status);
+            const completedEvent = events.find(
+              (event) =>
+                event.event_type === "STEP_COMPLETED" &&
+                event.payload_json.step_key === stepKey &&
+                typeof event.payload_json.assigned_agent_id === "string",
+            );
+            const assignedAgentId =
+              step.assigned_agent_id ??
+              (completedEvent?.payload_json.assigned_agent_id as string | undefined) ??
+              null;
+            const assignedSubagent = assignedAgentId ? subagentsById.get(assignedAgentId) : undefined;
+            const isAsync = step.execution_mode === "async" || Boolean(step.can_spawn_subagent);
             return (
               <div
                 key={stepKey}
@@ -81,6 +107,22 @@ export function ExecutionPlanPanel({ events, plan }: { events: AgentEvent[]; pla
                   <span>·</span>
                   <span>{statusLabel(status)}</span>
                 </div>
+                {isAsync && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1 pl-6 text-[10px] text-slate-500">
+                    <GitBranch className="h-3 w-3 text-slate-400" />
+                    <span>派生子 Agent</span>
+                    {assignedAgentId ? (
+                      <>
+                        <span className="font-mono text-slate-700">{assignedAgentId.slice(0, 8)}</span>
+                        <Badge tone={statusTone(assignedSubagent?.status ?? "PENDING")}>
+                          {statusLabel(assignedSubagent?.status ?? "PENDING")}
+                        </Badge>
+                      </>
+                    ) : (
+                      <span className="text-slate-400">等待派生</span>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })

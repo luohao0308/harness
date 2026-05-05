@@ -192,7 +192,11 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
 
       <div className="grid grid-cols-12 gap-4 p-4">
         <section className="col-span-3">
-          <ExecutionPlanPanel events={events} plan={planQuery.data} />
+          <ExecutionPlanPanel
+            events={events}
+            plan={planQuery.data}
+            subagents={subagentsQuery.data?.items ?? []}
+          />
         </section>
         <section className={focus === "events" ? "col-span-9" : "col-span-6"}>
           <EventTimeline events={events} connected={stream.connected} />

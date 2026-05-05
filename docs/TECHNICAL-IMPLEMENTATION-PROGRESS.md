@@ -95,7 +95,7 @@ docs/SPEC.md
 | 执行类型 | 后端体现 | 前端体现 | 数据体现 | 当前状态 |
 |---|---|---|---|---|
 | 同步执行 | Executor 执行 `execution_mode=sync` 的 step | 任务详情执行计划展示“同步执行”和步骤状态 | `task_steps.execution_mode=sync`、`STEP_STARTED`、`STEP_COMPLETED` | 基础落地 |
-| 异步执行 | Executor 对 `execution_mode=async` 且 `can_spawn_subagent=true` 的 step 派生 Subagent | 任务详情执行计划展示“异步执行”，Subagent 面板展示子 Agent | `task_steps.assigned_agent_id`、`agent_runs.status`、`SUBAGENT_SPAWNED` | 基础落地 |
+| 异步执行 | Executor 对 `execution_mode=async` 且 `can_spawn_subagent=true` 的 step 派生 Subagent | 执行计划展示“异步执行”、子 Agent ID 和状态，Subagent 面板展示来源 step | `task_steps.assigned_agent_id`、`agent_runs.status`、`SUBAGENT_SPAWNED` | 基础落地 |
 | 并发控制 | Subagent 上限固定 5 | 页面展示任务最大子 Agent 数 | `tasks.max_subagents`、`agent_runs` | 已落地 |
 | 超时保护 | worker 使用 timeout | 子 Agent 列表展示 timeout 时间 | `agent_runs.timeout_at`、`SUBAGENT_TIMEOUT` | 基础落地 |
 
@@ -163,14 +163,13 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 完成同步执行 / 异步执行派生关系展示
-2. 补 LLM Planner 结构重试和计划版本对比
-3. 补 Subagent worker 工具链执行和父任务结果聚合
-4. 补 Worker 级恢复编排
-5. 补 Loki logs、Grafana dashboards、Trace 查询和观测服务健康接口
-6. 补控制台全量 i18n
-7. 整合用户提供的官网代码
-8. 同步 OpenAPI、测试、Runbook 和覆盖文档
+1. 补 LLM Planner 结构重试和计划版本对比
+2. 补 Subagent worker 工具链执行和父任务结果聚合
+3. 补 Worker 级恢复编排
+4. 补 Loki logs、Grafana dashboards、Trace 查询和观测服务健康接口
+5. 补控制台全量 i18n
+6. 整合用户提供的官网代码
+7. 同步 OpenAPI、测试、Runbook 和覆盖文档
 ```
 
 ## 验证命令

@@ -134,7 +134,7 @@ agent_subagent_duration_seconds
 |---|---|---|
 | 主任务聚合子 Agent 结果 | 父任务结果摘要仍需增强 | Parent Executor 聚合子 Agent 输出 |
 | 子 Agent 长任务执行增强 | 当前 worker 已执行 assignment 并回写摘要，复杂工具链仍需增强 | worker 按 assignment 调用模型、工具和沙箱并回写结构化结果 |
-| 派生关系展示 | async step 与 Subagent 的关联展示仍需增强 | 页面展示 step key、assigned_agent_id 和子 Agent 状态链路 |
+| 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
 
 ## 实现顺序
 
@@ -154,4 +154,5 @@ agent_subagent_duration_seconds
 - 超时任务进入 `TIMEOUT`。
 - async step 必须生成 Subagent 记录。
 - 任务详情页必须展示异步派生出的 Subagent。
+- 执行计划面板必须展示异步步骤关联的子 Agent ID 和状态。
 - 主任务能读取 Subagent 结果摘要。

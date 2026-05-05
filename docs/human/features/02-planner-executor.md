@@ -168,7 +168,7 @@ agent_subagents_running
 |---|---|---|
 | LLM Planner 增强 | 当前已解析模型 JSON，计划质量仍依赖供应商输出 | 增强 Prompt、结构重试和计划版本对比 |
 | 步骤级断点续跑 | Worker 崩溃后的执行恢复仍需增强 | 以 Replay state 驱动 Worker 恢复 |
-| 异步执行可视化 | 当前页面展示 `sync`、`async` 原始值，说明不足 | 控制台展示中文标签、派生关系和 Subagent 状态链路 |
+| 异步执行可视化 | 基础落地，已展示中文标签、派生子 Agent ID 和状态 | 增强时间线中的并行执行拓扑 |
 
 ## 实现顺序
 
@@ -178,6 +178,7 @@ agent_subagents_running
 3. 增加计划版本对比
 4. 增强 Executor ReAct 循环
 5. 补 Worker 级恢复与验收测试
+6. 增强时间线中的并行执行拓扑
 ```
 
 ## 验收标准
@@ -187,6 +188,7 @@ agent_subagents_running
 - 同步步骤在计划和步骤接口中显示 `execution_mode=sync`。
 - 异步步骤在计划和步骤接口中显示 `execution_mode=async`。
 - 异步步骤必须生成 `agent_runs` 记录，并在 Subagent 面板展示。
+- 异步步骤在执行计划面板展示关联子 Agent ID 和状态。
 - 工具动作不绕过 Tool Registry。
 - 高风险动作不绕过 Sandbox。
 - 事件流能还原执行顺序。

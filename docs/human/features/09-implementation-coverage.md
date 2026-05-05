@@ -102,7 +102,7 @@
 |---|---|---|
 | Planner | 已接入模型 JSON 计划解析，解析失败回退确定性计划 | 增强 Prompt、结构重试和计划版本对比 |
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 级恢复编排 |
-| 同步与异步可视化 | 执行计划已显示中文标签，派生关系说明仍需增强 | 控制台展示 assigned_agent_id 和 Subagent 状态链路 |
+| 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id 和 Subagent 状态链路 | 增强时间线中的并行执行拓扑 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 补齐 Worker 级恢复编排 |
