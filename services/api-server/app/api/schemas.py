@@ -44,12 +44,21 @@ class TaskArtifact(BaseModel):
     status: str = Field(description="产物状态")
 
 
+class TaskSubagentResult(BaseModel):
+    id: str = Field(description="子 Agent ID")
+    step_key: str | None = Field(default=None, description="来源步骤键")
+    status: str = Field(description="子 Agent 状态")
+    summary: str | None = Field(default=None, description="子 Agent 结果摘要")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+
+
 class TaskResultResponse(BaseModel):
     task_id: str = Field(description="任务 ID")
     status: str = Field(description="任务状态")
     summary: str | None = Field(default=None, description="结果摘要")
     execution_plan: dict | None = Field(default=None, description="执行计划")
     artifacts: list[TaskArtifact] = Field(description="产物列表")
+    subagent_results: list[TaskSubagentResult] = Field(description="子 Agent 结果聚合")
     last_sequence: int = Field(description="最后事件序号")
     pending: bool = Field(description="是否仍在运行")
 

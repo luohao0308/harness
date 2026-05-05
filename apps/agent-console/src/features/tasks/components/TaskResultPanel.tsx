@@ -1,4 +1,4 @@
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Bot } from "lucide-react";
 
 import type { Task, TaskResult } from "../api";
 import { Card, CardHeader } from "../../../components/ui/card";
@@ -25,6 +25,35 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
         </span>
       </CardHeader>
       {result?.summary && <div className="border-b border-slate-100 p-3 text-xs">{result.summary}</div>}
+      {result?.subagent_results && result.subagent_results.length > 0 && (
+        <div className="border-b border-slate-100 p-3">
+          <div className="mb-2 flex items-center gap-1 text-xs font-semibold text-slate-900">
+            <Bot className="h-3.5 w-3.5" /> 异步子 Agent 结果
+          </div>
+          <Table>
+            <thead className="bg-slate-50/40 text-slate-500">
+              <tr>
+                <Th>子 Agent</Th>
+                <Th>来源步骤</Th>
+                <Th>状态</Th>
+                <Th>摘要</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.subagent_results.map((subagent) => (
+                <tr key={subagent.id} className="border-t border-slate-100">
+                  <Td className="font-mono text-slate-800">{subagent.id.slice(0, 8)}</Td>
+                  <Td className="font-mono text-slate-600">{subagent.step_key ?? "-"}</Td>
+                  <Td className="text-slate-600">{statusLabel(subagent.status)}</Td>
+                  <Td className="max-w-[360px] truncate text-slate-600">
+                    {subagent.summary ?? "尚未写入结果"}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+      )}
       <Table>
         <thead className="bg-slate-50/40 text-slate-500">
           <tr>

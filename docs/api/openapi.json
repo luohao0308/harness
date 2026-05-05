@@ -3233,6 +3233,14 @@
             "title": "Artifacts",
             "description": "产物列表"
           },
+          "subagent_results": {
+            "items": {
+              "$ref": "#/components/schemas/TaskSubagentResult"
+            },
+            "type": "array",
+            "title": "Subagent Results",
+            "description": "子 Agent 结果聚合"
+          },
           "last_sequence": {
             "type": "integer",
             "title": "Last Sequence",
@@ -3249,6 +3257,7 @@
           "task_id",
           "status",
           "artifacts",
+          "subagent_results",
           "last_sequence",
           "pending"
         ],
@@ -3382,6 +3391,63 @@
           "execution_mode"
         ],
         "title": "TaskStepResponse"
+      },
+      "TaskSubagentResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "子 Agent ID"
+          },
+          "step_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Key",
+            "description": "来源步骤键"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "子 Agent 状态"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary",
+            "description": "子 Agent 结果摘要"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At",
+            "description": "完成时间"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "TaskSubagentResult"
       },
       "ToolCallPage": {
         "properties": {

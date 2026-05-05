@@ -39,6 +39,7 @@ POST /api/subagents/{subagent_id}/cancel
 | Subagent 面板 | 子 Agent 数量、状态、assignment 摘要 | Subagent API |
 | Subagent 列表页 | `PENDING`、`RUNNING`、`SUCCESS`、`FAILED`、`TIMEOUT`、`CANCELLED` | Subagent API |
 | 事件时间线 | `SUBAGENT_SPAWNED`、`SUBAGENT_STARTED`、`SUBAGENT_COMPLETED` | Events API |
+| 任务结果面板 | 聚合展示子 Agent 状态和结果摘要 | Result API |
 
 ## 数据模型
 
@@ -57,6 +58,7 @@ POST /api/subagents/{subagent_id}/cancel
 | `agent_runs.context_json.assignment` | `agent_runs` | 子 Agent 任务说明 |
 | `agent_runs.status` | `agent_runs` | 子 Agent 当前状态 |
 | `task_steps.assigned_agent_id` | `task_steps` | async step 绑定的子 Agent |
+| `agent_runs.context_json.result` | `agent_runs` | worker 写回的子 Agent 结果摘要 |
 
 ## 事件模型
 
@@ -127,12 +129,12 @@ agent_subagent_duration_seconds
 | Dramatiq worker | 基础落地 | `agent-worker` |
 | 异步派生可见性 | 基础落地 | 任务详情页 Subagent 面板和 `/subagents` 页面 |
 | worker 结果写回 | 基础落地 | worker 写入 `SUBAGENT_PROGRESS`、`SUBAGENT_COMPLETED` 和 `context_json.result` |
+| 主任务聚合子 Agent 结果 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` 和 `subagent-results.json` |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 主任务聚合子 Agent 结果 | 父任务结果摘要仍需增强 | Parent Executor 聚合子 Agent 输出 |
 | 子 Agent 长任务执行增强 | 当前 worker 已执行 assignment 并回写摘要，复杂工具链仍需增强 | worker 按 assignment 调用模型、工具和沙箱并回写结构化结果 |
 | 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
 
@@ -141,7 +143,7 @@ agent_subagent_duration_seconds
 ```text
 1. 固化 agent_runs 字段和状态机
 2. 强化 Dramatiq worker 工具链执行内容
-3. 增加父任务结果聚合
+3. 增强父任务结果聚合产物详情
 4. 增加超时和取消测试
 5. 前端补详情页和批量状态展示
 ```

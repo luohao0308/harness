@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import ExecutionPlan, Task, TaskSnapshot, TaskStep, utc_now
+from app.db.models import AgentRun, ExecutionPlan, Task, TaskSnapshot, TaskStep, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.main import app
@@ -158,6 +158,60 @@ def test_task_plan_steps_and_tool_execute_endpoints() -> None:
     assert tool_payload["allowed"] is True
     assert tool_payload["tool_call"]["tool_name"] == "read_file"
     assert "content" in tool_payload["output"]
+
+
+def test_task_result_aggregates_subagent_outputs(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Async aggregate",
+        goal="Collect async result",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    subagent = AgentRun(
+        task_id=task.id,
+        agent_type="subagent",
+        status="SUCCESS",
+        context_json={
+            "step_key": "subagent_research",
+            "result": {"summary": "异步调研完成"},
+        },
+        started_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add(subagent)
+    EventStore(db_session).append(
+        task_id=task.id,
+        agent_run_id=subagent.id,
+        event_type=EventType.SUBAGENT_COMPLETED,
+        payload_json={"summary": "异步调研完成"},
+    )
+    db_session.commit()
+
+    client = TestClient(app)
+    result = client.get(f"/api/tasks/{task.id}/result", headers=AUTH_HEADERS)
+
+    assert result.status_code == 200
+    payload = result.json()
+    subagent_result = payload["subagent_results"][0]
+    assert subagent_result["id"] == subagent.id
+    assert subagent_result["step_key"] == "subagent_research"
+    assert subagent_result["status"] == "SUCCESS"
+    assert subagent_result["summary"] == "异步调研完成"
+    assert subagent_result["completed_at"] is not None
+    assert payload["artifacts"][1]["name"] == "subagent-results.json"
+    assert "成功 1 个" in payload["summary"]
 
 
 def test_replay_uses_snapshot_and_events_after_snapshot(db_session: Session) -> None:

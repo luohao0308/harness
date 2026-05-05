@@ -17,12 +17,14 @@ from app.api.schemas import (
     TaskResponse,
     TaskResultResponse,
     TaskStepPage,
+    TaskSubagentResult,
     ToolCallPage,
     ToolExecuteRequest,
     ToolExecuteResponse,
 )
 from app.db.models import (
     AgentEvent,
+    AgentRun,
     ExecutionPlan,
     ModelCall,
     SandboxInstance,
@@ -46,6 +48,7 @@ from app.tools.runner import ToolRunner
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+SUBAGENT_TERMINAL_STATUSES = {"SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"}
 
 
 def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task:
@@ -228,17 +231,42 @@ def get_task_result(task_id: str, session: DbSession, principal: Principal) -> T
             status="ready" if task.status == "COMPLETED" else "pending",
         )
     ]
-    summary = None
+    subagent_runs = list(
+        session.execute(
+            select(AgentRun)
+            .where(AgentRun.task_id == task.id, AgentRun.agent_type == "subagent")
+            .order_by(AgentRun.started_at.asc(), AgentRun.id.asc())
+        ).scalars()
+    )
+    subagent_results = [_to_subagent_result(agent_run) for agent_run in subagent_runs]
+    if subagent_runs:
+        artifacts.append(
+            TaskArtifact(
+                name="subagent-results.json",
+                artifact_type="json",
+                description="异步子 Agent 结果聚合",
+                status=(
+                    "ready"
+                    if all(run.status in SUBAGENT_TERMINAL_STATUSES for run in subagent_runs)
+                    else "pending"
+                ),
+            )
+        )
+    summary_parts = []
     if task.status == "COMPLETED":
-        summary = f"任务《{task.title}》已完成。"
+        summary_parts.append(f"任务《{task.title}》已完成。")
     if task.status == "FAILED":
-        summary = f"任务《{task.title}》已失败。"
+        summary_parts.append(f"任务《{task.title}》已失败。")
+    subagent_summary = _subagent_result_summary(subagent_results)
+    if subagent_summary is not None:
+        summary_parts.append(subagent_summary)
     return TaskResultResponse(
         task_id=task.id,
         status=task.status,
-        summary=summary,
+        summary=" ".join(summary_parts) if summary_parts else None,
         execution_plan=plan.plan_json if plan is not None else None,
         artifacts=artifacts,
+        subagent_results=subagent_results,
         last_sequence=last_sequence or 0,
         pending=task.status not in {"COMPLETED", "FAILED", "CANCELLED"},
     )
@@ -407,6 +435,52 @@ def _latest_plan(task_id: str, session: Session) -> ExecutionPlan | None:
         .order_by(ExecutionPlan.version.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
+    result = agent_run.context_json.get("result")
+    summary = None
+    if isinstance(result, dict):
+        raw_summary = result.get("summary")
+        if raw_summary is not None:
+            summary = str(raw_summary)
+    raw_step_key = agent_run.context_json.get("step_key")
+    return TaskSubagentResult(
+        id=agent_run.id,
+        step_key=str(raw_step_key) if raw_step_key is not None else None,
+        status=agent_run.status,
+        summary=summary,
+        completed_at=agent_run.completed_at,
+    )
+
+
+def _subagent_result_summary(subagent_results: list[TaskSubagentResult]) -> str | None:
+    if not subagent_results:
+        return None
+    counts = {status: 0 for status in SUBAGENT_TERMINAL_STATUSES}
+    running = 0
+    for result in subagent_results:
+        if result.status in counts:
+            counts[result.status] += 1
+        else:
+            running += 1
+    parts = [
+        f"共 {len(subagent_results)} 个子 Agent",
+        f"成功 {counts['SUCCESS']} 个",
+        f"失败 {counts['FAILED']} 个",
+        f"超时 {counts['TIMEOUT']} 个",
+        f"取消 {counts['CANCELLED']} 个",
+    ]
+    if running > 0:
+        parts.append(f"运行中 {running} 个")
+    completed_summaries = [
+        result.summary
+        for result in subagent_results
+        if result.status == "SUCCESS" and result.summary
+    ]
+    if completed_summaries:
+        parts.append("异步摘要：" + "；".join(completed_summaries[:3]))
+    return "子 Agent 结果：" + "，".join(parts) + "。"
 
 
 def _resolve_tool_sandbox(

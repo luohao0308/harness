@@ -187,6 +187,13 @@ export type TaskResult = {
     description: string;
     status: string;
   }>;
+  subagent_results: Array<{
+    id: string;
+    step_key: string | null;
+    status: string;
+    summary: string | null;
+    completed_at: string | null;
+  }>;
   last_sequence: number;
   pending: boolean;
 };

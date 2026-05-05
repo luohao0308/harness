@@ -69,6 +69,7 @@
 | 事件流 | 已落地 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` |
 | Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
 | Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
+| Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
 | 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` |
 | 模型审计 | 基础落地 | `GET /api/tasks/{task_id}/model-calls` |
@@ -87,7 +88,7 @@
 |---|---|---|
 | `/tasks` | Task API | 已接入 |
 | `/tasks/new` | Task API | 已接入 |
-| `/tasks/:taskId` | Task、Result、Events、Replay、Audit、Subagent | 已接入 |
+| `/tasks/:taskId` | Task、Result、Events、Replay、Audit、Subagent、Subagent Result | 已接入 |
 | `/subagents` | Subagent API | 已接入 |
 | `/sandboxes` | Sandbox API | 已接入 |
 | `/observability` | `GET /api/observability/summary` 与 `/metrics` | 已接入 |
