@@ -161,3 +161,110 @@ def test_observability_summary_aggregates_current_organization(db_session: Sessi
     assert payload["sandbox_total"] == 1
     assert payload["tasks_by_status"] == [{"name": "FAILED", "count": 1}]
     assert payload["subagents_by_status"] == [{"name": "FAILED", "count": 1}]
+
+
+def test_observability_logs_returns_event_store_entries(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Logs",
+        goal="Query logs",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_STARTED,
+        payload_json={"summary": "started"},
+        trace_id="trace-logs",
+    )
+    db_session.commit()
+
+    response = TestClient(app).get(
+        "/api/observability/logs",
+        headers=AUTH_HEADERS,
+        params={"task_id": task.id, "trace_id": "trace-logs"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "event_store"
+    assert payload["items"][0]["task_id"] == task.id
+    assert payload["items"][0]["trace_id"] == "trace-logs"
+    assert payload["items"][0]["event_type"] == "TASK_STARTED"
+
+
+def test_observability_trace_returns_event_spans(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Trace",
+        goal="Query trace",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_STARTED,
+        payload_json={"summary": "started"},
+        trace_id="trace-chain",
+    )
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_COMPLETED,
+        payload_json={"summary": "done"},
+        trace_id="trace-chain",
+    )
+    db_session.commit()
+
+    response = TestClient(app).get(
+        "/api/observability/traces/trace-chain",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["trace_id"] == "trace-chain"
+    assert payload["source"] == "event_store"
+    assert [span["name"] for span in payload["spans"]] == ["TASK_STARTED", "TASK_COMPLETED"]
+    assert payload["spans"][1]["parent_span_id"] == "event-1"
+
+
+def test_grafana_dashboards_returns_configured_fallback() -> None:
+    response = TestClient(app).get("/api/observability/grafana/dashboards", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"][0]["uid"] == "agent-harness"
+    assert payload["items"][0]["source"] in {"configured", "grafana"}
+
+
+def test_observability_services_health_returns_all_services() -> None:
+    response = TestClient(app).get("/api/observability/services/health", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {service["name"] for service in payload["services"]} == {
+        "prometheus",
+        "grafana",
+        "loki",
+        "otel-collector",
+    }

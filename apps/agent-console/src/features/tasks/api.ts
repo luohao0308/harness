@@ -102,6 +102,68 @@ export type ObservabilitySummary = {
   sandbox_total: number;
 };
 
+export type ObservabilityLogEntry = {
+  timestamp: string;
+  level: string;
+  service: string;
+  message: string;
+  trace_id: string | null;
+  task_id: string | null;
+  agent_run_id: string | null;
+  event_type: string | null;
+  payload_json: Record<string, unknown>;
+  source: string;
+};
+
+export type ObservabilityLogs = {
+  items: ObservabilityLogEntry[];
+  next_cursor: string | null;
+  source: string;
+};
+
+export type ObservabilityTraceSpan = {
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string | null;
+  name: string;
+  service: string;
+  start_time: string;
+  duration_ms: number;
+  attributes: Record<string, unknown>;
+  source: string;
+};
+
+export type ObservabilityTrace = {
+  trace_id: string;
+  spans: ObservabilityTraceSpan[];
+  source: string;
+};
+
+export type GrafanaDashboard = {
+  uid: string;
+  title: string;
+  url: string;
+  tags: string[];
+  source: string;
+};
+
+export type GrafanaDashboards = {
+  items: GrafanaDashboard[];
+  next_cursor: string | null;
+};
+
+export type ObservabilityServiceHealth = {
+  name: string;
+  status: string;
+  url: string;
+  latency_ms: number | null;
+  error_message: string | null;
+};
+
+export type ObservabilityServicesHealth = {
+  services: ObservabilityServiceHealth[];
+};
+
 export type Subagent = {
   id: string;
   task_id: string;
@@ -330,4 +392,35 @@ export async function getWarmPool() {
 
 export async function getObservabilitySummary() {
   return request<ObservabilitySummary>("/api/observability/summary");
+}
+
+export async function listObservabilityLogs(params?: {
+  task_id?: string;
+  trace_id?: string;
+  service?: string;
+  event_type?: string;
+  limit?: number;
+}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<ObservabilityLogs>(`/api/observability/logs${suffix}`);
+}
+
+export async function getObservabilityTrace(traceId: string) {
+  return request<ObservabilityTrace>(
+    `/api/observability/traces/${encodeURIComponent(traceId)}`,
+  );
+}
+
+export async function listGrafanaDashboards() {
+  return request<GrafanaDashboards>("/api/observability/grafana/dashboards");
+}
+
+export async function getObservabilityServicesHealth() {
+  return request<ObservabilityServicesHealth>("/api/observability/services/health");
 }

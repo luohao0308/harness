@@ -24,7 +24,7 @@ GET /api/observability/summary
 GET /metrics
 ```
 
-待落地：
+基础落地：
 
 ```text
 GET /api/observability/grafana/dashboards
@@ -105,10 +105,10 @@ Trace span -> OTel Collector -> traces API -> 控制台 Trace 页
 
 | 服务 | 当前入口 | 目标用途 | Harness 后端代理 |
 |---|---|---|---|
-| Prometheus | `http://127.0.0.1:9091` | 抓取并查询指标 | `GET /metrics` 已落地，查询代理待落地 |
-| Grafana | `http://127.0.0.1:3001` | 展示仪表盘 | `GET /api/observability/grafana/dashboards` 待落地 |
-| Loki | `http://127.0.0.1:3100` | 查询结构化日志 | `GET /api/observability/logs` 待落地 |
-| OpenTelemetry Collector | `http://127.0.0.1:4317`、`http://127.0.0.1:4318` | 接收 trace | `GET /api/observability/traces/{trace_id}` 待落地 |
+| Prometheus | `http://127.0.0.1:9091` | 抓取并查询指标 | `GET /metrics` 已落地 |
+| Grafana | `http://127.0.0.1:3001` | 展示仪表盘 | `GET /api/observability/grafana/dashboards` 基础落地 |
+| Loki | `http://127.0.0.1:3100` | 查询结构化日志 | `GET /api/observability/logs` 基础落地 |
+| OpenTelemetry Collector | `http://127.0.0.1:4317`、`http://127.0.0.1:4318` | 接收 trace | `GET /api/observability/traces/{trace_id}` 基础落地 |
 
 ## 观测指标
 
@@ -186,27 +186,27 @@ cookie
 | Loki 容器 | 已落地 | `deploy/docker-compose/docker-compose.yml` |
 | OTel Collector 容器 | 已落地 | `deploy/docker-compose/docker-compose.yml` |
 | trace_id 响应头 | 基础落地 | `services/api-server/app/core/tracing.py` |
-| Loki 日志采集链路 | 待落地 | 缺日志采集器和 push 链路 |
-| Grafana 后端代理 | 待落地 | 缺 `GET /api/observability/grafana/dashboards` |
-| Trace 查询 API | 待落地 | 缺 `GET /api/observability/traces/{trace_id}` |
+| Loki 日志查询 API | 基础落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
+| Grafana 后端代理 | 基础落地 | `GET /api/observability/grafana/dashboards` |
+| Trace 查询 API | 基础落地 | `GET /api/observability/traces/{trace_id}`，当前使用 Event Store 合成 span |
+| 观测服务健康 | 基础落地 | `GET /api/observability/services/health` |
 | 全量控制台 i18n | 待落地 | 当前只覆盖 Shell、导航和部分文案 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Loki 日志采集链路 | 控制台无法查询结构化日志 | 日志进入 Loki 并按 task_id、trace_id 查询 |
-| Grafana 后端代理 | 控制台无法读取 dashboard 列表 | 后端返回 dashboard 元数据和深链 |
-| OTel Trace 查询 | 控制台无法按 trace_id 看链路 | 后端返回 trace span 列表 |
+| Loki 真实采集链路 | 当前接口已有 Event Store 回退，外部日志采集仍需增强 | 日志进入 Loki 并按 task_id、trace_id 查询 |
+| Grafana 鉴权和 provisioning | 当前接口已有 dashboard 列表和配置回退 | 后端返回 dashboard 元数据和深链 |
+| OTel Trace 后端 | 当前接口已有 Event Store 合成 span | 后端返回真实 trace span 列表 |
 | 控制台全量 i18n | 部分旧页面仍是英文 | 默认中文，顶栏切换 English |
 
 ## 实现顺序
 
 ```text
-1. 补 Loki 日志采集链路
-2. 补 /api/observability/logs 查询接口
-3. 补 Grafana dashboard provisioning 与 dashboard 列表接口
-4. 补 OTel exporter wiring 与 trace 查询接口
+1. 增强 Loki 日志采集链路
+2. 增强 Grafana dashboard provisioning 与鉴权
+3. 补 OTel exporter wiring 与真实 trace 查询
 5. 拆分控制台 i18n 字典
 6. 覆盖任务、详情、Subagent、沙箱、观测、设置页面双语
 7. 更新 OpenAPI、控制台页面和验收测试

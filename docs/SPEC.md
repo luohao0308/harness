@@ -119,9 +119,9 @@ User Goal
 
 | 缺口 | 规格文件 | 目标 |
 |---|---|---|
-| Loki 日志采集 | `docs/human/features/10-observability-localization-spec.md` | 日志按 task_id、trace_id 查询 |
-| Grafana 后端代理 | `docs/human/features/10-observability-localization-spec.md` | 控制台读取 dashboard 列表 |
-| OTel Trace 查询 | `docs/human/features/10-observability-localization-spec.md` | 控制台按 trace_id 查看链路 |
+| Loki 日志采集 | `docs/human/features/10-observability-localization-spec.md` | 外部 Loki 采集链路增强 |
+| Grafana 后端代理 | `docs/human/features/10-observability-localization-spec.md` | 已有 dashboard 列表接口，增强鉴权和 provisioning |
+| OTel Trace 查询 | `docs/human/features/10-observability-localization-spec.md` | 已有 trace 查询接口，增强真实 OTel Trace 后端 |
 | 控制台全量 i18n | `docs/human/features/10-observability-localization-spec.md` | 所有页面双语 |
 | LLM Planner | `docs/human/features/02-planner-executor.md` | 真实模型规划、结构校验和计划版本 |
 | Worker 级恢复 | `docs/human/features/03-event-sourcing-replay.md` | 长任务恢复编排 |

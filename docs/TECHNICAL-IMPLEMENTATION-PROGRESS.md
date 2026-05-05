@@ -66,7 +66,7 @@ docs/SPEC.md
 | Replay | snapshot + event replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
 | 模型网关 | OpenAI-compatible | 基础落地 | Model Gateway、model_calls |
 | 工具治理 | Tool Registry + Policy Engine | 基础落地 | Tool Runner、tool_calls |
-| 观测 | Prometheus + Grafana + Loki + OTel | 部署基础已接入，深度查询待补 | `/metrics`、Observability Summary |
+| 观测 | Prometheus + Grafana + Loki + OTel | 深度观测接口基础落地，真实采集链路仍需增强 | `/metrics`、Observability Summary、Logs、Trace、Dashboard、Health |
 | 本地化 | 默认中文，English 切换 | 基础落地 | 控制台 Shell 和部分页面 |
 
 ## 功能实现与接口进展
@@ -121,10 +121,10 @@ docs/SPEC.md
 |---|---|---|---|
 | Prometheus 指标 | 已落地 | `GET /metrics` | 增强 dashboard 指标覆盖 |
 | 观测摘要 | 已落地 | `GET /api/observability/summary` | 增加队列、耗时分位和深链 |
-| Grafana | 部署基础已接入 | Grafana 服务 | `GET /api/observability/grafana/dashboards` |
-| Loki | 部署基础已接入 | Loki 服务 | `GET /api/observability/logs` |
-| OpenTelemetry | trace_id 基础已接入 | 响应头与 collector | `GET /api/observability/traces/{trace_id}` |
-| 服务健康 | API 健康已接入 | `GET /health` | `GET /api/observability/services/health` |
+| Grafana | 基础落地 | `GET /api/observability/grafana/dashboards` | 增强鉴权和 provisioning |
+| Loki | 基础落地 | `GET /api/observability/logs` | 增强真实日志采集链路 |
+| OpenTelemetry | 基础落地 | `GET /api/observability/traces/{trace_id}` | 接入真实 Trace 后端 |
+| 服务健康 | 基础落地 | `GET /health`、`GET /api/observability/services/health` | 增强告警联动 |
 
 ## 当前未完成缺口
 
@@ -136,9 +136,9 @@ docs/SPEC.md
 | 父任务聚合子 Agent 结果 | 任务结果摘要对异步输出聚合不足 | `docs/human/features/04-subagent-orchestration.md` |
 | 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
 | TPM 限流与供应商熔断 | 模型成本和稳定性治理仍需增强 | `docs/human/features/06-model-tool-audit.md` |
-| Loki 日志查询 | 控制台无法按 task_id、trace_id 查结构化日志 | `docs/human/features/10-observability-localization-spec.md` |
-| Grafana 代理 | 控制台无法读取 dashboard 元数据 | `docs/human/features/10-observability-localization-spec.md` |
-| Trace 查询 | 控制台无法按 trace_id 查看链路 | `docs/human/features/10-observability-localization-spec.md` |
+| Loki 真实采集链路 | 当前接口已有 Event Store 回退，外部采集仍需增强 | `docs/human/features/10-observability-localization-spec.md` |
+| Grafana 鉴权和 provisioning | 当前接口已有 dashboard 列表和配置回退 | `docs/human/features/10-observability-localization-spec.md` |
+| 真实 OTel Trace 后端 | 当前接口已有 Event Store 合成 span | `docs/human/features/10-observability-localization-spec.md` |
 | 控制台全量 i18n | 部分旧页面仍有英文原始文案 | `docs/human/features/10-observability-localization-spec.md` |
 | 官网最终接入 | 用户提供的官网代码还需整合 | `docs/human/features/08-website-console-openapi.md` |
 
@@ -166,7 +166,7 @@ docs/SPEC.md
 1. 补 LLM Planner 结构重试和计划版本对比
 2. 补 Subagent worker 工具链执行和父任务结果聚合
 3. 补 Worker 级恢复编排
-4. 补 Loki logs、Grafana dashboards、Trace 查询和观测服务健康接口
+4. 增强 Loki 采集、Grafana provisioning 和真实 OTel Trace 查询
 5. 补控制台全量 i18n
 6. 整合用户提供的官网代码
 7. 同步 OpenAPI、测试、Runbook 和覆盖文档

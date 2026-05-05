@@ -58,6 +58,6 @@
 | 沙箱治理 | Sandbox 与 WarmPool 接口已落地 | 沙箱页已接入 |
 | 模型与工具审计 | 审计表与查询已落地 | 面板已接入 |
 | Settings | 持久化读写已落地 | 设置页已接入 |
-| Observability | Prometheus 指标已落地 | 运营页基础接入 |
-| Loki / Grafana / OTel | 部署服务已落地，后端代理待落地 | 深度观测页待落地 |
+| Observability | Prometheus 指标与深度观测接口已落地 | 运营页基础接入 |
+| Loki / Grafana / OTel | 日志、Dashboard、Trace、服务健康接口基础落地 | 观测页基础接入 |
 | 控制台本地化 | 字典化待收敛 | Shell 与部分页面已接入 |

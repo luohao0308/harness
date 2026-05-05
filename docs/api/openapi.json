@@ -1393,6 +1393,223 @@
           }
         ]
       }
+    },
+    "/api/observability/logs": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "查询结构化日志",
+        "description": "按任务、trace、服务和事件类型查询结构化日志；Loki 不可用时返回 Event Store 日志视图。",
+        "operationId": "list_observability_logs_api_observability_logs_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "任务 ID",
+              "title": "Task Id"
+            },
+            "description": "任务 ID"
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Trace ID",
+              "title": "Trace Id"
+            },
+            "description": "Trace ID"
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "服务名",
+              "title": "Service"
+            },
+            "description": "服务名"
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "事件类型",
+              "title": "Event Type"
+            },
+            "description": "事件类型"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "返回数量",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityLogPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/traces/{trace_id}": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "查询 Trace 链路",
+        "description": "按 trace_id 查询链路；外部 Trace 后端未接入时返回 Event Store 合成 span。",
+        "operationId": "get_observability_trace_api_observability_traces__trace_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityTraceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/grafana/dashboards": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "查询 Grafana Dashboard",
+        "description": "返回 Grafana dashboard 列表；Grafana 不可用时返回已配置的 Harness dashboard 深链。",
+        "operationId": "list_grafana_dashboards_api_observability_grafana_dashboards_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrafanaDashboardPage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/services/health": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "查询观测服务健康",
+        "description": "探测 Prometheus、Grafana、Loki 和 OpenTelemetry Collector 健康状态。",
+        "operationId": "get_observability_services_health_api_observability_services_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityServicesHealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1533,6 +1750,75 @@
           "created_at"
         ],
         "title": "EventResponse"
+      },
+      "GrafanaDashboardPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GrafanaDashboardResponse"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Dashboard 列表"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "下一页游标"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "GrafanaDashboardPage"
+      },
+      "GrafanaDashboardResponse": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid",
+            "description": "Dashboard UID"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Dashboard 标题"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Dashboard 地址"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "标签"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "数据来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid",
+          "title",
+          "url",
+          "source"
+        ],
+        "title": "GrafanaDashboardResponse"
       },
       "HTTPValidationError": {
         "properties": {
@@ -1795,6 +2081,201 @@
         ],
         "title": "ModelSettingsResponse"
       },
+      "ObservabilityLogEntry": {
+        "properties": {
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "日志时间"
+          },
+          "level": {
+            "type": "string",
+            "title": "Level",
+            "description": "日志级别"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service",
+            "description": "服务名"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "日志内容"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id",
+            "description": "Trace ID"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "任务 ID"
+          },
+          "agent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Run Id",
+            "description": "Agent 运行 ID"
+          },
+          "event_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type",
+            "description": "事件类型"
+          },
+          "payload_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload Json",
+            "description": "日志载荷"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "日志来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timestamp",
+          "level",
+          "service",
+          "message",
+          "source"
+        ],
+        "title": "ObservabilityLogEntry"
+      },
+      "ObservabilityLogPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityLogEntry"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "日志列表"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "下一页游标"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "数据来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "source"
+        ],
+        "title": "ObservabilityLogPage"
+      },
+      "ObservabilityServiceHealthResponse": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "服务名"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "健康状态"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "服务地址"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms",
+            "description": "探测耗时毫秒"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message",
+            "description": "错误信息"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "url"
+        ],
+        "title": "ObservabilityServiceHealthResponse"
+      },
+      "ObservabilityServicesHealthResponse": {
+        "properties": {
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityServiceHealthResponse"
+            },
+            "type": "array",
+            "title": "Services",
+            "description": "服务健康列表"
+          }
+        },
+        "type": "object",
+        "required": [
+          "services"
+        ],
+        "title": "ObservabilityServicesHealthResponse"
+      },
       "ObservabilitySummaryResponse": {
         "properties": {
           "tasks_by_status": {
@@ -1888,6 +2369,104 @@
           "sandbox_total"
         ],
         "title": "ObservabilitySummaryResponse"
+      },
+      "ObservabilityTraceResponse": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "title": "Trace Id",
+            "description": "Trace ID"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityTraceSpan"
+            },
+            "type": "array",
+            "title": "Spans",
+            "description": "Span 列表"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "数据来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trace_id",
+          "spans",
+          "source"
+        ],
+        "title": "ObservabilityTraceResponse"
+      },
+      "ObservabilityTraceSpan": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "title": "Trace Id",
+            "description": "Trace ID"
+          },
+          "span_id": {
+            "type": "string",
+            "title": "Span Id",
+            "description": "Span ID"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id",
+            "description": "父 Span ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Span 名称"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service",
+            "description": "服务名"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Time",
+            "description": "开始时间"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms",
+            "description": "耗时毫秒"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Attributes",
+            "description": "Span 属性"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "数据来源"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trace_id",
+          "span_id",
+          "name",
+          "service",
+          "start_time",
+          "duration_ms",
+          "source"
+        ],
+        "title": "ObservabilityTraceSpan"
       },
       "PolicySettingsResponse": {
         "properties": {

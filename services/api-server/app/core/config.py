@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     )
     model_gateway_api_key: str = Field(default="replace-me", alias="MODEL_GATEWAY_API_KEY")
     docker_host: str = Field(default="unix:///var/run/docker.sock", alias="DOCKER_HOST")
+    prometheus_base_url: AnyHttpUrl = Field(
+        default="http://localhost:9091",
+        alias="PROMETHEUS_BASE_URL",
+    )
+    grafana_base_url: AnyHttpUrl = Field(
+        default="http://localhost:3001",
+        alias="GRAFANA_BASE_URL",
+    )
+    loki_base_url: AnyHttpUrl = Field(default="http://localhost:3100", alias="LOKI_BASE_URL")
+    otel_collector_http_url: AnyHttpUrl = Field(
+        default="http://localhost:4318",
+        alias="OTEL_COLLECTOR_HTTP_URL",
+    )
 
     model_config = SettingsConfigDict(case_sensitive=True, extra="ignore")
 

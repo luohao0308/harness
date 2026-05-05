@@ -25,7 +25,7 @@ GET /api/observability/summary
 GET /metrics
 ```
 
-待落地契约：
+深度观测契约：
 
 ```text
 GET /api/observability/grafana/dashboards
@@ -122,15 +122,15 @@ model_call_errors_total
 | 设置变更审计 | 已落地 | `admin_audit_events` |
 | Model Gateway 读取设置 | 已落地 | Model Gateway |
 | Policy Engine 读取设置 | 已落地 | Policy Engine |
-| Grafana / Loki 控制台入口 | 待增强 | 控制台入口和代理仍需补齐 |
+| Grafana / Loki 控制台入口 | 基础落地 | `/observability` 已展示日志、Trace、Dashboard 和服务健康 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Loki 日志采集链路 | 控制台无法按 task_id 查询日志 | JSON 日志进入 Loki 并按标签查询 |
-| Grafana 后端代理 | 控制台无法读取 dashboard 列表 | 后端代理 Grafana dashboard 元数据 |
-| Trace 查询 API | 控制台无法按 trace_id 查看链路 | 后端查询 trace 并返回 span 列表 |
+| Loki 真实采集链路 | 当前接口已按 Event Store 回退，外部采集仍需增强 | JSON 日志进入 Loki 并按标签查询 |
+| Grafana 鉴权和 provisioning | 当前接口有 Grafana 查询和配置回退 | 后端代理 Grafana dashboard 元数据和权限 |
+| Trace 后端集成 | 当前接口已按 Event Store 合成 span | 后端查询真实 OTel Trace 并返回 span 列表 |
 
 ## 实现顺序
 

@@ -76,10 +76,10 @@
 | 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` |
 | 策略设置 | 已落地 | `GET /api/settings/policies`、`PUT /api/settings/policies` |
 | 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics` |
-| 日志观测 | 待落地 | 目标接口：`GET /api/observability/logs` |
-| Trace 观测 | 待落地 | 目标接口：`GET /api/observability/traces/{trace_id}` |
-| Grafana 集成 | 待落地 | 目标接口：`GET /api/observability/grafana/dashboards` |
-| 观测服务健康 | 待落地 | 目标接口：`GET /api/observability/services/health` |
+| 日志观测 | 基础落地 | `GET /api/observability/logs` |
+| Trace 观测 | 基础落地 | `GET /api/observability/traces/{trace_id}` |
+| Grafana 集成 | 基础落地 | `GET /api/observability/grafana/dashboards` |
+| 观测服务健康 | 基础落地 | `GET /api/observability/services/health` |
 
 前端页面覆盖：
 
@@ -91,8 +91,8 @@
 | `/subagents` | Subagent API | 已接入 |
 | `/sandboxes` | Sandbox API | 已接入 |
 | `/observability` | `GET /api/observability/summary` 与 `/metrics` | 已接入 |
-| `/observability/logs` | 目标接口 `GET /api/observability/logs` | 待落地 |
-| `/observability/traces` | 目标接口 `GET /api/observability/traces/{trace_id}` | 待落地 |
+| `/observability` 日志区 | `GET /api/observability/logs` | 基础接入 |
+| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 基础接入 |
 | `/settings/models` | Settings API | 已接入 |
 | `/settings/policies` | Settings API | 已接入 |
 
@@ -106,9 +106,9 @@
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 补齐 Worker 级恢复编排 |
-| Observability | 聚合 API、控制台摘要和 Prometheus 指标已落地 | 补齐队列图表与 Grafana 深链 |
-| Loki | Loki 容器已落地，日志采集链路和后端查询接口待落地 | 控制台按 task_id、trace_id 查询结构化日志 |
-| OpenTelemetry | trace_id 响应头和中间件基础落地，exporter 与 trace 查询待落地 | 控制台按 trace_id 查看链路 |
+| Observability | 聚合 API、深度观测接口、控制台摘要和 Prometheus 指标已落地 | 补齐队列图表与 Grafana 鉴权 |
+| Loki | 日志接口已落地，Event Store 回退已落地，Loki 容器已落地 | 增强真实日志采集链路和标签查询 |
+| OpenTelemetry | trace_id 响应头、Trace 查询接口和 Event Store 合成 span 已落地 | 接入真实 OTel Trace 后端 |
 | 控制台本地化 | 顶栏语言切换基础落地，全页面字典化待落地 | 所有页面表头、按钮、空状态和错误状态双语 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取 | 资源规格、网络 allowlist 和供应商熔断增强 |
 

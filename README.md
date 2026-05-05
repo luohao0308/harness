@@ -94,6 +94,10 @@ GET  /api/sandboxes/warm-pool
 GET  /api/sandboxes/{sandbox_id}
 POST /api/sandboxes/{sandbox_id}/terminate
 GET  /api/observability/summary
+GET  /api/observability/logs
+GET  /api/observability/traces/{trace_id}
+GET  /api/observability/grafana/dashboards
+GET  /api/observability/services/health
 GET  /api/settings/models
 PUT  /api/settings/models
 GET  /api/settings/models/health

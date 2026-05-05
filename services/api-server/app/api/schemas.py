@@ -206,6 +206,68 @@ class ObservabilitySummaryResponse(BaseModel):
     sandbox_total: int = Field(description="沙箱总数")
 
 
+class ObservabilityLogEntry(BaseModel):
+    timestamp: datetime = Field(description="日志时间")
+    level: str = Field(description="日志级别")
+    service: str = Field(description="服务名")
+    message: str = Field(description="日志内容")
+    trace_id: str | None = Field(default=None, description="Trace ID")
+    task_id: str | None = Field(default=None, description="任务 ID")
+    agent_run_id: str | None = Field(default=None, description="Agent 运行 ID")
+    event_type: str | None = Field(default=None, description="事件类型")
+    payload_json: dict = Field(default_factory=dict, description="日志载荷")
+    source: str = Field(description="日志来源")
+
+
+class ObservabilityLogPage(BaseModel):
+    items: list[ObservabilityLogEntry] = Field(description="日志列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+    source: str = Field(description="数据来源")
+
+
+class ObservabilityTraceSpan(BaseModel):
+    trace_id: str = Field(description="Trace ID")
+    span_id: str = Field(description="Span ID")
+    parent_span_id: str | None = Field(default=None, description="父 Span ID")
+    name: str = Field(description="Span 名称")
+    service: str = Field(description="服务名")
+    start_time: datetime = Field(description="开始时间")
+    duration_ms: int = Field(description="耗时毫秒")
+    attributes: dict = Field(default_factory=dict, description="Span 属性")
+    source: str = Field(description="数据来源")
+
+
+class ObservabilityTraceResponse(BaseModel):
+    trace_id: str = Field(description="Trace ID")
+    spans: list[ObservabilityTraceSpan] = Field(description="Span 列表")
+    source: str = Field(description="数据来源")
+
+
+class GrafanaDashboardResponse(BaseModel):
+    uid: str = Field(description="Dashboard UID")
+    title: str = Field(description="Dashboard 标题")
+    url: str = Field(description="Dashboard 地址")
+    tags: list[str] = Field(default_factory=list, description="标签")
+    source: str = Field(description="数据来源")
+
+
+class GrafanaDashboardPage(BaseModel):
+    items: list[GrafanaDashboardResponse] = Field(description="Dashboard 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class ObservabilityServiceHealthResponse(BaseModel):
+    name: str = Field(description="服务名")
+    status: str = Field(description="健康状态")
+    url: str = Field(description="服务地址")
+    latency_ms: int | None = Field(default=None, description="探测耗时毫秒")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class ObservabilityServicesHealthResponse(BaseModel):
+    services: list[ObservabilityServiceHealthResponse] = Field(description="服务健康列表")
+
+
 class ModelCallResponse(BaseModel):
     id: str = Field(description="模型调用 ID")
     task_id: str = Field(description="任务 ID")
