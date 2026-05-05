@@ -82,6 +82,18 @@ export type WarmPool = {
   miss_total: number;
 };
 
+export type Subagent = {
+  id: string;
+  task_id: string;
+  parent_agent_id: string | null;
+  agent_type: string;
+  status: string;
+  context_json: Record<string, unknown>;
+  started_at: string | null;
+  completed_at: string | null;
+  timeout_at: string | null;
+};
+
 export type TaskResult = {
   task_id: string;
   status: TaskStatus;
@@ -186,6 +198,12 @@ export async function replayTask(taskId: string, sequence?: number) {
 export async function listTaskEvents(taskId: string) {
   return request<{ items: AgentEvent[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/events`,
+  );
+}
+
+export async function listTaskSubagents(taskId: string) {
+  return request<{ items: Subagent[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/subagents`,
   );
 }
 

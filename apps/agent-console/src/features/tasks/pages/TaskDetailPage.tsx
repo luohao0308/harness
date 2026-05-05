@@ -18,6 +18,7 @@ import {
   getTaskResult,
   listModelCalls,
   listTaskEvents,
+  listTaskSubagents,
   listToolCalls,
   replayTask,
   resumeTask,
@@ -50,6 +51,11 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const modelCallsQuery = useQuery({
     queryKey: ["model-calls", taskId],
     queryFn: () => listModelCalls(taskId!),
+    enabled: Boolean(taskId),
+  });
+  const subagentsQuery = useQuery({
+    queryKey: ["task-subagents", taskId],
+    queryFn: () => listTaskSubagents(taskId!),
     enabled: Boolean(taskId),
   });
   const toolCallsQuery = useQuery({
@@ -196,7 +202,11 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
         </section>
         {focus !== "events" && (
           <section className="col-span-3 space-y-3">
-            <SubagentPanel />
+            <SubagentPanel
+              subagents={subagentsQuery.data?.items ?? []}
+              maxSubagents={task.max_subagents}
+              loading={subagentsQuery.isLoading}
+            />
             <SandboxPanel enabled={task.enable_sandbox} />
             <ModelCallPanel
               modelCalls={modelCallsQuery.data?.items ?? []}

@@ -21,7 +21,7 @@ import { cn } from "../lib/utils";
 
 const navItems = [
   { to: "/tasks", label: "任务", en: "Tasks", icon: ListChecks },
-  { to: "/tasks/demo/subagents", label: "子 Agent", en: "Subagents", icon: Bot },
+  { to: "/subagents", label: "子 Agent", en: "Subagents", icon: Bot },
   { to: "/sandboxes", label: "沙箱", en: "Sandboxes", icon: Box },
   { to: "/observability", label: "观测", en: "Observability", icon: Activity },
   { to: "/settings/policies", label: "策略", en: "Policies", icon: ShieldCheck },
