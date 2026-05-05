@@ -182,3 +182,7 @@ Model Gateway 负责：
 - 敏感信息脱敏
 - MODEL_CALLED 事件
 - MODEL_RESPONSE_RECEIVED 事件
+- MODEL_CALL_FAILED 事件
+- MODEL_FALLBACK_USED 事件
+
+当前后端已提供 OpenAI-compatible HTTP 调用路径、本地 mock 路径、模型调用审计、失败审计、fallback 事件、组织级 Settings 读取、RPM 限流和模型健康状态接口。TPM 限流、外部主动探测和供应商级熔断属于企业版增强项。

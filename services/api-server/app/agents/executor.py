@@ -2,14 +2,23 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.model_gateway import (
+    AuditedModelGateway,
+    ModelGatewayError,
+    ModelMessage,
+    ModelRequest,
+)
 from app.agents.planner import DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
+from app.agents.subagent_manager import SubagentManager
 from app.db.models import ExecutionPlan as ExecutionPlanModel
-from app.db.models import ModelCall, Task, TaskStep, ToolCall, utc_now
+from app.db.models import Task, TaskStep, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.events.replay import EventReplay
 from app.observability.metrics import agent_tasks_failed_total
+from app.tools.runner import ToolRunner
 
 
 class Executor:
@@ -26,32 +35,40 @@ class Executor:
             event_type=EventType.PLAN_REQUESTED,
             payload_json={"task_id": task.id, "goal": task.goal},
         )
-        model_call = ModelCall(
-            task_id=task.id,
-            model_provider=task.model_provider,
-            model_name=task.model_name,
-            status="SUCCESS",
-            prompt_tokens=0,
-            completion_tokens=0,
-            duration_ms=0,
-            request_json={"goal": task.goal, "planner": "deterministic"},
-            response_json={"mode": "mock"},
-            created_at=utc_now(),
-        )
-        self.session.add(model_call)
-        self.session.flush()
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.MODEL_CALLED,
-            payload_json={
-                "model_call_id": model_call.id,
-                "model_provider": task.model_provider,
-                "model_name": task.model_name,
-            },
-        )
+        try:
+            planner_response = AuditedModelGateway(session=self.session, task_id=task.id).complete(
+                ModelRequest(
+                    model_provider=task.model_provider,
+                    model_name=task.model_name,
+                    messages=[
+                        ModelMessage(
+                            role="system",
+                            content=(
+                                "Generate a structured JSON execution plan for the Harness "
+                                "Planner. Return only JSON with summary and steps. Each step "
+                                "must include key, description, execution_mode sync or async, "
+                                "requires_sandbox, and can_spawn_subagent."
+                            ),
+                        ),
+                        ModelMessage(role="user", content=task.goal),
+                    ],
+                )
+            )
+        except ModelGatewayError as exc:
+            task.status = "FAILED"
+            task.updated_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.TASK_FAILED,
+                payload_json={"summary": str(exc), "stage": "model_gateway"},
+            )
+            self.session.flush()
+            return task
 
         try:
-            plan = ExecutionPlan.model_validate(self.planner.create_plan(task))
+            plan = ExecutionPlan.model_validate(
+                self.planner.create_plan(task, model_content=planner_response.content)
+            )
         except ValidationError as exc:
             task.status = "FAILED"
             task.updated_at = utc_now()
@@ -68,11 +85,6 @@ class Executor:
             task_id=task.id,
             event_type=EventType.PLAN_GENERATED,
             payload_json={"plan_id": plan_row.id, "plan": plan.model_dump()},
-        )
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.MODEL_RESPONSE_RECEIVED,
-            payload_json={"model_call_id": model_call.id, "plan_id": plan_row.id},
         )
 
         task.status = "RUNNING"
@@ -102,6 +114,61 @@ class Executor:
         self.session.flush()
         return task
 
+    def resume_task(self, task: Task) -> Task:
+        replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
+        plan_row = self._latest_plan(task)
+        if plan_row is None:
+            return self.start_task(task)
+        plan = ExecutionPlan.model_validate(plan_row.plan_json)
+
+        completed_steps = set(replay_state.get("completed_steps", []))
+        failed_steps = set(replay_state.get("failed_steps", []))
+        if not completed_steps and not failed_steps:
+            return self.start_task(task)
+
+        task.status = "RUNNING"
+        task.updated_at = utc_now()
+        resumed_step_keys = []
+        for step in plan.steps:
+            if step.key in completed_steps:
+                resumed_step_keys.append(step.key)
+                self.event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.STEP_SKIPPED,
+                    payload_json={
+                        "step_key": step.key,
+                        "reason": "already completed before resume",
+                    },
+                )
+                continue
+            result = self._execute_step(task, plan_row, step)
+            if result.status == "STEP_FAILED":
+                task.status = "FAILED"
+                task.updated_at = utc_now()
+                self.event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.TASK_FAILED,
+                    payload_json={"failed_step": step.key, "summary": result.summary},
+                )
+                agent_tasks_failed_total.inc()
+                self.session.flush()
+                return task
+
+        task.status = "COMPLETED"
+        task.updated_at = utc_now()
+        task.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.TASK_COMPLETED,
+            payload_json={
+                "task_id": task.id,
+                "plan_id": plan_row.id,
+                "resumed_from_steps": resumed_step_keys,
+            },
+        )
+        self.session.flush()
+        return task
+
     def _persist_plan(self, task: Task, plan: ExecutionPlan) -> ExecutionPlanModel:
         max_version = self.session.execute(
             select(func.max(ExecutionPlanModel.version)).where(
@@ -118,6 +185,14 @@ class Executor:
         self.session.add(plan_row)
         self.session.flush()
         return plan_row
+
+    def _latest_plan(self, task: Task) -> ExecutionPlanModel | None:
+        return self.session.execute(
+            select(ExecutionPlanModel)
+            .where(ExecutionPlanModel.task_id == task.id)
+            .order_by(ExecutionPlanModel.version.desc())
+            .limit(1)
+        ).scalar_one_or_none()
 
     def _execute_step(
         self,
@@ -141,35 +216,85 @@ class Executor:
             event_type=EventType.STEP_STARTED,
             payload_json={"step_id": step_row.id, "step_key": step.key},
         )
+        if step.can_spawn_subagent:
+            agent_run = SubagentManager(self.session).spawn(
+                task=task,
+                assignment={
+                    "step_key": step.key,
+                    "description": step.description,
+                    "execution_mode": step.execution_mode,
+                },
+                enqueue=True,
+            )
+            step_row.assigned_agent_id = agent_run.id
+            result = StepResult(
+                step_key=step.key,
+                status="STEP_COMPLETED",
+                summary=f"Subagent spawned: {agent_run.id}",
+                tool_calls=[],
+                next_action="continue",
+            )
+            step_row.status = result.status
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                agent_run_id=agent_run.id,
+                event_type=EventType.STEP_COMPLETED,
+                payload_json={
+                    "step_id": step_row.id,
+                    "step_key": step.key,
+                    "summary": result.summary,
+                    "assigned_agent_id": agent_run.id,
+                },
+            )
+            self.session.flush()
+            return result
         tool_name = "run_shell" if step.requires_sandbox else "read_file"
-        tool_call = ToolCall(
+        tool_input = (
+            {
+                "command": f"echo {step.key}",
+                "cwd": "/workspace",
+                "timeout_seconds": 60,
+            }
+            if step.requires_sandbox
+            else {"path": "pyproject.toml"}
+        )
+        execution = ToolRunner(session=self.session).execute(
             task_id=task.id,
             tool_name=tool_name,
-            status="SUCCESS",
-            risk_level="high" if step.requires_sandbox else "low",
-            requires_sandbox=step.requires_sandbox,
-            duration_ms=0,
-            input_json={"step_key": step.key, "description": step.description},
-            output_json={"summary": "mock tool execution"},
-            created_at=utc_now(),
-        )
-        self.session.add(tool_call)
-        self.session.flush()
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.POLICY_CHECKED,
-            payload_json={
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_name,
-                "allowed": True,
-                "requires_sandbox": step.requires_sandbox,
+            input_json={
+                **tool_input,
+                "step_key": step.key,
+                "description": step.description,
             },
         )
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.TOOL_CALLED,
-            payload_json={"tool_call_id": tool_call.id, "tool_name": tool_name},
-        )
+        if not execution.allowed or execution.tool_call.status != "SUCCESS":
+            result = StepResult(
+                step_key=step.key,
+                status="STEP_FAILED",
+                summary=execution.tool_call.error_message or "Tool execution failed",
+                tool_calls=[
+                    {
+                        "tool_call_id": execution.tool_call.id,
+                        "tool_name": tool_name,
+                    }
+                ],
+                next_action="stop",
+            )
+            step_row.status = result.status
+            step_row.error_message = result.summary
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_FAILED,
+                payload_json={
+                    "step_id": step_row.id,
+                    "step_key": step.key,
+                    "summary": result.summary,
+                },
+            )
+            self.session.flush()
+            return result
 
         trace = ReActTrace(
             reason=Reason(step_key=step.key, summary=f"Execute {step.description}"),
@@ -180,21 +305,12 @@ class Executor:
             step_key=step.key,
             status="STEP_COMPLETED",
             summary=trace.observe.status,
-            tool_calls=[{"tool_call_id": tool_call.id, "tool_name": tool_name}],
+            tool_calls=[{"tool_call_id": execution.tool_call.id, "tool_name": tool_name}],
             next_action="continue",
         )
 
         step_row.status = result.status
         step_row.completed_at = utc_now()
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.TOOL_RESULT_RECEIVED,
-            payload_json={
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_name,
-                "status": "SUCCESS",
-            },
-        )
         self.event_store.append(
             task_id=task.id,
             event_type=EventType.STEP_COMPLETED,

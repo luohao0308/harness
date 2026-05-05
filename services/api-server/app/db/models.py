@@ -216,3 +216,17 @@ class AdminAuditEvent(Base):
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "key", name="system_settings_org_key_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    value_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

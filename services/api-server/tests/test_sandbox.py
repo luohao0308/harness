@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api import sandboxes as sandboxes_api
-from app.db.models import SandboxInstance, Task, utc_now
+from app.db.models import SandboxInstance, SystemSetting, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
 from app.sandbox.docker_manager import DockerManager
@@ -103,6 +103,39 @@ def test_docker_manager_creates_container_with_required_defaults(
     ]
 
 
+def test_docker_manager_reads_sandbox_policy_settings(db_session: Session) -> None:
+    task = create_task(db_session)
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {"default_network": True, "default_timeout_seconds": 7},
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+    fake_client = FakeDockerClient()
+    manager = DockerManager(client=fake_client)
+
+    sandbox = manager.create_sandbox(session=db_session, task_id=task.id)
+
+    run_call = fake_client.containers.run_calls[0]
+    assert run_call["network_mode"] == "bridge"
+    assert sandbox.network_enabled is True
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    assert events[0].payload_json["network"] == "bridge"
+    assert events[0].payload_json["timeout_seconds"] == 7
+    assert events[1].payload_json["timeout_seconds"] == 7
+
+
 def test_shell_tool_runs_command_through_docker_and_records_result(
     db_session: Session,
 ) -> None:
@@ -129,6 +162,44 @@ def test_shell_tool_runs_command_through_docker_and_records_result(
         "SANDBOX_COMMAND_STARTED",
         "SANDBOX_COMMAND_COMPLETED",
     ]
+
+
+def test_docker_manager_uses_policy_timeout_when_command_timeout_missing(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session)
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {"default_network": False, "default_timeout_seconds": 9},
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+    fake_client = FakeDockerClient()
+    manager = DockerManager(client=fake_client)
+    sandbox = manager.create_sandbox(session=db_session, task_id=task.id)
+
+    result = manager.run_command(
+        session=db_session,
+        sandbox=sandbox,
+        command="pytest",
+        timeout_seconds=None,
+    )
+
+    assert result.exit_code == 0
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    started = [event for event in events if event.event_type == "SANDBOX_COMMAND_STARTED"][0]
+    assert started.payload_json["timeout_seconds"] == 9
 
 
 def test_tool_registry_matches_stage12_required_tools() -> None:

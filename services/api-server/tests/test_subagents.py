@@ -57,12 +57,13 @@ def test_worker_success_flow_writes_started_and_completed(db_session: Session) -
     refreshed = db_session.get(AgentRun, agent_run.id)
     assert refreshed is not None
     assert refreshed.status == "SUCCESS"
+    assert refreshed.context_json["result"]["summary"].startswith("Subagent completed review")
     events = EventStore(db_session).list_by_task(task_id=task.id)
-    assert [event.event_type for event in events] == [
-        "SUBAGENT_SPAWNED",
-        "SUBAGENT_STARTED",
-        "SUBAGENT_COMPLETED",
-    ]
+    event_types = [event.event_type for event in events]
+    assert event_types[0:3] == ["SUBAGENT_SPAWNED", "SUBAGENT_STARTED", "SUBAGENT_PROGRESS"]
+    assert "MODEL_CALLED" in event_types
+    assert "MODEL_RESPONSE_RECEIVED" in event_types
+    assert event_types[-1] == "SUBAGENT_COMPLETED"
 
 
 def test_worker_timeout_flow_writes_timeout_event(db_session: Session) -> None:
@@ -97,3 +98,24 @@ def test_subagent_api_list_get_and_cancel(db_session: Session) -> None:
     cancelled = client.post(f"/api/subagents/{subagent.id}/cancel", headers=AUTH_HEADERS)
     assert cancelled.status_code == 202
     assert cancelled.json()["status"] == "CANCELLED"
+
+
+def test_subagent_api_create_for_task(db_session: Session) -> None:
+    task = create_task(db_session)
+    db_session.commit()
+    client = TestClient(app)
+
+    created = client.post(
+        f"/api/tasks/{task.id}/subagents",
+        headers=AUTH_HEADERS,
+        json={
+            "assignment": {"step_key": "parallel_review", "description": "并发审查"},
+            "timeout_seconds": 120,
+        },
+    )
+
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["task_id"] == task.id
+    assert payload["status"] == "PENDING"
+    assert payload["context_json"]["step_key"] == "parallel_review"

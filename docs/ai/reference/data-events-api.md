@@ -16,6 +16,20 @@
 说明文档：docs/api/openapi-contract.md
 ```
 
+## 当前接口分组
+
+```text
+Tasks: create, list, detail, start, cancel, resume, result
+Events: list, stream
+Replay: replay
+Subagents: list, create, detail, cancel
+Sandboxes: list, warm-pool, detail, terminate
+Settings: models read/write, model health, policies read/write
+Audit: model-calls, tool-calls
+Observability: summary
+Metrics: /metrics
+```
+
 ## 事件类型
 
 ```text
@@ -75,4 +89,5 @@ ADMIN_ACTION
 - 唯一索引固定为 `task_id + sequence`。
 - 任务状态从事件流重建。
 - 每 100 个事件生成一次 snapshot。
-
+- Replay 会读取最近的 `task_snapshots`，再继续扫描后续事件。
+- Snapshot 内容包含状态、步骤、工具、模型、子 Agent、沙箱、失败点和最后事件序号。

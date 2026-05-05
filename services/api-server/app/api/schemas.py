@@ -54,6 +54,49 @@ class TaskResultResponse(BaseModel):
     pending: bool = Field(description="是否仍在运行")
 
 
+class TaskStepResponse(BaseModel):
+    id: str = Field(description="步骤 ID")
+    task_id: str = Field(description="任务 ID")
+    plan_id: str = Field(description="计划 ID")
+    step_key: str = Field(description="步骤键")
+    description: str = Field(description="步骤说明")
+    status: str = Field(description="步骤状态")
+    execution_mode: str = Field(description="执行模式")
+    assigned_agent_id: str | None = Field(default=None, description="分配的 Agent ID")
+    started_at: datetime | None = Field(default=None, description="开始时间")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskStepPage(BaseModel):
+    items: list[TaskStepResponse] = Field(description="步骤列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class TaskPlanStepState(BaseModel):
+    step_key: str = Field(description="步骤键")
+    description: str = Field(description="步骤说明")
+    execution_mode: str = Field(description="执行模式")
+    requires_sandbox: bool = Field(description="是否需要沙箱")
+    can_spawn_subagent: bool = Field(description="是否可派生子 Agent")
+    status: str = Field(description="当前步骤状态")
+    assigned_agent_id: str | None = Field(default=None, description="分配的 Agent ID")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class TaskPlanResponse(BaseModel):
+    id: str = Field(description="计划 ID")
+    task_id: str = Field(description="任务 ID")
+    version: int = Field(description="计划版本")
+    status: str = Field(description="计划状态")
+    summary: str | None = Field(default=None, description="计划摘要")
+    plan_json: dict = Field(description="计划原始 JSON")
+    steps: list[TaskPlanStepState] = Field(description="计划步骤状态")
+    created_at: datetime = Field(description="创建时间")
+
+
 class ReplayRequest(BaseModel):
     sequence: int | None = Field(default=None, ge=1, description="重放到指定事件序号")
 
@@ -106,6 +149,13 @@ class SubagentPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
+class SubagentCreateRequest(BaseModel):
+    assignment: dict = Field(description="子 Agent 任务上下文")
+    parent_agent_id: str | None = Field(default=None, description="父 Agent ID")
+    timeout_seconds: int = Field(default=900, ge=1, description="超时秒数")
+    enqueue: bool = Field(default=False, description="是否进入 Dramatiq 队列")
+
+
 class SandboxResponse(BaseModel):
     id: str = Field(description="沙箱 ID")
     task_id: str = Field(description="任务 ID")
@@ -134,6 +184,26 @@ class WarmPoolResponse(BaseModel):
     failed: int = Field(description="失败数量")
     hit_total: int = Field(description="命中总数")
     miss_total: int = Field(description="未命中总数")
+
+
+class CountItem(BaseModel):
+    name: str = Field(description="名称")
+    count: int = Field(description="数量")
+
+
+class ObservabilitySummaryResponse(BaseModel):
+    tasks_by_status: list[CountItem] = Field(description="任务状态分布")
+    subagents_by_status: list[CountItem] = Field(description="子 Agent 状态分布")
+    model_calls_by_status: list[CountItem] = Field(description="模型调用状态分布")
+    tool_calls_by_status: list[CountItem] = Field(description="工具调用状态分布")
+    sandboxes_by_status: list[CountItem] = Field(description="沙箱状态分布")
+    warm_pool: WarmPoolResponse = Field(description="WarmPool 状态")
+    event_total: int = Field(description="事件总数")
+    task_total: int = Field(description="任务总数")
+    failed_task_total: int = Field(description="失败任务总数")
+    model_call_total: int = Field(description="模型调用总数")
+    tool_call_total: int = Field(description="工具调用总数")
+    sandbox_total: int = Field(description="沙箱总数")
 
 
 class ModelCallResponse(BaseModel):
@@ -182,12 +252,39 @@ class ToolCallPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
+class ToolExecuteRequest(BaseModel):
+    tool_name: str = Field(description="工具名称")
+    input_json: dict = Field(default_factory=dict, description="工具输入")
+    sandbox_id: str | None = Field(default=None, description="沙箱 ID")
+    create_sandbox: bool = Field(default=False, description="需要沙箱时是否自动创建")
+
+
+class ToolExecuteResponse(BaseModel):
+    tool_call: ToolCallResponse = Field(description="工具调用审计记录")
+    allowed: bool = Field(description="是否通过策略")
+    output: dict = Field(description="工具输出")
+
+
 class ModelSettingsResponse(BaseModel):
     default_provider: str = Field(description="默认供应商")
     default_model: str = Field(description="默认模型")
     providers: list[dict] = Field(description="供应商列表")
     rate_limits: dict = Field(description="限流信息")
     health: dict = Field(description="健康状态")
+
+
+class ModelHealthResponse(BaseModel):
+    provider: str = Field(description="模型供应商")
+    model: str = Field(description="模型名称")
+    status: str = Field(description="健康状态")
+    mode: str = Field(description="探测模式")
+    checked_at: datetime = Field(description="检查时间")
+    latency_ms: int = Field(description="探测耗时（毫秒）")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class ModelHealthPage(BaseModel):
+    items: list[ModelHealthResponse] = Field(description="模型健康状态列表")
 
 
 class PolicySettingsResponse(BaseModel):

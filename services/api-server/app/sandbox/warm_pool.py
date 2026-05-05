@@ -16,7 +16,11 @@ from app.observability.metrics import (
     warm_pool_miss_total,
 )
 from app.sandbox.docker_manager import DockerManager
-from app.sandbox.policies import DEFAULT_SANDBOX_IMAGE
+from app.sandbox.policies import (
+    DEFAULT_SANDBOX_IMAGE,
+    DEFAULT_SANDBOX_NETWORK,
+    SandboxPolicyResolver,
+)
 
 WARM_POOL_MIN_SIZE = 3
 WARM_POOL_MAX_SIZE = 10
@@ -83,6 +87,15 @@ class WarmPoolManager:
         agent_run_id: str | None = None,
     ) -> SandboxInstance:
         self._prune_expired(session)
+        runtime_policy = SandboxPolicyResolver(session).runtime_for_task(task_id)
+        if runtime_policy.network_mode != DEFAULT_SANDBOX_NETWORK:
+            self._miss_total += 1
+            warm_pool_miss_total.inc()
+            return self.docker_manager.create_sandbox(
+                session=session,
+                task_id=task_id,
+                agent_run_id=agent_run_id,
+            )
         pooled = self._next_idle(session)
         if pooled is not None:
             self._hit_total += 1
@@ -100,6 +113,7 @@ class WarmPoolManager:
                 container_id=pooled.container_id,
                 image=pooled.image,
                 warm_pool_reused=True,
+                runtime_policy=runtime_policy,
             )
             pooled.sandbox_id = sandbox.id
             pooled.updated_at = utc_now()

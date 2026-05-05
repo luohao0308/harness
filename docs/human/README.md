@@ -1,6 +1,13 @@
 # 人读文档入口
 
-本目录面向产品、研发、设计、交付和管理人员。文档采用确定口径，所有技术选型、模块边界、执行顺序和验收标准均为项目定稿。
+本目录面向产品、研发、设计、交付和管理人员。文档采用正式 Spec 口径，所有技术选型、模块边界、执行顺序和验收标准均为项目定稿。
+
+全局入口：
+
+- [Harness 正式规格总入口](../SPEC.md)
+- [Spec 功能索引](../SPEC-INDEX.md)
+- [Spec 模板](../SPEC-TEMPLATE.md)
+- [技术实现与流程进展总览](../TECHNICAL-IMPLEMENTATION-PROGRESS.md)
 
 ## 阅读顺序
 
@@ -17,6 +24,15 @@
 11. [任务进度看板](./10-task-progress.md)
 12. [网站使用流程](./11-website-usage-flow.md)
 13. [功能文档目录](./features/README.md)
+14. [技术实现与流程进展总览](../TECHNICAL-IMPLEMENTATION-PROGRESS.md)
+
+## Spec 执行规则
+
+- 功能变更先修改 `docs/human/features/*.md`。
+- 接口变更同步 `docs/api/openapi.yaml` 和 `docs/api/openapi.json`。
+- 数据、事件、工具、权限和部署变更同步 `docs/ai/reference`。
+- 页面变更同步 `docs/ai/reference/frontend-spec.md`、`docs/design/page-inventory.md` 和对应功能 Spec。
+- 验证结果同步 `docs/human/features/09-implementation-coverage.md` 与进度文档。
 
 ## 项目主线
 

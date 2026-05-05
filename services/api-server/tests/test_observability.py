@@ -2,8 +2,12 @@ import json
 import logging
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app.core.logging import JsonFormatter
+from app.db.models import AgentRun, ModelCall, SandboxInstance, Task, ToolCall, utc_now
+from app.events.event_store import EventStore
+from app.events.event_types import EventType
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -70,3 +74,90 @@ def test_request_trace_id_is_written_to_events() -> None:
 
     assert created.headers["x-trace-id"] == "trace-from-test"
     assert events[0]["trace_id"] == "trace-from-test"
+
+
+def test_observability_summary_aggregates_current_organization(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Observe",
+        goal="Aggregate runtime facts",
+        status="FAILED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    other = Task(
+        organization_id="other-org",
+        created_by="other",
+        title="Other",
+        goal="Should not count",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add_all([task, other])
+    db_session.flush()
+    db_session.add_all(
+        [
+            AgentRun(task_id=task.id, agent_type="subagent", status="FAILED", context_json={}),
+            ModelCall(
+                task_id=task.id,
+                model_provider="openai-compatible",
+                model_name="default",
+                status="SUCCESS",
+                request_json={},
+                response_json={},
+            ),
+            ToolCall(
+                task_id=task.id,
+                tool_name="read_file",
+                status="SUCCESS",
+                risk_level="low",
+                requires_sandbox=False,
+                input_json={},
+                output_json={},
+            ),
+            SandboxInstance(
+                task_id=task.id,
+                container_id="container-1",
+                image="agent-runtime:latest",
+                status="IDLE",
+                cpu_limit="1.0",
+                memory_limit_mb=1024,
+                network_enabled=False,
+                warm_pool_reused=False,
+            ),
+        ]
+    )
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_FAILED,
+        payload_json={"summary": "boom"},
+    )
+    db_session.commit()
+
+    client = TestClient(app)
+    response = client.get("/api/observability/summary", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["task_total"] == 1
+    assert payload["failed_task_total"] == 1
+    assert payload["event_total"] == 1
+    assert payload["model_call_total"] == 1
+    assert payload["tool_call_total"] == 1
+    assert payload["sandbox_total"] == 1
+    assert payload["tasks_by_status"] == [{"name": "FAILED", "count": 1}]
+    assert payload["subagents_by_status"] == [{"name": "FAILED", "count": 1}]

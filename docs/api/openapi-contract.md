@@ -15,11 +15,19 @@ API 的唯一机器契约是 [openapi.yaml](./openapi.yaml)。本文件只定义
 
 ```text
 Tasks
+Plans
+Steps
 Events
 Subagents
 Sandboxes
 WarmPool
 Replay
+ToolExecution
+ModelAudit
+ToolAudit
+Settings
+Metrics
+Observability
 ```
 
 ## Error Contract
@@ -44,10 +52,10 @@ Replay
 - Response schema 变更必须同步前端 API client。
 - 新增错误码必须同步测试用例。
 - SSE 契约变更必须同步 Nginx 配置和控制台 EventSource hook。
+- 新增运行时接口必须同步官网 `public/openapi.json` 与 `public/openapi.yaml`。
 
 ## Verification
 
 ```bash
 python3 scripts/validate-docs.py
 ```
-

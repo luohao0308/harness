@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Base, Task, utc_now
+from app.db.models import Base, Task, TaskSnapshot, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 
@@ -85,3 +85,44 @@ def test_event_store_assigns_unique_sequences_under_concurrent_writes(tmp_path) 
         sequences = list(executor.map(append_event, range(10)))
 
     assert sorted(sequences) == list(range(1, 11))
+
+
+def test_event_store_creates_snapshot_every_100_events(db_session: Session) -> None:
+    task = Task(
+        title="Snapshot demo",
+        goal="Write enough events",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    event_store = EventStore(db_session)
+
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.TASK_CREATED,
+        payload_json={"title": task.title},
+    )
+    for index in range(98):
+        event_store.append(
+            task_id=task.id,
+            event_type=EventType.SUBAGENT_PROGRESS,
+            payload_json={"index": index},
+        )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.TASK_COMPLETED,
+        payload_json={"task_id": task.id},
+    )
+
+    snapshot = db_session.query(TaskSnapshot).filter(TaskSnapshot.task_id == task.id).one()
+    assert snapshot.sequence == 100
+    assert snapshot.state_json["status"] == "COMPLETED"
+    assert snapshot.state_json["last_sequence"] == 100

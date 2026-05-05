@@ -63,7 +63,30 @@ class SubagentManager:
         if enqueue:
             from app.workers.subagent_worker import run_subagent
 
-            run_subagent.send(agent_run.id)
+            try:
+                run_subagent.send(agent_run.id)
+                self.event_store.append(
+                    task_id=task.id,
+                    agent_run_id=agent_run.id,
+                    event_type=EventType.SUBAGENT_PROGRESS,
+                    payload_json={
+                        "agent_run_id": agent_run.id,
+                        "stage": "queued",
+                        "summary": "Subagent queued in Dramatiq",
+                    },
+                )
+            except Exception as exc:
+                self.event_store.append(
+                    task_id=task.id,
+                    agent_run_id=agent_run.id,
+                    event_type=EventType.SUBAGENT_PROGRESS,
+                    payload_json={
+                        "agent_run_id": agent_run.id,
+                        "stage": "queue_deferred",
+                        "summary": "Subagent queue unavailable; agent remains pending",
+                        "error": str(exc),
+                    },
+                )
         return agent_run
 
     def cancel(self, agent_run: AgentRun) -> AgentRun:

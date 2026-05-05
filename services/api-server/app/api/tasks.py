@@ -12,11 +12,25 @@ from app.api.schemas import (
     TaskArtifact,
     TaskCreateRequest,
     TaskPage,
+    TaskPlanResponse,
+    TaskPlanStepState,
     TaskResponse,
     TaskResultResponse,
+    TaskStepPage,
     ToolCallPage,
+    ToolExecuteRequest,
+    ToolExecuteResponse,
 )
-from app.db.models import AgentEvent, ExecutionPlan, ModelCall, Task, ToolCall, utc_now
+from app.db.models import (
+    AgentEvent,
+    ExecutionPlan,
+    ModelCall,
+    SandboxInstance,
+    Task,
+    TaskStep,
+    ToolCall,
+    utc_now,
+)
 from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
@@ -26,7 +40,9 @@ from app.observability.metrics import (
     agent_tasks_running,
     agent_tasks_total,
 )
+from app.sandbox.docker_manager import DockerManager
 from app.security.auth import Principal
+from app.tools.runner import ToolRunner
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -181,7 +197,7 @@ def resume_task(task_id: str, session: DbSession, principal: Principal) -> Task:
         actor_id=principal.user_id,
     )
     agent_task_resume_total.inc()
-    resumed = Executor(session).start_task(task)
+    resumed = Executor(session).resume_task(task)
     session.commit()
     session.refresh(resumed)
     return resumed
@@ -226,6 +242,67 @@ def get_task_result(task_id: str, session: DbSession, principal: Principal) -> T
         last_sequence=last_sequence or 0,
         pending=task.status not in {"COMPLETED", "FAILED", "CANCELLED"},
     )
+
+
+@router.get(
+    "/{task_id}/plan",
+    response_model=TaskPlanResponse,
+    summary="查询任务执行计划",
+    description="返回任务最新执行计划，并合并已落库步骤的当前状态。",
+)
+def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> TaskPlanResponse:
+    get_owned_task(task_id, session, principal.organization_id)
+    plan = _latest_plan(task_id=task_id, session=session)
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行计划未找到")
+    step_rows = {
+        step.step_key: step
+        for step in session.execute(
+            select(TaskStep).where(TaskStep.task_id == task_id, TaskStep.plan_id == plan.id)
+        ).scalars()
+    }
+    steps = []
+    for raw_step in plan.plan_json.get("steps", []):
+        step_key = str(raw_step.get("key", ""))
+        step_row = step_rows.get(step_key)
+        steps.append(
+            TaskPlanStepState(
+                step_key=step_key,
+                description=str(raw_step.get("description", "")),
+                execution_mode=str(raw_step.get("execution_mode", "")),
+                requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
+                can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),
+                status=step_row.status if step_row is not None else "PENDING",
+                assigned_agent_id=step_row.assigned_agent_id if step_row is not None else None,
+                error_message=step_row.error_message if step_row is not None else None,
+            )
+        )
+    return TaskPlanResponse(
+        id=plan.id,
+        task_id=plan.task_id,
+        version=plan.version,
+        status=plan.status,
+        summary=plan.plan_json.get("summary"),
+        plan_json=plan.plan_json,
+        steps=steps,
+        created_at=plan.created_at,
+    )
+
+
+@router.get(
+    "/{task_id}/steps",
+    response_model=TaskStepPage,
+    summary="查询任务步骤",
+    description="返回任务已执行或已派生的步骤状态列表。",
+)
+def list_task_steps(task_id: str, session: DbSession, principal: Principal) -> TaskStepPage:
+    get_owned_task(task_id, session, principal.organization_id)
+    steps = list(
+        session.execute(
+            select(TaskStep).where(TaskStep.task_id == task_id).order_by(TaskStep.started_at.asc())
+        ).scalars()
+    )
+    return TaskStepPage(items=steps)
 
 
 @router.post(
@@ -284,3 +361,70 @@ def list_tool_calls(task_id: str, session: DbSession, principal: Principal) -> T
         ).scalars()
     )
     return ToolCallPage(items=calls)
+
+
+@router.post(
+    "/{task_id}/tools/execute",
+    response_model=ToolExecuteResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="执行任务工具",
+    description="按工具注册表和策略执行工具，并写入工具调用审计与事件流。",
+)
+def execute_task_tool(
+    task_id: str,
+    request: ToolExecuteRequest,
+    session: DbSession,
+    principal: Principal,
+) -> ToolExecuteResponse:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    sandbox = _resolve_tool_sandbox(
+        task=task,
+        request=request,
+        session=session,
+    )
+    execution = ToolRunner(session=session).execute(
+        task_id=task.id,
+        tool_name=request.tool_name,
+        input_json=request.input_json,
+        roles=principal.roles,
+        sandbox=sandbox,
+    )
+    session.commit()
+    session.refresh(execution.tool_call)
+    return ToolExecuteResponse(
+        tool_call=execution.tool_call,
+        allowed=execution.allowed,
+        output=execution.output,
+    )
+
+
+def _latest_plan(task_id: str, session: Session) -> ExecutionPlan | None:
+    return session.execute(
+        select(ExecutionPlan)
+        .where(ExecutionPlan.task_id == task_id)
+        .order_by(ExecutionPlan.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _resolve_tool_sandbox(
+    *,
+    task: Task,
+    request: ToolExecuteRequest,
+    session: Session,
+) -> SandboxInstance | None:
+    if request.sandbox_id is None:
+        if not request.create_sandbox:
+            return None
+        sandbox = DockerManager().create_sandbox(session=session, task_id=task.id)
+        session.flush()
+        return sandbox
+    sandbox = session.execute(
+        select(SandboxInstance).where(
+            SandboxInstance.id == request.sandbox_id,
+            SandboxInstance.task_id == task.id,
+        )
+    ).scalar_one_or_none()
+    if sandbox is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="沙箱未找到")
+    return sandbox

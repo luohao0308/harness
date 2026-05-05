@@ -1,6 +1,6 @@
 # Enterprise AI Agent Harness Platform
 
-本项目是生产级企业 AI Agent Harness 平台的定稿方案与工程规范。项目采用确定技术栈、确定架构边界、确定开发顺序，文档拆分为人读文档和 AI 读文档。
+本项目是生产级企业 AI Agent Harness 平台的定稿方案与工程规范。项目采用确定技术栈、确定架构边界、确定开发顺序，文档统一收敛为正式 Spec。
 
 核心公式：
 
@@ -37,6 +37,10 @@ Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、
 
 | 契约 | 事实源 |
 |---|---|
+| 全局 Spec 入口、优先级、变更流程 | [Harness 正式规格总入口](./docs/SPEC.md) |
+| 功能域与文档映射 | [Spec 功能索引](./docs/SPEC-INDEX.md) |
+| 新增功能文档格式 | [Spec 模板](./docs/SPEC-TEMPLATE.md) |
+| 技术实现、接口和流程进展总览 | [技术实现与流程进展总览](./docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md) |
 | API 路径、请求、响应、安全方案 | [OpenAPI YAML](./docs/api/openapi.yaml) |
 | API 人读说明 | [OpenAPI 契约](./docs/api/openapi-contract.md) |
 | 数据表、字段、索引、关系 | [数据库 Schema YAML](./docs/ai/reference/database-schema.yaml) |
@@ -54,47 +58,59 @@ Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、
 ## 当前实现状态
 
 ```text
-当前阶段：阶段 11 Review P1 Production Hardening
+当前阶段：阶段 13 Website Code Integration
 当前状态：ready_for_review
-当前 PR：https://github.com/luohao0308/harness/pull/9
-下一阶段：阶段 12 Runtime Product Completion
-后续阶段：阶段 13 Website Code Integration
+当前 PR：https://github.com/luohao0308/harness/pull/11
+运行时补齐：进行中
+官网与控制台接入：进行中
 ```
 
-阶段 11 已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、控制台后端能力展示和中文 OpenAPI JSON 导入镜像。阶段 12 固定补齐原始产品与运行时文档中仍未完整落地的功能面，包括：
+当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、中文 OpenAPI JSON/YAML 和官网公开下载入口。
+
+当前运行时接口：
 
 ```text
+POST /api/tasks
+GET  /api/tasks
+GET  /api/tasks/{task_id}
+POST /api/tasks/{task_id}/start
 POST /api/tasks/{task_id}/cancel
 POST /api/tasks/{task_id}/resume
 GET  /api/tasks/{task_id}/result
+GET  /api/tasks/{task_id}/plan
+GET  /api/tasks/{task_id}/steps
 POST /api/tasks/{task_id}/replay
+GET  /api/tasks/{task_id}/events
+GET  /api/tasks/{task_id}/events/stream
+GET  /api/tasks/{task_id}/subagents
+POST /api/tasks/{task_id}/subagents
+GET  /api/subagents/{subagent_id}
+POST /api/subagents/{subagent_id}/cancel
 GET  /api/tasks/{task_id}/model-calls
 GET  /api/tasks/{task_id}/tool-calls
+POST /api/tasks/{task_id}/tools/execute
+GET  /api/sandboxes
+GET  /api/sandboxes/warm-pool
+GET  /api/sandboxes/{sandbox_id}
+POST /api/sandboxes/{sandbox_id}/terminate
+GET  /api/observability/summary
 GET  /api/settings/models
 PUT  /api/settings/models
+GET  /api/settings/models/health
 GET  /api/settings/policies
 PUT  /api/settings/policies
-model_calls table
-tool_calls table
-filesystem tools
-http tools
-settings models page
-settings policies page
-replay debug view
-model/tool audit panels
-resource usage chart
-default Chinese UI
-Chinese / English switch
+GET  /health
+GET  /metrics
 ```
 
 当前代码落地状态：
 
 | 要求 | 当前状态 | 证据 |
 |---|---|---|
-| 官网使用 Next.js | 未实现 | `apps/web-site` 当前只有 `.env.example`，没有 `package.json`、Next.js app、页面和构建脚本 |
+| 官网使用 Next.js | 已实现 | `apps/web-site/package.json`、`app/`、`components/`、公开 OpenAPI 文件 |
 | 控制台使用 React + Vite | 已实现 | `apps/agent-console/package.json` 使用 Vite、React、TypeScript、Tailwind CSS |
 | 后端使用 Python 3.11 + FastAPI | 已实现 | `services/api-server/pyproject.toml` 固定 `requires-python ==3.11.*` 并依赖 FastAPI |
-| 异步任务使用 Dramatiq | 已实现 | `services/api-server/app/workers/subagent_worker.py` 和 Docker Compose `agent-worker` 使用 Dramatiq |
+| 异步任务使用 Dramatiq | 基础落地 | `services/api-server/app/workers/subagent_worker.py` 和 Docker Compose `agent-worker` 使用 Dramatiq |
 | 数据库使用 PostgreSQL 16 | 已接入 | Docker Compose 使用 `postgres:16-alpine`，后端使用 SQLAlchemy 与 Alembic |
 | 缓存与队列使用 Redis 7 | 已接入 | Docker Compose 使用 `redis:7-alpine`，后端依赖 Redis 与 Dramatiq broker |
 | 容器沙箱使用 Docker SDK for Python | 已实现基础能力 | 后端依赖 `docker`，存在 Docker manager、WarmPool、shell 工具沙箱路径 |
@@ -102,9 +118,9 @@ Chinese / English switch
 | 监控使用 Prometheus + Grafana | 已接入 | Docker Compose 包含 Prometheus 和 Grafana，后端提供 `/metrics` |
 | 设计稿使用 Figma | 文档已约束，外部设计源未纳入仓库 | `docs/design` 中有 Figma production brief、page inventory、design tokens |
 | Gemini/H5 产物只作为视觉参考和文案参考 | 文档已约束 | 生产前端必须由 React/Next.js 组件实现，不复制 AI 生成 H5 |
-| 文档统一使用阶段、首个交付版、集成演示版和企业版 | 部分完成 | 阶段术语已覆盖；首个交付版、集成演示版、企业版主要出现在架构和交付文档，README 仍需显式纳入术语口径 |
+| 文档统一使用阶段、首个交付版、集成演示版和企业版 | 已覆盖 | README 与阶段文档统一使用固定术语 |
 
-未实现项不得在 README、OpenAPI、控制台页面中表述为已完成能力。官网代码由用户提供，阶段 13 负责接入、构建、后端联动和部署接入；阶段 12 聚焦运行时产品补齐和控制台功能补齐。
+生产级增强项记录在 [实现覆盖与缺口](./docs/human/features/09-implementation-coverage.md)。README、OpenAPI、控制台页面只表述真实代码已有能力。
 
 ## 固定技术栈
 
@@ -131,6 +147,13 @@ ORM：SQLAlchemy 2.0
 ```
 
 ## 文档结构
+
+正式 Spec 面向产品、研发、设计、交付、管理人员和 AI 执行 Agent。所有变更先进入 Spec，再同步 OpenAPI、后端、前端、部署和验证。
+
+- [Harness 正式规格总入口](./docs/SPEC.md)
+- [Spec 功能索引](./docs/SPEC-INDEX.md)
+- [Spec 模板](./docs/SPEC-TEMPLATE.md)
+- [技术实现与流程进展总览](./docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md)
 
 人读文档面向产品、研发、设计、交付和管理人员，强调业务理解、系统边界、研发流程和验收标准。
 

@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AdminAuditEvent
+from app.db.models import AdminAuditEvent, SystemSetting
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -44,3 +44,43 @@ def test_policy_settings_round_trip_for_admin(db_session: Session) -> None:
     assert audit_event.event_type == "ADMIN_ACTION"
     assert audit_event.resource_id == "policies"
     assert audit_event.action == "settings.policies.update"
+
+
+def test_model_settings_persist_per_organization(db_session: Session) -> None:
+    client = TestClient(app)
+
+    current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
+    current["default_model"] = "claude-code-compatible"
+
+    updated = client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+    reloaded = client.get("/api/settings/models", headers=ADMIN_HEADERS)
+
+    assert updated.status_code == 200
+    assert reloaded.json()["default_model"] == "claude-code-compatible"
+    setting = db_session.execute(select(SystemSetting)).scalar_one()
+    assert setting.key == "settings.models"
+    assert setting.value_json["default_model"] == "claude-code-compatible"
+
+
+def test_model_settings_health_endpoint_uses_current_settings() -> None:
+    client = TestClient(app)
+
+    current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
+    current["providers"] = [
+        {
+            "name": "openai-compatible",
+            "status": "degraded",
+            "rate_limit_rpm": 60,
+            "model": "configured-model",
+        }
+    ]
+    client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+
+    health = client.get("/api/settings/models/health", headers=ADMIN_HEADERS)
+
+    assert health.status_code == 200
+    payload = health.json()["items"][0]
+    assert payload["provider"] == "openai-compatible"
+    assert payload["model"] == "configured-model"
+    assert payload["status"] == "healthy"
+    assert payload["mode"] == "mock"

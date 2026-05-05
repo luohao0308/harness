@@ -45,6 +45,17 @@ service_account
 | git_command | high | true | restricted | admin, engineer | elevated |
 | secret_read | critical | true | none | owner, admin | critical |
 
+## Runtime Settings Binding
+
+```text
+settings_key: settings.policies
+runtime_reader: PolicyEngine
+decision_consumer: ToolRunner
+effective_fields: risk_levels, approvals, sandbox, audit
+sandbox_consumer: DockerManager, WarmPoolManager
+sandbox_effective_fields: default_network, default_timeout_seconds
+```
+
 ## Sandbox Policy
 
 ```yaml
@@ -137,4 +148,3 @@ Secret access:
 ```text
 SECRET_ACCESSED
 ```
-

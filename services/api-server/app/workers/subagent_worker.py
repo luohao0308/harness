@@ -6,7 +6,8 @@ from datetime import timedelta
 import dramatiq
 from sqlalchemy.orm import Session
 
-from app.db.models import AgentRun, utc_now
+from app.agents.model_gateway import AuditedModelGateway, ModelMessage, ModelRequest
+from app.db.models import AgentRun, Task, utc_now
 from app.db.session import SessionLocal
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
@@ -74,7 +75,52 @@ def _execute_subagent_with_session(
             session.commit()
             return agent_run.status
 
+        event_store.append(
+            task_id=agent_run.task_id,
+            agent_run_id=agent_run.id,
+            event_type=EventType.SUBAGENT_PROGRESS,
+            payload_json={
+                "agent_run_id": agent_run.id,
+                "stage": "executing_assignment",
+                "assignment": agent_run.context_json,
+            },
+        )
+        task = session.get(Task, agent_run.task_id)
+        summary = _assignment_summary(agent_run.context_json)
+        if task is not None:
+            response = AuditedModelGateway(
+                session=session,
+                task_id=agent_run.task_id,
+                agent_run_id=agent_run.id,
+            ).complete(
+                ModelRequest(
+                    model_provider=task.model_provider,
+                    model_name=task.model_name,
+                    messages=[
+                        ModelMessage(
+                            role="system",
+                            content=(
+                                "You are a Harness Subagent. Complete the assigned async task "
+                                "and return compact JSON with summary and findings."
+                            ),
+                        ),
+                        ModelMessage(
+                            role="user",
+                            content=jsonish_assignment(agent_run.context_json),
+                        ),
+                    ],
+                )
+            )
+            if response.content and response.content != "{}":
+                summary = response.content[:1000]
         time.sleep(0)
+        agent_run.context_json = {
+            **agent_run.context_json,
+            "result": {
+                "summary": summary,
+                "completed_at": utc_now().isoformat(),
+            },
+        }
         agent_run.status = "SUCCESS"
         agent_run.completed_at = utc_now()
         agent_subagents_running.dec()
@@ -82,7 +128,7 @@ def _execute_subagent_with_session(
             task_id=agent_run.task_id,
             agent_run_id=agent_run.id,
             event_type=EventType.SUBAGENT_COMPLETED,
-            payload_json={"agent_run_id": agent_run.id, "summary": "Subagent completed"},
+            payload_json={"agent_run_id": agent_run.id, "summary": summary},
         )
         session.commit()
         return agent_run.status
@@ -113,3 +159,13 @@ def run_subagent(agent_run_id: str) -> None:
 
 def timeout_at_from_now(timeout_seconds: int = DEFAULT_SUBAGENT_TIMEOUT_SECONDS):
     return utc_now() + timedelta(seconds=timeout_seconds)
+
+
+def jsonish_assignment(assignment: dict) -> str:
+    return "\n".join(f"{key}: {value}" for key, value in assignment.items())
+
+
+def _assignment_summary(assignment: dict) -> str:
+    step_key = assignment.get("step_key") or "subagent_task"
+    description = assignment.get("description") or assignment.get("goal") or "异步子任务"
+    return f"Subagent completed {step_key}: {description}"

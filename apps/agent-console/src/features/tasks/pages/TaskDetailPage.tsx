@@ -15,6 +15,7 @@ import { SubagentPanel } from "../../subagents/components/SubagentPanel";
 import {
   cancelTask,
   getTask,
+  getTaskPlan,
   getTaskResult,
   listModelCalls,
   listTaskEvents,
@@ -48,6 +49,12 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     queryFn: () => getTaskResult(taskId!),
     enabled: Boolean(taskId),
   });
+  const planQuery = useQuery({
+    queryKey: ["task-plan", taskId],
+    queryFn: () => getTaskPlan(taskId!),
+    enabled: Boolean(taskId) && taskQuery.data?.status !== "CREATED",
+    retry: false,
+  });
   const modelCallsQuery = useQuery({
     queryKey: ["model-calls", taskId],
     queryFn: () => listModelCalls(taskId!),
@@ -69,6 +76,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
     },
   });
   const cancelMutation = useMutation({
@@ -77,6 +86,7 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
     },
   });
   const resumeMutation = useMutation({
@@ -85,6 +95,7 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["model-calls", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["tool-calls", taskId] });
     },
@@ -181,7 +192,7 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
 
       <div className="grid grid-cols-12 gap-4 p-4">
         <section className="col-span-3">
-          <ExecutionPlanPanel events={events} />
+          <ExecutionPlanPanel events={events} plan={planQuery.data} />
         </section>
         <section className={focus === "events" ? "col-span-9" : "col-span-6"}>
           <EventTimeline events={events} connected={stream.connected} />

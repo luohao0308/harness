@@ -20,6 +20,10 @@ BLOCKED_TERMS = [
 
 REQUIRED_FILES = [
     "README.md",
+    "docs/SPEC.md",
+    "docs/SPEC-INDEX.md",
+    "docs/SPEC-TEMPLATE.md",
+    "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
     "docs/ai/README.md",
     "docs/ai/00-master-prompt.md",
     "docs/ai/00-execution-protocol.md",
@@ -60,6 +64,38 @@ REQUIRED_FILES = [
     "docs/human/features/06-model-tool-audit.md",
     "docs/human/features/07-settings-observability.md",
     "docs/human/features/08-website-console-openapi.md",
+    "docs/human/features/09-implementation-coverage.md",
+    "docs/human/features/10-observability-localization-spec.md",
+]
+
+FEATURE_SPEC_FILES = [
+    "docs/human/features/01-task-lifecycle.md",
+    "docs/human/features/02-planner-executor.md",
+    "docs/human/features/03-event-sourcing-replay.md",
+    "docs/human/features/04-subagent-orchestration.md",
+    "docs/human/features/05-sandbox-warmpool.md",
+    "docs/human/features/06-model-tool-audit.md",
+    "docs/human/features/07-settings-observability.md",
+    "docs/human/features/08-website-console-openapi.md",
+    "docs/human/features/09-implementation-coverage.md",
+    "docs/human/features/10-observability-localization-spec.md",
+]
+
+FEATURE_SPEC_SECTIONS = [
+    "## \u76ee\u6807",
+    "## \u7528\u6237\u53ef\u89c1\u80fd\u529b",
+    "## \u540e\u7aef\u5951\u7ea6",
+    "## \u524d\u7aef\u5165\u53e3",
+    "## \u6570\u636e\u6a21\u578b",
+    "## \u4e8b\u4ef6\u6a21\u578b",
+    "## \u6743\u9650\u6a21\u578b",
+    "## \u72b6\u6001\u6d41\u8f6c",
+    "## \u5916\u90e8\u670d\u52a1\u5951\u7ea6",
+    "## \u89c2\u6d4b\u6307\u6807",
+    "## \u5f53\u524d\u5b9e\u73b0\u72b6\u6001",
+    "## \u7f3a\u53e3",
+    "## \u5b9e\u73b0\u987a\u5e8f",
+    "## \u9a8c\u6536\u6807\u51c6",
 ]
 
 STAGE_FILES = [
@@ -172,12 +208,21 @@ def check_reference_links() -> None:
             fail(f"AI README missing link {rel}")
 
 
+def check_feature_specs() -> None:
+    for rel in FEATURE_SPEC_FILES:
+        text = read_text(ROOT / rel)
+        for section in FEATURE_SPEC_SECTIONS:
+            if section not in text:
+                fail(f"{rel} missing feature spec section {section}")
+
+
 def main() -> None:
     check_required_files()
     check_blocked_terms()
     check_stage_docs()
     check_progress_alignment()
     check_reference_links()
+    check_feature_specs()
     print("docs validation passed")
 
 

@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.subagent_manager import SubagentManager
-from app.api.schemas import SubagentPage, SubagentResponse
+from app.agents.subagent_manager import SubagentLimitExceededError, SubagentManager
+from app.api.schemas import SubagentCreateRequest, SubagentPage, SubagentResponse
 from app.api.tasks import get_owned_task
 from app.db.models import AgentRun, Task
 from app.db.session import get_db_session
@@ -29,6 +29,38 @@ def list_task_subagents(task_id: str, session: DbSession, principal: Principal) 
         .order_by(AgentRun.started_at.asc().nullsfirst(), AgentRun.id.asc())
     )
     return SubagentPage(items=list(session.execute(statement).scalars()))
+
+
+@router.post(
+    "/tasks/{task_id}/subagents",
+    response_model=SubagentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="创建任务子 Agent",
+    description="为指定任务派生一个子 Agent，并写入 SUBAGENT_SPAWNED 事件。",
+)
+def create_task_subagent(
+    task_id: str,
+    request: SubagentCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AgentRun:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    try:
+        agent_run = SubagentManager(session).spawn(
+            task=task,
+            assignment=request.assignment,
+            parent_agent_id=request.parent_agent_id,
+            timeout_seconds=request.timeout_seconds,
+            enqueue=request.enqueue,
+        )
+    except SubagentLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="子 Agent 并发数量已达到上限",
+        ) from exc
+    session.commit()
+    session.refresh(agent_run)
+    return agent_run
 
 
 def get_owned_subagent(subagent_id: str, session: Session, principal: Principal) -> AgentRun:

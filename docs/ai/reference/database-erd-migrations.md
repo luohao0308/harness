@@ -11,9 +11,14 @@ erDiagram
     tasks ||--o{ agent_runs : has
     tasks ||--o{ agent_events : has
     tasks ||--o{ sandbox_instances : has
+    tasks ||--o{ model_calls : audits
+    tasks ||--o{ tool_calls : audits
+    tasks ||--o{ task_snapshots : snapshots
     execution_plans ||--o{ task_steps : contains
     agent_runs ||--o{ agent_events : emits
     agent_runs ||--o{ sandbox_instances : uses
+    sandbox_instances ||--o{ tool_calls : runs
+    system_settings ||--o{ admin_audit_events : changes
 ```
 
 ## Migration Naming
@@ -70,4 +75,3 @@ archive_storage: object storage
 archive_format: jsonl.gz
 archive_index: task_id, date range, organization_id
 ```
-

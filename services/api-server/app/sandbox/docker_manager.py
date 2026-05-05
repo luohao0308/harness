@@ -19,14 +19,11 @@ from app.observability.metrics import (
     sandbox_containers_total,
 )
 from app.sandbox.policies import (
-    DEFAULT_SANDBOX_CPUS,
     DEFAULT_SANDBOX_IMAGE,
-    DEFAULT_SANDBOX_MEMORY,
-    DEFAULT_SANDBOX_MEMORY_MB,
-    DEFAULT_SANDBOX_NANO_CPUS,
     DEFAULT_SANDBOX_NETWORK,
-    DEFAULT_SANDBOX_USER,
     DEFAULT_WORKSPACE_MOUNT,
+    SandboxPolicyResolver,
+    SandboxRuntimePolicy,
     network_enabled_from_mode,
     require_command_timeout,
 )
@@ -60,7 +57,13 @@ class DockerManager:
         task_id: str,
         image: str = DEFAULT_SANDBOX_IMAGE,
         workspace_root: str | None = None,
+        runtime_policy: SandboxRuntimePolicy | None = None,
     ) -> Any:
+        policy = runtime_policy or SandboxRuntimePolicy(
+            network_mode=DEFAULT_SANDBOX_NETWORK,
+            network_enabled=network_enabled_from_mode(DEFAULT_SANDBOX_NETWORK),
+            timeout_seconds=60,
+        )
         volumes = None
         if workspace_root is not None:
             volumes = {
@@ -74,10 +77,10 @@ class DockerManager:
             command="sleep infinity",
             detach=True,
             tty=True,
-            mem_limit=DEFAULT_SANDBOX_MEMORY,
-            nano_cpus=DEFAULT_SANDBOX_NANO_CPUS,
-            network_mode=DEFAULT_SANDBOX_NETWORK,
-            user=DEFAULT_SANDBOX_USER,
+            mem_limit=policy.memory,
+            nano_cpus=policy.nano_cpus,
+            network_mode=policy.network_mode,
+            user=policy.user,
             working_dir=DEFAULT_WORKSPACE_MOUNT,
             volumes=volumes,
             labels={
@@ -96,16 +99,22 @@ class DockerManager:
         workspace_root: str | None = None,
     ) -> SandboxInstance:
         event_store = EventStore(session)
+        runtime_policy = SandboxPolicyResolver(session).runtime_for_task(task_id)
         event_store.append(
             task_id=task_id,
             agent_run_id=agent_run_id,
             event_type=EventType.SANDBOX_REQUESTED,
-            payload_json={"image": image, "network": DEFAULT_SANDBOX_NETWORK},
+            payload_json={
+                "image": image,
+                "network": runtime_policy.network_mode,
+                "timeout_seconds": runtime_policy.timeout_seconds,
+            },
         )
         container = self.create_container(
             task_id=task_id,
             image=image,
             workspace_root=workspace_root,
+            runtime_policy=runtime_policy,
         )
         sandbox = self.record_allocated_container(
             session=session,
@@ -114,6 +123,7 @@ class DockerManager:
             agent_run_id=agent_run_id,
             image=image,
             warm_pool_reused=False,
+            runtime_policy=runtime_policy,
         )
         return sandbox
 
@@ -126,14 +136,20 @@ class DockerManager:
         agent_run_id: str | None = None,
         image: str = DEFAULT_SANDBOX_IMAGE,
         warm_pool_reused: bool,
+        runtime_policy: SandboxRuntimePolicy | None = None,
     ) -> SandboxInstance:
         event_store = EventStore(session)
+        policy = runtime_policy or SandboxPolicyResolver(session).runtime_for_task(task_id)
         if warm_pool_reused:
             event_store.append(
                 task_id=task_id,
                 agent_run_id=agent_run_id,
                 event_type=EventType.SANDBOX_REQUESTED,
-                payload_json={"image": image, "network": DEFAULT_SANDBOX_NETWORK},
+                payload_json={
+                    "image": image,
+                    "network": policy.network_mode,
+                    "timeout_seconds": policy.timeout_seconds,
+                },
             )
         sandbox = SandboxInstance(
             task_id=task_id,
@@ -141,9 +157,9 @@ class DockerManager:
             container_id=container_id,
             image=image,
             status="IDLE",
-            cpu_limit=DEFAULT_SANDBOX_CPUS,
-            memory_limit_mb=DEFAULT_SANDBOX_MEMORY_MB,
-            network_enabled=network_enabled_from_mode(),
+            cpu_limit=policy.cpus,
+            memory_limit_mb=policy.memory_mb,
+            network_enabled=policy.network_enabled,
             warm_pool_reused=warm_pool_reused,
         )
         session.add(sandbox)
@@ -158,10 +174,11 @@ class DockerManager:
                 "sandbox_id": sandbox.id,
                 "container_id": container_id,
                 "image": image,
-                "memory": DEFAULT_SANDBOX_MEMORY,
-                "cpus": DEFAULT_SANDBOX_CPUS,
-                "network": DEFAULT_SANDBOX_NETWORK,
-                "user": DEFAULT_SANDBOX_USER,
+                "memory": policy.memory,
+                "cpus": policy.cpus,
+                "network": policy.network_mode,
+                "user": policy.user,
+                "timeout_seconds": policy.timeout_seconds,
             },
         )
         if warm_pool_reused:
@@ -179,10 +196,12 @@ class DockerManager:
         session: Session,
         sandbox: SandboxInstance,
         command: str,
-        timeout_seconds: int,
+        timeout_seconds: int | None,
         cwd: str = DEFAULT_WORKSPACE_MOUNT,
     ) -> SandboxCommandResult:
-        policy = require_command_timeout(timeout_seconds)
+        runtime_policy = SandboxPolicyResolver(session).runtime_for_task(sandbox.task_id)
+        effective_timeout = timeout_seconds or runtime_policy.timeout_seconds
+        policy = require_command_timeout(effective_timeout)
         if not policy.allowed:
             raise ValueError(policy.reason)
 
@@ -194,7 +213,7 @@ class DockerManager:
             payload_json={
                 "sandbox_id": sandbox.id,
                 "command": command,
-                "timeout_seconds": timeout_seconds,
+                "timeout_seconds": effective_timeout,
             },
         )
         sandbox.status = "BUSY"
@@ -206,7 +225,7 @@ class DockerManager:
             executor = ThreadPoolExecutor(max_workers=1)
             try:
                 future = executor.submit(container.exec_run, command, workdir=cwd, demux=True)
-                exec_result = future.result(timeout=timeout_seconds)
+                exec_result = future.result(timeout=effective_timeout)
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
             stdout, stderr, exit_code = self._decode_exec_result(exec_result)

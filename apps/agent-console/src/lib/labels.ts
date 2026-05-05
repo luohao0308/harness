@@ -108,6 +108,11 @@ const settingsKeyLabels: Record<string, string> = {
   updated_at: "更新时间",
 };
 
+const executionModeLabels: Record<string, string> = {
+  sync: "同步执行",
+  async: "异步执行",
+};
+
 export function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -148,4 +153,8 @@ export function environmentLabel(environment: string) {
 
 export function settingsKeyLabel(key: string) {
   return settingsKeyLabels[key] ?? key;
+}
+
+export function executionModeLabel(mode: string) {
+  return executionModeLabels[mode] ?? mode;
 }

@@ -76,6 +76,25 @@ loki
 otel-collector
 ```
 
+## 外部观测服务入口
+
+```text
+Prometheus: http://127.0.0.1:9091
+Grafana: http://127.0.0.1:3001
+Loki: http://127.0.0.1:3100
+OTel gRPC: http://127.0.0.1:4317
+OTel HTTP: http://127.0.0.1:4318
+```
+
+## 目标后端代理接口
+
+```text
+GET /api/observability/grafana/dashboards
+GET /api/observability/logs
+GET /api/observability/traces/{trace_id}
+GET /api/observability/services/health
+```
+
 ## systemd
 
 ```text
@@ -108,4 +127,3 @@ raw_api_key
 full_prompt
 raw_sensitive_file_content
 ```
-

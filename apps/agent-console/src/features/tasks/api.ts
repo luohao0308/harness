@@ -82,6 +82,26 @@ export type WarmPool = {
   miss_total: number;
 };
 
+export type CountItem = {
+  name: string;
+  count: number;
+};
+
+export type ObservabilitySummary = {
+  tasks_by_status: CountItem[];
+  subagents_by_status: CountItem[];
+  model_calls_by_status: CountItem[];
+  tool_calls_by_status: CountItem[];
+  sandboxes_by_status: CountItem[];
+  warm_pool: WarmPool;
+  event_total: number;
+  task_total: number;
+  failed_task_total: number;
+  model_call_total: number;
+  tool_call_total: number;
+  sandbox_total: number;
+};
+
 export type Subagent = {
   id: string;
   task_id: string;
@@ -109,6 +129,42 @@ export type TaskResult = {
   pending: boolean;
 };
 
+export type TaskPlanStep = {
+  step_key: string;
+  description: string;
+  execution_mode: string;
+  requires_sandbox: boolean;
+  can_spawn_subagent: boolean;
+  status: string;
+  assigned_agent_id: string | null;
+  error_message: string | null;
+};
+
+export type TaskPlan = {
+  id: string;
+  task_id: string;
+  version: number;
+  status: string;
+  summary: string | null;
+  plan_json: Record<string, unknown>;
+  steps: TaskPlanStep[];
+  created_at: string;
+};
+
+export type TaskStep = {
+  id: string;
+  task_id: string;
+  plan_id: string;
+  step_key: string;
+  description: string;
+  status: string;
+  execution_mode: string;
+  assigned_agent_id: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error_message: string | null;
+};
+
 export type ReplayResult = {
   task_id: string;
   sequence: number;
@@ -131,12 +187,31 @@ export type ModelCall = {
 
 export type ToolCall = {
   id: string;
+  task_id?: string;
+  agent_run_id?: string | null;
   tool_name: string;
   status: string;
   risk_level: string;
   requires_sandbox: boolean;
+  sandbox_id?: string | null;
   duration_ms: number;
+  input_json?: Record<string, unknown>;
+  output_json?: Record<string, unknown>;
+  error_message?: string | null;
   created_at: string;
+};
+
+export type ToolExecutePayload = {
+  tool_name: string;
+  input_json: Record<string, unknown>;
+  sandbox_id?: string | null;
+  create_sandbox?: boolean;
+};
+
+export type ToolExecuteResult = {
+  tool_call: ToolCall;
+  allowed: boolean;
+  output: Record<string, unknown>;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -188,6 +263,16 @@ export async function getTaskResult(taskId: string) {
   return request<TaskResult>(`/api/tasks/${taskId}/result`);
 }
 
+export async function getTaskPlan(taskId: string) {
+  return request<TaskPlan>(`/api/tasks/${taskId}/plan`);
+}
+
+export async function listTaskSteps(taskId: string) {
+  return request<{ items: TaskStep[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/steps`,
+  );
+}
+
 export async function replayTask(taskId: string, sequence?: number) {
   return request<ReplayResult>(`/api/tasks/${taskId}/replay`, {
     method: "POST",
@@ -219,6 +304,13 @@ export async function listToolCalls(taskId: string) {
   );
 }
 
+export async function executeTaskTool(taskId: string, payload: ToolExecutePayload) {
+  return request<ToolExecuteResult>(`/api/tasks/${taskId}/tools/execute`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function taskEventStreamUrl(taskId: string) {
   const params = new URLSearchParams({ access_token: DEV_BEARER_TOKEN });
   return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
@@ -234,4 +326,8 @@ export async function getPolicySettings() {
 
 export async function getWarmPool() {
   return request<WarmPool>("/api/sandboxes/warm-pool");
+}
+
+export async function getObservabilitySummary() {
+  return request<ObservabilitySummary>("/api/observability/summary");
 }

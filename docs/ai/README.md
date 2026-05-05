@@ -1,6 +1,12 @@
 # AI 执行文档入口
 
-本目录是 AI Agent 执行项目落地的唯一任务书。AI 必须按编号读取，按阶段执行，完成一个阶段后更新 [机器可读任务进度](./task-progress.yaml)，再读取下一阶段文档。
+本目录是 AI Agent 执行项目落地的任务书。AI 必须先读取全局 Spec，再按编号读取阶段文档，完成一个阶段后更新 [机器可读任务进度](./task-progress.yaml)，再读取下一阶段文档。
+
+全局入口：
+
+- [Harness 正式规格总入口](../SPEC.md)
+- [Spec 功能索引](../SPEC-INDEX.md)
+- [Spec 模板](../SPEC-TEMPLATE.md)
 
 ## 强制读取顺序
 
@@ -24,6 +30,9 @@
 
 ## 参考规格
 
+- [Harness 正式规格总入口](../SPEC.md)
+- [Spec 功能索引](../SPEC-INDEX.md)
+- [Spec 模板](../SPEC-TEMPLATE.md)
 - [架构与技术决策](./reference/architecture-and-decisions.md)
 - [数据、事件与 API](./reference/data-events-api.md)
 - [前端规格](./reference/frontend-spec.md)
@@ -52,6 +61,8 @@
 
 ## 执行总规则
 
+- 所有实现必须先定位对应功能 Spec。
+- API、页面、数据、事件、权限和部署变更必须回写对应 Spec。
 - 固定技术栈不可替换。
 - 固定目录结构不可改名。
 - GitHub 与 Figma 阶段必须先完成。

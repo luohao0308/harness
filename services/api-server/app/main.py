@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
+from app.api.observability import router as observability_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.settings import router as settings_router
 from app.api.subagents import router as subagents_router
@@ -57,3 +58,4 @@ app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(subagents_router, prefix="/api")
 app.include_router(sandboxes_router, prefix="/api")
+app.include_router(observability_router, prefix="/api")
