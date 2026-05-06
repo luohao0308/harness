@@ -47,6 +47,8 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+      tempo:
+        condition: service_started
     environment:
       APP_ENV: production
       APP_BASE_URL: http://127.0.0.1:3000
@@ -61,6 +63,7 @@ services:
       GRAFANA_PASSWORD: admin
       LOKI_BASE_URL: http://loki:3100
       OTEL_COLLECTOR_HTTP_URL: http://otel-collector:13133
+      TEMPO_BASE_URL: http://tempo:3200
     ports:
       - "8000:8000"
 
@@ -89,10 +92,13 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     command: python -m dramatiq app.workers.subagent_worker
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
 
   subagent-recovery:
     image: agent-harness-api-server:latest
@@ -101,10 +107,13 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     command: python -m app.workers.subagent_recovery_worker
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       SUBAGENT_RECOVERY_METRICS_PORT: 9102
     expose:
       - "9102"
@@ -214,6 +223,8 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.113.0
+    depends_on:
+      - tempo
     command:
       - --config=/etc/otel-collector.yml
     ports:
@@ -222,6 +233,15 @@ services:
       - "13133:13133"
     volumes:
       - ../monitoring/otel-collector.yml:/etc/otel-collector.yml:ro
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command:
+      - -config.file=/etc/tempo.yml
+    ports:
+      - "3200:3200"
+    volumes:
+      - ../monitoring/tempo.yml:/etc/tempo.yml:ro
 
 volumes:
   agent-workspaces:

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
         default="http://localhost:4318",
         alias="OTEL_COLLECTOR_HTTP_URL",
     )
+    otel_exporter_otlp_endpoint: str = Field(
+        default="",
+        alias="OTEL_EXPORTER_OTLP_ENDPOINT",
+    )
+    tempo_base_url: AnyHttpUrl = Field(default="http://localhost:3200", alias="TEMPO_BASE_URL")
 
     model_config = SettingsConfigDict(case_sensitive=True, extra="ignore")
 

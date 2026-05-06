@@ -6,7 +6,12 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.api.observability import _grafana_auth_headers, _loki_label_selector, _query_loki_logs
+from app.api.observability import (
+    _grafana_auth_headers,
+    _loki_label_selector,
+    _query_loki_logs,
+    _tempo_trace_spans,
+)
 from app.core.config import Settings
 from app.core.logging import JsonFormatter
 from app.db.models import AgentRun, ModelCall, SandboxInstance, Task, ToolCall, utc_now
@@ -315,6 +320,93 @@ def test_observability_trace_returns_event_spans(db_session: Session) -> None:
     assert payload["spans"][1]["parent_span_id"] == "event-1"
 
 
+def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:
+    tempo_payload = {
+        "batches": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "api-server"}}
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {
+                                "traceId": "otel-trace-1",
+                                "spanId": "span-1",
+                                "name": "GET /api/tasks",
+                                "startTimeUnixNano": "1000000000",
+                                "endTimeUnixNano": "1250000000",
+                                "attributes": [
+                                    {
+                                        "key": "harness.trace_id",
+                                        "value": {"stringValue": "trace-chain"},
+                                    },
+                                    {"key": "url.path", "value": {"stringValue": "/api/tasks"}},
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+    with patch("app.api.observability._get_json") as get_json:
+        get_json.side_effect = [
+            {"traces": [{"traceID": "otel-trace-1"}]},
+            tempo_payload,
+        ]
+        response = TestClient(app).get(
+            "/api/observability/traces/trace-chain",
+            headers=AUTH_HEADERS,
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "tempo"
+    assert payload["spans"][0]["trace_id"] == "trace-chain"
+    assert payload["spans"][0]["span_id"] == "span-1"
+    assert payload["spans"][0]["duration_ms"] == 250
+
+
+def test_tempo_trace_span_parser_handles_resource_spans() -> None:
+    spans = _tempo_trace_spans(
+        requested_trace_id="trace-parser",
+        payload={
+            "resourceSpans": [
+                {
+                    "resource": {
+                        "attributes": [
+                            {"key": "service.name", "value": {"stringValue": "api-server"}}
+                        ]
+                    },
+                    "scopeSpans": [
+                        {
+                            "spans": [
+                                {
+                                    "traceId": "otel-trace-2",
+                                    "spanId": "span-2",
+                                    "parentSpanId": "span-1",
+                                    "name": "POST /api/tasks",
+                                    "startTimeUnixNano": "2000000000",
+                                    "endTimeUnixNano": "3000000000",
+                                    "attributes": [],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert spans[0].service == "api-server"
+    assert spans[0].parent_span_id == "span-1"
+    assert spans[0].duration_ms == 1000
+
+
 def test_grafana_dashboards_returns_configured_fallback() -> None:
     response = TestClient(app).get("/api/observability/grafana/dashboards", headers=AUTH_HEADERS)
 
@@ -340,4 +432,5 @@ def test_observability_services_health_returns_all_services() -> None:
         "grafana",
         "loki",
         "otel-collector",
+        "tempo",
     }

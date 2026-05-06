@@ -3,8 +3,10 @@ import * as echarts from "echarts";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { useI18n } from "../../../lib/i18n";
 
 export function PlaceholderPage({ title, chart = false }: { title: string; chart?: boolean }) {
+  const { text } = useI18n();
   const chartRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -35,7 +37,10 @@ export function PlaceholderPage({ title, chart = false }: { title: string; chart
               <div ref={chartRef} className="h-72 w-full" />
             ) : (
               <div className="rounded-md border border-dashed border-slate-200 p-8">
-                This operational view is reserved for the next runtime stages.
+                {text(
+                  "该运营视图已预留给后续运行时阶段。",
+                  "This operational view is reserved for the next runtime stages.",
+                )}
               </div>
             )}
           </div>

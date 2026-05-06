@@ -2,6 +2,7 @@ import type { AgentEvent } from "../../tasks/api";
 import type { Subagent } from "../../tasks/api";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Badge, Dot, statusTone } from "../../../components/ui/badge";
+import { useI18n } from "../../../lib/i18n";
 import { actorLabel, eventLabel } from "../../../lib/labels";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
@@ -15,6 +16,7 @@ export function EventTimeline({
   connected: boolean;
   subagents?: Subagent[];
 }) {
+  const { text } = useI18n();
   const subagentsById = new Map(subagents.map((subagent) => [subagent.id, subagent]));
   const topology = events
     .filter((event) => event.event_type === "SUBAGENT_SPAWNED")
@@ -38,15 +40,16 @@ export function EventTimeline({
   return (
     <Card>
       <CardHeader>
-        <div className="text-[11px] tracking-widest text-slate-500">实时事件时间线</div>
+        <div className="text-[11px] tracking-widest text-slate-500">{text("实时事件时间线", "Live Event Timeline")}</div>
         <div className="flex items-center gap-2 text-[11px] text-slate-500">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-          {connected ? "实时连接" : "快照"} · 序号 {events.at(-1)?.sequence ?? 0}
+          {connected ? text("实时连接", "Live connection") : text("快照", "Snapshot")} ·{" "}
+          {text(`序号 ${events.at(-1)?.sequence ?? 0}`, `Seq ${events.at(-1)?.sequence ?? 0}`)}
         </div>
       </CardHeader>
       {topology.length > 0 && (
         <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
-          <div className="mb-1 font-semibold text-slate-700">并行执行拓扑</div>
+          <div className="mb-1 font-semibold text-slate-700">{text("并行执行拓扑", "Parallel Execution Topology")}</div>
           <div className="space-y-1">
             {topology.slice(0, 5).map((item) => (
               <div
@@ -66,11 +69,11 @@ export function EventTimeline({
       )}
       <div className="font-mono text-[11px]">
         <div className="grid grid-cols-[60px_86px_180px_90px_1fr] border-b border-slate-100 bg-slate-50/40 px-3 py-1.5 text-slate-400">
-          <div>序号</div>
-          <div>时间</div>
-          <div>事件</div>
-          <div>来源</div>
-          <div>载荷</div>
+          <div>{text("序号", "Seq")}</div>
+          <div>{text("时间", "Time")}</div>
+          <div>{text("事件", "Event")}</div>
+          <div>{text("来源", "Source")}</div>
+          <div>{text("载荷", "Payload")}</div>
         </div>
         {events.map((event) => (
           <div
@@ -93,9 +96,10 @@ export function EventTimeline({
 }
 
 function GitBranchLabel({ agentRunId }: { agentRunId: string | null }) {
+  const { text } = useI18n();
   return (
     <span className="font-mono text-slate-600">
-      {agentRunId ? agentRunId.slice(0, 8) : "等待子 Agent"}
+      {agentRunId ? agentRunId.slice(0, 8) : text("等待子 Agent", "Waiting for subagent")}
     </span>
   );
 }

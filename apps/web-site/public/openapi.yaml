@@ -1060,7 +1060,8 @@ paths:
       tags:
       - observability
       summary: 查询 Trace 链路
-      description: 按 trace_id 查询链路；外部 Trace 后端未接入时返回 Event Store 合成 span。
+      description: 按 trace_id 查询链路；优先返回 Tempo 真实 span，Tempo 不可用时返回 Event Store 合成
+        span。
       operationId: get_observability_trace_api_observability_traces__trace_id__get
       security:
       - HTTPBearer: []
@@ -1103,7 +1104,7 @@ paths:
       tags:
       - observability
       summary: 查询观测服务健康
-      description: 探测 Prometheus、Grafana、Loki 和 OpenTelemetry Collector 健康状态。
+      description: 探测 Prometheus、Grafana、Loki、OpenTelemetry Collector 和 Tempo 健康状态。
       operationId: get_observability_services_health_api_observability_services_health_get
       responses:
         '200':

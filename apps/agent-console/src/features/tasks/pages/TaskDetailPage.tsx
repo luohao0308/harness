@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router-dom";
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
+import { useI18n } from "../../../lib/i18n";
 import { enabledLabel } from "../../../lib/labels";
 import { EventTimeline } from "../../events/components/EventTimeline";
 import { useTaskEventStream } from "../../events/useTaskEventStream";
@@ -36,6 +37,7 @@ import { TaskResultPanel } from "../components/TaskResultPanel";
 import { TaskStatusBadge } from "../components/TaskStatusBadge";
 
 export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
+  const { text } = useI18n();
   const { taskId } = useParams();
   const queryClient = useQueryClient();
   const taskQuery = useQuery({
@@ -159,17 +161,17 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
 
   if (!task) {
     return (
-      <ConsoleShell title="任务 / 详情">
-        <div className="p-6 text-sm text-slate-500">任务加载中...</div>
+      <ConsoleShell title={text("任务 / 详情", "Tasks / Detail")}>
+        <div className="p-6 text-sm text-slate-500">{text("任务加载中...", "Loading task...")}</div>
       </ConsoleShell>
     );
   }
 
   return (
-    <ConsoleShell title={`任务 / ${task.id.slice(0, 8)}`}>
+    <ConsoleShell title={`${text("任务", "Task")} / ${task.id.slice(0, 8)}`}>
       <div className="border-b border-slate-200 bg-white px-6 py-5">
         <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
-          <Link to="/tasks">任务</Link>
+          <Link to="/tasks">{text("任务", "Tasks")}</Link>
           <ChevronRight className="h-3 w-3" />
           <span className="font-mono">{task.id.slice(0, 8)}</span>
         </div>
@@ -180,22 +182,22 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 {task.title}
               </h1>
               <TaskStatusBadge status={task.status} />
-              {task.enable_sandbox && <Badge tone="purple">沙箱已启用</Badge>}
+              {task.enable_sandbox && <Badge tone="purple">{text("沙箱已启用", "Sandbox enabled")}</Badge>}
               <PolicyBadge requiresSandbox={task.enable_sandbox} />
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-5 text-xs text-slate-500">
               <span>
-                模型 <span className="text-slate-800">{task.model_name}</span>
+                {text("模型", "Model")} <span className="text-slate-800">{task.model_name}</span>
               </span>
               <span>
-                子 Agent <span className="font-mono text-slate-800">{task.max_subagents}</span>
+                {text("子 Agent", "Subagents")} <span className="font-mono text-slate-800">{task.max_subagents}</span>
               </span>
               <span>
-                运行上限{" "}
+                {text("运行上限", "Runtime limit")}{" "}
                 <span className="font-mono text-slate-800">{task.max_runtime_seconds}s</span>
               </span>
               <span>
-                网络{" "}
+                {text("网络", "Network")}{" "}
                 <span className={task.enable_network ? "text-amber-600" : "text-slate-800"}>
                   {enabledLabel(task.enable_network)}
                 </span>
@@ -207,23 +209,23 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               onClick={() => startMutation.mutate()}
               disabled={startMutation.isPending || task.status !== "CREATED"}
             >
-              <Play className="h-3.5 w-3.5" /> 启动
+              <Play className="h-3.5 w-3.5" /> {text("启动", "Start")}
             </Button>
             <Button
               onClick={() => cancelMutation.mutate()}
               disabled={cancelMutation.isPending || !["CREATED", "RUNNING", "FAILED"].includes(task.status)}
               variant="danger"
             >
-              <Ban className="h-3.5 w-3.5" /> 取消
+              <Ban className="h-3.5 w-3.5" /> {text("取消", "Cancel")}
             </Button>
             <Button
               onClick={() => resumeMutation.mutate()}
               disabled={resumeMutation.isPending || !["FAILED", "CANCELLED"].includes(task.status)}
             >
-              <RotateCcw className="h-3.5 w-3.5" /> 恢复
+              <RotateCcw className="h-3.5 w-3.5" /> {text("恢复", "Resume")}
             </Button>
             <Button variant="primary">
-              <Download className="h-3.5 w-3.5" /> 导出审计
+              <Download className="h-3.5 w-3.5" /> {text("导出审计", "Export Audit")}
             </Button>
           </div>
         </div>
@@ -247,13 +249,14 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
           />
           <div className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-xs">
             <div className="mb-2 flex items-center justify-between">
-              <span className="font-semibold text-slate-900">重放调试</span>
+              <span className="font-semibold text-slate-900">{text("重放调试", "Replay Debug")}</span>
               <Button onClick={() => replayMutation.mutate()} disabled={replayMutation.isPending}>
-                <RotateCcw className="h-3.5 w-3.5" /> 重放当前序号
+                <RotateCcw className="h-3.5 w-3.5" /> {text("重放当前序号", "Replay Current Sequence")}
               </Button>
             </div>
             <div className="text-slate-500">
-              {replayMutation.data?.state_summary ?? "将当前最后事件序号作为重放输入。"}
+              {replayMutation.data?.state_summary ??
+                text("将当前最后事件序号作为重放输入。", "Uses the current last event sequence as replay input.")}
             </div>
             {replayMutation.data?.diagnosis && (
               <div className="mt-1 text-slate-500">{replayMutation.data.diagnosis}</div>

@@ -67,7 +67,7 @@ docs/SPEC.md
 | 模型网关 | OpenAI-compatible | 基础落地 | Model Gateway、model_calls |
 | 工具治理 | Tool Registry + Policy Engine | 基础落地 | Tool Runner、tool_calls |
 | 观测 | Prometheus + Grafana + Loki + OTel | 深度观测接口、Grafana provisioning、Promtail 采集和 Loki 标签检索基础落地 | `/metrics`、Observability Summary、Logs、Trace、Dashboard、Health |
-| 本地化 | 默认中文，English 切换 | 基础落地 | 控制台 Shell 和部分页面 |
+| 本地化 | 默认中文，English 切换 | 已落地 | 控制台 Shell、任务、详情、事件、Subagent、沙箱、观测、模型设置和策略设置页面 |
 
 ## 功能实现与接口进展
 
@@ -125,7 +125,7 @@ docs/SPEC.md
 | 观测摘要 | 已落地 | `GET /api/observability/summary` | 增加队列、耗时分位和深链 |
 | Grafana | 基础落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning | 增强权限模型 |
 | Loki | 基础落地 | `GET /api/observability/logs`、Promtail 采集、标签检索 | 增强日志检索深链 |
-| OpenTelemetry | 基础落地 | `GET /api/observability/traces/{trace_id}` | 接入真实 Trace 后端 |
+| OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 增强 Trace 深链 |
 | 服务健康 | 基础落地 | `GET /health`、`GET /api/observability/services/health` | 增强告警联动 |
 
 ## 当前未完成缺口
@@ -133,8 +133,7 @@ docs/SPEC.md
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |
-| 真实 OTel Trace 后端 | 当前接口已有 Event Store 合成 span | `docs/human/features/10-observability-localization-spec.md` |
-| 控制台全量 i18n | 部分旧页面仍有英文原始文案 | `docs/human/features/10-observability-localization-spec.md` |
+| 控制台边缘文案巡检 | 新增页面仍需按 Spec 持续检查双语文案 | `docs/human/features/10-observability-localization-spec.md` |
 | 官网最终接入 | 用户提供的官网代码还需整合 | `docs/human/features/08-website-console-openapi.md` |
 
 ## 流程进展
@@ -158,10 +157,9 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 接入真实 OTel Trace 后端
-2. 补控制台全量 i18n
-3. 整合用户提供的官网代码
-4. 同步 OpenAPI、测试、Runbook 和覆盖文档
+1. 整合用户提供的官网代码
+2. 同步 OpenAPI、测试、Runbook 和覆盖文档
+3. 持续巡检控制台新增页面双语文案
 ```
 
 ## 验证命令

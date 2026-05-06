@@ -3,6 +3,7 @@ import { GitBranch, RotateCcw } from "lucide-react";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import type { Subagent, SubagentRecoveryBatch, SubagentRecoveryResponse } from "../../tasks/api";
@@ -53,11 +54,12 @@ export function SubagentPanel({
   recoveryBatches?: SubagentRecoveryBatch[];
   onRecover?: () => void;
 }) {
+  const { text } = useI18n();
   return (
     <Card>
       <CardHeader>
         <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
-          <GitBranch className="h-3 w-3" /> 子 Agent
+          <GitBranch className="h-3 w-3" /> {text("子 Agent", "Subagents")}
         </div>
         <div className="flex items-center gap-1">
           <span className="font-mono text-[10px] text-slate-400">
@@ -70,7 +72,7 @@ export function SubagentPanel({
               onClick={onRecover}
               variant="ghost"
             >
-              <RotateCcw className="h-3 w-3" /> 恢复
+              <RotateCcw className="h-3 w-3" /> {text("恢复", "Recover")}
             </Button>
           )}
         </div>
@@ -78,15 +80,15 @@ export function SubagentPanel({
       {recoveryBatch && (
         <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-700">最近恢复批次</span>
+            <span className="font-semibold text-slate-700">{text("最近恢复批次", "Latest Recovery Batch")}</span>
             <span className="font-mono text-slate-400">{recoveryBatch.batch_id.slice(0, 13)}</span>
           </div>
           <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
-            <span>{recoveryBatch.trigger === "auto" ? "自动巡检" : "手动触发"}</span>
-            <span>扫描 {recoveryBatch.scanned_count}</span>
-            <span>恢复 {recoveryBatch.recovered_count}</span>
+            <span>{recoveryBatch.trigger === "auto" ? text("自动巡检", "Auto scan") : text("手动触发", "Manual trigger")}</span>
+            <span>{text(`扫描 ${recoveryBatch.scanned_count}`, `Scanned ${recoveryBatch.scanned_count}`)}</span>
+            <span>{text(`恢复 ${recoveryBatch.recovered_count}`, `Recovered ${recoveryBatch.recovered_count}`)}</span>
             <span>Replay {recoveryBatch.replay_sequence}</span>
-            <span>卡住阈值 {recoveryBatch.stale_after_seconds}s</span>
+            <span>{text(`卡住阈值 ${recoveryBatch.stale_after_seconds}s`, `Stale threshold ${recoveryBatch.stale_after_seconds}s`)}</span>
             <span>{formatShortDate(recoveryBatch.completed_at)}</span>
           </div>
           {recoveryBatch.recovered.length > 0 && (
@@ -103,19 +105,20 @@ export function SubagentPanel({
             </div>
           )}
           {recoveryBatch.recovered.length === 0 && (
-            <div className="mt-1 text-slate-400">本批次没有需要恢复的子 Agent。</div>
+            <div className="mt-1 text-slate-400">{text("本批次没有需要恢复的子 Agent。", "No subagents needed recovery in this batch.")}</div>
           )}
         </div>
       )}
       {recoveryBatches.length > 1 && (
         <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
-          <div className="mb-1 font-semibold text-slate-700">恢复批次历史</div>
+          <div className="mb-1 font-semibold text-slate-700">{text("恢复批次历史", "Recovery Batch History")}</div>
           <div className="space-y-0.5">
             {recoveryBatches.slice(0, 3).map((batch) => (
               <div key={batch.batch_id} className="flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate">
-                  {batch.trigger === "auto" ? "自动巡检" : "手动触发"} · 扫描 {batch.scanned_count} · 恢复{" "}
-                  {batch.recovered_count}
+                  {batch.trigger === "auto" ? text("自动巡检", "Auto scan") : text("手动触发", "Manual trigger")} ·{" "}
+                  {text(`扫描 ${batch.scanned_count}`, `Scanned ${batch.scanned_count}`)} ·{" "}
+                  {text(`恢复 ${batch.recovered_count}`, `Recovered ${batch.recovered_count}`)}
                 </span>
                 <span className="shrink-0 font-mono text-slate-400">
                   {formatShortDate(batch.completed_at)}
@@ -126,10 +129,13 @@ export function SubagentPanel({
         </div>
       )}
       <div className="space-y-1.5 p-2">
-        {loading && <div className="px-2 py-4 text-xs text-slate-500">子 Agent 加载中...</div>}
+        {loading && <div className="px-2 py-4 text-xs text-slate-500">{text("子 Agent 加载中...", "Loading subagents...")}</div>}
         {!loading && subagents.length === 0 && (
           <div className="px-2 py-4 text-xs text-slate-500">
-            当前任务尚未派生子 Agent。长耗时任务会在这里显示并发状态。
+            {text(
+              "当前任务尚未派生子 Agent。长耗时任务会在这里显示并发状态。",
+              "This task has not spawned subagents yet. Long-running tasks show concurrency state here.",
+            )}
           </div>
         )}
         {subagents.map((subagent) => (
@@ -147,13 +153,15 @@ export function SubagentPanel({
             <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
               {subagentStepKey(subagent) && (
                 <>
-                  <span>来源步骤</span>
+                  <span>{text("来源步骤", "Source step")}</span>
                   <span className="font-mono text-slate-700">{subagentStepKey(subagent)}</span>
                 </>
               )}
-              {subagent.started_at && <span>已启动</span>}
-              {subagent.timeout_at && <span>超时保护已设置</span>}
-              {subagentToolCount(subagent) > 0 && <span>工具 {subagentToolCount(subagent)}</span>}
+              {subagent.started_at && <span>{text("已启动", "Started")}</span>}
+              {subagent.timeout_at && <span>{text("超时保护已设置", "Timeout guard set")}</span>}
+              {subagentToolCount(subagent) > 0 && (
+                <span>{text(`工具 ${subagentToolCount(subagent)}`, `Tools ${subagentToolCount(subagent)}`)}</span>
+              )}
             </div>
             {subagentResultSummary(subagent) && (
               <div className="mt-1 line-clamp-2 text-[10px] text-slate-500">

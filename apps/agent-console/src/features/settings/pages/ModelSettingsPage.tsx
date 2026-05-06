@@ -4,11 +4,13 @@ import { Brain } from "lucide-react";
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import { getModelHealth, getModelSettings } from "../../tasks/api";
 
 export function ModelSettingsPage() {
+  const { text } = useI18n();
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
   const health = useQuery({ queryKey: ["settings", "models", "health"], queryFn: getModelHealth });
   const healthByProvider = new Map(
@@ -16,23 +18,23 @@ export function ModelSettingsPage() {
   );
 
   return (
-    <ConsoleShell title="模型设置">
+    <ConsoleShell title={text("模型设置", "Model Settings")}>
       <div className="space-y-4 p-4">
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Brain className="h-4 w-4" /> 模型网关
+              <Brain className="h-4 w-4" /> {text("模型网关", "Model Gateway")}
             </div>
-            <span className="text-xs text-slate-500">模型网关、供应商与限流状态</span>
+            <span className="text-xs text-slate-500">{text("模型网关、供应商与限流状态", "Model gateway, providers, and rate limits")}</span>
           </CardHeader>
           <div className="grid grid-cols-3 gap-3 p-3 text-xs">
-            <Metric label="默认供应商" value={settings.data?.default_provider ?? "..."} />
-            <Metric label="默认模型" value={settings.data?.default_model ?? "..."} />
-            <Metric label="健康状态" value={statusLabel(String(settings.data?.health.status ?? "..."))} />
+            <Metric label={text("默认供应商", "Default Provider")} value={settings.data?.default_provider ?? "..."} />
+            <Metric label={text("默认模型", "Default Model")} value={settings.data?.default_model ?? "..."} />
+            <Metric label={text("健康状态", "Health")} value={statusLabel(String(settings.data?.health.status ?? "..."))} />
             <Metric label="RPM 限流" value={formatLimit(settings.data?.rate_limits.rpm, "rpm")} />
             <Metric label="TPM 限流" value={formatLimit(settings.data?.rate_limits.tpm, "tpm")} />
             <Metric
-              label="熔断规则"
+              label={text("熔断规则", "Circuit Breaker")}
               value={`${String(settings.data?.circuit_breaker.failure_threshold ?? "...")} 次失败 / ${String(
                 settings.data?.circuit_breaker.cooldown_seconds ?? "...",
               )} 秒`}
@@ -42,22 +44,22 @@ export function ModelSettingsPage() {
         <Card>
           <CardHeader>
             <div>
-              <div className="text-[11px] tracking-widest text-slate-500">供应商</div>
+              <div className="text-[11px] tracking-widest text-slate-500">{text("供应商", "Providers")}</div>
               <div className="mt-1 text-xs text-slate-500">
-                展示限流、主动探测和供应商级熔断状态
+                {text("展示限流、主动探测和供应商级熔断状态", "Shows rate limits, active probes, and provider circuit state")}
               </div>
             </div>
           </CardHeader>
           <Table>
             <thead className="bg-slate-50 text-slate-500">
               <tr>
-                <Th>名称</Th>
-                <Th>模型</Th>
-                <Th>状态</Th>
-                <Th>限流</Th>
-                <Th>探测</Th>
-                <Th>熔断</Th>
-                <Th>失败</Th>
+                <Th>{text("名称", "Name")}</Th>
+                <Th>{text("模型", "Model")}</Th>
+                <Th>{text("状态", "Status")}</Th>
+                <Th>{text("限流", "Rate Limit")}</Th>
+                <Th>{text("探测", "Probe")}</Th>
+                <Th>{text("熔断", "Circuit")}</Th>
+                <Th>{text("失败", "Failures")}</Th>
               </tr>
             </thead>
             <tbody>
@@ -89,7 +91,7 @@ export function ModelSettingsPage() {
                       ) : null}
                     </Td>
                     <Td>
-                      <div>{String(item?.consecutive_failures ?? 0)} 次</div>
+                      <div>{text(`${String(item?.consecutive_failures ?? 0)} 次`, `${String(item?.consecutive_failures ?? 0)} failures`)}</div>
                       {item?.error_message ? (
                         <div className="mt-1 max-w-56 truncate text-red-600">{item.error_message}</div>
                       ) : null}

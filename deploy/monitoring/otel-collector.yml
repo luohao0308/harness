@@ -16,6 +16,10 @@ extensions:
 exporters:
   debug:
     verbosity: basic
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
 
 service:
   extensions:
@@ -28,3 +32,4 @@ service:
         - batch
       exporters:
         - debug
+        - otlp/tempo

@@ -1,7 +1,7 @@
 import json
 import time
 from base64 import b64encode
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 from urllib import error, request
 from urllib.parse import urlencode
@@ -149,13 +149,19 @@ def list_observability_logs(
     "/traces/{trace_id}",
     response_model=ObservabilityTraceResponse,
     summary="查询 Trace 链路",
-    description="按 trace_id 查询链路；外部 Trace 后端未接入时返回 Event Store 合成 span。",
+    description=(
+        "按 trace_id 查询链路；"
+        "优先返回 Tempo 真实 span，Tempo 不可用时返回 Event Store 合成 span。"
+    ),
 )
 def get_observability_trace(
     trace_id: str,
     session: DbSession,
     principal: Principal,
 ) -> ObservabilityTraceResponse:
+    tempo_spans = _query_tempo_trace(trace_id=trace_id)
+    if tempo_spans:
+        return ObservabilityTraceResponse(trace_id=trace_id, spans=tempo_spans, source="tempo")
     spans = _event_trace_spans(session=session, principal=principal, trace_id=trace_id)
     return ObservabilityTraceResponse(trace_id=trace_id, spans=spans, source="event_store")
 
@@ -192,7 +198,7 @@ def list_grafana_dashboards() -> GrafanaDashboardPage:
     "/services/health",
     response_model=ObservabilityServicesHealthResponse,
     summary="查询观测服务健康",
-    description="探测 Prometheus、Grafana、Loki 和 OpenTelemetry Collector 健康状态。",
+    description="探测 Prometheus、Grafana、Loki、OpenTelemetry Collector 和 Tempo 健康状态。",
 )
 def get_observability_services_health() -> ObservabilityServicesHealthResponse:
     settings = get_settings()
@@ -201,6 +207,7 @@ def get_observability_services_health() -> ObservabilityServicesHealthResponse:
         ("grafana", f"{str(settings.grafana_base_url).rstrip('/')}/api/health"),
         ("loki", f"{str(settings.loki_base_url).rstrip('/')}/ready"),
         ("otel-collector", f"{str(settings.otel_collector_http_url).rstrip('/')}/"),
+        ("tempo", f"{str(settings.tempo_base_url).rstrip('/')}/ready"),
     ]
     return ObservabilityServicesHealthResponse(
         services=[_probe_service(name=name, url=url) for name, url in services]
@@ -294,6 +301,120 @@ def _event_trace_spans(
         )
         previous_span_id = span_id
     return spans
+
+
+def _query_tempo_trace(*, trace_id: str) -> list[ObservabilityTraceSpan]:
+    settings = get_settings()
+    base_url = str(settings.tempo_base_url).rstrip("/")
+    tempo_trace_ids = [trace_id]
+    search_query = urlencode({"q": f'{{.harness.trace_id="{trace_id}"}}', "limit": "5"})
+    try:
+        search_payload = _get_json(f"{base_url}/api/search?{search_query}", timeout=0.35)
+    except Exception:
+        search_payload = {}
+    for trace in search_payload.get("traces", []) if isinstance(search_payload, dict) else []:
+        candidate = trace.get("traceID") or trace.get("traceId")
+        if isinstance(candidate, str) and candidate not in tempo_trace_ids:
+            tempo_trace_ids.append(candidate)
+    for tempo_trace_id in tempo_trace_ids:
+        try:
+            payload = _get_json(f"{base_url}/api/traces/{tempo_trace_id}", timeout=0.35)
+        except Exception:
+            continue
+        spans = _tempo_trace_spans(payload=payload, requested_trace_id=trace_id)
+        if spans:
+            return spans
+    return []
+
+
+def _tempo_trace_spans(
+    *,
+    payload: dict | list,
+    requested_trace_id: str,
+) -> list[ObservabilityTraceSpan]:
+    if not isinstance(payload, dict):
+        return []
+    batches = payload.get("batches")
+    if not isinstance(batches, list):
+        batches = payload.get("resourceSpans")
+    if not isinstance(batches, list):
+        return []
+    spans: list[ObservabilityTraceSpan] = []
+    for batch in batches:
+        resource_attrs = _tempo_attributes(batch.get("resource", {}).get("attributes", []))
+        service_name = str(
+            resource_attrs.get("service.name")
+            or resource_attrs.get("service_name")
+            or "unknown"
+        )
+        scope_spans = batch.get("scopeSpans") or batch.get("instrumentationLibrarySpans") or []
+        for scope_span in scope_spans:
+            for raw_span in scope_span.get("spans", []):
+                attrs = {
+                    **resource_attrs,
+                    **_tempo_attributes(raw_span.get("attributes", [])),
+                }
+                span_trace_id = str(raw_span.get("traceId") or requested_trace_id)
+                spans.append(
+                    ObservabilityTraceSpan(
+                        trace_id=str(attrs.get("harness.trace_id") or requested_trace_id),
+                        span_id=str(raw_span.get("spanId") or raw_span.get("span_id") or ""),
+                        parent_span_id=(
+                            raw_span.get("parentSpanId") or raw_span.get("parent_span_id")
+                        ),
+                        name=str(raw_span.get("name") or "span"),
+                        service=service_name,
+                        start_time=_parse_tempo_time(raw_span.get("startTimeUnixNano")),
+                        duration_ms=_tempo_duration_ms(raw_span),
+                        attributes={**attrs, "otel_trace_id": span_trace_id},
+                        source="tempo",
+                    )
+                )
+    return sorted(spans, key=lambda span: span.start_time)
+
+
+def _tempo_attributes(raw_attributes: object) -> dict:
+    if not isinstance(raw_attributes, list):
+        return {}
+    attributes = {}
+    for item in raw_attributes:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("key")
+        value = item.get("value")
+        if not isinstance(key, str):
+            continue
+        attributes[key] = _tempo_attribute_value(value)
+    return attributes
+
+
+def _tempo_attribute_value(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    for key in ("stringValue", "intValue", "doubleValue", "boolValue"):
+        if key in value:
+            return value[key]
+    if "arrayValue" in value:
+        return value["arrayValue"]
+    if "kvlistValue" in value:
+        return value["kvlistValue"]
+    return value
+
+
+def _parse_tempo_time(value: object) -> datetime:
+    try:
+        return datetime.fromtimestamp(int(str(value)) / 1_000_000_000, tz=UTC)
+    except (TypeError, ValueError):
+        return datetime.now(UTC)
+
+
+def _tempo_duration_ms(raw_span: dict) -> int:
+    try:
+        started_at = int(str(raw_span.get("startTimeUnixNano")))
+        ended_at = int(str(raw_span.get("endTimeUnixNano")))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, int((ended_at - started_at) / 1_000_000))
 
 
 def _query_loki_logs(

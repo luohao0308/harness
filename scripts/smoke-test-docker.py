@@ -17,6 +17,7 @@ NGINX_BASE_URL = "http://127.0.0.1:8080"
 PROMETHEUS_BASE_URL = "http://127.0.0.1:9091"
 GRAFANA_BASE_URL = "http://127.0.0.1:3001"
 LOKI_BASE_URL = "http://127.0.0.1:3100"
+TEMPO_BASE_URL = "http://127.0.0.1:3200"
 AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
 
 
@@ -106,6 +107,7 @@ def main() -> int:
         client.check("Prometheus health", lambda: assert_true("Healthy" in client.get_text_url(PROMETHEUS_BASE_URL + "/-/healthy"), "prometheus unhealthy"))
         client.check("Grafana health", lambda: assert_true("database" in client.get_text_url(GRAFANA_BASE_URL + "/api/health"), "grafana health missing database"))
         client.check("Loki ready", lambda: assert_true("ready" in client.get_text_url(LOKI_BASE_URL + "/ready").lower(), "loki not ready"))
+        client.check("Tempo ready", lambda: assert_true("ready" in client.get_text_url(TEMPO_BASE_URL + "/ready").lower(), "tempo not ready"))
 
         openapi = client.check("OpenAPI", lambda: client.get_json("/openapi.json", auth=False))
         assert_true("/api/tasks" in openapi["paths"], "OpenAPI missing /api/tasks")
@@ -206,6 +208,8 @@ def main() -> int:
             lambda: client.get_json("/api/observability/services/health"),
         )
         assert_true(len(service_health["services"]) >= 1, "service health empty")
+        service_names = {item["name"] for item in service_health["services"]}
+        assert_true("tempo" in service_names, "service health missing tempo")
         assert_true(
             any(item["status"] in {"ok", "healthy"} for item in service_health["services"]),
             "all observability services are unreachable",
@@ -252,7 +256,26 @@ def main() -> int:
             ),
         )
         datasource_uids = {item.get("uid") for item in grafana_datasources}
-        assert_true({"prometheus", "loki"}.issubset(datasource_uids), "grafana datasources missing")
+        assert_true({"prometheus", "loki", "tempo"}.issubset(datasource_uids), "grafana datasources missing")
+
+        trace_id = events["items"][0]["trace_id"]
+        observability_trace = None
+        for _ in range(12):
+            observability_trace = client.check(
+                "Observability Tempo trace",
+                lambda: client.get_json(f"/api/observability/traces/{trace_id}"),
+            )
+            if observability_trace.get("source") == "tempo" and observability_trace.get("spans"):
+                break
+            time.sleep(5)
+        assert_true(
+            bool(
+                observability_trace
+                and observability_trace.get("source") == "tempo"
+                and observability_trace.get("spans")
+            ),
+            "observability trace did not return tempo spans",
+        )
 
         def query_loki_api_logs() -> dict:
             now_ns = int(time.time() * 1_000_000_000)

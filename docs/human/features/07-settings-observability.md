@@ -128,14 +128,14 @@ model_call_errors_total
 | Loki 真实采集链路 | 基础落地 | Promtail 采集 Docker 容器日志进入 Loki |
 | Loki 标签查询体验 | 基础落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector |
 | Grafana Basic Auth 代理 | 基础落地 | 后端使用 Grafana 凭据查询 dashboard 元数据 |
-| Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki 数据源和 Harness dashboard |
+| Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo 数据源和 Harness dashboard |
+| Tempo Trace 后端 | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | Grafana 权限模型 | 当前接口有 Basic Auth 查询、配置回退和 provisioning | 后端代理 Grafana dashboard 权限 |
-| Trace 后端集成 | 当前接口已按 Event Store 合成 span | 后端查询真实 OTel Trace 并返回 span 列表 |
 
 ## 实现顺序
 

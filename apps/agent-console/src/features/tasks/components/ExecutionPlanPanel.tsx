@@ -4,6 +4,7 @@ import type { AgentEvent, Subagent, TaskPlan, TaskPlanDiff, TaskPlanVersionSumma
 import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
+import { useI18n } from "../../../lib/i18n";
 import {
   executionModeLabel,
   planDiffLabel,
@@ -56,6 +57,7 @@ export function ExecutionPlanPanel({
   planDiff?: TaskPlanDiff;
   subagents?: Subagent[];
 }) {
+  const { text } = useI18n();
   const generated = events.find((event) => event.event_type === "PLAN_GENERATED");
   const eventPlan = generated?.payload_json.plan as { steps?: PlanStep[] } | undefined;
   const subagentsById = new Map(subagents.map((subagent) => [subagent.id, subagent]));
@@ -78,27 +80,27 @@ export function ExecutionPlanPanel({
   return (
     <Card>
       <CardHeader>
-        <div className="text-[11px] tracking-widest text-slate-500">执行计划</div>
+        <div className="text-[11px] tracking-widest text-slate-500">{text("执行计划", "Execution Plan")}</div>
         <span className="font-mono text-[10px] text-slate-400">
-          {steps.length} steps
-          {plan ? ` · ${plannerSourceLabel(plan.planner_source)} · ${plan.planner_attempts} 次` : ""}
+          {text(`${steps.length} 个步骤`, `${steps.length} steps`)}
+          {plan ? ` · ${plannerSourceLabel(plan.planner_source)} · ${text(`${plan.planner_attempts} 次`, `${plan.planner_attempts} attempts`)}` : ""}
         </span>
       </CardHeader>
       {planVersions.length > 0 && (
         <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span>计划版本</span>
+            <span>{text("计划版本", "Plan version")}</span>
             <span className="font-mono text-slate-800">v{planVersions[0].version}</span>
-            <span>共 {planVersions.length} 版</span>
+            <span>{text(`共 ${planVersions.length} 版`, `${planVersions.length} versions`)}</span>
             {planDiff && (
               <>
                 <span>·</span>
                 <span>
-                  对比 v{planDiff.from_version} → v{planDiff.to_version}
+                  {text("对比", "Compare")} v{planDiff.from_version} → v{planDiff.to_version}
                 </span>
-                <span className="text-emerald-600">新增 {planDiff.added}</span>
-                <span className="text-amber-600">变更 {planDiff.changed}</span>
-                <span className="text-rose-600">移除 {planDiff.removed}</span>
+                <span className="text-emerald-600">{text(`新增 ${planDiff.added}`, `Added ${planDiff.added}`)}</span>
+                <span className="text-amber-600">{text(`变更 ${planDiff.changed}`, `Changed ${planDiff.changed}`)}</span>
+                <span className="text-rose-600">{text(`移除 ${planDiff.removed}`, `Removed ${planDiff.removed}`)}</span>
               </>
             )}
           </div>
@@ -135,7 +137,7 @@ export function ExecutionPlanPanel({
       <div className="space-y-1 p-2">
         {steps.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-            任务启动后这里会显示规划结果。
+            {text("任务启动后这里会显示规划结果。", "The generated plan appears here after the task starts.")}
           </div>
         ) : (
           steps.map((step, index) => {
@@ -206,7 +208,7 @@ export function ExecutionPlanPanel({
                   <div className="mt-2 space-y-1 pl-6 text-[10px] text-slate-500">
                     {toolHints.length > 0 && (
                       <div className="flex flex-wrap gap-1">
-                        <span className="text-slate-400">工具</span>
+                        <span className="text-slate-400">{text("工具", "Tools")}</span>
                         {toolHints.map((tool) => (
                           <span
                             key={tool}
@@ -219,13 +221,13 @@ export function ExecutionPlanPanel({
                     )}
                     {acceptanceCriteria.length > 0 && (
                       <div>
-                        <span className="text-slate-400">验收 </span>
+                        <span className="text-slate-400">{text("验收 ", "Acceptance ")}</span>
                         <span>{acceptanceCriteria.join("；")}</span>
                       </div>
                     )}
                     {artifactExpectations.length > 0 && (
                       <div>
-                        <span className="text-slate-400">产物 </span>
+                        <span className="text-slate-400">{text("产物 ", "Artifacts ")}</span>
                         <span>{artifactExpectations.join("；")}</span>
                       </div>
                     )}
@@ -234,7 +236,7 @@ export function ExecutionPlanPanel({
                 {isAsync && (
                   <div className="mt-2 flex flex-wrap items-center gap-1 pl-6 text-[10px] text-slate-500">
                     <GitBranch className="h-3 w-3 text-slate-400" />
-                    <span>派生子 Agent</span>
+                    <span>{text("派生子 Agent", "Spawn subagent")}</span>
                     {assignedAgentId ? (
                       <>
                         <span className="font-mono text-slate-700">{assignedAgentId.slice(0, 8)}</span>
@@ -243,7 +245,7 @@ export function ExecutionPlanPanel({
                         </Badge>
                       </>
                     ) : (
-                      <span className="text-slate-400">等待派生</span>
+                      <span className="text-slate-400">{text("等待派生", "Waiting to spawn")}</span>
                     )}
                   </div>
                 )}
