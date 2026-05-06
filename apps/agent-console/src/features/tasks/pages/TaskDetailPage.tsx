@@ -23,6 +23,7 @@ import {
   listTaskEvents,
   listTaskSubagents,
   listToolCalls,
+  recoverTaskSubagents,
   replayTask,
   resumeTask,
   startTask,
@@ -86,6 +87,14 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     queryKey: ["tool-calls", taskId],
     queryFn: () => listToolCalls(taskId!),
     enabled: Boolean(taskId),
+  });
+  const recoverSubagentsMutation = useMutation({
+    mutationFn: () => recoverTaskSubagents(taskId!),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["task-subagents", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+    },
   });
   const stream = useTaskEventStream(taskId);
   const startMutation = useMutation({
@@ -246,6 +255,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               subagents={subagentsQuery.data?.items ?? []}
               maxSubagents={task.max_subagents}
               loading={subagentsQuery.isLoading}
+              recovering={recoverSubagentsMutation.isPending}
+              onRecover={() => recoverSubagentsMutation.mutate()}
             />
             <SandboxPanel enabled={task.enable_sandbox} />
             <ModelCallPanel

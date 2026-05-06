@@ -78,7 +78,7 @@ docs/SPEC.md
 | 同步执行 | Executor 直接执行 step | `GET /api/tasks/{task_id}/steps`、`GET /api/tasks/{task_id}/events` | 基础落地 |
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
-| Replay 与恢复 | 重放状态、定位失败点、恢复执行 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume` | 基础落地 |
+| Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover` | 基础落地 |
 | Subagent 并发 | 查询、创建、取消、状态追踪 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
@@ -133,7 +133,7 @@ docs/SPEC.md
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
 | LLM Planner Prompt | 已解析模型 JSON 计划并支持一次结构修复和版本对比，Prompt 仍需增强 | `docs/human/features/02-planner-executor.md` |
-| Worker 级恢复 | 长任务跨进程恢复仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
+| Worker 自动巡检恢复 | 已支持手动恢复超时和卡住的 Subagent，定时巡检仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
 | Subagent 工具链执行 | worker 已执行 assignment 工具并回写结果，多轮 ReAct 工具规划仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要，结构化产物详情仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
@@ -167,7 +167,7 @@ docs/SPEC.md
 ```text
 1. 补 LLM Planner Prompt 增强和版本差异可视化
 2. 补 Subagent worker 多轮 ReAct 工具规划和结果产物详情
-3. 补 Worker 级恢复编排
+3. 补 Worker 自动巡检恢复编排
 4. 增强 Loki 采集、Grafana provisioning 和真实 OTel Trace 查询
 5. 补控制台全量 i18n
 6. 整合用户提供的官网代码

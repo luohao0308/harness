@@ -19,6 +19,7 @@ Subagent 负责异步、长耗时、并发探索类任务。主 Executor 不被�
 ```text
 GET  /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents
+POST /api/tasks/{task_id}/subagents/recover
 GET  /api/subagents/{subagent_id}
 POST /api/subagents/{subagent_id}/cancel
 ```
@@ -145,6 +146,7 @@ agent_subagent_duration_seconds
 | 子 Agent 查询 | 已落地 | `GET /api/tasks/{task_id}/subagents` |
 | 子 Agent 详情 | 已落地 | `GET /api/subagents/{subagent_id}` |
 | 子 Agent 取消 | 已落地 | `POST /api/subagents/{subagent_id}/cancel` |
+| 子 Agent 恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
 | 并发上限 | 已落地 | 固定 5 |
 | Dramatiq worker | 基础落地 | `agent-worker` |
 | 异步派生可见性 | 基础落地 | 任务详情页 Subagent 面板和 `/subagents` 页面 |
@@ -157,6 +159,7 @@ agent_subagent_duration_seconds
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 子 Agent 长任务执行增强 | 当前 worker 已接入 assignment 工具链，复杂多轮工具规划仍需增强 | worker 按 ReAct 循环组织模型、工具和沙箱并回写结构化结果 |
+| 自动恢复巡检 | 当前已有手动恢复接口 | 定时扫描卡住的 Subagent 并执行恢复 |
 | 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
 
 ## 实现顺序

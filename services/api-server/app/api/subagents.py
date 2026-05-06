@@ -5,7 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.subagent_manager import SubagentLimitExceededError, SubagentManager
-from app.api.schemas import SubagentCreateRequest, SubagentPage, SubagentResponse
+from app.api.schemas import (
+    SubagentCreateRequest,
+    SubagentPage,
+    SubagentRecoverRequest,
+    SubagentRecoveryResponse,
+    SubagentResponse,
+)
 from app.api.tasks import get_owned_task
 from app.db.models import AgentRun, Task
 from app.db.session import get_db_session
@@ -61,6 +67,33 @@ def create_task_subagent(
     session.commit()
     session.refresh(agent_run)
     return agent_run
+
+
+@router.post(
+    "/tasks/{task_id}/subagents/recover",
+    response_model=SubagentRecoveryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="恢复任务子 Agent",
+    description="基于 Replay 状态恢复超时或卡住的子 Agent，并按需重新入队。",
+)
+def recover_task_subagents(
+    task_id: str,
+    request: SubagentRecoverRequest,
+    session: DbSession,
+    principal: Principal,
+) -> SubagentRecoveryResponse:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    replay_sequence, recovered = SubagentManager(session).recover_for_task(
+        task=task,
+        stale_after_seconds=request.stale_after_seconds,
+        enqueue=request.enqueue,
+    )
+    session.commit()
+    return SubagentRecoveryResponse(
+        task_id=task.id,
+        replay_sequence=replay_sequence,
+        recovered=recovered,
+    )
 
 
 def get_owned_subagent(subagent_id: str, session: Session, principal: Principal) -> AgentRun:

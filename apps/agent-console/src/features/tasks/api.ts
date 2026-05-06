@@ -176,6 +176,19 @@ export type Subagent = {
   timeout_at: string | null;
 };
 
+export type SubagentRecoveryResponse = {
+  task_id: string;
+  replay_sequence: number;
+  recovered: Array<{
+    id: string;
+    previous_status: string;
+    status: string;
+    action: string;
+    reason: string;
+    replay_status: string | null;
+  }>;
+};
+
 export type TaskResult = {
   task_id: string;
   status: TaskStatus;
@@ -412,6 +425,13 @@ export async function listTaskSubagents(taskId: string) {
   return request<{ items: Subagent[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/subagents`,
   );
+}
+
+export async function recoverTaskSubagents(taskId: string) {
+  return request<SubagentRecoveryResponse>(`/api/tasks/${taskId}/subagents/recover`, {
+    method: "POST",
+    body: JSON.stringify({ stale_after_seconds: 900, enqueue: false }),
+  });
 }
 
 export async function listModelCalls(taskId: string) {

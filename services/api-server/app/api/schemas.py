@@ -212,6 +212,26 @@ class SubagentCreateRequest(BaseModel):
     enqueue: bool = Field(default=False, description="是否进入 Dramatiq 队列")
 
 
+class SubagentRecoverRequest(BaseModel):
+    stale_after_seconds: int = Field(default=900, ge=1, description="运行卡住判定秒数")
+    enqueue: bool = Field(default=False, description="是否重新进入 Dramatiq 队列")
+
+
+class SubagentRecoveryItem(BaseModel):
+    id: str = Field(description="子 Agent ID")
+    previous_status: str = Field(description="恢复前状态")
+    status: str = Field(description="恢复后状态")
+    action: str = Field(description="恢复动作")
+    reason: str = Field(description="恢复原因")
+    replay_status: str | None = Field(default=None, description="Replay 中的子 Agent 状态")
+
+
+class SubagentRecoveryResponse(BaseModel):
+    task_id: str = Field(description="任务 ID")
+    replay_sequence: int = Field(description="Replay 序号")
+    recovered: list[SubagentRecoveryItem] = Field(description="恢复结果列表")
+
+
 class SandboxResponse(BaseModel):
     id: str = Field(description="沙箱 ID")
     task_id: str = Field(description="任务 ID")

@@ -746,6 +746,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/subagents/recover:
+    post:
+      tags:
+      - subagents
+      summary: 恢复任务子 Agent
+      description: 基于 Replay 状态恢复超时或卡住的子 Agent，并按需重新入队。
+      operationId: recover_task_subagents_api_tasks__task_id__subagents_recover_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubagentRecoverRequest'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentRecoveryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/subagents/{subagent_id}:
     get:
       tags:
@@ -1844,6 +1879,79 @@ components:
       required:
       - items
       title: SubagentPage
+    SubagentRecoverRequest:
+      properties:
+        stale_after_seconds:
+          type: integer
+          minimum: 1.0
+          title: Stale After Seconds
+          description: 运行卡住判定秒数
+          default: 900
+        enqueue:
+          type: boolean
+          title: Enqueue
+          description: 是否重新进入 Dramatiq 队列
+          default: false
+      type: object
+      title: SubagentRecoverRequest
+    SubagentRecoveryItem:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 子 Agent ID
+        previous_status:
+          type: string
+          title: Previous Status
+          description: 恢复前状态
+        status:
+          type: string
+          title: Status
+          description: 恢复后状态
+        action:
+          type: string
+          title: Action
+          description: 恢复动作
+        reason:
+          type: string
+          title: Reason
+          description: 恢复原因
+        replay_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Replay Status
+          description: Replay 中的子 Agent 状态
+      type: object
+      required:
+      - id
+      - previous_status
+      - status
+      - action
+      - reason
+      title: SubagentRecoveryItem
+    SubagentRecoveryResponse:
+      properties:
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        replay_sequence:
+          type: integer
+          title: Replay Sequence
+          description: Replay 序号
+        recovered:
+          items:
+            $ref: '#/components/schemas/SubagentRecoveryItem'
+          type: array
+          title: Recovered
+          description: 恢复结果列表
+      type: object
+      required:
+      - task_id
+      - replay_sequence
+      - recovered
+      title: SubagentRecoveryResponse
     SubagentResponse:
       properties:
         id:

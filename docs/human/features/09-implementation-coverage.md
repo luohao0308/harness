@@ -68,7 +68,7 @@
 | 计划与步骤 | 基础落地 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps` |
 | 事件流 | 已落地 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` |
 | Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
-| Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
+| Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
 | Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
 | Subagent 工具链 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
@@ -103,7 +103,8 @@
 | 能力 | 当前缺口 | 目标结果 |
 |---|---|---|
 | Planner | 已接入模型 JSON 计划解析、一次结构修复、确定性回退、计划来源展示和计划版本对比 | 增强 Prompt 和版本差异可视化 |
-| Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 级恢复编排 |
+| Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 自动巡检恢复编排 |
+| Worker 恢复 | 手动恢复超时和卡住 Subagent 已基础落地 | 接入自动巡检 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id 和 Subagent 状态链路 | 增强时间线中的并行执行拓扑 |
 | Subagent Worker | assignment 工具执行、工具审计、结果回写已基础落地 | 增强多轮 ReAct 工具规划 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |

@@ -1,6 +1,7 @@
-import { GitBranch } from "lucide-react";
+import { GitBranch, RotateCcw } from "lucide-react";
 
 import { Badge, statusTone } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { statusLabel } from "../../../lib/labels";
 import type { Subagent } from "../../tasks/api";
@@ -38,10 +39,14 @@ export function SubagentPanel({
   subagents = [],
   maxSubagents = 5,
   loading = false,
+  recovering = false,
+  onRecover,
 }: {
   subagents?: Subagent[];
   maxSubagents?: number;
   loading?: boolean;
+  recovering?: boolean;
+  onRecover?: () => void;
 }) {
   return (
     <Card>
@@ -49,9 +54,21 @@ export function SubagentPanel({
         <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
           <GitBranch className="h-3 w-3" /> 子 Agent
         </div>
-        <span className="font-mono text-[10px] text-slate-400">
-          {subagents.length} / {maxSubagents}
-        </span>
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-[10px] text-slate-400">
+            {subagents.length} / {maxSubagents}
+          </span>
+          {onRecover && (
+            <Button
+              className="h-6 px-2 text-[10px]"
+              disabled={recovering}
+              onClick={onRecover}
+              variant="ghost"
+            >
+              <RotateCcw className="h-3 w-3" /> 恢复
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <div className="space-y-1.5 p-2">
         {loading && <div className="px-2 py-4 text-xs text-slate-500">子 Agent 加载中...</div>}

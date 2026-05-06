@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -153,3 +154,51 @@ def test_subagent_api_create_for_task(db_session: Session) -> None:
     assert payload["task_id"] == task.id
     assert payload["status"] == "PENDING"
     assert payload["context_json"]["step_key"] == "parallel_review"
+
+
+def test_subagent_recovery_resets_stale_running_and_times_out_expired(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session)
+    manager = SubagentManager(db_session)
+    stale = manager.spawn(
+        task=task,
+        assignment={"step_key": "stale_worker"},
+        timeout_seconds=1800,
+    )
+    stale.status = "RUNNING"
+    stale.started_at = utc_now() - timedelta(seconds=901)
+    expired = manager.spawn(
+        task=task,
+        assignment={"step_key": "expired_worker"},
+        timeout_seconds=1,
+    )
+    expired.status = "RUNNING"
+    expired.started_at = utc_now() - timedelta(seconds=60)
+    expired.timeout_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+
+    client = TestClient(app)
+    recovered = client.post(
+        f"/api/tasks/{task.id}/subagents/recover",
+        headers=AUTH_HEADERS,
+        json={"stale_after_seconds": 900, "enqueue": False},
+    )
+
+    assert recovered.status_code == 202
+    payload = recovered.json()
+    actions = {item["id"]: item["action"] for item in payload["recovered"]}
+    assert actions[stale.id] == "reset_to_pending"
+    assert actions[expired.id] == "marked_timeout"
+    refreshed_stale = db_session.get(AgentRun, stale.id)
+    refreshed_expired = db_session.get(AgentRun, expired.id)
+    assert refreshed_stale is not None
+    assert refreshed_stale.status == "PENDING"
+    assert refreshed_stale.started_at is None
+    assert refreshed_stale.context_json["recovery_attempts"] == 1
+    assert refreshed_expired is not None
+    assert refreshed_expired.status == "TIMEOUT"
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    event_types = [event.event_type for event in events]
+    assert "SUBAGENT_PROGRESS" in event_types
+    assert event_types[-1] == "SUBAGENT_TIMEOUT"

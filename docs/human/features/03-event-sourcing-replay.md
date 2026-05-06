@@ -12,6 +12,7 @@ Event Sourcing 把任务状态变化记录为 append-only 事件流。Replay 通
 | 实时事件 | `/tasks/:taskId` | 断线重连后继续读取 |
 | 重放现场 | Replay 面板 | 选择 sequence 并重建状态 |
 | 定位失败点 | Replay 面板 | 查看失败步骤、工具和错误摘要 |
+| 恢复 Worker | Subagent 面板 | 基于 Replay 状态恢复超时或卡住的子 Agent |
 
 ## 后端契约
 
@@ -19,6 +20,7 @@ Event Sourcing 把任务状态变化记录为 append-only 事件流。Replay 通
 GET  /api/tasks/{task_id}/events
 GET  /api/tasks/{task_id}/events/stream
 POST /api/tasks/{task_id}/replay
+POST /api/tasks/{task_id}/subagents/recover
 ```
 
 ## 前端入口
@@ -26,6 +28,7 @@ POST /api/tasks/{task_id}/replay
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
 | `/tasks/:taskId` | Events API、SSE、Replay API | 时间线、Replay 摘要、失败点 |
+| `/tasks/:taskId` Subagent 面板 | Subagent Recovery API | 恢复卡住的子 Agent |
 | `/tasks/:taskId/events` | Events API、SSE | 事件流查看 |
 
 ## 数据模型
@@ -68,6 +71,7 @@ Replay 本身不写历史事件。
 Resume 写入 TASK_RESUMED。
 每 100 个事件自动生成 task_snapshots。
 Resume 会根据 Replay state 跳过已完成 step。
+Subagent recovery 会根据 Replay state 标记超时或重置卡住的 worker。
 ```
 
 ## 外部服务契约
@@ -94,12 +98,13 @@ agent_tasks_failed_total
 | Replay 从 snapshot 续扫 | 已落地 | Replay service |
 | 失败点定位 | 已落地 | Replay response |
 | 步骤级恢复执行 | 已落地 | Resume flow |
+| Worker 级恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 分布式 Worker 恢复 | Worker 崩溃后恢复编排仍需增强 | Worker 从 Replay state 恢复长任务 |
+| 分布式 Worker 恢复 | 当前已支持超时标记和卡住 worker 重置，自动队列巡检仍需增强 | 定时巡检按 Replay state 恢复长任务 |
 
 ## 实现顺序
 
@@ -107,7 +112,7 @@ agent_tasks_failed_total
 1. 保持事件枚举与 OpenAPI 同步
 2. 保持 snapshot 规则与 Replay service 同步
 3. 前端展示 sequence、payload 摘要和 failure point
-4. 补 Worker 级恢复编排
+4. 增强 Worker 自动巡检恢复编排
 5. 补并发和断线重连测试
 ```
 
@@ -120,4 +125,6 @@ agent_tasks_failed_total
 - 第 100 个事件生成 task snapshot。
 - Resume 后已完成步骤写入 `STEP_SKIPPED`。
 - Resume 后只执行未完成步骤和失败步骤。
+- Worker 恢复能标记超时 Subagent。
+- Worker 恢复能把卡住的 RUNNING Subagent 重置为 `PENDING`。
 - 事件流满足审计追踪要求。
