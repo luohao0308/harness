@@ -100,7 +100,7 @@ git pull --ff-only origin main
 docker compose -f deploy/docker-compose/docker-compose.yml up -d --build
 ```
 
-Docker Compose 执行 `db-migrate` 一次性服务，迁移完成后 API、worker 和 WarmPool 服务启动。
+Docker Compose 执行 `db-migrate` 一次性服务，迁移完成后 API、worker、Subagent 恢复巡检和 WarmPool 服务启动。
 
 ## Post Deployment Verification
 

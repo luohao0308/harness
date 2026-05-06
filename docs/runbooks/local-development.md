@@ -58,6 +58,14 @@ source .venv/bin/activate
 dramatiq app.workers.subagent_worker
 ```
 
+## Subagent Recovery Worker
+
+```bash
+cd services/api-server
+source .venv/bin/activate
+python -m app.workers.subagent_recovery_worker
+```
+
 ## Website
 
 ```bash

@@ -126,18 +126,6 @@ class SubagentManager:
                     )
                 )
                 continue
-            if agent_run.status == "PENDING" and enqueue:
-                self._enqueue(agent_run=agent_run, task_id=task.id, stage="recovery_requeued")
-                recovered.append(
-                    {
-                        "id": agent_run.id,
-                        "previous_status": "PENDING",
-                        "status": agent_run.status,
-                        "action": "requeued",
-                        "reason": "pending subagent requested for recovery enqueue",
-                        "replay_status": replay_status,
-                    }
-                )
         self.session.flush()
         return int(replay_state.get("last_sequence") or 0), recovered
 

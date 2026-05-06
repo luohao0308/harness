@@ -98,13 +98,14 @@ agent_tasks_failed_total
 | Replay 从 snapshot 续扫 | 已落地 | Replay service |
 | 失败点定位 | 已落地 | Replay response |
 | 步骤级恢复执行 | 已落地 | Resume flow |
-| Worker 级恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
+| Worker 级恢复 | 已落地 | `POST /api/tasks/{task_id}/subagents/recover` |
+| Worker 自动巡检 | 基础落地 | `subagent_recovery_worker.recover_stalled_subagents` |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 分布式 Worker 恢复 | 当前已支持超时标记和卡住 worker 重置，自动队列巡检仍需增强 | 定时巡检按 Replay state 恢复长任务 |
+| 分布式 Worker 恢复 | 当前已支持超时标记、卡住 worker 重置、巡检函数和 Compose 服务 | 补告警联动 |
 
 ## 实现顺序
 
@@ -112,7 +113,7 @@ agent_tasks_failed_total
 1. 保持事件枚举与 OpenAPI 同步
 2. 保持 snapshot 规则与 Replay service 同步
 3. 前端展示 sequence、payload 摘要和 failure point
-4. 增强 Worker 自动巡检恢复编排
+4. 增强 Worker 恢复告警联动
 5. 补并发和断线重连测试
 ```
 
@@ -127,4 +128,5 @@ agent_tasks_failed_total
 - Resume 后只执行未完成步骤和失败步骤。
 - Worker 恢复能标记超时 Subagent。
 - Worker 恢复能把卡住的 RUNNING Subagent 重置为 `PENDING`。
+- Worker 巡检能扫描多个任务的卡住 Subagent。
 - 事件流满足审计追踪要求。

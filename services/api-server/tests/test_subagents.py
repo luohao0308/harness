@@ -8,6 +8,7 @@ from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT, SubagentMana
 from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
+from app.workers.subagent_recovery_worker import recover_stalled_subagents
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, execute_subagent
 from tests.conftest import AUTH_HEADERS
 
@@ -202,3 +203,35 @@ def test_subagent_recovery_resets_stale_running_and_times_out_expired(
     event_types = [event.event_type for event in events]
     assert "SUBAGENT_PROGRESS" in event_types
     assert event_types[-1] == "SUBAGENT_TIMEOUT"
+
+
+def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
+    first_task = create_task(db_session)
+    second_task = create_task(db_session)
+    first_stale = SubagentManager(db_session).spawn(
+        task=first_task,
+        assignment={"step_key": "first_stale"},
+        timeout_seconds=1800,
+    )
+    first_stale.status = "RUNNING"
+    first_stale.started_at = utc_now() - timedelta(seconds=901)
+    second_expired = SubagentManager(db_session).spawn(
+        task=second_task,
+        assignment={"step_key": "second_expired"},
+        timeout_seconds=1,
+    )
+    second_expired.status = "RUNNING"
+    second_expired.started_at = utc_now() - timedelta(seconds=60)
+    second_expired.timeout_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+
+    result = recover_stalled_subagents(
+        stale_after_seconds=900,
+        enqueue=False,
+        session=db_session,
+    )
+
+    assert result["task_count"] == 2
+    assert result["recovered_count"] == 2
+    assert db_session.get(AgentRun, first_stale.id).status == "PENDING"
+    assert db_session.get(AgentRun, second_expired.id).status == "TIMEOUT"
