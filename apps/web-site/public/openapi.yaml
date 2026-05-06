@@ -2793,6 +2793,22 @@ components:
           type: object
           title: Output Json
           description: 输出内容
+        output_kind:
+          type: string
+          title: Output Kind
+          description: 输出类型
+          default: unknown
+        output_summary:
+          type: string
+          title: Output Summary
+          description: 输出摘要
+          default: ''
+        timeout_category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Timeout Category
+          description: 超时分类
         error_message:
           anyOf:
           - type: string

@@ -108,7 +108,7 @@
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id、Subagent 状态链路和时间线并行执行拓扑 | 增强批量状态展示 |
 | Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要和长上下文压缩已基础落地 | 增强恢复批次历史查询 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
-| Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
+| Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类和控制台细节 | 增强工具审计筛选和深链 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强恢复批次查询 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标和 Grafana Basic Auth 代理已落地 | 补齐队列图表与 Grafana 权限模型 |
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集和标签查询已落地 | 增强日志检索深链 |

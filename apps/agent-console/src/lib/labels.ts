@@ -126,6 +126,26 @@ const planDiffLabels: Record<string, string> = {
   unchanged: "未变更",
 };
 
+const toolOutputKindLabels: Record<string, string> = {
+  file_content: "文件内容",
+  file_list: "文件列表",
+  file_write: "文件写入",
+  shell_result: "命令结果",
+  http_response: "HTTP 响应",
+  policy_denied: "策略拒绝",
+  timeout: "工具超时",
+  error: "执行错误",
+  empty: "无输出",
+  json: "JSON 输出",
+  unknown: "未知输出",
+};
+
+const timeoutCategoryLabels: Record<string, string> = {
+  sandbox_command_timeout: "沙箱命令超时",
+  tool_timeout: "工具执行超时",
+  unknown_timeout: "未知超时",
+};
+
 export function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -178,4 +198,12 @@ export function plannerSourceLabel(source: string) {
 
 export function planDiffLabel(changeType: string) {
   return planDiffLabels[changeType] ?? changeType;
+}
+
+export function toolOutputKindLabel(kind: string) {
+  return toolOutputKindLabels[kind] ?? kind;
+}
+
+export function timeoutCategoryLabel(category: string | null | undefined) {
+  return category ? (timeoutCategoryLabels[category] ?? category) : "无超时";
 }

@@ -113,7 +113,11 @@ def test_task_cancel_resume_result_replay_and_audit_endpoints() -> None:
     assert model_calls.status_code == 200
     assert model_calls.json()["items"][0]["model_provider"] == "openai-compatible"
     assert tool_calls.status_code == 200
-    assert tool_calls.json()["items"][0]["tool_name"] == "read_file"
+    tool_call = tool_calls.json()["items"][0]
+    assert tool_call["tool_name"] == "read_file"
+    assert tool_call["output_kind"] == "file_content"
+    assert tool_call["output_summary"].startswith("文件内容")
+    assert tool_call["timeout_category"] is None
 
 
 def test_task_plan_steps_and_tool_execute_endpoints() -> None:
@@ -157,6 +161,8 @@ def test_task_plan_steps_and_tool_execute_endpoints() -> None:
     tool_payload = tool_execution.json()
     assert tool_payload["allowed"] is True
     assert tool_payload["tool_call"]["tool_name"] == "read_file"
+    assert tool_payload["tool_call"]["output_kind"] == "file_content"
+    assert tool_payload["tool_call"]["output_summary"].startswith("文件内容")
     assert "content" in tool_payload["output"]
 
 

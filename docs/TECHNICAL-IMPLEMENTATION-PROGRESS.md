@@ -133,7 +133,6 @@ docs/SPEC.md
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |
-| 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
 | TPM 限流与供应商熔断 | 模型成本和稳定性治理仍需增强 | `docs/human/features/06-model-tool-audit.md` |
 | 真实 OTel Trace 后端 | 当前接口已有 Event Store 合成 span | `docs/human/features/10-observability-localization-spec.md` |
 | 控制台全量 i18n | 部分旧页面仍有英文原始文案 | `docs/human/features/10-observability-localization-spec.md` |
@@ -161,12 +160,11 @@ docs/SPEC.md
 
 ```text
 1. 增强 Worker 恢复批次历史查询
-2. 补工具结果解析、超时分类和控制台细节
-3. 补 TPM 限流、外部主动探测和供应商级熔断
-4. 接入真实 OTel Trace 后端
-5. 补控制台全量 i18n
-6. 整合用户提供的官网代码
-7. 同步 OpenAPI、测试、Runbook 和覆盖文档
+2. 补 TPM 限流、外部主动探测和供应商级熔断
+3. 接入真实 OTel Trace 后端
+4. 补控制台全量 i18n
+5. 整合用户提供的官网代码
+6. 同步 OpenAPI、测试、Runbook 和覆盖文档
 ```
 
 ## 验证命令

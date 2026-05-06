@@ -403,6 +403,9 @@ class ToolCallResponse(BaseModel):
     duration_ms: int = Field(description="耗时（毫秒）")
     input_json: dict = Field(description="输入内容")
     output_json: dict = Field(description="输出内容")
+    output_kind: str = Field(default="unknown", description="输出类型")
+    output_summary: str = Field(default="", description="输出摘要")
+    timeout_category: str | None = Field(default=None, description="超时分类")
     error_message: str | None = Field(default=None, description="错误信息")
     created_at: datetime = Field(description="创建时间")
 

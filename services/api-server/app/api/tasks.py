@@ -23,6 +23,7 @@ from app.api.schemas import (
     TaskStepPage,
     TaskSubagentResult,
     ToolCallPage,
+    ToolCallResponse,
     ToolExecuteRequest,
     ToolExecuteResponse,
 )
@@ -452,7 +453,7 @@ def list_tool_calls(task_id: str, session: DbSession, principal: Principal) -> T
             select(ToolCall).where(ToolCall.task_id == task_id).order_by(ToolCall.created_at.desc())
         ).scalars()
     )
-    return ToolCallPage(items=calls)
+    return ToolCallPage(items=[_to_tool_call_response(call) for call in calls])
 
 
 @router.post(
@@ -484,10 +485,90 @@ def execute_task_tool(
     session.commit()
     session.refresh(execution.tool_call)
     return ToolExecuteResponse(
-        tool_call=execution.tool_call,
+        tool_call=_to_tool_call_response(execution.tool_call),
         allowed=execution.allowed,
         output=execution.output,
     )
+
+
+def _to_tool_call_response(tool_call: ToolCall) -> ToolCallResponse:
+    return ToolCallResponse(
+        id=tool_call.id,
+        task_id=tool_call.task_id,
+        agent_run_id=tool_call.agent_run_id,
+        tool_name=tool_call.tool_name,
+        status=tool_call.status,
+        risk_level=tool_call.risk_level,
+        requires_sandbox=tool_call.requires_sandbox,
+        sandbox_id=tool_call.sandbox_id,
+        duration_ms=tool_call.duration_ms,
+        input_json=tool_call.input_json,
+        output_json=tool_call.output_json,
+        output_kind=_tool_output_kind(tool_call),
+        output_summary=_tool_output_summary(tool_call),
+        timeout_category=_tool_timeout_category(tool_call),
+        error_message=tool_call.error_message,
+        created_at=tool_call.created_at,
+    )
+
+
+def _tool_output_kind(tool_call: ToolCall) -> str:
+    output = tool_call.output_json if isinstance(tool_call.output_json, dict) else {}
+    if tool_call.status == "DENIED":
+        return "policy_denied"
+    if tool_call.status == "TIMEOUT":
+        return "timeout"
+    if "content" in output:
+        return "file_content"
+    if "files" in output:
+        return "file_list"
+    if "exit_code" in output:
+        return "shell_result"
+    if "status_code" in output:
+        return "http_response"
+    if "path" in output and "bytes_written" in output:
+        return "file_write"
+    if tool_call.status == "FAILED":
+        return "error"
+    return "empty" if not output else "json"
+
+
+def _tool_output_summary(tool_call: ToolCall) -> str:
+    output = tool_call.output_json if isinstance(tool_call.output_json, dict) else {}
+    if tool_call.error_message and tool_call.status in {"DENIED", "FAILED", "TIMEOUT"}:
+        return tool_call.error_message[:300]
+    if "content" in output:
+        content = str(output.get("content") or "")
+        size_bytes = output.get("size_bytes")
+        return f"文件内容 {len(content)} 字符，{size_bytes or 0} bytes"
+    if "files" in output and isinstance(output.get("files"), list):
+        return f"文件列表 {len(output['files'])} 项"
+    if "exit_code" in output:
+        stdout = str(output.get("stdout_preview") or "")
+        stderr = str(output.get("stderr_preview") or "")
+        return (
+            f"命令退出码 {output.get('exit_code')}，"
+            f"stdout {len(stdout)} 字符，stderr {len(stderr)} 字符"
+        )
+    if "status_code" in output:
+        body = str(output.get("body_preview") or "")
+        return f"HTTP {output.get('status_code')}，响应预览 {len(body)} 字符"
+    if "path" in output and "bytes_written" in output:
+        return f"写入 {output.get('path')}，{output.get('bytes_written')} bytes"
+    if not output:
+        return "无输出"
+    return f"JSON 输出字段 {len(output)} 个"
+
+
+def _tool_timeout_category(tool_call: ToolCall) -> str | None:
+    if tool_call.status != "TIMEOUT":
+        return None
+    message = (tool_call.error_message or "").lower()
+    if "sandbox command timed out" in message:
+        return "sandbox_command_timeout"
+    if "timed out" in message or "timeout" in message:
+        return "tool_timeout"
+    return "unknown_timeout"
 
 
 def _latest_plan(task_id: str, session: Session) -> ExecutionPlan | None:

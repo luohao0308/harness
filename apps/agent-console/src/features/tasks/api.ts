@@ -341,6 +341,9 @@ export type ToolCall = {
   duration_ms: number;
   input_json?: Record<string, unknown>;
   output_json?: Record<string, unknown>;
+  output_kind: string;
+  output_summary: string;
+  timeout_category?: string | null;
   error_message?: string | null;
   created_at: string;
 };
