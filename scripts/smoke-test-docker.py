@@ -271,6 +271,26 @@ def main() -> int:
             bool(loki_logs and loki_logs.get("data", {}).get("result")),
             "loki has no api-server logs",
         )
+
+        observability_logs = None
+        for _ in range(12):
+            observability_logs = client.check(
+                "Observability Loki label logs",
+                lambda: client.get_json(
+                    f"/api/observability/logs?task_id={task_id}&trace_id={events['items'][0]['trace_id']}&event_type=TASK_CREATED&limit=20"
+                ),
+            )
+            if observability_logs.get("source") == "loki" and observability_logs.get("items"):
+                break
+            time.sleep(5)
+        assert_true(
+            bool(
+                observability_logs
+                and observability_logs.get("source") == "loki"
+                and observability_logs.get("items")
+            ),
+            "observability logs did not return loki label-filtered task events",
+        )
     except Exception as exc:
         client.print_summary()
         print(f"FAIL detail {exc}")

@@ -1,5 +1,6 @@
 import json
 import time
+from base64 import b64encode
 from datetime import datetime
 from typing import Annotated
 from urllib import error, request
@@ -22,7 +23,7 @@ from app.api.schemas import (
     ObservabilityTraceSpan,
     WarmPoolResponse,
 )
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.db.models import AgentEvent, AgentRun, ModelCall, SandboxInstance, Task, ToolCall
 from app.db.session import get_db_session
 from app.sandbox.warm_pool import WarmPoolManager
@@ -304,7 +305,12 @@ def _query_loki_logs(
     limit: int,
 ) -> list[ObservabilityLogEntry]:
     base_url = str(get_settings().loki_base_url).rstrip("/")
-    selector = f'{{service="{service or "api-server"}"}}'
+    selector = _loki_label_selector(
+        service=service,
+        task_id=task_id,
+        trace_id=trace_id,
+        event_type=event_type,
+    )
     query_params = urlencode({"query": selector, "limit": str(limit)})
     try:
         payload = _get_json(f"{base_url}/loki/api/v1/query_range?{query_params}", timeout=0.35)
@@ -325,7 +331,7 @@ def _query_loki_logs(
                 continue
             entries.append(
                 ObservabilityLogEntry(
-                    timestamp=_parse_datetime(line.get("timestamp")),
+                    timestamp=_parse_datetime(line.get("timestamp") or line.get("created_at")),
                     level=str(line.get("level") or "INFO"),
                     service=str(line.get("service") or service or "api-server"),
                     message=str(line.get("message") or ""),
@@ -340,10 +346,40 @@ def _query_loki_logs(
     return entries
 
 
+def _loki_label_selector(
+    *,
+    service: str | None,
+    task_id: str | None,
+    trace_id: str | None,
+    event_type: str | None,
+) -> str:
+    labels = {
+        "service": service or "api-server",
+        "task_id": task_id,
+        "trace_id": trace_id,
+        "event_type": event_type,
+    }
+    selector_parts = [
+        f'{key}="{_escape_loki_label_value(value)}"'
+        for key, value in labels.items()
+        if value
+    ]
+    return "{" + ",".join(selector_parts) + "}"
+
+
+def _escape_loki_label_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _query_grafana_dashboards() -> list[GrafanaDashboardResponse]:
-    base_url = str(get_settings().grafana_base_url).rstrip("/")
+    settings = get_settings()
+    base_url = str(settings.grafana_base_url).rstrip("/")
     try:
-        payload = _get_json(f"{base_url}/api/search?type=dash-db", timeout=0.35)
+        payload = _get_json(
+            f"{base_url}/api/search?type=dash-db",
+            timeout=0.35,
+            headers=_grafana_auth_headers(settings),
+        )
     except Exception:
         return []
     dashboards = []
@@ -361,6 +397,13 @@ def _query_grafana_dashboards() -> list[GrafanaDashboardResponse]:
             )
         )
     return dashboards
+
+
+def _grafana_auth_headers(settings: Settings) -> dict[str, str]:
+    token = b64encode(f"{settings.grafana_username}:{settings.grafana_password}".encode()).decode(
+        "ascii"
+    )
+    return {"Authorization": f"Basic {token}"}
 
 
 def _probe_service(*, name: str, url: str) -> ObservabilityServiceHealthResponse:
@@ -386,8 +429,8 @@ def _probe_service(*, name: str, url: str) -> ObservabilityServiceHealthResponse
     )
 
 
-def _get_json(url: str, *, timeout: float) -> dict | list:
-    http_request = request.Request(url, method="GET")
+def _get_json(url: str, *, timeout: float, headers: dict[str, str] | None = None) -> dict | list:
+    http_request = request.Request(url, headers=headers or {}, method="GET")
     with request.urlopen(http_request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 

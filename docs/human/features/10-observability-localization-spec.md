@@ -189,7 +189,8 @@ cookie
 | trace_id 响应头 | 基础落地 | `services/api-server/app/core/tracing.py` |
 | Loki 日志查询 API | 基础落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
 | Loki 真实采集链路 | 基础落地 | Promtail 通过 Docker socket 采集容器日志并写入 Loki |
-| Grafana 后端代理 | 基础落地 | `GET /api/observability/grafana/dashboards` |
+| Loki 标签检索体验 | 基础落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector |
+| Grafana 后端代理 | 基础落地 | `GET /api/observability/grafana/dashboards`，后端使用 Basic Auth 查询 dashboard 元数据 |
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 基础落地 | `GET /api/observability/traces/{trace_id}`，当前使用 Event Store 合成 span |
 | 观测服务健康 | 基础落地 | `GET /api/observability/services/health` |
@@ -199,16 +200,15 @@ cookie
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Loki 标签检索体验 | 当前接口已有 Event Store 回退和 Promtail 采集，标签检索体验仍需增强 | 按 task_id、trace_id、event_type 查询 |
-| Grafana 鉴权 | 当前接口已有 dashboard 列表、配置回退和 provisioning | 后端代理 Grafana 权限 |
+| Grafana 权限模型 | 当前接口已有 Basic Auth 查询、dashboard 列表、配置回退和 provisioning | 后端代理 Grafana 权限 |
 | OTel Trace 后端 | 当前接口已有 Event Store 合成 span | 后端返回真实 trace span 列表 |
 | 控制台全量 i18n | 部分旧页面仍是英文 | 默认中文，顶栏切换 English |
 
 ## 实现顺序
 
 ```text
-1. 增强 Loki 标签检索体验
-2. 增强 Grafana dashboard 鉴权
+1. 增强 Grafana dashboard 权限模型
+2. 增强日志检索深链
 3. 补 OTel exporter wiring 与真实 trace 查询
 5. 拆分控制台 i18n 字典
 6. 覆盖任务、详情、Subagent、沙箱、观测、设置页面双语
@@ -223,10 +223,12 @@ cookie
 - Prometheus targets 中 `subagent-recovery` 为 up。
 - Prometheus rules 中加载 Subagent 恢复告警。
 - Grafana health 返回 ok。
+- 后端 Grafana dashboard 代理使用配置凭据查询。
 - Grafana 自动加载 Prometheus 和 Loki 数据源。
 - Grafana 自动加载 Agent Harness dashboard。
 - Loki ready 返回 ready。
 - Loki 能查询到 `api-server` 容器日志。
+- 后端日志 API 能按 `task_id`、`trace_id`、`event_type` 查询 Loki 标签。
 - Loki labels 查询返回 success。
 - API JSON 日志能按 `trace_id` 查询。
 - 事件中的 `trace_id` 与响应头 `x-trace-id` 能关联。

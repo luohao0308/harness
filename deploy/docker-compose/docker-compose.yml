@@ -57,6 +57,8 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       PROMETHEUS_BASE_URL: http://prometheus:9090
       GRAFANA_BASE_URL: http://grafana:3000
+      GRAFANA_USERNAME: admin
+      GRAFANA_PASSWORD: admin
       LOKI_BASE_URL: http://loki:3100
       OTEL_COLLECTOR_HTTP_URL: http://otel-collector:13133
     ports:

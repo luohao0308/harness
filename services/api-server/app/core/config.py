@@ -28,6 +28,8 @@ class Settings(BaseSettings):
         default="http://localhost:3001",
         alias="GRAFANA_BASE_URL",
     )
+    grafana_username: str = Field(default="admin", alias="GRAFANA_USERNAME")
+    grafana_password: str = Field(default="admin", alias="GRAFANA_PASSWORD")
     loki_base_url: AnyHttpUrl = Field(default="http://localhost:3100", alias="LOKI_BASE_URL")
     otel_collector_http_url: AnyHttpUrl = Field(
         default="http://localhost:4318",

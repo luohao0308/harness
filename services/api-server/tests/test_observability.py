@@ -1,9 +1,13 @@
 import json
 import logging
+from datetime import datetime
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.api.observability import _grafana_auth_headers, _loki_label_selector, _query_loki_logs
+from app.core.config import Settings
 from app.core.logging import JsonFormatter
 from app.db.models import AgentRun, ModelCall, SandboxInstance, Task, ToolCall, utc_now
 from app.events.event_store import EventStore
@@ -205,6 +209,67 @@ def test_observability_logs_returns_event_store_entries(db_session: Session) -> 
     assert payload["items"][0]["event_type"] == "TASK_STARTED"
 
 
+def test_loki_label_selector_uses_filter_labels() -> None:
+    selector = _loki_label_selector(
+        service=None,
+        task_id='task-"quoted"',
+        trace_id="trace-logs",
+        event_type="TASK_STARTED",
+    )
+
+    assert selector == (
+        '{service="api-server",task_id="task-\\"quoted\\"",trace_id="trace-logs",'
+        'event_type="TASK_STARTED"}'
+    )
+
+
+def test_loki_logs_query_uses_label_selector_and_created_at() -> None:
+    payload = {
+        "data": {
+            "result": [
+                {
+                    "stream": {
+                        "service": "api-server",
+                        "task_id": "task-1",
+                        "trace_id": "trace-1",
+                        "event_type": "TASK_STARTED",
+                    },
+                    "values": [
+                        [
+                            "1",
+                            json.dumps(
+                                {
+                                    "created_at": "2026-05-06T10:20:00+00:00",
+                                    "level": "INFO",
+                                    "service": "api-server",
+                                    "message": "TASK_STARTED",
+                                    "task_id": "task-1",
+                                    "trace_id": "trace-1",
+                                    "event_type": "TASK_STARTED",
+                                }
+                            ),
+                        ]
+                    ],
+                }
+            ]
+        }
+    }
+
+    with patch("app.api.observability._get_json", return_value=payload) as get_json:
+        entries = _query_loki_logs(
+            task_id="task-1",
+            trace_id="trace-1",
+            service=None,
+            event_type="TASK_STARTED",
+            limit=20,
+        )
+
+    called_url = get_json.call_args.args[0]
+    assert "%7Bservice%3D%22api-server%22%2Ctask_id%3D%22task-1%22" in called_url
+    assert entries[0].source == "loki"
+    assert entries[0].timestamp == datetime.fromisoformat("2026-05-06T10:20:00+00:00")
+
+
 def test_observability_trace_returns_event_spans(db_session: Session) -> None:
     task = Task(
         organization_id="dev-org",
@@ -257,6 +322,12 @@ def test_grafana_dashboards_returns_configured_fallback() -> None:
     payload = response.json()
     assert payload["items"][0]["uid"] == "agent-harness"
     assert payload["items"][0]["source"] in {"configured", "grafana"}
+
+
+def test_grafana_auth_headers_use_basic_auth_settings() -> None:
+    settings = Settings(GRAFANA_USERNAME="viewer", GRAFANA_PASSWORD="secret")
+
+    assert _grafana_auth_headers(settings) == {"Authorization": "Basic dmlld2VyOnNlY3JldA=="}
 
 
 def test_observability_services_health_returns_all_services() -> None:

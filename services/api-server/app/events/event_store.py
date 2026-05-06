@@ -1,3 +1,4 @@
+import logging
 from threading import RLock
 
 from sqlalchemy import func, select
@@ -10,6 +11,7 @@ from app.events.event_types import EventType
 _sequence_locks: dict[str, RLock] = {}
 _sequence_locks_guard = RLock()
 SNAPSHOT_FREQUENCY_EVENTS = 100
+logger = logging.getLogger("agent-harness.events")
 
 
 def _task_sequence_lock(task_id: str) -> RLock:
@@ -55,6 +57,16 @@ class EventStore:
             )
             self.session.add(event)
             self.session.flush()
+            logger.info(
+                event.event_type,
+                extra={
+                    "service": "api-server",
+                    "trace_id": event.trace_id,
+                    "task_id": event.task_id,
+                    "agent_run_id": event.agent_run_id,
+                    "event_type": event.event_type,
+                },
+            )
             self._maybe_create_snapshot(event)
             return event
 

@@ -110,8 +110,8 @@
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 补齐 Worker 级恢复编排 |
-| Observability | 聚合 API、深度观测接口、控制台摘要和 Prometheus 指标已落地 | 补齐队列图表与 Grafana 鉴权 |
-| Loki | 日志接口、Event Store 回退、Loki 容器和 Promtail 采集已落地 | 增强标签查询体验 |
+| Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标和 Grafana Basic Auth 代理已落地 | 补齐队列图表与 Grafana 权限模型 |
+| Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集和标签查询已落地 | 增强日志检索深链 |
 | OpenTelemetry | trace_id 响应头、Trace 查询接口和 Event Store 合成 span 已落地 | 接入真实 OTel Trace 后端 |
 | 控制台本地化 | 顶栏语言切换基础落地，全页面字典化待落地 | 所有页面表头、按钮、空状态和错误状态双语 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取 | 资源规格、网络 allowlist 和供应商熔断增强 |
