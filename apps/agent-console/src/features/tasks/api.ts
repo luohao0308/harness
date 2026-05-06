@@ -224,6 +224,7 @@ export type TaskResult = {
       preview: string | null;
     }>;
     react_trace: Array<Record<string, unknown>>;
+    context_summary: Record<string, unknown>;
     completed_at: string | null;
   }>;
   last_sequence: number;

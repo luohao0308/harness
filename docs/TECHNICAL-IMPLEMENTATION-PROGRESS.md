@@ -132,7 +132,6 @@ docs/SPEC.md
 
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
-| Subagent 长上下文 | worker 已执行 assignment 工具、多轮 `next_tools` ReAct 工具规划、产物摘要并回写结果，长上下文压缩仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |
 | 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
 | TPM 限流与供应商熔断 | 模型成本和稳定性治理仍需增强 | `docs/human/features/06-model-tool-audit.md` |
@@ -161,15 +160,14 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 补 Subagent worker 长上下文压缩
-2. 增强 Worker 恢复批次详情和控制台展示
-3. 增强计划版本差异可视化和并行执行拓扑
-4. 补工具结果解析、超时分类和控制台细节
-5. 补 TPM 限流、外部主动探测和供应商级熔断
-6. 接入真实 OTel Trace 后端
-7. 补控制台全量 i18n
-8. 整合用户提供的官网代码
-9. 同步 OpenAPI、测试、Runbook 和覆盖文档
+1. 增强 Worker 恢复批次详情和控制台展示
+2. 增强计划版本差异可视化和并行执行拓扑
+3. 补工具结果解析、超时分类和控制台细节
+4. 补 TPM 限流、外部主动探测和供应商级熔断
+5. 接入真实 OTel Trace 后端
+6. 补控制台全量 i18n
+7. 整合用户提供的官网代码
+8. 同步 OpenAPI、测试、Runbook 和覆盖文档
 ```
 
 ## 验证命令

@@ -607,6 +607,7 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
     summary = None
     tool_results = []
     react_trace = []
+    context_summary = {}
     if isinstance(result, dict):
         raw_summary = result.get("summary")
         if raw_summary is not None:
@@ -617,6 +618,9 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
         raw_react_trace = result.get("react_trace", [])
         if isinstance(raw_react_trace, list):
             react_trace = [item for item in raw_react_trace if isinstance(item, dict)]
+        raw_context_summary = result.get("context_summary", {})
+        if isinstance(raw_context_summary, dict):
+            context_summary = raw_context_summary
     raw_step_key = agent_run.context_json.get("step_key")
     return TaskSubagentResult(
         id=agent_run.id,
@@ -626,6 +630,7 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
         tool_results=tool_results,
         artifacts=_subagent_artifacts(tool_results),
         react_trace=react_trace,
+        context_summary=context_summary,
         completed_at=agent_run.completed_at,
     )
 

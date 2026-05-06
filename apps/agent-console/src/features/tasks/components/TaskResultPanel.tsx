@@ -5,6 +5,19 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { artifactStatusLabel, statusLabel } from "../../../lib/labels";
 
+function numberField(data: Record<string, unknown>, key: string) {
+  const value = data[key];
+  return typeof value === "number" ? value : 0;
+}
+
+function contextCompressionLabel(contextSummary: Record<string, unknown>) {
+  const total = numberField(contextSummary, "total_tool_results");
+  if (total === 0) return "无工具上下文";
+  const retained = numberField(contextSummary, "retained_tool_results");
+  const omitted = numberField(contextSummary, "omitted_tool_results");
+  return `总计 ${total} · 模型保留 ${retained} · 已压缩 ${omitted}`;
+}
+
 export function TaskResultPanel({ task, result }: { task: Task; result?: TaskResult }) {
   const rows = result?.artifacts.map((artifact) => [
     artifact.name,
@@ -37,6 +50,7 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
                 <Th>来源步骤</Th>
                 <Th>状态</Th>
                 <Th>摘要</Th>
+                <Th>上下文压缩</Th>
               </tr>
             </thead>
             <tbody>
@@ -59,6 +73,9 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
                   </Td>
                   <Td className="max-w-[360px] truncate text-slate-600">
                     {subagent.summary ?? "尚未写入结果"}
+                  </Td>
+                  <Td className="text-[11px] text-slate-500">
+                    {contextCompressionLabel(subagent.context_summary)}
                   </Td>
                 </tr>
               ))}

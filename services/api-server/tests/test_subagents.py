@@ -11,7 +11,11 @@ from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
 from app.workers.subagent_recovery_worker import _sqlite_recovery_lock, recover_stalled_subagents
-from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, execute_subagent
+from app.workers.subagent_worker import (
+    DEFAULT_REACT_CONTEXT_RECENT_RESULTS,
+    DEFAULT_SUBAGENT_TIMEOUT_SECONDS,
+    execute_subagent,
+)
 from tests.conftest import AUTH_HEADERS
 
 
@@ -168,11 +172,31 @@ def test_worker_runs_multiround_react_tools(
         "第二轮",
     ]
     assert result["react_trace"] == [
-        {"round": 1, "executed_tool_count": 1, "next_tool_count": 1, "done": False},
-        {"round": 2, "executed_tool_count": 1, "next_tool_count": 0, "done": True},
+        {
+            "round": 1,
+            "executed_tool_count": 1,
+            "next_tool_count": 1,
+            "done": False,
+            "context_retained_tool_result_count": 1,
+            "context_omitted_tool_result_count": 0,
+        },
+        {
+            "round": 2,
+            "executed_tool_count": 1,
+            "next_tool_count": 0,
+            "done": True,
+            "context_retained_tool_result_count": 2,
+            "context_omitted_tool_result_count": 0,
+        },
     ]
+    assert result["context_summary"]["total_tool_results"] == 2
+    assert result["context_summary"]["retained_tool_results"] == 2
     assert result["tool_results"][0]["input_json"]["path"] == "notes.md"
     assert len(gateway.requests) == 2
+    first_payload = json.loads(gateway.requests[0].messages[-1].content)
+    assert "tool_results" not in first_payload
+    first_tool_context = first_payload["tool_context"]["recent_tool_results"][0]
+    assert first_tool_context["output_preview"]["content"] == "第一轮"
     events = EventStore(db_session).list_by_task(task_id=task.id)
     react_events = [
         event
@@ -181,6 +205,65 @@ def test_worker_runs_multiround_react_tools(
         and event.payload_json.get("stage") == "react_round_completed"
     ]
     assert [event.payload_json["round"] for event in react_events] == [1, 2]
+
+
+def test_worker_compacts_long_react_context_for_model_requests(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    task = create_task(db_session)
+    for index in range(1, 6):
+        (tmp_path / f"round-{index}.md").write_text(f"第 {index} 轮" * 600, encoding="utf-8")
+    gateway = SequencedModelGateway(
+        [
+            {
+                "summary": f"第 {index} 轮完成",
+                "done": index == 5,
+                "next_tools": []
+                if index == 5
+                else [{"tool_name": "read_file", "input_json": {"path": f"round-{index + 1}.md"}}],
+            }
+            for index in range(1, 6)
+        ]
+    )
+    agent_run = SubagentManager(db_session).spawn(
+        task=task,
+        assignment={
+            "step_key": "long_context_review",
+            "max_tool_rounds": 5,
+            "tools": [{"tool_name": "read_file", "input_json": {"path": "round-1.md"}}],
+        },
+    )
+    db_session.commit()
+
+    status = execute_subagent(
+        agent_run.id,
+        session=db_session,
+        workspace_root=tmp_path,
+        model_gateway=gateway,
+    )
+
+    assert status == "SUCCESS"
+    refreshed = db_session.get(AgentRun, agent_run.id)
+    assert refreshed is not None
+    result = refreshed.context_json["result"]
+    assert len(result["tool_results"]) == 5
+    assert result["context_summary"]["total_tool_results"] == 5
+    assert (
+        result["context_summary"]["retained_tool_results"]
+        == DEFAULT_REACT_CONTEXT_RECENT_RESULTS
+    )
+    assert result["context_summary"]["omitted_tool_results"] == 2
+    assert result["react_trace"][-1]["context_omitted_tool_result_count"] == 2
+    last_payload = json.loads(gateway.requests[-1].messages[-1].content)
+    assert last_payload["tool_context"]["total_tool_results"] == 5
+    assert last_payload["tool_context"]["omitted_tool_results"] == 2
+    assert (
+        len(last_payload["tool_context"]["recent_tool_results"])
+        == DEFAULT_REACT_CONTEXT_RECENT_RESULTS
+    )
+    preview = last_payload["tool_context"]["recent_tool_results"][-1]["output_preview"]["content"]
+    assert preview.endswith("...[truncated]")
 
 
 def test_worker_timeout_flow_writes_timeout_event(db_session: Session) -> None:

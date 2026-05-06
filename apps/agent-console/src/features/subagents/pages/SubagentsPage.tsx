@@ -19,6 +19,20 @@ function contextSummary(context: Record<string, unknown>) {
   return "子 Agent 上下文";
 }
 
+function resultContextSummary(context: Record<string, unknown>) {
+  const result = context.result;
+  if (!result || typeof result !== "object") return "尚无压缩摘要";
+  const contextSummary = (result as Record<string, unknown>).context_summary;
+  if (!contextSummary || typeof contextSummary !== "object") return "尚无压缩摘要";
+  const data = contextSummary as Record<string, unknown>;
+  const total = typeof data.total_tool_results === "number" ? data.total_tool_results : 0;
+  const retained =
+    typeof data.retained_tool_results === "number" ? data.retained_tool_results : 0;
+  const omitted = typeof data.omitted_tool_results === "number" ? data.omitted_tool_results : 0;
+  if (total === 0) return "无工具上下文";
+  return `工具 ${total} · 保留 ${retained} · 压缩 ${omitted}`;
+}
+
 export function SubagentsPage() {
   const tasksQuery = useQuery({ queryKey: ["tasks"], queryFn: listTasks });
   const tasks = tasksQuery.data?.items ?? [];
@@ -108,6 +122,7 @@ export function SubagentsPage() {
                   <Th>开始时间</Th>
                   <Th>完成时间</Th>
                   <Th>超时时间</Th>
+                  <Th>上下文压缩</Th>
                 </tr>
               </thead>
               <tbody>
@@ -131,11 +146,14 @@ export function SubagentsPage() {
                     <Td className="font-mono text-slate-500">
                       {subagent.timeout_at ? formatShortDate(subagent.timeout_at) : "-"}
                     </Td>
+                    <Td className="text-[11px] text-slate-500">
+                      {resultContextSummary(subagent.context_json)}
+                    </Td>
                   </tr>
                 ))}
                 {!subagentsQuery.isLoading && activeTask && subagents.length === 0 && (
                   <tr>
-                    <Td colSpan={5} className="py-12 text-center text-slate-500">
+                    <Td colSpan={6} className="py-12 text-center text-slate-500">
                       当前任务没有派生子 Agent。触发长耗时拆分任务后，这里会展示并发状态。
                     </Td>
                   </tr>

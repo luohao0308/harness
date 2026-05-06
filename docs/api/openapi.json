@@ -4008,6 +4008,12 @@
             "title": "React Trace",
             "description": "ReAct 执行轮次轨迹"
           },
+          "context_summary": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context Summary",
+            "description": "长上下文压缩摘要"
+          },
           "completed_at": {
             "anyOf": [
               {

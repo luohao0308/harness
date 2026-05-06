@@ -70,6 +70,7 @@ class TaskSubagentResult(BaseModel):
     tool_results: list[ToolResult] = Field(default_factory=list, description="工具执行结果")
     artifacts: list[SubagentArtifact] = Field(default_factory=list, description="子 Agent 产物")
     react_trace: list[dict] = Field(default_factory=list, description="ReAct 执行轮次轨迹")
+    context_summary: dict = Field(default_factory=dict, description="长上下文压缩摘要")
     completed_at: datetime | None = Field(default=None, description="完成时间")
 
 

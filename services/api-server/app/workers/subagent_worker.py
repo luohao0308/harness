@@ -25,6 +25,8 @@ from app.tools.runner import ToolExecution, ToolRunner
 from app.workers.broker import broker
 
 DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 900
+DEFAULT_REACT_CONTEXT_RECENT_RESULTS = 3
+DEFAULT_REACT_CONTEXT_OUTPUT_PREVIEW_CHARS = 1200
 
 
 def execute_subagent(
@@ -104,7 +106,7 @@ def _execute_subagent_with_session(
             },
         )
         task = session.get(Task, agent_run.task_id)
-        tool_results, react_trace, model_summary = _execute_react_loop(
+        tool_results, react_trace, model_summary, context_summary = _execute_react_loop(
             session=session,
             task=task,
             agent_run=agent_run,
@@ -124,6 +126,7 @@ def _execute_subagent_with_session(
                 "summary": summary,
                 "tool_results": tool_results,
                 "react_trace": react_trace,
+                "context_summary": context_summary,
                 "completed_at": utc_now().isoformat(),
             },
         }
@@ -181,15 +184,16 @@ def _execute_react_loop(
     workspace_root: Path | None,
     event_store: EventStore,
     model_gateway: ModelGateway | None,
-) -> tuple[list[dict], list[dict], str | None]:
+) -> tuple[list[dict], list[dict], str | None, dict]:
     if task is None:
-        return [], [], None
+        return [], [], None, _compact_react_context([])
 
     max_rounds = _assignment_max_tool_rounds(agent_run.context_json)
     pending_tools = _assignment_tools(agent_run.context_json)
     tool_results: list[dict] = []
     react_trace: list[dict] = []
     model_summary: str | None = None
+    context_summary = _compact_react_context(tool_results)
 
     for round_index in range(1, max_rounds + 1):
         round_results = _execute_tool_batch(
@@ -202,11 +206,12 @@ def _execute_react_loop(
             round_index=round_index,
         )
         tool_results.extend(round_results)
+        context_summary = _compact_react_context(tool_results)
         response = _complete_react_round(
             session=session,
             task=task,
             agent_run=agent_run,
-            tool_results=tool_results,
+            context_summary=context_summary,
             round_index=round_index,
             model_gateway=model_gateway,
         )
@@ -220,6 +225,8 @@ def _execute_react_loop(
                 "executed_tool_count": len(round_results),
                 "next_tool_count": len(next_tools),
                 "done": parsed["done"],
+                "context_retained_tool_result_count": context_summary["retained_tool_results"],
+                "context_omitted_tool_result_count": context_summary["omitted_tool_results"],
             }
         )
         event_store.append(
@@ -233,12 +240,14 @@ def _execute_react_loop(
                 "executed_tool_count": len(round_results),
                 "next_tool_count": len(next_tools),
                 "done": parsed["done"],
+                "context_retained_tool_result_count": context_summary["retained_tool_results"],
+                "context_omitted_tool_result_count": context_summary["omitted_tool_results"],
             },
         )
         if parsed["done"] or not next_tools:
             break
         pending_tools = next_tools
-    return tool_results, react_trace, model_summary
+    return tool_results, react_trace, model_summary, context_summary
 
 
 def _execute_tool_batch(
@@ -297,7 +306,7 @@ def _complete_react_round(
     session: Session,
     task: Task,
     agent_run: AgentRun,
-    tool_results: list[dict],
+    context_summary: dict,
     round_index: int,
     model_gateway: ModelGateway | None,
 ) -> str:
@@ -325,7 +334,7 @@ def _complete_react_round(
                         {
                             "assignment": agent_run.context_json,
                             "round": round_index,
-                            "tool_results": tool_results,
+                            "tool_context": context_summary,
                         },
                         ensure_ascii=False,
                         default=str,
@@ -335,6 +344,70 @@ def _complete_react_round(
         )
     )
     return response.content
+
+
+def _compact_react_context(tool_results: list[dict]) -> dict:
+    retained = [
+        _compact_tool_result(result)
+        for result in tool_results[-DEFAULT_REACT_CONTEXT_RECENT_RESULTS:]
+    ]
+    status_counts: dict[str, int] = {}
+    tool_counts: dict[str, int] = {}
+    for result in tool_results:
+        status = str(result.get("status") or "UNKNOWN")
+        tool_name = str(result.get("tool_name") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+    omitted_count = max(0, len(tool_results) - len(retained))
+    notes = [
+        f"累计工具结果 {len(tool_results)} 个，保留最近 {len(retained)} 个给模型继续规划。",
+    ]
+    if omitted_count:
+        notes.append(
+            f"已压缩较早工具结果 {omitted_count} 个，完整审计结果仍保存在 result.tool_results。"
+        )
+    return {
+        "strategy": "recent_tool_results_with_counts",
+        "total_tool_results": len(tool_results),
+        "retained_tool_results": len(retained),
+        "omitted_tool_results": omitted_count,
+        "status_counts": status_counts,
+        "tool_counts": tool_counts,
+        "recent_tool_results": retained,
+        "notes": notes,
+    }
+
+
+def _compact_tool_result(result: dict) -> dict:
+    return {
+        "tool_call_id": result.get("tool_call_id"),
+        "tool_name": result.get("tool_name"),
+        "status": result.get("status"),
+        "allowed": result.get("allowed"),
+        "duration_ms": result.get("duration_ms"),
+        "input_json": (
+            result.get("input_json") if isinstance(result.get("input_json"), dict) else {}
+        ),
+        "output_preview": _preview_value(result.get("output")),
+        "error_message": _preview_text(result.get("error_message")),
+    }
+
+
+def _preview_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(key): _preview_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_preview_value(item) for item in value[:10]]
+    return _preview_text(value)
+
+
+def _preview_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= DEFAULT_REACT_CONTEXT_OUTPUT_PREVIEW_CHARS:
+        return text
+    return f"{text[:DEFAULT_REACT_CONTEXT_OUTPUT_PREVIEW_CHARS]}...[truncated]"
 
 
 def _assignment_tools(assignment: dict) -> list[dict]:
