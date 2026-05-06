@@ -233,7 +233,11 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
           />
         </section>
         <section className={focus === "events" ? "col-span-9" : "col-span-6"}>
-          <EventTimeline events={events} connected={stream.connected} />
+          <EventTimeline
+            events={events}
+            connected={stream.connected}
+            subagents={subagentsQuery.data?.items ?? []}
+          />
           <div className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-xs">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-semibold text-slate-900">重放调试</span>

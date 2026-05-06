@@ -1,10 +1,16 @@
 import { CheckCircle2, Clock, GitBranch } from "lucide-react";
 
 import type { AgentEvent, Subagent, TaskPlan, TaskPlanDiff, TaskPlanVersionSummary } from "../api";
-import { Badge } from "../../../components/ui/badge";
+import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
-import { executionModeLabel, plannerSourceLabel, riskLabel, statusLabel } from "../../../lib/labels";
+import {
+  executionModeLabel,
+  planDiffLabel,
+  plannerSourceLabel,
+  riskLabel,
+  statusLabel,
+} from "../../../lib/labels";
 
 type PlanStep = {
   key?: string;
@@ -19,6 +25,23 @@ type PlanStep = {
   risk_level?: string;
   artifact_expectations?: string[];
 };
+
+function diffTone(changeType: string): BadgeTone {
+  if (changeType === "added") return "success";
+  if (changeType === "changed") return "warning";
+  if (changeType === "removed") return "failed";
+  return "neutral";
+}
+
+function stepDescription(step: Record<string, unknown> | null) {
+  const description = step?.description;
+  return typeof description === "string" && description.length > 0 ? description : "无步骤描述";
+}
+
+function stepMode(step: Record<string, unknown> | null) {
+  const mode = step?.execution_mode;
+  return typeof mode === "string" ? executionModeLabel(mode) : "未知模式";
+}
 
 export function ExecutionPlanPanel({
   events,
@@ -79,6 +102,34 @@ export function ExecutionPlanPanel({
               </>
             )}
           </div>
+          {planDiff && planDiff.step_diffs.some((diff) => diff.change_type !== "unchanged") && (
+            <div className="mt-2 space-y-1">
+              {planDiff.step_diffs
+                .filter((diff) => diff.change_type !== "unchanged")
+                .slice(0, 6)
+                .map((diff) => (
+                  <div
+                    key={`${diff.step_key}-${diff.change_type}`}
+                    className="rounded border border-slate-100 bg-white px-2 py-1"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Badge tone={diffTone(diff.change_type)} className="px-1 py-0 text-[10px]">
+                        {planDiffLabel(diff.change_type)}
+                      </Badge>
+                      <span className="font-mono text-slate-800">{diff.step_key}</span>
+                      <span className="text-slate-400">
+                        {stepMode(diff.from_step ?? diff.to_step)}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-slate-500">
+                      {diff.change_type === "changed"
+                        ? `${stepDescription(diff.from_step)} → ${stepDescription(diff.to_step)}`
+                        : stepDescription(diff.to_step ?? diff.from_step)}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
       <div className="space-y-1 p-2">

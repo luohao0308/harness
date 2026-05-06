@@ -162,6 +162,7 @@ agent_subagents_running
 | 计划查询接口 | 已落地 | `GET /api/tasks/{task_id}/plan` |
 | 计划版本接口 | 已落地 | `GET /api/tasks/{task_id}/plans` |
 | 计划版本对比 | 已落地 | `GET /api/tasks/{task_id}/plans/diff` |
+| 计划版本差异可视化 | 基础落地 | 控制台执行计划面板展示新增、变更和移除步骤清单 |
 | 步骤查询接口 | 已落地 | `GET /api/tasks/{task_id}/steps` |
 | LLM Planner | 基础落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
 | LLM Planner Prompt 1.1 | 基础落地 | Prompt 要求工具意图、验收标准、风险等级和预期产物 |
@@ -172,22 +173,21 @@ agent_subagents_running
 | Subagent 派生 | 基础落地 | async 步骤写入 `agent_runs` 并请求 Dramatiq 入队 |
 | 真实 Tool Runner | 基础落地 | 低风险文件工具真实执行，高风险工具进入沙箱路径 |
 | 工具公开执行接口 | 已落地 | `POST /api/tasks/{task_id}/tools/execute` |
+| 并行执行拓扑 | 基础落地 | 控制台事件时间线展示异步步骤到子 Agent 的拓扑链路 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 步骤级断点续跑 | Worker 崩溃后的执行恢复仍需增强 | 以 Replay state 驱动 Worker 恢复 |
-| 异步执行可视化 | 基础落地，已展示中文标签、派生子 Agent ID 和状态 | 增强时间线中的并行执行拓扑 |
 
 ## 实现顺序
 
 ```text
 1. 固化 Plan / Step schema
-2. 增强计划版本差异可视化
-3. 增强 Executor ReAct 循环
-4. 补 Worker 级恢复与验收测试
-5. 增强时间线中的并行执行拓扑
+2. 增强 Executor ReAct 循环
+3. 增强步骤级断点续跑
+4. 补 Worker 级恢复历史查询
 ```
 
 ## 验收标准
@@ -201,6 +201,8 @@ agent_subagents_running
 - Plan API 返回计划来源和尝试次数。
 - Plan API 返回步骤工具意图、验收标准、风险等级和预期产物。
 - Plan Version API 返回版本列表和版本差异。
+- 控制台必须展示计划版本新增、变更和移除步骤清单。
+- 事件时间线必须展示异步步骤到子 Agent 的并行执行拓扑。
 - 工具动作不绕过 Tool Registry。
 - 高风险动作不绕过 Sandbox。
 - 事件流能还原执行顺序。

@@ -175,15 +175,15 @@ agent_subagent_recovery_last_recovered
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 自动恢复批次历史 | 当前已有巡检函数、跨节点恢复锁、批次详情、service loop、Compose 服务、指标和告警规则 | 增强恢复批次历史查询 |
-| 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
+| 派生关系展示 | 基础落地，执行计划、Subagent 面板和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量状态展示 |
 
 ## 实现顺序
 
 ```text
 1. 固化 agent_runs 字段和状态机
 2. 增强 Worker 恢复批次历史查询
-3. 增强时间线中的并行执行拓扑
-4. 增强父任务结果产物预览页
+3. 增强父任务结果产物预览页
+4. 增强批量状态展示
 5. 增加超时和取消测试
 ```
 
@@ -204,3 +204,4 @@ agent_subagent_recovery_last_recovered
 - 长上下文执行必须保存完整 `tool_results`，模型请求必须使用压缩后的 `tool_context`。
 - 任务结果页和子 Agent 页面必须展示上下文压缩摘要。
 - 手动恢复必须在任务详情页展示最近恢复批次摘要。
+- 事件时间线必须展示异步步骤到子 Agent 的并行执行拓扑。

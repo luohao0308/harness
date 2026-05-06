@@ -119,6 +119,13 @@ const plannerSourceLabels: Record<string, string> = {
   deterministic: "确定性计划",
 };
 
+const planDiffLabels: Record<string, string> = {
+  added: "新增",
+  changed: "变更",
+  removed: "移除",
+  unchanged: "未变更",
+};
+
 export function statusLabel(status: string) {
   return statusLabels[status] ?? status;
 }
@@ -167,4 +174,8 @@ export function executionModeLabel(mode: string) {
 
 export function plannerSourceLabel(source: string) {
   return plannerSourceLabels[source] ?? source;
+}
+
+export function planDiffLabel(changeType: string) {
+  return planDiffLabels[changeType] ?? changeType;
 }
