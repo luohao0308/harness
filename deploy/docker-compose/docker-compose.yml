@@ -55,6 +55,10 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      PROMETHEUS_BASE_URL: http://prometheus:9090
+      GRAFANA_BASE_URL: http://grafana:3000
+      LOKI_BASE_URL: http://loki:3100
+      OTEL_COLLECTOR_HTTP_URL: http://otel-collector:13133
     ports:
       - "8000:8000"
 
@@ -200,6 +204,7 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "13133:13133"
     volumes:
       - ../monitoring/otel-collector.yml:/etc/otel-collector.yml:ro
 
