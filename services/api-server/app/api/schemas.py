@@ -118,6 +118,41 @@ class TaskPlanResponse(BaseModel):
     created_at: datetime = Field(description="创建时间")
 
 
+class TaskPlanVersionSummary(BaseModel):
+    id: str = Field(description="计划 ID")
+    task_id: str = Field(description="任务 ID")
+    version: int = Field(description="计划版本")
+    status: str = Field(description="计划状态")
+    summary: str | None = Field(default=None, description="计划摘要")
+    planner_source: str = Field(description="计划来源")
+    planner_attempts: int = Field(description="计划生成尝试次数")
+    step_count: int = Field(description="步骤数量")
+    created_at: datetime = Field(description="创建时间")
+
+
+class TaskPlanVersionPage(BaseModel):
+    items: list[TaskPlanVersionSummary] = Field(description="计划版本列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class TaskPlanStepDiff(BaseModel):
+    step_key: str = Field(description="步骤键")
+    change_type: str = Field(description="变更类型")
+    from_step: dict | None = Field(default=None, description="来源版本步骤")
+    to_step: dict | None = Field(default=None, description="目标版本步骤")
+
+
+class TaskPlanDiffResponse(BaseModel):
+    task_id: str = Field(description="任务 ID")
+    from_version: int = Field(description="来源计划版本")
+    to_version: int = Field(description="目标计划版本")
+    added: int = Field(description="新增步骤数")
+    removed: int = Field(description="移除步骤数")
+    changed: int = Field(description="变更步骤数")
+    unchanged: int = Field(description="未变更步骤数")
+    step_diffs: list[TaskPlanStepDiff] = Field(description="步骤差异列表")
+
+
 class ReplayRequest(BaseModel):
     sequence: int | None = Field(default=None, ge=1, description="重放到指定事件序号")
 

@@ -16,7 +16,9 @@ import {
   cancelTask,
   getTask,
   getTaskPlan,
+  getTaskPlanDiff,
   getTaskResult,
+  listTaskPlanVersions,
   listModelCalls,
   listTaskEvents,
   listTaskSubagents,
@@ -55,6 +57,21 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     enabled: Boolean(taskId) && taskQuery.data?.status !== "CREATED",
     retry: false,
   });
+  const planVersionsQuery = useQuery({
+    queryKey: ["task-plan-versions", taskId],
+    queryFn: () => listTaskPlanVersions(taskId!),
+    enabled: Boolean(taskId) && taskQuery.data?.status !== "CREATED",
+    retry: false,
+  });
+  const planVersions = planVersionsQuery.data?.items ?? [];
+  const latestPlanVersion = planVersions[0]?.version;
+  const previousPlanVersion = planVersions[1]?.version;
+  const planDiffQuery = useQuery({
+    queryKey: ["task-plan-diff", taskId, previousPlanVersion, latestPlanVersion],
+    queryFn: () => getTaskPlanDiff(taskId!, previousPlanVersion!, latestPlanVersion!),
+    enabled: Boolean(taskId) && Boolean(previousPlanVersion) && Boolean(latestPlanVersion),
+    retry: false,
+  });
   const modelCallsQuery = useQuery({
     queryKey: ["model-calls", taskId],
     queryFn: () => listModelCalls(taskId!),
@@ -77,6 +94,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-versions", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-diff", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
     },
   });
@@ -87,6 +106,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-versions", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-diff", taskId] });
     },
   });
   const resumeMutation = useMutation({
@@ -96,6 +117,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-versions", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-diff", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["model-calls", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["tool-calls", taskId] });
     },
@@ -195,6 +218,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
           <ExecutionPlanPanel
             events={events}
             plan={planQuery.data}
+            planVersions={planVersions}
+            planDiff={planDiffQuery.data}
             subagents={subagentsQuery.data?.items ?? []}
           />
         </section>

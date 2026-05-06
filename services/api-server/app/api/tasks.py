@@ -12,8 +12,12 @@ from app.api.schemas import (
     TaskArtifact,
     TaskCreateRequest,
     TaskPage,
+    TaskPlanDiffResponse,
     TaskPlanResponse,
+    TaskPlanStepDiff,
     TaskPlanStepState,
+    TaskPlanVersionPage,
+    TaskPlanVersionSummary,
     TaskResponse,
     TaskResultResponse,
     TaskStepPage,
@@ -320,6 +324,49 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
 
 
 @router.get(
+    "/{task_id}/plans",
+    response_model=TaskPlanVersionPage,
+    summary="查询任务计划版本",
+    description="返回任务全部执行计划版本，用于计划变更对比。",
+)
+def list_task_plan_versions(
+    task_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> TaskPlanVersionPage:
+    get_owned_task(task_id, session, principal.organization_id)
+    plans = list(
+        session.execute(
+            select(ExecutionPlan)
+            .where(ExecutionPlan.task_id == task_id)
+            .order_by(ExecutionPlan.version.desc())
+        ).scalars()
+    )
+    return TaskPlanVersionPage(items=[_plan_version_summary(plan) for plan in plans])
+
+
+@router.get(
+    "/{task_id}/plans/diff",
+    response_model=TaskPlanDiffResponse,
+    summary="对比任务计划版本",
+    description="按两个计划版本对比步骤新增、移除和变更。",
+)
+def diff_task_plan_versions(
+    task_id: str,
+    from_version: Annotated[int, Query(ge=1)],
+    to_version: Annotated[int, Query(ge=1)],
+    session: DbSession,
+    principal: Principal,
+) -> TaskPlanDiffResponse:
+    get_owned_task(task_id, session, principal.organization_id)
+    from_plan = _plan_by_version(task_id=task_id, version=from_version, session=session)
+    to_plan = _plan_by_version(task_id=task_id, version=to_version, session=session)
+    if from_plan is None or to_plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="计划版本未找到")
+    return _plan_diff_response(task_id=task_id, from_plan=from_plan, to_plan=to_plan)
+
+
+@router.get(
     "/{task_id}/steps",
     response_model=TaskStepPage,
     summary="查询任务步骤",
@@ -435,6 +482,101 @@ def _latest_plan(task_id: str, session: Session) -> ExecutionPlan | None:
         .order_by(ExecutionPlan.version.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def _plan_by_version(
+    *,
+    task_id: str,
+    version: int,
+    session: Session,
+) -> ExecutionPlan | None:
+    return session.execute(
+        select(ExecutionPlan).where(
+            ExecutionPlan.task_id == task_id,
+            ExecutionPlan.version == version,
+        )
+    ).scalar_one_or_none()
+
+
+def _plan_version_summary(plan: ExecutionPlan) -> TaskPlanVersionSummary:
+    steps = plan.plan_json.get("steps", [])
+    return TaskPlanVersionSummary(
+        id=plan.id,
+        task_id=plan.task_id,
+        version=plan.version,
+        status=plan.status,
+        summary=plan.plan_json.get("summary"),
+        planner_source=str(plan.plan_json.get("planner_source", "deterministic")),
+        planner_attempts=int(plan.plan_json.get("planner_attempts", 1) or 1),
+        step_count=len(steps) if isinstance(steps, list) else 0,
+        created_at=plan.created_at,
+    )
+
+
+def _plan_diff_response(
+    *,
+    task_id: str,
+    from_plan: ExecutionPlan,
+    to_plan: ExecutionPlan,
+) -> TaskPlanDiffResponse:
+    from_steps = _steps_by_key(from_plan.plan_json)
+    to_steps = _steps_by_key(to_plan.plan_json)
+    step_diffs = []
+    for step_key in sorted(set(from_steps) | set(to_steps)):
+        from_step = from_steps.get(step_key)
+        to_step = to_steps.get(step_key)
+        if from_step is None:
+            change_type = "added"
+        elif to_step is None:
+            change_type = "removed"
+        elif _normalized_step(from_step) != _normalized_step(to_step):
+            change_type = "changed"
+        else:
+            change_type = "unchanged"
+        step_diffs.append(
+            TaskPlanStepDiff(
+                step_key=step_key,
+                change_type=change_type,
+                from_step=from_step,
+                to_step=to_step,
+            )
+        )
+    counts = {key: 0 for key in ["added", "removed", "changed", "unchanged"]}
+    for diff in step_diffs:
+        counts[diff.change_type] += 1
+    return TaskPlanDiffResponse(
+        task_id=task_id,
+        from_version=from_plan.version,
+        to_version=to_plan.version,
+        added=counts["added"],
+        removed=counts["removed"],
+        changed=counts["changed"],
+        unchanged=counts["unchanged"],
+        step_diffs=step_diffs,
+    )
+
+
+def _steps_by_key(plan_json: dict) -> dict[str, dict]:
+    steps = plan_json.get("steps", [])
+    if not isinstance(steps, list):
+        return {}
+    result = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        step_key = step.get("key") or step.get("step_key")
+        if isinstance(step_key, str) and step_key:
+            result[step_key] = step
+    return result
+
+
+def _normalized_step(step: dict) -> dict:
+    return {
+        "description": step.get("description"),
+        "execution_mode": step.get("execution_mode"),
+        "requires_sandbox": bool(step.get("requires_sandbox", False)),
+        "can_spawn_subagent": bool(step.get("can_spawn_subagent", False)),
+    }
 
 
 def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:

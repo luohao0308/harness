@@ -65,7 +65,7 @@
 | 功能 | 状态 | 接口 |
 |---|---|---|
 | 任务生命周期 | 已落地 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}`、`POST /api/tasks/{task_id}/start`、`POST /api/tasks/{task_id}/cancel`、`POST /api/tasks/{task_id}/resume`、`GET /api/tasks/{task_id}/result` |
-| 计划与步骤 | 基础落地 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/steps` |
+| 计划与步骤 | 基础落地 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps` |
 | 事件流 | 已落地 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` |
 | Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
 | Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
@@ -102,7 +102,7 @@
 
 | 能力 | 当前缺口 | 目标结果 |
 |---|---|---|
-| Planner | 已接入模型 JSON 计划解析、一次结构修复、确定性回退和计划来源展示 | 增强 Prompt 和计划版本对比 |
+| Planner | 已接入模型 JSON 计划解析、一次结构修复、确定性回退、计划来源展示和计划版本对比 | 增强 Prompt 和版本差异可视化 |
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 级恢复编排 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id 和 Subagent 状态链路 | 增强时间线中的并行执行拓扑 |
 | Subagent Worker | assignment 工具执行、工具审计、结果回写已基础落地 | 增强多轮 ReAct 工具规划 |

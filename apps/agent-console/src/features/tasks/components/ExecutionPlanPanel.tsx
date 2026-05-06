@@ -1,6 +1,6 @@
 import { CheckCircle2, Clock, GitBranch } from "lucide-react";
 
-import type { AgentEvent, Subagent, TaskPlan } from "../api";
+import type { AgentEvent, Subagent, TaskPlan, TaskPlanDiff, TaskPlanVersionSummary } from "../api";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
@@ -19,10 +19,14 @@ type PlanStep = {
 export function ExecutionPlanPanel({
   events,
   plan,
+  planVersions = [],
+  planDiff,
   subagents = [],
 }: {
   events: AgentEvent[];
   plan?: TaskPlan;
+  planVersions?: TaskPlanVersionSummary[];
+  planDiff?: TaskPlanDiff;
   subagents?: Subagent[];
 }) {
   const generated = events.find((event) => event.event_type === "PLAN_GENERATED");
@@ -49,6 +53,26 @@ export function ExecutionPlanPanel({
           {plan ? ` · ${plannerSourceLabel(plan.planner_source)} · ${plan.planner_attempts} 次` : ""}
         </span>
       </CardHeader>
+      {planVersions.length > 0 && (
+        <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>计划版本</span>
+            <span className="font-mono text-slate-800">v{planVersions[0].version}</span>
+            <span>共 {planVersions.length} 版</span>
+            {planDiff && (
+              <>
+                <span>·</span>
+                <span>
+                  对比 v{planDiff.from_version} → v{planDiff.to_version}
+                </span>
+                <span className="text-emerald-600">新增 {planDiff.added}</span>
+                <span className="text-amber-600">变更 {planDiff.changed}</span>
+                <span className="text-rose-600">移除 {planDiff.removed}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       <div className="space-y-1 p-2">
         {steps.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-200 p-3 text-xs text-slate-500">

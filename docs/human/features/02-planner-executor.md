@@ -23,6 +23,7 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 | 执行工具 | `/tasks/:taskId` | 按策略执行工具并记录审计 |
 | 查看同步执行 | `/tasks/:taskId` | 计划步骤显示 `sync`，步骤由 Executor 直接执行 |
 | 查看异步执行 | `/tasks/:taskId`、`/tasks/:taskId/subagents` | 计划步骤显示 `async`，步骤派生 Subagent 并展示子 Agent 状态 |
+| 查看计划版本 | `/tasks/:taskId` | 查看计划版本数量、最新版本和相邻版本差异 |
 
 ## 后端契约
 
@@ -30,6 +31,8 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 POST /api/tasks/{task_id}/start
 GET  /api/tasks/{task_id}/result
 GET  /api/tasks/{task_id}/plan
+GET  /api/tasks/{task_id}/plans
+GET  /api/tasks/{task_id}/plans/diff
 GET  /api/tasks/{task_id}/steps
 POST /api/tasks/{task_id}/tools/execute
 ```
@@ -71,6 +74,7 @@ POST /api/tasks/{task_id}/tools/execute
 | `agent_runs.status` | `agent_runs` | 子 Agent 状态 |
 | `planner_source` | `execution_plans.plan_json`、Plan API | `llm`、`llm_repaired`、`deterministic` |
 | `planner_attempts` | `execution_plans.plan_json`、Plan API | 计划生成尝试次数 |
+| `execution_plans.version` | `execution_plans`、Plan Version API | 计划版本号 |
 
 ## 事件模型
 
@@ -156,6 +160,8 @@ agent_subagents_running
 |---|---|---|
 | 结构化计划 | 已落地 | `planner.py` 先解析模型 JSON，失败时回退确定性计划 |
 | 计划查询接口 | 已落地 | `GET /api/tasks/{task_id}/plan` |
+| 计划版本接口 | 已落地 | `GET /api/tasks/{task_id}/plans` |
+| 计划版本对比 | 已落地 | `GET /api/tasks/{task_id}/plans/diff` |
 | 步骤查询接口 | 已落地 | `GET /api/tasks/{task_id}/steps` |
 | LLM Planner | 基础落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
 | LLM Planner 结构重试 | 基础落地 | 第一次模型计划非法时，自动请求修复一次 |
@@ -170,7 +176,7 @@ agent_subagents_running
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| LLM Planner 增强 | 当前已解析模型 JSON，并支持一次结构修复 | 增强 Prompt 和计划版本对比 |
+| LLM Planner 增强 | 当前已解析模型 JSON，并支持一次结构修复与版本对比 | 增强 Prompt |
 | 步骤级断点续跑 | Worker 崩溃后的执行恢复仍需增强 | 以 Replay state 驱动 Worker 恢复 |
 | 异步执行可视化 | 基础落地，已展示中文标签、派生子 Agent ID 和状态 | 增强时间线中的并行执行拓扑 |
 
@@ -179,7 +185,7 @@ agent_subagents_running
 ```text
 1. 固化 Plan / Step schema
 2. 增强 LLM Planner Prompt
-3. 增加计划版本对比
+3. 增强计划版本差异可视化
 4. 增强 Executor ReAct 循环
 5. 补 Worker 级恢复与验收测试
 6. 增强时间线中的并行执行拓扑
@@ -194,6 +200,7 @@ agent_subagents_running
 - 异步步骤必须生成 `agent_runs` 记录，并在 Subagent 面板展示。
 - 异步步骤在执行计划面板展示关联子 Agent ID 和状态。
 - Plan API 返回计划来源和尝试次数。
+- Plan Version API 返回版本列表和版本差异。
 - 工具动作不绕过 Tool Registry。
 - 高风险动作不绕过 Sandbox。
 - 事件流能还原执行顺序。

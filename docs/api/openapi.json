@@ -432,6 +432,122 @@
         }
       }
     },
+    "/api/tasks/{task_id}/plans": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "查询任务计划版本",
+        "description": "返回任务全部执行计划版本，用于计划变更对比。",
+        "operationId": "list_task_plan_versions_api_tasks__task_id__plans_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPlanVersionPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{task_id}/plans/diff": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "对比任务计划版本",
+        "description": "按两个计划版本对比步骤新增、移除和变更。",
+        "operationId": "diff_task_plan_versions_api_tasks__task_id__plans_diff_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "from_version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "From Version"
+            }
+          },
+          {
+            "name": "to_version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "To Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPlanDiffResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tasks/{task_id}/steps": {
       "get": {
         "tags": [
@@ -2946,6 +3062,65 @@
         ],
         "title": "TaskPage"
       },
+      "TaskPlanDiffResponse": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "description": "任务 ID"
+          },
+          "from_version": {
+            "type": "integer",
+            "title": "From Version",
+            "description": "来源计划版本"
+          },
+          "to_version": {
+            "type": "integer",
+            "title": "To Version",
+            "description": "目标计划版本"
+          },
+          "added": {
+            "type": "integer",
+            "title": "Added",
+            "description": "新增步骤数"
+          },
+          "removed": {
+            "type": "integer",
+            "title": "Removed",
+            "description": "移除步骤数"
+          },
+          "changed": {
+            "type": "integer",
+            "title": "Changed",
+            "description": "变更步骤数"
+          },
+          "unchanged": {
+            "type": "integer",
+            "title": "Unchanged",
+            "description": "未变更步骤数"
+          },
+          "step_diffs": {
+            "items": {
+              "$ref": "#/components/schemas/TaskPlanStepDiff"
+            },
+            "type": "array",
+            "title": "Step Diffs",
+            "description": "步骤差异列表"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "from_version",
+          "to_version",
+          "added",
+          "removed",
+          "changed",
+          "unchanged",
+          "step_diffs"
+        ],
+        "title": "TaskPlanDiffResponse"
+      },
       "TaskPlanResponse": {
         "properties": {
           "id": {
@@ -3025,6 +3200,52 @@
         ],
         "title": "TaskPlanResponse"
       },
+      "TaskPlanStepDiff": {
+        "properties": {
+          "step_key": {
+            "type": "string",
+            "title": "Step Key",
+            "description": "步骤键"
+          },
+          "change_type": {
+            "type": "string",
+            "title": "Change Type",
+            "description": "变更类型"
+          },
+          "from_step": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Step",
+            "description": "来源版本步骤"
+          },
+          "to_step": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Step",
+            "description": "目标版本步骤"
+          }
+        },
+        "type": "object",
+        "required": [
+          "step_key",
+          "change_type"
+        ],
+        "title": "TaskPlanStepDiff"
+      },
       "TaskPlanStepState": {
         "properties": {
           "step_key": {
@@ -3092,6 +3313,104 @@
           "status"
         ],
         "title": "TaskPlanStepState"
+      },
+      "TaskPlanVersionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TaskPlanVersionSummary"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "计划版本列表"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "下一页游标"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "TaskPlanVersionPage"
+      },
+      "TaskPlanVersionSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "计划 ID"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "description": "任务 ID"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version",
+            "description": "计划版本"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "计划状态"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary",
+            "description": "计划摘要"
+          },
+          "planner_source": {
+            "type": "string",
+            "title": "Planner Source",
+            "description": "计划来源"
+          },
+          "planner_attempts": {
+            "type": "integer",
+            "title": "Planner Attempts",
+            "description": "计划生成尝试次数"
+          },
+          "step_count": {
+            "type": "integer",
+            "title": "Step Count",
+            "description": "步骤数量"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "创建时间"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "version",
+          "status",
+          "planner_source",
+          "planner_attempts",
+          "step_count",
+          "created_at"
+        ],
+        "title": "TaskPlanVersionSummary"
       },
       "TaskResponse": {
         "properties": {

@@ -160,6 +160,106 @@ def test_task_plan_steps_and_tool_execute_endpoints() -> None:
     assert "content" in tool_payload["output"]
 
 
+def test_task_plan_versions_and_diff_endpoint(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Plan versions",
+        goal="Compare plan versions",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    first_plan = ExecutionPlan(
+        task_id=task.id,
+        version=1,
+        status="GENERATED",
+        plan_json={
+            "summary": "第一版计划",
+            "planner_source": "deterministic",
+            "planner_attempts": 1,
+            "steps": [
+                {
+                    "key": "inspect",
+                    "description": "检查项目",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                },
+                {
+                    "key": "report",
+                    "description": "生成报告",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                },
+            ],
+        },
+        created_at=utc_now(),
+    )
+    second_plan = ExecutionPlan(
+        task_id=task.id,
+        version=2,
+        status="GENERATED",
+        plan_json={
+            "summary": "第二版计划",
+            "planner_source": "llm_repaired",
+            "planner_attempts": 2,
+            "steps": [
+                {
+                    "key": "inspect",
+                    "description": "深入检查项目",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                },
+                {
+                    "key": "subagent_research",
+                    "description": "派生子 Agent 调研",
+                    "execution_mode": "async",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": True,
+                },
+            ],
+        },
+        created_at=utc_now(),
+    )
+    db_session.add_all([first_plan, second_plan])
+    db_session.commit()
+
+    client = TestClient(app)
+    versions = client.get(f"/api/tasks/{task.id}/plans", headers=AUTH_HEADERS)
+    diff = client.get(
+        f"/api/tasks/{task.id}/plans/diff?from_version=1&to_version=2",
+        headers=AUTH_HEADERS,
+    )
+
+    assert versions.status_code == 200
+    version_payload = versions.json()
+    assert [item["version"] for item in version_payload["items"]] == [2, 1]
+    assert version_payload["items"][0]["planner_source"] == "llm_repaired"
+    assert diff.status_code == 200
+    diff_payload = diff.json()
+    assert diff_payload["added"] == 1
+    assert diff_payload["removed"] == 1
+    assert diff_payload["changed"] == 1
+    assert diff_payload["unchanged"] == 0
+    changes = {item["step_key"]: item["change_type"] for item in diff_payload["step_diffs"]}
+    assert changes == {
+        "inspect": "changed",
+        "report": "removed",
+        "subagent_research": "added",
+    }
+
+
 def test_task_result_aggregates_subagent_outputs(db_session: Session) -> None:
     task = Task(
         organization_id="dev-org",

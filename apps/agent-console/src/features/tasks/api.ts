@@ -231,6 +231,34 @@ export type TaskPlan = {
   created_at: string;
 };
 
+export type TaskPlanVersionSummary = {
+  id: string;
+  task_id: string;
+  version: number;
+  status: string;
+  summary: string | null;
+  planner_source: string;
+  planner_attempts: number;
+  step_count: number;
+  created_at: string;
+};
+
+export type TaskPlanDiff = {
+  task_id: string;
+  from_version: number;
+  to_version: number;
+  added: number;
+  removed: number;
+  changed: number;
+  unchanged: number;
+  step_diffs: Array<{
+    step_key: string;
+    change_type: string;
+    from_step: Record<string, unknown> | null;
+    to_step: Record<string, unknown> | null;
+  }>;
+};
+
 export type TaskStep = {
   id: string;
   task_id: string;
@@ -345,6 +373,20 @@ export async function getTaskResult(taskId: string) {
 
 export async function getTaskPlan(taskId: string) {
   return request<TaskPlan>(`/api/tasks/${taskId}/plan`);
+}
+
+export async function listTaskPlanVersions(taskId: string) {
+  return request<{ items: TaskPlanVersionSummary[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/plans`,
+  );
+}
+
+export async function getTaskPlanDiff(taskId: string, fromVersion: number, toVersion: number) {
+  const params = new URLSearchParams({
+    from_version: String(fromVersion),
+    to_version: String(toVersion),
+  });
+  return request<TaskPlanDiff>(`/api/tasks/${taskId}/plans/diff?${params.toString()}`);
 }
 
 export async function listTaskSteps(taskId: string) {
