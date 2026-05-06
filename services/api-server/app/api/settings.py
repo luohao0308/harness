@@ -21,10 +21,23 @@ DEFAULT_MODEL_SETTINGS = ModelSettingsResponse(
     default_provider="openai-compatible",
     default_model="default",
     providers=[
-        {"name": "openai-compatible", "status": "healthy", "rate_limit_rpm": 600},
+        {
+            "name": "openai-compatible",
+            "status": "healthy",
+            "rate_limit_rpm": 600,
+            "rate_limit_tpm": 120000,
+            "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+        },
     ],
     rate_limits={"rpm": 600, "tpm": 120000},
-    health={"status": "healthy", "updated_at": None},
+    health={
+        "status": "healthy",
+        "updated_at": None,
+        "mode": "mock",
+        "latency_ms": 0,
+        "error_message": None,
+    },
+    circuit_breaker={"failure_threshold": 3, "cooldown_seconds": 60},
 )
 
 DEFAULT_POLICY_SETTINGS = PolicySettingsResponse(
@@ -162,8 +175,10 @@ def update_model_settings(
     description="按当前组织模型设置返回供应商健康状态和探测结果。",
 )
 def get_model_health(session: DbSession, principal: Principal) -> ModelHealthPage:
+    items = ModelHealthChecker(session).check(organization_id=principal.organization_id)
+    session.commit()
     return ModelHealthPage(
-        items=ModelHealthChecker(session).check(organization_id=principal.organization_id)
+        items=items
     )
 
 

@@ -87,7 +87,7 @@ docs/SPEC.md
 | 工具调用审计 | 查询入参、结果、耗时、拒绝、失败 | `GET /api/tasks/{task_id}/tool-calls` | 基础落地 |
 | 沙箱治理 | 沙箱列表、详情、终止 | `GET /api/sandboxes`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` | 已落地 |
 | WarmPool | 查看预热池状态 | `GET /api/sandboxes/warm-pool` | 已落地 |
-| 模型设置 | 供应商、模型、限流、健康状态 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` | 已落地 |
+| 模型设置 | 供应商、模型、RPM、TPM、主动探测、熔断状态 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` | 已落地 |
 | 策略设置 | 工具风险、审批、沙箱、审计要求 | `GET /api/settings/policies`、`PUT /api/settings/policies` | 已落地 |
 | 观测摘要 | 任务、模型、工具、沙箱、WarmPool 汇总 | `GET /api/observability/summary`、`GET /metrics` | 已落地 |
 | OpenAPI 导入 | 中文 JSON/YAML 导入 | `GET /openapi.json`、`docs/api/openapi.json`、`docs/api/openapi.yaml` | 已落地 |
@@ -113,7 +113,7 @@ docs/SPEC.md
 | `/subagents` | 子 Agent 列表 | Task API、Subagent API | 已接入 |
 | `/sandboxes` | 沙箱和 WarmPool | Sandbox API、WarmPool API | 已接入 |
 | `/observability` | 运行摘要 | Observability Summary、Metrics | 基础接入 |
-| `/settings/models` | 模型设置 | Settings Models API | 已接入 |
+| `/settings/models` | 模型设置 | Settings Models API、Model Health API | 已接入，展示 RPM、TPM、探测模式和熔断状态 |
 | `/settings/policies` | 策略设置 | Settings Policies API | 已接入 |
 | 官网 | 产品展示、文档、OpenAPI 下载 | Next.js、公开 OpenAPI 文件 | 基础接入，最终官网代码待整合 |
 
@@ -133,7 +133,6 @@ docs/SPEC.md
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |
-| TPM 限流与供应商熔断 | 模型成本和稳定性治理仍需增强 | `docs/human/features/06-model-tool-audit.md` |
 | 真实 OTel Trace 后端 | 当前接口已有 Event Store 合成 span | `docs/human/features/10-observability-localization-spec.md` |
 | 控制台全量 i18n | 部分旧页面仍有英文原始文案 | `docs/human/features/10-observability-localization-spec.md` |
 | 官网最终接入 | 用户提供的官网代码还需整合 | `docs/human/features/08-website-console-openapi.md` |
@@ -160,11 +159,10 @@ docs/SPEC.md
 
 ```text
 1. 增强 Worker 恢复批次历史查询
-2. 补 TPM 限流、外部主动探测和供应商级熔断
-3. 接入真实 OTel Trace 后端
-4. 补控制台全量 i18n
-5. 整合用户提供的官网代码
-6. 同步 OpenAPI、测试、Runbook 和覆盖文档
+2. 接入真实 OTel Trace 后端
+3. 补控制台全量 i18n
+4. 整合用户提供的官网代码
+5. 同步 OpenAPI、测试、Runbook 和覆盖文档
 ```
 
 ## 验证命令

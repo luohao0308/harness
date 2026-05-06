@@ -112,8 +112,10 @@ model_call_errors_total
 |---|---|---|
 | 模型设置读取 | 已落地 | `GET /api/settings/models` |
 | 模型设置写入 | 已落地 | `PUT /api/settings/models` |
-| 模型设置生效 | 已落地 | Model Gateway 读取组织级默认模型、供应商和限流 |
+| 模型设置生效 | 已落地 | Model Gateway 读取组织级默认模型、供应商、RPM、TPM 和熔断规则 |
 | 模型健康状态 | 已落地 | `GET /api/settings/models/health` |
+| 模型主动探测 | 已落地 | `GET /api/settings/models/health` 对真实供应商发起探测并写回健康快照 |
+| 模型熔断可视化 | 已落地 | `/settings/models` 展示熔断状态、连续失败次数和打开截止时间 |
 | 策略设置读取 | 已落地 | `GET /api/settings/policies` |
 | 策略设置写入 | 已落地 | `PUT /api/settings/policies` |
 | 策略设置生效 | 已落地 | Tool Runner 读取组织级风险、角色、审批和沙箱要求 |
@@ -151,6 +153,8 @@ model_call_errors_total
 - admin 修改设置返回 200。
 - 设置变更写入审计。
 - 设置变更重新读取后保持最新值。
+- 模型健康探测写回 `system_settings.health` 与 provider `last_health`。
+- 模型页面展示 RPM、TPM、探测模式和熔断状态。
 - 策略变更影响后续工具调用。
 - 沙箱策略变更影响后续沙箱创建和命令执行。
 - Observability 聚合结果按组织隔离。

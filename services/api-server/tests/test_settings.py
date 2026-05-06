@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.model_gateway import ModelResponse
 from app.db.models import AdminAuditEvent, SystemSetting
 from app.main import app
 from tests.conftest import AUTH_HEADERS
@@ -84,3 +85,52 @@ def test_model_settings_health_endpoint_uses_current_settings() -> None:
     assert payload["model"] == "configured-model"
     assert payload["status"] == "healthy"
     assert payload["mode"] == "mock"
+    assert payload["circuit_status"] == "closed"
+
+
+def test_model_settings_health_endpoint_probes_real_provider(
+    monkeypatch,
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    captured = {}
+
+    def fake_complete(self, request_payload):
+        captured["provider"] = request_payload.model_provider
+        captured["model"] = request_payload.model_name
+        return ModelResponse(
+            content="{}",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 1, "completion_tokens": 1},
+        )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.OpenAICompatibleModelGateway.complete",
+        fake_complete,
+    )
+
+    current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
+    current["default_model"] = "probe-model"
+    current["providers"] = [
+        {
+            "name": "openai-compatible",
+            "status": "degraded",
+            "rate_limit_rpm": 60,
+            "rate_limit_tpm": 120000,
+            "base_url": "https://models.example.test/v1",
+            "api_key": "secret-key",
+        }
+    ]
+    client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+
+    health = client.get("/api/settings/models/health", headers=ADMIN_HEADERS)
+
+    assert health.status_code == 200
+    payload = health.json()["items"][0]
+    assert payload["status"] == "healthy"
+    assert payload["mode"] == "probe"
+    assert captured == {"provider": "openai-compatible", "model": "probe-model"}
+    setting = db_session.execute(select(SystemSetting)).scalar_one()
+    assert setting.value_json["health"]["status"] == "healthy"
+    assert setting.value_json["providers"][0]["last_health"]["mode"] == "probe"

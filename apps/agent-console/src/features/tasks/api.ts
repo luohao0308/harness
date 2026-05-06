@@ -62,6 +62,24 @@ export type ModelSettings = {
   providers: Array<Record<string, unknown>>;
   rate_limits: Record<string, unknown>;
   health: Record<string, unknown>;
+  circuit_breaker: Record<string, unknown>;
+};
+
+export type ModelHealth = {
+  provider: string;
+  model: string;
+  status: string;
+  mode: string;
+  checked_at: string;
+  latency_ms: number;
+  error_message: string | null;
+  circuit_status: string;
+  circuit_open_until: string | null;
+  consecutive_failures: number;
+};
+
+export type ModelHealthPage = {
+  items: ModelHealth[];
 };
 
 export type PolicySettings = {
@@ -486,6 +504,10 @@ export function taskEventStreamUrl(taskId: string) {
 
 export async function getModelSettings() {
   return request<ModelSettings>("/api/settings/models");
+}
+
+export async function getModelHealth() {
+  return request<ModelHealthPage>("/api/settings/models/health");
 }
 
 export async function getPolicySettings() {

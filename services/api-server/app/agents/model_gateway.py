@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from urllib import error, request
 from urllib.parse import urljoin
@@ -55,10 +57,26 @@ DEFAULT_MODEL_SETTINGS = {
     "default_provider": "openai-compatible",
     "default_model": "default",
     "providers": [
-        {"name": "openai-compatible", "status": "healthy", "rate_limit_rpm": 600},
+        {
+            "name": "openai-compatible",
+            "status": "healthy",
+            "rate_limit_rpm": 600,
+            "rate_limit_tpm": 120000,
+            "circuit_breaker": {
+                "failure_threshold": 3,
+                "cooldown_seconds": 60,
+            },
+        },
     ],
     "rate_limits": {"rpm": 600, "tpm": 120000},
-    "health": {"status": "healthy", "updated_at": None},
+    "health": {
+        "status": "healthy",
+        "updated_at": None,
+        "mode": "mock",
+        "latency_ms": 0,
+        "error_message": None,
+    },
+    "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
 }
 
 
@@ -69,29 +87,123 @@ class ResolvedModelSettings:
     default_model: str
     provider: dict
     rate_limit_rpm: int
+    rate_limit_tpm: int
+    circuit_breaker: dict
+
+
+class ModelRateLimitError(ModelGatewayError):
+    pass
+
+
+class ModelCircuitOpenError(ModelGatewayError):
+    pass
 
 
 class ModelRateLimiter:
     _calls: dict[str, list[float]] = {}
+    _tokens: dict[str, list[tuple[float, int]]] = {}
 
     @classmethod
-    def check(cls, *, key: str, rpm: int, now: float | None = None) -> None:
-        if rpm <= 0:
+    def check(
+        cls,
+        *,
+        key: str,
+        rpm: int,
+        tpm: int,
+        estimated_tokens: int,
+        now: float | None = None,
+    ) -> None:
+        if rpm <= 0 and tpm <= 0:
             return
         current_time = now or time.time()
         window_start = current_time - 60
         timestamps = [
             timestamp for timestamp in cls._calls.get(key, []) if timestamp >= window_start
         ]
-        if len(timestamps) >= rpm:
+        token_entries = [
+            entry for entry in cls._tokens.get(key, []) if entry[0] >= window_start
+        ]
+        if rpm > 0 and len(timestamps) >= rpm:
             cls._calls[key] = timestamps
-            raise ModelGatewayError("model rate limit exceeded")
+            cls._tokens[key] = token_entries
+            raise ModelRateLimitError("model rate limit exceeded")
+        token_total = sum(tokens for _, tokens in token_entries)
+        if tpm > 0 and token_total + estimated_tokens > tpm:
+            cls._calls[key] = timestamps
+            cls._tokens[key] = token_entries
+            raise ModelRateLimitError("model tpm limit exceeded")
         timestamps.append(current_time)
+        token_entries.append((current_time, estimated_tokens))
         cls._calls[key] = timestamps
+        cls._tokens[key] = token_entries
 
     @classmethod
     def clear(cls) -> None:
         cls._calls.clear()
+        cls._tokens.clear()
+
+
+class ModelCircuitBreaker:
+    _states: dict[str, dict] = {}
+
+    @classmethod
+    def check(cls, *, key: str, now: float | None = None) -> None:
+        state = cls._states.get(key, {})
+        opened_until = float(state.get("opened_until") or 0)
+        if opened_until <= 0:
+            return
+        current_time = now or time.time()
+        if opened_until > current_time:
+            raise ModelCircuitOpenError("model provider circuit open")
+        state["opened_until"] = 0
+        cls._states[key] = state
+
+    @classmethod
+    def record_success(cls, *, key: str) -> None:
+        cls._states[key] = {
+            "consecutive_failures": 0,
+            "opened_until": 0,
+        }
+
+    @classmethod
+    def record_failure(
+        cls,
+        *,
+        key: str,
+        failure_threshold: int,
+        cooldown_seconds: int,
+        now: float | None = None,
+    ) -> None:
+        if failure_threshold <= 0 or cooldown_seconds <= 0:
+            return
+        current_time = now or time.time()
+        state = cls._states.get(key, {})
+        consecutive_failures = int(state.get("consecutive_failures") or 0) + 1
+        opened_until = float(state.get("opened_until") or 0)
+        if consecutive_failures >= failure_threshold:
+            opened_until = current_time + cooldown_seconds
+        cls._states[key] = {
+            "consecutive_failures": consecutive_failures,
+            "opened_until": opened_until,
+        }
+
+    @classmethod
+    def state(cls, *, key: str, now: float | None = None) -> dict:
+        state = cls._states.get(key, {})
+        current_time = now or time.time()
+        opened_until = float(state.get("opened_until") or 0)
+        is_open = opened_until > current_time
+        return {
+            "status": "open" if is_open else "closed",
+            "consecutive_failures": int(state.get("consecutive_failures") or 0),
+            "opened_until": datetime.fromtimestamp(opened_until).isoformat()
+            if is_open
+            else None,
+        }
+
+    @classmethod
+    def clear(cls) -> None:
+        cls._states.clear()
 
 
 class ModelGateway(Protocol):
@@ -210,6 +322,17 @@ class ModelSettingsResolver:
             or settings.get("rate_limits", {}).get("rpm")
             or 600
         )
+        tpm = int(
+            provider.get("rate_limit_tpm")
+            or settings.get("rate_limits", {}).get("tpm")
+            or 120000
+        )
+        circuit_breaker = {
+            **dict(settings.get("circuit_breaker") or {}),
+            **dict(provider.get("circuit_breaker") or {}),
+        }
+        circuit_breaker.setdefault("failure_threshold", 3)
+        circuit_breaker.setdefault("cooldown_seconds", 60)
         resolved_request = request_payload.model_copy(
             update={"model_provider": provider_name, "model_name": model_name}
         )
@@ -221,6 +344,8 @@ class ModelSettingsResolver:
                 default_model=default_model,
                 provider=provider,
                 rate_limit_rpm=rpm,
+                rate_limit_tpm=tpm,
+                circuit_breaker=circuit_breaker,
             ),
         )
 
@@ -234,7 +359,7 @@ class ModelSettingsResolver:
             )
         ).scalar_one_or_none()
         if setting is None:
-            return DEFAULT_MODEL_SETTINGS
+            return deepcopy(DEFAULT_MODEL_SETTINGS)
         return setting.value_json
 
     def _provider(self, *, settings: dict, provider_name: str) -> dict:
@@ -257,22 +382,83 @@ class ModelHealthChecker:
             status = str(provider.get("status") or "healthy")
             mode = "configured"
             error_message = None
+            provider_name = str(provider.get("name") or "unknown")
+            model_name = str(provider.get("model") or default_model)
+            circuit_key = f"{organization_id}:{provider_name}:{model_name}"
             if provider.get("api_key") in {None, "", "replace-me"} and not provider.get("base_url"):
                 mode = "mock"
                 status = "healthy"
-            if status not in {"healthy", "degraded"}:
+            else:
+                mode = "probe"
+                try:
+                    OpenAICompatibleModelGateway(
+                        base_url=provider.get("base_url"),
+                        api_key=provider.get("api_key"),
+                        timeout_seconds=int(provider.get("health_timeout_seconds") or 5),
+                    ).complete(
+                        ModelRequest(
+                            model_provider=provider_name,
+                            model_name=model_name,
+                            messages=[
+                                ModelMessage(
+                                    role="user",
+                                    content="health check",
+                                )
+                            ],
+                        )
+                    )
+                    status = "healthy"
+                except Exception as exc:
+                    status = "unhealthy"
+                    error_message = str(exc)
+            if status not in {"healthy", "degraded", "unhealthy"}:
                 error_message = f"provider status is {status}"
+                status = "unhealthy"
+            latency_ms = int((time.monotonic() - started_at) * 1000)
+            circuit_state = ModelCircuitBreaker.state(key=circuit_key)
             results.append(
                 {
-                    "provider": str(provider.get("name") or "unknown"),
-                    "model": str(provider.get("model") or default_model),
+                    "provider": provider_name,
+                    "model": model_name,
                     "status": status,
                     "mode": mode,
                     "checked_at": utc_now(),
-                    "latency_ms": int((time.monotonic() - started_at) * 1000),
+                    "latency_ms": latency_ms,
                     "error_message": error_message,
+                    "circuit_status": circuit_state["status"],
+                    "circuit_open_until": circuit_state["opened_until"],
+                    "consecutive_failures": circuit_state["consecutive_failures"],
                 }
             )
+            provider["status"] = status
+            provider["last_health"] = {
+                "status": status,
+                "mode": mode,
+                "checked_at": results[-1]["checked_at"].isoformat(),
+                "latency_ms": latency_ms,
+                "error_message": error_message,
+            }
+        if results:
+            worst_status = "healthy"
+            if any(result["status"] == "unhealthy" for result in results):
+                worst_status = "unhealthy"
+            elif any(result["status"] == "degraded" for result in results):
+                worst_status = "degraded"
+            settings["health"] = {
+                "status": worst_status,
+                "updated_at": utc_now().isoformat(),
+                "mode": "probe" if any(result["mode"] == "probe" for result in results) else "mock",
+                "latency_ms": max(result["latency_ms"] for result in results),
+                "error_message": next(
+                    (
+                        result["error_message"]
+                        for result in results
+                        if result["error_message"] is not None
+                    ),
+                    None,
+                ),
+            }
+            self._write_settings_for_org(organization_id=organization_id, settings=settings)
         return results
 
     def _settings_for_org(self, organization_id: str) -> dict:
@@ -283,8 +469,29 @@ class ModelHealthChecker:
             )
         ).scalar_one_or_none()
         if setting is None:
-            return DEFAULT_MODEL_SETTINGS
+            return deepcopy(DEFAULT_MODEL_SETTINGS)
         return setting.value_json
+
+    def _write_settings_for_org(self, *, organization_id: str, settings: dict) -> None:
+        setting = self.session.execute(
+            select(SystemSetting).where(
+                SystemSetting.organization_id == organization_id,
+                SystemSetting.key == MODEL_SETTINGS_KEY,
+            )
+        ).scalar_one_or_none()
+        if setting is None:
+            setting = SystemSetting(
+                organization_id=organization_id,
+                key=MODEL_SETTINGS_KEY,
+                value_json=deepcopy(settings),
+                updated_by="system",
+                updated_at=utc_now(),
+            )
+            self.session.add(setting)
+        else:
+            setting.value_json = deepcopy(settings)
+            setting.updated_at = utc_now()
+        self.session.flush()
 
 
 class AuditedModelGateway:
@@ -343,6 +550,8 @@ class AuditedModelGateway:
             f"{settings.organization_id or 'global'}:"
             f"{request_payload.model_provider}:{request_payload.model_name}"
         )
+        circuit_key = limiter_key
+        estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         gateway = self.gateway or self._gateway_from_settings(settings.provider)
         started_at = time.monotonic()
         model_call = ModelCall(
@@ -372,9 +581,25 @@ class AuditedModelGateway:
             },
         )
         try:
-            ModelRateLimiter.check(key=limiter_key, rpm=settings.rate_limit_rpm)
+            ModelCircuitBreaker.check(key=circuit_key)
+            ModelRateLimiter.check(
+                key=limiter_key,
+                rpm=settings.rate_limit_rpm,
+                tpm=settings.rate_limit_tpm,
+                estimated_tokens=estimated_prompt_tokens,
+            )
             response_payload = gateway.complete(request_payload)
         except Exception as exc:
+            if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
+                ModelCircuitBreaker.record_failure(
+                    key=circuit_key,
+                    failure_threshold=int(
+                        settings.circuit_breaker.get("failure_threshold") or 3
+                    ),
+                    cooldown_seconds=int(
+                        settings.circuit_breaker.get("cooldown_seconds") or 60
+                    ),
+                )
             model_call.status = "FAILED"
             model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
             model_call.error_message = str(exc)
@@ -395,6 +620,7 @@ class AuditedModelGateway:
             raise ModelGatewayError(str(exc)) from exc
 
         usage = response_payload.usage
+        ModelCircuitBreaker.record_success(key=circuit_key)
         model_call.status = "SUCCESS"
         model_call.prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         model_call.completion_tokens = int(usage.get("completion_tokens", 0) or 0)
@@ -421,10 +647,12 @@ class AuditedModelGateway:
         return response_payload
 
     def _safe_request_json(self, request_payload: ModelRequest) -> dict:
+        estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         return {
             "model_provider": request_payload.model_provider,
             "model_name": request_payload.model_name,
             "response_format": request_payload.response_format,
+            "estimated_prompt_tokens": estimated_prompt_tokens,
             "messages": [
                 {
                     "role": message.role,
@@ -434,6 +662,11 @@ class AuditedModelGateway:
                 for message in request_payload.messages
             ],
         }
+
+    def _estimate_prompt_tokens(self, request_payload: ModelRequest) -> int:
+        content_length = sum(len(message.content) for message in request_payload.messages)
+        message_overhead = len(request_payload.messages) * 4
+        return max(1, (content_length // 4) + message_overhead)
 
     def _gateway_from_settings(self, provider: dict) -> ModelGateway:
         return OpenAICompatibleModelGateway(

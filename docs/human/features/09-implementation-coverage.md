@@ -75,7 +75,7 @@
 | 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` |
 | 模型审计 | 基础落地 | `GET /api/tasks/{task_id}/model-calls` |
 | 工具审计 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` |
-| 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` |
+| 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health`，覆盖 RPM、TPM、主动探测和供应商熔断 |
 | 策略设置 | 已落地 | `GET /api/settings/policies`、`PUT /api/settings/policies` |
 | 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics` |
 | 日志观测 | 基础落地 | `GET /api/observability/logs`、Promtail 采集 |
@@ -95,7 +95,7 @@
 | `/observability` | `GET /api/observability/summary` 与 `/metrics` | 已接入 |
 | `/observability` 日志区 | `GET /api/observability/logs` | 基础接入 |
 | `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 基础接入 |
-| `/settings/models` | Settings API | 已接入 |
+| `/settings/models` | Settings API、Model Health API | 已接入，展示 RPM、TPM、探测模式和熔断状态 |
 | `/settings/policies` | Settings API | 已接入 |
 
 ## 缺口
@@ -107,14 +107,14 @@
 | Worker 恢复 | 手动恢复、巡检函数、service loop、跨节点恢复锁、批次详情、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已基础落地 | 增强恢复批次历史查询 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id、Subagent 状态链路和时间线并行执行拓扑 | 增强批量状态展示 |
 | Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要和长上下文压缩已基础落地 | 增强恢复批次历史查询 |
-| Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
+| Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流、TPM 限流、主动探测和供应商级熔断已落地 | 增强多供应商 fallback 策略观测 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类和控制台细节 | 增强工具审计筛选和深链 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强恢复批次查询 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标和 Grafana Basic Auth 代理已落地 | 补齐队列图表与 Grafana 权限模型 |
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集和标签查询已落地 | 增强日志检索深链 |
 | OpenTelemetry | trace_id 响应头、Trace 查询接口和 Event Store 合成 span 已落地 | 接入真实 OTel Trace 后端 |
 | 控制台本地化 | 顶栏语言切换基础落地，全页面字典化待落地 | 所有页面表头、按钮、空状态和错误状态双语 |
-| Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取 | 资源规格、网络 allowlist 和供应商熔断增强 |
+| Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取，模型健康探测写回设置快照 | 资源规格和网络 allowlist 增强 |
 
 ## 实现顺序
 

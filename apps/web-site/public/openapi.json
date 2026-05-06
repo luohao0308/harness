@@ -2198,6 +2198,30 @@
             ],
             "title": "Error Message",
             "description": "错误信息"
+          },
+          "circuit_status": {
+            "type": "string",
+            "title": "Circuit Status",
+            "description": "熔断状态",
+            "default": "closed"
+          },
+          "circuit_open_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Circuit Open Until",
+            "description": "熔断打开截止时间"
+          },
+          "consecutive_failures": {
+            "type": "integer",
+            "title": "Consecutive Failures",
+            "description": "连续失败次数",
+            "default": 0
           }
         },
         "type": "object",
@@ -2243,6 +2267,12 @@
             "type": "object",
             "title": "Health",
             "description": "健康状态"
+          },
+          "circuit_breaker": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Circuit Breaker",
+            "description": "供应商熔断规则"
           }
         },
         "type": "object",

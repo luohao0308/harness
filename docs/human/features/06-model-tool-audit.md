@@ -118,7 +118,10 @@ tool_policy_denied_total
 | Model Gateway OpenAI-compatible 调用 | 基础落地 | Model Gateway |
 | Model Gateway 读取 Settings | 已落地 | Model Gateway |
 | 模型 RPM 限流 | 已落地 | Model Gateway |
-| 模型健康状态接口 | 已落地 | `GET /api/settings/models/health` |
+| 模型 TPM 限流 | 已落地 | Model Gateway 按组织、供应商和模型估算 prompt token |
+| 模型健康主动探测 | 已落地 | `GET /api/settings/models/health` 探测真实供应商并写回健康快照 |
+| 供应商级熔断 | 已落地 | Model Gateway 连续失败达到阈值后快速拒绝并触发 fallback 流程 |
+| 模型健康状态接口 | 已落地 | `GET /api/settings/models/health` 返回探测模式、熔断状态和连续失败次数 |
 | 模型调用成功审计 | 已落地 | `model_calls` |
 | 模型调用失败审计 | 已落地 | `model_calls` |
 | 模型 fallback 事件 | 已落地 | `MODEL_FALLBACK_USED` |
@@ -130,18 +133,15 @@ tool_policy_denied_total
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| TPM 限流 | 高 token 任务成本控制仍需增强 | 按组织、供应商和模型限制 token |
-| 外部主动探测 | 供应商健康状态仍偏被动 | 后台探测供应商并写入健康状态 |
-| 供应商级熔断 | 连续失败后的流量治理仍需增强 | 失败阈值触发 fallback 和熔断 |
+| 工具审计筛选和深链 | 审计列表定位效率仍需增强 | 按工具、状态、风险和 trace 深链查询 |
+| 控制台审计详情验收测试 | 页面能力已有实现，自动验收仍需增强 | 覆盖模型审计、工具审计和策略拒绝展示 |
 
 ## 实现顺序
 
 ```text
 1. 保持审计表与 OpenAPI 同步
-2. 增强模型 TPM 限流和主动探测
-3. 增强供应商熔断与 fallback 策略
-4. 增强工具审计筛选和深链
-5. 补控制台审计详情验收测试
+2. 增强工具审计筛选和深链
+3. 补控制台审计详情验收测试
 ```
 
 ## 验收标准
@@ -152,4 +152,5 @@ tool_policy_denied_total
 - 控制台展示模型调用列表。
 - 控制台展示工具调用列表。
 - 控制台展示工具输出类型、摘要和超时分类。
+- 控制台展示模型 TPM、健康探测和供应商熔断状态。
 - 高风险工具必须经过策略检查和沙箱路径。

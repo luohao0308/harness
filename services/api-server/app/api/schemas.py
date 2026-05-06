@@ -436,6 +436,7 @@ class ModelSettingsResponse(BaseModel):
     providers: list[dict] = Field(description="供应商列表")
     rate_limits: dict = Field(description="限流信息")
     health: dict = Field(description="健康状态")
+    circuit_breaker: dict = Field(default_factory=dict, description="供应商熔断规则")
 
 
 class ModelHealthResponse(BaseModel):
@@ -446,6 +447,9 @@ class ModelHealthResponse(BaseModel):
     checked_at: datetime = Field(description="检查时间")
     latency_ms: int = Field(description="探测耗时（毫秒）")
     error_message: str | None = Field(default=None, description="错误信息")
+    circuit_status: str = Field(default="closed", description="熔断状态")
+    circuit_open_until: str | None = Field(default=None, description="熔断打开截止时间")
+    consecutive_failures: int = Field(default=0, description="连续失败次数")
 
 
 class ModelHealthPage(BaseModel):

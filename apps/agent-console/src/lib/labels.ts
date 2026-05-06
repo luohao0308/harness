@@ -11,7 +11,13 @@ const statusLabels: Record<string, string> = {
   PENDING: "待处理",
   TIMEOUT: "超时",
   healthy: "健康",
+  degraded: "降级",
   unhealthy: "异常",
+  open: "已熔断",
+  closed: "未熔断",
+  mock: "本地模拟",
+  probe: "主动探测",
+  configured: "配置状态",
 };
 
 const eventLabels: Record<string, string> = {

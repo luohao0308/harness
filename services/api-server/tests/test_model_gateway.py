@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import (
     AuditedModelGateway,
+    ModelCircuitBreaker,
     ModelGatewayError,
     ModelMessage,
     ModelRateLimiter,
@@ -89,6 +90,7 @@ def test_audited_model_gateway_writes_success_events(db_session: Session) -> Non
 
 
 def test_audited_model_gateway_records_failure_and_fallback(db_session: Session) -> None:
+    ModelCircuitBreaker.clear()
     task = create_task(db_session)
     gateway = SequenceGateway(
         [
@@ -163,6 +165,7 @@ def test_openai_compatible_gateway_normalizes_chat_completion(monkeypatch) -> No
 
 def test_audited_model_gateway_uses_organization_model_settings(db_session: Session) -> None:
     ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
     task = create_task(db_session)
     db_session.add(
         SystemSetting(
@@ -210,6 +213,7 @@ def test_audited_model_gateway_uses_organization_model_settings(db_session: Sess
 
 def test_audited_model_gateway_enforces_rate_limit(db_session: Session) -> None:
     ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
     task = create_task(db_session)
     db_session.add(
         SystemSetting(
@@ -253,3 +257,109 @@ def test_audited_model_gateway_enforces_rate_limit(db_session: Session) -> None:
     assert [call.status for call in calls] == ["SUCCESS", "FAILED"]
     events = EventStore(db_session).list_by_task(task_id=task.id)
     assert events[-1].event_type == "MODEL_CALL_FAILED"
+
+
+def test_audited_model_gateway_enforces_tpm_limit(db_session: Session) -> None:
+    ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.models",
+            value_json={
+                "default_provider": "openai-compatible",
+                "default_model": "default",
+                "providers": [
+                    {
+                        "name": "openai-compatible",
+                        "status": "healthy",
+                        "rate_limit_rpm": 60,
+                        "rate_limit_tpm": 2,
+                    }
+                ],
+                "rate_limits": {"rpm": 60, "tpm": 2},
+                "health": {"status": "healthy", "updated_at": None},
+                "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+    gateway = SequenceGateway(
+        [ModelResponse(content="{}", model_provider="openai-compatible", model_name="default")]
+    )
+    audited = AuditedModelGateway(session=db_session, task_id=task.id, gateway=gateway)
+
+    try:
+        audited.complete(model_request())
+    except ModelGatewayError as exc:
+        assert str(exc) == "model tpm limit exceeded"
+    else:
+        raise AssertionError("tpm limit must reject oversized prompt")
+
+    assert gateway.requests == []
+    model_call = db_session.execute(select(ModelCall)).scalar_one()
+    assert model_call.status == "FAILED"
+    assert model_call.error_message == "model tpm limit exceeded"
+
+
+def test_audited_model_gateway_opens_provider_circuit(db_session: Session) -> None:
+    ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.models",
+            value_json={
+                "default_provider": "openai-compatible",
+                "default_model": "default",
+                "providers": [
+                    {
+                        "name": "openai-compatible",
+                        "status": "healthy",
+                        "rate_limit_rpm": 60,
+                        "rate_limit_tpm": 120000,
+                        "circuit_breaker": {
+                            "failure_threshold": 2,
+                            "cooldown_seconds": 60,
+                        },
+                    }
+                ],
+                "rate_limits": {"rpm": 60, "tpm": 120000},
+                "health": {"status": "healthy", "updated_at": None},
+                "circuit_breaker": {"failure_threshold": 2, "cooldown_seconds": 60},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+    gateway = SequenceGateway(
+        [
+            ModelGatewayError("upstream failed once"),
+            ModelGatewayError("upstream failed twice"),
+            ModelResponse(content="{}", model_provider="openai-compatible", model_name="default"),
+        ]
+    )
+    audited = AuditedModelGateway(session=db_session, task_id=task.id, gateway=gateway)
+
+    for expected in ["upstream failed once", "upstream failed twice"]:
+        try:
+            audited.complete(model_request())
+        except ModelGatewayError as exc:
+            assert str(exc) == expected
+        else:
+            raise AssertionError("upstream failure must bubble")
+    try:
+        audited.complete(model_request())
+    except ModelGatewayError as exc:
+        assert str(exc) == "model provider circuit open"
+    else:
+        raise AssertionError("open circuit must reject third call")
+
+    assert len(gateway.requests) == 2
+    calls = list(db_session.execute(select(ModelCall).order_by(ModelCall.created_at)).scalars())
+    assert [call.status for call in calls] == ["FAILED", "FAILED", "FAILED"]
