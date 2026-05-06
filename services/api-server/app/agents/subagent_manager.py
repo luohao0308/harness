@@ -85,7 +85,7 @@ class SubagentManager:
         task: Task,
         stale_after_seconds: int,
         enqueue: bool,
-    ) -> tuple[int, list[dict]]:
+    ) -> tuple[int, list[dict], int]:
         replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
         replay_subagents = replay_state.get("subagents", {})
         now = utc_now()
@@ -127,7 +127,7 @@ class SubagentManager:
                 )
                 continue
         self.session.flush()
-        return int(replay_state.get("last_sequence") or 0), recovered
+        return int(replay_state.get("last_sequence") or 0), recovered, len(agent_runs)
 
     def _enqueue(self, *, agent_run: AgentRun, task_id: str, stage: str) -> None:
         from app.workers.subagent_worker import run_subagent

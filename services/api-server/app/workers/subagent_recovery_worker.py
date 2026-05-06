@@ -5,7 +5,9 @@ import signal
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from threading import Lock
+from uuid import uuid4
 
 import dramatiq
 from prometheus_client import start_http_server
@@ -63,10 +65,17 @@ def _recover_stalled_subagents_with_session(
             agent_subagent_recovery_sweeps_total.inc()
             agent_subagent_recovery_last_recovered.set(0)
             return {
+                "batch_id": f"auto-{uuid4()}",
+                "trigger": "auto",
                 "lock_acquired": False,
+                "stale_after_seconds": stale_after_seconds,
+                "enqueue": enqueue,
                 "task_count": 0,
+                "scanned_count": 0,
                 "recovered_count": 0,
+                "action_counts": {},
                 "recovered_by_task": [],
+                "completed_at": datetime.now(UTC).isoformat(),
             }
         return _recover_stalled_subagents_after_lease(
             session=session,
@@ -94,19 +103,27 @@ def _recover_stalled_subagents_after_lease(
     )
     recovered_by_task = []
     recovered_total = 0
+    scanned_total = 0
+    action_counts: dict[str, int] = {}
     for task in tasks:
-        replay_sequence, recovered = SubagentManager(session).recover_for_task(
+        replay_sequence, recovered, scanned_count = SubagentManager(session).recover_for_task(
             task=task,
             stale_after_seconds=stale_after_seconds,
             enqueue=enqueue,
         )
+        scanned_total += scanned_count
         if not recovered:
             continue
         recovered_total += len(recovered)
+        for item in recovered:
+            action = str(item.get("action") or "unknown")
+            action_counts[action] = action_counts.get(action, 0) + 1
         recovered_by_task.append(
             {
                 "task_id": task.id,
                 "replay_sequence": replay_sequence,
+                "scanned_count": scanned_count,
+                "recovered_count": len(recovered),
                 "recovered": recovered,
             }
         )
@@ -114,10 +131,17 @@ def _recover_stalled_subagents_after_lease(
     agent_subagent_recovery_sweeps_total.inc()
     agent_subagent_recovery_last_recovered.set(recovered_total)
     return {
+        "batch_id": f"auto-{uuid4()}",
+        "trigger": "auto",
         "lock_acquired": True,
+        "stale_after_seconds": stale_after_seconds,
+        "enqueue": enqueue,
         "task_count": len(tasks),
+        "scanned_count": scanned_total,
         "recovered_count": recovered_total,
+        "action_counts": action_counts,
         "recovered_by_task": recovered_by_task,
+        "completed_at": datetime.now(UTC).isoformat(),
     }
 
 

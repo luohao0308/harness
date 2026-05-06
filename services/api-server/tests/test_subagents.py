@@ -352,6 +352,17 @@ def test_subagent_recovery_resets_stale_running_and_times_out_expired(
 
     assert recovered.status_code == 202
     payload = recovered.json()
+    assert payload["batch_id"].startswith("manual-")
+    assert payload["trigger"] == "manual"
+    assert payload["stale_after_seconds"] == 900
+    assert payload["enqueue"] is False
+    assert payload["scanned_count"] == 2
+    assert payload["recovered_count"] == 2
+    assert payload["action_counts"] == {
+        "marked_timeout": 1,
+        "reset_to_pending": 1,
+    }
+    assert payload["completed_at"]
     actions = {item["id"]: item["action"] for item in payload["recovered"]}
     assert actions[stale.id] == "reset_to_pending"
     assert actions[expired.id] == "marked_timeout"
@@ -396,8 +407,20 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     )
 
     assert result["lock_acquired"] is True
+    assert result["batch_id"].startswith("auto-")
+    assert result["trigger"] == "auto"
+    assert result["stale_after_seconds"] == 900
+    assert result["enqueue"] is False
     assert result["task_count"] == 2
+    assert result["scanned_count"] == 2
     assert result["recovered_count"] == 2
+    assert result["action_counts"] == {
+        "marked_timeout": 1,
+        "reset_to_pending": 1,
+    }
+    assert result["completed_at"]
+    assert result["recovered_by_task"][0]["scanned_count"] == 1
+    assert result["recovered_by_task"][0]["recovered_count"] == 1
     assert db_session.get(AgentRun, first_stale.id).status == "PENDING"
     assert db_session.get(AgentRun, second_expired.id).status == "TIMEOUT"
     metrics = TestClient(app).get("/metrics").text
@@ -428,10 +451,15 @@ def test_subagent_recovery_sweep_skips_when_lease_is_held(db_session: Session) -
     finally:
         _sqlite_recovery_lock.release()
 
-    assert result == {
-        "lock_acquired": False,
-        "task_count": 0,
-        "recovered_count": 0,
-        "recovered_by_task": [],
-    }
+    assert result["batch_id"].startswith("auto-")
+    assert result["trigger"] == "auto"
+    assert result["lock_acquired"] is False
+    assert result["stale_after_seconds"] == 900
+    assert result["enqueue"] is False
+    assert result["task_count"] == 0
+    assert result["scanned_count"] == 0
+    assert result["recovered_count"] == 0
+    assert result["action_counts"] == {}
+    assert result["recovered_by_task"] == []
+    assert result["completed_at"]
     assert db_session.get(AgentRun, stale.id).status == "RUNNING"

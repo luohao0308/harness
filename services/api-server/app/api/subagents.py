@@ -1,4 +1,6 @@
+from datetime import UTC, datetime
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -83,17 +85,33 @@ def recover_task_subagents(
     principal: Principal,
 ) -> SubagentRecoveryResponse:
     task = get_owned_task(task_id, session, principal.organization_id)
-    replay_sequence, recovered = SubagentManager(session).recover_for_task(
+    replay_sequence, recovered, scanned_count = SubagentManager(session).recover_for_task(
         task=task,
         stale_after_seconds=request.stale_after_seconds,
         enqueue=request.enqueue,
     )
     session.commit()
     return SubagentRecoveryResponse(
+        batch_id=f"manual-{uuid4()}",
         task_id=task.id,
+        trigger="manual",
         replay_sequence=replay_sequence,
+        stale_after_seconds=request.stale_after_seconds,
+        enqueue=request.enqueue,
+        scanned_count=scanned_count,
+        recovered_count=len(recovered),
+        action_counts=_recovery_action_counts(recovered),
         recovered=recovered,
+        completed_at=datetime.now(UTC),
     )
+
+
+def _recovery_action_counts(recovered: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in recovered:
+        action = str(item.get("action") or "unknown")
+        counts[action] = counts.get(action, 0) + 1
+    return counts
 
 
 def get_owned_subagent(subagent_id: str, session: Session, principal: Principal) -> AgentRun:

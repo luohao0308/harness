@@ -177,8 +177,15 @@ export type Subagent = {
 };
 
 export type SubagentRecoveryResponse = {
+  batch_id: string;
   task_id: string;
+  trigger: string;
   replay_sequence: number;
+  stale_after_seconds: number;
+  enqueue: boolean;
+  scanned_count: number;
+  recovered_count: number;
+  action_counts: Record<string, number>;
   recovered: Array<{
     id: string;
     previous_status: string;
@@ -187,6 +194,7 @@ export type SubagentRecoveryResponse = {
     reason: string;
     replay_status: string | null;
   }>;
+  completed_at: string;
 };
 
 export type TaskResult = {

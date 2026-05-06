@@ -243,9 +243,17 @@ class SubagentRecoveryItem(BaseModel):
 
 
 class SubagentRecoveryResponse(BaseModel):
+    batch_id: str = Field(description="恢复批次 ID")
     task_id: str = Field(description="任务 ID")
+    trigger: str = Field(description="触发来源")
     replay_sequence: int = Field(description="Replay 序号")
+    stale_after_seconds: int = Field(description="卡住判定秒数")
+    enqueue: bool = Field(description="是否重新入队")
+    scanned_count: int = Field(description="扫描子 Agent 数")
+    recovered_count: int = Field(description="恢复子 Agent 数")
+    action_counts: dict[str, int] = Field(description="恢复动作统计")
     recovered: list[SubagentRecoveryItem] = Field(description="恢复结果列表")
+    completed_at: datetime = Field(description="恢复批次完成时间")
 
 
 class SandboxResponse(BaseModel):

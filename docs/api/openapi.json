@@ -3032,15 +3032,53 @@
       },
       "SubagentRecoveryResponse": {
         "properties": {
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id",
+            "description": "恢复批次 ID"
+          },
           "task_id": {
             "type": "string",
             "title": "Task Id",
             "description": "任务 ID"
           },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger",
+            "description": "触发来源"
+          },
           "replay_sequence": {
             "type": "integer",
             "title": "Replay Sequence",
             "description": "Replay 序号"
+          },
+          "stale_after_seconds": {
+            "type": "integer",
+            "title": "Stale After Seconds",
+            "description": "卡住判定秒数"
+          },
+          "enqueue": {
+            "type": "boolean",
+            "title": "Enqueue",
+            "description": "是否重新入队"
+          },
+          "scanned_count": {
+            "type": "integer",
+            "title": "Scanned Count",
+            "description": "扫描子 Agent 数"
+          },
+          "recovered_count": {
+            "type": "integer",
+            "title": "Recovered Count",
+            "description": "恢复子 Agent 数"
+          },
+          "action_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Action Counts",
+            "description": "恢复动作统计"
           },
           "recovered": {
             "items": {
@@ -3049,13 +3087,27 @@
             "type": "array",
             "title": "Recovered",
             "description": "恢复结果列表"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At",
+            "description": "恢复批次完成时间"
           }
         },
         "type": "object",
         "required": [
+          "batch_id",
           "task_id",
+          "trigger",
           "replay_sequence",
-          "recovered"
+          "stale_after_seconds",
+          "enqueue",
+          "scanned_count",
+          "recovered_count",
+          "action_counts",
+          "recovered",
+          "completed_at"
         ],
         "title": "SubagentRecoveryResponse"
       },

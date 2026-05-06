@@ -4,7 +4,7 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { statusLabel } from "../../../lib/labels";
-import type { Subagent } from "../../tasks/api";
+import type { Subagent, SubagentRecoveryResponse } from "../../tasks/api";
 
 function subagentLabel(subagent: Subagent) {
   const label = subagent.context_json.label;
@@ -40,12 +40,14 @@ export function SubagentPanel({
   maxSubagents = 5,
   loading = false,
   recovering = false,
+  recoveryBatch,
   onRecover,
 }: {
   subagents?: Subagent[];
   maxSubagents?: number;
   loading?: boolean;
   recovering?: boolean;
+  recoveryBatch?: SubagentRecoveryResponse;
   onRecover?: () => void;
 }) {
   return (
@@ -70,6 +72,36 @@ export function SubagentPanel({
           )}
         </div>
       </CardHeader>
+      {recoveryBatch && (
+        <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-slate-700">最近恢复批次</span>
+            <span className="font-mono text-slate-400">{recoveryBatch.batch_id.slice(0, 13)}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
+            <span>扫描 {recoveryBatch.scanned_count}</span>
+            <span>恢复 {recoveryBatch.recovered_count}</span>
+            <span>Replay {recoveryBatch.replay_sequence}</span>
+            <span>卡住阈值 {recoveryBatch.stale_after_seconds}s</span>
+          </div>
+          {recoveryBatch.recovered.length > 0 && (
+            <div className="mt-1 space-y-0.5">
+              {recoveryBatch.recovered.slice(0, 3).map((item) => (
+                <div key={item.id} className="truncate">
+                  <span className="font-mono text-slate-600">{item.id.slice(0, 8)}</span>
+                  <span className="ml-1">{item.previous_status}</span>
+                  <span className="mx-1">→</span>
+                  <span>{statusLabel(item.status)}</span>
+                  <span className="ml-1 text-slate-400">{item.action}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {recoveryBatch.recovered.length === 0 && (
+            <div className="mt-1 text-slate-400">本批次没有需要恢复的子 Agent。</div>
+          )}
+        </div>
+      )}
       <div className="space-y-1.5 p-2">
         {loading && <div className="px-2 py-4 text-xs text-slate-500">子 Agent 加载中...</div>}
         {!loading && subagents.length === 0 && (

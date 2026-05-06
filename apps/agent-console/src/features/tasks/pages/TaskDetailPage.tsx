@@ -256,6 +256,7 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               maxSubagents={task.max_subagents}
               loading={subagentsQuery.isLoading}
               recovering={recoverSubagentsMutation.isPending}
+              recoveryBatch={recoverSubagentsMutation.data}
               onRecover={() => recoverSubagentsMutation.mutate()}
             />
             <SandboxPanel enabled={task.enable_sandbox} />
