@@ -66,7 +66,7 @@ docs/SPEC.md
 | Replay | snapshot + event replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
 | 模型网关 | OpenAI-compatible | 基础落地 | Model Gateway、model_calls |
 | 工具治理 | Tool Registry + Policy Engine | 基础落地 | Tool Runner、tool_calls |
-| 观测 | Prometheus + Grafana + Loki + OTel | 深度观测接口基础落地，真实采集链路仍需增强 | `/metrics`、Observability Summary、Logs、Trace、Dashboard、Health |
+| 观测 | Prometheus + Grafana + Loki + OTel | 深度观测接口、Grafana provisioning、Promtail 采集和 Loki 标签检索基础落地 | `/metrics`、Observability Summary、Logs、Trace、Dashboard、Health |
 | 本地化 | 默认中文，English 切换 | 基础落地 | 控制台 Shell 和部分页面 |
 
 ## 功能实现与接口进展
