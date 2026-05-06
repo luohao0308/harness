@@ -4,7 +4,7 @@ import type { AgentEvent, Subagent, TaskPlan, TaskPlanDiff, TaskPlanVersionSumma
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
-import { executionModeLabel, plannerSourceLabel, statusLabel } from "../../../lib/labels";
+import { executionModeLabel, plannerSourceLabel, riskLabel, statusLabel } from "../../../lib/labels";
 
 type PlanStep = {
   key?: string;
@@ -14,6 +14,10 @@ type PlanStep = {
   status?: string;
   can_spawn_subagent?: boolean;
   assigned_agent_id?: string | null;
+  tool_hints?: string[];
+  acceptance_criteria?: string[];
+  risk_level?: string;
+  artifact_expectations?: string[];
 };
 
 export function ExecutionPlanPanel({
@@ -40,6 +44,10 @@ export function ExecutionPlanPanel({
       status: step.status,
       can_spawn_subagent: step.can_spawn_subagent,
       assigned_agent_id: step.assigned_agent_id,
+      tool_hints: step.tool_hints,
+      acceptance_criteria: step.acceptance_criteria,
+      risk_level: step.risk_level,
+      artifact_expectations: step.artifact_expectations,
     })) ??
     eventPlan?.steps ??
     [];
@@ -106,6 +114,9 @@ export function ExecutionPlanPanel({
               null;
             const assignedSubagent = assignedAgentId ? subagentsById.get(assignedAgentId) : undefined;
             const isAsync = step.execution_mode === "async" || Boolean(step.can_spawn_subagent);
+            const toolHints = step.tool_hints ?? [];
+            const acceptanceCriteria = step.acceptance_criteria ?? [];
+            const artifactExpectations = step.artifact_expectations ?? [];
             return (
               <div
                 key={stepKey}
@@ -132,8 +143,43 @@ export function ExecutionPlanPanel({
                     {executionModeLabel(step.execution_mode)}
                   </span>
                   <span>·</span>
+                  <Badge tone={statusTone(step.risk_level ?? "low")}>
+                    {riskLabel(step.risk_level ?? "low")}
+                  </Badge>
+                  <span>·</span>
                   <span>{statusLabel(status)}</span>
                 </div>
+                {(toolHints.length > 0 ||
+                  acceptanceCriteria.length > 0 ||
+                  artifactExpectations.length > 0) && (
+                  <div className="mt-2 space-y-1 pl-6 text-[10px] text-slate-500">
+                    {toolHints.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-slate-400">工具</span>
+                        {toolHints.map((tool) => (
+                          <span
+                            key={tool}
+                            className="rounded border border-slate-200 px-1 py-0.5 font-mono text-slate-700"
+                          >
+                            {tool}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {acceptanceCriteria.length > 0 && (
+                      <div>
+                        <span className="text-slate-400">验收 </span>
+                        <span>{acceptanceCriteria.join("；")}</span>
+                      </div>
+                    )}
+                    {artifactExpectations.length > 0 && (
+                      <div>
+                        <span className="text-slate-400">产物 </span>
+                        <span>{artifactExpectations.join("；")}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {isAsync && (
                   <div className="mt-2 flex flex-wrap items-center gap-1 pl-6 text-[10px] text-slate-500">
                     <GitBranch className="h-3 w-3 text-slate-400" />

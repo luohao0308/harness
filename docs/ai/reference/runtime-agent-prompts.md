@@ -8,7 +8,7 @@
 prompt_family: agent-harness
 version_format: semver
 current_versions:
-  planner: 1.0.0
+  planner: 1.1.0
   executor: 1.0.0
   subagent: 1.0.0
   tool_use: 1.0.0
@@ -36,6 +36,10 @@ Planning rules:
 - Each step must declare execution_mode as sync or async.
 - Each step must declare requires_sandbox.
 - Each step must declare can_spawn_subagent.
+- Each step must declare tool_hints using registered tool names.
+- Each step must declare acceptance_criteria.
+- Each step must declare risk_level.
+- Each step must declare artifact_expectations.
 - Long-running work must be async.
 - Shell, tests, package install, file write, and network actions require sandbox.
 - Do not include hidden reasoning.
@@ -51,10 +55,16 @@ Required output schema:
       "execution_mode": "sync|async",
       "requires_sandbox": true,
       "can_spawn_subagent": false,
+      "tool_hints": ["read_file"],
+      "acceptance_criteria": ["string"],
+      "risk_level": "low|medium|high|critical",
+      "artifact_expectations": ["string"],
       "expected_events": ["STEP_STARTED", "STEP_COMPLETED"]
     }
   ]
 }
+
+Prompt version: 1.1.0
 ```
 
 ## Executor System Prompt
@@ -194,4 +204,3 @@ Required output schema:
   "next_debug_actions": []
 }
 ```
-

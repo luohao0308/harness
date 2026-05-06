@@ -236,6 +236,10 @@ export type TaskPlanStep = {
   execution_mode: string;
   requires_sandbox: boolean;
   can_spawn_subagent: boolean;
+  tool_hints: string[];
+  acceptance_criteria: string[];
+  risk_level: string;
+  artifact_expectations: string[];
   status: string;
   assigned_agent_id: string | null;
   error_message: string | null;

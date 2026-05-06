@@ -133,6 +133,11 @@ def main() -> int:
 
         plan = client.check("Plan query", lambda: client.get_json(f"/api/tasks/{task_id}/plan"))
         assert_true(len(plan["steps"]) >= 1, "plan has no steps")
+        plan_step = plan["steps"][0]
+        assert_true("tool_hints" in plan_step, "plan step missing tool_hints")
+        assert_true("acceptance_criteria" in plan_step, "plan step missing acceptance_criteria")
+        assert_true("risk_level" in plan_step, "plan step missing risk_level")
+        assert_true("artifact_expectations" in plan_step, "plan step missing artifact_expectations")
 
         steps = client.check("Step query", lambda: client.get_json(f"/api/tasks/{task_id}/steps"))
         assert_true(len(steps["items"]) >= 1, "steps empty")

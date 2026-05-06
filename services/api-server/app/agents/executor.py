@@ -8,7 +8,7 @@ from app.agents.model_gateway import (
     ModelMessage,
     ModelRequest,
 )
-from app.agents.planner import DeterministicPlanner
+from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
 from app.agents.subagent_manager import SubagentManager
@@ -19,6 +19,56 @@ from app.events.event_types import EventType
 from app.events.replay import EventReplay
 from app.observability.metrics import agent_tasks_failed_total
 from app.tools.runner import ToolRunner
+
+PLANNER_SYSTEM_PROMPT = f"""You are the Planner inside an enterprise AI Agent Harness platform.
+
+Convert the user goal into a structured execution plan. Return JSON only.
+
+Harness architecture:
+- Model + Harness = Agent.
+- Planner decomposes the goal and does not execute tools.
+- Executor performs synchronous ReAct steps.
+- Subagents perform asynchronous, long-running, or parallel work.
+- Tool Registry and Policy Engine guard all tool execution.
+- Docker Sandbox is required for shell, tests, file mutation, Git, package install,
+  and network actions.
+- Event Store records every important action for replay and audit.
+
+Planning rules:
+- Produce 3 to 8 steps.
+- Use stable snake_case step keys.
+- Mark short inspection, summarization, and read-only work as sync.
+- Mark long-running, parallel, broad research, or independently verifiable work as async.
+- Set can_spawn_subagent=true only for async work.
+- Choose tool_hints from: read_file, list_files, write_file, run_shell, run_tests,
+  network_request, git_command.
+- Set risk_level from: low, medium, high, critical.
+- Add acceptance_criteria for every step.
+- Add artifact_expectations when the step should produce a report, file, JSON,
+  summary, test result, or audit artifact.
+- Do not include hidden reasoning.
+
+Required JSON schema:
+{{
+  "summary": "string",
+  "steps": [
+    {{
+      "key": "snake_case_string",
+      "description": "string",
+      "execution_mode": "sync|async",
+      "requires_sandbox": true,
+      "can_spawn_subagent": false,
+      "tool_hints": ["read_file"],
+      "acceptance_criteria": ["string"],
+      "risk_level": "low|medium|high|critical",
+      "artifact_expectations": ["string"],
+      "expected_events": ["STEP_STARTED", "STEP_COMPLETED"]
+    }}
+  ]
+}}
+
+Prompt version: {PLANNER_PROMPT_VERSION}
+"""
 
 
 class Executor:
@@ -33,7 +83,11 @@ class Executor:
         self.event_store.append(
             task_id=task.id,
             event_type=EventType.PLAN_REQUESTED,
-            payload_json={"task_id": task.id, "goal": task.goal},
+            payload_json={
+                "task_id": task.id,
+                "goal": task.goal,
+                "prompt_version": PLANNER_PROMPT_VERSION,
+            },
         )
         try:
             planner_response = AuditedModelGateway(session=self.session, task_id=task.id).complete(
@@ -43,14 +97,18 @@ class Executor:
                     messages=[
                         ModelMessage(
                             role="system",
+                            content=PLANNER_SYSTEM_PROMPT,
+                        ),
+                        ModelMessage(
+                            role="user",
                             content=(
-                                "Generate a structured JSON execution plan for the Harness "
-                                "Planner. Return only JSON with summary and steps. Each step "
-                                "must include key, description, execution_mode sync or async, "
-                                "requires_sandbox, and can_spawn_subagent."
+                                f"Task title:\n{task.title}\n\n"
+                                f"Task goal:\n{task.goal}\n\n"
+                                f"Max subagents: {task.max_subagents}\n"
+                                f"Sandbox enabled: {task.enable_sandbox}\n"
+                                f"Network enabled: {task.enable_network}"
                             ),
                         ),
-                        ModelMessage(role="user", content=task.goal),
                     ],
                 )
             )
@@ -78,6 +136,7 @@ class Executor:
                     "reason": "model_plan_schema_invalid",
                     "attempt": 1,
                     "content_preview": planner_response.content[:500],
+                    "prompt_version": PLANNER_PROMPT_VERSION,
                 },
             )
             repair_response = self._repair_plan(task=task, invalid_content=planner_response.content)
@@ -107,7 +166,11 @@ class Executor:
         self.event_store.append(
             task_id=task.id,
             event_type=EventType.PLAN_GENERATED,
-            payload_json={"plan_id": plan_row.id, "plan": plan.model_dump()},
+            payload_json={
+                "plan_id": plan_row.id,
+                "plan": plan.model_dump(),
+                "prompt_version": PLANNER_PROMPT_VERSION,
+            },
         )
 
         task.status = "RUNNING"
@@ -202,10 +265,8 @@ class Executor:
                         ModelMessage(
                             role="system",
                             content=(
-                                "Repair the previous Planner output. Return only valid JSON "
-                                "with summary and steps. Each step must include key, "
-                                "description, execution_mode sync or async, requires_sandbox, "
-                                "and can_spawn_subagent."
+                                f"{PLANNER_SYSTEM_PROMPT}\nRepair the previous Planner output. "
+                                "Return one valid JSON object that matches the required schema."
                             ),
                         ),
                         ModelMessage(

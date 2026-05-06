@@ -74,7 +74,7 @@ docs/SPEC.md
 | 功能域 | 用户能力 | 已落地接口 | 当前状态 |
 |---|---|---|---|
 | 任务生命周期 | 创建、查看、启动、取消、恢复、结果 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}`、`POST /api/tasks/{task_id}/start`、`POST /api/tasks/{task_id}/cancel`、`POST /api/tasks/{task_id}/resume`、`GET /api/tasks/{task_id}/result` | 已落地 |
-| 计划与执行 | 查看计划、步骤、同步执行、异步派生、版本对比 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/start` | 基础落地，已支持模型 JSON 计划解析、一次修复、来源展示和版本对比 |
+| 计划与执行 | 查看计划、步骤、同步执行、异步派生、版本对比 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/start` | 基础落地，已支持 Planner Prompt 1.1、模型 JSON 计划解析、一次修复、来源展示、步骤元数据和版本对比 |
 | 同步执行 | Executor 直接执行 step | `GET /api/tasks/{task_id}/steps`、`GET /api/tasks/{task_id}/events` | 基础落地 |
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
@@ -132,7 +132,6 @@ docs/SPEC.md
 
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
-| LLM Planner Prompt | 已解析模型 JSON 计划并支持一次结构修复和版本对比，Prompt 仍需增强 | `docs/human/features/02-planner-executor.md` |
 | Worker 恢复跨节点治理 | 已支持手动恢复、巡检函数、service loop、Compose 服务、Prometheus 指标、Grafana 面板和告警规则，分布式恢复锁仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
 | Subagent 长上下文 | worker 已执行 assignment 工具、多轮 `next_tools` ReAct 工具规划、产物摘要并回写结果，长上下文压缩仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |

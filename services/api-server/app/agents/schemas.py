@@ -10,6 +10,10 @@ class PlanStep(BaseModel):
     requires_sandbox: bool
     can_spawn_subagent: bool
     expected_events: list[str] = Field(default_factory=lambda: ["STEP_STARTED", "STEP_COMPLETED"])
+    tool_hints: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    risk_level: Literal["low", "medium", "high", "critical"] = "low"
+    artifact_expectations: list[str] = Field(default_factory=list)
 
 
 class ExecutionPlan(BaseModel):

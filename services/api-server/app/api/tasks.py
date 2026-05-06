@@ -315,6 +315,10 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
                 execution_mode=str(raw_step.get("execution_mode", "")),
                 requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
                 can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),
+                tool_hints=_string_list(raw_step.get("tool_hints")),
+                acceptance_criteria=_string_list(raw_step.get("acceptance_criteria")),
+                risk_level=str(raw_step.get("risk_level") or "low"),
+                artifact_expectations=_string_list(raw_step.get("artifact_expectations")),
                 status=step_row.status if step_row is not None else "PENDING",
                 assigned_agent_id=step_row.assigned_agent_id if step_row is not None else None,
                 error_message=step_row.error_message if step_row is not None else None,
@@ -522,6 +526,14 @@ def _plan_version_summary(plan: ExecutionPlan) -> TaskPlanVersionSummary:
         step_count=len(steps) if isinstance(steps, list) else 0,
         created_at=plan.created_at,
     )
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
 
 
 def _plan_diff_response(

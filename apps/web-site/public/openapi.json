@@ -3479,6 +3479,36 @@
             "title": "Can Spawn Subagent",
             "description": "是否可派生子 Agent"
           },
+          "tool_hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tool Hints",
+            "description": "计划工具意图"
+          },
+          "acceptance_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Acceptance Criteria",
+            "description": "验收标准"
+          },
+          "risk_level": {
+            "type": "string",
+            "title": "Risk Level",
+            "description": "风险等级",
+            "default": "low"
+          },
+          "artifact_expectations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Artifact Expectations",
+            "description": "预期产物"
+          },
           "status": {
             "type": "string",
             "title": "Status",

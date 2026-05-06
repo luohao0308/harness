@@ -10,6 +10,9 @@ from app.agents.schemas import ExecutionPlan, PlanStep
 from app.db.models import Task
 from app.tools.registry import ToolRegistry
 
+PLANNER_PROMPT_VERSION = "1.1.0"
+ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
+
 
 class DeterministicPlanner:
     def __init__(self, tool_registry: ToolRegistry | None = None) -> None:
@@ -57,6 +60,10 @@ class DeterministicPlanner:
                 execution_mode="sync",
                 requires_sandbox=False,
                 can_spawn_subagent=False,
+                tool_hints=["list_files", "read_file"],
+                acceptance_criteria=["识别项目结构和关键入口文件。"],
+                risk_level="low",
+                artifact_expectations=["项目结构摘要"],
             )
         ]
         if needs_subagent and task.max_subagents > 0:
@@ -67,6 +74,10 @@ class DeterministicPlanner:
                     execution_mode="async",
                     requires_sandbox=False,
                     can_spawn_subagent=True,
+                    tool_hints=["read_file", "list_files"],
+                    acceptance_criteria=["子 Agent 返回可供父任务汇总的调研结果。"],
+                    risk_level="medium",
+                    artifact_expectations=["子 Agent 调研摘要"],
                 )
             )
         steps.append(
@@ -76,6 +87,10 @@ class DeterministicPlanner:
                 execution_mode="sync",
                 requires_sandbox=False,
                 can_spawn_subagent=False,
+                tool_hints=["read_file"],
+                acceptance_criteria=["输出任务结果摘要和后续动作。"],
+                risk_level="low",
+                artifact_expectations=["任务结果摘要"],
             )
         )
         plan = ExecutionPlan(
@@ -150,6 +165,8 @@ class DeterministicPlanner:
             can_spawn_subagent = bool(raw_step.get("can_spawn_subagent"))
             if execution_mode == "async":
                 can_spawn_subagent = True
+            tool_hints = self._normalize_tool_hints(raw_step.get("tool_hints"))
+            risk_level = self._normalize_risk_level(raw_step.get("risk_level"), tool_hints)
             normalized_steps.append(
                 {
                     "key": key,
@@ -160,6 +177,16 @@ class DeterministicPlanner:
                     "expected_events": raw_step.get(
                         "expected_events",
                         ["STEP_STARTED", "STEP_COMPLETED"],
+                    ),
+                    "tool_hints": tool_hints,
+                    "acceptance_criteria": self._normalize_string_list(
+                        raw_step.get("acceptance_criteria"),
+                        default=[f"步骤 {key} 达到可审计的完成状态。"],
+                    ),
+                    "risk_level": risk_level,
+                    "artifact_expectations": self._normalize_string_list(
+                        raw_step.get("artifact_expectations"),
+                        default=[],
                     ),
                 }
             )
@@ -177,3 +204,31 @@ class DeterministicPlanner:
         if not re.match(r"^[a-z0-9_]+$", key):
             key = f"step_{index}"
         return key
+
+    def _normalize_tool_hints(self, value: object) -> list[str]:
+        names = self._normalize_string_list(value, default=[])
+        registered = set(self.tool_registry.tools)
+        return [name for name in names if name in registered]
+
+    def _normalize_risk_level(self, value: object, tool_hints: list[str]) -> str:
+        raw_risk = str(value or "").lower()
+        if raw_risk in ALLOWED_RISK_LEVELS:
+            return raw_risk
+        tool_risks = [
+            self.tool_registry.tools[name].risk_level
+            for name in tool_hints
+            if name in self.tool_registry.tools
+        ]
+        if any(risk in {"high", "critical"} for risk in tool_risks):
+            return "high"
+        if any(risk == "medium" for risk in tool_risks):
+            return "medium"
+        return "low"
+
+    def _normalize_string_list(self, value: object, *, default: list[str]) -> list[str]:
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        if not isinstance(value, list):
+            return default
+        normalized = [str(item).strip() for item in value if str(item).strip()]
+        return normalized or default
