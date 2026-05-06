@@ -4,7 +4,8 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { statusLabel } from "../../../lib/labels";
-import type { Subagent, SubagentRecoveryResponse } from "../../tasks/api";
+import { formatShortDate } from "../../../lib/utils";
+import type { Subagent, SubagentRecoveryBatch, SubagentRecoveryResponse } from "../../tasks/api";
 
 function subagentLabel(subagent: Subagent) {
   const label = subagent.context_json.label;
@@ -41,6 +42,7 @@ export function SubagentPanel({
   loading = false,
   recovering = false,
   recoveryBatch,
+  recoveryBatches = [],
   onRecover,
 }: {
   subagents?: Subagent[];
@@ -48,6 +50,7 @@ export function SubagentPanel({
   loading?: boolean;
   recovering?: boolean;
   recoveryBatch?: SubagentRecoveryResponse;
+  recoveryBatches?: SubagentRecoveryBatch[];
   onRecover?: () => void;
 }) {
   return (
@@ -79,10 +82,12 @@ export function SubagentPanel({
             <span className="font-mono text-slate-400">{recoveryBatch.batch_id.slice(0, 13)}</span>
           </div>
           <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
+            <span>{recoveryBatch.trigger === "auto" ? "自动巡检" : "手动触发"}</span>
             <span>扫描 {recoveryBatch.scanned_count}</span>
             <span>恢复 {recoveryBatch.recovered_count}</span>
             <span>Replay {recoveryBatch.replay_sequence}</span>
             <span>卡住阈值 {recoveryBatch.stale_after_seconds}s</span>
+            <span>{formatShortDate(recoveryBatch.completed_at)}</span>
           </div>
           {recoveryBatch.recovered.length > 0 && (
             <div className="mt-1 space-y-0.5">
@@ -100,6 +105,24 @@ export function SubagentPanel({
           {recoveryBatch.recovered.length === 0 && (
             <div className="mt-1 text-slate-400">本批次没有需要恢复的子 Agent。</div>
           )}
+        </div>
+      )}
+      {recoveryBatches.length > 1 && (
+        <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
+          <div className="mb-1 font-semibold text-slate-700">恢复批次历史</div>
+          <div className="space-y-0.5">
+            {recoveryBatches.slice(0, 3).map((batch) => (
+              <div key={batch.batch_id} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate">
+                  {batch.trigger === "auto" ? "自动巡检" : "手动触发"} · 扫描 {batch.scanned_count} · 恢复{" "}
+                  {batch.recovered_count}
+                </span>
+                <span className="shrink-0 font-mono text-slate-400">
+                  {formatShortDate(batch.completed_at)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <div className="space-y-1.5 p-2">

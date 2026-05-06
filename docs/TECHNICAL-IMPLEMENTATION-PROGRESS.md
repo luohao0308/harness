@@ -78,7 +78,7 @@ docs/SPEC.md
 | 同步执行 | Executor 直接执行 step | `GET /api/tasks/{task_id}/steps`、`GET /api/tasks/{task_id}/events` | 基础落地 |
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
-| Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover` | 基础落地 |
+| Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent、恢复批次历史 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 并发 | 查询、创建、取消、状态追踪 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
@@ -158,11 +158,10 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 增强 Worker 恢复批次历史查询
-2. 接入真实 OTel Trace 后端
-3. 补控制台全量 i18n
-4. 整合用户提供的官网代码
-5. 同步 OpenAPI、测试、Runbook 和覆盖文档
+1. 接入真实 OTel Trace 后端
+2. 补控制台全量 i18n
+3. 整合用户提供的官网代码
+4. 同步 OpenAPI、测试、Runbook 和覆盖文档
 ```
 
 ## 验证命令

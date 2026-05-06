@@ -215,6 +215,13 @@ export type SubagentRecoveryResponse = {
   completed_at: string;
 };
 
+export type SubagentRecoveryBatch = SubagentRecoveryResponse & {
+  organization_id: string | null;
+  lock_acquired: boolean;
+  task_count: number;
+  recovered_by_task: Array<Record<string, unknown>>;
+};
+
 export type TaskResult = {
   task_id: string;
   status: TaskStatus;
@@ -468,6 +475,12 @@ export async function listTaskEvents(taskId: string) {
 export async function listTaskSubagents(taskId: string) {
   return request<{ items: Subagent[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/subagents`,
+  );
+}
+
+export async function listTaskSubagentRecoveryBatches(taskId: string) {
+  return request<{ items: SubagentRecoveryBatch[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/subagents/recovery-batches`,
   );
 }
 

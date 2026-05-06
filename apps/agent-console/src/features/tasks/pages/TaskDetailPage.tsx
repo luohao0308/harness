@@ -20,6 +20,7 @@ import {
   getTaskResult,
   listTaskPlanVersions,
   listModelCalls,
+  listTaskSubagentRecoveryBatches,
   listTaskEvents,
   listTaskSubagents,
   listToolCalls,
@@ -83,6 +84,11 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     queryFn: () => listTaskSubagents(taskId!),
     enabled: Boolean(taskId),
   });
+  const recoveryBatchesQuery = useQuery({
+    queryKey: ["task-subagent-recovery-batches", taskId],
+    queryFn: () => listTaskSubagentRecoveryBatches(taskId!),
+    enabled: Boolean(taskId),
+  });
   const toolCallsQuery = useQuery({
     queryKey: ["tool-calls", taskId],
     queryFn: () => listToolCalls(taskId!),
@@ -94,6 +100,7 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["task-subagents", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-subagent-recovery-batches", taskId] });
     },
   });
   const stream = useTaskEventStream(taskId);
@@ -260,7 +267,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               maxSubagents={task.max_subagents}
               loading={subagentsQuery.isLoading}
               recovering={recoverSubagentsMutation.isPending}
-              recoveryBatch={recoverSubagentsMutation.data}
+              recoveryBatch={recoverSubagentsMutation.data ?? recoveryBatchesQuery.data?.items[0]}
+              recoveryBatches={recoveryBatchesQuery.data?.items ?? []}
               onRecover={() => recoverSubagentsMutation.mutate()}
             />
             <SandboxPanel enabled={task.enable_sandbox} />

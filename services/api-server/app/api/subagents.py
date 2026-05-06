@@ -7,15 +7,20 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.subagent_manager import SubagentLimitExceededError, SubagentManager
+from app.agents.subagent_recovery_history import (
+    persist_recovery_batch,
+    recovery_action_counts,
+)
 from app.api.schemas import (
     SubagentCreateRequest,
     SubagentPage,
     SubagentRecoverRequest,
+    SubagentRecoveryBatchPage,
     SubagentRecoveryResponse,
     SubagentResponse,
 )
 from app.api.tasks import get_owned_task
-from app.db.models import AgentRun, Task
+from app.db.models import AgentRun, SubagentRecoveryBatch, Task
 from app.db.session import get_db_session
 from app.security.auth import Principal
 
@@ -90,8 +95,7 @@ def recover_task_subagents(
         stale_after_seconds=request.stale_after_seconds,
         enqueue=request.enqueue,
     )
-    session.commit()
-    return SubagentRecoveryResponse(
+    response = SubagentRecoveryResponse(
         batch_id=f"manual-{uuid4()}",
         task_id=task.id,
         trigger="manual",
@@ -100,18 +104,58 @@ def recover_task_subagents(
         enqueue=request.enqueue,
         scanned_count=scanned_count,
         recovered_count=len(recovered),
-        action_counts=_recovery_action_counts(recovered),
+        action_counts=recovery_action_counts(recovered),
         recovered=recovered,
         completed_at=datetime.now(UTC),
     )
+    persist_recovery_batch(
+        session=session,
+        organization_id=task.organization_id,
+        payload={
+            **response.model_dump(),
+            "lock_acquired": True,
+            "task_count": 1,
+            "recovered_by_task": [
+                {
+                    "task_id": task.id,
+                    "replay_sequence": replay_sequence,
+                    "scanned_count": scanned_count,
+                    "recovered_count": len(recovered),
+                    "recovered": recovered,
+                }
+            ]
+            if recovered
+            else [],
+        },
+    )
+    session.commit()
+    return response
 
 
-def _recovery_action_counts(recovered: list[dict]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in recovered:
-        action = str(item.get("action") or "unknown")
-        counts[action] = counts.get(action, 0) + 1
-    return counts
+@router.get(
+    "/tasks/{task_id}/subagents/recovery-batches",
+    response_model=SubagentRecoveryBatchPage,
+    summary="查询子 Agent 恢复批次",
+    description="返回指定任务最近的子 Agent 恢复批次历史。",
+)
+def list_task_subagent_recovery_batches(
+    task_id: str,
+    session: DbSession,
+    principal: Principal,
+    limit: int = 20,
+) -> SubagentRecoveryBatchPage:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    capped_limit = max(1, min(limit, 100))
+    statement = (
+        select(SubagentRecoveryBatch)
+        .where(
+            SubagentRecoveryBatch.organization_id == principal.organization_id,
+            SubagentRecoveryBatch.task_id == task.id,
+        )
+        .order_by(SubagentRecoveryBatch.completed_at.desc(), SubagentRecoveryBatch.id.desc())
+        .limit(capped_limit)
+    )
+    return SubagentRecoveryBatchPage(items=list(session.execute(statement).scalars()))
 
 
 def get_owned_subagent(subagent_id: str, session: Session, principal: Principal) -> AgentRun:

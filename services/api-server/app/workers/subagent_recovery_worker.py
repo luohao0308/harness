@@ -15,6 +15,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.agents.subagent_manager import SubagentManager
+from app.agents.subagent_recovery_history import persist_recovery_batch
 from app.db.models import AgentRun, Task
 from app.db.session import SessionLocal
 from app.observability.metrics import (
@@ -64,7 +65,7 @@ def _recover_stalled_subagents_with_session(
         if not lease_acquired:
             agent_subagent_recovery_sweeps_total.inc()
             agent_subagent_recovery_last_recovered.set(0)
-            return {
+            result = {
                 "batch_id": f"auto-{uuid4()}",
                 "trigger": "auto",
                 "lock_acquired": False,
@@ -77,6 +78,12 @@ def _recover_stalled_subagents_with_session(
                 "recovered_by_task": [],
                 "completed_at": datetime.now(UTC).isoformat(),
             }
+            persist_recovery_batch(
+                session=session,
+                organization_id=None,
+                payload=result,
+            )
+            return result
         return _recover_stalled_subagents_after_lease(
             session=session,
             stale_after_seconds=stale_after_seconds,
@@ -130,7 +137,7 @@ def _recover_stalled_subagents_after_lease(
     session.flush()
     agent_subagent_recovery_sweeps_total.inc()
     agent_subagent_recovery_last_recovered.set(recovered_total)
-    return {
+    result = {
         "batch_id": f"auto-{uuid4()}",
         "trigger": "auto",
         "lock_acquired": True,
@@ -143,6 +150,31 @@ def _recover_stalled_subagents_after_lease(
         "recovered_by_task": recovered_by_task,
         "completed_at": datetime.now(UTC).isoformat(),
     }
+    if recovered_by_task:
+        tasks_by_id = {task.id: task for task in tasks}
+        for task_recovery in recovered_by_task:
+            task = tasks_by_id.get(str(task_recovery.get("task_id")))
+            persist_recovery_batch(
+                session=session,
+                organization_id=task.organization_id if task is not None else None,
+                payload={
+                    **result,
+                    "task_id": task_recovery["task_id"],
+                    "replay_sequence": task_recovery["replay_sequence"],
+                    "scanned_count": task_recovery["scanned_count"],
+                    "recovered_count": task_recovery["recovered_count"],
+                    "recovered": task_recovery["recovered"],
+                    "recovered_by_task": [task_recovery],
+                    "task_count": 1,
+                },
+            )
+    else:
+        persist_recovery_batch(
+            session=session,
+            organization_id=None,
+            payload=result,
+        )
+    return result
 
 
 @contextmanager

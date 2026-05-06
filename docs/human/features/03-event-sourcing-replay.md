@@ -105,6 +105,7 @@ agent_subagent_recovery_last_recovered
 | Worker 自动巡检 | 基础落地 | `subagent_recovery_worker.recover_stalled_subagents` |
 | Worker 跨节点恢复锁 | 基础落地 | PostgreSQL advisory lock 控制同一时间只有一个恢复巡检执行 |
 | Worker 恢复批次详情 | 基础落地 | 手动恢复 API 与自动巡检返回 `batch_id`、扫描数、恢复数、动作统计和完成时间 |
+| Worker 恢复批次历史 | 已落地 | `GET /api/tasks/{task_id}/subagents/recovery-batches` 查询持久化批次 |
 | Worker 恢复指标 | 已落地 | `subagent-recovery:9102/metrics` 输出恢复动作、巡检次数和最近恢复数量 |
 | Worker 恢复告警 | 已落地 | `deploy/monitoring/alert-rules.yml` |
 
@@ -112,7 +113,7 @@ agent_subagent_recovery_last_recovered
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Worker 级恢复编排 | 当前已支持恢复锁、批次详情、超时标记、卡住 worker 重置、巡检函数、Compose 服务、Prometheus 指标和告警规则 | 增强批次历史查询 |
+| Worker 级恢复编排 | 当前已支持恢复锁、批次详情、批次历史、超时标记、卡住 worker 重置、巡检函数、Compose 服务、Prometheus 指标和告警规则 | 增强批次筛选和跨任务汇总 |
 
 ## 实现顺序
 
@@ -120,8 +121,7 @@ agent_subagent_recovery_last_recovered
 1. 保持事件枚举与 OpenAPI 同步
 2. 保持 snapshot 规则与 Replay service 同步
 3. 前端展示 sequence、payload 摘要和 failure point
-4. 增强恢复批次历史查询
-5. 补并发和断线重连测试
+4. 补并发和断线重连测试
 ```
 
 ## 验收标准

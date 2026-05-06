@@ -68,7 +68,7 @@
 | 计划与步骤 | 基础落地 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps` |
 | 事件流 | 已落地 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` |
 | Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
-| Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
+| Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
 | Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
 | Subagent 工具链 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
@@ -103,13 +103,13 @@
 | 能力 | 当前缺口 | 目标结果 |
 |---|---|---|
 | Planner | 已接入 Prompt 1.1、模型 JSON 计划解析、一次结构修复、确定性回退、计划来源展示、计划版本对比和差异可视化 | 增强步骤级断点续跑 |
-| Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 增强 Worker 恢复批次历史查询 |
-| Worker 恢复 | 手动恢复、巡检函数、service loop、跨节点恢复锁、批次详情、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已基础落地 | 增强恢复批次历史查询 |
+| Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 增强步骤级断点续跑 |
+| Worker 恢复 | 手动恢复、巡检函数、service loop、跨节点恢复锁、批次详情、批次历史、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已基础落地 | 增强跨任务恢复批次汇总 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id、Subagent 状态链路和时间线并行执行拓扑 | 增强批量状态展示 |
-| Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要和长上下文压缩已基础落地 | 增强恢复批次历史查询 |
+| Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要和长上下文压缩已基础落地 | 增强父任务结果产物预览页 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流、TPM 限流、主动探测和供应商级熔断已落地 | 增强多供应商 fallback 策略观测 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类和控制台细节 | 增强工具审计筛选和深链 |
-| Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强恢复批次查询 |
+| Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强并发与断线重连测试 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标和 Grafana Basic Auth 代理已落地 | 补齐队列图表与 Grafana 权限模型 |
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集和标签查询已落地 | 增强日志检索深链 |
 | OpenTelemetry | trace_id 响应头、Trace 查询接口和 Event Store 合成 span 已落地 | 接入真实 OTel Trace 后端 |

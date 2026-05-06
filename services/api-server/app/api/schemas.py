@@ -256,6 +256,20 @@ class SubagentRecoveryResponse(BaseModel):
     completed_at: datetime = Field(description="恢复批次完成时间")
 
 
+class SubagentRecoveryBatchResponse(SubagentRecoveryResponse):
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    lock_acquired: bool = Field(default=True, description="是否获取恢复锁")
+    task_count: int = Field(default=1, description="扫描任务数")
+    recovered_by_task: list[dict] = Field(default_factory=list, description="按任务聚合的恢复结果")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubagentRecoveryBatchPage(BaseModel):
+    items: list[SubagentRecoveryBatchResponse] = Field(description="恢复批次列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
 class SandboxResponse(BaseModel):
     id: str = Field(description="沙箱 ID")
     task_id: str = Field(description="任务 ID")

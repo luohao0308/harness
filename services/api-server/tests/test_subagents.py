@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelRequest, ModelResponse
 from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT, SubagentManager
-from app.db.models import AgentRun, Task, utc_now
+from app.db.models import AgentRun, SubagentRecoveryBatch, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
 from app.workers.subagent_recovery_worker import _sqlite_recovery_lock, recover_stalled_subagents
@@ -379,6 +379,20 @@ def test_subagent_recovery_resets_stale_running_and_times_out_expired(
     assert "SUBAGENT_PROGRESS" in event_types
     assert event_types[-1] == "SUBAGENT_TIMEOUT"
 
+    history = client.get(
+        f"/api/tasks/{task.id}/subagents/recovery-batches",
+        headers=AUTH_HEADERS,
+    )
+    assert history.status_code == 200
+    batch = history.json()["items"][0]
+    assert batch["batch_id"] == payload["batch_id"]
+    assert batch["trigger"] == "manual"
+    assert batch["task_id"] == task.id
+    assert batch["lock_acquired"] is True
+    assert batch["task_count"] == 1
+    assert batch["scanned_count"] == 2
+    assert batch["recovered_count"] == 2
+
 
 def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     first_task = create_task(db_session)
@@ -421,6 +435,11 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     assert result["completed_at"]
     assert result["recovered_by_task"][0]["scanned_count"] == 1
     assert result["recovered_by_task"][0]["recovered_count"] == 1
+    batches = list(db_session.query(SubagentRecoveryBatch).order_by(SubagentRecoveryBatch.task_id))
+    assert len(batches) == 2
+    assert {batch.batch_id for batch in batches} == {result["batch_id"]}
+    assert {batch.task_id for batch in batches} == {first_task.id, second_task.id}
+    assert {batch.recovered_count for batch in batches} == {1}
     assert db_session.get(AgentRun, first_stale.id).status == "PENDING"
     assert db_session.get(AgentRun, second_expired.id).status == "TIMEOUT"
     metrics = TestClient(app).get("/metrics").text

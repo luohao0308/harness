@@ -96,6 +96,27 @@ class AgentRun(Base):
     timeout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class SubagentRecoveryBatch(Base):
+    __tablename__ = "subagent_recovery_batches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    batch_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    trigger: Mapped[str] = mapped_column(String(64), nullable=False)
+    lock_acquired: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    replay_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stale_after_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    enqueue: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    task_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scanned_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    recovered_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    action_counts: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    recovered: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    recovered_by_task: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AgentEvent(Base):
     __tablename__ = "agent_events"
     __table_args__ = (

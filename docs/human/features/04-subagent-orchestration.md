@@ -158,6 +158,7 @@ agent_subagent_recovery_last_recovered
 | 子 Agent 恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
 | 自动恢复巡检 | 基础落地 | `subagent_recovery_worker` 扫描 `PENDING`、`RUNNING` 子 Agent |
 | 恢复批次详情 | 基础落地 | 手动恢复和自动巡检返回批次 ID、扫描数量、恢复数量、动作统计和完成时间 |
+| 恢复批次历史 | 已落地 | `subagent_recovery_batches` 与 `GET /api/tasks/{task_id}/subagents/recovery-batches` |
 | 恢复观测指标 | 已落地 | `/metrics` 与 Grafana 默认 Dashboard 展示恢复动作 |
 | 恢复告警规则 | 已落地 | Prometheus 加载 `deploy/monitoring/alert-rules.yml` |
 | 并发上限 | 已落地 | 固定 5 |
@@ -174,17 +175,16 @@ agent_subagent_recovery_last_recovered
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 自动恢复批次历史 | 当前已有巡检函数、跨节点恢复锁、批次详情、service loop、Compose 服务、指标和告警规则 | 增强恢复批次历史查询 |
+| 自动恢复批次汇总 | 当前已有巡检函数、跨节点恢复锁、批次详情、批次历史、service loop、Compose 服务、指标和告警规则 | 增强跨任务恢复批次汇总 |
 | 派生关系展示 | 基础落地，执行计划、Subagent 面板和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量状态展示 |
 
 ## 实现顺序
 
 ```text
 1. 固化 agent_runs 字段和状态机
-2. 增强 Worker 恢复批次历史查询
-3. 增强父任务结果产物预览页
-4. 增强批量状态展示
-5. 增加超时和取消测试
+2. 增强父任务结果产物预览页
+3. 增强批量状态展示
+4. 增加超时和取消测试
 ```
 
 ## 验收标准
