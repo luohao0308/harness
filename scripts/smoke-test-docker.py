@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, request
+from urllib.parse import urlencode
 
 
 API_BASE_URL = "http://127.0.0.1:8000"
@@ -76,6 +77,11 @@ class SmokeClient:
     def get_text_url(self, url: str) -> str:
         with request.urlopen(url, timeout=15) as response:
             return response.read().decode("utf-8", errors="replace")
+
+    def get_json_url(self, url: str, headers: dict[str, str] | None = None) -> dict:
+        http_request = request.Request(url, headers=headers or {}, method="GET")
+        with request.urlopen(http_request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
 
     def print_summary(self) -> None:
         for result in self.results:
@@ -219,6 +225,51 @@ def main() -> int:
         assert_true(
             "HarnessSubagentRecoveryServiceDown" in prometheus_rules,
             "prometheus missing recovery alert rule",
+        )
+
+        grafana_dashboards = client.check(
+            "Grafana provisioned dashboard",
+            lambda: client.get_json_url(
+                GRAFANA_BASE_URL + "/api/search?query=Agent%20Harness",
+                headers={"Authorization": "Basic YWRtaW46YWRtaW4="},
+            ),
+        )
+        assert_true(
+            any(item.get("uid") == "agent-harness" for item in grafana_dashboards),
+            "grafana missing provisioned Agent Harness dashboard",
+        )
+
+        grafana_datasources = client.check(
+            "Grafana provisioned datasources",
+            lambda: client.get_json_url(
+                GRAFANA_BASE_URL + "/api/datasources",
+                headers={"Authorization": "Basic YWRtaW46YWRtaW4="},
+            ),
+        )
+        datasource_uids = {item.get("uid") for item in grafana_datasources}
+        assert_true({"prometheus", "loki"}.issubset(datasource_uids), "grafana datasources missing")
+
+        def query_loki_api_logs() -> dict:
+            now_ns = int(time.time() * 1_000_000_000)
+            params = urlencode(
+                {
+                    "query": '{app="agent-harness",service="api-server"}',
+                    "limit": "20",
+                    "start": str(now_ns - 15 * 60 * 1_000_000_000),
+                    "end": str(now_ns),
+                }
+            )
+            return client.get_json_url(LOKI_BASE_URL + f"/loki/api/v1/query_range?{params}")
+
+        loki_logs = None
+        for _ in range(12):
+            loki_logs = client.check("Loki API logs", query_loki_api_logs)
+            if loki_logs.get("data", {}).get("result"):
+                break
+            time.sleep(5)
+        assert_true(
+            bool(loki_logs and loki_logs.get("data", {}).get("result")),
+            "loki has no api-server logs",
         )
     except Exception as exc:
         client.print_summary()

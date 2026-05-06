@@ -78,9 +78,9 @@
 | 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` |
 | 策略设置 | 已落地 | `GET /api/settings/policies`、`PUT /api/settings/policies` |
 | 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics` |
-| 日志观测 | 基础落地 | `GET /api/observability/logs` |
+| 日志观测 | 基础落地 | `GET /api/observability/logs`、Promtail 采集 |
 | Trace 观测 | 基础落地 | `GET /api/observability/traces/{trace_id}` |
-| Grafana 集成 | 基础落地 | `GET /api/observability/grafana/dashboards` |
+| Grafana 集成 | 基础落地 | `GET /api/observability/grafana/dashboards`、provisioning |
 | 观测服务健康 | 基础落地 | `GET /api/observability/services/health` |
 
 前端页面覆盖：
@@ -111,7 +111,7 @@
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 补齐 Worker 级恢复编排 |
 | Observability | 聚合 API、深度观测接口、控制台摘要和 Prometheus 指标已落地 | 补齐队列图表与 Grafana 鉴权 |
-| Loki | 日志接口已落地，Event Store 回退已落地，Loki 容器已落地 | 增强真实日志采集链路和标签查询 |
+| Loki | 日志接口、Event Store 回退、Loki 容器和 Promtail 采集已落地 | 增强标签查询体验 |
 | OpenTelemetry | trace_id 响应头、Trace 查询接口和 Event Store 合成 span 已落地 | 接入真实 OTel Trace 后端 |
 | 控制台本地化 | 顶栏语言切换基础落地，全页面字典化待落地 | 所有页面表头、按钮、空状态和错误状态双语 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取 | 资源规格、网络 allowlist 和供应商熔断增强 |

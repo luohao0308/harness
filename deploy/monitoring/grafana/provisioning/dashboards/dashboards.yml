@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Agent Harness
+    orgId: 1
+    folder: Harness
+    type: file
+    disableDeletion: false
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
