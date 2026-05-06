@@ -2842,6 +2842,56 @@
         ],
         "title": "SandboxResponse"
       },
+      "SubagentArtifact": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "产物名称"
+          },
+          "artifact_type": {
+            "type": "string",
+            "title": "Artifact Type",
+            "description": "产物类型"
+          },
+          "source_tool": {
+            "type": "string",
+            "title": "Source Tool",
+            "description": "来源工具"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "产物说明"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "产物状态"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview",
+            "description": "产物预览"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "artifact_type",
+          "source_tool",
+          "description",
+          "status"
+        ],
+        "title": "SubagentArtifact"
+      },
       "SubagentCreateRequest": {
         "properties": {
           "assignment": {
@@ -3911,6 +3961,23 @@
             "title": "Tool Results",
             "description": "工具执行结果"
           },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/SubagentArtifact"
+            },
+            "type": "array",
+            "title": "Artifacts",
+            "description": "子 Agent 产物"
+          },
+          "react_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "React Trace",
+            "description": "ReAct 执行轮次轨迹"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -4158,6 +4225,12 @@
             "type": "integer",
             "title": "Duration Ms",
             "description": "耗时毫秒"
+          },
+          "input_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Input Json",
+            "description": "工具输入"
           },
           "output": {
             "additionalProperties": true,

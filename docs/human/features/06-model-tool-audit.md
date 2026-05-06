@@ -122,6 +122,7 @@ tool_policy_denied_total
 | 模型调用成功审计 | 已落地 | `model_calls` |
 | 模型调用失败审计 | 已落地 | `model_calls` |
 | 模型 fallback 事件 | 已落地 | `MODEL_FALLBACK_USED` |
+| 工具产物摘要 | 基础落地 | Result API 从工具结果派生 Subagent `artifacts[]` |
 
 ## 缺口
 
@@ -130,7 +131,7 @@ tool_policy_denied_total
 | TPM 限流 | 高 token 任务成本控制仍需增强 | 按组织、供应商和模型限制 token |
 | 外部主动探测 | 供应商健康状态仍偏被动 | 后台探测供应商并写入健康状态 |
 | 供应商级熔断 | 连续失败后的流量治理仍需增强 | 失败阈值触发 fallback 和熔断 |
-| 工具结果解析 | 控制台结果可读性仍需增强 | 按工具类型解析摘要、日志和产物 |
+| 工具结果解析 | 当前已按工具类型派生产物摘要，控制台详情页仍需增强 | 展示日志、文件预览和 HTTP 响应详情 |
 
 ## 实现顺序
 

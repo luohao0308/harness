@@ -294,8 +294,17 @@ def test_task_result_aggregates_subagent_outputs(db_session: Session) -> None:
                         "status": "SUCCESS",
                         "allowed": True,
                         "duration_ms": 1,
+                        "input_json": {"path": "README.md"},
                         "output": {"content": "ok"},
                         "error_message": None,
+                    }
+                ],
+                "react_trace": [
+                    {
+                        "round": 1,
+                        "executed_tool_count": 1,
+                        "next_tool_count": 0,
+                        "done": True,
                     }
                 ],
             },
@@ -323,8 +332,12 @@ def test_task_result_aggregates_subagent_outputs(db_session: Session) -> None:
     assert subagent_result["status"] == "SUCCESS"
     assert subagent_result["summary"] == "异步调研完成"
     assert subagent_result["tool_results"][0]["tool_name"] == "read_file"
+    assert subagent_result["artifacts"][0]["name"] == "README.md"
+    assert subagent_result["artifacts"][0]["preview"] == "ok"
+    assert subagent_result["react_trace"][0]["round"] == 1
     assert subagent_result["completed_at"] is not None
     assert payload["artifacts"][1]["name"] == "subagent-results.json"
+    assert payload["artifacts"][2]["name"] == "subagent_research/README.md"
     assert "成功 1 个" in payload["summary"]
 
 

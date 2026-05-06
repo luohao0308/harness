@@ -106,7 +106,7 @@
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 自动巡检恢复编排 |
 | Worker 恢复 | 手动恢复、巡检函数、service loop、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已基础落地 | 增强分布式恢复锁 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id 和 Subagent 状态链路 | 增强时间线中的并行执行拓扑 |
-| Subagent Worker | assignment 工具执行、工具审计、结果回写和多轮 `next_tools` ReAct 执行已基础落地 | 增强长上下文压缩和结构化产物 |
+| Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行和产物摘要已基础落地 | 增强长上下文压缩 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 补齐 Worker 级恢复编排 |

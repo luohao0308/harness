@@ -211,9 +211,19 @@ export type TaskResult = {
       status: string;
       allowed: boolean;
       duration_ms: number;
+      input_json: Record<string, unknown>;
       output: Record<string, unknown>;
       error_message: string | null;
     }>;
+    artifacts: Array<{
+      name: string;
+      artifact_type: string;
+      source_tool: string;
+      description: string;
+      status: string;
+      preview: string | null;
+    }>;
+    react_trace: Array<Record<string, unknown>>;
     completed_at: string | null;
   }>;
   last_sequence: number;

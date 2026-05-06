@@ -51,14 +51,25 @@ class TaskSubagentResult(BaseModel):
         status: str = Field(description="工具状态")
         allowed: bool = Field(description="是否允许执行")
         duration_ms: int = Field(description="耗时毫秒")
+        input_json: dict = Field(default_factory=dict, description="工具输入")
         output: dict = Field(description="工具输出")
         error_message: str | None = Field(default=None, description="错误信息")
+
+    class SubagentArtifact(BaseModel):
+        name: str = Field(description="产物名称")
+        artifact_type: str = Field(description="产物类型")
+        source_tool: str = Field(description="来源工具")
+        description: str = Field(description="产物说明")
+        status: str = Field(description="产物状态")
+        preview: str | None = Field(default=None, description="产物预览")
 
     id: str = Field(description="子 Agent ID")
     step_key: str | None = Field(default=None, description="来源步骤键")
     status: str = Field(description="子 Agent 状态")
     summary: str | None = Field(default=None, description="子 Agent 结果摘要")
     tool_results: list[ToolResult] = Field(default_factory=list, description="工具执行结果")
+    artifacts: list[SubagentArtifact] = Field(default_factory=list, description="子 Agent 产物")
+    react_trace: list[dict] = Field(default_factory=list, description="ReAct 执行轮次轨迹")
     completed_at: datetime | None = Field(default=None, description="完成时间")
 
 

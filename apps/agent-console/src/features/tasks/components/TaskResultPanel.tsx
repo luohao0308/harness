@@ -51,6 +51,11 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
                         工具 {subagent.tool_results.length}
                       </span>
                     )}
+                    {subagent.artifacts.length > 0 && (
+                      <span className="ml-1 text-[10px] text-slate-400">
+                        产物 {subagent.artifacts.length}
+                      </span>
+                    )}
                   </Td>
                   <Td className="max-w-[360px] truncate text-slate-600">
                     {subagent.summary ?? "尚未写入结果"}

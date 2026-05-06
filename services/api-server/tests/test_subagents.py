@@ -113,6 +113,7 @@ def test_worker_executes_assignment_tools_and_writes_results(
     tool_results = refreshed.context_json["result"]["tool_results"]
     assert tool_results[0]["tool_name"] == "read_file"
     assert tool_results[0]["status"] == "SUCCESS"
+    assert tool_results[0]["input_json"]["path"] == "notes.md"
     assert tool_results[0]["output"]["content"] == "异步工具结果"
     assert "工具执行 1 个" in refreshed.context_json["result"]["summary"]
     events = EventStore(db_session).list_by_task(task_id=task.id)
@@ -170,6 +171,7 @@ def test_worker_runs_multiround_react_tools(
         {"round": 1, "executed_tool_count": 1, "next_tool_count": 1, "done": False},
         {"round": 2, "executed_tool_count": 1, "next_tool_count": 0, "done": True},
     ]
+    assert result["tool_results"][0]["input_json"]["path"] == "notes.md"
     assert len(gateway.requests) == 2
     events = EventStore(db_session).list_by_task(task_id=task.id)
     react_events = [

@@ -404,6 +404,7 @@ def _tool_result_payload(execution: ToolExecution) -> dict:
         "status": execution.tool_call.status,
         "allowed": execution.allowed,
         "duration_ms": execution.tool_call.duration_ms,
+        "input_json": execution.tool_call.input_json,
         "output": execution.output,
         "error_message": execution.tool_call.error_message,
     }

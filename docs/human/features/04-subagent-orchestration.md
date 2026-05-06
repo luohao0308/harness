@@ -62,6 +62,7 @@ POST /api/subagents/{subagent_id}/cancel
 | `agent_runs.context_json.result` | `agent_runs` | worker 写回的子 Agent 结果摘要 |
 | `agent_runs.context_json.tools[]` | `agent_runs` | 子 Agent assignment 内的工具执行声明 |
 | `agent_runs.context_json.result.tool_results[]` | `agent_runs` | 子 Agent 工具执行结果 |
+| `agent_runs.context_json.result.artifacts[]` | API 派生 | 子 Agent 工具结果产物摘要 |
 | `agent_runs.context_json.result.react_trace[]` | `agent_runs` | 子 Agent 多轮工具规划轨迹 |
 | `agent_runs.context_json.max_tool_rounds` | `agent_runs` | 子 Agent ReAct 工具轮次上限，最大 5 |
 
@@ -164,12 +165,13 @@ agent_subagent_recovery_last_recovered
 | 主任务聚合子 Agent 结果 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` 和 `subagent-results.json` |
 | Subagent 工具链执行 | 基础落地 | worker 执行 `assignment.tools[]`，写入 `tool_calls` 和 `result.tool_results[]` |
 | 多轮 ReAct 工具规划 | 基础落地 | worker 支持模型返回 `next_tools`，按 `max_tool_rounds` 继续执行并写入 `react_trace` |
+| Subagent 产物详情 | 基础落地 | Result API 从工具结果生成 `artifacts[]` 并汇总到任务产物列表 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 子 Agent 长任务执行增强 | 当前 worker 已接入 assignment 工具链和多轮 `next_tools` 执行，复杂长上下文记忆仍需增强 | worker 按阶段压缩上下文并沉淀结构化产物 |
+| 子 Agent 长任务执行增强 | 当前 worker 已接入 assignment 工具链、多轮 `next_tools` 执行和产物摘要，复杂长上下文记忆仍需增强 | worker 按阶段压缩上下文 |
 | 自动恢复跨节点治理 | 当前已有巡检函数、service loop、Compose 服务、指标和告警规则 | 增强分布式恢复锁 |
 | 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
 
@@ -177,8 +179,8 @@ agent_subagent_recovery_last_recovered
 
 ```text
 1. 固化 agent_runs 字段和状态机
-2. 增强 Dramatiq worker 长上下文压缩和结构化产物
-3. 增强父任务结果聚合产物详情
+2. 增强 Dramatiq worker 长上下文压缩
+3. 增强父任务结果产物预览页
 4. 增加超时和取消测试
 5. 前端补详情页和批量状态展示
 ```
@@ -195,3 +197,5 @@ agent_subagent_recovery_last_recovered
 - 主任务能读取 Subagent 结果摘要。
 - 多轮 ReAct 执行必须写入 `react_trace`。
 - 模型返回 `next_tools` 后 worker 必须继续执行下一轮工具。
+- Result API 必须返回 Subagent 产物摘要。
+- 任务产物列表必须包含 Subagent 产物入口。

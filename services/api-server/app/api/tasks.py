@@ -256,6 +256,17 @@ def get_task_result(task_id: str, session: DbSession, principal: Principal) -> T
                 ),
             )
         )
+    for subagent_result in subagent_results:
+        for artifact in subagent_result.artifacts:
+            prefix = subagent_result.step_key or subagent_result.id[:8]
+            artifacts.append(
+                TaskArtifact(
+                    name=f"{prefix}/{artifact.name}",
+                    artifact_type=artifact.artifact_type,
+                    description=f"子 Agent 产物：{artifact.description}",
+                    status=artifact.status,
+                )
+            )
     summary_parts = []
     if task.status == "COMPLETED":
         summary_parts.append(f"任务《{task.title}》已完成。")
@@ -583,6 +594,7 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
     result = agent_run.context_json.get("result")
     summary = None
     tool_results = []
+    react_trace = []
     if isinstance(result, dict):
         raw_summary = result.get("summary")
         if raw_summary is not None:
@@ -590,6 +602,9 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
         raw_tool_results = result.get("tool_results", [])
         if isinstance(raw_tool_results, list):
             tool_results = [item for item in raw_tool_results if isinstance(item, dict)]
+        raw_react_trace = result.get("react_trace", [])
+        if isinstance(raw_react_trace, list):
+            react_trace = [item for item in raw_react_trace if isinstance(item, dict)]
     raw_step_key = agent_run.context_json.get("step_key")
     return TaskSubagentResult(
         id=agent_run.id,
@@ -597,8 +612,79 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
         status=agent_run.status,
         summary=summary,
         tool_results=tool_results,
+        artifacts=_subagent_artifacts(tool_results),
+        react_trace=react_trace,
         completed_at=agent_run.completed_at,
     )
+
+
+def _subagent_artifacts(tool_results: list[dict]) -> list[dict]:
+    artifacts = []
+    for index, tool_result in enumerate(tool_results, start=1):
+        if tool_result.get("status") != "SUCCESS":
+            continue
+        artifact = _subagent_artifact_from_tool_result(tool_result, index)
+        if artifact is not None:
+            artifacts.append(artifact)
+    return artifacts
+
+
+def _subagent_artifact_from_tool_result(tool_result: dict, index: int) -> dict | None:
+    tool_name = str(tool_result.get("tool_name") or "tool")
+    output = tool_result.get("output") if isinstance(tool_result.get("output"), dict) else {}
+    input_json = (
+        tool_result.get("input_json") if isinstance(tool_result.get("input_json"), dict) else {}
+    )
+    if tool_name == "read_file":
+        name = str(input_json.get("path") or f"read-file-{index}.txt")
+        return {
+            "name": name,
+            "artifact_type": "file",
+            "source_tool": tool_name,
+            "description": f"读取文件，大小 {int(output.get('size_bytes', 0) or 0)} 字节",
+            "status": "ready",
+            "preview": str(output.get("content", ""))[:500] or None,
+        }
+    if tool_name == "list_files":
+        files = output.get("files", [])
+        count = len(files) if isinstance(files, list) else 0
+        return {
+            "name": f"file-list-{index}.json",
+            "artifact_type": "json",
+            "source_tool": tool_name,
+            "description": f"文件列表，共 {count} 项",
+            "status": "ready",
+            "preview": str(files[:20]) if isinstance(files, list) else None,
+        }
+    if tool_name == "write_file":
+        return {
+            "name": str(output.get("path") or input_json.get("path") or f"write-file-{index}"),
+            "artifact_type": "file",
+            "source_tool": tool_name,
+            "description": f"写入文件，大小 {int(output.get('bytes_written', 0) or 0)} 字节",
+            "status": "ready",
+            "preview": str(input_json.get("content", ""))[:500] or None,
+        }
+    if tool_name in {"run_tests", "run_shell", "git_command"}:
+        preview = str(output.get("stdout_preview") or output.get("stderr_preview") or "")[:500]
+        return {
+            "name": f"{tool_name}-{index}.log",
+            "artifact_type": "log",
+            "source_tool": tool_name,
+            "description": f"命令退出码 {output.get('exit_code', 'unknown')}",
+            "status": "ready",
+            "preview": preview or None,
+        }
+    if tool_name == "network_request":
+        return {
+            "name": f"http-response-{index}.json",
+            "artifact_type": "json",
+            "source_tool": tool_name,
+            "description": f"HTTP 状态 {output.get('status_code', 'unknown')}",
+            "status": "ready",
+            "preview": str(output.get("body_preview", ""))[:500] or None,
+        }
+    return None
 
 
 def _subagent_result_summary(subagent_results: list[TaskSubagentResult]) -> str | None:
