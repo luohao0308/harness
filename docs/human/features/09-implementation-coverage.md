@@ -70,6 +70,7 @@
 | Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
 | Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
 | Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
+| Subagent 工具链 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
 | 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` |
 | 模型审计 | 基础落地 | `GET /api/tasks/{task_id}/model-calls` |
@@ -104,6 +105,7 @@
 | Planner | 已接入模型 JSON 计划解析、一次结构修复、确定性回退和计划来源展示 | 增强 Prompt 和计划版本对比 |
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 接入 Worker 级恢复编排 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id 和 Subagent 状态链路 | 增强时间线中的并行执行拓扑 |
+| Subagent Worker | assignment 工具执行、工具审计、结果回写已基础落地 | 增强多轮 ReAct 工具规划 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流和健康状态已基础落地 | 补齐 TPM 限流、外部主动探测和供应商级熔断 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行和策略拒绝审计 | 补齐更多沙箱工具结果解析、超时分类和控制台细节 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 补齐 Worker 级恢复编排 |

@@ -440,16 +440,21 @@ def _latest_plan(task_id: str, session: Session) -> ExecutionPlan | None:
 def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
     result = agent_run.context_json.get("result")
     summary = None
+    tool_results = []
     if isinstance(result, dict):
         raw_summary = result.get("summary")
         if raw_summary is not None:
             summary = str(raw_summary)
+        raw_tool_results = result.get("tool_results", [])
+        if isinstance(raw_tool_results, list):
+            tool_results = [item for item in raw_tool_results if isinstance(item, dict)]
     raw_step_key = agent_run.context_json.get("step_key")
     return TaskSubagentResult(
         id=agent_run.id,
         step_key=str(raw_step_key) if raw_step_key is not None else None,
         status=agent_run.status,
         summary=summary,
+        tool_results=tool_results,
         completed_at=agent_run.completed_at,
     )
 

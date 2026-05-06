@@ -45,10 +45,20 @@ class TaskArtifact(BaseModel):
 
 
 class TaskSubagentResult(BaseModel):
+    class ToolResult(BaseModel):
+        tool_call_id: str = Field(description="工具调用 ID")
+        tool_name: str = Field(description="工具名称")
+        status: str = Field(description="工具状态")
+        allowed: bool = Field(description="是否允许执行")
+        duration_ms: int = Field(description="耗时毫秒")
+        output: dict = Field(description="工具输出")
+        error_message: str | None = Field(default=None, description="错误信息")
+
     id: str = Field(description="子 Agent ID")
     step_key: str | None = Field(default=None, description="来源步骤键")
     status: str = Field(description="子 Agent 状态")
     summary: str | None = Field(default=None, description="子 Agent 结果摘要")
+    tool_results: list[ToolResult] = Field(default_factory=list, description="工具执行结果")
     completed_at: datetime | None = Field(default=None, description="完成时间")
 
 

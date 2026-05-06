@@ -44,7 +44,14 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
                 <tr key={subagent.id} className="border-t border-slate-100">
                   <Td className="font-mono text-slate-800">{subagent.id.slice(0, 8)}</Td>
                   <Td className="font-mono text-slate-600">{subagent.step_key ?? "-"}</Td>
-                  <Td className="text-slate-600">{statusLabel(subagent.status)}</Td>
+                  <Td className="text-slate-600">
+                    {statusLabel(subagent.status)}
+                    {subagent.tool_results.length > 0 && (
+                      <span className="ml-1 text-[10px] text-slate-400">
+                        工具 {subagent.tool_results.length}
+                      </span>
+                    )}
+                  </Td>
                   <Td className="max-w-[360px] truncate text-slate-600">
                     {subagent.summary ?? "尚未写入结果"}
                   </Td>

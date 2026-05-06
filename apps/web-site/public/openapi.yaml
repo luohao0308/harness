@@ -2259,6 +2259,12 @@ components:
           - type: 'null'
           title: Summary
           description: 子 Agent 结果摘要
+        tool_results:
+          items:
+            $ref: '#/components/schemas/ToolResult'
+          type: array
+          title: Tool Results
+          description: 工具执行结果
         completed_at:
           anyOf:
           - type: string
@@ -2411,6 +2417,48 @@ components:
       - allowed
       - output
       title: ToolExecuteResponse
+    ToolResult:
+      properties:
+        tool_call_id:
+          type: string
+          title: Tool Call Id
+          description: 工具调用 ID
+        tool_name:
+          type: string
+          title: Tool Name
+          description: 工具名称
+        status:
+          type: string
+          title: Status
+          description: 工具状态
+        allowed:
+          type: boolean
+          title: Allowed
+          description: 是否允许执行
+        duration_ms:
+          type: integer
+          title: Duration Ms
+          description: 耗时毫秒
+        output:
+          additionalProperties: true
+          type: object
+          title: Output
+          description: 工具输出
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+          description: 错误信息
+      type: object
+      required:
+      - tool_call_id
+      - tool_name
+      - status
+      - allowed
+      - duration_ms
+      - output
+      title: ToolResult
     ValidationError:
       properties:
         loc:

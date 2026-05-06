@@ -81,6 +81,7 @@ docs/SPEC.md
 | Replay 与恢复 | 重放状态、定位失败点、恢复执行 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume` | 基础落地 |
 | Subagent 并发 | 查询、创建、取消、状态追踪 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
+| Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
 | 工具执行 | 按策略执行工具 | `POST /api/tasks/{task_id}/tools/execute` | 基础落地 |
 | 模型调用审计 | 查询供应商、模型、token、延迟、失败 | `GET /api/tasks/{task_id}/model-calls` | 基础落地 |
 | 工具调用审计 | 查询入参、结果、耗时、拒绝、失败 | `GET /api/tasks/{task_id}/tool-calls` | 基础落地 |
@@ -133,7 +134,7 @@ docs/SPEC.md
 |---|---|---|
 | LLM Planner 增强 | 已解析模型 JSON 计划并支持一次结构修复，Prompt 和版本对比仍需增强 | `docs/human/features/02-planner-executor.md` |
 | Worker 级恢复 | 长任务跨进程恢复仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
-| Subagent 工具链执行 | worker 已回写 assignment 摘要，模型、工具、沙箱组合执行仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
+| Subagent 工具链执行 | worker 已执行 assignment 工具并回写结果，多轮 ReAct 工具规划仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要，结构化产物详情仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
 | TPM 限流与供应商熔断 | 模型成本和稳定性治理仍需增强 | `docs/human/features/06-model-tool-audit.md` |
@@ -165,7 +166,7 @@ docs/SPEC.md
 
 ```text
 1. 补 LLM Planner Prompt 增强和计划版本对比
-2. 补 Subagent worker 工具链执行和结果产物详情
+2. 补 Subagent worker 多轮 ReAct 工具规划和结果产物详情
 3. 补 Worker 级恢复编排
 4. 增强 Loki 采集、Grafana provisioning 和真实 OTel Trace 查询
 5. 补控制台全量 i18n

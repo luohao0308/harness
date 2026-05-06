@@ -27,6 +27,13 @@ function subagentResultSummary(subagent: Subagent) {
   return typeof summary === "string" && summary.length > 0 ? summary : null;
 }
 
+function subagentToolCount(subagent: Subagent) {
+  const result = subagent.context_json.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) return 0;
+  const tools = (result as Record<string, unknown>).tool_results;
+  return Array.isArray(tools) ? tools.length : 0;
+}
+
 export function SubagentPanel({
   subagents = [],
   maxSubagents = 5,
@@ -74,6 +81,7 @@ export function SubagentPanel({
               )}
               {subagent.started_at && <span>已启动</span>}
               {subagent.timeout_at && <span>超时保护已设置</span>}
+              {subagentToolCount(subagent) > 0 && <span>工具 {subagentToolCount(subagent)}</span>}
             </div>
             {subagentResultSummary(subagent) && (
               <div className="mt-1 line-clamp-2 text-[10px] text-slate-500">

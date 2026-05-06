@@ -185,7 +185,20 @@ def test_task_result_aggregates_subagent_outputs(db_session: Session) -> None:
         status="SUCCESS",
         context_json={
             "step_key": "subagent_research",
-            "result": {"summary": "异步调研完成"},
+            "result": {
+                "summary": "异步调研完成",
+                "tool_results": [
+                    {
+                        "tool_call_id": "tool-1",
+                        "tool_name": "read_file",
+                        "status": "SUCCESS",
+                        "allowed": True,
+                        "duration_ms": 1,
+                        "output": {"content": "ok"},
+                        "error_message": None,
+                    }
+                ],
+            },
         },
         started_at=utc_now(),
         completed_at=utc_now(),
@@ -209,6 +222,7 @@ def test_task_result_aggregates_subagent_outputs(db_session: Session) -> None:
     assert subagent_result["step_key"] == "subagent_research"
     assert subagent_result["status"] == "SUCCESS"
     assert subagent_result["summary"] == "异步调研完成"
+    assert subagent_result["tool_results"][0]["tool_name"] == "read_file"
     assert subagent_result["completed_at"] is not None
     assert payload["artifacts"][1]["name"] == "subagent-results.json"
     assert "成功 1 个" in payload["summary"]

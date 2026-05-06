@@ -192,6 +192,15 @@ export type TaskResult = {
     step_key: string | null;
     status: string;
     summary: string | null;
+    tool_results: Array<{
+      tool_call_id: string;
+      tool_name: string;
+      status: string;
+      allowed: boolean;
+      duration_ms: number;
+      output: Record<string, unknown>;
+      error_message: string | null;
+    }>;
     completed_at: string | null;
   }>;
   last_sequence: number;

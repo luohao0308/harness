@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -64,6 +66,38 @@ def test_worker_success_flow_writes_started_and_completed(db_session: Session) -
     assert "MODEL_CALLED" in event_types
     assert "MODEL_RESPONSE_RECEIVED" in event_types
     assert event_types[-1] == "SUBAGENT_COMPLETED"
+
+
+def test_worker_executes_assignment_tools_and_writes_results(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    task = create_task(db_session)
+    target = tmp_path / "notes.md"
+    target.write_text("异步工具结果", encoding="utf-8")
+    agent_run = SubagentManager(db_session).spawn(
+        task=task,
+        assignment={
+            "step_key": "tool_review",
+            "tools": [{"tool_name": "read_file", "input_json": {"path": "notes.md"}}],
+        },
+    )
+    db_session.commit()
+
+    status = execute_subagent(agent_run.id, session=db_session, workspace_root=tmp_path)
+
+    assert status == "SUCCESS"
+    refreshed = db_session.get(AgentRun, agent_run.id)
+    assert refreshed is not None
+    tool_results = refreshed.context_json["result"]["tool_results"]
+    assert tool_results[0]["tool_name"] == "read_file"
+    assert tool_results[0]["status"] == "SUCCESS"
+    assert tool_results[0]["output"]["content"] == "异步工具结果"
+    assert "工具执行 1 个" in refreshed.context_json["result"]["summary"]
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    event_types = [event.event_type for event in events]
+    assert "TOOL_CALLED" in event_types
+    assert "TOOL_RESULT_RECEIVED" in event_types
 
 
 def test_worker_timeout_flow_writes_timeout_event(db_session: Session) -> None:
