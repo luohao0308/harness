@@ -5,7 +5,7 @@ from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
-from app.observability.metrics import agent_subagents_queued
+from app.observability.metrics import agent_subagent_recovery_total, agent_subagents_queued
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, timeout_at_from_now
 
 SUBAGENT_CONCURRENCY_LIMIT = 5
@@ -167,6 +167,7 @@ class SubagentManager:
         previous_status = agent_run.status
         agent_run.status = "TIMEOUT"
         agent_run.completed_at = utc_now()
+        agent_subagent_recovery_total.labels(action="marked_timeout").inc()
         self.event_store.append(
             task_id=agent_run.task_id,
             agent_run_id=agent_run.id,
@@ -195,6 +196,7 @@ class SubagentManager:
         agent_run.context_json = {**agent_run.context_json, "recovery_attempts": recovery_attempts}
         agent_run.status = "PENDING"
         agent_run.started_at = None
+        agent_subagent_recovery_total.labels(action="reset_to_pending").inc()
         reason = f"running longer than {stale_after_seconds}s without terminal event"
         self.event_store.append(
             task_id=agent_run.task_id,

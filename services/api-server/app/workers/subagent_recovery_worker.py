@@ -10,6 +10,10 @@ from sqlalchemy.orm import Session
 from app.agents.subagent_manager import SubagentManager
 from app.db.models import AgentRun, Task
 from app.db.session import SessionLocal
+from app.observability.metrics import (
+    agent_subagent_recovery_last_recovered,
+    agent_subagent_recovery_sweeps_total,
+)
 from app.workers.broker import broker
 
 DEFAULT_RECOVERY_STALE_AFTER_SECONDS = 900
@@ -76,6 +80,8 @@ def _recover_stalled_subagents_with_session(
             }
         )
     session.flush()
+    agent_subagent_recovery_sweeps_total.inc()
+    agent_subagent_recovery_last_recovered.set(recovered_total)
     return {
         "task_count": len(tasks),
         "recovered_count": recovered_total,

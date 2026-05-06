@@ -10,6 +10,19 @@ agent_subagents_running = Gauge("agent_subagents_running", "Subagents currently 
 agent_subagents_queued = Gauge("agent_subagents_queued", "Subagents queued.")
 agent_subagents_failed_total = Counter("agent_subagents_failed_total", "Subagents failed.")
 agent_subagent_duration_seconds = Histogram("agent_subagent_duration_seconds", "Subagent duration.")
+agent_subagent_recovery_total = Counter(
+    "agent_subagent_recovery_total",
+    "Subagent recovery actions.",
+    ["action"],
+)
+agent_subagent_recovery_sweeps_total = Counter(
+    "agent_subagent_recovery_sweeps_total",
+    "Subagent recovery sweeps.",
+)
+agent_subagent_recovery_last_recovered = Gauge(
+    "agent_subagent_recovery_last_recovered",
+    "Subagents recovered by the last recovery sweep.",
+)
 
 sandbox_containers_total = Counter("sandbox_containers_total", "Sandbox containers allocated.")
 sandbox_containers_running = Gauge("sandbox_containers_running", "Sandbox containers running.")

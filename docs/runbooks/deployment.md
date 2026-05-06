@@ -116,6 +116,7 @@ Grafana verification:
 agent_tasks_total visible
 warm_pool_hit_total visible
 sandbox_command_duration_seconds visible
+agent_subagent_recovery_total visible
 ```
 
 Loki verification:

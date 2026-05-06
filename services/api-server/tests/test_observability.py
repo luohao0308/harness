@@ -21,6 +21,8 @@ def test_metrics_endpoint_exposes_required_metrics() -> None:
     body = response.text
     assert "agent_tasks_total" in body
     assert "agent_subagents_running" in body
+    assert "agent_subagent_recovery_total" in body
+    assert "agent_subagent_recovery_sweeps_total" in body
     assert "sandbox_containers_total" in body
     assert "warm_pool_hit_total" in body
     assert "model_calls_total" in body

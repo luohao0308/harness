@@ -235,3 +235,8 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     assert result["recovered_count"] == 2
     assert db_session.get(AgentRun, first_stale.id).status == "PENDING"
     assert db_session.get(AgentRun, second_expired.id).status == "TIMEOUT"
+    metrics = TestClient(app).get("/metrics").text
+    assert 'agent_subagent_recovery_total{action="reset_to_pending"}' in metrics
+    assert 'agent_subagent_recovery_total{action="marked_timeout"}' in metrics
+    assert "agent_subagent_recovery_sweeps_total" in metrics
+    assert "agent_subagent_recovery_last_recovered" in metrics

@@ -90,6 +90,35 @@
       ],
       "title": "Sandboxes",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "agent_subagent_recovery_total",
+          "legendFormat": "{{action}}"
+        },
+        {
+          "expr": "agent_subagent_recovery_last_recovered",
+          "legendFormat": "last sweep"
+        }
+      ],
+      "title": "Subagent Recovery",
+      "type": "timeseries"
     }
   ],
   "schemaVersion": 40,
