@@ -99,6 +99,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      SUBAGENT_RECOVERY_METRICS_PORT: 9102
+    expose:
+      - "9102"
 
   warm-pool:
     image: agent-harness-api-server:latest
@@ -169,6 +172,7 @@ services:
       - "${PROMETHEUS_PORT:-9091}:9090"
     volumes:
       - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
 
   grafana:
     image: grafana/grafana:11.3.0

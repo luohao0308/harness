@@ -1,0 +1,42 @@
+groups:
+  - name: agent-harness-subagent-recovery
+    rules:
+      - alert: HarnessSubagentRecoveryServiceDown
+        expr: up{job="subagent-recovery"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          domain: subagent
+        annotations:
+          summary: "Subagent 恢复巡检服务不可用"
+          description: "Prometheus 连续 2 分钟无法抓取 subagent-recovery 指标。"
+
+      - alert: HarnessSubagentRecoverySweepMissing
+        expr: absent_over_time(agent_subagent_recovery_sweeps_total{job="subagent-recovery"}[5m])
+        for: 1m
+        labels:
+          severity: warning
+          domain: subagent
+        annotations:
+          summary: "Subagent 恢复巡检未产生心跳"
+          description: "subagent-recovery 在 5 分钟内没有产生巡检计数。"
+
+      - alert: HarnessSubagentRecoveryMarkedTimeout
+        expr: sum(increase(agent_subagent_recovery_total{action="marked_timeout"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          domain: subagent
+        annotations:
+          summary: "Subagent 出现超时恢复"
+          description: "过去 10 分钟存在被恢复流程标记为 TIMEOUT 的 Subagent。"
+
+      - alert: HarnessSubagentRecoveryRepeatedReset
+        expr: sum(increase(agent_subagent_recovery_total{action="reset_to_pending"}[10m])) > 5
+        for: 2m
+        labels:
+          severity: warning
+          domain: subagent
+        annotations:
+          summary: "Subagent 卡住后反复重置"
+          description: "过去 10 分钟 Subagent 重置回 PENDING 超过 5 次。"

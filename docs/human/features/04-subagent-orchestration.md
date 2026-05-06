@@ -152,6 +152,7 @@ agent_subagent_recovery_last_recovered
 | 子 Agent 恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
 | 自动恢复巡检 | 基础落地 | `subagent_recovery_worker` 扫描 `PENDING`、`RUNNING` 子 Agent |
 | 恢复观测指标 | 已落地 | `/metrics` 与 Grafana 默认 Dashboard 展示恢复动作 |
+| 恢复告警规则 | 已落地 | Prometheus 加载 `deploy/monitoring/alert-rules.yml` |
 | 并发上限 | 已落地 | 固定 5 |
 | Dramatiq worker | 基础落地 | `agent-worker` |
 | 异步派生可见性 | 基础落地 | 任务详情页 Subagent 面板和 `/subagents` 页面 |
@@ -164,7 +165,7 @@ agent_subagent_recovery_last_recovered
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 子 Agent 长任务执行增强 | 当前 worker 已接入 assignment 工具链，复杂多轮工具规划仍需增强 | worker 按 ReAct 循环组织模型、工具和沙箱并回写结构化结果 |
-| 自动恢复巡检告警 | 当前已有巡检函数、service loop、Compose 服务和指标 | 接入告警规则 |
+| 自动恢复跨节点治理 | 当前已有巡检函数、service loop、Compose 服务、指标和告警规则 | 增强分布式恢复锁 |
 | 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
 
 ## 实现顺序

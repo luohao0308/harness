@@ -133,7 +133,7 @@ docs/SPEC.md
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
 | LLM Planner Prompt | 已解析模型 JSON 计划并支持一次结构修复和版本对比，Prompt 仍需增强 | `docs/human/features/02-planner-executor.md` |
-| Worker 恢复告警 | 已支持手动恢复、巡检函数、service loop、Compose 服务、Prometheus 指标和 Grafana 面板，告警规则仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
+| Worker 恢复跨节点治理 | 已支持手动恢复、巡检函数、service loop、Compose 服务、Prometheus 指标、Grafana 面板和告警规则，分布式恢复锁仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
 | Subagent 工具链执行 | worker 已执行 assignment 工具并回写结果，多轮 ReAct 工具规划仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要，结构化产物详情仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
@@ -167,7 +167,7 @@ docs/SPEC.md
 ```text
 1. 补 LLM Planner Prompt 增强和版本差异可视化
 2. 补 Subagent worker 多轮 ReAct 工具规划和结果产物详情
-3. 补 Worker 恢复告警规则
+3. 补 Worker 恢复跨节点租约和恢复锁
 4. 增强 Loki 采集、Grafana provisioning 和真实 OTel Trace 查询
 5. 补控制台全量 i18n
 6. 整合用户提供的官网代码

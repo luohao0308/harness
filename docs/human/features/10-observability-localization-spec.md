@@ -185,6 +185,7 @@ cookie
 | Grafana 容器 | 已落地 | `deploy/docker-compose/docker-compose.yml` |
 | Loki 容器 | 已落地 | `deploy/docker-compose/docker-compose.yml` |
 | OTel Collector 容器 | 已落地 | `deploy/docker-compose/docker-compose.yml` |
+| Prometheus 告警规则 | 已落地 | `deploy/monitoring/alert-rules.yml` |
 | trace_id 响应头 | 基础落地 | `services/api-server/app/core/tracing.py` |
 | Loki 日志查询 API | 基础落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
 | Grafana 后端代理 | 基础落地 | `GET /api/observability/grafana/dashboards` |
@@ -217,6 +218,8 @@ cookie
 - `GET /api/observability/summary` 返回任务、模型、工具、沙箱和 WarmPool 汇总。
 - `GET /metrics` 暴露 Prometheus 指标。
 - Prometheus targets 中 `api-server` 为 up。
+- Prometheus targets 中 `subagent-recovery` 为 up。
+- Prometheus rules 中加载 Subagent 恢复告警。
 - Grafana health 返回 ok。
 - Loki ready 返回 ready。
 - Loki labels 查询返回 success。

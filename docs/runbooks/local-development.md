@@ -66,6 +66,12 @@ source .venv/bin/activate
 python -m app.workers.subagent_recovery_worker
 ```
 
+Metrics:
+
+```text
+http://127.0.0.1:9102/metrics
+```
+
 ## Website
 
 ```bash

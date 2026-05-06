@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import signal
 import time
 
 import dramatiq
+from prometheus_client import start_http_server
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,7 @@ from app.workers.broker import broker
 DEFAULT_RECOVERY_STALE_AFTER_SECONDS = 900
 DEFAULT_RECOVERY_INTERVAL_SECONDS = 30
 DEFAULT_RECOVERY_ENQUEUE = True
+DEFAULT_RECOVERY_METRICS_PORT = 9102
 
 
 def recover_stalled_subagents(
@@ -109,6 +112,7 @@ def run_subagent_recovery_service(
     stale_after_seconds: int = DEFAULT_RECOVERY_STALE_AFTER_SECONDS,
     interval_seconds: int = DEFAULT_RECOVERY_INTERVAL_SECONDS,
     enqueue: bool = DEFAULT_RECOVERY_ENQUEUE,
+    metrics_port: int = DEFAULT_RECOVERY_METRICS_PORT,
 ) -> None:
     running = True
 
@@ -119,6 +123,9 @@ def run_subagent_recovery_service(
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    if metrics_port > 0:
+        start_http_server(metrics_port)
+
     while running:
         recover_stalled_subagents(
             stale_after_seconds=stale_after_seconds,
@@ -127,5 +134,25 @@ def run_subagent_recovery_service(
         time.sleep(interval_seconds)
 
 
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return int(raw_value)
+
+
 if __name__ == "__main__":
-    run_subagent_recovery_service()
+    run_subagent_recovery_service(
+        stale_after_seconds=_env_int(
+            "SUBAGENT_RECOVERY_STALE_AFTER_SECONDS",
+            DEFAULT_RECOVERY_STALE_AFTER_SECONDS,
+        ),
+        interval_seconds=_env_int(
+            "SUBAGENT_RECOVERY_INTERVAL_SECONDS",
+            DEFAULT_RECOVERY_INTERVAL_SECONDS,
+        ),
+        metrics_port=_env_int(
+            "SUBAGENT_RECOVERY_METRICS_PORT",
+            DEFAULT_RECOVERY_METRICS_PORT,
+        ),
+    )

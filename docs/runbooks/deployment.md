@@ -119,6 +119,15 @@ sandbox_command_duration_seconds visible
 agent_subagent_recovery_total visible
 ```
 
+Prometheus alert rule verification:
+
+```text
+HarnessSubagentRecoveryServiceDown loaded
+HarnessSubagentRecoverySweepMissing loaded
+HarnessSubagentRecoveryMarkedTimeout loaded
+HarnessSubagentRecoveryRepeatedReset loaded
+```
+
 Loki verification:
 
 ```text

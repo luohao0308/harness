@@ -103,13 +103,14 @@ agent_subagent_recovery_last_recovered
 | 步骤级恢复执行 | 已落地 | Resume flow |
 | Worker 级恢复 | 已落地 | `POST /api/tasks/{task_id}/subagents/recover` |
 | Worker 自动巡检 | 基础落地 | `subagent_recovery_worker.recover_stalled_subagents` |
-| Worker 恢复指标 | 已落地 | `/metrics` 输出恢复动作、巡检次数和最近恢复数量 |
+| Worker 恢复指标 | 已落地 | `subagent-recovery:9102/metrics` 输出恢复动作、巡检次数和最近恢复数量 |
+| Worker 恢复告警 | 已落地 | `deploy/monitoring/alert-rules.yml` |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 分布式 Worker 恢复 | 当前已支持超时标记、卡住 worker 重置、巡检函数、Compose 服务和 Prometheus 指标 | 补告警规则 |
+| 分布式 Worker 恢复编排 | 当前已支持超时标记、卡住 worker 重置、巡检函数、Compose 服务、Prometheus 指标和告警规则 | 增强跨节点租约和恢复锁 |
 
 ## 实现顺序
 
@@ -117,7 +118,7 @@ agent_subagent_recovery_last_recovered
 1. 保持事件枚举与 OpenAPI 同步
 2. 保持 snapshot 规则与 Replay service 同步
 3. 前端展示 sequence、payload 摘要和 failure point
-4. 增强 Worker 恢复告警规则
+4. 增强 Worker 跨节点恢复锁
 5. 补并发和断线重连测试
 ```
 
@@ -134,4 +135,5 @@ agent_subagent_recovery_last_recovered
 - Worker 恢复能把卡住的 RUNNING Subagent 重置为 `PENDING`。
 - Worker 巡检能扫描多个任务的卡住 Subagent。
 - Worker 恢复指标必须出现在 `/metrics`。
+- Prometheus 必须加载 `HarnessSubagentRecoveryServiceDown`、`HarnessSubagentRecoverySweepMissing`、`HarnessSubagentRecoveryMarkedTimeout` 和 `HarnessSubagentRecoveryRepeatedReset`。
 - 事件流满足审计追踪要求。
