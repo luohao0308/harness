@@ -10,7 +10,7 @@ from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT, SubagentMana
 from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
-from app.workers.subagent_recovery_worker import recover_stalled_subagents
+from app.workers.subagent_recovery_worker import _sqlite_recovery_lock, recover_stalled_subagents
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, execute_subagent
 from tests.conftest import AUTH_HEADERS
 
@@ -312,6 +312,7 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
         session=db_session,
     )
 
+    assert result["lock_acquired"] is True
     assert result["task_count"] == 2
     assert result["recovered_count"] == 2
     assert db_session.get(AgentRun, first_stale.id).status == "PENDING"
@@ -321,3 +322,33 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     assert 'agent_subagent_recovery_total{action="marked_timeout"}' in metrics
     assert "agent_subagent_recovery_sweeps_total" in metrics
     assert "agent_subagent_recovery_last_recovered" in metrics
+
+
+def test_subagent_recovery_sweep_skips_when_lease_is_held(db_session: Session) -> None:
+    task = create_task(db_session)
+    stale = SubagentManager(db_session).spawn(
+        task=task,
+        assignment={"step_key": "locked_recovery"},
+        timeout_seconds=1800,
+    )
+    stale.status = "RUNNING"
+    stale.started_at = utc_now() - timedelta(seconds=901)
+    db_session.commit()
+
+    assert _sqlite_recovery_lock.acquire(blocking=False) is True
+    try:
+        result = recover_stalled_subagents(
+            stale_after_seconds=900,
+            enqueue=False,
+            session=db_session,
+        )
+    finally:
+        _sqlite_recovery_lock.release()
+
+    assert result == {
+        "lock_acquired": False,
+        "task_count": 0,
+        "recovered_count": 0,
+        "recovered_by_task": [],
+    }
+    assert db_session.get(AgentRun, stale.id).status == "RUNNING"

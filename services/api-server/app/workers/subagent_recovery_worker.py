@@ -3,10 +3,13 @@ from __future__ import annotations
 import os
 import signal
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from threading import Lock
 
 import dramatiq
 from prometheus_client import start_http_server
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.agents.subagent_manager import SubagentManager
@@ -22,6 +25,8 @@ DEFAULT_RECOVERY_STALE_AFTER_SECONDS = 900
 DEFAULT_RECOVERY_INTERVAL_SECONDS = 30
 DEFAULT_RECOVERY_ENQUEUE = True
 DEFAULT_RECOVERY_METRICS_PORT = 9102
+RECOVERY_ADVISORY_LOCK_KEY = 830_202_605
+_sqlite_recovery_lock = Lock()
 
 
 def recover_stalled_subagents(
@@ -48,6 +53,29 @@ def recover_stalled_subagents(
 
 
 def _recover_stalled_subagents_with_session(
+    *,
+    session: Session,
+    stale_after_seconds: int,
+    enqueue: bool,
+) -> dict:
+    with _recovery_lease(session) as lease_acquired:
+        if not lease_acquired:
+            agent_subagent_recovery_sweeps_total.inc()
+            agent_subagent_recovery_last_recovered.set(0)
+            return {
+                "lock_acquired": False,
+                "task_count": 0,
+                "recovered_count": 0,
+                "recovered_by_task": [],
+            }
+        return _recover_stalled_subagents_after_lease(
+            session=session,
+            stale_after_seconds=stale_after_seconds,
+            enqueue=enqueue,
+        )
+
+
+def _recover_stalled_subagents_after_lease(
     *,
     session: Session,
     stale_after_seconds: int,
@@ -86,10 +114,40 @@ def _recover_stalled_subagents_with_session(
     agent_subagent_recovery_sweeps_total.inc()
     agent_subagent_recovery_last_recovered.set(recovered_total)
     return {
+        "lock_acquired": True,
         "task_count": len(tasks),
         "recovered_count": recovered_total,
         "recovered_by_task": recovered_by_task,
     }
+
+
+@contextmanager
+def _recovery_lease(session: Session) -> Iterator[bool]:
+    bind = session.get_bind()
+    dialect_name = bind.dialect.name if bind is not None else ""
+    if dialect_name == "postgresql":
+        acquired = bool(
+            session.execute(
+                text("SELECT pg_try_advisory_lock(:lock_key)"),
+                {"lock_key": RECOVERY_ADVISORY_LOCK_KEY},
+            ).scalar()
+        )
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                session.execute(
+                    text("SELECT pg_advisory_unlock(:lock_key)"),
+                    {"lock_key": RECOVERY_ADVISORY_LOCK_KEY},
+                )
+        return
+
+    acquired = _sqlite_recovery_lock.acquire(blocking=False)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            _sqlite_recovery_lock.release()
 
 
 @dramatiq.actor(

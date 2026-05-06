@@ -172,7 +172,7 @@ agent_subagent_recovery_last_recovered
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 子 Agent 长任务执行增强 | 当前 worker 已接入 assignment 工具链、多轮 `next_tools` 执行和产物摘要，复杂长上下文记忆仍需增强 | worker 按阶段压缩上下文 |
-| 自动恢复跨节点治理 | 当前已有巡检函数、service loop、Compose 服务、指标和告警规则 | 增强分布式恢复锁 |
+| 自动恢复批次详情 | 当前已有巡检函数、跨节点恢复锁、service loop、Compose 服务、指标和告警规则 | 增强恢复批次详情和控制台展示 |
 | 派生关系展示 | 基础落地，执行计划和 Subagent 面板已展示 step key、assigned_agent_id 和状态 | 增强时间线中的并行执行拓扑 |
 
 ## 实现顺序

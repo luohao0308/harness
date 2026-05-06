@@ -132,7 +132,6 @@ docs/SPEC.md
 
 | 缺口 | 影响 | 目标文档 |
 |---|---|---|
-| Worker 恢复跨节点治理 | 已支持手动恢复、巡检函数、service loop、Compose 服务、Prometheus 指标、Grafana 面板和告警规则，分布式恢复锁仍需增强 | `docs/human/features/03-event-sourcing-replay.md` |
 | Subagent 长上下文 | worker 已执行 assignment 工具、多轮 `next_tools` ReAct 工具规划、产物摘要并回写结果，长上下文压缩仍需增强 | `docs/human/features/04-subagent-orchestration.md` |
 | Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |
 | 工具结果解析 | 工具审计详情和产物解析不足 | `docs/human/features/06-model-tool-audit.md` |
@@ -162,13 +161,15 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 补 LLM Planner Prompt 增强和版本差异可视化
-2. 补 Subagent worker 长上下文压缩
-3. 补 Worker 恢复跨节点租约和恢复锁
-4. 增强 Grafana 权限模型、日志检索深链和真实 OTel Trace 查询
-5. 补控制台全量 i18n
-6. 整合用户提供的官网代码
-7. 同步 OpenAPI、测试、Runbook 和覆盖文档
+1. 补 Subagent worker 长上下文压缩
+2. 增强 Worker 恢复批次详情和控制台展示
+3. 增强计划版本差异可视化和并行执行拓扑
+4. 补工具结果解析、超时分类和控制台细节
+5. 补 TPM 限流、外部主动探测和供应商级熔断
+6. 接入真实 OTel Trace 后端
+7. 补控制台全量 i18n
+8. 整合用户提供的官网代码
+9. 同步 OpenAPI、测试、Runbook 和覆盖文档
 ```
 
 ## 验证命令
