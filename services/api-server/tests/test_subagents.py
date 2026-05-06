@@ -1,9 +1,11 @@
+import json
 from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.agents.model_gateway import ModelRequest, ModelResponse
 from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT, SubagentManager
 from app.db.models import AgentRun, Task, utc_now
 from app.events.event_store import EventStore
@@ -11,6 +13,23 @@ from app.main import app
 from app.workers.subagent_recovery_worker import recover_stalled_subagents
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, execute_subagent
 from tests.conftest import AUTH_HEADERS
+
+
+class SequencedModelGateway:
+    def __init__(self, contents: list[dict]) -> None:
+        self.contents = contents
+        self.requests: list[ModelRequest] = []
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        content = self.contents[min(len(self.requests) - 1, len(self.contents) - 1)]
+        return ModelResponse(
+            content=json.dumps(content, ensure_ascii=False),
+            model_provider=request.model_provider,
+            model_name=request.model_name,
+            usage={"prompt_tokens": 0, "completion_tokens": 0},
+            raw_response={"mode": "test"},
+        )
 
 
 def create_task(db_session: Session) -> Task:
@@ -100,6 +119,66 @@ def test_worker_executes_assignment_tools_and_writes_results(
     event_types = [event.event_type for event in events]
     assert "TOOL_CALLED" in event_types
     assert "TOOL_RESULT_RECEIVED" in event_types
+
+
+def test_worker_runs_multiround_react_tools(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    task = create_task(db_session)
+    (tmp_path / "notes.md").write_text("第一轮", encoding="utf-8")
+    (tmp_path / "extra.md").write_text("第二轮", encoding="utf-8")
+    gateway = SequencedModelGateway(
+        [
+            {
+                "summary": "第一轮完成，继续补充文件",
+                "done": False,
+                "next_tools": [
+                    {"tool_name": "read_file", "input_json": {"path": "extra.md"}}
+                ],
+            },
+            {"summary": "多轮 ReAct 子 Agent 完成", "done": True, "next_tools": []},
+        ]
+    )
+    agent_run = SubagentManager(db_session).spawn(
+        task=task,
+        assignment={
+            "step_key": "react_review",
+            "max_tool_rounds": 2,
+            "tools": [{"tool_name": "read_file", "input_json": {"path": "notes.md"}}],
+        },
+    )
+    db_session.commit()
+
+    status = execute_subagent(
+        agent_run.id,
+        session=db_session,
+        workspace_root=tmp_path,
+        model_gateway=gateway,
+    )
+
+    assert status == "SUCCESS"
+    refreshed = db_session.get(AgentRun, agent_run.id)
+    assert refreshed is not None
+    result = refreshed.context_json["result"]
+    assert result["summary"] == "多轮 ReAct 子 Agent 完成"
+    assert [item["output"]["content"] for item in result["tool_results"]] == [
+        "第一轮",
+        "第二轮",
+    ]
+    assert result["react_trace"] == [
+        {"round": 1, "executed_tool_count": 1, "next_tool_count": 1, "done": False},
+        {"round": 2, "executed_tool_count": 1, "next_tool_count": 0, "done": True},
+    ]
+    assert len(gateway.requests) == 2
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    react_events = [
+        event
+        for event in events
+        if event.event_type == "SUBAGENT_PROGRESS"
+        and event.payload_json.get("stage") == "react_round_completed"
+    ]
+    assert [event.payload_json["round"] for event in react_events] == [1, 2]
 
 
 def test_worker_timeout_flow_writes_timeout_event(db_session: Session) -> None:

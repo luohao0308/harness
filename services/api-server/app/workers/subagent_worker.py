@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -7,7 +8,12 @@ from pathlib import Path
 import dramatiq
 from sqlalchemy.orm import Session
 
-from app.agents.model_gateway import AuditedModelGateway, ModelMessage, ModelRequest
+from app.agents.model_gateway import (
+    AuditedModelGateway,
+    ModelGateway,
+    ModelMessage,
+    ModelRequest,
+)
 from app.db.models import AgentRun, Task, utc_now
 from app.db.session import SessionLocal
 from app.events.event_store import EventStore
@@ -26,6 +32,7 @@ def execute_subagent(
     simulate_timeout: bool = False,
     session: Session | None = None,
     workspace_root: Path | None = None,
+    model_gateway: ModelGateway | None = None,
 ) -> str:
     if session is not None:
         return _execute_subagent_with_session(
@@ -33,6 +40,7 @@ def execute_subagent(
             agent_run_id=agent_run_id,
             simulate_timeout=simulate_timeout,
             workspace_root=workspace_root,
+            model_gateway=model_gateway,
         )
 
     with SessionLocal() as session:
@@ -41,6 +49,7 @@ def execute_subagent(
             agent_run_id=agent_run_id,
             simulate_timeout=simulate_timeout,
             workspace_root=workspace_root,
+            model_gateway=model_gateway,
         )
 
 
@@ -50,6 +59,7 @@ def _execute_subagent_with_session(
     agent_run_id: str,
     simulate_timeout: bool,
     workspace_root: Path | None,
+    model_gateway: ModelGateway | None,
 ) -> str:
     agent_run = session.get(AgentRun, agent_run_id)
     if agent_run is None:
@@ -94,48 +104,26 @@ def _execute_subagent_with_session(
             },
         )
         task = session.get(Task, agent_run.task_id)
-        tool_results = _execute_assignment_tools(
+        tool_results, react_trace, model_summary = _execute_react_loop(
             session=session,
             task=task,
             agent_run=agent_run,
             workspace_root=workspace_root,
             event_store=event_store,
+            model_gateway=model_gateway,
         )
         summary = _assignment_summary(agent_run.context_json)
         if tool_results:
             summary = _summary_with_tool_results(summary=summary, tool_results=tool_results)
-        if task is not None:
-            response = AuditedModelGateway(
-                session=session,
-                task_id=agent_run.task_id,
-                agent_run_id=agent_run.id,
-            ).complete(
-                ModelRequest(
-                    model_provider=task.model_provider,
-                    model_name=task.model_name,
-                    messages=[
-                        ModelMessage(
-                            role="system",
-                            content=(
-                                "You are a Harness Subagent. Complete the assigned async task "
-                                "and return compact JSON with summary and findings."
-                            ),
-                        ),
-                        ModelMessage(
-                            role="user",
-                            content=jsonish_assignment(agent_run.context_json),
-                        ),
-                    ],
-                )
-            )
-            if response.content and response.content != "{}":
-                summary = response.content[:1000]
+        if model_summary:
+            summary = model_summary
         time.sleep(0)
         agent_run.context_json = {
             **agent_run.context_json,
             "result": {
                 "summary": summary,
                 "tool_results": tool_results,
+                "react_trace": react_trace,
                 "completed_at": utc_now().isoformat(),
             },
         }
@@ -179,26 +167,91 @@ def timeout_at_from_now(timeout_seconds: int = DEFAULT_SUBAGENT_TIMEOUT_SECONDS)
     return utc_now() + timedelta(seconds=timeout_seconds)
 
 
-def jsonish_assignment(assignment: dict) -> str:
-    return "\n".join(f"{key}: {value}" for key, value in assignment.items())
-
-
 def _assignment_summary(assignment: dict) -> str:
     step_key = assignment.get("step_key") or "subagent_task"
     description = assignment.get("description") or assignment.get("goal") or "异步子任务"
     return f"Subagent completed {step_key}: {description}"
 
 
-def _execute_assignment_tools(
+def _execute_react_loop(
     *,
     session: Session,
     task: Task | None,
     agent_run: AgentRun,
     workspace_root: Path | None,
     event_store: EventStore,
+    model_gateway: ModelGateway | None,
+) -> tuple[list[dict], list[dict], str | None]:
+    if task is None:
+        return [], [], None
+
+    max_rounds = _assignment_max_tool_rounds(agent_run.context_json)
+    pending_tools = _assignment_tools(agent_run.context_json)
+    tool_results: list[dict] = []
+    react_trace: list[dict] = []
+    model_summary: str | None = None
+
+    for round_index in range(1, max_rounds + 1):
+        round_results = _execute_tool_batch(
+            session=session,
+            task=task,
+            agent_run=agent_run,
+            workspace_root=workspace_root,
+            event_store=event_store,
+            tools=pending_tools,
+            round_index=round_index,
+        )
+        tool_results.extend(round_results)
+        response = _complete_react_round(
+            session=session,
+            task=task,
+            agent_run=agent_run,
+            tool_results=tool_results,
+            round_index=round_index,
+            model_gateway=model_gateway,
+        )
+        parsed = _parse_react_response(response)
+        if parsed["summary"]:
+            model_summary = parsed["summary"]
+        next_tools = parsed["next_tools"]
+        react_trace.append(
+            {
+                "round": round_index,
+                "executed_tool_count": len(round_results),
+                "next_tool_count": len(next_tools),
+                "done": parsed["done"],
+            }
+        )
+        event_store.append(
+            task_id=agent_run.task_id,
+            agent_run_id=agent_run.id,
+            event_type=EventType.SUBAGENT_PROGRESS,
+            payload_json={
+                "agent_run_id": agent_run.id,
+                "stage": "react_round_completed",
+                "round": round_index,
+                "executed_tool_count": len(round_results),
+                "next_tool_count": len(next_tools),
+                "done": parsed["done"],
+            },
+        )
+        if parsed["done"] or not next_tools:
+            break
+        pending_tools = next_tools
+    return tool_results, react_trace, model_summary
+
+
+def _execute_tool_batch(
+    *,
+    session: Session,
+    task: Task,
+    agent_run: AgentRun,
+    workspace_root: Path | None,
+    event_store: EventStore,
+    tools: list[dict],
+    round_index: int,
 ) -> list[dict]:
-    tools = _assignment_tools(agent_run.context_json)
-    if task is None or not tools:
+    if not tools:
         return []
 
     event_store.append(
@@ -208,6 +261,7 @@ def _execute_assignment_tools(
         payload_json={
             "agent_run_id": agent_run.id,
             "stage": "executing_tools",
+            "round": round_index,
             "tool_count": len(tools),
         },
     )
@@ -238,8 +292,57 @@ def _execute_assignment_tools(
     return results
 
 
+def _complete_react_round(
+    *,
+    session: Session,
+    task: Task,
+    agent_run: AgentRun,
+    tool_results: list[dict],
+    round_index: int,
+    model_gateway: ModelGateway | None,
+) -> str:
+    response = AuditedModelGateway(
+        session=session,
+        task_id=agent_run.task_id,
+        agent_run_id=agent_run.id,
+        gateway=model_gateway,
+    ).complete(
+        ModelRequest(
+            model_provider=task.model_provider,
+            model_name=task.model_name,
+            messages=[
+                ModelMessage(
+                    role="system",
+                    content=(
+                        "You are a Harness Subagent. Use ReAct style execution. "
+                        "Return compact JSON with keys summary, done and next_tools. "
+                        "next_tools must be a list of {tool_name,input_json}."
+                    ),
+                ),
+                ModelMessage(
+                    role="user",
+                    content=json.dumps(
+                        {
+                            "assignment": agent_run.context_json,
+                            "round": round_index,
+                            "tool_results": tool_results,
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                ),
+            ],
+        )
+    )
+    return response.content
+
+
 def _assignment_tools(assignment: dict) -> list[dict]:
     raw_tools = assignment.get("tools", [])
+    return _normalize_tools(raw_tools)
+
+
+def _normalize_tools(raw_tools: object) -> list[dict]:
     if not isinstance(raw_tools, list):
         return []
     registry = ToolRegistry.default()
@@ -255,6 +358,34 @@ def _assignment_tools(assignment: dict) -> list[dict]:
             raise ValueError(f"tool input_json must be an object: {tool_name}")
         tools.append({"tool_name": tool_name, "input_json": input_json})
     return tools
+
+
+def _assignment_max_tool_rounds(assignment: dict) -> int:
+    raw_value = assignment.get("max_tool_rounds", 1)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, min(value, 5))
+
+
+def _parse_react_response(content: str) -> dict:
+    if not content or content == "{}":
+        return {"summary": None, "done": True, "next_tools": []}
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return {"summary": content[:1000], "done": True, "next_tools": []}
+    if not isinstance(parsed, dict):
+        return {"summary": content[:1000], "done": True, "next_tools": []}
+    summary = parsed.get("summary")
+    next_tools = _normalize_tools(parsed.get("next_tools", []))
+    done = bool(parsed.get("done", not next_tools))
+    return {
+        "summary": summary[:1000] if isinstance(summary, str) else None,
+        "done": done,
+        "next_tools": next_tools,
+    }
 
 
 def _assignment_roles(assignment: dict) -> list[str]:
