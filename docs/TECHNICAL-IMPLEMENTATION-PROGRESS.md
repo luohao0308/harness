@@ -80,6 +80,7 @@ docs/SPEC.md
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
 | Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent、恢复批次历史 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 并发 | 查询、创建、取消、状态追踪 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
+| Subagent 恢复运营 | 跨任务查看恢复批次、扫描数、恢复数、动作统计和任务聚合 | `GET /api/subagents/recovery/summary`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
 | 工具执行 | 按策略执行工具 | `POST /api/tasks/{task_id}/tools/execute` | 基础落地 |
@@ -114,6 +115,7 @@ docs/SPEC.md
 | `/subagents/:subagentId` | 子 Agent 详情、取消、结果产物、工具结果、ReAct 轨迹、上下文压缩 | Subagent API、Task Result API | 已接入 |
 | `/sandboxes` | 沙箱和 WarmPool | Sandbox API、WarmPool API | 已接入 |
 | `/observability` | 运行摘要 | Observability Summary、Metrics | 基础接入 |
+| `/observability` 恢复运营区 | 跨任务子 Agent 恢复批次、动作统计和任务聚合 | Subagent Recovery Summary API | 已接入 |
 | `/settings/models` | 模型设置 | Settings Models API、Model Health API | 已接入，展示 RPM、TPM、探测模式和熔断状态 |
 | `/settings/policies` | 策略设置 | Settings Policies API | 已接入 |
 | 官网 | 产品展示、文档、OpenAPI 下载 | Next.js、公开 OpenAPI 文件 | 已接入，首页、产品、架构、方案、安全、部署、文档和联系页已接通 |
@@ -141,7 +143,7 @@ docs/SPEC.md
 
 | 增强项 | 说明 | 目标文档 |
 |---|---|---|
-| Worker 级恢复跨任务汇总 | 当前任务级恢复、批次历史、自动巡检、指标和告警已落地，后续增强跨任务运营视图 | `docs/human/features/04-subagent-orchestration.md` |
+| Worker 级恢复跨任务汇总 | 已落地组织级恢复运营摘要；后续增强跨组织汇总和导出 | `docs/human/features/04-subagent-orchestration.md` |
 | 观测深链 | Loki、Grafana、Tempo 基础代理与回退已落地，后续增强权限模型、筛选深链和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
 | 步骤级断点续跑 | 当前任务级恢复和已完成步骤跳过已落地，后续增强步骤级人工选择与批量恢复 | `docs/human/features/02-planner-executor.md` |
 

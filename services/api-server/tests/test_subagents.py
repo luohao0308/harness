@@ -442,6 +442,24 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     assert {batch.recovered_count for batch in batches} == {1}
     assert db_session.get(AgentRun, first_stale.id).status == "PENDING"
     assert db_session.get(AgentRun, second_expired.id).status == "TIMEOUT"
+    summary = TestClient(app).get("/api/subagents/recovery/summary", headers=AUTH_HEADERS)
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["organization_id"] == "dev-org"
+    assert summary_payload["batch_total"] == 1
+    assert summary_payload["task_total"] == 2
+    assert summary_payload["scanned_total"] == 2
+    assert summary_payload["recovered_total"] == 2
+    assert summary_payload["lock_skipped_total"] == 0
+    assert summary_payload["action_counts"] == {
+        "marked_timeout": 1,
+        "reset_to_pending": 1,
+    }
+    assert {item["task_id"] for item in summary_payload["tasks"]} == {
+        first_task.id,
+        second_task.id,
+    }
+    assert len(summary_payload["recent_batches"]) == 2
     metrics = TestClient(app).get("/metrics").text
     assert 'agent_subagent_recovery_total{action="reset_to_pending"}' in metrics
     assert 'agent_subagent_recovery_total{action="marked_timeout"}' in metrics

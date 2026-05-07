@@ -9,6 +9,7 @@
 | 能力 | 用户入口 | 用户结果 |
 |---|---|---|
 | 运行摘要 | `/observability` | 查看任务、事件、模型、工具、沙箱和 WarmPool 汇总 |
+| 恢复运营摘要 | `/observability` | 查看子 Agent 恢复批次、扫描数、恢复数、动作统计和任务聚合 |
 | 指标查看 | `/observability`、`/metrics` | 查看 Prometheus 指标 |
 | 仪表盘查看 | `/observability`、Grafana | 查看任务吞吐、失败率、资源和模型工具指标 |
 | 日志查看 | `/observability/logs` | 按任务、trace、服务筛选日志 |
@@ -31,13 +32,14 @@ GET /api/observability/grafana/dashboards
 GET /api/observability/logs
 GET /api/observability/traces/{trace_id}
 GET /api/observability/services/health
+GET /api/subagents/recovery/summary
 ```
 
 ## 前端入口
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/observability` | `GET /api/observability/summary`、`GET /metrics` | 运行摘要和指标 |
+| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary`、`GET /metrics` | 运行摘要、恢复运营摘要和指标 |
 | `/observability/logs` | `GET /api/observability/logs` | 日志筛选和详情 |
 | `/observability/traces` | `GET /api/observability/traces/{trace_id}` | Trace 查询和 span 列表 |
 | `/settings/models` | Settings API | 模型设置 |
@@ -197,6 +199,7 @@ cookie
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store |
 | 观测服务健康 | 基础落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo |
+| 子 Agent 恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 与控制台观测页展示批次、任务聚合和动作统计 |
 | 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
 
 ## 缺口
@@ -235,3 +238,4 @@ cookie
 - 事件中的 `trace_id` 与响应头 `x-trace-id` 能关联。
 - 控制台切换 English 后页面表头、按钮、空状态和错误状态切换为英文。
 - 技术值保留原始值，并显示当前语言说明。
+- 观测页必须展示子 Agent 恢复运营摘要，包含批次数、任务数、扫描数、恢复数和动作统计。

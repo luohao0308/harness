@@ -196,7 +196,7 @@ export type Subagent = {
 
 export type SubagentRecoveryResponse = {
   batch_id: string;
-  task_id: string;
+  task_id: string | null;
   trigger: string;
   replay_sequence: number;
   stale_after_seconds: number;
@@ -220,6 +220,26 @@ export type SubagentRecoveryBatch = SubagentRecoveryResponse & {
   lock_acquired: boolean;
   task_count: number;
   recovered_by_task: Array<Record<string, unknown>>;
+};
+
+export type SubagentRecoverySummary = {
+  organization_id: string | null;
+  batch_total: number;
+  task_total: number;
+  scanned_total: number;
+  recovered_total: number;
+  lock_skipped_total: number;
+  action_counts: Record<string, number>;
+  latest_completed_at: string | null;
+  tasks: Array<{
+    task_id: string;
+    scanned_count: number;
+    recovered_count: number;
+    latest_batch_id: string;
+    latest_completed_at: string;
+    latest_replay_sequence: number;
+  }>;
+  recent_batches: SubagentRecoveryBatch[];
 };
 
 export type TaskResult = {
@@ -497,6 +517,10 @@ export async function recoverTaskSubagents(taskId: string) {
     method: "POST",
     body: JSON.stringify({ stale_after_seconds: 900, enqueue: false }),
   });
+}
+
+export async function getSubagentRecoverySummary() {
+  return request<SubagentRecoverySummary>("/api/subagents/recovery/summary");
 }
 
 export async function listModelCalls(taskId: string) {

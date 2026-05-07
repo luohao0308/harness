@@ -817,6 +817,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents/recovery/summary:
+    get:
+      tags:
+      - subagents
+      summary: 查询子 Agent 恢复运营摘要
+      description: 按当前组织聚合最近的子 Agent 自动恢复与手动恢复批次，用于运营视图。
+      operationId: get_subagent_recovery_summary_api_subagents_recovery_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentRecoverySummaryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/subagents/{subagent_id}:
     get:
       tags:
@@ -2013,7 +2043,9 @@ components:
           title: Batch Id
           description: 恢复批次 ID
         task_id:
-          type: string
+          anyOf:
+          - type: string
+          - type: 'null'
           title: Task Id
           description: 任务 ID
         trigger:
@@ -2083,7 +2115,6 @@ components:
       type: object
       required:
       - batch_id
-      - task_id
       - trigger
       - replay_sequence
       - stale_after_seconds
@@ -2137,7 +2168,9 @@ components:
           title: Batch Id
           description: 恢复批次 ID
         task_id:
-          type: string
+          anyOf:
+          - type: string
+          - type: 'null'
           title: Task Id
           description: 任务 ID
         trigger:
@@ -2184,7 +2217,6 @@ components:
       type: object
       required:
       - batch_id
-      - task_id
       - trigger
       - replay_sequence
       - stale_after_seconds
@@ -2195,6 +2227,106 @@ components:
       - recovered
       - completed_at
       title: SubagentRecoveryResponse
+    SubagentRecoverySummaryResponse:
+      properties:
+        organization_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Organization Id
+          description: 组织 ID
+        batch_total:
+          type: integer
+          title: Batch Total
+          description: 恢复批次数
+        task_total:
+          type: integer
+          title: Task Total
+          description: 涉及任务数
+        scanned_total:
+          type: integer
+          title: Scanned Total
+          description: 累计扫描子 Agent 数
+        recovered_total:
+          type: integer
+          title: Recovered Total
+          description: 累计恢复子 Agent 数
+        lock_skipped_total:
+          type: integer
+          title: Lock Skipped Total
+          description: 未获取恢复锁次数
+        action_counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Action Counts
+          description: 恢复动作统计
+        latest_completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Latest Completed At
+          description: 最近完成时间
+        tasks:
+          items:
+            $ref: '#/components/schemas/SubagentRecoveryTaskSummary'
+          type: array
+          title: Tasks
+          description: 按任务聚合
+        recent_batches:
+          items:
+            $ref: '#/components/schemas/SubagentRecoveryBatchResponse'
+          type: array
+          title: Recent Batches
+          description: 最近恢复批次
+      type: object
+      required:
+      - batch_total
+      - task_total
+      - scanned_total
+      - recovered_total
+      - lock_skipped_total
+      - action_counts
+      - tasks
+      - recent_batches
+      title: SubagentRecoverySummaryResponse
+    SubagentRecoveryTaskSummary:
+      properties:
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        scanned_count:
+          type: integer
+          title: Scanned Count
+          description: 累计扫描数
+        recovered_count:
+          type: integer
+          title: Recovered Count
+          description: 累计恢复数
+        latest_batch_id:
+          type: string
+          title: Latest Batch Id
+          description: 最近批次 ID
+        latest_completed_at:
+          type: string
+          format: date-time
+          title: Latest Completed At
+          description: 最近完成时间
+        latest_replay_sequence:
+          type: integer
+          title: Latest Replay Sequence
+          description: 最近 Replay 序号
+      type: object
+      required:
+      - task_id
+      - scanned_count
+      - recovered_count
+      - latest_batch_id
+      - latest_completed_at
+      - latest_replay_sequence
+      title: SubagentRecoveryTaskSummary
     SubagentResponse:
       properties:
         id:
@@ -3165,4 +3297,3 @@ components:
     HTTPBearer:
       type: http
       scheme: bearer
-

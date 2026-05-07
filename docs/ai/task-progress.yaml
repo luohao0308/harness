@@ -580,16 +580,22 @@ stages:
       - apps/web-site/tailwind.config.ts
       - apps/web-site/tsconfig.json
       - apps/agent-console/src/app/routes.tsx
+      - apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx
       - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
       - apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx
       - apps/agent-console/src/features/subagents/pages/SubagentsPage.tsx
       - apps/agent-console/src/features/tasks/api.ts
       - apps/agent-console/src/features/tasks/components/TaskResultPanel.tsx
+      - services/api-server/app/api/schemas.py
+      - services/api-server/app/api/subagents.py
+      - services/api-server/tests/test_subagents.py
       - deploy/docker-compose/docker-compose.yml
       - deploy/nginx/agent-harness.conf
       - docs/SPEC-INDEX.md
       - docs/SPEC.md
       - docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md
+      - docs/api/openapi.json
+      - docs/api/openapi.yaml
       - docs/human/07-deployment-operations.md
       - docs/human/10-task-progress.md
       - docs/human/features/04-subagent-orchestration.md
@@ -601,6 +607,8 @@ stages:
       - docs/runbooks/deployment.md
       - docs/runbooks/local-development.md
     verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
       - cd apps/agent-console && npm run lint
       - cd apps/agent-console && npm run build
       - cd apps/web-site && npm run lint
@@ -610,8 +618,8 @@ stages:
       - bash scripts/check-docs.sh
     verification_result: passed
     branch: stage/stage-13-website-code-integration
-    commit_sha: 5a12fc8b4e7d8a0d463c024aaf06eb9091b36bda
+    commit_sha: e705fc3e6500170bdbb63e88981b1cf7710aee0a
     pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, and synchronized Spec coverage."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, and synchronized Spec coverage."
     next_stage: completed

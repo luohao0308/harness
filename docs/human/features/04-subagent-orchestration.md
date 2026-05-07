@@ -20,6 +20,7 @@ Subagent 负责异步、长耗时、并发探索类任务。主 Executor 不被�
 GET  /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents/recover
+GET  /api/subagents/recovery/summary
 GET  /api/subagents/{subagent_id}
 POST /api/subagents/{subagent_id}/cancel
 ```
@@ -159,6 +160,7 @@ agent_subagent_recovery_last_recovered
 | 自动恢复巡检 | 基础落地 | `subagent_recovery_worker` 扫描 `PENDING`、`RUNNING` 子 Agent |
 | 恢复批次详情 | 基础落地 | 手动恢复和自动巡检返回批次 ID、扫描数量、恢复数量、动作统计和完成时间 |
 | 恢复批次历史 | 已落地 | `subagent_recovery_batches` 与 `GET /api/tasks/{task_id}/subagents/recovery-batches` |
+| 跨任务恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 按组织聚合批次数、涉及任务、扫描数、恢复数、锁跳过次数、动作统计和最近批次 |
 | 恢复观测指标 | 已落地 | `/metrics` 与 Grafana 默认 Dashboard 展示恢复动作 |
 | 恢复告警规则 | 已落地 | Prometheus 加载 `deploy/monitoring/alert-rules.yml` |
 | 并发上限 | 已落地 | 固定 5 |
@@ -175,14 +177,14 @@ agent_subagent_recovery_last_recovered
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 自动恢复批次汇总 | 当前已有巡检函数、跨节点恢复锁、批次详情、批次历史、service loop、Compose 服务、指标和告警规则 | 增强跨任务恢复批次汇总 |
+| 自动恢复批次汇总 | 跨任务恢复运营摘要已落地，控制台观测页已展示组织级恢复批次和任务聚合 | 增强跨组织汇总和导出 |
 | 派生关系展示 | 基础落地，执行计划、Subagent 面板和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量状态展示 |
 
 ## 实现顺序
 
 ```text
 1. 固化 agent_runs 字段和状态机
-2. 增强跨任务恢复批次汇总
+2. 增强跨组织汇总和导出
 3. 增强批量状态展示
 4. 增加超时和取消测试
 ```
@@ -204,4 +206,5 @@ agent_subagent_recovery_last_recovered
 - 长上下文执行必须保存完整 `tool_results`，模型请求必须使用压缩后的 `tool_context`。
 - 任务结果页和子 Agent 页面必须展示上下文压缩摘要。
 - 手动恢复必须在任务详情页展示最近恢复批次摘要。
+- 观测页必须展示跨任务恢复运营摘要。
 - 事件时间线必须展示异步步骤到子 Agent 的并行执行拓扑。

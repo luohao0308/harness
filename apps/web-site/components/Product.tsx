@@ -59,7 +59,7 @@ export function Product({ onNav }: { onNav?: (k: string) => void }) {
     ["任务生命周期", "/api/tasks · /api/tasks/{id}/{start,cancel,resume,result}", "任务列表、任务详情", "标准化任务状态机，避免散落实现"],
     ["Planner", "内部模块（任务启动后触发）", "任务详情 · 执行计划面板", "把自然语言目标拆成可执行步骤"],
     ["Executor / ReAct", "内部模块（事件可见）", "任务详情 · 事件时间线", "可观测的工具调用循环"],
-    ["Subagent", "GET /api/tasks/{id}/subagents · GET /api/subagents/{id} · POST /api/subagents/{id}/cancel", "任务详情 · 子 Agent 面板 · 子 Agent 详情", "并发子任务执行、结果产物查看与可控取消"],
+    ["Subagent", "GET /api/tasks/{id}/subagents · GET /api/subagents/{id} · GET /api/subagents/recovery/summary", "任务详情 · 子 Agent 面板 · 子 Agent 详情 · 观测页", "并发子任务执行、结果产物查看与恢复运营"],
     ["Event Sourcing", "GET /api/tasks/{id}/events", "事件时间线", "全链路可追溯、可审计"],
     ["SSE 实时事件", "GET /api/tasks/{id}/events/stream", "事件时间线（实时）", "无需轮询的实时调试"],
     ["Replay", "POST /api/tasks/{id}/replay", "任务详情 · 重放面板", "故障复盘与状态重建"],

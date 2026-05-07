@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Box, ExternalLink, Gauge, GitBranch, Logs, RefreshCw } from "lucide-react";
+import { Activity, Box, ExternalLink, Gauge, GitBranch, Logs, RefreshCw, RotateCcw } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, Dot, statusTone } from "../../../components/ui/badge";
@@ -7,11 +8,13 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { enabledLabel, eventLabel, statusLabel } from "../../../lib/labels";
+import { formatShortDate } from "../../../lib/utils";
 import type { CountItem } from "../../tasks/api";
 import {
   getObservabilityServicesHealth,
   getObservabilitySummary,
   getObservabilityTrace,
+  getSubagentRecoverySummary,
   listGrafanaDashboards,
   listObservabilityLogs,
 } from "../../tasks/api";
@@ -29,6 +32,10 @@ export function ObservabilityPage() {
   const dashboards = useQuery({
     queryKey: ["observability", "grafana-dashboards"],
     queryFn: listGrafanaDashboards,
+  });
+  const recovery = useQuery({
+    queryKey: ["subagents", "recovery-summary"],
+    queryFn: getSubagentRecoverySummary,
   });
   const logs = useQuery({
     queryKey: ["observability", "logs"],
@@ -110,6 +117,119 @@ export function ObservabilityPage() {
             <DistributionTable items={data?.sandboxes_by_status ?? []} emptyText={text("暂无沙箱实例", "No sandbox instances")} />
           </Card>
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <RotateCcw className="h-4 w-4" /> {text("子 Agent 恢复运营", "Subagent Recovery Operations")}
+            </div>
+            <span className="text-xs text-slate-500">
+              {recovery.data?.latest_completed_at
+                ? text(
+                    `最近完成 ${formatShortDate(recovery.data.latest_completed_at)}`,
+                    `Latest ${formatShortDate(recovery.data.latest_completed_at)}`,
+                  )
+                : text("等待恢复批次", "Waiting for recovery batches")}
+            </span>
+          </CardHeader>
+          <div className="grid grid-cols-6 gap-3 border-b border-slate-100 p-3 text-xs">
+            <Metric label={text("恢复批次", "Batches")} value={formatNumber(recovery.data?.batch_total)} />
+            <Metric label={text("涉及任务", "Tasks")} value={formatNumber(recovery.data?.task_total)} />
+            <Metric label={text("扫描子 Agent", "Scanned")} value={formatNumber(recovery.data?.scanned_total)} />
+            <Metric label={text("恢复子 Agent", "Recovered")} value={formatNumber(recovery.data?.recovered_total)} />
+            <Metric label={text("恢复锁跳过", "Lock Skips")} value={formatNumber(recovery.data?.lock_skipped_total)} />
+            <Metric
+              label={text("动作类型", "Actions")}
+              value={formatNumber(Object.keys(recovery.data?.action_counts ?? {}).length)}
+            />
+          </div>
+          <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 p-3">
+            <div className="overflow-hidden rounded-md border border-slate-100">
+              <Table>
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <Th>{text("任务", "Task")}</Th>
+                    <Th className="text-right">{text("扫描", "Scanned")}</Th>
+                    <Th className="text-right">{text("恢复", "Recovered")}</Th>
+                    <Th>{text("最近批次", "Latest Batch")}</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(recovery.data?.tasks ?? []).slice(0, 6).map((item) => (
+                    <tr key={item.task_id} className="border-t border-slate-100">
+                      <Td>
+                        <Link
+                          to={`/tasks/${item.task_id}/subagents`}
+                          className="font-mono text-slate-900 hover:text-slate-950"
+                        >
+                          {item.task_id.slice(0, 8)}
+                        </Link>
+                      </Td>
+                      <Td className="text-right font-mono text-slate-600">{item.scanned_count}</Td>
+                      <Td className="text-right font-mono text-slate-600">{item.recovered_count}</Td>
+                      <Td className="text-slate-500">
+                        <div className="font-mono text-[11px]">{item.latest_batch_id.slice(0, 13)}</div>
+                        <div className="mt-0.5 text-[10px]">
+                          Replay {item.latest_replay_sequence} · {formatShortDate(item.latest_completed_at)}
+                        </div>
+                      </Td>
+                    </tr>
+                  ))}
+                  {!recovery.isLoading && (recovery.data?.tasks.length ?? 0) === 0 && (
+                    <tr className="border-t border-slate-100">
+                      <Td colSpan={4} className="py-8 text-center text-slate-500">
+                        {text("暂无恢复任务汇总", "No recovery task summary")}
+                      </Td>
+                    </tr>
+                  )}
+                </tbody>
+              </Table>
+            </div>
+            <div className="space-y-3">
+              <div className="rounded-md border border-slate-100 p-3">
+                <div className="mb-2 text-[11px] tracking-widest text-slate-500">
+                  {text("恢复动作统计", "Recovery Action Counts")}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(recovery.data?.action_counts ?? {}).map(([action, count]) => (
+                    <Badge key={action} tone="info">
+                      {action} <span className="font-mono">{count}</span>
+                    </Badge>
+                  ))}
+                  {Object.keys(recovery.data?.action_counts ?? {}).length === 0 && (
+                    <span className="text-xs text-slate-500">{text("暂无动作", "No actions")}</span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border border-slate-100 p-3">
+                <div className="mb-2 text-[11px] tracking-widest text-slate-500">
+                  {text("最近批次", "Recent Batches")}
+                </div>
+                <div className="space-y-1.5">
+                  {(recovery.data?.recent_batches ?? []).slice(0, 4).map((batch) => (
+                    <div key={`${batch.batch_id}-${batch.task_id ?? "none"}`} className="flex items-center justify-between gap-3 text-xs">
+                      <span className="min-w-0 truncate">
+                        <span className="font-mono text-slate-700">{batch.batch_id.slice(0, 13)}</span>
+                        <span className="ml-2 text-slate-500">
+                          {batch.trigger === "auto" ? text("自动", "Auto") : text("手动", "Manual")} ·{" "}
+                          {text(`恢复 ${batch.recovered_count}`, `Recovered ${batch.recovered_count}`)}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[10px] text-slate-400">
+                        {formatShortDate(batch.completed_at)}
+                      </span>
+                    </div>
+                  ))}
+                  {!recovery.isLoading && (recovery.data?.recent_batches.length ?? 0) === 0 && (
+                    <div className="py-4 text-center text-xs text-slate-500">
+                      {text("暂无恢复批次", "No recovery batches")}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
 
         <div className="grid grid-cols-2 gap-4">
           <Card>

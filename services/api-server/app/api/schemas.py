@@ -244,7 +244,7 @@ class SubagentRecoveryItem(BaseModel):
 
 class SubagentRecoveryResponse(BaseModel):
     batch_id: str = Field(description="恢复批次 ID")
-    task_id: str = Field(description="任务 ID")
+    task_id: str | None = Field(default=None, description="任务 ID")
     trigger: str = Field(description="触发来源")
     replay_sequence: int = Field(description="Replay 序号")
     stale_after_seconds: int = Field(description="卡住判定秒数")
@@ -268,6 +268,28 @@ class SubagentRecoveryBatchResponse(SubagentRecoveryResponse):
 class SubagentRecoveryBatchPage(BaseModel):
     items: list[SubagentRecoveryBatchResponse] = Field(description="恢复批次列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class SubagentRecoveryTaskSummary(BaseModel):
+    task_id: str = Field(description="任务 ID")
+    scanned_count: int = Field(description="累计扫描数")
+    recovered_count: int = Field(description="累计恢复数")
+    latest_batch_id: str = Field(description="最近批次 ID")
+    latest_completed_at: datetime = Field(description="最近完成时间")
+    latest_replay_sequence: int = Field(description="最近 Replay 序号")
+
+
+class SubagentRecoverySummaryResponse(BaseModel):
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    batch_total: int = Field(description="恢复批次数")
+    task_total: int = Field(description="涉及任务数")
+    scanned_total: int = Field(description="累计扫描子 Agent 数")
+    recovered_total: int = Field(description="累计恢复子 Agent 数")
+    lock_skipped_total: int = Field(description="未获取恢复锁次数")
+    action_counts: dict[str, int] = Field(description="恢复动作统计")
+    latest_completed_at: datetime | None = Field(default=None, description="最近完成时间")
+    tasks: list[SubagentRecoveryTaskSummary] = Field(description="按任务聚合")
+    recent_batches: list[SubagentRecoveryBatchResponse] = Field(description="最近恢复批次")
 
 
 class SandboxResponse(BaseModel):
