@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,8 @@ from app.agents.subagent_recovery_history import (
 )
 from app.api.schemas import (
     SubagentCreateRequest,
+    SubagentListItemResponse,
+    SubagentListPage,
     SubagentPage,
     SubagentRecoverRequest,
     SubagentRecoveryBatchPage,
@@ -44,6 +46,58 @@ def list_task_subagents(task_id: str, session: DbSession, principal: Principal) 
         .order_by(AgentRun.started_at.asc().nullsfirst(), AgentRun.id.asc())
     )
     return SubagentPage(items=list(session.execute(statement).scalars()))
+
+
+@router.get(
+    "/subagents",
+    response_model=SubagentListPage,
+    summary="查询组织子 Agent 列表",
+    description="返回当前组织全部子 Agent，支持按状态筛选，用于批量运营视图。",
+)
+def list_subagents(
+    session: DbSession,
+    principal: Principal,
+    status_filter: str | None = Query(default=None, alias="status", description="子 Agent 状态"),
+    limit: int = Query(default=100, ge=1, le=500, description="返回数量"),
+) -> SubagentListPage:
+    statement = (
+        select(AgentRun, Task)
+        .join(Task, Task.id == AgentRun.task_id)
+        .where(
+            Task.organization_id == principal.organization_id,
+            AgentRun.agent_type == "subagent",
+        )
+        .order_by(AgentRun.started_at.desc(), AgentRun.id.desc())
+        .limit(limit)
+    )
+    if status_filter:
+        statement = statement.where(AgentRun.status == status_filter)
+    rows = session.execute(statement).all()
+    return SubagentListPage(
+        items=[
+            SubagentListItemResponse(
+                id=agent_run.id,
+                task_id=agent_run.task_id,
+                parent_agent_id=agent_run.parent_agent_id,
+                agent_type=agent_run.agent_type,
+                status=agent_run.status,
+                context_json=agent_run.context_json,
+                started_at=agent_run.started_at,
+                completed_at=agent_run.completed_at,
+                timeout_at=agent_run.timeout_at,
+                task_title=task.title,
+                task_status=task.status,
+                step_key=_subagent_step_key(agent_run),
+            )
+            for agent_run, task in rows
+        ],
+        next_cursor=None,
+    )
+
+
+def _subagent_step_key(agent_run: AgentRun) -> str | None:
+    step_key = agent_run.context_json.get("step_key")
+    return str(step_key) if step_key is not None else None
 
 
 @router.post(

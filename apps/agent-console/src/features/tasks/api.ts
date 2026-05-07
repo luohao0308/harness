@@ -194,6 +194,12 @@ export type Subagent = {
   timeout_at: string | null;
 };
 
+export type SubagentListItem = Subagent & {
+  task_title: string;
+  task_status: string;
+  step_key: string | null;
+};
+
 export type SubagentRecoveryResponse = {
   batch_id: string;
   task_id: string | null;
@@ -495,6 +501,20 @@ export async function listTaskEvents(taskId: string) {
 export async function listTaskSubagents(taskId: string) {
   return request<{ items: Subagent[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/subagents`,
+  );
+}
+
+export async function listSubagents(params?: { status?: string; limit?: number }) {
+  const searchParams = new URLSearchParams();
+  if (params?.status && params.status !== "ALL") {
+    searchParams.set("status", params.status);
+  }
+  if (params?.limit) {
+    searchParams.set("limit", String(params.limit));
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<{ items: SubagentListItem[]; next_cursor: string | null }>(
+    `/api/subagents${suffix}`,
   );
 }
 

@@ -221,6 +221,17 @@ class SubagentPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
+class SubagentListItemResponse(SubagentResponse):
+    task_title: str = Field(description="任务标题")
+    task_status: str = Field(description="任务状态")
+    step_key: str | None = Field(default=None, description="来源步骤键")
+
+
+class SubagentListPage(BaseModel):
+    items: list[SubagentListItemResponse] = Field(description="组织子 Agent 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
 class SubagentCreateRequest(BaseModel):
     assignment: dict = Field(description="子 Agent 任务上下文")
     parent_agent_id: str | None = Field(default=None, description="父 Agent ID")

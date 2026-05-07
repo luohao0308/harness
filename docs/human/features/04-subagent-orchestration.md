@@ -20,6 +20,7 @@ Subagent 负责异步、长耗时、并发探索类任务。主 Executor 不被�
 GET  /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents/recover
+GET  /api/subagents
 GET  /api/subagents/recovery/summary
 GET  /api/subagents/{subagent_id}
 POST /api/subagents/{subagent_id}/cancel
@@ -31,6 +32,7 @@ POST /api/subagents/{subagent_id}/cancel
 |---|---|---|
 | `/tasks/:taskId` | Subagent API | 展示任务相关子 Agent |
 | `/tasks/:taskId/subagents` | Subagent API | 展示列表和状态 |
+| `/subagents` | Subagent API | 展示组织级批量状态、状态筛选、任务跳转和详情跳转 |
 | `/subagents/:subagentId` | Subagent API | 展示详情并取消 |
 
 异步执行在页面上的体现：
@@ -154,6 +156,7 @@ agent_subagent_recovery_last_recovered
 |---|---|---|
 | 子 Agent 创建 | 已落地 | `POST /api/tasks/{task_id}/subagents` |
 | 子 Agent 查询 | 已落地 | `GET /api/tasks/{task_id}/subagents` |
+| 组织子 Agent 批量查询 | 已落地 | `GET /api/subagents` 支持 `status` 和 `limit` |
 | 子 Agent 详情 | 已落地 | `GET /api/subagents/{subagent_id}` |
 | 子 Agent 取消 | 已落地 | `POST /api/subagents/{subagent_id}/cancel` |
 | 子 Agent 恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
@@ -178,14 +181,14 @@ agent_subagent_recovery_last_recovered
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 自动恢复批次汇总 | 跨任务恢复运营摘要已落地，控制台观测页已展示组织级恢复批次和任务聚合 | 增强跨组织汇总和导出 |
-| 派生关系展示 | 基础落地，执行计划、Subagent 面板和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量状态展示 |
+| 派生关系展示 | 已落地，执行计划、Subagent 面板、组织级批量状态页和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量操作 |
 
 ## 实现顺序
 
 ```text
 1. 固化 agent_runs 字段和状态机
 2. 增强跨组织汇总和导出
-3. 增强批量状态展示
+3. 增强批量操作
 4. 增加超时和取消测试
 ```
 
@@ -197,6 +200,7 @@ agent_subagent_recovery_last_recovered
 - 超时任务进入 `TIMEOUT`。
 - async step 必须生成 Subagent 记录。
 - 任务详情页必须展示异步派生出的 Subagent。
+- `/subagents` 必须展示组织级子 Agent 批量状态并支持状态筛选。
 - 执行计划面板必须展示异步步骤关联的子 Agent ID 和状态。
 - 主任务能读取 Subagent 结果摘要。
 - 多轮 ReAct 执行必须写入 `react_trace`。

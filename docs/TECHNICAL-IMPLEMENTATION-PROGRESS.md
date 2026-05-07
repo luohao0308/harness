@@ -79,7 +79,7 @@ docs/SPEC.md
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
 | Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent、恢复批次历史 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
-| Subagent 并发 | 查询、创建、取消、状态追踪 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
+| Subagent 并发 | 查询、创建、取消、状态追踪、组织级批量状态筛选 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
 | Subagent 恢复运营 | 跨任务查看恢复批次、扫描数、恢复数、动作统计和任务聚合 | `GET /api/subagents/recovery/summary`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
@@ -111,7 +111,7 @@ docs/SPEC.md
 | `/tasks/:taskId` | 详情、计划、事件、Replay、结果、Subagent、审计 | Task、Plan、Steps、Events、Replay、Audit、Subagent API | 已接入 |
 | `/tasks/:taskId/events` | 事件流聚焦 | Events API、SSE | 已接入 |
 | `/tasks/:taskId/subagents` | 子 Agent 聚焦 | Subagent API | 已接入 |
-| `/subagents` | 子 Agent 列表 | Task API、Subagent API | 已接入 |
+| `/subagents` | 组织级子 Agent 批量状态、状态筛选、任务跳转和详情跳转 | Subagent API | 已接入 |
 | `/subagents/:subagentId` | 子 Agent 详情、取消、结果产物、工具结果、ReAct 轨迹、上下文压缩 | Subagent API、Task Result API | 已接入 |
 | `/sandboxes` | 沙箱和 WarmPool | Sandbox API、WarmPool API | 已接入 |
 | `/observability` | 运行摘要 | Observability Summary、Metrics | 基础接入 |
@@ -170,7 +170,7 @@ docs/SPEC.md
 ```text
 1. 持续增强 Worker 级恢复跨任务汇总
 2. 增强观测深链、队列图表和 Grafana 权限模型
-3. 增强步骤级断点续跑与批量状态展示
+3. 增强步骤级断点续跑与批量操作
 ```
 
 ## 验证命令

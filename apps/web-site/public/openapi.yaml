@@ -746,6 +746,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents:
+    get:
+      tags:
+      - subagents
+      summary: 查询组织子 Agent 列表
+      description: 返回当前组织全部子 Agent，支持按状态筛选，用于批量运营视图。
+      operationId: list_subagents_api_subagents_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 子 Agent 状态
+          title: Status
+        description: 子 Agent 状态
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: 返回数量
+          default: 100
+          title: Limit
+        description: 返回数量
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentListPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/subagents/recover:
     post:
       tags:
@@ -1985,6 +2029,98 @@ components:
       required:
       - assignment
       title: SubagentCreateRequest
+    SubagentListItemResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 子 Agent ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        parent_agent_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Agent Id
+          description: 父 Agent ID
+        agent_type:
+          type: string
+          title: Agent Type
+          description: Agent 类型
+        status:
+          type: string
+          title: Status
+          description: 子 Agent 状态
+        context_json:
+          additionalProperties: true
+          type: object
+          title: Context Json
+          description: 上下文
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+          description: 开始时间
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+          description: 完成时间
+        timeout_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Timeout At
+          description: 超时时间
+        task_title:
+          type: string
+          title: Task Title
+          description: 任务标题
+        task_status:
+          type: string
+          title: Task Status
+          description: 任务状态
+        step_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Step Key
+          description: 来源步骤键
+      type: object
+      required:
+      - id
+      - task_id
+      - agent_type
+      - status
+      - context_json
+      - task_title
+      - task_status
+      title: SubagentListItemResponse
+    SubagentListPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SubagentListItemResponse'
+          type: array
+          title: Items
+          description: 组织子 Agent 列表
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: SubagentListPage
     SubagentPage:
       properties:
         items:

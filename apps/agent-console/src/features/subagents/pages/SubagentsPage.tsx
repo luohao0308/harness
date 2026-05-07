@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { GitBranch } from "lucide-react";
+import { GitBranch, ListFilter } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -11,13 +11,17 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { listTaskSubagents, listTasks } from "../../tasks/api";
+import { listSubagents, type SubagentListItem } from "../../tasks/api";
+
+const statusFilters = ["ALL", "PENDING", "RUNNING", "SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"];
 
 function contextSummary(context: Record<string, unknown>) {
   const label = context.label;
   const goal = context.goal;
+  const description = context.description;
   if (typeof label === "string" && label.length > 0) return label;
   if (typeof goal === "string" && goal.length > 0) return goal;
+  if (typeof description === "string" && description.length > 0) return description;
   return "子 Agent 上下文";
 }
 
@@ -35,22 +39,26 @@ function resultContextSummary(context: Record<string, unknown>) {
   return `工具 ${total} · 保留 ${retained} · 压缩 ${omitted}`;
 }
 
+function statusCounts(items: SubagentListItem[]) {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.status] = (counts[item.status] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
 export function SubagentsPage() {
   const { text } = useI18n();
-  const tasksQuery = useQuery({ queryKey: ["tasks"], queryFn: listTasks });
-  const tasks = tasksQuery.data?.items ?? [];
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const activeTaskId = selectedTaskId ?? tasks[0]?.id ?? null;
-  const activeTask = useMemo(
-    () => tasks.find((task) => task.id === activeTaskId) ?? null,
-    [activeTaskId, tasks],
-  );
+  const [statusFilter, setStatusFilter] = useState("ALL");
   const subagentsQuery = useQuery({
-    queryKey: ["task-subagents", activeTaskId],
-    queryFn: () => listTaskSubagents(activeTaskId!),
-    enabled: Boolean(activeTaskId),
+    queryKey: ["subagents", statusFilter],
+    queryFn: () => listSubagents({ status: statusFilter, limit: 200 }),
+  });
+  const allSubagentsQuery = useQuery({
+    queryKey: ["subagents", "all-counts"],
+    queryFn: () => listSubagents({ limit: 500 }),
   });
   const subagents = subagentsQuery.data?.items ?? [];
+  const counts = statusCounts(allSubagentsQuery.data?.items ?? []);
 
   return (
     <ConsoleShell title={text("子 Agent", "Subagents")}>
@@ -58,131 +66,134 @@ export function SubagentsPage() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-900">
-              <GitBranch className="h-4 w-4" /> {text("子 Agent 编排", "Subagent Orchestration")}
+              <GitBranch className="h-4 w-4" /> {text("子 Agent 批量运营", "Subagent Operations")}
             </div>
             <div className="mt-1 text-xs text-slate-500">
               {text(
-                "选择任务后查看其派生出的异步子 Agent 状态、上下文与超时边界。",
-                "Select a task to inspect async subagent status, context, and timeout boundaries.",
+                "按组织查看全部异步子 Agent，筛选状态并快速跳转到任务、详情和恢复视图。",
+                "Inspect all async subagents across the organization, filter by status, and jump to tasks, details, and recovery views.",
               )}
             </div>
           </div>
-          {activeTask && (
-            <Button>
-              <Link to={`/tasks/${activeTask.id}/subagents`}>{text("进入任务详情", "Open Task Detail")}</Link>
-            </Button>
-          )}
+          <Button>
+            <Link to="/observability">{text("查看恢复运营", "Open Recovery Operations")}</Link>
+          </Button>
         </div>
 
-        <div className="grid grid-cols-12 gap-4">
-          <Card className="col-span-4 overflow-hidden">
-            <div className="border-b border-slate-100 px-3 py-2 text-xs font-semibold text-slate-900">
-              {text("最近任务", "Recent Tasks")}
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-center gap-2 p-3">
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+              <ListFilter className="h-3.5 w-3.5" /> {text("状态筛选", "Status Filter")}
             </div>
-            <div className="max-h-[640px] overflow-auto p-2">
-              {tasksQuery.isLoading && <div className="p-3 text-xs text-slate-500">{text("任务加载中...", "Loading tasks...")}</div>}
-              {!tasksQuery.isLoading && tasks.length === 0 && (
-                <div className="p-3 text-xs text-slate-500">
-                  {text("暂无任务。创建任务后会显示子 Agent 状态。", "No tasks yet. Subagent status appears after a task is created.")}
-                </div>
-              )}
-              {tasks.map((task) => (
+            {statusFilters.map((status) => {
+              const active = statusFilter === status;
+              const count =
+                status === "ALL"
+                  ? Object.values(counts).reduce((total, value) => total + value, 0)
+                  : counts[status] ?? 0;
+              return (
                 <button
-                  key={task.id}
-                  onClick={() => setSelectedTaskId(task.id)}
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
                   className={
-                    task.id === activeTaskId
-                      ? "mb-1 w-full rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-left"
-                      : "mb-1 w-full rounded-md border border-transparent px-3 py-2 text-left hover:bg-slate-50"
+                    active
+                      ? "rounded-md border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs text-slate-900"
+                      : "rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
                   }
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm text-slate-900">{task.title}</span>
-                    <span className="font-mono text-[10px] text-slate-400">{task.id.slice(0, 8)}</span>
-                  </div>
-                  <div className="mt-1 truncate text-[11px] text-slate-500">{task.goal}</div>
+                  {status === "ALL" ? text("全部", "All") : statusLabel(status)}
+                  <span className="ml-1 font-mono text-[10px] text-slate-400">{count}</span>
                 </button>
-              ))}
-            </div>
-          </Card>
+              );
+            })}
+          </div>
+        </Card>
 
-          <Card className="col-span-8 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
-              <div>
-                <div className="text-xs font-semibold text-slate-900">
-                  {activeTask ? activeTask.title : text("子 Agent 列表", "Subagent List")}
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  {activeTask
-                    ? text(
-                        `任务 ${activeTask.id.slice(0, 8)} · 上限 ${activeTask.max_subagents}`,
-                        `Task ${activeTask.id.slice(0, 8)} · limit ${activeTask.max_subagents}`,
-                      )
-                    : text("未选择任务", "No task selected")}
-                </div>
+        <Card className="overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+            <div>
+              <div className="text-xs font-semibold text-slate-900">
+                {text("组织子 Agent 列表", "Organization Subagent List")}
               </div>
-              <span className="text-xs text-slate-500">
-                {subagentsQuery.isLoading
-                  ? text("加载中...", "Loading...")
-                  : text(`${subagents.length} 个子 Agent`, `${subagents.length} subagents`)}
-              </span>
-            </div>
-            <Table>
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <Th>{text("子 Agent", "Subagent")}</Th>
-                  <Th>{text("状态", "Status")}</Th>
-                  <Th>{text("开始时间", "Started")}</Th>
-                  <Th>{text("完成时间", "Completed")}</Th>
-                  <Th>{text("超时时间", "Timeout")}</Th>
-                  <Th>{text("上下文压缩", "Context Compression")}</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {subagents.map((subagent) => (
-                  <tr key={subagent.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                    <Td>
-                      <Link
-                        to={`/subagents/${subagent.id}`}
-                        className="font-mono text-xs text-slate-900 hover:text-slate-950"
-                      >
-                        {subagent.id.slice(0, 8)}
-                      </Link>
-                      <div className="mt-0.5 truncate text-[11px] text-slate-500">
-                        {contextSummary(subagent.context_json)}
-                      </div>
-                    </Td>
-                    <Td>
-                      <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
-                    </Td>
-                    <Td className="font-mono text-slate-500">
-                      {subagent.started_at ? formatShortDate(subagent.started_at) : "-"}
-                    </Td>
-                    <Td className="font-mono text-slate-500">
-                      {subagent.completed_at ? formatShortDate(subagent.completed_at) : "-"}
-                    </Td>
-                    <Td className="font-mono text-slate-500">
-                      {subagent.timeout_at ? formatShortDate(subagent.timeout_at) : "-"}
-                    </Td>
-                    <Td className="text-[11px] text-slate-500">
-                      {resultContextSummary(subagent.context_json)}
-                    </Td>
-                  </tr>
-                ))}
-                {!subagentsQuery.isLoading && activeTask && subagents.length === 0 && (
-                  <tr>
-                    <Td colSpan={6} className="py-12 text-center text-slate-500">
-                      {text(
-                        "当前任务没有派生子 Agent。触发长耗时拆分任务后，这里会展示并发状态。",
-                        "This task has not spawned subagents. Long-running decomposed tasks will show concurrency state here.",
-                      )}
-                    </Td>
-                  </tr>
+              <div className="mt-0.5 text-[11px] text-slate-500">
+                {text(
+                  "展示最近 200 个子 Agent，技术状态保留原值并显示中文说明。",
+                  "Shows the latest 200 subagents with original technical status values and localized labels.",
                 )}
-              </tbody>
-            </Table>
-          </Card>
-        </div>
+              </div>
+            </div>
+            <span className="text-xs text-slate-500">
+              {subagentsQuery.isLoading
+                ? text("加载中...", "Loading...")
+                : text(`${subagents.length} 个子 Agent`, `${subagents.length} subagents`)}
+            </span>
+          </div>
+          <Table>
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <Th>{text("子 Agent", "Subagent")}</Th>
+                <Th>{text("任务", "Task")}</Th>
+                <Th>{text("状态", "Status")}</Th>
+                <Th>{text("来源步骤", "Source Step")}</Th>
+                <Th>{text("开始时间", "Started")}</Th>
+                <Th>{text("完成时间", "Completed")}</Th>
+                <Th>{text("上下文压缩", "Context Compression")}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {subagents.map((subagent) => (
+                <tr key={subagent.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                  <Td>
+                    <Link
+                      to={`/subagents/${subagent.id}`}
+                      className="font-mono text-xs text-slate-900 hover:text-slate-950"
+                    >
+                      {subagent.id.slice(0, 8)}
+                    </Link>
+                    <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-slate-500">
+                      {contextSummary(subagent.context_json)}
+                    </div>
+                  </Td>
+                  <Td>
+                    <Link
+                      to={`/tasks/${subagent.task_id}/subagents`}
+                      className="text-xs text-slate-900 hover:text-slate-950"
+                    >
+                      {subagent.task_title}
+                    </Link>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
+                      <span className="font-mono">{subagent.task_id.slice(0, 8)}</span>
+                      <span>{statusLabel(subagent.task_status)}</span>
+                    </div>
+                  </Td>
+                  <Td>
+                    <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
+                  </Td>
+                  <Td className="font-mono text-slate-500">{subagent.step_key ?? "-"}</Td>
+                  <Td className="font-mono text-slate-500">
+                    {subagent.started_at ? formatShortDate(subagent.started_at) : "-"}
+                  </Td>
+                  <Td className="font-mono text-slate-500">
+                    {subagent.completed_at ? formatShortDate(subagent.completed_at) : "-"}
+                  </Td>
+                  <Td className="text-[11px] text-slate-500">
+                    {resultContextSummary(subagent.context_json)}
+                  </Td>
+                </tr>
+              ))}
+              {!subagentsQuery.isLoading && subagents.length === 0 && (
+                <tr>
+                  <Td colSpan={7} className="py-12 text-center text-slate-500">
+                    {text(
+                      "暂无符合筛选条件的子 Agent。",
+                      "No subagents match the selected filters.",
+                    )}
+                  </Td>
+                </tr>
+              )}
+            </tbody>
+          </Table>
+        </Card>
       </div>
     </ConsoleShell>
   );

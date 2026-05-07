@@ -291,6 +291,17 @@ def test_subagent_api_list_get_and_cancel(db_session: Session) -> None:
     listed = client.get(f"/api/tasks/{task.id}/subagents", headers=AUTH_HEADERS)
     assert listed.status_code == 200
     assert listed.json()["items"][0]["id"] == subagent.id
+    organization_list = client.get("/api/subagents", headers=AUTH_HEADERS)
+    assert organization_list.status_code == 200
+    organization_item = organization_list.json()["items"][0]
+    assert organization_item["id"] == subagent.id
+    assert organization_item["task_id"] == task.id
+    assert organization_item["task_title"] == task.title
+    assert organization_item["task_status"] == task.status
+    assert organization_item["step_key"] == "dependency_review"
+    filtered = client.get("/api/subagents", headers=AUTH_HEADERS, params={"status": "RUNNING"})
+    assert filtered.status_code == 200
+    assert filtered.json()["items"] == []
 
     fetched = client.get(f"/api/subagents/{subagent.id}", headers=AUTH_HEADERS)
     assert fetched.status_code == 200
