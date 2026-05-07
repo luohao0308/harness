@@ -618,8 +618,8 @@ stages:
       - bash scripts/check-docs.sh
     verification_result: passed
     branch: stage/stage-13-website-code-integration
-    commit_sha: ea56a0fe053d68fe5cf906a3d27390d427e6ca70
+    commit_sha: 0b900ed2723688c6a77e2ef53c01fe2f51a14d76
     pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, and synchronized Spec coverage."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, observability export retention, queue chart, span attribute search, and synchronized Spec coverage."
     next_stage: completed
