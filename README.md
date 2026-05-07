@@ -66,6 +66,7 @@ Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、
 ```
 
 当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、沙箱动态资源、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
+步骤级断点续跑已接入，控制台任务详情页支持从指定步骤继续执行后续未完成步骤。
 
 当前运行时接口：
 
@@ -79,6 +80,7 @@ POST /api/tasks/{task_id}/resume
 GET  /api/tasks/{task_id}/result
 GET  /api/tasks/{task_id}/plan
 GET  /api/tasks/{task_id}/steps
+POST /api/tasks/{task_id}/steps/resume
 POST /api/tasks/{task_id}/replay
 GET  /api/tasks/{task_id}/events
 GET  /api/tasks/{task_id}/events/stream

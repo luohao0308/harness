@@ -13,6 +13,7 @@
 | 启动任务 | `/tasks/:taskId` | 触发 Planner 与 Executor |
 | 取消任务 | `/tasks/:taskId` | 任务进入 `CANCELLED` |
 | 恢复任务 | `/tasks/:taskId` | 从 Replay 状态继续执行 |
+| 从步骤续跑 | `/tasks/:taskId` | 从指定步骤继续执行后续未完成步骤 |
 | 查看结果 | `/tasks/:taskId` | 查看摘要、产物和最后事件序号 |
 
 ## 后端契约
@@ -24,6 +25,7 @@ GET  /api/tasks/{task_id}
 POST /api/tasks/{task_id}/start
 POST /api/tasks/{task_id}/cancel
 POST /api/tasks/{task_id}/resume
+POST /api/tasks/{task_id}/steps/resume
 GET  /api/tasks/{task_id}/result
 ```
 
@@ -33,7 +35,7 @@ GET  /api/tasks/{task_id}/result
 |---|---|---|
 | `/tasks` | Task API | 列表、状态筛选、进入详情 |
 | `/tasks/new` | Task API | 输入目标并创建任务 |
-| `/tasks/:taskId` | Task、Result、Events、Replay | 启动、取消、恢复、查看结果 |
+| `/tasks/:taskId` | Task、Result、Events、Replay、Step Resume | 启动、取消、恢复、步骤续跑、查看结果 |
 
 ## 数据模型
 
@@ -54,6 +56,7 @@ TASK_RESUMED
 TASK_FAILED
 TASK_COMPLETED
 STEP_SKIPPED
+STEP_RETRIED
 ```
 
 ## 权限模型
@@ -65,6 +68,7 @@ STEP_SKIPPED
 | 启动任务 | admin、engineer |
 | 取消任务 | admin、engineer |
 | 恢复任务 | admin、engineer |
+| 步骤续跑 | admin、engineer |
 
 ## 状态流转
 
@@ -74,6 +78,7 @@ CREATED -> PLANNING -> RUNNING -> FAILED
 RUNNING -> WAITING_SUBAGENTS -> RUNNING
 RUNNING -> CANCELLED
 FAILED -> RUNNING
+FAILED -> TASK_RESUMED -> STEP_RETRIED -> RUNNING
 ```
 
 ## 外部服务契约
@@ -98,10 +103,12 @@ agent_task_resume_total
 | 启动任务 | 已落地 | `POST /api/tasks/{task_id}/start` |
 | 取消任务 | 已落地 | `POST /api/tasks/{task_id}/cancel` |
 | 恢复任务 | 已落地 | `POST /api/tasks/{task_id}/resume` |
+| 步骤续跑 | 已落地 | `POST /api/tasks/{task_id}/steps/resume` |
 | result 查询 | 已落地 | `GET /api/tasks/{task_id}/result` |
 | 恢复时复用计划 | 已落地 | Executor 恢复链路 |
 | 恢复时跳过已完成步骤 | 已落地 | `STEP_SKIPPED` |
 | 恢复时继续失败步骤 | 已落地 | Replay state |
+| 步骤续跑返回执行结果 | 已落地 | Step Resume Response |
 
 ## 缺口
 
@@ -128,3 +135,4 @@ agent_task_resume_total
 - 取消和恢复动作在事件流中可见。
 - 恢复任务不重复生成已有计划。
 - 恢复任务不重复执行已完成步骤。
+- 步骤续跑必须写入 `TASK_RESUMED`、`STEP_RETRIED` 和 `STEP_SKIPPED`。

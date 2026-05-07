@@ -28,6 +28,7 @@ import {
   recoverTaskSubagents,
   replayTask,
   resumeTask,
+  resumeTaskSteps,
   startTask,
 } from "../api";
 import type { ToolCallFilters } from "../api";
@@ -143,6 +144,20 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       await queryClient.invalidateQueries({ queryKey: ["tool-calls", taskId] });
     },
   });
+  const resumeStepsMutation = useMutation({
+    mutationFn: (stepKey: string) => resumeTaskSteps(taskId!, [stepKey]),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["task", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-events", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-result", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-versions", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-plan-diff", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["task-subagents", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["model-calls", taskId] });
+      await queryClient.invalidateQueries({ queryKey: ["tool-calls", taskId] });
+    },
+  });
   const replayMutation = useMutation({
     mutationFn: () => replayTask(taskId!, events.at(-1)?.sequence),
   });
@@ -241,6 +256,11 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             planVersions={planVersions}
             planDiff={planDiffQuery.data}
             subagents={subagentsQuery.data?.items ?? []}
+            canResumeSteps={["FAILED", "CANCELLED"].includes(task.status)}
+            resumingStepKey={
+              resumeStepsMutation.isPending ? (resumeStepsMutation.variables ?? null) : null
+            }
+            onResumeFromStep={(stepKey) => resumeStepsMutation.mutate(stepKey)}
           />
         </section>
         <section className={focus === "events" ? "col-span-9" : "col-span-6"}>

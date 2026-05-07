@@ -74,7 +74,7 @@ docs/SPEC.md
 | 功能域 | 用户能力 | 已落地接口 | 当前状态 |
 |---|---|---|---|
 | 任务生命周期 | 创建、查看、启动、取消、恢复、结果 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}`、`POST /api/tasks/{task_id}/start`、`POST /api/tasks/{task_id}/cancel`、`POST /api/tasks/{task_id}/resume`、`GET /api/tasks/{task_id}/result` | 已落地 |
-| 计划与执行 | 查看计划、步骤、同步执行、异步派生、版本对比 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/start` | 基础落地，已支持 Planner Prompt 1.1、模型 JSON 计划解析、一次修复、来源展示、步骤元数据和版本对比 |
+| 计划与执行 | 查看计划、步骤、同步执行、异步派生、版本对比、步骤断点续跑 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/steps/resume`、`POST /api/tasks/{task_id}/start` | 已落地，已支持 Planner Prompt 1.1、模型 JSON 计划解析、一次修复、来源展示、步骤元数据、版本对比和步骤断点续跑 |
 | 同步执行 | Executor 直接执行 step | `GET /api/tasks/{task_id}/steps`、`GET /api/tasks/{task_id}/events` | 基础落地 |
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
@@ -109,7 +109,7 @@ docs/SPEC.md
 |---|---|---|---|
 | `/tasks` | 任务列表 | Task API | 已接入 |
 | `/tasks/new` | 创建任务、配置模型和 max_subagents | Task API | 已接入 |
-| `/tasks/:taskId` | 详情、计划、事件、Replay、结果、Subagent、审计 | Task、Plan、Steps、Events、Replay、Audit、Subagent API | 已接入，工具审计支持筛选和 Trace 深链 |
+| `/tasks/:taskId` | 详情、计划、事件、Replay、步骤续跑、结果、Subagent、审计 | Task、Plan、Steps、Step Resume、Events、Replay、Audit、Subagent API | 已接入，执行计划面板支持从指定步骤续跑，工具审计支持筛选和 Trace 深链 |
 | `/tasks/:taskId/events` | 事件流聚焦 | Events API、SSE | 已接入 |
 | `/tasks/:taskId/subagents` | 子 Agent 聚焦 | Subagent API | 已接入 |
 | `/subagents` | 组织级子 Agent 批量状态、状态筛选、任务跳转和详情跳转 | Subagent API | 已接入 |
@@ -148,7 +148,7 @@ docs/SPEC.md
 |---|---|---|
 | Worker 级恢复跨任务汇总 | 已落地组织级恢复运营摘要；后续增强跨组织汇总和导出 | `docs/human/features/04-subagent-orchestration.md` |
 | 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口、导出留存、队列图表和 Span 属性检索已落地 | `docs/human/features/10-observability-localization-spec.md` |
-| 步骤级断点续跑 | 当前任务级恢复和已完成步骤跳过已落地，后续增强步骤级人工选择与批量恢复 | `docs/human/features/02-planner-executor.md` |
+| Worker 跨进程接管 | 步骤级断点续跑已落地，后续增强 Worker 崩溃后的自动接管 | `docs/human/features/02-planner-executor.md` |
 
 ## 流程进展
 
@@ -173,7 +173,7 @@ docs/SPEC.md
 ```text
 1. 持续增强 Worker 级恢复跨任务汇总
 2. 增强观测深链、队列图表和导出留存
-3. 增强步骤级断点续跑与批量操作
+3. 增强 Worker 跨进程接管与批量操作
 ```
 
 ## 验证命令

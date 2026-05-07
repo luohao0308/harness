@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -12,8 +14,8 @@ from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
 from app.agents.subagent_manager import SubagentManager
+from app.db.models import AgentEvent, Task, TaskStep, utc_now
 from app.db.models import ExecutionPlan as ExecutionPlanModel
-from app.db.models import Task, TaskStep, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
@@ -69,6 +71,22 @@ Required JSON schema:
 
 Prompt version: {PLANNER_PROMPT_VERSION}
 """
+
+
+@dataclass(frozen=True)
+class StepResumeOutcome:
+    task: Task
+    plan_id: str
+    resume_mode: str
+    resume_from_step_key: str
+    requested_step_keys: list[str]
+    skipped_step_keys: list[str]
+    resumed_step_keys: list[str]
+    completed_step_keys: list[str]
+    pending_step_keys: list[str]
+    failed_step_key: str | None
+    error_message: str | None
+    last_sequence: int
 
 
 class Executor:
@@ -227,6 +245,14 @@ class Executor:
                     },
                 )
                 continue
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_RETRIED,
+                payload_json={
+                    "step_key": step.key,
+                    "resume_mode": "full_task",
+                },
+            )
             result = self._execute_step(task, plan_row, step)
             if result.status == "STEP_FAILED":
                 task.status = "FAILED"
@@ -254,6 +280,178 @@ class Executor:
         )
         self.session.flush()
         return task
+
+    def resume_steps(
+        self,
+        task: Task,
+        *,
+        step_keys: list[str],
+        resume_mode: str = "from_first_selected",
+    ) -> StepResumeOutcome:
+        replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
+        plan_row = self._latest_plan(task)
+        if plan_row is None:
+            msg = "Execution plan not found"
+            raise ValueError(msg)
+        plan = ExecutionPlan.model_validate(plan_row.plan_json)
+        requested_step_keys = list(dict.fromkeys(step_keys))
+        step_index = {step.key: index for index, step in enumerate(plan.steps)}
+        unknown_step_keys = [
+            step_key for step_key in requested_step_keys if step_key not in step_index
+        ]
+        if unknown_step_keys:
+            msg = f"Unknown step keys: {', '.join(unknown_step_keys)}"
+            raise ValueError(msg)
+        first_step_index = min(step_index[step_key] for step_key in requested_step_keys)
+        resume_from_step_key = plan.steps[first_step_index].key
+
+        task.status = "RUNNING"
+        task.updated_at = utc_now()
+        task.completed_at = None
+        completed_steps = set(replay_state.get("completed_steps", []))
+        skipped_step_keys: list[str] = []
+        resumed_step_keys: list[str] = []
+        failed_step_key: str | None = None
+        error_message: str | None = None
+
+        for step in plan.steps[first_step_index:]:
+            if step.key in completed_steps:
+                skipped_step_keys.append(step.key)
+                self.event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.STEP_SKIPPED,
+                    payload_json={
+                        "step_key": step.key,
+                        "reason": "already completed before step resume",
+                        "resume_mode": resume_mode,
+                        "resume_from_step_key": resume_from_step_key,
+                    },
+                )
+                continue
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_RETRIED,
+                payload_json={
+                    "step_key": step.key,
+                    "resume_mode": resume_mode,
+                    "resume_from_step_key": resume_from_step_key,
+                },
+            )
+            resumed_step_keys.append(step.key)
+            result = self._execute_step(task, plan_row, step)
+            if result.status == "STEP_FAILED":
+                failed_step_key = step.key
+                error_message = result.summary
+                task.status = "FAILED"
+                task.updated_at = utc_now()
+                self.event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.TASK_FAILED,
+                    payload_json={
+                        "failed_step": step.key,
+                        "summary": result.summary,
+                        "resume_mode": resume_mode,
+                        "resume_from_step_key": resume_from_step_key,
+                    },
+                )
+                agent_tasks_failed_total.inc()
+                self.session.flush()
+                return self._step_resume_outcome(
+                    task=task,
+                    plan=plan,
+                    plan_id=plan_row.id,
+                    resume_mode=resume_mode,
+                    resume_from_step_key=resume_from_step_key,
+                    requested_step_keys=requested_step_keys,
+                    skipped_step_keys=skipped_step_keys,
+                    resumed_step_keys=resumed_step_keys,
+                    completed_steps=completed_steps,
+                    failed_step_key=failed_step_key,
+                    error_message=error_message,
+                )
+            completed_steps.add(step.key)
+
+        pending_step_keys = [step.key for step in plan.steps if step.key not in completed_steps]
+        if pending_step_keys:
+            task.status = "FAILED"
+            task.updated_at = utc_now()
+            error_message = "所选断点之前仍存在未完成步骤"
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.TASK_FAILED,
+                payload_json={
+                    "summary": error_message,
+                    "pending_step_keys": pending_step_keys,
+                    "resume_mode": resume_mode,
+                    "resume_from_step_key": resume_from_step_key,
+                },
+            )
+            agent_tasks_failed_total.inc()
+        else:
+            task.status = "COMPLETED"
+            task.updated_at = utc_now()
+            task.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.TASK_COMPLETED,
+                payload_json={
+                    "task_id": task.id,
+                    "plan_id": plan_row.id,
+                    "resume_mode": resume_mode,
+                    "resume_from_step_key": resume_from_step_key,
+                    "resumed_step_keys": resumed_step_keys,
+                    "skipped_step_keys": skipped_step_keys,
+                },
+            )
+        self.session.flush()
+        return self._step_resume_outcome(
+            task=task,
+            plan=plan,
+            plan_id=plan_row.id,
+            resume_mode=resume_mode,
+            resume_from_step_key=resume_from_step_key,
+            requested_step_keys=requested_step_keys,
+            skipped_step_keys=skipped_step_keys,
+            resumed_step_keys=resumed_step_keys,
+            completed_steps=completed_steps,
+            failed_step_key=failed_step_key,
+            error_message=error_message,
+        )
+
+    def _step_resume_outcome(
+        self,
+        *,
+        task: Task,
+        plan: ExecutionPlan,
+        plan_id: str,
+        resume_mode: str,
+        resume_from_step_key: str,
+        requested_step_keys: list[str],
+        skipped_step_keys: list[str],
+        resumed_step_keys: list[str],
+        completed_steps: set[str],
+        failed_step_key: str | None,
+        error_message: str | None,
+    ) -> StepResumeOutcome:
+        completed_step_keys = [step.key for step in plan.steps if step.key in completed_steps]
+        pending_step_keys = [step.key for step in plan.steps if step.key not in completed_steps]
+        last_sequence = self.session.execute(
+            select(func.max(AgentEvent.sequence)).where(AgentEvent.task_id == task.id)
+        ).scalar_one_or_none()
+        return StepResumeOutcome(
+            task=task,
+            plan_id=plan_id,
+            resume_mode=resume_mode,
+            resume_from_step_key=resume_from_step_key,
+            requested_step_keys=requested_step_keys,
+            skipped_step_keys=skipped_step_keys,
+            resumed_step_keys=resumed_step_keys,
+            completed_step_keys=completed_step_keys,
+            pending_step_keys=pending_step_keys,
+            failed_step_key=failed_step_key,
+            error_message=error_message,
+            last_sequence=int(last_sequence or 0),
+        )
 
     def _repair_plan(self, *, task: Task, invalid_content: str):
         try:

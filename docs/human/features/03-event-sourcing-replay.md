@@ -12,6 +12,7 @@ Event Sourcing 把任务状态变化记录为 append-only 事件流。Replay 通
 | 实时事件 | `/tasks/:taskId` | 断线重连后继续读取 |
 | 重放现场 | Replay 面板 | 选择 sequence 并重建状态 |
 | 定位失败点 | Replay 面板 | 查看失败步骤、工具和错误摘要 |
+| 步骤续跑 | 执行计划面板 | 基于 Replay state 跳过已完成步骤并重试未完成步骤 |
 | 恢复 Worker | Subagent 面板 | 基于 Replay 状态恢复超时或卡住的子 Agent |
 
 ## 后端契约
@@ -20,6 +21,7 @@ Event Sourcing 把任务状态变化记录为 append-only 事件流。Replay 通
 GET  /api/tasks/{task_id}/events
 GET  /api/tasks/{task_id}/events/stream
 POST /api/tasks/{task_id}/replay
+POST /api/tasks/{task_id}/steps/resume
 POST /api/tasks/{task_id}/subagents/recover
 ```
 
@@ -27,7 +29,7 @@ POST /api/tasks/{task_id}/subagents/recover
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/tasks/:taskId` | Events API、SSE、Replay API | 时间线、Replay 摘要、失败点 |
+| `/tasks/:taskId` | Events API、SSE、Replay API、Step Resume API | 时间线、Replay 摘要、失败点、步骤续跑 |
 | `/tasks/:taskId` Subagent 面板 | Subagent Recovery API | 恢复卡住的子 Agent |
 | `/tasks/:taskId/events` | Events API、SSE | 事件流查看 |
 
@@ -69,8 +71,10 @@ SSE 支持 after_sequence。
 SSE 支持 Last-Event-ID。
 Replay 本身不写历史事件。
 Resume 写入 TASK_RESUMED。
+Step Resume 写入 STEP_RETRIED 与 STEP_SKIPPED。
 每 100 个事件自动生成 task_snapshots。
 Resume 会根据 Replay state 跳过已完成 step。
+Step Resume 会从最靠前的请求步骤继续执行后续未完成 step。
 Subagent recovery 会根据 Replay state 标记超时或重置卡住的 worker。
 ```
 
@@ -100,7 +104,7 @@ agent_subagent_recovery_last_recovered
 | 每 100 个事件生成 snapshot | 已落地 | Replay service |
 | Replay 从 snapshot 续扫 | 已落地 | Replay service |
 | 失败点定位 | 已落地 | Replay response |
-| 步骤级恢复执行 | 已落地 | Resume flow |
+| 步骤级恢复执行 | 已落地 | `POST /api/tasks/{task_id}/steps/resume` |
 | Worker 级恢复 | 已落地 | `POST /api/tasks/{task_id}/subagents/recover` |
 | Worker 自动巡检 | 基础落地 | `subagent_recovery_worker.recover_stalled_subagents` |
 | Worker 跨节点恢复锁 | 基础落地 | PostgreSQL advisory lock 控制同一时间只有一个恢复巡检执行 |
@@ -133,6 +137,8 @@ agent_subagent_recovery_last_recovered
 - 第 100 个事件生成 task snapshot。
 - Resume 后已完成步骤写入 `STEP_SKIPPED`。
 - Resume 后只执行未完成步骤和失败步骤。
+- Step Resume 后写入 `STEP_RETRIED`。
+- Step Resume 后 failure point 必须按最新事件重放结果清理。
 - Worker 恢复能标记超时 Subagent。
 - Worker 恢复能把卡住的 RUNNING Subagent 重置为 `PENDING`。
 - Worker 巡检能扫描多个任务的卡住 Subagent。

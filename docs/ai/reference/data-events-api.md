@@ -19,7 +19,7 @@
 ## 当前接口分组
 
 ```text
-Tasks: create, list, detail, start, cancel, resume, result
+Tasks: create, list, detail, start, cancel, resume, step resume, result
 Events: list, stream
 Replay: replay
 Subagents: list, create, detail, cancel

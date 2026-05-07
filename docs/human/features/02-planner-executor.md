@@ -24,6 +24,7 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 | 查看同步执行 | `/tasks/:taskId` | 计划步骤显示 `sync`，步骤由 Executor 直接执行 |
 | 查看异步执行 | `/tasks/:taskId`、`/tasks/:taskId/subagents` | 计划步骤显示 `async`，步骤派生 Subagent 并展示子 Agent 状态 |
 | 查看计划版本 | `/tasks/:taskId` | 查看计划版本数量、最新版本和相邻版本差异 |
+| 从步骤断点续跑 | `/tasks/:taskId` | 选择步骤作为断点，从该步骤继续执行后续未完成步骤 |
 
 ## 后端契约
 
@@ -34,6 +35,7 @@ GET  /api/tasks/{task_id}/plan
 GET  /api/tasks/{task_id}/plans
 GET  /api/tasks/{task_id}/plans/diff
 GET  /api/tasks/{task_id}/steps
+POST /api/tasks/{task_id}/steps/resume
 POST /api/tasks/{task_id}/tools/execute
 ```
 
@@ -42,7 +44,7 @@ POST /api/tasks/{task_id}/tools/execute
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
 | `/tasks/new` | Task API | 输入目标、模型、策略和沙箱约束 |
-| `/tasks/:taskId` | Plan、Steps、Tool Execute、Subagent API | 查看同步步骤、异步步骤、工具执行结果和子 Agent |
+| `/tasks/:taskId` | Plan、Steps、Step Resume、Tool Execute、Subagent API | 查看同步步骤、异步步骤、步骤断点续跑、工具执行结果和子 Agent |
 
 同步与异步在页面上的体现：
 
@@ -76,6 +78,17 @@ POST /api/tasks/{task_id}/tools/execute
 | `planner_attempts` | `execution_plans.plan_json`、Plan API | 计划生成尝试次数 |
 | `execution_plans.version` | `execution_plans`、Plan Version API | 计划版本号 |
 
+步骤断点续跑契约：
+
+| 字段 | 所在数据 | 说明 |
+|---|---|---|
+| `step_keys` | Step Resume Request | 人工选择的断点步骤键列表 |
+| `resume_mode=from_first_selected` | Step Resume Request | 从计划顺序中最靠前的步骤键续跑 |
+| `resume_from_step_key` | Step Resume Response | 实际续跑断点 |
+| `resumed_step_keys` | Step Resume Response | 本次实际执行的步骤 |
+| `skipped_step_keys` | Step Resume Response | 本次跳过的已完成步骤 |
+| `pending_step_keys` | Step Resume Response | 重放后仍未完成的步骤 |
+
 ## 事件模型
 
 ```text
@@ -84,6 +97,8 @@ PLAN_GENERATED
 STEP_STARTED
 STEP_COMPLETED
 STEP_FAILED
+STEP_RETRIED
+STEP_SKIPPED
 TOOL_CALLED
 TOOL_RESULT_RECEIVED
 TOOL_FAILED
@@ -118,6 +133,7 @@ SUBAGENT_TIMEOUT
 | 启动计划 | admin、engineer |
 | 查看计划 | admin、engineer、operator |
 | 执行工具 | admin、engineer |
+| 步骤断点续跑 | admin、engineer |
 
 ## 状态流转
 
@@ -126,6 +142,7 @@ TASK_CREATED -> PLANNING -> RUNNING
 STEP_PENDING -> STEP_RUNNING -> STEP_COMPLETED
 STEP_PENDING -> STEP_RUNNING -> STEP_FAILED
 STEP_RUNNING -> SUBAGENT_SPAWNED -> WAITING_SUBAGENTS
+TASK_FAILED -> TASK_RESUMED -> STEP_RETRIED -> STEP_COMPLETED
 ```
 
 执行模式流转：
@@ -164,6 +181,10 @@ agent_subagents_running
 | 计划版本对比 | 已落地 | `GET /api/tasks/{task_id}/plans/diff` |
 | 计划版本差异可视化 | 基础落地 | 控制台执行计划面板展示新增、变更和移除步骤清单 |
 | 步骤查询接口 | 已落地 | `GET /api/tasks/{task_id}/steps` |
+| 步骤断点续跑接口 | 已落地 | `POST /api/tasks/{task_id}/steps/resume` |
+| 步骤断点续跑控制台动作 | 已落地 | 执行计划面板展示“从此续跑” |
+| 步骤重试事件 | 已落地 | `STEP_RETRIED` |
+| 步骤跳过事件 | 已落地 | `STEP_SKIPPED` |
 | LLM Planner | 基础落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
 | LLM Planner Prompt 1.1 | 基础落地 | Prompt 要求工具意图、验收标准、风险等级和预期产物 |
 | LLM Planner 结构重试 | 基础落地 | 第一次模型计划非法时，自动请求修复一次 |
@@ -179,14 +200,14 @@ agent_subagents_running
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 步骤级断点续跑 | Worker 崩溃后的执行恢复仍需增强 | 以 Replay state 驱动 Worker 恢复 |
+| Worker 跨进程接管 | Worker 崩溃后的自动接管仍需增强 | 以 Replay state 驱动 Worker 恢复 |
 
 ## 实现顺序
 
 ```text
 1. 固化 Plan / Step schema
 2. 增强 Executor ReAct 循环
-3. 增强步骤级断点续跑
+3. 增强 Worker 跨进程接管
 4. 补 Worker 级恢复历史查询
 ```
 
@@ -202,6 +223,10 @@ agent_subagents_running
 - Plan API 返回步骤工具意图、验收标准、风险等级和预期产物。
 - Plan Version API 返回版本列表和版本差异。
 - 控制台必须展示计划版本新增、变更和移除步骤清单。
+- 控制台必须在任务失败或取消后展示步骤级“从此续跑”动作。
+- Step Resume API 必须写入 `TASK_RESUMED`、`STEP_RETRIED` 和 `STEP_SKIPPED`。
+- Step Resume API 必须从最靠前的请求步骤继续执行后续未完成步骤。
+- Step Resume API 必须返回实际断点、执行步骤、跳过步骤和剩余步骤。
 - 事件时间线必须展示异步步骤到子 Agent 的并行执行拓扑。
 - 工具动作不绕过 Tool Registry。
 - 高风险动作不绕过 Sandbox。

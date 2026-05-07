@@ -9,6 +9,8 @@ from app.api.schemas import (
     ModelCallPage,
     ReplayRequest,
     ReplayResponse,
+    StepResumeRequest,
+    StepResumeResponse,
     TaskArtifact,
     TaskCreateRequest,
     TaskPage,
@@ -211,6 +213,81 @@ def resume_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     return resumed
 
 
+@router.post(
+    "/{task_id}/steps/resume",
+    response_model=StepResumeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="从指定步骤续跑任务",
+    description=(
+        "将 FAILED 或 CANCELLED 任务按最新执行计划恢复，"
+        "从请求中最靠前的步骤键开始续跑，已完成步骤写入 STEP_SKIPPED。"
+    ),
+)
+def resume_task_steps(
+    task_id: str,
+    request: StepResumeRequest,
+    session: DbSession,
+    principal: Principal,
+) -> StepResumeResponse:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    if task.status not in {"FAILED", "CANCELLED"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务步骤无法续跑")
+    plan = _latest_plan(task_id=task_id, session=session)
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行计划未找到")
+    requested_step_keys = list(dict.fromkeys(request.step_keys))
+    plan_step_keys = [
+        str(raw_step.get("key", ""))
+        for raw_step in plan.plan_json.get("steps", [])
+        if isinstance(raw_step, dict)
+    ]
+    plan_step_key_set = set(plan_step_keys)
+    unknown_step_keys = [
+        step_key for step_key in requested_step_keys if step_key not in plan_step_key_set
+    ]
+    if unknown_step_keys:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "步骤键不存在", "unknown_step_keys": unknown_step_keys},
+        )
+
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_RESUMED,
+        payload_json={
+            "task_id": task.id,
+            "resumed_by": principal.user_id,
+            "resume_mode": request.resume_mode,
+            "requested_step_keys": requested_step_keys,
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    agent_task_resume_total.inc()
+    outcome = Executor(session).resume_steps(
+        task,
+        step_keys=requested_step_keys,
+        resume_mode=request.resume_mode,
+    )
+    session.commit()
+    session.refresh(outcome.task)
+    return StepResumeResponse(
+        task_id=outcome.task.id,
+        status=outcome.task.status,
+        plan_id=outcome.plan_id,
+        resume_mode=outcome.resume_mode,
+        resume_from_step_key=outcome.resume_from_step_key,
+        requested_step_keys=outcome.requested_step_keys,
+        skipped_step_keys=outcome.skipped_step_keys,
+        resumed_step_keys=outcome.resumed_step_keys,
+        completed_step_keys=outcome.completed_step_keys,
+        pending_step_keys=outcome.pending_step_keys,
+        failed_step_key=outcome.failed_step_key,
+        error_message=outcome.error_message,
+        last_sequence=outcome.last_sequence,
+    )
+
+
 @router.get(
     "/{task_id}/result",
     response_model=TaskResultResponse,
@@ -302,7 +379,9 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
     step_rows = {
         step.step_key: step
         for step in session.execute(
-            select(TaskStep).where(TaskStep.task_id == task_id, TaskStep.plan_id == plan.id)
+            select(TaskStep)
+            .where(TaskStep.task_id == task_id, TaskStep.plan_id == plan.id)
+            .order_by(TaskStep.started_at.asc(), TaskStep.completed_at.asc(), TaskStep.id.asc())
         ).scalars()
     }
     steps = []

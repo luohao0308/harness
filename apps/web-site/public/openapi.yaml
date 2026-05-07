@@ -204,6 +204,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/steps/resume:
+    post:
+      tags:
+      - tasks
+      summary: 从指定步骤续跑任务
+      description: 将 FAILED 或 CANCELLED 任务按最新执行计划恢复，从请求中最靠前的步骤键开始续跑，已完成步骤写入 STEP_SKIPPED。
+      operationId: resume_task_steps_api_tasks__task_id__steps_resume_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StepResumeRequest'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResumeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/result:
     get:
       tags:
@@ -2526,6 +2561,107 @@ components:
       - network_enabled
       - warm_pool_reused
       title: SandboxResponse
+    StepResumeRequest:
+      properties:
+        step_keys:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Step Keys
+          description: 断点步骤键列表
+        resume_mode:
+          type: string
+          const: from_first_selected
+          title: Resume Mode
+          description: 恢复模式：from_first_selected 表示从最靠前的断点步骤续跑
+          default: from_first_selected
+      type: object
+      required:
+      - step_keys
+      title: StepResumeRequest
+    StepResumeResponse:
+      properties:
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        status:
+          type: string
+          title: Status
+          description: 恢复后的任务状态
+        plan_id:
+          type: string
+          title: Plan Id
+          description: 计划 ID
+        resume_mode:
+          type: string
+          title: Resume Mode
+          description: 恢复模式
+        resume_from_step_key:
+          type: string
+          title: Resume From Step Key
+          description: 实际断点步骤键
+        requested_step_keys:
+          items:
+            type: string
+          type: array
+          title: Requested Step Keys
+          description: 请求恢复的步骤键
+        skipped_step_keys:
+          items:
+            type: string
+          type: array
+          title: Skipped Step Keys
+          description: 恢复中跳过的已完成步骤键
+        resumed_step_keys:
+          items:
+            type: string
+          type: array
+          title: Resumed Step Keys
+          description: 本次实际执行的步骤键
+        completed_step_keys:
+          items:
+            type: string
+          type: array
+          title: Completed Step Keys
+          description: 重放后已完成的步骤键
+        pending_step_keys:
+          items:
+            type: string
+          type: array
+          title: Pending Step Keys
+          description: 重放后仍未完成的步骤键
+        failed_step_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Failed Step Key
+          description: 本次失败步骤键
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+          description: 错误信息
+        last_sequence:
+          type: integer
+          title: Last Sequence
+          description: 最后事件序号
+      type: object
+      required:
+      - task_id
+      - status
+      - plan_id
+      - resume_mode
+      - resume_from_step_key
+      - requested_step_keys
+      - skipped_step_keys
+      - resumed_step_keys
+      - completed_step_keys
+      - pending_step_keys
+      - last_sequence
+      title: StepResumeResponse
     SubagentArtifact:
       properties:
         name:

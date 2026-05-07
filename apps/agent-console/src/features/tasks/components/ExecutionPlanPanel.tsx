@@ -1,7 +1,8 @@
-import { CheckCircle2, Clock, GitBranch } from "lucide-react";
+import { CheckCircle2, Clock, GitBranch, RotateCcw } from "lucide-react";
 
 import type { AgentEvent, Subagent, TaskPlan, TaskPlanDiff, TaskPlanVersionSummary } from "../api";
 import { Badge, type BadgeTone } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
 import { useI18n } from "../../../lib/i18n";
@@ -50,12 +51,18 @@ export function ExecutionPlanPanel({
   planVersions = [],
   planDiff,
   subagents = [],
+  canResumeSteps = false,
+  resumingStepKey = null,
+  onResumeFromStep,
 }: {
   events: AgentEvent[];
   plan?: TaskPlan;
   planVersions?: TaskPlanVersionSummary[];
   planDiff?: TaskPlanDiff;
   subagents?: Subagent[];
+  canResumeSteps?: boolean;
+  resumingStepKey?: string | null;
+  onResumeFromStep?: (stepKey: string) => void;
 }) {
   const { text } = useI18n();
   const generated = events.find((event) => event.event_type === "PLAN_GENERATED");
@@ -187,6 +194,18 @@ export function ExecutionPlanPanel({
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-800">
                     {stepKey}
                   </span>
+                  {onResumeFromStep && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-6 px-1.5 text-[10px]"
+                      title={text("从此步骤续跑", "Resume from this step")}
+                      disabled={!canResumeSteps || resumingStepKey === stepKey || stepKey.length === 0}
+                      onClick={() => onResumeFromStep(stepKey)}
+                    >
+                      <RotateCcw className="h-3 w-3" /> {text("从此续跑", "Resume")}
+                    </Button>
+                  )}
                   <Dot tone={tone} />
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-1 pl-6 text-[10px] text-slate-500">

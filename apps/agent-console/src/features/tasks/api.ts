@@ -416,6 +416,22 @@ export type ReplayResult = {
   requires_manual_review: boolean;
 };
 
+export type StepResumeResult = {
+  task_id: string;
+  status: TaskStatus;
+  plan_id: string;
+  resume_mode: string;
+  resume_from_step_key: string;
+  requested_step_keys: string[];
+  skipped_step_keys: string[];
+  resumed_step_keys: string[];
+  completed_step_keys: string[];
+  pending_step_keys: string[];
+  failed_step_key: string | null;
+  error_message: string | null;
+  last_sequence: number;
+};
+
 export type ModelCall = {
   id: string;
   model_provider: string;
@@ -511,6 +527,13 @@ export async function cancelTask(taskId: string) {
 
 export async function resumeTask(taskId: string) {
   return request<Task>(`/api/tasks/${taskId}/resume`, { method: "POST" });
+}
+
+export async function resumeTaskSteps(taskId: string, stepKeys: string[]) {
+  return request<StepResumeResult>(`/api/tasks/${taskId}/steps/resume`, {
+    method: "POST",
+    body: JSON.stringify({ step_keys: stepKeys, resume_mode: "from_first_selected" }),
+  });
 }
 
 export async function getTaskResult(taskId: string) {

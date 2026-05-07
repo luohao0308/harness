@@ -1,9 +1,12 @@
+from datetime import timedelta
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.db.models import AgentRun, ExecutionPlan, Task, TaskSnapshot, TaskStep, ToolCall, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.events.replay import EventReplay
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -464,6 +467,101 @@ def test_replay_uses_snapshot_and_events_after_snapshot(db_session: Session) -> 
     assert payload["failure_point"]["sequence"] == 101
 
 
+def _failed_task_with_three_step_plan(db_session: Session) -> tuple[Task, ExecutionPlan]:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Step resume from failed step",
+        goal="Continue after selected failure",
+        status="FAILED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    plan = ExecutionPlan(
+        task_id=task.id,
+        version=1,
+        status="GENERATED",
+        plan_json={
+            "summary": "Continue after selected failure",
+            "steps": [
+                {
+                    "key": "inspect_project",
+                    "description": "Inspect project structure",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                    "expected_events": ["STEP_STARTED", "STEP_COMPLETED"],
+                },
+                {
+                    "key": "produce_report",
+                    "description": "Produce final report",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                    "expected_events": ["STEP_STARTED", "STEP_COMPLETED"],
+                },
+                {
+                    "key": "verify_report",
+                    "description": "Verify final report",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                    "expected_events": ["STEP_STARTED", "STEP_COMPLETED"],
+                },
+            ],
+        },
+        created_at=utc_now(),
+    )
+    db_session.add(plan)
+    db_session.flush()
+    event_store = EventStore(db_session)
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.TASK_CREATED,
+        payload_json={"title": task.title},
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.PLAN_GENERATED,
+        payload_json={"plan_id": plan.id, "plan": plan.plan_json},
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.STEP_STARTED,
+        payload_json={"step_key": "inspect_project"},
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.STEP_COMPLETED,
+        payload_json={"step_key": "inspect_project"},
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.STEP_STARTED,
+        payload_json={"step_key": "produce_report"},
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.STEP_FAILED,
+        payload_json={"step_key": "produce_report", "summary": "boom"},
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.TASK_FAILED,
+        payload_json={"failed_step": "produce_report", "summary": "boom"},
+    )
+    db_session.commit()
+    return task, plan
+
+
 def test_resume_reuses_plan_and_skips_completed_steps(db_session: Session) -> None:
     task = Task(
         organization_id="dev-org",
@@ -565,3 +663,96 @@ def test_resume_reuses_plan_and_skips_completed_steps(db_session: Session) -> No
     event_types = [event["event_type"] for event in events]
     assert "STEP_SKIPPED" in event_types
     assert event_types.count("PLAN_GENERATED") == 1
+
+
+def test_resume_from_selected_step_continues_plan(db_session: Session) -> None:
+    task, _plan = _failed_task_with_three_step_plan(db_session)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/tasks/{task.id}/steps/resume",
+        headers=AUTH_HEADERS,
+        json={"step_keys": ["produce_report"]},
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status"] == "COMPLETED"
+    assert payload["resume_from_step_key"] == "produce_report"
+    assert payload["requested_step_keys"] == ["produce_report"]
+    assert payload["resumed_step_keys"] == ["produce_report", "verify_report"]
+    assert payload["pending_step_keys"] == []
+    steps = list(
+        db_session.query(TaskStep)
+        .filter(TaskStep.task_id == task.id)
+        .order_by(TaskStep.started_at)
+        .all()
+    )
+    assert [step.step_key for step in steps] == ["produce_report", "verify_report"]
+    events = client.get(f"/api/tasks/{task.id}/events", headers=AUTH_HEADERS).json()["items"]
+    event_types = [event["event_type"] for event in events]
+    assert event_types.count("TASK_RESUMED") == 1
+    assert event_types.count("STEP_RETRIED") == 2
+    assert event_types[-1] == "TASK_COMPLETED"
+    replay_state = EventReplay(db_session).replay_state_json(task_id=task.id)
+    assert replay_state["status"] == "COMPLETED"
+    assert replay_state["failed_steps"] == []
+    assert replay_state["failure_point"] is None
+
+
+def test_resume_from_selected_step_rejects_unknown_step(db_session: Session) -> None:
+    task, _plan = _failed_task_with_three_step_plan(db_session)
+    client = TestClient(app)
+
+    response = client.post(
+        f"/api/tasks/{task.id}/steps/resume",
+        headers=AUTH_HEADERS,
+        json={"step_keys": ["missing_step"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["message"] == "步骤键不存在"
+    assert response.json()["detail"]["unknown_step_keys"] == ["missing_step"]
+
+
+def test_plan_state_uses_latest_step_attempt(db_session: Session) -> None:
+    task, plan = _failed_task_with_three_step_plan(db_session)
+    failed_at = utc_now()
+    completed_at = failed_at + timedelta(seconds=1)
+    db_session.add(
+        TaskStep(
+            task_id=task.id,
+            plan_id=plan.id,
+            step_key="produce_report",
+            description="Produce final report",
+            status="STEP_FAILED",
+            execution_mode="sync",
+            started_at=failed_at,
+            completed_at=failed_at,
+            error_message="old failure",
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        TaskStep(
+            task_id=task.id,
+            plan_id=plan.id,
+            step_key="produce_report",
+            description="Produce final report",
+            status="STEP_COMPLETED",
+            execution_mode="sync",
+            started_at=completed_at,
+            completed_at=completed_at,
+        )
+    )
+    db_session.commit()
+    client = TestClient(app)
+
+    response = client.get(f"/api/tasks/{task.id}/plan", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    produce_step = next(
+        step for step in response.json()["steps"] if step["step_key"] == "produce_report"
+    )
+    assert produce_step["status"] == "STEP_COMPLETED"
+    assert produce_step["error_message"] is None

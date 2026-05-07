@@ -139,6 +139,7 @@ def replay_events_to_state(
             state["status"] = "PLANNING"
         elif event.event_type == EventType.TASK_RESUMED.value:
             state["status"] = "RUNNING"
+            state["failure_point"] = None
         elif event.event_type == EventType.TASK_CANCELLED.value:
             state["status"] = "CANCELLED"
         elif event.event_type == EventType.TASK_COMPLETED.value:
@@ -161,10 +162,24 @@ def replay_events_to_state(
             state["current_step"] = payload.get("step_key")
             if state["status"] not in {"FAILED", "CANCELLED", "COMPLETED"}:
                 state["status"] = "RUNNING"
+        if event.event_type == EventType.STEP_RETRIED.value:
+            step_key = payload.get("step_key")
+            state["current_step"] = step_key
+            state["status"] = "RUNNING"
+            if step_key in state["failed_steps"]:
+                state["failed_steps"].remove(step_key)
+            state["failure_point"] = None
         if event.event_type == EventType.STEP_COMPLETED.value:
             step_key = payload.get("step_key")
             if step_key is not None and step_key not in state["completed_steps"]:
                 state["completed_steps"].append(step_key)
+            if step_key in state["failed_steps"]:
+                state["failed_steps"].remove(step_key)
+            if (
+                isinstance(state.get("failure_point"), dict)
+                and state["failure_point"].get("payload", {}).get("step_key") == step_key
+            ):
+                state["failure_point"] = None
             state.pop("current_step", None)
         if event.event_type == EventType.STEP_FAILED.value:
             step_key = payload.get("step_key")

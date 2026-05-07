@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -104,6 +105,30 @@ class TaskStepResponse(BaseModel):
 class TaskStepPage(BaseModel):
     items: list[TaskStepResponse] = Field(description="步骤列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class StepResumeRequest(BaseModel):
+    step_keys: list[str] = Field(min_length=1, description="断点步骤键列表")
+    resume_mode: Literal["from_first_selected"] = Field(
+        default="from_first_selected",
+        description="恢复模式：from_first_selected 表示从最靠前的断点步骤续跑",
+    )
+
+
+class StepResumeResponse(BaseModel):
+    task_id: str = Field(description="任务 ID")
+    status: str = Field(description="恢复后的任务状态")
+    plan_id: str = Field(description="计划 ID")
+    resume_mode: str = Field(description="恢复模式")
+    resume_from_step_key: str = Field(description="实际断点步骤键")
+    requested_step_keys: list[str] = Field(description="请求恢复的步骤键")
+    skipped_step_keys: list[str] = Field(description="恢复中跳过的已完成步骤键")
+    resumed_step_keys: list[str] = Field(description="本次实际执行的步骤键")
+    completed_step_keys: list[str] = Field(description="重放后已完成的步骤键")
+    pending_step_keys: list[str] = Field(description="重放后仍未完成的步骤键")
+    failed_step_key: str | None = Field(default=None, description="本次失败步骤键")
+    error_message: str | None = Field(default=None, description="错误信息")
+    last_sequence: int = Field(description="最后事件序号")
 
 
 class TaskPlanStepState(BaseModel):

@@ -90,6 +90,7 @@ GET    /api/tasks/{task_id}
 POST   /api/tasks/{task_id}/start
 POST   /api/tasks/{task_id}/cancel
 POST   /api/tasks/{task_id}/resume
+POST   /api/tasks/{task_id}/steps/resume
 GET    /api/tasks/{task_id}/result
 ```
 
