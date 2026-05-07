@@ -120,8 +120,8 @@ tool_policy_denied_total
 | 低风险文件工具真实执行 | 已落地 | Tool Runner |
 | 高风险工具无沙箱拒绝 | 已落地 | Policy Engine |
 | 角色策略拒绝 | 已落地 | Policy Engine |
-| 高风险工具沙箱真实执行 | 基础落地 | Docker Sandbox 路径 |
-| Model Gateway OpenAI-compatible 调用 | 基础落地 | Model Gateway |
+| 高风险工具沙箱真实执行 | 已落地 | Docker Sandbox 路径 |
+| Model Gateway OpenAI-compatible 调用 | 已落地 | Model Gateway |
 | Model Gateway 读取 Settings | 已落地 | Model Gateway |
 | 模型 RPM 限流 | 已落地 | Model Gateway |
 | 模型 TPM 限流 | 已落地 | Model Gateway 按组织、供应商和模型估算 prompt token |
@@ -133,9 +133,9 @@ tool_policy_denied_total
 | 模型 fallback 事件 | 已落地 | `MODEL_FALLBACK_USED` |
 | 模型 fallback 策略观测 | 已落地 | `GET /api/settings/models/fallbacks` 返回 fallback 总数、主模型失败、供应商分布和最近事件 |
 | 模型审计 Trace | 已落地 | `GET /api/tasks/{task_id}/model-calls` 返回 `trace_id`、请求摘要、响应预览和错误信息 |
-| 工具产物摘要 | 基础落地 | Result API 从工具结果派生 Subagent `artifacts[]` |
-| 工具结果解析 | 基础落地 | Tool Call API 返回 `output_kind`、`output_summary` 和 `timeout_category` |
-| 控制台工具审计详情 | 基础落地 | 控制台展示工具输出类型、输出摘要、沙箱标记、风险等级和超时分类 |
+| 工具产物摘要 | 已落地 | Result API 从工具结果派生 Subagent `artifacts[]` |
+| 工具结果解析 | 已落地 | Tool Call API 返回 `output_kind`、`output_summary` 和 `timeout_category` |
+| 控制台工具审计详情 | 已落地 | 控制台展示工具输出类型、输出摘要、沙箱标记、风险等级和超时分类 |
 | 工具审计筛选和深链 | 已落地 | `GET /api/tasks/{task_id}/tool-calls` 支持 `tool_name`、`status`、`risk_level`、`trace_id` 和 `limit`；响应返回 `trace_id`；控制台可跳转任务事件和观测 Trace |
 | 控制台审计详情验收测试 | 已落地 | 后端自动验收覆盖模型 trace、请求摘要、响应预览、工具输入、工具输出、输出类型和输出摘要 |
 

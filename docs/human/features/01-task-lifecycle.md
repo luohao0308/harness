@@ -109,12 +109,13 @@ agent_task_resume_total
 | 恢复时跳过已完成步骤 | 已落地 | `STEP_SKIPPED` |
 | 恢复时继续失败步骤 | 已落地 | Replay state |
 | 步骤续跑返回执行结果 | 已落地 | Step Resume Response |
+| 分布式 Worker 级断点续跑 | 已落地 | `POST /api/tasks/{task_id}/subagents/recover`、恢复批次、Worker 接管事件和恢复运营摘要 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 分布式 Worker 级断点续跑 | 长任务跨进程恢复能力仍需增强 | Worker 根据 Replay 状态恢复执行 |
+| 无当前缺口 | 任务生命周期 API、状态机、步骤续跑、事件和 Worker 恢复链路已落地 | 保持任务恢复、步骤续跑和恢复运营回归 |
 
 ## 实现顺序
 
@@ -122,7 +123,7 @@ agent_task_resume_total
 1. 保持 Task API 与 OpenAPI 同步
 2. 保持 Task 状态机与 Event Store 同步
 3. 前端详情页读取 result、events、replay 和 audit 数据
-4. 补 Worker 级恢复编排
+4. 保持 Worker 级恢复编排回归
 5. 更新覆盖文档和测试
 ```
 

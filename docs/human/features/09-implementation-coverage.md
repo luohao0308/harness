@@ -56,7 +56,7 @@
 | 状态 | 含义 |
 |---|---|
 | 已落地 | 有后端接口、数据来源、测试和前端入口 |
-| 基础落地 | 有接口和数据链路，生产级策略仍需增强 |
+| 基础落地 | 有接口和数据链路，企业级策略待补齐 |
 | 待增强 | 文档已定义，代码只覆盖部分行为 |
 | 待落地 | 文档已定义，代码尚无稳定入口 |
 
@@ -67,18 +67,18 @@
 | 任务生命周期 | 已落地 | `POST /api/tasks`、`GET /api/tasks`、`GET /api/tasks/{task_id}`、`POST /api/tasks/{task_id}/start`、`POST /api/tasks/{task_id}/cancel`、`POST /api/tasks/{task_id}/resume`、`GET /api/tasks/{task_id}/result` |
 | 计划与步骤 | 已落地 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/steps/resume` |
 | 事件流 | 已落地 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` |
-| Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
+| Replay | 已落地 | `POST /api/tasks/{task_id}/replay` |
 | Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches`、`GET /api/subagents`、`POST /api/subagents/bulk`、`GET /api/subagents/recovery/summary`、`GET /api/subagents/recovery/global-summary`、`GET /api/subagents/recovery/global-summary/export`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
 | Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
-| Subagent 工具链 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
-| 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
+| Subagent 工具链 | 已落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
+| 工具执行 | 已落地 | `POST /api/tasks/{task_id}/tools/execute` |
 | 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/quota/usage`、`GET /api/sandboxes/quota/history`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate`，Settings 下发 memory、cpu、workspace quota 和 network allowlist |
 | 模型审计 | 已落地 | `GET /api/tasks/{task_id}/model-calls`，响应包含 `trace_id`、请求摘要、响应预览和错误信息 |
 | 工具审计 | 已落地 | `GET /api/tasks/{task_id}/tool-calls`，支持工具、状态、风险、Trace 筛选和事件/Trace 深链 |
 | 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health`、`GET /api/settings/models/fallbacks`，覆盖 RPM、TPM、主动探测、供应商熔断和 fallback 观测 |
 | 策略设置 | 已落地 | `GET /api/settings/policies`、`PUT /api/settings/policies` |
 | 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics`，summary 返回 `subagent_queue` 队列摘要 |
-| 日志观测 | 基础落地 | `GET /api/observability/logs`、Promtail 采集 |
+| 日志观测 | 已落地 | `GET /api/observability/logs`、Promtail 采集 |
 | Trace 观测 | 已落地 | `GET /api/observability/traces/{trace_id}`，支持服务、Span 名称和属性键值过滤 |
 | Grafana 集成 | 已落地 | `GET /api/observability/grafana/dashboards`、provisioning、admin/operator RBAC |
 | 观测服务健康 | 已落地 | `GET /api/observability/services/health`、admin/operator RBAC |

@@ -82,7 +82,7 @@ http_request_duration_seconds
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| 官网 Next.js | 基础落地 | `apps/web-site` |
+| 官网 Next.js | 已落地 | `apps/web-site` |
 | 控制台 React + Vite | 已落地 | `apps/agent-console` |
 | 中文 OpenAPI JSON/YAML | 已落地 | `docs/api` 与官网 public |
 | 控制台任务入口 | 已落地 | `/tasks` |

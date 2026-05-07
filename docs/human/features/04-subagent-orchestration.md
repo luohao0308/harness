@@ -178,9 +178,9 @@ agent_subagent_recovery_last_recovered
 | 组织子 Agent 批量查询 | 已落地 | `GET /api/subagents` 支持 `status` 和 `limit` |
 | 子 Agent 详情 | 已落地 | `GET /api/subagents/{subagent_id}` |
 | 子 Agent 取消 | 已落地 | `POST /api/subagents/{subagent_id}/cancel` |
-| 子 Agent 恢复 | 基础落地 | `POST /api/tasks/{task_id}/subagents/recover` |
-| 自动恢复巡检 | 基础落地 | `subagent_recovery_worker` 扫描 `PENDING`、`RUNNING` 子 Agent |
-| 恢复批次详情 | 基础落地 | 手动恢复和自动巡检返回批次 ID、扫描数量、恢复数量、动作统计和完成时间 |
+| 子 Agent 恢复 | 已落地 | `POST /api/tasks/{task_id}/subagents/recover` |
+| 自动恢复巡检 | 已落地 | `subagent_recovery_worker` 扫描 `PENDING`、`RUNNING` 子 Agent |
+| 恢复批次详情 | 已落地 | 手动恢复和自动巡检返回批次 ID、扫描数量、恢复数量、动作统计和完成时间 |
 | 恢复批次历史 | 已落地 | `subagent_recovery_batches` 与 `GET /api/tasks/{task_id}/subagents/recovery-batches` |
 | 跨任务恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 按组织聚合批次数、涉及任务、扫描数、恢复数、锁跳过次数、动作统计和最近批次 |
 | 跨组织恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/global-summary` 按组织聚合恢复运营数据，限定 admin |
@@ -190,14 +190,14 @@ agent_subagent_recovery_last_recovered
 | Worker 崩溃接管 | 已落地 | 卡住 `RUNNING` 子 Agent 重置为 `PENDING`，写入 `takeover_generation`、`last_takeover_owner`、`last_takeover_at` 和 `SUBAGENT_PROGRESS stage=worker_takeover` |
 | 子 Agent 批量取消 | 已落地 | `POST /api/subagents/bulk` 与控制台 `/subagents` 选择框、批量取消按钮 |
 | 并发上限 | 已落地 | 固定 5 |
-| Dramatiq worker | 基础落地 | `agent-worker` |
-| 异步派生可见性 | 基础落地 | 任务详情页 Subagent 面板和 `/subagents` 页面 |
-| worker 结果写回 | 基础落地 | worker 写入 `SUBAGENT_PROGRESS`、`SUBAGENT_COMPLETED` 和 `context_json.result` |
+| Dramatiq worker | 已落地 | `agent-worker` |
+| 异步派生可见性 | 已落地 | 任务详情页 Subagent 面板和 `/subagents` 页面 |
+| worker 结果写回 | 已落地 | worker 写入 `SUBAGENT_PROGRESS`、`SUBAGENT_COMPLETED` 和 `context_json.result` |
 | 主任务聚合子 Agent 结果 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` 和 `subagent-results.json` |
-| Subagent 工具链执行 | 基础落地 | worker 执行 `assignment.tools[]`，写入 `tool_calls` 和 `result.tool_results[]` |
-| 多轮 ReAct 工具规划 | 基础落地 | worker 支持模型返回 `next_tools`，按 `max_tool_rounds` 继续执行并写入 `react_trace` |
+| Subagent 工具链执行 | 已落地 | worker 执行 `assignment.tools[]`，写入 `tool_calls` 和 `result.tool_results[]` |
+| 多轮 ReAct 工具规划 | 已落地 | worker 支持模型返回 `next_tools`，按 `max_tool_rounds` 继续执行并写入 `react_trace` |
 | Subagent 产物详情 | 已落地 | Result API 从工具结果生成 `artifacts[]`；控制台 `/subagents/:subagentId` 展示结果摘要、产物、工具结果、ReAct 轨迹和上下文压缩 |
-| 长上下文压缩 | 基础落地 | worker 保留完整 `tool_results` 审计记录，模型侧使用 `context_summary.recent_tool_results` 和聚合计数继续规划 |
+| 长上下文压缩 | 已落地 | worker 保留完整 `tool_results` 审计记录，模型侧使用 `context_summary.recent_tool_results` 和聚合计数继续规划 |
 
 ## 缺口
 

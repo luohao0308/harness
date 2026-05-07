@@ -121,7 +121,7 @@ Trace span -> OTel Collector -> traces API -> 控制台 Trace 页
 |---|---|---|---|
 | Prometheus | `http://127.0.0.1:9091` | 抓取并查询指标 | `GET /metrics` 已落地 |
 | Grafana | `http://127.0.0.1:3001` | 展示仪表盘 | `GET /api/observability/grafana/dashboards` 已落地，含 admin/operator RBAC |
-| Loki | `http://127.0.0.1:3100` | 查询结构化日志 | `GET /api/observability/logs` 基础落地 |
+| Loki | `http://127.0.0.1:3100` | 查询结构化日志 | `GET /api/observability/logs` 已落地 |
 | OpenTelemetry Collector | `http://127.0.0.1:4317`、`http://127.0.0.1:4318` | 接收并转发 trace | `GET /api/observability/traces/{trace_id}` 已落地 |
 | Tempo | `http://127.0.0.1:3200` | 存储并查询真实 trace | `GET /api/observability/traces/{trace_id}` 已落地 |
 
@@ -204,11 +204,11 @@ cookie
 | Prometheus 告警规则 | 已落地 | `deploy/monitoring/alert-rules.yml` |
 | trace_id 响应头 | 已落地 | `services/api-server/app/core/tracing.py` |
 | OTLP exporter wiring | 已落地 | API Server 启动时配置 OTLP gRPC exporter |
-| Loki 日志查询 API | 基础落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
-| Loki 真实采集链路 | 基础落地 | Promtail 通过 Docker socket 采集容器日志并写入 Loki |
+| Loki 日志查询 API | 已落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
+| Loki 真实采集链路 | 已落地 | Promtail 通过 Docker socket 采集容器日志并写入 Loki |
 | Loki 标签检索体验 | 已落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector；控制台提供深链筛选 |
 | Grafana 后端代理 | 已落地 | `GET /api/observability/grafana/dashboards`，后端使用 Basic Auth 查询 dashboard 元数据，并限定 admin/operator 访问 |
-| Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
+| Grafana provisioning | 已落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store；控制台支持手动 Trace 查询和日志行跳转 |
 | Trace 属性检索 | 已落地 | Trace API 支持 `service`、`span_name`、`attribute_key`、`attribute_value` 查询参数；控制台提供 Span 筛选表单 |
 | 观测服务健康 | 已落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo，并限定 admin/operator 访问 |

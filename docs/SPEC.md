@@ -72,7 +72,8 @@ OpenAPI 与后端不一致：以 OpenAPI 为变更目标，随后同步后端 sc
 | 状态 | 含义 |
 |---|---|
 | 已落地 | 后端接口、数据来源、测试和前端入口已存在 |
-| 基础落地 | 主链路已存在，生产级细节仍需增强 |
+| 基础落地 | 主链路已存在，企业级细节待补齐 |
+| 持续回归 | 企业级能力已落地，后续变更必须保持测试和页面验收 |
 | 待增强 | Spec 已定义，代码只覆盖部分行为 |
 | 待落地 | Spec 已定义，代码尚无稳定入口 |
 
@@ -115,14 +116,14 @@ User Goal
 -> OpenAPI / Console / Website
 ```
 
-## 当前缺口主线
+## 当前持续增强主线
 
-| 缺口 | 规格文件 | 目标 |
+| 主线 | 规格文件 | 目标 |
 |---|---|---|
 | 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增页面继续保持默认中文与 English 切换 |
-| LLM Planner | `docs/human/features/02-planner-executor.md` | 真实模型规划、结构校验和计划版本 |
-| Worker 级恢复 | `docs/human/features/03-event-sourcing-replay.md` | 长任务恢复编排 |
-| 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 更多工具结果解析、超时分类和控制台细节 |
+| LLM Planner 质量治理 | `docs/human/features/02-planner-executor.md` | 计划结构校验、版本治理和回归数据集 |
+| 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 工具结果解析、超时分类和控制台细节 |
+| 企业级运营回归 | `docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md` | Worker 接管、恢复运营、fallback、配额、导出和 dashboard 持续验收 |
 
 ## 交付分层
 

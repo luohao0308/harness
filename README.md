@@ -131,12 +131,12 @@ GET  /metrics
 | 官网使用 Next.js | 已实现 | `apps/web-site/package.json`、`app/`、`components/`、公开 OpenAPI 文件 |
 | 控制台使用 React + Vite | 已实现 | `apps/agent-console/package.json` 使用 Vite、React、TypeScript、Tailwind CSS |
 | 后端使用 Python 3.11 + FastAPI | 已实现 | `services/api-server/pyproject.toml` 固定 `requires-python ==3.11.*` 并依赖 FastAPI |
-| 异步任务使用 Dramatiq | 基础落地 | `services/api-server/app/workers/subagent_worker.py` 和 Docker Compose `agent-worker` 使用 Dramatiq |
+| 异步任务使用 Dramatiq | 已实现 | `services/api-server/app/workers/subagent_worker.py` 和 Docker Compose `agent-worker` 使用 Dramatiq |
 | 数据库使用 PostgreSQL 16 | 已接入 | Docker Compose 使用 `postgres:16-alpine`，后端使用 SQLAlchemy 与 Alembic |
 | 缓存与队列使用 Redis 7 | 已接入 | Docker Compose 使用 `redis:7-alpine`，后端依赖 Redis 与 Dramatiq broker |
-| 容器沙箱使用 Docker SDK for Python | 已实现基础能力 | 后端依赖 `docker`，存在 Docker manager、WarmPool、shell 工具沙箱路径 |
-| 日志使用 Loki | 已接入部署配置 | Docker Compose 包含 Loki，监控目录包含 `loki.yml` |
-| 监控使用 Prometheus + Grafana | 已接入 | Docker Compose 包含 Prometheus 和 Grafana，后端提供 `/metrics` |
+| 容器沙箱使用 Docker SDK for Python | 已实现 | 后端依赖 `docker`，存在 Docker manager、WarmPool、shell 工具沙箱路径、配额审计和网络白名单 |
+| 日志使用 Loki | 已实现 | Docker Compose 包含 Loki 和 Promtail，后端提供日志查询与标签检索 |
+| 监控使用 Prometheus + Grafana | 已实现 | Docker Compose 包含 Prometheus 和 Grafana，后端提供 `/metrics`、dashboard provisioning 和服务健康接口 |
 | 设计稿使用 Figma | 文档已约束，外部设计源未纳入仓库 | `docs/design` 中有 Figma production brief、page inventory、design tokens |
 | Gemini/H5 产物只作为视觉参考和文案参考 | 文档已约束 | 生产前端必须由 React/Next.js 组件实现，不复制 AI 生成 H5 |
 | 文档统一使用阶段、首个交付版、集成演示版和企业版 | 已覆盖 | README 与阶段文档统一使用固定术语 |

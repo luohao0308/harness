@@ -131,10 +131,10 @@ sandbox_network_enabled_total
 | Model Gateway 读取设置 | 已落地 | Model Gateway |
 | Policy Engine 读取设置 | 已落地 | Policy Engine |
 | Grafana / Loki 控制台入口 | 已落地 | `/observability` 已展示日志、Trace、Dashboard 和服务健康 |
-| Loki 真实采集链路 | 基础落地 | Promtail 采集 Docker 容器日志进入 Loki |
-| Loki 标签查询体验 | 基础落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector |
+| Loki 真实采集链路 | 已落地 | Promtail 采集 Docker 容器日志进入 Loki |
+| Loki 标签查询体验 | 已落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector |
 | Grafana Basic Auth 代理 | 已落地 | 后端使用 Grafana 凭据查询 dashboard 元数据，并限定 admin/operator 访问 |
-| Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo 数据源和 Harness dashboard |
+| Grafana provisioning | 已落地 | 自动加载 Prometheus、Loki、Tempo 数据源和 Harness dashboard |
 | Tempo Trace 后端 | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span |
 | 观测导出 | 已落地 | `GET /api/observability/exports`、日志 JSONL、Trace JSON、Grafana dashboard JSON 和服务健康 JSON |
 | Grafana 指标覆盖 | 已落地 | 默认 Dashboard 覆盖 Subagent Recovery、Model Fallback、Sandbox Quota、Replay & Recovery 和 API Logs |

@@ -108,9 +108,9 @@ agent_subagent_recovery_last_recovered
 | 失败点定位 | 已落地 | Replay response |
 | 步骤级恢复执行 | 已落地 | `POST /api/tasks/{task_id}/steps/resume` |
 | Worker 级恢复 | 已落地 | `POST /api/tasks/{task_id}/subagents/recover` |
-| Worker 自动巡检 | 基础落地 | `subagent_recovery_worker.recover_stalled_subagents` |
-| Worker 跨节点恢复锁 | 基础落地 | PostgreSQL advisory lock 控制同一时间只有一个恢复巡检执行 |
-| Worker 恢复批次详情 | 基础落地 | 手动恢复 API 与自动巡检返回 `batch_id`、扫描数、恢复数、动作统计和完成时间 |
+| Worker 自动巡检 | 已落地 | `subagent_recovery_worker.recover_stalled_subagents` |
+| Worker 跨节点恢复锁 | 已落地 | PostgreSQL advisory lock 控制同一时间只有一个恢复巡检执行 |
+| Worker 恢复批次详情 | 已落地 | 手动恢复 API 与自动巡检返回 `batch_id`、扫描数、恢复数、动作统计和完成时间 |
 | Worker 恢复批次历史 | 已落地 | `GET /api/tasks/{task_id}/subagents/recovery-batches` 查询持久化批次 |
 | Worker 恢复指标 | 已落地 | `subagent-recovery:9102/metrics` 输出恢复动作、巡检次数和最近恢复数量 |
 | Worker 恢复告警 | 已落地 | `deploy/monitoring/alert-rules.yml` |

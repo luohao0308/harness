@@ -179,36 +179,38 @@ agent_subagents_running
 | 计划查询接口 | 已落地 | `GET /api/tasks/{task_id}/plan` |
 | 计划版本接口 | 已落地 | `GET /api/tasks/{task_id}/plans` |
 | 计划版本对比 | 已落地 | `GET /api/tasks/{task_id}/plans/diff` |
-| 计划版本差异可视化 | 基础落地 | 控制台执行计划面板展示新增、变更和移除步骤清单 |
+| 计划版本差异可视化 | 已落地 | 控制台执行计划面板展示新增、变更和移除步骤清单 |
 | 步骤查询接口 | 已落地 | `GET /api/tasks/{task_id}/steps` |
 | 步骤断点续跑接口 | 已落地 | `POST /api/tasks/{task_id}/steps/resume` |
 | 步骤断点续跑控制台动作 | 已落地 | 执行计划面板展示“从此续跑” |
 | 步骤重试事件 | 已落地 | `STEP_RETRIED` |
 | 步骤跳过事件 | 已落地 | `STEP_SKIPPED` |
-| LLM Planner | 基础落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
-| LLM Planner Prompt 1.1 | 基础落地 | Prompt 要求工具意图、验收标准、风险等级和预期产物 |
-| LLM Planner 结构重试 | 基础落地 | 第一次模型计划非法时，自动请求修复一次 |
-| 计划来源展示 | 基础落地 | Plan API 和控制台展示 `planner_source`、`planner_attempts` 和步骤元数据 |
-| 异步步骤识别 | 基础落地 | 模型 JSON 或关键词触发 async 步骤 |
-| Executor 步骤执行 | 基础落地 | 同步步骤写入工具审计与事件 |
-| Subagent 派生 | 基础落地 | async 步骤写入 `agent_runs` 并请求 Dramatiq 入队 |
-| 真实 Tool Runner | 基础落地 | 低风险文件工具真实执行，高风险工具进入沙箱路径 |
+| LLM Planner | 已落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
+| LLM Planner Prompt 1.1 | 已落地 | Prompt 要求工具意图、验收标准、风险等级和预期产物 |
+| LLM Planner 结构重试 | 已落地 | 第一次模型计划非法时，自动请求修复一次 |
+| 计划来源展示 | 已落地 | Plan API 和控制台展示 `planner_source`、`planner_attempts` 和步骤元数据 |
+| 异步步骤识别 | 已落地 | 模型 JSON 或关键词触发 async 步骤 |
+| Executor 步骤执行 | 已落地 | 同步步骤写入工具审计与事件 |
+| Subagent 派生 | 已落地 | async 步骤写入 `agent_runs` 并请求 Dramatiq 入队 |
+| 真实 Tool Runner | 已落地 | 低风险文件工具真实执行，高风险工具进入沙箱路径 |
 | 工具公开执行接口 | 已落地 | `POST /api/tasks/{task_id}/tools/execute` |
-| 并行执行拓扑 | 基础落地 | 控制台事件时间线展示异步步骤到子 Agent 的拓扑链路 |
+| 并行执行拓扑 | 已落地 | 控制台事件时间线展示异步步骤到子 Agent 的拓扑链路 |
+| Worker 跨进程接管 | 已落地 | `SubagentManager.recover_for_task`、`SUBAGENT_PROGRESS stage=worker_takeover`、恢复批次和接管元数据 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Worker 跨进程接管 | Worker 崩溃后的自动接管仍需增强 | 以 Replay state 驱动 Worker 恢复 |
+| LLM Planner 质量治理 | 复杂目标拆解质量依赖模型输出稳定性 | 强化计划 schema 校验、版本治理和回归数据集 |
+| Executor ReAct 轨迹细节 | 多轮工具执行轨迹已写入，复杂失败定位需要更细粒度摘要 | 强化同步步骤、异步步骤和工具轮次的统一轨迹展示 |
 
 ## 实现顺序
 
 ```text
 1. 固化 Plan / Step schema
 2. 增强 Executor ReAct 循环
-3. 增强 Worker 跨进程接管
-4. 补 Worker 级恢复历史查询
+3. 保持 Worker 跨进程接管回归
+4. 保持 Worker 级恢复历史查询
 ```
 
 ## 验收标准

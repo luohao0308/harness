@@ -51,13 +51,13 @@
 | 能力 | 后端状态 | 前端状态 |
 |---|---|---|
 | 任务生命周期 | 接口已落地 | 页面已接入 |
-| 计划与执行 | 基础链路已落地 | 计划面板已接入 |
+| 计划与执行 | Planner、Executor、同步步骤、异步派生和 Worker 接管已落地 | 计划面板已接入 |
 | 事件流 | REST 与 SSE 已落地 | 时间线已接入 |
-| Replay | 基础重放已落地 | 摘要面板已接入 |
+| Replay | Snapshot、Replay、步骤恢复和 Worker 恢复已落地 | 摘要面板已接入 |
 | Subagent | 查询、创建、取消、恢复和结果聚合已落地 | 列表页、任务页与详情页已接入 |
 | 沙箱治理 | Sandbox 与 WarmPool 接口已落地 | 沙箱页已接入 |
 | 模型与工具审计 | 审计表与查询已落地 | 面板已接入 |
 | Settings | 持久化读写已落地 | 设置页已接入 |
-| Observability | Prometheus 指标与深度观测接口已落地 | 运营页基础接入 |
-| Loki / Grafana / OTel | 日志、Dashboard、Trace、服务健康接口基础落地 | 观测页基础接入 |
+| Observability | Prometheus 指标、深度观测接口、导出留存和队列摘要已落地 | 运营页已接入 |
+| Loki / Grafana / OTel | 日志、Dashboard、Trace、服务健康接口和 provisioning 已落地 | 观测页已接入 |
 | 控制台本地化 | 默认中文与 English 切换已落地 | Shell、主要页面与子 Agent 详情页已接入 |
