@@ -122,7 +122,7 @@ User Goal
 | Loki 日志采集 | `docs/human/features/10-observability-localization-spec.md` | 外部 Loki 采集链路增强 |
 | Grafana 后端代理 | `docs/human/features/10-observability-localization-spec.md` | 已有 dashboard 列表接口，增强鉴权和 provisioning |
 | OTel Trace 查询 | `docs/human/features/10-observability-localization-spec.md` | 已有 trace 查询接口，增强真实 OTel Trace 后端 |
-| 控制台全量 i18n | `docs/human/features/10-observability-localization-spec.md` | 所有页面双语 |
+| 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增页面继续保持默认中文与 English 切换 |
 | LLM Planner | `docs/human/features/02-planner-executor.md` | 真实模型规划、结构校验和计划版本 |
 | Worker 级恢复 | `docs/human/features/03-event-sourcing-replay.md` | 长任务恢复编排 |
 | 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 更多工具结果解析、超时分类和控制台细节 |

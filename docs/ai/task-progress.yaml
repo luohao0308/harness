@@ -579,22 +579,39 @@ stages:
       - apps/web-site/public/openapi.yaml
       - apps/web-site/tailwind.config.ts
       - apps/web-site/tsconfig.json
+      - apps/agent-console/src/app/routes.tsx
+      - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
+      - apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx
+      - apps/agent-console/src/features/subagents/pages/SubagentsPage.tsx
+      - apps/agent-console/src/features/tasks/api.ts
+      - apps/agent-console/src/features/tasks/components/TaskResultPanel.tsx
       - deploy/docker-compose/docker-compose.yml
       - deploy/nginx/agent-harness.conf
+      - docs/SPEC-INDEX.md
+      - docs/SPEC.md
+      - docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md
       - docs/human/07-deployment-operations.md
       - docs/human/10-task-progress.md
+      - docs/human/features/04-subagent-orchestration.md
+      - docs/human/features/08-website-console-openapi.md
+      - docs/human/features/09-implementation-coverage.md
+      - docs/human/features/10-observability-localization-spec.md
+      - docs/human/features/README.md
       - docs/qa/test-strategy.md
       - docs/runbooks/deployment.md
       - docs/runbooks/local-development.md
     verification_commands:
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
       - cd apps/web-site && npm run lint
       - cd apps/web-site && npm run build
       - docker compose -f deploy/docker-compose/docker-compose.yml config
       - python3 scripts/validate-docs.py
+      - bash scripts/check-docs.sh
     verification_result: passed
     branch: stage/stage-13-website-code-integration
     commit_sha: 5a12fc8b4e7d8a0d463c024aaf06eb9091b36bda
     pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Verification commands passed after adding the site .dockerignore and rebuilding the website image and compose stack."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, and synchronized Spec coverage."
     next_stage: completed

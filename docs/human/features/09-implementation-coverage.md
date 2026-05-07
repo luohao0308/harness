@@ -91,6 +91,7 @@
 | `/tasks/new` | Task API | 已接入 |
 | `/tasks/:taskId` | Task、Result、Events、Replay、Audit、Subagent、Subagent Result | 已接入 |
 | `/subagents` | Subagent API | 已接入 |
+| `/subagents/:subagentId` | Subagent API、Task Result API | 已接入，展示单个子 Agent assignment、状态、取消、产物、工具结果、ReAct 轨迹和上下文压缩 |
 | `/sandboxes` | Sandbox API | 已接入 |
 | `/observability` | `GET /api/observability/summary` 与 `/metrics` | 已接入 |
 | `/observability` 日志区 | `GET /api/observability/logs` | 基础接入 |
@@ -106,14 +107,14 @@
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤已落地 | 增强步骤级断点续跑 |
 | Worker 恢复 | 手动恢复、巡检函数、service loop、跨节点恢复锁、批次详情、批次历史、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已基础落地 | 增强跨任务恢复批次汇总 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id、Subagent 状态链路和时间线并行执行拓扑 | 增强批量状态展示 |
-| Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要和长上下文压缩已基础落地 | 增强父任务结果产物预览页 |
+| Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要、长上下文压缩和单个子 Agent 详情页已基础落地 | 增强跨任务恢复汇总与批量状态展示 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流、TPM 限流、主动探测和供应商级熔断已落地 | 增强多供应商 fallback 策略观测 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类和控制台细节 | 增强工具审计筛选和深链 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强并发与断线重连测试 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标、Grafana Basic Auth 代理和 Tempo Trace 查询已落地 | 补齐队列图表与 Grafana 权限模型 |
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集和标签查询已落地 | 增强日志检索深链 |
 | OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口和 Event Store 回退已落地 | 增强 trace 深链和筛选 |
-| 控制台本地化 | 顶栏语言切换、默认中文、任务、详情、事件、Subagent、沙箱、观测、模型设置和策略设置页面双语已落地 | 持续巡检新增页面表头、按钮、空状态和错误状态 |
+| 控制台本地化 | 顶栏语言切换、默认中文、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面双语已落地 | 持续巡检新增页面表头、按钮、空状态和错误状态 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取，模型健康探测写回设置快照 | 资源规格和网络 allowlist 增强 |
 
 ## 实现顺序

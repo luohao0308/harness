@@ -142,7 +142,12 @@ export function SubagentsPage() {
                 {subagents.map((subagent) => (
                   <tr key={subagent.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                     <Td>
-                      <div className="font-mono text-xs text-slate-900">{subagent.id.slice(0, 8)}</div>
+                      <Link
+                        to={`/subagents/${subagent.id}`}
+                        className="font-mono text-xs text-slate-900 hover:text-slate-950"
+                      >
+                        {subagent.id.slice(0, 8)}
+                      </Link>
                       <div className="mt-0.5 truncate text-[11px] text-slate-500">
                         {contextSummary(subagent.context_json)}
                       </div>

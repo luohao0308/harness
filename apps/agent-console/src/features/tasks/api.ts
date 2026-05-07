@@ -478,6 +478,14 @@ export async function listTaskSubagents(taskId: string) {
   );
 }
 
+export async function getSubagent(subagentId: string) {
+  return request<Subagent>(`/api/subagents/${subagentId}`);
+}
+
+export async function cancelSubagent(subagentId: string) {
+  return request<Subagent>(`/api/subagents/${subagentId}/cancel`, { method: "POST" });
+}
+
 export async function listTaskSubagentRecoveryBatches(taskId: string) {
   return request<{ items: SubagentRecoveryBatch[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/subagents/recovery-batches`,

@@ -1,4 +1,5 @@
 import { GitBranch, RotateCcw } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -145,7 +146,12 @@ export function SubagentPanel({
           >
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-mono text-xs text-slate-800">{subagent.id.slice(0, 8)}</div>
+                <Link
+                  to={`/subagents/${subagent.id}`}
+                  className="font-mono text-xs text-slate-800 hover:text-slate-950"
+                >
+                  {subagent.id.slice(0, 8)}
+                </Link>
                 <div className="truncate text-[10px] text-slate-500">{subagentLabel(subagent)}</div>
               </div>
               <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>

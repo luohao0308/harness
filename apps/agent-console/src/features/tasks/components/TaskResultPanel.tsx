@@ -1,4 +1,5 @@
 import { AlertCircle, Bot } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import type { Task, TaskResult } from "../api";
 import { Card, CardHeader } from "../../../components/ui/card";
@@ -58,7 +59,14 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
             <tbody>
               {result.subagent_results.map((subagent) => (
                 <tr key={subagent.id} className="border-t border-slate-100">
-                  <Td className="font-mono text-slate-800">{subagent.id.slice(0, 8)}</Td>
+                  <Td>
+                    <Link
+                      to={`/subagents/${subagent.id}`}
+                      className="font-mono text-slate-800 hover:text-slate-950"
+                    >
+                      {subagent.id.slice(0, 8)}
+                    </Link>
+                  </Td>
                   <Td className="font-mono text-slate-600">{subagent.step_key ?? "-"}</Td>
                   <Td className="text-slate-600">
                     {statusLabel(subagent.status)}

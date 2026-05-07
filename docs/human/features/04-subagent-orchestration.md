@@ -168,7 +168,7 @@ agent_subagent_recovery_last_recovered
 | 主任务聚合子 Agent 结果 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` 和 `subagent-results.json` |
 | Subagent 工具链执行 | 基础落地 | worker 执行 `assignment.tools[]`，写入 `tool_calls` 和 `result.tool_results[]` |
 | 多轮 ReAct 工具规划 | 基础落地 | worker 支持模型返回 `next_tools`，按 `max_tool_rounds` 继续执行并写入 `react_trace` |
-| Subagent 产物详情 | 基础落地 | Result API 从工具结果生成 `artifacts[]` 并汇总到任务产物列表 |
+| Subagent 产物详情 | 已落地 | Result API 从工具结果生成 `artifacts[]`；控制台 `/subagents/:subagentId` 展示结果摘要、产物、工具结果、ReAct 轨迹和上下文压缩 |
 | 长上下文压缩 | 基础落地 | worker 保留完整 `tool_results` 审计记录，模型侧使用 `context_summary.recent_tool_results` 和聚合计数继续规划 |
 
 ## 缺口
@@ -182,7 +182,7 @@ agent_subagent_recovery_last_recovered
 
 ```text
 1. 固化 agent_runs 字段和状态机
-2. 增强父任务结果产物预览页
+2. 增强跨任务恢复批次汇总
 3. 增强批量状态展示
 4. 增加超时和取消测试
 ```

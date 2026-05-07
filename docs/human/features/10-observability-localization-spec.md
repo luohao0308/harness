@@ -197,14 +197,14 @@ cookie
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store |
 | 观测服务健康 | 基础落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo |
-| 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
+| 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | Grafana 权限模型 | 当前接口已有 Basic Auth 查询、dashboard 列表、配置回退和 provisioning | 后端代理 Grafana 权限 |
-| 控制台边缘文案巡检 | 少量技术值和开发占位页仍需持续巡检 | 默认中文，顶栏切换 English，技术值保留原值并提供说明 |
+| 控制台边缘文案巡检 | 新增页面已按双语接入；后续新增页面仍需持续巡检 | 默认中文，顶栏切换 English，技术值保留原值并提供说明 |
 
 ## 实现顺序
 

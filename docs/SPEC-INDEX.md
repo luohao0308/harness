@@ -20,8 +20,8 @@
 | 模型设置 | [07 Settings 与 Observability](./human/features/07-settings-observability.md) | [OpenAPI](./api/openapi.yaml) | [安全策略矩阵](./ai/reference/security-policy-matrix.md) | [前端规格](./ai/reference/frontend-spec.md) | [QA 策略](./qa/test-strategy.md) | 已落地 |
 | 策略设置 | [07 Settings 与 Observability](./human/features/07-settings-observability.md) | [OpenAPI](./api/openapi.yaml) | [Tool Registry](./ai/reference/tool-registry-spec.md)、[安全策略矩阵](./ai/reference/security-policy-matrix.md) | [前端规格](./ai/reference/frontend-spec.md) | [安全威胁模型](./security/threat-model.md) | 已落地 |
 | 观测与运营 | [10 Observability 与本地化规格](./human/features/10-observability-localization-spec.md) | [OpenAPI](./api/openapi.yaml) | [运行时与部署规格](./ai/reference/runtime-deployment-spec.md) | [前端规格](./ai/reference/frontend-spec.md)、[Figma Brief](./design/figma-production-brief.md) | [部署 Runbook](./runbooks/deployment.md)、[排障 Runbook](./runbooks/troubleshooting.md) | 基础落地 |
-| 控制台本地化 | [10 Observability 与本地化规格](./human/features/10-observability-localization-spec.md) | 不涉及 | [前端规格](./ai/reference/frontend-spec.md) | [Figma Brief](./design/figma-production-brief.md)、[页面清单](./design/page-inventory.md) | [QA 策略](./qa/test-strategy.md) | 待增强 |
-| 官网与 OpenAPI | [08 官网、控制台与 OpenAPI 入口](./human/features/08-website-console-openapi.md) | [OpenAPI 契约](./api/openapi-contract.md) | [架构与技术决策](./ai/reference/architecture-and-decisions.md) | [Figma Brief](./design/figma-production-brief.md) | [端到端 Demo 剧本](./demo/e2e-demo-script.md) | 基础落地 |
+| 控制台本地化 | [10 Observability 与本地化规格](./human/features/10-observability-localization-spec.md) | 不涉及 | [前端规格](./ai/reference/frontend-spec.md) | [Figma Brief](./design/figma-production-brief.md)、[页面清单](./design/page-inventory.md) | [QA 策略](./qa/test-strategy.md) | 已落地 |
+| 官网与 OpenAPI | [08 官网、控制台与 OpenAPI 入口](./human/features/08-website-console-openapi.md) | [OpenAPI 契约](./api/openapi-contract.md) | [架构与技术决策](./ai/reference/architecture-and-decisions.md) | [Figma Brief](./design/figma-production-brief.md) | [端到端 Demo 剧本](./demo/e2e-demo-script.md) | 已落地 |
 
 ## 变更检查
 

@@ -111,11 +111,12 @@ docs/SPEC.md
 | `/tasks/:taskId/events` | 事件流聚焦 | Events API、SSE | 已接入 |
 | `/tasks/:taskId/subagents` | 子 Agent 聚焦 | Subagent API | 已接入 |
 | `/subagents` | 子 Agent 列表 | Task API、Subagent API | 已接入 |
+| `/subagents/:subagentId` | 子 Agent 详情、取消、结果产物、工具结果、ReAct 轨迹、上下文压缩 | Subagent API、Task Result API | 已接入 |
 | `/sandboxes` | 沙箱和 WarmPool | Sandbox API、WarmPool API | 已接入 |
 | `/observability` | 运行摘要 | Observability Summary、Metrics | 基础接入 |
 | `/settings/models` | 模型设置 | Settings Models API、Model Health API | 已接入，展示 RPM、TPM、探测模式和熔断状态 |
 | `/settings/policies` | 策略设置 | Settings Policies API | 已接入 |
-| 官网 | 产品展示、文档、OpenAPI 下载 | Next.js、公开 OpenAPI 文件 | 基础接入，最终官网代码待整合 |
+| 官网 | 产品展示、文档、OpenAPI 下载 | Next.js、公开 OpenAPI 文件 | 已接入，首页、产品、架构、方案、安全、部署、文档和联系页已接通 |
 
 ## 观测与运行进展
 
@@ -128,13 +129,21 @@ docs/SPEC.md
 | OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 增强 Trace 深链 |
 | 服务健康 | 基础落地 | `GET /health`、`GET /api/observability/services/health` | 增强告警联动 |
 
-## 当前未完成缺口
+## 本轮完成收口
 
-| 缺口 | 影响 | 目标文档 |
+| 收口项 | 当前结果 | 证据 |
 |---|---|---|
-| Subagent 结果产物详情 | 父任务已聚合子 Agent 摘要和产物摘要 | `docs/human/features/04-subagent-orchestration.md` |
-| 控制台边缘文案巡检 | 新增页面仍需按 Spec 持续检查双语文案 | `docs/human/features/10-observability-localization-spec.md` |
-| 官网最终接入 | 用户提供的官网代码还需整合 | `docs/human/features/08-website-console-openapi.md` |
+| Subagent 结果产物详情 | 已新增单个子 Agent 详情页，可查看 assignment、状态、取消动作、结果摘要、产物、工具结果、ReAct 轨迹和上下文压缩摘要 | `/subagents/:subagentId`、`GET /api/subagents/{subagent_id}`、`GET /api/tasks/{task_id}/result` |
+| 控制台边缘文案巡检 | 新增详情页按默认中文、English 切换接入；列表、任务结果和详情入口均使用双语文案 | `apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx` |
+| 官网最终接入 | 官网首页能力文案中文优先，控制台页面清单已链接真实控制台路径，产品页补充子 Agent 详情入口 | `apps/web-site/components/Homepage.tsx`、`apps/web-site/components/Product.tsx` |
+
+## 后续增强队列
+
+| 增强项 | 说明 | 目标文档 |
+|---|---|---|
+| Worker 级恢复跨任务汇总 | 当前任务级恢复、批次历史、自动巡检、指标和告警已落地，后续增强跨任务运营视图 | `docs/human/features/04-subagent-orchestration.md` |
+| 观测深链 | Loki、Grafana、Tempo 基础代理与回退已落地，后续增强权限模型、筛选深链和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
+| 步骤级断点续跑 | 当前任务级恢复和已完成步骤跳过已落地，后续增强步骤级人工选择与批量恢复 | `docs/human/features/02-planner-executor.md` |
 
 ## 流程进展
 
@@ -152,14 +161,14 @@ docs/SPEC.md
 | 阶段 10 | `docs/ai/11-stage-10-observability-deployment.md` | 已完成基础部署，深度查询接口待补 |
 | 阶段 11 | `docs/ai/12-stage-11-review-p1-hardening.md` | 已完成 |
 | 阶段 12 | `docs/ai/13-stage-12-runtime-product-completion.md` | 基础能力已补齐，增强项转入功能 Spec |
-| 阶段 13 | `docs/ai/14-stage-13-website-code-integration.md` | 进行中，等待最终官网代码整合 |
+| 阶段 13 | `docs/ai/14-stage-13-website-code-integration.md` | 已完成本轮官网与控制台收口 |
 
 ## 后续执行顺序
 
 ```text
-1. 整合用户提供的官网代码
-2. 同步 OpenAPI、测试、Runbook 和覆盖文档
-3. 持续巡检控制台新增页面双语文案
+1. 持续增强 Worker 级恢复跨任务汇总
+2. 增强观测深链、队列图表和 Grafana 权限模型
+3. 增强步骤级断点续跑与批量状态展示
 ```
 
 ## 验证命令
