@@ -72,7 +72,7 @@
 | Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
 | Subagent 工具链 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
-| 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` |
+| 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate`，Settings 下发 memory、cpu、workspace quota 和 network allowlist |
 | 模型审计 | 基础落地 | `GET /api/tasks/{task_id}/model-calls` |
 | 工具审计 | 已落地 | `GET /api/tasks/{task_id}/tool-calls`，支持工具、状态、风险、Trace 筛选和事件/Trace 深链 |
 | 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health`，覆盖 RPM、TPM、主动探测和供应商熔断 |
@@ -117,7 +117,7 @@
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集、标签查询和控制台深链筛选已落地 | 增强日志导出 |
 | OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口、Event Store 回退和控制台 Trace 深链已落地 | 增强 span 属性检索 |
 | 控制台本地化 | 顶栏语言切换、默认中文、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面双语已落地 | 持续巡检新增页面表头、按钮、空状态和错误状态 |
-| Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取，模型健康探测写回设置快照 | 资源规格和网络 allowlist 增强 |
+| Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine、Sandbox Manager 和网络请求策略读取，模型健康探测写回设置快照，沙箱资源规格和 network allowlist 已落地 | 增强配额用量统计和历史审计 |
 
 ## 实现顺序
 

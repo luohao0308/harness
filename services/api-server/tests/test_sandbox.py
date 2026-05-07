@@ -114,7 +114,14 @@ def test_docker_manager_reads_sandbox_policy_settings(db_session: Session) -> No
                     {"name": "high", "requires_sandbox": True, "approval": "admin"}
                 ],
                 "approvals": {"manual_review": True, "deny_on_missing_policy": True},
-                "sandbox": {"default_network": True, "default_timeout_seconds": 7},
+                "sandbox": {
+                    "default_network": True,
+                    "default_timeout_seconds": 7,
+                    "memory_mb": 2048,
+                    "cpus": "2.5",
+                    "workspace_quota_mb": 4096,
+                    "network_allowlist": ["api.example.test", "*.internal.test"],
+                },
                 "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
             },
             updated_by="dev-admin",
@@ -129,11 +136,26 @@ def test_docker_manager_reads_sandbox_policy_settings(db_session: Session) -> No
 
     run_call = fake_client.containers.run_calls[0]
     assert run_call["network_mode"] == "bridge"
+    assert run_call["mem_limit"] == "2048m"
+    assert run_call["nano_cpus"] == 2_500_000_000
+    assert run_call["labels"]["agent-harness.workspace_quota_mb"] == "4096"
+    assert run_call["labels"]["agent-harness.network_allowlist"] == (
+        "api.example.test,*.internal.test"
+    )
     assert sandbox.network_enabled is True
+    assert sandbox.memory_limit_mb == 2048
+    assert sandbox.cpu_limit == "2.5"
     events = EventStore(db_session).list_by_task(task_id=task.id)
     assert events[0].payload_json["network"] == "bridge"
     assert events[0].payload_json["timeout_seconds"] == 7
+    assert events[0].payload_json["workspace_quota_mb"] == 4096
+    assert events[0].payload_json["network_allowlist"] == [
+        "api.example.test",
+        "*.internal.test",
+    ]
     assert events[1].payload_json["timeout_seconds"] == 7
+    assert events[1].payload_json["memory_mb"] == 2048
+    assert events[1].payload_json["cpus"] == "2.5"
 
 
 def test_shell_tool_runs_command_through_docker_and_records_result(

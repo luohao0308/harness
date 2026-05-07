@@ -36,7 +36,7 @@ POST /api/sandboxes/{sandbox_id}/terminate
 | `sandbox_instances` | 沙箱实例、状态、资源、网络、WarmPool 复用 |
 | `tool_calls` | 沙箱工具执行审计 |
 | `agent_events` | 沙箱分配、命令和失败事件 |
-| `system_settings` | 沙箱默认网络和超时策略 |
+| `system_settings` | 沙箱默认网络、超时、资源规格、工作区配额和网络白名单策略 |
 
 ## 事件模型
 
@@ -95,24 +95,27 @@ warm_pool_miss_total
 | 默认网络关闭 | 已落地 | Sandbox policy |
 | Settings 控制默认网络 | 已落地 | `settings.policies.sandbox.default_network` |
 | Settings 控制默认命令超时 | 已落地 | `settings.policies.sandbox.default_timeout_seconds` |
+| Settings 控制资源规格 | 已落地 | `settings.policies.sandbox.memory_mb`、`cpus`、`workspace_quota_mb` |
+| Settings 控制网络白名单 | 已落地 | `settings.policies.sandbox.network_allowlist` |
+| Docker 动态资源下发 | 已落地 | Docker `mem_limit`、`nano_cpus` 和 sandbox 事件载荷 |
+| 网络请求白名单拦截 | 已落地 | `network_request` 执行前按组织策略校验 host |
 | WarmPool 预热 | 已落地 | WarmPool API |
 | 非默认网络绕过 WarmPool | 已落地 | Sandbox Manager |
+| 非默认资源绕过 WarmPool | 已落地 | 自定义 memory、cpu、workspace quota 或 allowlist 时创建专用沙箱 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 容器资源规格动态配置 | 企业租户资源治理仍需增强 | Settings 下发 memory、cpu、workspace quota |
-| 网络 allowlist | 网络访问策略仍需增强 | 按组织配置域名和地址白名单 |
+| 资源配额留存审计 | 资源规格、工作区配额和网络白名单已进入事件与容器 label | 增强配额用量统计和历史审计 |
 
 ## 实现顺序
 
 ```text
 1. 固化 Sandbox API 与 WarmPool API
-2. 扩展 Settings 沙箱资源字段
-3. 增加网络 allowlist 策略
-4. 补沙箱资源与网络测试
-5. 控制台展示资源和策略说明
+2. 增强配额用量统计
+3. 增强资源历史审计
+4. 控制台展示资源和策略说明
 ```
 
 ## 验收标准
@@ -123,5 +126,9 @@ warm_pool_miss_total
 - 策略打开网络后创建网络沙箱。
 - 命令超时后终止。
 - 命令默认超时来自 Settings。
+- 容器 memory 和 cpu 来自 Settings。
+- 沙箱事件记录 `workspace_quota_mb` 和 `network_allowlist`。
+- `network_request` 目标 host 不在 allowlist 时返回策略拒绝。
+- 自定义资源规格不得复用默认 WarmPool 容器。
 - WarmPool 状态在 API 进程重启后不丢失。
 - WarmPool benchmark 覆盖获取耗时。

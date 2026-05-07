@@ -127,3 +127,43 @@ def test_warm_pool_bypasses_pool_when_policy_requires_network(db_session: Sessio
     assert len(fake_client.containers.run_calls) == 4
     assert fake_client.containers.run_calls[-1]["network_mode"] == "bridge"
     assert manager.status(session=db_session).miss_total == 1
+
+
+def test_warm_pool_bypasses_pool_for_custom_resources(db_session: Session) -> None:
+    task = create_task(db_session)
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {
+                    "default_network": False,
+                    "default_timeout_seconds": 60,
+                    "memory_mb": 2048,
+                    "cpus": "2.0",
+                    "workspace_quota_mb": 2048,
+                    "network_allowlist": [],
+                },
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+    fake_client = FakeDockerClient()
+    manager = WarmPoolManager(docker_manager=DockerManager(client=fake_client))
+    manager.prewarm(session=db_session)
+
+    sandbox = manager.acquire(session=db_session, task_id=task.id)
+
+    assert sandbox.warm_pool_reused is False
+    assert sandbox.memory_limit_mb == 2048
+    assert sandbox.cpu_limit == "2.0"
+    assert len(fake_client.containers.run_calls) == 4
+    assert fake_client.containers.run_calls[-1]["mem_limit"] == "2048m"
+    assert fake_client.containers.run_calls[-1]["nano_cpus"] == 2_000_000_000

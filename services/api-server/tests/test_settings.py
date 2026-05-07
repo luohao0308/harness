@@ -40,6 +40,10 @@ def test_policy_settings_round_trip_for_admin(db_session: Session) -> None:
     )
     assert updated.status_code == 200
     assert updated.json()["audit"]["tool_calls"] is True
+    assert updated.json()["sandbox"]["memory_mb"] == 1024
+    assert updated.json()["sandbox"]["cpus"] == "1.0"
+    assert updated.json()["sandbox"]["workspace_quota_mb"] == 1024
+    assert updated.json()["sandbox"]["network_allowlist"] == []
 
     audit_event = db_session.execute(select(AdminAuditEvent)).scalar_one()
     assert audit_event.event_type == "ADMIN_ACTION"

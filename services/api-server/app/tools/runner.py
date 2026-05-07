@@ -73,6 +73,20 @@ class ToolRunner:
                 decision=decision,
                 requires_sandbox=requires_sandbox,
             )
+        if metadata.name == "network_request":
+            network_decision = self.policy_engine.evaluate_network_request(
+                task_id=task_id,
+                url=str(input_json.get("url", "")),
+            )
+            if not network_decision.allowed:
+                return self._deny(
+                    task_id=task_id,
+                    agent_run_id=agent_run_id,
+                    metadata=metadata,
+                    input_json=input_json,
+                    decision=network_decision,
+                    requires_sandbox=requires_sandbox,
+                )
 
         started_at = time.monotonic()
         tool_call = ToolCall(

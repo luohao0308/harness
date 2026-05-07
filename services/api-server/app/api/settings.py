@@ -48,7 +48,14 @@ DEFAULT_POLICY_SETTINGS = PolicySettingsResponse(
         {"name": "critical", "requires_sandbox": True, "approval": "admin"},
     ],
     approvals={"manual_review": True, "deny_on_missing_policy": True},
-    sandbox={"default_network": False, "default_timeout_seconds": 60},
+    sandbox={
+        "default_network": False,
+        "default_timeout_seconds": 60,
+        "memory_mb": 1024,
+        "cpus": "1.0",
+        "workspace_quota_mb": 1024,
+        "network_allowlist": [],
+    },
     audit={"model_calls": True, "tool_calls": True, "policy_actions": True},
 )
 

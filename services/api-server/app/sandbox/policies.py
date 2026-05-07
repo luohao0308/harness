@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ DEFAULT_SANDBOX_MEMORY = "1024m"
 DEFAULT_SANDBOX_MEMORY_MB = 1024
 DEFAULT_SANDBOX_CPUS = "1.0"
 DEFAULT_SANDBOX_NANO_CPUS = 1_000_000_000
+DEFAULT_WORKSPACE_QUOTA_MB = 1024
 DEFAULT_SANDBOX_NETWORK = "none"
 DEFAULT_SANDBOX_USER = "non-root"
 DEFAULT_WORKSPACE_MOUNT = "/workspace"
@@ -24,7 +26,14 @@ DEFAULT_POLICY_SETTINGS = {
         {"name": "critical", "requires_sandbox": True, "approval": "admin"},
     ],
     "approvals": {"manual_review": True, "deny_on_missing_policy": True},
-    "sandbox": {"default_network": False, "default_timeout_seconds": 60},
+    "sandbox": {
+        "default_network": False,
+        "default_timeout_seconds": 60,
+        "memory_mb": DEFAULT_SANDBOX_MEMORY_MB,
+        "cpus": DEFAULT_SANDBOX_CPUS,
+        "workspace_quota_mb": DEFAULT_WORKSPACE_QUOTA_MB,
+        "network_allowlist": [],
+    },
     "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
 }
 
@@ -47,6 +56,8 @@ class SandboxRuntimePolicy:
     memory_mb: int = DEFAULT_SANDBOX_MEMORY_MB
     cpus: str = DEFAULT_SANDBOX_CPUS
     nano_cpus: int = DEFAULT_SANDBOX_NANO_CPUS
+    workspace_quota_mb: int = DEFAULT_WORKSPACE_QUOTA_MB
+    network_allowlist: tuple[str, ...] = ()
     user: str = DEFAULT_SANDBOX_USER
 
 
@@ -135,6 +146,43 @@ class PolicyEngine:
             requires_sandbox=requires_sandbox,
         )
 
+    def evaluate_network_request(self, *, task_id: str, url: str) -> SandboxPolicyDecision:
+        settings = self._settings_for_task(task_id)
+        sandbox = settings.get("sandbox", {})
+        if not bool(sandbox.get("default_network", False)):
+            return SandboxPolicyDecision(
+                allowed=False,
+                reason="network is disabled by sandbox policy",
+                policy_id="network-enabled",
+                audit_level="critical",
+                requires_sandbox=True,
+            )
+        host = _hostname_from_url(url)
+        if host is None:
+            return SandboxPolicyDecision(
+                allowed=False,
+                reason="network url host is invalid",
+                policy_id="network-url-valid",
+                audit_level="critical",
+                requires_sandbox=True,
+            )
+        allowlist = _network_allowlist(sandbox)
+        if not _host_allowed(host=host, allowlist=allowlist):
+            return SandboxPolicyDecision(
+                allowed=False,
+                reason="network host is not in allowlist",
+                policy_id="network-allowlist",
+                audit_level="critical",
+                requires_sandbox=True,
+            )
+        return SandboxPolicyDecision(
+            allowed=True,
+            reason="network host accepted",
+            policy_id="network-allowlist",
+            audit_level="critical",
+            requires_sandbox=True,
+        )
+
     def _settings_for_task(self, task_id: str) -> dict:
         task = self.session.get(Task, task_id)
         if task is None or task.organization_id is None:
@@ -167,10 +215,25 @@ class SandboxPolicyResolver:
         timeout_seconds = int(
             sandbox.get("default_timeout_seconds") or DEFAULT_SANDBOX_TIMEOUT_SECONDS
         )
+        memory_mb = _positive_int(
+            sandbox.get("memory_mb"),
+            default=DEFAULT_SANDBOX_MEMORY_MB,
+        )
+        cpus = _positive_float_string(sandbox.get("cpus"), default=DEFAULT_SANDBOX_CPUS)
+        workspace_quota_mb = _positive_int(
+            sandbox.get("workspace_quota_mb"),
+            default=DEFAULT_WORKSPACE_QUOTA_MB,
+        )
         return SandboxRuntimePolicy(
             network_mode="bridge" if network_enabled else DEFAULT_SANDBOX_NETWORK,
             network_enabled=network_enabled,
             timeout_seconds=timeout_seconds,
+            memory=f"{memory_mb}m",
+            memory_mb=memory_mb,
+            cpus=cpus,
+            nano_cpus=int(float(cpus) * 1_000_000_000),
+            workspace_quota_mb=workspace_quota_mb,
+            network_allowlist=tuple(_network_allowlist(sandbox)),
         )
 
     def _settings_for_task(self, task_id: str | None) -> dict:
@@ -188,3 +251,51 @@ class SandboxPolicyResolver:
         if setting is None:
             return DEFAULT_POLICY_SETTINGS
         return setting.value_json
+
+
+def _positive_int(value: object, *, default: int) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _positive_float_string(value: object, *, default: str) -> str:
+    try:
+        parsed = float(str(value))
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    if parsed.is_integer():
+        return f"{parsed:.1f}"
+    return f"{parsed:.3f}".rstrip("0").rstrip(".")
+
+
+def _network_allowlist(sandbox: dict) -> list[str]:
+    raw_allowlist = sandbox.get("network_allowlist", [])
+    if not isinstance(raw_allowlist, list):
+        return []
+    return [str(item).lower().strip() for item in raw_allowlist if str(item).strip()]
+
+
+def _hostname_from_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        return None
+    return parsed.hostname.lower()
+
+
+def _host_allowed(*, host: str, allowlist: list[str]) -> bool:
+    for entry in allowlist:
+        if entry == "*":
+            return True
+        if entry.startswith("*.") or entry.startswith("."):
+            suffix = entry.removeprefix("*.").removeprefix(".")
+            if host == suffix or host.endswith(f".{suffix}"):
+                return True
+            continue
+        if host == entry:
+            return True
+    return False

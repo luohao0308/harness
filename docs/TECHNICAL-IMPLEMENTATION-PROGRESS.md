@@ -60,7 +60,7 @@ docs/SPEC.md
 | 数据库 | PostgreSQL 16 | 已接入模型和迁移 | `deploy/docker-compose`、Alembic |
 | 缓存与队列 | Redis 7 | 已接入 Dramatiq Broker | `agent-worker`、Redis 服务 |
 | 异步任务 | Dramatiq | 基础落地 | `services/api-server/app/workers/subagent_worker.py` |
-| 沙箱 | Docker SDK for Python | 基础落地 | Docker Manager、Sandbox API |
+| 沙箱 | Docker SDK for Python | 已落地 Settings 动态资源和 network allowlist | Docker Manager、Sandbox API、Policy Engine |
 | WarmPool | 预热容器池 | 已落地状态接口和数据库事实源 | `GET /api/sandboxes/warm-pool` |
 | 事件溯源 | append-only event table | 已落地 | `agent_events`、Event Store |
 | Replay | snapshot + event replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
@@ -86,8 +86,8 @@ docs/SPEC.md
 | 工具执行 | 按策略执行工具 | `POST /api/tasks/{task_id}/tools/execute` | 基础落地 |
 | 模型调用审计 | 查询供应商、模型、token、延迟、失败 | `GET /api/tasks/{task_id}/model-calls` | 基础落地 |
 | 工具调用审计 | 查询入参、结果、耗时、拒绝、失败、Trace 深链 | `GET /api/tasks/{task_id}/tool-calls` | 已落地，支持工具、状态、风险和 Trace 筛选 |
-| 沙箱治理 | 沙箱列表、详情、终止 | `GET /api/sandboxes`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` | 已落地 |
-| WarmPool | 查看预热池状态 | `GET /api/sandboxes/warm-pool` | 已落地 |
+| 沙箱治理 | 沙箱列表、详情、终止、资源规格和网络白名单 | `GET /api/sandboxes`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate`、`GET/PUT /api/settings/policies` | 已落地 |
+| WarmPool | 查看预热池状态，自定义资源绕过默认池 | `GET /api/sandboxes/warm-pool` | 已落地 |
 | 模型设置 | 供应商、模型、RPM、TPM、主动探测、熔断状态 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` | 已落地 |
 | 策略设置 | 工具风险、审批、沙箱、审计要求 | `GET /api/settings/policies`、`PUT /api/settings/policies` | 已落地 |
 | 观测摘要 | 任务、模型、工具、沙箱、WarmPool 汇总 | `GET /api/observability/summary`、`GET /metrics` | 已落地 |

@@ -17,9 +17,13 @@ from app.observability.metrics import (
 )
 from app.sandbox.docker_manager import DockerManager
 from app.sandbox.policies import (
+    DEFAULT_SANDBOX_CPUS,
     DEFAULT_SANDBOX_IMAGE,
+    DEFAULT_SANDBOX_MEMORY_MB,
     DEFAULT_SANDBOX_NETWORK,
+    DEFAULT_WORKSPACE_QUOTA_MB,
     SandboxPolicyResolver,
+    SandboxRuntimePolicy,
 )
 
 WARM_POOL_MIN_SIZE = 3
@@ -88,7 +92,7 @@ class WarmPoolManager:
     ) -> SandboxInstance:
         self._prune_expired(session)
         runtime_policy = SandboxPolicyResolver(session).runtime_for_task(task_id)
-        if runtime_policy.network_mode != DEFAULT_SANDBOX_NETWORK:
+        if not _can_reuse_warm_pool(runtime_policy):
             self._miss_total += 1
             warm_pool_miss_total.inc()
             return self.docker_manager.create_sandbox(
@@ -216,3 +220,13 @@ class WarmPoolManager:
                 )
             ).scalar_one()
         )
+
+
+def _can_reuse_warm_pool(runtime_policy: SandboxRuntimePolicy) -> bool:
+    return (
+        runtime_policy.network_mode == DEFAULT_SANDBOX_NETWORK
+        and runtime_policy.memory_mb == DEFAULT_SANDBOX_MEMORY_MB
+        and runtime_policy.cpus == DEFAULT_SANDBOX_CPUS
+        and runtime_policy.workspace_quota_mb == DEFAULT_WORKSPACE_QUOTA_MB
+        and len(runtime_policy.network_allowlist) == 0
+    )

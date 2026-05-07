@@ -86,6 +86,8 @@ class DockerManager:
             labels={
                 "agent-harness.task_id": task_id,
                 "agent-harness.managed": "true",
+                "agent-harness.workspace_quota_mb": str(policy.workspace_quota_mb),
+                "agent-harness.network_allowlist": ",".join(policy.network_allowlist),
             },
         )
 
@@ -108,6 +110,10 @@ class DockerManager:
                 "image": image,
                 "network": runtime_policy.network_mode,
                 "timeout_seconds": runtime_policy.timeout_seconds,
+                "memory_mb": runtime_policy.memory_mb,
+                "cpus": runtime_policy.cpus,
+                "workspace_quota_mb": runtime_policy.workspace_quota_mb,
+                "network_allowlist": list(runtime_policy.network_allowlist),
             },
         )
         container = self.create_container(
@@ -149,6 +155,10 @@ class DockerManager:
                     "image": image,
                     "network": policy.network_mode,
                     "timeout_seconds": policy.timeout_seconds,
+                    "memory_mb": policy.memory_mb,
+                    "cpus": policy.cpus,
+                    "workspace_quota_mb": policy.workspace_quota_mb,
+                    "network_allowlist": list(policy.network_allowlist),
                 },
             )
         sandbox = SandboxInstance(
@@ -175,8 +185,11 @@ class DockerManager:
                 "container_id": container_id,
                 "image": image,
                 "memory": policy.memory,
+                "memory_mb": policy.memory_mb,
                 "cpus": policy.cpus,
+                "workspace_quota_mb": policy.workspace_quota_mb,
                 "network": policy.network_mode,
+                "network_allowlist": list(policy.network_allowlist),
                 "user": policy.user,
                 "timeout_seconds": policy.timeout_seconds,
             },

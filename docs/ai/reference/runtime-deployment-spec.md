@@ -7,6 +7,8 @@ image: agent-runtime:latest
 memory: 1024m
 cpus: "1.0"
 network: none
+workspace_quota_mb: 1024
+network_allowlist: []
 user: non-root
 workspace_mount: /workspace
 command_timeout_required: true
