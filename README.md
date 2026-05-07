@@ -61,11 +61,11 @@ Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、
 当前阶段：阶段 13 Website Code Integration
 当前状态：ready_for_review
 当前 PR：https://github.com/luohao0308/harness/pull/11
-运行时补齐：进行中
-官网与控制台接入：进行中
+运行时补齐：企业级增强持续推进
+官网与控制台接入：已接入
 ```
 
-当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、中文 OpenAPI JSON/YAML 和官网公开下载入口。
+当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、沙箱动态资源、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
 
 当前运行时接口：
 
@@ -98,6 +98,13 @@ GET  /api/observability/logs
 GET  /api/observability/traces/{trace_id}
 GET  /api/observability/grafana/dashboards
 GET  /api/observability/services/health
+GET  /api/observability/exports
+GET  /api/observability/exports/logs
+GET  /api/observability/exports/traces/{trace_id}
+GET  /api/observability/exports/grafana/dashboards
+GET  /api/observability/exports/services/health
+GET  /api/observability/exports/history
+GET  /api/observability/exports/history/{export_id}/download
 GET  /api/settings/models
 PUT  /api/settings/models
 GET  /api/settings/models/health

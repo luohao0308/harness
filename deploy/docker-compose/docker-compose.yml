@@ -64,8 +64,11 @@ services:
       LOKI_BASE_URL: http://loki:3100
       OTEL_COLLECTOR_HTTP_URL: http://otel-collector:13133
       TEMPO_BASE_URL: http://tempo:3200
+      OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
     ports:
       - "8000:8000"
+    volumes:
+      - observability-exports:/var/lib/agent-harness/exports
 
   db-migrate:
     image: agent-harness-api-server:latest
@@ -246,5 +249,6 @@ services:
 volumes:
   agent-workspaces:
   loki-data:
+  observability-exports:
   postgres-data:
   redis-data:

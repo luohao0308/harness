@@ -2,11 +2,14 @@ import json
 import time
 from base64 import b64encode
 from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
 from typing import Annotated
 from urllib import error, request
 from urllib.parse import urlencode
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,10 +17,13 @@ from app.api.schemas import (
     CountItem,
     GrafanaDashboardPage,
     GrafanaDashboardResponse,
+    ObservabilityExportHistoryItem,
+    ObservabilityExportHistoryPage,
     ObservabilityExportItem,
     ObservabilityExportPage,
     ObservabilityLogEntry,
     ObservabilityLogPage,
+    ObservabilityQueueResponse,
     ObservabilityServiceHealthResponse,
     ObservabilityServicesHealthResponse,
     ObservabilitySummaryResponse,
@@ -26,7 +32,15 @@ from app.api.schemas import (
     WarmPoolResponse,
 )
 from app.core.config import Settings, get_settings
-from app.db.models import AgentEvent, AgentRun, ModelCall, SandboxInstance, Task, ToolCall
+from app.db.models import (
+    AgentEvent,
+    AgentRun,
+    ModelCall,
+    ObservabilityExportRecord,
+    SandboxInstance,
+    Task,
+    ToolCall,
+)
 from app.db.session import get_db_session
 from app.sandbox.warm_pool import WarmPoolManager
 from app.security.auth import Principal, require_role
@@ -73,6 +87,10 @@ def get_observability_summary(
             select(SandboxInstance.status, func.count(SandboxInstance.id)).where(
                 SandboxInstance.task_id.in_(task_ids)
             ),
+        ),
+        subagent_queue=_subagent_queue_summary(
+            session=session,
+            organization_id=principal.organization_id,
         ),
         warm_pool=warm_pool,
         event_total=_count_total(
@@ -185,12 +203,77 @@ def list_observability_exports(principal: Principal) -> ObservabilityExportPage:
 
 
 @router.get(
+    "/exports/history",
+    response_model=ObservabilityExportHistoryPage,
+    summary="查询观测导出历史",
+    description="仅 admin、operator 可访问。返回已留存的观测导出文件历史。",
+)
+def list_observability_export_history(
+    session: DbSession,
+    principal: Principal,
+    export_type: str | None = Query(default=None, description="导出类型"),
+    limit: int = Query(default=20, ge=1, le=100, description="返回数量"),
+) -> ObservabilityExportHistoryPage:
+    require_observability_operator(principal)
+    statement = select(ObservabilityExportRecord).where(
+        ObservabilityExportRecord.organization_id == principal.organization_id
+    )
+    if export_type is not None:
+        statement = statement.where(ObservabilityExportRecord.export_type == export_type)
+    records = session.execute(
+        statement.order_by(ObservabilityExportRecord.created_at.desc()).limit(limit)
+    ).scalars()
+    return ObservabilityExportHistoryPage(
+        items=[_export_history_item(record) for record in records],
+        next_cursor=None,
+    )
+
+
+@router.get(
+    "/exports/history/{export_id}/download",
+    response_class=Response,
+    summary="下载观测导出历史文件",
+    description="仅 admin、operator 可访问。按导出记录 ID 下载已留存文件。",
+    responses={
+        200: {
+            "description": "导出文件",
+            "content": {"application/octet-stream": {}},
+        }
+    },
+)
+def download_observability_export_history(
+    export_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> Response:
+    require_observability_operator(principal)
+    record = session.get(ObservabilityExportRecord, export_id)
+    if record is None or record.organization_id != principal.organization_id:
+        raise HTTPException(status_code=404, detail="导出记录不存在")
+    path = Path(record.storage_uri)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="导出文件不存在")
+    return Response(
+        content=path.read_bytes(),
+        media_type=record.content_type,
+        headers=_export_headers(record=record),
+    )
+
+
+@router.get(
     "/exports/logs",
+    response_class=Response,
     summary="导出结构化日志",
     description=(
         "仅 admin、operator 可访问。按任务、trace、服务和事件类型导出 JSONL；"
         "Loki 不可用时导出 Event Store 日志视图。"
     ),
+    responses={
+        200: {
+            "description": "JSONL 导出文件",
+            "content": {"application/x-ndjson": {}},
+        }
+    },
 )
 def export_observability_logs(
     session: DbSession,
@@ -216,14 +299,28 @@ def export_observability_logs(
         for item in page.items
     ]
     body = "\n".join(lines) + ("\n" if lines else "")
+    record = _persist_export(
+        session=session,
+        principal=principal,
+        export_type="logs_jsonl",
+        filename="observability-logs.jsonl",
+        content_type="application/x-ndjson",
+        export_format="jsonl",
+        source=page.source,
+        row_count=len(page.items),
+        filter_json={
+            "task_id": task_id,
+            "trace_id": trace_id,
+            "service": service,
+            "event_type": event_type,
+            "limit": limit,
+        },
+        body=body.encode("utf-8"),
+    )
     return Response(
         content=body,
         media_type="application/x-ndjson",
-        headers={
-            "Content-Disposition": 'attachment; filename="observability-logs.jsonl"',
-            "X-Harness-Export-Count": str(len(page.items)),
-            "X-Harness-Export-Source": page.source,
-        },
+        headers=_export_headers(record=record),
     )
 
 
@@ -238,12 +335,43 @@ def export_observability_trace(
     session: DbSession,
     principal: Principal,
     response: Response,
+    service: str | None = Query(default=None, description="服务名"),
+    span_name: str | None = Query(default=None, description="Span 名称"),
+    attribute_key: str | None = Query(default=None, description="Span 属性键"),
+    attribute_value: str | None = Query(default=None, description="Span 属性值"),
 ) -> ObservabilityTraceResponse:
     require_observability_operator(principal)
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="observability-trace-{trace_id}.json"'
+    payload = _observability_trace(
+        trace_id=trace_id,
+        session=session,
+        principal=principal,
+        service=service,
+        span_name=span_name,
+        attribute_key=attribute_key,
+        attribute_value=attribute_value,
     )
-    return _observability_trace(trace_id=trace_id, session=session, principal=principal)
+    filename = f"observability-trace-{_safe_filename(trace_id)}.json"
+    record = _persist_export(
+        session=session,
+        principal=principal,
+        export_type="trace_json",
+        filename=filename,
+        content_type="application/json",
+        export_format="json",
+        source=payload.source,
+        row_count=len(payload.spans),
+        filter_json={
+            "trace_id": trace_id,
+            "service": service,
+            "span_name": span_name,
+            "attribute_key": attribute_key,
+            "attribute_value": attribute_value,
+        },
+        body=payload.model_dump_json().encode("utf-8"),
+    )
+    for key, value in _export_headers(record=record).items():
+        response.headers[key] = value
+    return payload
 
 
 @router.get(
@@ -253,11 +381,26 @@ def export_observability_trace(
     description="仅 admin、operator 可访问。导出后端代理可见的 Grafana dashboard 列表。",
 )
 def export_grafana_dashboards(
+    session: DbSession,
     principal: Principal,
     response: Response,
 ) -> GrafanaDashboardPage:
-    response.headers["Content-Disposition"] = 'attachment; filename="grafana-dashboards.json"'
-    return list_grafana_dashboards(principal)
+    page = list_grafana_dashboards(principal)
+    record = _persist_export(
+        session=session,
+        principal=principal,
+        export_type="grafana_dashboards_json",
+        filename="grafana-dashboards.json",
+        content_type="application/json",
+        export_format="json",
+        source="grafana" if any(item.source == "grafana" for item in page.items) else "configured",
+        row_count=len(page.items),
+        filter_json={},
+        body=page.model_dump_json().encode("utf-8"),
+    )
+    for key, value in _export_headers(record=record).items():
+        response.headers[key] = value
+    return page
 
 
 @router.get(
@@ -267,11 +410,26 @@ def export_grafana_dashboards(
     description="仅 admin、operator 可访问。导出观测服务健康 JSON。",
 )
 def export_observability_services_health(
+    session: DbSession,
     principal: Principal,
     response: Response,
 ) -> ObservabilityServicesHealthResponse:
-    response.headers["Content-Disposition"] = 'attachment; filename="observability-health.json"'
-    return get_observability_services_health(principal)
+    payload = get_observability_services_health(principal)
+    record = _persist_export(
+        session=session,
+        principal=principal,
+        export_type="services_health_json",
+        filename="observability-health.json",
+        content_type="application/json",
+        export_format="json",
+        source="probe",
+        row_count=len(payload.services),
+        filter_json={},
+        body=payload.model_dump_json().encode("utf-8"),
+    )
+    for key, value in _export_headers(record=record).items():
+        response.headers[key] = value
+    return payload
 
 
 def _observability_logs(
@@ -321,8 +479,20 @@ def get_observability_trace(
     trace_id: str,
     session: DbSession,
     principal: Principal,
+    service: str | None = Query(default=None, description="服务名"),
+    span_name: str | None = Query(default=None, description="Span 名称"),
+    attribute_key: str | None = Query(default=None, description="Span 属性键"),
+    attribute_value: str | None = Query(default=None, description="Span 属性值"),
 ) -> ObservabilityTraceResponse:
-    return _observability_trace(trace_id=trace_id, session=session, principal=principal)
+    return _observability_trace(
+        trace_id=trace_id,
+        session=session,
+        principal=principal,
+        service=service,
+        span_name=span_name,
+        attribute_key=attribute_key,
+        attribute_value=attribute_value,
+    )
 
 
 def _observability_trace(
@@ -330,12 +500,36 @@ def _observability_trace(
     trace_id: str,
     session: Session,
     principal: Principal,
+    service: str | None,
+    span_name: str | None,
+    attribute_key: str | None,
+    attribute_value: str | None,
 ) -> ObservabilityTraceResponse:
     tempo_spans = _query_tempo_trace(trace_id=trace_id)
     if tempo_spans:
-        return ObservabilityTraceResponse(trace_id=trace_id, spans=tempo_spans, source="tempo")
+        return ObservabilityTraceResponse(
+            trace_id=trace_id,
+            spans=_filter_spans(
+                tempo_spans,
+                service=service,
+                span_name=span_name,
+                attribute_key=attribute_key,
+                attribute_value=attribute_value,
+            ),
+            source="tempo",
+        )
     spans = _event_trace_spans(session=session, principal=principal, trace_id=trace_id)
-    return ObservabilityTraceResponse(trace_id=trace_id, spans=spans, source="event_store")
+    return ObservabilityTraceResponse(
+        trace_id=trace_id,
+        spans=_filter_spans(
+            spans,
+            service=service,
+            span_name=span_name,
+            attribute_key=attribute_key,
+            attribute_value=attribute_value,
+        ),
+        source="event_store",
+    )
 
 
 @router.get(
@@ -404,6 +598,44 @@ def _count_items(session: Session, statement) -> list[CountItem]:
 
 def _count_total(session: Session, statement) -> int:
     return int(session.execute(statement).scalar_one() or 0)
+
+
+def _subagent_queue_summary(
+    *,
+    session: Session,
+    organization_id: str,
+) -> ObservabilityQueueResponse:
+    task_ids = select(Task.id).where(Task.organization_id == organization_id)
+    rows = session.execute(
+        select(AgentRun.status, func.count(AgentRun.id))
+        .where(AgentRun.task_id.in_(task_ids), AgentRun.agent_type == "subagent")
+        .group_by(AgentRun.status)
+    ).all()
+    counts = {str(status).upper(): int(count) for status, count in rows}
+    active_tasks = session.execute(
+        select(func.coalesce(func.sum(Task.max_subagents), 0)).where(
+            Task.organization_id == organization_id,
+            Task.status.in_(["PLANNING", "RUNNING", "WAITING_SUBAGENTS"]),
+        )
+    ).scalar_one()
+    capacity = int(active_tasks or 0)
+    pending = counts.get("PENDING", 0)
+    running = counts.get("RUNNING", 0)
+    active_total = pending + running
+    available_slots = max(capacity - active_total, 0)
+    utilization_percent = int((active_total / capacity) * 100) if capacity > 0 else 0
+    return ObservabilityQueueResponse(
+        pending=pending,
+        running=running,
+        success=counts.get("SUCCESS", 0),
+        failed=counts.get("FAILED", 0),
+        timeout=counts.get("TIMEOUT", 0),
+        cancelled=counts.get("CANCELLED", 0),
+        active_total=active_total,
+        capacity=capacity,
+        available_slots=available_slots,
+        utilization_percent=min(utilization_percent, 100),
+    )
 
 
 def _event_logs(
@@ -484,6 +716,46 @@ def _event_trace_spans(
         )
         previous_span_id = span_id
     return spans
+
+
+def _filter_spans(
+    spans: list[ObservabilityTraceSpan],
+    *,
+    service: str | None,
+    span_name: str | None,
+    attribute_key: str | None,
+    attribute_value: str | None,
+) -> list[ObservabilityTraceSpan]:
+    filtered = spans
+    if service:
+        filtered = [span for span in filtered if span.service == service]
+    if span_name:
+        needle = span_name.lower()
+        filtered = [span for span in filtered if needle in span.name.lower()]
+    if attribute_key:
+        filtered = [
+            span
+            for span in filtered
+            if _span_attribute_matches(
+                span=span,
+                attribute_key=attribute_key,
+                attribute_value=attribute_value,
+            )
+        ]
+    return filtered
+
+
+def _span_attribute_matches(
+    *,
+    span: ObservabilityTraceSpan,
+    attribute_key: str,
+    attribute_value: str | None,
+) -> bool:
+    if attribute_key not in span.attributes:
+        return False
+    if attribute_value is None or attribute_value == "":
+        return True
+    return str(span.attributes.get(attribute_key)) == attribute_value
 
 
 def _query_tempo_trace(*, trace_id: str) -> list[ObservabilityTraceSpan]:
@@ -746,3 +1018,80 @@ def _parse_datetime(value: object) -> datetime:
         except ValueError:
             pass
     return datetime.now().astimezone()
+
+
+def _persist_export(
+    *,
+    session: Session,
+    principal: Principal,
+    export_type: str,
+    filename: str,
+    content_type: str,
+    export_format: str,
+    source: str,
+    row_count: int,
+    filter_json: dict,
+    body: bytes,
+) -> ObservabilityExportRecord:
+    export_id = str(uuid4())
+    safe_filename = _safe_filename(filename)
+    storage_path = (
+        Path(get_settings().observability_export_dir)
+        / _safe_filename(principal.organization_id)
+        / f"{export_id}-{safe_filename}"
+    )
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_bytes(body)
+    record = ObservabilityExportRecord(
+        id=export_id,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        export_type=export_type,
+        filename=safe_filename,
+        content_type=content_type,
+        format=export_format,
+        source=source,
+        row_count=row_count,
+        filter_json={key: value for key, value in filter_json.items() if value is not None},
+        storage_driver="local_file",
+        storage_uri=str(storage_path),
+        size_bytes=len(body),
+        sha256=sha256(body).hexdigest(),
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def _export_headers(*, record: ObservabilityExportRecord) -> dict[str, str]:
+    return {
+        "Content-Disposition": f'attachment; filename="{record.filename}"',
+        "X-Harness-Export-Id": record.id,
+        "X-Harness-Export-Count": str(record.row_count),
+        "X-Harness-Export-Source": record.source,
+        "X-Harness-Export-Sha256": record.sha256,
+    }
+
+
+def _export_history_item(record: ObservabilityExportRecord) -> ObservabilityExportHistoryItem:
+    return ObservabilityExportHistoryItem(
+        id=record.id,
+        export_type=record.export_type,
+        filename=record.filename,
+        content_type=record.content_type,
+        format=record.format,
+        source=record.source,
+        row_count=record.row_count,
+        filter_json=record.filter_json,
+        storage_driver=record.storage_driver,
+        size_bytes=record.size_bytes,
+        sha256=record.sha256,
+        download_url=f"/api/observability/exports/history/{record.id}/download",
+        created_at=record.created_at,
+    )
+
+
+def _safe_filename(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)
+    return safe.strip("._") or "export"

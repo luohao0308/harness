@@ -19,6 +19,14 @@ erDiagram
     agent_runs ||--o{ sandbox_instances : uses
     sandbox_instances ||--o{ tool_calls : runs
     system_settings ||--o{ admin_audit_events : changes
+    observability_export_records {
+        string id
+        string organization_id
+        string export_type
+        string storage_driver
+        string storage_uri
+        string sha256
+    }
 ```
 
 ## Migration Naming
@@ -74,4 +82,6 @@ hot_events_retention_days: 90
 archive_storage: object storage
 archive_format: jsonl.gz
 archive_index: task_id, date range, organization_id
+observability_export_storage: local_file_volume
+observability_export_index: organization_id, export_type, created_at
 ```

@@ -14,7 +14,15 @@ from app.api.observability import (
 )
 from app.core.config import Settings
 from app.core.logging import JsonFormatter
-from app.db.models import AgentRun, ModelCall, SandboxInstance, Task, ToolCall, utc_now
+from app.db.models import (
+    AgentRun,
+    ModelCall,
+    ObservabilityExportRecord,
+    SandboxInstance,
+    Task,
+    ToolCall,
+    utc_now,
+)
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.main import app
@@ -175,6 +183,9 @@ def test_observability_summary_aggregates_current_organization(db_session: Sessi
     assert payload["sandbox_total"] == 1
     assert payload["tasks_by_status"] == [{"name": "FAILED", "count": 1}]
     assert payload["subagents_by_status"] == [{"name": "FAILED", "count": 1}]
+    assert payload["subagent_queue"]["failed"] == 1
+    assert payload["subagent_queue"]["active_total"] == 0
+    assert payload["subagent_queue"]["capacity"] == 0
 
 
 def test_observability_logs_returns_event_store_entries(db_session: Session) -> None:
@@ -268,9 +279,34 @@ def test_export_observability_logs_returns_jsonl(db_session: Session) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
     assert response.headers["x-harness-export-count"] == "1"
+    assert response.headers["x-harness-export-id"]
     payload = json.loads(response.text.strip())
     assert payload["task_id"] == task.id
     assert payload["trace_id"] == "trace-export"
+    record = db_session.get(ObservabilityExportRecord, response.headers["x-harness-export-id"])
+    assert record is not None
+    assert record.export_type == "logs_jsonl"
+    assert record.row_count == 1
+
+    history = TestClient(app).get(
+        "/api/observability/exports/history",
+        headers=OPERATOR_HEADERS,
+    )
+    engineer_history = TestClient(app).get(
+        "/api/observability/exports/history",
+        headers=AUTH_HEADERS,
+    )
+    download = TestClient(app).get(
+        f"/api/observability/exports/history/{record.id}/download",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert history.status_code == 200
+    assert history.json()["items"][0]["id"] == record.id
+    assert history.json()["items"][0]["download_url"].endswith(f"{record.id}/download")
+    assert engineer_history.status_code == 403
+    assert download.status_code == 200
+    assert download.text == response.text
 
 
 def test_loki_label_selector_uses_filter_labels() -> None:
@@ -446,6 +482,27 @@ def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:
                                     },
                                     {"key": "url.path", "value": {"stringValue": "/api/tasks"}},
                                 ],
+                            },
+                            {
+                                "traceId": "otel-trace-1",
+                                "spanId": "span-2",
+                                "name": "POST /api/tasks",
+                                "startTimeUnixNano": "1300000000",
+                                "endTimeUnixNano": "1500000000",
+                                "attributes": [
+                                    {
+                                        "key": "harness.trace_id",
+                                        "value": {"stringValue": "trace-chain"},
+                                    },
+                                    {
+                                        "key": "url.path",
+                                        "value": {"stringValue": "/api/tasks"},
+                                    },
+                                    {
+                                        "key": "http.request.method",
+                                        "value": {"stringValue": "POST"},
+                                    },
+                                ],
                             }
                         ]
                     }
@@ -462,14 +519,19 @@ def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:
         response = TestClient(app).get(
             "/api/observability/traces/trace-chain",
             headers=AUTH_HEADERS,
+            params={
+                "attribute_key": "http.request.method",
+                "attribute_value": "POST",
+            },
         )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["source"] == "tempo"
     assert payload["spans"][0]["trace_id"] == "trace-chain"
-    assert payload["spans"][0]["span_id"] == "span-1"
-    assert payload["spans"][0]["duration_ms"] == 250
+    assert payload["spans"][0]["span_id"] == "span-2"
+    assert payload["spans"][0]["duration_ms"] == 200
+    assert len(payload["spans"]) == 1
 
 
 def test_tempo_trace_span_parser_handles_resource_spans() -> None:

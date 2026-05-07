@@ -95,6 +95,18 @@ GET /api/observability/grafana/dashboards
 GET /api/observability/logs
 GET /api/observability/traces/{trace_id}
 GET /api/observability/services/health
+GET /api/observability/exports/history
+GET /api/observability/exports/history/{export_id}/download
+```
+
+## 观测导出留存
+
+```yaml
+OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
+storage_driver: local_file
+docker_volume: observability-exports
+metadata_table: observability_export_records
+download_api: GET /api/observability/exports/history/{export_id}/download
 ```
 
 ## systemd

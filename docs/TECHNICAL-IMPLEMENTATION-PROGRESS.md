@@ -90,7 +90,8 @@ docs/SPEC.md
 | WarmPool | 查看预热池状态，自定义资源绕过默认池 | `GET /api/sandboxes/warm-pool` | 已落地 |
 | 模型设置 | 供应商、模型、RPM、TPM、主动探测、熔断状态 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` | 已落地 |
 | 策略设置 | 工具风险、审批、沙箱、审计要求 | `GET /api/settings/policies`、`PUT /api/settings/policies` | 已落地 |
-| 观测摘要 | 任务、模型、工具、沙箱、WarmPool 汇总 | `GET /api/observability/summary`、`GET /metrics` | 已落地 |
+| 观测摘要 | 任务、模型、工具、沙箱、WarmPool 与 Subagent 队列汇总 | `GET /api/observability/summary`、`GET /metrics` | 已落地 |
+| 观测导出留存 | 查询导出入口、导出文件、查看历史、下载历史文件 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health`、`GET /api/observability/exports/history`、`GET /api/observability/exports/history/{export_id}/download` | 已落地 |
 | OpenAPI 导入 | 中文 JSON/YAML 导入 | `GET /openapi.json`、`docs/api/openapi.json`、`docs/api/openapi.yaml` | 已落地 |
 
 ## 同步执行与异步执行体现
@@ -125,11 +126,11 @@ docs/SPEC.md
 | 能力 | 当前状态 | 已有入口 | 待补目标 |
 |---|---|---|---|
 | Prometheus 指标 | 已落地 | `GET /metrics` | 增强 dashboard 指标覆盖 |
-| 观测摘要 | 已落地 | `GET /api/observability/summary` | 增加队列、耗时分位和深链 |
+| 观测摘要 | 已落地 | `GET /api/observability/summary` | 已返回子 Agent 队列容量、等待、运行、剩余槽位和使用率 |
 | Grafana | 已落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning、admin/operator RBAC | 增强 dashboard 指标覆盖 |
 | Loki | 基础落地 | `GET /api/observability/logs`、Promtail 采集、标签检索 | 增强日志检索深链 |
-| OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 增强 Trace 深链 |
-| 日志与 Trace 深链 | 已落地 | `GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、控制台筛选查询台、观测导出接口 | 增强导出留存和 span 属性检索 |
+| OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 已支持服务、Span 名称和属性键值检索 |
+| 日志与 Trace 深链 | 已落地 | `GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、控制台筛选查询台、观测导出接口、导出历史接口 | 已支持导出留存和 span 属性检索 |
 | 服务健康 | 已落地 | `GET /health`、`GET /api/observability/services/health`、admin/operator RBAC | 增强告警联动 |
 
 ## 本轮完成收口
@@ -139,13 +140,14 @@ docs/SPEC.md
 | Subagent 结果产物详情 | 已新增单个子 Agent 详情页，可查看 assignment、状态、取消动作、结果摘要、产物、工具结果、ReAct 轨迹和上下文压缩摘要 | `/subagents/:subagentId`、`GET /api/subagents/{subagent_id}`、`GET /api/tasks/{task_id}/result` |
 | 控制台边缘文案巡检 | 新增详情页按默认中文、English 切换接入；列表、任务结果和详情入口均使用双语文案 | `apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx` |
 | 官网最终接入 | 官网首页能力文案中文优先，控制台页面清单已链接真实控制台路径，产品页补充子 Agent 详情入口 | `apps/web-site/components/Homepage.tsx`、`apps/web-site/components/Product.tsx` |
+| 企业级观测运营 | 已新增导出文件留存、历史下载、子 Agent 队列摘要和 Trace span 属性检索 | `GET /api/observability/exports/history`、`GET /api/observability/summary`、`GET /api/observability/traces/{trace_id}` |
 
 ## 后续增强队列
 
 | 增强项 | 说明 | 目标文档 |
 |---|---|---|
 | Worker 级恢复跨任务汇总 | 已落地组织级恢复运营摘要；后续增强跨组织汇总和导出 | `docs/human/features/04-subagent-orchestration.md` |
-| 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口已落地，后续增强导出留存和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
+| 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口、导出留存、队列图表和 Span 属性检索已落地 | `docs/human/features/10-observability-localization-spec.md` |
 | 步骤级断点续跑 | 当前任务级恢复和已完成步骤跳过已落地，后续增强步骤级人工选择与批量恢复 | `docs/human/features/02-planner-executor.md` |
 
 ## 流程进展

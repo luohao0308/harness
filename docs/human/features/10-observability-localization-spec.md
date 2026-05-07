@@ -25,7 +25,7 @@ GET /api/observability/summary
 GET /metrics
 ```
 
-基础落地：
+运行面接口：
 
 ```text
 GET /api/observability/grafana/dashboards
@@ -37,6 +37,8 @@ GET /api/observability/exports/logs
 GET /api/observability/exports/traces/{trace_id}
 GET /api/observability/exports/grafana/dashboards
 GET /api/observability/exports/services/health
+GET /api/observability/exports/history
+GET /api/observability/exports/history/{export_id}/download
 GET /api/subagents/recovery/summary
 ```
 
@@ -44,10 +46,10 @@ GET /api/subagents/recovery/summary
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary`、`GET /metrics` | 运行摘要、恢复运营摘要和指标 |
+| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary`、`GET /metrics` | 运行摘要、队列摘要、恢复运营摘要和指标 |
 | `/observability` 日志区 | `GET /api/observability/logs` | 按任务、Trace、服务和事件类型筛选日志 |
-| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 手动输入 Trace ID 或从日志行跳转查询 span 列表 |
-| `/observability` 导出区 | `GET /api/observability/exports` 与导出接口 | 导出日志、Trace、Grafana dashboard 和服务健康快照 |
+| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 手动输入 Trace ID，从日志行跳转，按服务、Span 名称和属性键值筛选 span |
+| `/observability` 导出区 | `GET /api/observability/exports` 与导出接口 | 导出日志、Trace、Grafana dashboard 和服务健康快照，并查看历史文件 |
 | `/settings/models` | Settings API | 模型设置 |
 | `/settings/policies` | Settings API | 策略设置 |
 | 控制台 Shell | i18n 字典 | 中文与 English 切换 |
@@ -61,6 +63,7 @@ GET /api/subagents/recovery/summary
 | `model_calls` | 模型供应商、模型名、token、耗时、失败 |
 | `tool_calls` | 工具名、输入、输出、耗时、策略结果 |
 | `sandbox_instances` | 沙箱状态、资源、网络、WarmPool 复用 |
+| `observability_export_records` | 导出文件元数据、筛选条件、留存路径、SHA256 和下载历史 |
 | Loki stream | JSON 日志、service、trace_id、task_id、agent_run_id |
 | Prometheus TSDB | 指标时序 |
 | OTel traces | 请求 span、trace_id、span 属性 |
@@ -207,8 +210,11 @@ cookie
 | Grafana 后端代理 | 已落地 | `GET /api/observability/grafana/dashboards`，后端使用 Basic Auth 查询 dashboard 元数据，并限定 admin/operator 访问 |
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store；控制台支持手动 Trace 查询和日志行跳转 |
+| Trace 属性检索 | 已落地 | Trace API 支持 `service`、`span_name`、`attribute_key`、`attribute_value` 查询参数；控制台提供 Span 筛选表单 |
 | 观测服务健康 | 已落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo，并限定 admin/operator 访问 |
 | 观测导出 | 已落地 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health`；控制台提供下载入口 |
+| 观测导出留存 | 已落地 | `observability_export_records` 记录导出元数据，`OBSERVABILITY_EXPORT_DIR` 保存文件，`GET /api/observability/exports/history` 和下载接口提供历史文件 |
+| 子 Agent 队列图表 | 已落地 | `GET /api/observability/summary` 返回 `subagent_queue`，控制台展示等待、运行、容量、剩余槽位和使用率 |
 | 子 Agent 恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 与控制台观测页展示批次、任务聚合和动作统计 |
 | 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
 
@@ -223,7 +229,7 @@ cookie
 ```text
 1. 持续巡检新页面表头、按钮、空状态和错误状态双语
 2. 增强控制台 i18n 字典复用
-3. 更新 OpenAPI、控制台页面和验收测试
+3. 保持 OpenAPI、控制台页面和验收测试同步
 ```
 
 ## 验收标准
@@ -240,6 +246,10 @@ cookie
 - `GET /api/observability/exports` 对 engineer 返回 403，对 admin 和 operator 返回 200。
 - `GET /api/observability/exports/logs` 返回 JSONL，并带 `X-Harness-Export-Count`。
 - `GET /api/observability/exports/traces/{trace_id}` 返回 Trace JSON，并带下载文件名。
+- `GET /api/observability/exports/history` 对 engineer 返回 403，对 admin 和 operator 返回 200。
+- `GET /api/observability/exports/history/{export_id}/download` 返回留存文件。
+- 导出响应必须带 `X-Harness-Export-Id` 和 `X-Harness-Export-Sha256`。
+- Trace 查询必须支持按服务、Span 名称和属性键值过滤。
 - Grafana 自动加载 Prometheus 和 Loki 数据源。
 - Grafana 自动加载 Agent Harness dashboard。
 - Loki ready 返回 ready。
@@ -253,4 +263,6 @@ cookie
 - 控制台切换 English 后页面表头、按钮、空状态和错误状态切换为英文。
 - 技术值保留原始值，并显示当前语言说明。
 - 观测页必须展示子 Agent 恢复运营摘要，包含批次数、任务数、扫描数、恢复数和动作统计。
+- 观测页必须展示子 Agent 队列摘要，包含等待、运行、容量、剩余槽位和使用率。
 - 观测页必须展示观测导出入口，支持日志、Trace、Grafana dashboard 和服务健康导出。
+- 观测页必须展示观测导出历史，并支持历史文件下载。

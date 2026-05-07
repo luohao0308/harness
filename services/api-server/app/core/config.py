@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         alias="OTEL_EXPORTER_OTLP_ENDPOINT",
     )
     tempo_base_url: AnyHttpUrl = Field(default="http://localhost:3200", alias="TEMPO_BASE_URL")
+    observability_export_dir: str = Field(
+        default="/tmp/agent-harness/exports",
+        alias="OBSERVABILITY_EXPORT_DIR",
+    )
 
     model_config = SettingsConfigDict(case_sensitive=True, extra="ignore")
 

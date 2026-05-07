@@ -22,13 +22,18 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { enabledLabel, eventLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import type { CountItem, ObservabilityExportItem } from "../../tasks/api";
+import type {
+  CountItem,
+  ObservabilityExportHistoryItem,
+  ObservabilityExportItem,
+} from "../../tasks/api";
 import {
   downloadObservabilityExport,
   getObservabilityServicesHealth,
   getObservabilitySummary,
   getObservabilityTrace,
   getSubagentRecoverySummary,
+  listObservabilityExportHistory,
   listObservabilityExports,
   listGrafanaDashboards,
   listObservabilityLogs,
@@ -48,6 +53,13 @@ export function ObservabilityPage() {
   const [logFilters, setLogFilters] = useState(draftLogFilters);
   const [draftTraceId, setDraftTraceId] = useState(initialTraceId);
   const [traceId, setTraceId] = useState(initialTraceId);
+  const [draftTraceFilters, setDraftTraceFilters] = useState({
+    service: "",
+    span_name: "",
+    attribute_key: "",
+    attribute_value: "",
+  });
+  const [traceFilters, setTraceFilters] = useState(draftTraceFilters);
   const summary = useQuery({
     queryKey: ["observability", "summary"],
     queryFn: getObservabilitySummary,
@@ -63,6 +75,10 @@ export function ObservabilityPage() {
   const exports = useQuery({
     queryKey: ["observability", "exports"],
     queryFn: listObservabilityExports,
+  });
+  const exportHistory = useQuery({
+    queryKey: ["observability", "exports", "history"],
+    queryFn: listObservabilityExportHistory,
   });
   const recovery = useQuery({
     queryKey: ["subagents", "recovery-summary"],
@@ -83,8 +99,14 @@ export function ObservabilityPage() {
   const activeTraceId = traceId || firstTraceId;
   const [exportStatus, setExportStatus] = useState("");
   const trace = useQuery({
-    queryKey: ["observability", "trace", activeTraceId],
-    queryFn: () => getObservabilityTrace(activeTraceId),
+    queryKey: ["observability", "trace", activeTraceId, traceFilters],
+    queryFn: () =>
+      getObservabilityTrace(activeTraceId, {
+        service: cleanFilter(traceFilters.service),
+        span_name: cleanFilter(traceFilters.span_name),
+        attribute_key: cleanFilter(traceFilters.attribute_key),
+        attribute_value: cleanFilter(traceFilters.attribute_value),
+      }),
     enabled: Boolean(activeTraceId),
   });
   const data = summary.data;
@@ -118,7 +140,15 @@ export function ObservabilityPage() {
       return `${item.url}?${searchParams.toString()}`;
     }
     if (item.name === "trace_json") {
-      return item.url.replace("{trace_id}", encodeURIComponent(activeTraceId));
+      const searchParams = new URLSearchParams();
+      for (const [key, value] of Object.entries(traceFilters)) {
+        const cleanValue = cleanFilter(value);
+        if (cleanValue) {
+          searchParams.set(key, cleanValue);
+        }
+      }
+      const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+      return `${item.url.replace("{trace_id}", encodeURIComponent(activeTraceId))}${suffix}`;
     }
     return item.url;
   };
@@ -137,11 +167,32 @@ export function ObservabilityPage() {
       anchor.click();
       window.URL.revokeObjectURL(url);
       setExportStatus(text(`已导出 ${filename}`, `Exported ${filename}`));
+      void exportHistory.refetch();
     } catch (error) {
       setExportStatus(
         text(
           `导出失败：${error instanceof Error ? error.message : "未知错误"}`,
           `Export failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        ),
+      );
+    }
+  };
+  const downloadHistoryExport = async (path: string) => {
+    setExportStatus(text("正在下载历史文件...", "Downloading retained file..."));
+    try {
+      const { blob, filename } = await downloadObservabilityExport(path);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setExportStatus(text(`已下载 ${filename}`, `Downloaded ${filename}`));
+    } catch (error) {
+      setExportStatus(
+        text(
+          `下载失败：${error instanceof Error ? error.message : "未知错误"}`,
+          `Download failed: ${error instanceof Error ? error.message : "unknown error"}`,
         ),
       );
     }
@@ -179,6 +230,44 @@ export function ObservabilityPage() {
           <DistributionCard title={text("模型调用状态", "Model Call Status")} items={data?.model_calls_by_status ?? []} />
           <DistributionCard title={text("工具调用状态", "Tool Call Status")} items={data?.tool_calls_by_status ?? []} />
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <GitBranch className="h-4 w-4" /> {text("子 Agent 队列", "Subagent Queue")}
+            </div>
+            <span className="text-xs text-slate-500">
+              {text("等待、运行、容量和剩余槽位", "Pending, running, capacity, and available slots")}
+            </span>
+          </CardHeader>
+          <div className="grid grid-cols-[0.8fr_1.2fr] gap-4 p-3">
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <Metric label={text("等待", "Pending")} value={formatNumber(data?.subagent_queue.pending)} />
+              <Metric label={text("运行中", "Running")} value={formatNumber(data?.subagent_queue.running)} />
+              <Metric label={text("队列容量", "Capacity")} value={formatNumber(data?.subagent_queue.capacity)} />
+              <Metric label={text("剩余槽位", "Available")} value={formatNumber(data?.subagent_queue.available_slots)} />
+            </div>
+            <div className="rounded-md border border-slate-100 p-3 text-xs">
+              <div className="mb-3 flex items-center justify-between text-slate-500">
+                <span>{text("槽位使用率", "Slot utilization")}</span>
+                <span className="font-mono text-slate-900">
+                  {formatNumber(data?.subagent_queue.utilization_percent)}%
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded bg-slate-100">
+                <div
+                  className="h-full rounded bg-slate-900"
+                  style={{ width: `${data?.subagent_queue.utilization_percent ?? 0}%` }}
+                />
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <QueueCount label={text("成功", "Success")} value={data?.subagent_queue.success} tone="success" />
+                <QueueCount label={text("失败", "Failed")} value={data?.subagent_queue.failed} tone="failed" />
+                <QueueCount label={text("超时", "Timeout")} value={data?.subagent_queue.timeout} tone="warning" />
+              </div>
+            </div>
+          </div>
+        </Card>
 
         <div className="grid grid-cols-[1fr_2fr] gap-4">
           <Card>
@@ -256,6 +345,11 @@ export function ObservabilityPage() {
               </div>
             )}
           </div>
+          <ExportHistoryTable
+            items={exportHistory.data?.items ?? []}
+            isLoading={exportHistory.isLoading}
+            onDownload={downloadHistoryExport}
+          />
         </Card>
 
         <Card>
@@ -445,10 +539,10 @@ export function ObservabilityPage() {
                         `Grafana access limited: ${dashboards.error.message}`,
                       )
                     : text("暂无 Grafana dashboard", "No Grafana dashboards")}
-                </div>
-              )}
-            </div>
-          </Card>
+              </div>
+            )}
+          </div>
+        </Card>
         </div>
 
         <Card>
@@ -509,6 +603,47 @@ export function ObservabilityPage() {
               onChange={(event) => setDraftTraceId(event.target.value)}
             />
             <Button onClick={() => queryTrace()}>{text("查询 Trace", "Search Trace")}</Button>
+          </div>
+          <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 border-t border-slate-100 p-3">
+            <Input
+              aria-label={text("Trace 服务", "Trace Service")}
+              className="h-8 text-xs"
+              placeholder={text("服务", "Service")}
+              value={draftTraceFilters.service}
+              onChange={(event) =>
+                setDraftTraceFilters((filters) => ({ ...filters, service: event.target.value }))
+              }
+            />
+            <Input
+              aria-label={text("Span 名称", "Span Name")}
+              className="h-8 text-xs"
+              placeholder={text("Span 名称", "Span name")}
+              value={draftTraceFilters.span_name}
+              onChange={(event) =>
+                setDraftTraceFilters((filters) => ({ ...filters, span_name: event.target.value }))
+              }
+            />
+            <Input
+              aria-label={text("属性键", "Attribute Key")}
+              className="h-8 text-xs"
+              placeholder={text("属性键", "Attribute key")}
+              value={draftTraceFilters.attribute_key}
+              onChange={(event) =>
+                setDraftTraceFilters((filters) => ({ ...filters, attribute_key: event.target.value }))
+              }
+            />
+            <Input
+              aria-label={text("属性值", "Attribute Value")}
+              className="h-8 text-xs"
+              placeholder={text("属性值", "Attribute value")}
+              value={draftTraceFilters.attribute_value}
+              onChange={(event) =>
+                setDraftTraceFilters((filters) => ({ ...filters, attribute_value: event.target.value }))
+              }
+            />
+            <Button onClick={() => setTraceFilters(draftTraceFilters)}>
+              {text("筛选 Span", "Filter Spans")}
+            </Button>
           </div>
         </Card>
 
@@ -591,6 +726,18 @@ export function ObservabilityPage() {
                   <div className="mt-1 text-[10px] text-slate-500">
                     {span.service} · {span.duration_ms}ms
                   </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {Object.entries(span.attributes)
+                      .slice(0, 3)
+                      .map(([key, value]) => (
+                        <span
+                          key={`${span.span_id}-${key}`}
+                          className="max-w-full truncate rounded border border-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500"
+                        >
+                          {key}: {String(value)}
+                        </span>
+                      ))}
+                  </div>
                 </div>
               ))}
               {!trace.isLoading && (trace.data?.spans.length ?? 0) === 0 && (
@@ -611,6 +758,83 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
       <div className="text-slate-500">{label}</div>
       <div className="mt-1 font-mono text-base font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function QueueCount({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number | undefined;
+  tone: "success" | "failed" | "warning";
+}) {
+  return (
+    <div className="rounded border border-slate-100 px-2 py-1.5">
+      <div className="mb-1 text-slate-500">{label}</div>
+      <Badge tone={tone}>{formatNumber(value)}</Badge>
+    </div>
+  );
+}
+
+function ExportHistoryTable({
+  items,
+  isLoading,
+  onDownload,
+}: {
+  items: ObservabilityExportHistoryItem[];
+  isLoading: boolean;
+  onDownload: (path: string) => void;
+}) {
+  const { text } = useI18n();
+  return (
+    <div className="border-t border-slate-100 p-3">
+      <div className="mb-2 flex items-center justify-between text-xs">
+        <span className="font-semibold text-slate-900">{text("导出历史", "Export History")}</span>
+        <span className="text-slate-500">{text("已留存文件", "Retained files")}</span>
+      </div>
+      <Table>
+        <thead className="bg-slate-50 text-slate-500">
+          <tr>
+            <Th>{text("文件", "File")}</Th>
+            <Th>{text("类型", "Type")}</Th>
+            <Th className="text-right">{text("行数", "Rows")}</Th>
+            <Th>{text("时间", "Time")}</Th>
+            <Th className="text-right">{text("操作", "Action")}</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.slice(0, 5).map((item) => (
+            <tr key={item.id} className="border-t border-slate-100">
+              <Td>
+                <div className="font-mono text-[11px] text-slate-900">{item.filename}</div>
+                <div className="mt-0.5 text-[10px] text-slate-500">
+                  {item.source} · {formatBytes(item.size_bytes)}
+                </div>
+              </Td>
+              <Td>
+                <Badge tone="info">{item.export_type}</Badge>
+              </Td>
+              <Td className="text-right font-mono text-slate-600">{item.row_count}</Td>
+              <Td className="text-[11px] text-slate-500">{formatShortDate(item.created_at)}</Td>
+              <Td className="text-right">
+                <Button variant="ghost" onClick={() => onDownload(item.download_url)}>
+                  <Download className="h-3 w-3" /> {text("下载", "Download")}
+                </Button>
+              </Td>
+            </tr>
+          ))}
+          {!isLoading && items.length === 0 && (
+            <tr className="border-t border-slate-100">
+              <Td colSpan={5} className="py-6 text-center text-slate-500">
+                {text("暂无导出历史", "No export history")}
+              </Td>
+            </tr>
+          )}
+        </tbody>
+      </Table>
     </div>
   );
 }
@@ -687,6 +911,16 @@ function StatusLine({ isLoading, error }: { isLoading: boolean; error: Error | n
 
 function formatNumber(value: number | undefined) {
   return value === undefined ? "..." : new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function cleanFilter(value: string) {

@@ -111,6 +111,18 @@ export type ObservabilitySummary = {
   model_calls_by_status: CountItem[];
   tool_calls_by_status: CountItem[];
   sandboxes_by_status: CountItem[];
+  subagent_queue: {
+    pending: number;
+    running: number;
+    success: number;
+    failed: number;
+    timeout: number;
+    cancelled: number;
+    active_total: number;
+    capacity: number;
+    available_slots: number;
+    utilization_percent: number;
+  };
   warm_pool: WarmPool;
   event_total: number;
   task_total: number;
@@ -194,6 +206,27 @@ export type ObservabilityExportItem = {
 
 export type ObservabilityExports = {
   items: ObservabilityExportItem[];
+};
+
+export type ObservabilityExportHistoryItem = {
+  id: string;
+  export_type: string;
+  filename: string;
+  content_type: string;
+  format: string;
+  source: string;
+  row_count: number;
+  filter_json: Record<string, unknown>;
+  storage_driver: string;
+  size_bytes: number;
+  sha256: string;
+  download_url: string;
+  created_at: string;
+};
+
+export type ObservabilityExportHistory = {
+  items: ObservabilityExportHistoryItem[];
+  next_cursor: string | null;
 };
 
 export type Subagent = {
@@ -634,9 +667,24 @@ export async function listObservabilityLogs(params?: {
   return request<ObservabilityLogs>(`/api/observability/logs${suffix}`);
 }
 
-export async function getObservabilityTrace(traceId: string) {
+export async function getObservabilityTrace(
+  traceId: string,
+  params?: {
+    service?: string;
+    span_name?: string;
+    attribute_key?: string;
+    attribute_value?: string;
+  },
+) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
   return request<ObservabilityTrace>(
-    `/api/observability/traces/${encodeURIComponent(traceId)}`,
+    `/api/observability/traces/${encodeURIComponent(traceId)}${suffix}`,
   );
 }
 
@@ -650,6 +698,10 @@ export async function getObservabilityServicesHealth() {
 
 export async function listObservabilityExports() {
   return request<ObservabilityExports>("/api/observability/exports");
+}
+
+export async function listObservabilityExportHistory() {
+  return request<ObservabilityExportHistory>("/api/observability/exports/history");
 }
 
 export async function downloadObservabilityExport(path: string) {

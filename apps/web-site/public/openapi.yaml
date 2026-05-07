@@ -1196,6 +1196,77 @@ paths:
                 $ref: '#/components/schemas/ObservabilityExportPage'
       security:
       - HTTPBearer: []
+  /api/observability/exports/history:
+    get:
+      tags:
+      - observability
+      summary: 查询观测导出历史
+      description: 仅 admin、operator 可访问。返回已留存的观测导出文件历史。
+      operationId: list_observability_export_history_api_observability_exports_history_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: export_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 导出类型
+          title: Export Type
+        description: 导出类型
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          description: 返回数量
+          default: 20
+          title: Limit
+        description: 返回数量
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservabilityExportHistoryPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/observability/exports/history/{export_id}/download:
+    get:
+      tags:
+      - observability
+      summary: 下载观测导出历史文件
+      description: 仅 admin、operator 可访问。按导出记录 ID 下载已留存文件。
+      operationId: download_observability_export_history_api_observability_exports_history__export_id__download_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: export_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Export Id
+      responses:
+        '200':
+          description: 导出文件
+          content:
+            application/octet-stream: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/observability/exports/logs:
     get:
       tags:
@@ -1260,10 +1331,9 @@ paths:
         description: 返回数量
       responses:
         '200':
-          description: Successful Response
+          description: JSONL 导出文件
           content:
-            application/json:
-              schema: {}
+            application/x-ndjson: {}
         '422':
           description: Validation Error
           content:
@@ -1286,6 +1356,46 @@ paths:
         schema:
           type: string
           title: Trace Id
+      - name: service
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 服务名
+          title: Service
+        description: 服务名
+      - name: span_name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Span 名称
+          title: Span Name
+        description: Span 名称
+      - name: attribute_key
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Span 属性键
+          title: Attribute Key
+        description: Span 属性键
+      - name: attribute_value
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Span 属性值
+          title: Attribute Value
+        description: Span 属性值
       responses:
         '200':
           description: Successful Response
@@ -1348,6 +1458,46 @@ paths:
         schema:
           type: string
           title: Trace Id
+      - name: service
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 服务名
+          title: Service
+        description: 服务名
+      - name: span_name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Span 名称
+          title: Span Name
+        description: Span 名称
+      - name: attribute_key
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Span 属性键
+          title: Attribute Key
+        description: Span 属性键
+      - name: attribute_value
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Span 属性值
+          title: Attribute Value
+        description: Span 属性值
       responses:
         '200':
           description: Successful Response
@@ -1751,6 +1901,96 @@ components:
       - rate_limits
       - health
       title: ModelSettingsResponse
+    ObservabilityExportHistoryItem:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 导出记录 ID
+        export_type:
+          type: string
+          title: Export Type
+          description: 导出类型
+        filename:
+          type: string
+          title: Filename
+          description: 文件名
+        content_type:
+          type: string
+          title: Content Type
+          description: 内容类型
+        format:
+          type: string
+          title: Format
+          description: 导出格式
+        source:
+          type: string
+          title: Source
+          description: 数据来源
+        row_count:
+          type: integer
+          title: Row Count
+          description: 导出行数
+        filter_json:
+          additionalProperties: true
+          type: object
+          title: Filter Json
+          description: 导出筛选条件
+        storage_driver:
+          type: string
+          title: Storage Driver
+          description: 留存驱动
+        size_bytes:
+          type: integer
+          title: Size Bytes
+          description: 文件大小字节数
+        sha256:
+          type: string
+          title: Sha256
+          description: 文件 SHA256
+        download_url:
+          type: string
+          title: Download Url
+          description: 历史文件下载地址
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+      type: object
+      required:
+      - id
+      - export_type
+      - filename
+      - content_type
+      - format
+      - source
+      - row_count
+      - filter_json
+      - storage_driver
+      - size_bytes
+      - sha256
+      - download_url
+      - created_at
+      title: ObservabilityExportHistoryItem
+    ObservabilityExportHistoryPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ObservabilityExportHistoryItem'
+          type: array
+          title: Items
+          description: 观测导出历史
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: ObservabilityExportHistoryPage
     ObservabilityExportItem:
       properties:
         name:
@@ -1888,6 +2128,61 @@ components:
       - items
       - source
       title: ObservabilityLogPage
+    ObservabilityQueueResponse:
+      properties:
+        pending:
+          type: integer
+          title: Pending
+          description: 等待执行的子 Agent 数
+        running:
+          type: integer
+          title: Running
+          description: 正在执行的子 Agent 数
+        success:
+          type: integer
+          title: Success
+          description: 成功完成的子 Agent 数
+        failed:
+          type: integer
+          title: Failed
+          description: 失败的子 Agent 数
+        timeout:
+          type: integer
+          title: Timeout
+          description: 超时的子 Agent 数
+        cancelled:
+          type: integer
+          title: Cancelled
+          description: 已取消的子 Agent 数
+        active_total:
+          type: integer
+          title: Active Total
+          description: 等待或运行中的子 Agent 数
+        capacity:
+          type: integer
+          title: Capacity
+          description: 当前组织活跃任务队列容量
+        available_slots:
+          type: integer
+          title: Available Slots
+          description: 剩余队列槽位
+        utilization_percent:
+          type: integer
+          title: Utilization Percent
+          description: 队列槽位使用率百分比
+      type: object
+      required:
+      - pending
+      - running
+      - success
+      - failed
+      - timeout
+      - cancelled
+      - active_total
+      - capacity
+      - available_slots
+      - utilization_percent
+      title: ObservabilityQueueResponse
     ObservabilityServiceHealthResponse:
       properties:
         name:
@@ -1964,6 +2259,9 @@ components:
           type: array
           title: Sandboxes By Status
           description: 沙箱状态分布
+        subagent_queue:
+          $ref: '#/components/schemas/ObservabilityQueueResponse'
+          description: 子 Agent 队列运营摘要
         warm_pool:
           $ref: '#/components/schemas/WarmPoolResponse'
           description: WarmPool 状态
@@ -1998,6 +2296,7 @@ components:
       - model_calls_by_status
       - tool_calls_by_status
       - sandboxes_by_status
+      - subagent_queue
       - warm_pool
       - event_total
       - task_total

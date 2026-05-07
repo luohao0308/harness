@@ -338,12 +338,26 @@ class CountItem(BaseModel):
     count: int = Field(description="数量")
 
 
+class ObservabilityQueueResponse(BaseModel):
+    pending: int = Field(description="等待执行的子 Agent 数")
+    running: int = Field(description="正在执行的子 Agent 数")
+    success: int = Field(description="成功完成的子 Agent 数")
+    failed: int = Field(description="失败的子 Agent 数")
+    timeout: int = Field(description="超时的子 Agent 数")
+    cancelled: int = Field(description="已取消的子 Agent 数")
+    active_total: int = Field(description="等待或运行中的子 Agent 数")
+    capacity: int = Field(description="当前组织活跃任务队列容量")
+    available_slots: int = Field(description="剩余队列槽位")
+    utilization_percent: int = Field(description="队列槽位使用率百分比")
+
+
 class ObservabilitySummaryResponse(BaseModel):
     tasks_by_status: list[CountItem] = Field(description="任务状态分布")
     subagents_by_status: list[CountItem] = Field(description="子 Agent 状态分布")
     model_calls_by_status: list[CountItem] = Field(description="模型调用状态分布")
     tool_calls_by_status: list[CountItem] = Field(description="工具调用状态分布")
     sandboxes_by_status: list[CountItem] = Field(description="沙箱状态分布")
+    subagent_queue: ObservabilityQueueResponse = Field(description="子 Agent 队列运营摘要")
     warm_pool: WarmPoolResponse = Field(description="WarmPool 状态")
     event_total: int = Field(description="事件总数")
     task_total: int = Field(description="任务总数")
@@ -427,6 +441,29 @@ class ObservabilityExportItem(BaseModel):
 
 class ObservabilityExportPage(BaseModel):
     items: list[ObservabilityExportItem] = Field(description="观测导出入口列表")
+
+
+class ObservabilityExportHistoryItem(BaseModel):
+    id: str = Field(description="导出记录 ID")
+    export_type: str = Field(description="导出类型")
+    filename: str = Field(description="文件名")
+    content_type: str = Field(description="内容类型")
+    format: str = Field(description="导出格式")
+    source: str = Field(description="数据来源")
+    row_count: int = Field(description="导出行数")
+    filter_json: dict = Field(description="导出筛选条件")
+    storage_driver: str = Field(description="留存驱动")
+    size_bytes: int = Field(description="文件大小字节数")
+    sha256: str = Field(description="文件 SHA256")
+    download_url: str = Field(description="历史文件下载地址")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ObservabilityExportHistoryPage(BaseModel):
+    items: list[ObservabilityExportHistoryItem] = Field(description="观测导出历史")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
 class ModelCallResponse(BaseModel):

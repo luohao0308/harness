@@ -77,12 +77,12 @@
 | 工具审计 | 已落地 | `GET /api/tasks/{task_id}/tool-calls`，支持工具、状态、风险、Trace 筛选和事件/Trace 深链 |
 | 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health`，覆盖 RPM、TPM、主动探测和供应商熔断 |
 | 策略设置 | 已落地 | `GET /api/settings/policies`、`PUT /api/settings/policies` |
-| 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics` |
+| 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics`，summary 返回 `subagent_queue` 队列摘要 |
 | 日志观测 | 基础落地 | `GET /api/observability/logs`、Promtail 采集 |
-| Trace 观测 | 基础落地 | `GET /api/observability/traces/{trace_id}` |
+| Trace 观测 | 已落地 | `GET /api/observability/traces/{trace_id}`，支持服务、Span 名称和属性键值过滤 |
 | Grafana 集成 | 已落地 | `GET /api/observability/grafana/dashboards`、provisioning、admin/operator RBAC |
 | 观测服务健康 | 已落地 | `GET /api/observability/services/health`、admin/operator RBAC |
-| 观测导出 | 已落地 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health` |
+| 观测导出 | 已落地 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health`、`GET /api/observability/exports/history`、`GET /api/observability/exports/history/{export_id}/download` |
 
 前端页面覆盖：
 
@@ -94,10 +94,10 @@
 | `/subagents` | Subagent API | 已接入，展示组织级批量状态、状态筛选、任务跳转和详情跳转 |
 | `/subagents/:subagentId` | Subagent API、Task Result API | 已接入，展示单个子 Agent assignment、状态、取消、产物、工具结果、ReAct 轨迹和上下文压缩 |
 | `/sandboxes` | Sandbox API | 已接入 |
-| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary` 与 `/metrics` | 已接入，展示运行摘要、恢复运营摘要和指标入口 |
+| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary` 与 `/metrics` | 已接入，展示运行摘要、队列摘要、恢复运营摘要和指标入口 |
 | `/observability` 日志区 | `GET /api/observability/logs` | 已接入，支持任务、Trace、服务和事件类型筛选 |
-| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 已接入，支持手动 Trace 查询和日志行跳转 |
-| `/observability` 导出区 | `GET /api/observability/exports` 与导出接口 | 已接入，支持导出日志、Trace、Grafana dashboard 和服务健康快照 |
+| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 已接入，支持手动 Trace 查询、日志行跳转和 Span 属性筛选 |
+| `/observability` 导出区 | `GET /api/observability/exports`、`GET /api/observability/exports/history` 与下载接口 | 已接入，支持导出日志、Trace、Grafana dashboard、服务健康快照和历史文件 |
 | `/settings/models` | Settings API、Model Health API | 已接入，展示 RPM、TPM、探测模式和熔断状态 |
 | `/settings/policies` | Settings API | 已接入 |
 
@@ -113,9 +113,9 @@
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流、TPM 限流、主动探测和供应商级熔断已落地 | 增强多供应商 fallback 策略观测 |
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类、控制台细节、工具审计筛选和 Trace 深链 | 增强控制台审计详情验收测试 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强并发与断线重连测试 |
-| Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标、Grafana Basic Auth 代理、Grafana admin/operator RBAC、服务健康 RBAC、观测导出和 Tempo Trace 查询已落地 | 补齐队列图表与导出留存 |
+| Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标、Grafana Basic Auth 代理、Grafana admin/operator RBAC、服务健康 RBAC、观测导出、导出留存、下载历史、队列图表和 Tempo Trace 查询已落地 | 增强 dashboard 指标覆盖 |
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集、标签查询和控制台深链筛选已落地 | 增强日志导出 |
-| OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口、Event Store 回退和控制台 Trace 深链已落地 | 增强 span 属性检索 |
+| OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口、Event Store 回退、控制台 Trace 深链和 span 属性检索已落地 | 增强跨服务 Trace 视图 |
 | 控制台本地化 | 顶栏语言切换、默认中文、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面双语已落地 | 持续巡检新增页面表头、按钮、空状态和错误状态 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine、Sandbox Manager 和网络请求策略读取，模型健康探测写回设置快照，沙箱资源规格和 network allowlist 已落地 | 增强配额用量统计和历史审计 |
 

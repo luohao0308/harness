@@ -11,14 +11,15 @@
 ├─ shared
 │  ├─ .env
 │  ├─ logs
-│  └─ workspaces
+│  ├─ workspaces
+│  └─ observability-exports
 └─ backups
 ```
 
 ## First Deployment
 
 ```bash
-sudo mkdir -p /opt/agent-harness/{current,releases,shared/logs,shared/workspaces,backups}
+sudo mkdir -p /opt/agent-harness/{current,releases,shared/logs,shared/workspaces,shared/observability-exports,backups}
 sudo chown -R "$USER":"$USER" /opt/agent-harness
 ```
 
@@ -133,4 +134,12 @@ Loki verification:
 ```text
 query by service="api-server"
 query by task_id
+```
+
+Observability export verification:
+
+```text
+GET /api/observability/exports/history
+GET /api/observability/exports/history/{export_id}/download
+OBSERVABILITY_EXPORT_DIR mounted on observability-exports volume
 ```

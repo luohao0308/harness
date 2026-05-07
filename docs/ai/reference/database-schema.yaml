@@ -191,6 +191,27 @@ tables:
     indexes:
       - admin_audit_events_org_idx
       - admin_audit_events_event_type_idx
+  observability_export_records:
+    primary_key: id
+    columns:
+      id: uuid
+      organization_id: uuid nullable
+      actor_id: text nullable
+      export_type: text
+      filename: text
+      content_type: text
+      format: text
+      source: text
+      row_count: integer
+      filter_json: jsonb
+      storage_driver: text
+      storage_uri: text
+      size_bytes: integer
+      sha256: text
+      created_at: timestamptz
+    indexes:
+      - observability_export_records_organization_id_idx
+      - observability_export_records_export_type_idx
   system_settings:
     primary_key: id
     columns:

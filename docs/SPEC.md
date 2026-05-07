@@ -119,9 +119,6 @@ User Goal
 
 | 缺口 | 规格文件 | 目标 |
 |---|---|---|
-| 观测导出留存 | `docs/human/features/10-observability-localization-spec.md` | 导出文件留存和下载历史 |
-| 观测队列图表 | `docs/human/features/10-observability-localization-spec.md` | 队列、耗时分位和 dashboard 指标覆盖 |
-| OTel Span 属性检索 | `docs/human/features/10-observability-localization-spec.md` | Trace span 属性检索和过滤 |
 | 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增页面继续保持默认中文与 English 切换 |
 | LLM Planner | `docs/human/features/02-planner-executor.md` | 真实模型规划、结构校验和计划版本 |
 | Worker 级恢复 | `docs/human/features/03-event-sourcing-replay.md` | 长任务恢复编排 |
