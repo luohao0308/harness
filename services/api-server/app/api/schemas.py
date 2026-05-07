@@ -456,6 +456,7 @@ class ToolCallResponse(BaseModel):
     id: str = Field(description="工具调用 ID")
     task_id: str = Field(description="任务 ID")
     agent_run_id: str | None = Field(default=None, description="Agent 运行 ID")
+    trace_id: str | None = Field(default=None, description="Trace ID")
     tool_name: str = Field(description="工具名称")
     status: str = Field(description="调用状态")
     risk_level: str = Field(description="风险等级")

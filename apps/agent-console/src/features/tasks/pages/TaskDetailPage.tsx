@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, ChevronRight, Download, Play, RotateCcw } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
@@ -30,6 +30,7 @@ import {
   resumeTask,
   startTask,
 } from "../api";
+import type { ToolCallFilters } from "../api";
 import { ExecutionPlanPanel } from "../components/ExecutionPlanPanel";
 import { ModelCallPanel } from "../components/ModelCallPanel";
 import { ResourceUsageChart } from "../components/ResourceUsageChart";
@@ -40,6 +41,7 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const { text } = useI18n();
   const { taskId } = useParams();
   const queryClient = useQueryClient();
+  const [toolCallFilters, setToolCallFilters] = useState<ToolCallFilters>({ limit: 100 });
   const taskQuery = useQuery({
     queryKey: ["task", taskId],
     queryFn: () => getTask(taskId!),
@@ -92,8 +94,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     enabled: Boolean(taskId),
   });
   const toolCallsQuery = useQuery({
-    queryKey: ["tool-calls", taskId],
-    queryFn: () => listToolCalls(taskId!),
+    queryKey: ["tool-calls", taskId, toolCallFilters],
+    queryFn: () => listToolCalls(taskId!, toolCallFilters),
     enabled: Boolean(taskId),
   });
   const recoverSubagentsMutation = useMutation({
@@ -278,6 +280,8 @@ export function TaskDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             <ModelCallPanel
               modelCalls={modelCallsQuery.data?.items ?? []}
               toolCalls={toolCallsQuery.data?.items ?? []}
+              toolCallFilters={toolCallFilters}
+              onToolCallFiltersChange={setToolCallFilters}
             />
             <ResourceUsageChart
               modelCallCount={modelCallsQuery.data?.items.length ?? 0}

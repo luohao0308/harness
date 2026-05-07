@@ -38,7 +38,7 @@ failed：验证失败
 | 10 | 监控、日志、部署 | completed | stage/stage-10-observability-deployment | https://github.com/luohao0308/harness/pull/8 | passed | PR 已合并到 develop。 |
 | 11 | Review P1 Production Hardening | completed | stage/stage-11-review-p1-hardening | https://github.com/luohao0308/harness/pull/9 | passed | 5 个 P1 已修复；PR #9 已合并；Docker Compose、API、Nginx、SSE、WarmPool、前端浏览器、Prometheus、Grafana 均已通过验收；后续补充已将 Subagent、Sandbox、WarmPool、Observability 后端能力展示到控制台，并生成中文 OpenAPI JSON 导入镜像。 |
 | 12 | Runtime Product Completion | completed | stage/stage-12-runtime-product-completion | https://github.com/luohao0308/harness/pull/10 | passed | 已补齐 task cancel/resume/result/replay、model_calls、tool_calls、filesystem/http tools、settings API、ADMIN_ACTION 审计、控制台 settings/replay/result/observability 页面、默认中文、中英文切换和中文 OpenAPI JSON/YAML。 |
-| 13 | Website Code Integration | ready_for_review | stage/stage-13-website-code-integration | https://github.com/luohao0308/harness/pull/11 | passed | 已接收用户提供的官网前端代码，保留视觉结构，完成 Next.js 工程化、后端接入、控制台导流、OpenAPI 入口、文档入口、部署接入；本轮追加子 Agent 详情页、结果产物钻取、官网真实控制台深链、组织级恢复运营摘要、组织级批量状态筛选、日志与 Trace 深链查询、Grafana dashboard 与服务健康 admin/operator RBAC、观测导出 API、控制台下载入口和 Spec 覆盖同步。 |
+| 13 | Website Code Integration | ready_for_review | stage/stage-13-website-code-integration | https://github.com/luohao0308/harness/pull/11 | passed | 已接收用户提供的官网前端代码，保留视觉结构，完成 Next.js 工程化、后端接入、控制台导流、OpenAPI 入口、文档入口、部署接入；本轮追加子 Agent 详情页、结果产物钻取、官网真实控制台深链、组织级恢复运营摘要、组织级批量状态筛选、日志与 Trace 深链查询、Grafana dashboard 与服务健康 admin/operator RBAC、观测导出 API、控制台下载入口、工具审计筛选、工具审计 Trace 深链和 Spec 覆盖同步。 |
 
 ## 阶段完成定义
 

@@ -443,6 +443,57 @@ paths:
         schema:
           type: string
           title: Task Id
+      - name: tool_name
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 工具名称，支持包含匹配
+          title: Tool Name
+        description: 工具名称，支持包含匹配
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 调用状态
+          title: Status
+        description: 调用状态
+      - name: risk_level
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 风险等级
+          title: Risk Level
+        description: 风险等级
+      - name: trace_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Trace ID
+          title: Trace Id
+        description: Trace ID
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: 返回数量
+          default: 100
+          title: Limit
+        description: 返回数量
       responses:
         '200':
           description: Successful Response
@@ -3400,6 +3451,12 @@ components:
           - type: 'null'
           title: Agent Run Id
           description: Agent 运行 ID
+        trace_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Trace Id
+          description: Trace ID
         tool_name:
           type: string
           title: Tool Name

@@ -11,7 +11,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, Dot, statusTone } from "../../../components/ui/badge";
@@ -36,15 +36,18 @@ import {
 
 export function ObservabilityPage() {
   const { text } = useI18n();
-  const [draftLogFilters, setDraftLogFilters] = useState({
-    task_id: "",
-    trace_id: "",
-    service: "",
-    event_type: "",
-  });
+  const [searchParams] = useSearchParams();
+  const initialTraceId = searchParams.get("trace_id") ?? "";
+  const initialLogFilters = {
+    task_id: searchParams.get("task_id") ?? "",
+    trace_id: initialTraceId,
+    service: searchParams.get("service") ?? "",
+    event_type: searchParams.get("event_type") ?? "",
+  };
+  const [draftLogFilters, setDraftLogFilters] = useState(initialLogFilters);
   const [logFilters, setLogFilters] = useState(draftLogFilters);
-  const [draftTraceId, setDraftTraceId] = useState("");
-  const [traceId, setTraceId] = useState("");
+  const [draftTraceId, setDraftTraceId] = useState(initialTraceId);
+  const [traceId, setTraceId] = useState(initialTraceId);
   const summary = useQuery({
     queryKey: ["observability", "summary"],
     queryFn: getObservabilitySummary,

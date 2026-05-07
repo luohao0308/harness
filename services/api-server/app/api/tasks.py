@@ -446,14 +446,47 @@ def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> 
     summary="查询工具调用",
     description="返回当前任务关联的工具调用审计列表。",
 )
-def list_tool_calls(task_id: str, session: DbSession, principal: Principal) -> ToolCallPage:
+def list_tool_calls(
+    task_id: str,
+    session: DbSession,
+    principal: Principal,
+    tool_name: str | None = Query(default=None, description="工具名称，支持包含匹配"),
+    status_filter: str | None = Query(default=None, alias="status", description="调用状态"),
+    risk_level: str | None = Query(default=None, description="风险等级"),
+    trace_id: str | None = Query(default=None, description="Trace ID"),
+    limit: int = Query(default=100, ge=1, le=500, description="返回数量"),
+) -> ToolCallPage:
     get_owned_task(task_id, session, principal.organization_id)
+    statement = select(ToolCall).where(ToolCall.task_id == task_id)
+    if tool_name is not None:
+        statement = statement.where(ToolCall.tool_name.ilike(f"%{tool_name}%"))
+    if status_filter is not None:
+        statement = statement.where(ToolCall.status == status_filter)
+    if risk_level is not None:
+        statement = statement.where(ToolCall.risk_level == risk_level)
+    if trace_id is not None:
+        tool_call_ids = _tool_call_ids_for_trace(
+            task_id=task_id,
+            trace_id=trace_id,
+            session=session,
+        )
+        if not tool_call_ids:
+            return ToolCallPage(items=[])
+        statement = statement.where(ToolCall.id.in_(tool_call_ids))
     calls = list(
-        session.execute(
-            select(ToolCall).where(ToolCall.task_id == task_id).order_by(ToolCall.created_at.desc())
-        ).scalars()
+        session.execute(statement.order_by(ToolCall.created_at.desc()).limit(limit)).scalars()
     )
-    return ToolCallPage(items=[_to_tool_call_response(call) for call in calls])
+    trace_ids = _tool_call_trace_ids(
+        task_id=task_id,
+        tool_call_ids=[call.id for call in calls],
+        session=session,
+    )
+    return ToolCallPage(
+        items=[
+            _to_tool_call_response(call, trace_id=trace_ids.get(call.id))
+            for call in calls
+        ]
+    )
 
 
 @router.post(
@@ -491,11 +524,12 @@ def execute_task_tool(
     )
 
 
-def _to_tool_call_response(tool_call: ToolCall) -> ToolCallResponse:
+def _to_tool_call_response(tool_call: ToolCall, trace_id: str | None = None) -> ToolCallResponse:
     return ToolCallResponse(
         id=tool_call.id,
         task_id=tool_call.task_id,
         agent_run_id=tool_call.agent_run_id,
+        trace_id=trace_id,
         tool_name=tool_call.tool_name,
         status=tool_call.status,
         risk_level=tool_call.risk_level,
@@ -510,6 +544,66 @@ def _to_tool_call_response(tool_call: ToolCall) -> ToolCallResponse:
         error_message=tool_call.error_message,
         created_at=tool_call.created_at,
     )
+
+
+def _tool_call_ids_for_trace(*, task_id: str, trace_id: str, session: Session) -> set[str]:
+    events = session.execute(
+        select(AgentEvent).where(
+            AgentEvent.task_id == task_id,
+            AgentEvent.trace_id == trace_id,
+            AgentEvent.event_type.in_(
+                [
+                    EventType.TOOL_CALLED.value,
+                    EventType.TOOL_RESULT_RECEIVED.value,
+                    EventType.TOOL_FAILED.value,
+                    EventType.TOOL_TIMEOUT.value,
+                    EventType.TOOL_DENIED_BY_POLICY.value,
+                ]
+            ),
+        )
+    ).scalars()
+    tool_call_ids: set[str] = set()
+    for event in events:
+        tool_call_id = event.payload_json.get("tool_call_id")
+        if isinstance(tool_call_id, str):
+            tool_call_ids.add(tool_call_id)
+    return tool_call_ids
+
+
+def _tool_call_trace_ids(
+    *,
+    task_id: str,
+    tool_call_ids: list[str],
+    session: Session,
+) -> dict[str, str]:
+    if not tool_call_ids:
+        return {}
+    events = session.execute(
+        select(AgentEvent).where(
+            AgentEvent.task_id == task_id,
+            AgentEvent.event_type.in_(
+                [
+                    EventType.TOOL_CALLED.value,
+                    EventType.TOOL_RESULT_RECEIVED.value,
+                    EventType.TOOL_FAILED.value,
+                    EventType.TOOL_TIMEOUT.value,
+                    EventType.TOOL_DENIED_BY_POLICY.value,
+                ]
+            ),
+        )
+    ).scalars()
+    trace_ids: dict[str, str] = {}
+    tool_call_id_set = set(tool_call_ids)
+    for event in events:
+        tool_call_id = event.payload_json.get("tool_call_id")
+        if (
+            isinstance(tool_call_id, str)
+            and tool_call_id in tool_call_id_set
+            and isinstance(event.trace_id, str)
+            and tool_call_id not in trace_ids
+        ):
+            trace_ids[tool_call_id] = event.trace_id
+    return trace_ids
 
 
 def _tool_output_kind(tool_call: ToolCall) -> str:

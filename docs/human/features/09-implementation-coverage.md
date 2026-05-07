@@ -74,7 +74,7 @@
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
 | 沙箱治理 | 已落地 | `GET /api/sandboxes`、`GET /api/sandboxes/warm-pool`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` |
 | 模型审计 | 基础落地 | `GET /api/tasks/{task_id}/model-calls` |
-| 工具审计 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` |
+| 工具审计 | 已落地 | `GET /api/tasks/{task_id}/tool-calls`，支持工具、状态、风险、Trace 筛选和事件/Trace 深链 |
 | 模型设置 | 已落地 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health`，覆盖 RPM、TPM、主动探测和供应商熔断 |
 | 策略设置 | 已落地 | `GET /api/settings/policies`、`PUT /api/settings/policies` |
 | 指标与观测 | 已落地 | `GET /api/observability/summary`、`GET /metrics` |
@@ -111,7 +111,7 @@
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id、Subagent 状态链路、组织级批量状态和时间线并行执行拓扑 | 增强批量操作 |
 | Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要、长上下文压缩、组织级批量状态、单个子 Agent 详情页和跨任务恢复运营摘要已基础落地 | 增强批量操作 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流、TPM 限流、主动探测和供应商级熔断已落地 | 增强多供应商 fallback 策略观测 |
-| Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类和控制台细节 | 增强工具审计筛选和深链 |
+| Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类、控制台细节、工具审计筛选和 Trace 深链 | 增强控制台审计详情验收测试 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强并发与断线重连测试 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标、Grafana Basic Auth 代理、Grafana admin/operator RBAC、服务健康 RBAC、观测导出和 Tempo Trace 查询已落地 | 补齐队列图表与导出留存 |
 | Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集、标签查询和控制台深链筛选已落地 | 增强日志导出 |

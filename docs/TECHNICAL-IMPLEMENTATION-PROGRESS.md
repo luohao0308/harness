@@ -85,7 +85,7 @@ docs/SPEC.md
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
 | 工具执行 | 按策略执行工具 | `POST /api/tasks/{task_id}/tools/execute` | 基础落地 |
 | 模型调用审计 | 查询供应商、模型、token、延迟、失败 | `GET /api/tasks/{task_id}/model-calls` | 基础落地 |
-| 工具调用审计 | 查询入参、结果、耗时、拒绝、失败 | `GET /api/tasks/{task_id}/tool-calls` | 基础落地 |
+| 工具调用审计 | 查询入参、结果、耗时、拒绝、失败、Trace 深链 | `GET /api/tasks/{task_id}/tool-calls` | 已落地，支持工具、状态、风险和 Trace 筛选 |
 | 沙箱治理 | 沙箱列表、详情、终止 | `GET /api/sandboxes`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate` | 已落地 |
 | WarmPool | 查看预热池状态 | `GET /api/sandboxes/warm-pool` | 已落地 |
 | 模型设置 | 供应商、模型、RPM、TPM、主动探测、熔断状态 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` | 已落地 |
@@ -108,7 +108,7 @@ docs/SPEC.md
 |---|---|---|---|
 | `/tasks` | 任务列表 | Task API | 已接入 |
 | `/tasks/new` | 创建任务、配置模型和 max_subagents | Task API | 已接入 |
-| `/tasks/:taskId` | 详情、计划、事件、Replay、结果、Subagent、审计 | Task、Plan、Steps、Events、Replay、Audit、Subagent API | 已接入 |
+| `/tasks/:taskId` | 详情、计划、事件、Replay、结果、Subagent、审计 | Task、Plan、Steps、Events、Replay、Audit、Subagent API | 已接入，工具审计支持筛选和 Trace 深链 |
 | `/tasks/:taskId/events` | 事件流聚焦 | Events API、SSE | 已接入 |
 | `/tasks/:taskId/subagents` | 子 Agent 聚焦 | Subagent API | 已接入 |
 | `/subagents` | 组织级子 Agent 批量状态、状态筛选、任务跳转和详情跳转 | Subagent API | 已接入 |

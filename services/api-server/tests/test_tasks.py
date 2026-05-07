@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import AgentRun, ExecutionPlan, Task, TaskSnapshot, TaskStep, utc_now
+from app.db.models import AgentRun, ExecutionPlan, Task, TaskSnapshot, TaskStep, ToolCall, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.main import app
@@ -164,6 +164,69 @@ def test_task_plan_steps_and_tool_execute_endpoints() -> None:
     assert tool_payload["tool_call"]["output_kind"] == "file_content"
     assert tool_payload["tool_call"]["output_summary"].startswith("文件内容")
     assert "content" in tool_payload["output"]
+
+
+def test_tool_calls_support_filters_and_trace_deep_link(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Tool audit filters",
+        goal="Filter tool calls",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    matching = ToolCall(
+        task_id=task.id,
+        tool_name="read_file",
+        status="SUCCESS",
+        risk_level="low",
+        requires_sandbox=False,
+        input_json={"path": "README.md"},
+        output_json={"content": "ok"},
+    )
+    ignored = ToolCall(
+        task_id=task.id,
+        tool_name="shell",
+        status="DENIED",
+        risk_level="high",
+        requires_sandbox=True,
+        input_json={"command": "rm -rf /"},
+        output_json={},
+    )
+    db_session.add_all([matching, ignored])
+    db_session.flush()
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TOOL_RESULT_RECEIVED,
+        payload_json={"tool_call_id": matching.id, "tool_name": matching.tool_name},
+        trace_id="trace-tool-filter",
+    )
+    db_session.commit()
+
+    response = TestClient(app).get(
+        f"/api/tasks/{task.id}/tool-calls",
+        headers=AUTH_HEADERS,
+        params={
+            "tool_name": "read",
+            "status": "SUCCESS",
+            "risk_level": "low",
+            "trace_id": "trace-tool-filter",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["id"] for item in payload["items"]] == [matching.id]
+    assert payload["items"][0]["trace_id"] == "trace-tool-filter"
 
 
 def test_task_plan_versions_and_diff_endpoint(db_session: Session) -> None:

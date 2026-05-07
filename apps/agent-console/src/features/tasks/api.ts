@@ -398,6 +398,7 @@ export type ToolCall = {
   id: string;
   task_id?: string;
   agent_run_id?: string | null;
+  trace_id?: string | null;
   tool_name: string;
   status: string;
   risk_level: string;
@@ -424,6 +425,14 @@ export type ToolExecuteResult = {
   tool_call: ToolCall;
   allowed: boolean;
   output: Record<string, unknown>;
+};
+
+export type ToolCallFilters = {
+  tool_name?: string;
+  status?: string;
+  risk_level?: string;
+  trace_id?: string;
+  limit?: number;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -563,9 +572,16 @@ export async function listModelCalls(taskId: string) {
   );
 }
 
-export async function listToolCalls(taskId: string) {
+export async function listToolCalls(taskId: string, params?: ToolCallFilters) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
   return request<{ items: ToolCall[]; next_cursor: string | null }>(
-    `/api/tasks/${taskId}/tool-calls`,
+    `/api/tasks/${taskId}/tool-calls${suffix}`,
   );
 }
 
