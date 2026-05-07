@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Box, ExternalLink, Gauge, GitBranch, Logs, RefreshCw, RotateCcw } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, Dot, statusTone } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { Input } from "../../../components/ui/input";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { enabledLabel, eventLabel, statusLabel } from "../../../lib/labels";
@@ -21,6 +24,15 @@ import {
 
 export function ObservabilityPage() {
   const { text } = useI18n();
+  const [draftLogFilters, setDraftLogFilters] = useState({
+    task_id: "",
+    trace_id: "",
+    service: "",
+    event_type: "",
+  });
+  const [logFilters, setLogFilters] = useState(draftLogFilters);
+  const [draftTraceId, setDraftTraceId] = useState("");
+  const [traceId, setTraceId] = useState("");
   const summary = useQuery({
     queryKey: ["observability", "summary"],
     queryFn: getObservabilitySummary,
@@ -38,16 +50,41 @@ export function ObservabilityPage() {
     queryFn: getSubagentRecoverySummary,
   });
   const logs = useQuery({
-    queryKey: ["observability", "logs"],
-    queryFn: () => listObservabilityLogs({ limit: 8 }),
+    queryKey: ["observability", "logs", logFilters],
+    queryFn: () =>
+      listObservabilityLogs({
+        task_id: cleanFilter(logFilters.task_id),
+        trace_id: cleanFilter(logFilters.trace_id),
+        service: cleanFilter(logFilters.service),
+        event_type: cleanFilter(logFilters.event_type),
+        limit: 20,
+      }),
   });
-  const firstTraceId = logs.data?.items.find((item) => item.trace_id)?.trace_id;
+  const firstTraceId = logs.data?.items.find((item) => item.trace_id)?.trace_id ?? "";
+  const activeTraceId = traceId || firstTraceId;
   const trace = useQuery({
-    queryKey: ["observability", "trace", firstTraceId],
-    queryFn: () => getObservabilityTrace(firstTraceId!),
-    enabled: Boolean(firstTraceId),
+    queryKey: ["observability", "trace", activeTraceId],
+    queryFn: () => getObservabilityTrace(activeTraceId),
+    enabled: Boolean(activeTraceId),
   });
   const data = summary.data;
+  const applyLogFilters = () => {
+    setLogFilters(draftLogFilters);
+    if (draftLogFilters.trace_id.trim()) {
+      setTraceId(draftLogFilters.trace_id.trim());
+      setDraftTraceId(draftLogFilters.trace_id.trim());
+    }
+  };
+  const clearLogFilters = () => {
+    const emptyFilters = { task_id: "", trace_id: "", service: "", event_type: "" };
+    setDraftLogFilters(emptyFilters);
+    setLogFilters(emptyFilters);
+  };
+  const queryTrace = (value = draftTraceId) => {
+    const nextTraceId = value.trim();
+    setDraftTraceId(nextTraceId);
+    setTraceId(nextTraceId);
+  };
 
   return (
     <ConsoleShell title={text("观测", "Observability")}>
@@ -301,6 +338,67 @@ export function ObservabilityPage() {
           </Card>
         </div>
 
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Logs className="h-4 w-4" /> {text("日志与 Trace 深链查询", "Logs & Trace Deep Search")}
+            </div>
+            <span className="text-xs text-slate-500">
+              {text("按任务、Trace、服务和事件筛选；Trace ID 可直接联动右侧链路。", "Filter by task, trace, service, and event; trace IDs can drive the chain view.")}
+            </span>
+          </CardHeader>
+          <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 p-3">
+            <Input
+              aria-label={text("任务 ID", "Task ID")}
+              className="h-8 text-xs"
+              placeholder={text("任务 ID", "Task ID")}
+              value={draftLogFilters.task_id}
+              onChange={(event) =>
+                setDraftLogFilters((filters) => ({ ...filters, task_id: event.target.value }))
+              }
+            />
+            <Input
+              aria-label={text("Trace ID", "Trace ID")}
+              className="h-8 text-xs"
+              placeholder="Trace ID"
+              value={draftLogFilters.trace_id}
+              onChange={(event) =>
+                setDraftLogFilters((filters) => ({ ...filters, trace_id: event.target.value }))
+              }
+            />
+            <Input
+              aria-label={text("服务", "Service")}
+              className="h-8 text-xs"
+              placeholder={text("服务，例如 api-server", "Service, e.g. api-server")}
+              value={draftLogFilters.service}
+              onChange={(event) =>
+                setDraftLogFilters((filters) => ({ ...filters, service: event.target.value }))
+              }
+            />
+            <Input
+              aria-label={text("事件类型", "Event Type")}
+              className="h-8 text-xs"
+              placeholder={text("事件类型，例如 TASK_STARTED", "Event type, e.g. TASK_STARTED")}
+              value={draftLogFilters.event_type}
+              onChange={(event) =>
+                setDraftLogFilters((filters) => ({ ...filters, event_type: event.target.value }))
+              }
+            />
+            <Button onClick={applyLogFilters}>{text("查询日志", "Search Logs")}</Button>
+            <Button onClick={clearLogFilters} variant="ghost">{text("清空", "Clear")}</Button>
+          </div>
+          <div className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-100 p-3">
+            <Input
+              aria-label={text("Trace 查询", "Trace Search")}
+              className="h-8 text-xs"
+              placeholder={text("输入 Trace ID 查询链路", "Enter Trace ID to query chain")}
+              value={draftTraceId}
+              onChange={(event) => setDraftTraceId(event.target.value)}
+            />
+            <Button onClick={() => queryTrace()}>{text("查询 Trace", "Search Trace")}</Button>
+          </div>
+        </Card>
+
         <div className="grid grid-cols-[1.2fr_0.8fr] gap-4">
           <Card>
             <CardHeader>
@@ -325,10 +423,25 @@ export function ObservabilityPage() {
                   <tr key={`${item.task_id}-${item.event_type}-${item.timestamp}`} className="border-t border-slate-100">
                     <Td>{item.event_type ? eventLabel(item.event_type) : item.message}</Td>
                     <Td className="font-mono text-[11px] text-slate-600">
-                      {item.task_id?.slice(0, 8) ?? "-"}
+                      {item.task_id ? (
+                        <Link to={`/tasks/${item.task_id}/events`} className="hover:text-slate-950">
+                          {item.task_id.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        "-"
+                      )}
                     </Td>
                     <Td className="font-mono text-[11px] text-slate-600">
-                      {item.trace_id?.slice(0, 12) ?? "-"}
+                      {item.trace_id ? (
+                        <button
+                          className="hover:text-slate-950"
+                          onClick={() => queryTrace(item.trace_id ?? "")}
+                        >
+                          {item.trace_id.slice(0, 12)}
+                        </button>
+                      ) : (
+                        "-"
+                      )}
                     </Td>
                     <Td>
                       <Badge tone={item.level === "ERROR" ? "failed" : "success"}>{item.level}</Badge>
@@ -352,7 +465,7 @@ export function ObservabilityPage() {
                 <GitBranch className="h-4 w-4" /> {text("Trace 链路", "Trace Chain")}
               </div>
               <span className="font-mono text-xs text-slate-500">
-                {firstTraceId?.slice(0, 16) ?? text("等待 trace", "Waiting for trace")}
+                {activeTraceId ? activeTraceId.slice(0, 16) : text("等待 trace", "Waiting for trace")}
               </span>
             </CardHeader>
             <div className="space-y-2 p-3">
@@ -461,4 +574,9 @@ function StatusLine({ isLoading, error }: { isLoading: boolean; error: Error | n
 
 function formatNumber(value: number | undefined) {
   return value === undefined ? "..." : new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function cleanFilter(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

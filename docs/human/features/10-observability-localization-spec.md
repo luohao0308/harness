@@ -40,8 +40,8 @@ GET /api/subagents/recovery/summary
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
 | `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary`、`GET /metrics` | 运行摘要、恢复运营摘要和指标 |
-| `/observability/logs` | `GET /api/observability/logs` | 日志筛选和详情 |
-| `/observability/traces` | `GET /api/observability/traces/{trace_id}` | Trace 查询和 span 列表 |
+| `/observability` 日志区 | `GET /api/observability/logs` | 按任务、Trace、服务和事件类型筛选日志 |
+| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 手动输入 Trace ID 或从日志行跳转查询 span 列表 |
 | `/settings/models` | Settings API | 模型设置 |
 | `/settings/policies` | Settings API | 策略设置 |
 | 控制台 Shell | i18n 字典 | 中文与 English 切换 |
@@ -194,10 +194,10 @@ cookie
 | OTLP exporter wiring | 已落地 | API Server 启动时配置 OTLP gRPC exporter |
 | Loki 日志查询 API | 基础落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
 | Loki 真实采集链路 | 基础落地 | Promtail 通过 Docker socket 采集容器日志并写入 Loki |
-| Loki 标签检索体验 | 基础落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector |
+| Loki 标签检索体验 | 已落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector；控制台提供深链筛选 |
 | Grafana 后端代理 | 基础落地 | `GET /api/observability/grafana/dashboards`，后端使用 Basic Auth 查询 dashboard 元数据 |
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
-| Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store |
+| Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store；控制台支持手动 Trace 查询和日志行跳转 |
 | 观测服务健康 | 基础落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo |
 | 子 Agent 恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 与控制台观测页展示批次、任务聚合和动作统计 |
 | 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
@@ -213,7 +213,7 @@ cookie
 
 ```text
 1. 增强 Grafana dashboard 权限模型
-2. 增强日志检索深链
+2. 增强 Grafana dashboard 权限
 3. 增强控制台 i18n 字典复用
 4. 持续巡检新页面表头、按钮、空状态和错误状态双语
 5. 更新 OpenAPI、控制台页面和验收测试
@@ -233,6 +233,8 @@ cookie
 - Loki ready 返回 ready。
 - Loki 能查询到 `api-server` 容器日志。
 - 后端日志 API 能按 `task_id`、`trace_id`、`event_type` 查询 Loki 标签。
+- 控制台观测页必须能按任务 ID、Trace ID、服务和事件类型筛选日志。
+- 控制台观测页必须能手动输入 Trace ID 查询链路，并能从日志行跳转到 Trace。
 - Loki labels 查询返回 success。
 - API JSON 日志能按 `trace_id` 查询。
 - 事件中的 `trace_id` 与响应头 `x-trace-id` 能关联。

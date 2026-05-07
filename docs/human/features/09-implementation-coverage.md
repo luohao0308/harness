@@ -94,8 +94,8 @@
 | `/subagents/:subagentId` | Subagent API、Task Result API | 已接入，展示单个子 Agent assignment、状态、取消、产物、工具结果、ReAct 轨迹和上下文压缩 |
 | `/sandboxes` | Sandbox API | 已接入 |
 | `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary` 与 `/metrics` | 已接入，展示运行摘要、恢复运营摘要和指标入口 |
-| `/observability` 日志区 | `GET /api/observability/logs` | 基础接入 |
-| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 基础接入 |
+| `/observability` 日志区 | `GET /api/observability/logs` | 已接入，支持任务、Trace、服务和事件类型筛选 |
+| `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 已接入，支持手动 Trace 查询和日志行跳转 |
 | `/settings/models` | Settings API、Model Health API | 已接入，展示 RPM、TPM、探测模式和熔断状态 |
 | `/settings/policies` | Settings API | 已接入 |
 
@@ -112,8 +112,8 @@
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类和控制台细节 | 增强工具审计筛选和深链 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫 | 增强并发与断线重连测试 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标、Grafana Basic Auth 代理和 Tempo Trace 查询已落地 | 补齐队列图表与 Grafana 权限模型 |
-| Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集和标签查询已落地 | 增强日志检索深链 |
-| OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口和 Event Store 回退已落地 | 增强 trace 深链和筛选 |
+| Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集、标签查询和控制台深链筛选已落地 | 增强日志导出 |
+| OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口、Event Store 回退和控制台 Trace 深链已落地 | 增强 span 属性检索 |
 | 控制台本地化 | 顶栏语言切换、默认中文、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面双语已落地 | 持续巡检新增页面表头、按钮、空状态和错误状态 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine 和 Sandbox Manager 读取，模型健康探测写回设置快照 | 资源规格和网络 allowlist 增强 |
 
