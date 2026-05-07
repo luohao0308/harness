@@ -182,6 +182,20 @@ export type ObservabilityServicesHealth = {
   services: ObservabilityServiceHealth[];
 };
 
+export type ObservabilityExportItem = {
+  name: string;
+  title: string;
+  description: string;
+  method: string;
+  url: string;
+  format: string;
+  required_roles: string[];
+};
+
+export type ObservabilityExports = {
+  items: ObservabilityExportItem[];
+};
+
 export type Subagent = {
   id: string;
   task_id: string;
@@ -616,4 +630,34 @@ export async function listGrafanaDashboards() {
 
 export async function getObservabilityServicesHealth() {
   return request<ObservabilityServicesHealth>("/api/observability/services/health");
+}
+
+export async function listObservabilityExports() {
+  return request<ObservabilityExports>("/api/observability/exports");
+}
+
+export async function downloadObservabilityExport(path: string) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    let message = response.statusText;
+    try {
+      const payload = await response.json();
+      message = payload.detail ?? message;
+    } catch {
+      // Keep the HTTP status text when the export response is not JSON.
+    }
+    throw new Error(message);
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  return {
+    blob: await response.blob(),
+    filename: contentDispositionFilename(disposition) ?? "observability-export.json",
+  };
+}
+
+function contentDispositionFilename(disposition: string) {
+  const match = disposition.match(/filename="([^"]+)"/);
+  return match?.[1];
 }

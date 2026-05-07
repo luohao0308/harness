@@ -129,7 +129,7 @@ docs/SPEC.md
 | Grafana | 已落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning、admin/operator RBAC | 增强 dashboard 指标覆盖 |
 | Loki | 基础落地 | `GET /api/observability/logs`、Promtail 采集、标签检索 | 增强日志检索深链 |
 | OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 增强 Trace 深链 |
-| 日志与 Trace 深链 | 已落地 | `GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、控制台筛选查询台 | 增强导出和 span 属性检索 |
+| 日志与 Trace 深链 | 已落地 | `GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、控制台筛选查询台、观测导出接口 | 增强导出留存和 span 属性检索 |
 | 服务健康 | 已落地 | `GET /health`、`GET /api/observability/services/health`、admin/operator RBAC | 增强告警联动 |
 
 ## 本轮完成收口
@@ -145,7 +145,7 @@ docs/SPEC.md
 | 增强项 | 说明 | 目标文档 |
 |---|---|---|
 | Worker 级恢复跨任务汇总 | 已落地组织级恢复运营摘要；后续增强跨组织汇总和导出 | `docs/human/features/04-subagent-orchestration.md` |
-| 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，后续增强导出和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
+| 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口已落地，后续增强导出留存和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
 | 步骤级断点续跑 | 当前任务级恢复和已完成步骤跳过已落地，后续增强步骤级人工选择与批量恢复 | `docs/human/features/02-planner-executor.md` |
 
 ## 流程进展
@@ -170,7 +170,7 @@ docs/SPEC.md
 
 ```text
 1. 持续增强 Worker 级恢复跨任务汇总
-2. 增强观测深链、队列图表和导出
+2. 增强观测深链、队列图表和导出留存
 3. 增强步骤级断点续跑与批量操作
 ```
 

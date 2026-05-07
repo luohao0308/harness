@@ -1,6 +1,16 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Box, ExternalLink, Gauge, GitBranch, Logs, RefreshCw, RotateCcw } from "lucide-react";
+import {
+  Activity,
+  Box,
+  Download,
+  ExternalLink,
+  Gauge,
+  GitBranch,
+  Logs,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -12,12 +22,14 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { enabledLabel, eventLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import type { CountItem } from "../../tasks/api";
+import type { CountItem, ObservabilityExportItem } from "../../tasks/api";
 import {
+  downloadObservabilityExport,
   getObservabilityServicesHealth,
   getObservabilitySummary,
   getObservabilityTrace,
   getSubagentRecoverySummary,
+  listObservabilityExports,
   listGrafanaDashboards,
   listObservabilityLogs,
 } from "../../tasks/api";
@@ -45,6 +57,10 @@ export function ObservabilityPage() {
     queryKey: ["observability", "grafana-dashboards"],
     queryFn: listGrafanaDashboards,
   });
+  const exports = useQuery({
+    queryKey: ["observability", "exports"],
+    queryFn: listObservabilityExports,
+  });
   const recovery = useQuery({
     queryKey: ["subagents", "recovery-summary"],
     queryFn: getSubagentRecoverySummary,
@@ -62,6 +78,7 @@ export function ObservabilityPage() {
   });
   const firstTraceId = logs.data?.items.find((item) => item.trace_id)?.trace_id ?? "";
   const activeTraceId = traceId || firstTraceId;
+  const [exportStatus, setExportStatus] = useState("");
   const trace = useQuery({
     queryKey: ["observability", "trace", activeTraceId],
     queryFn: () => getObservabilityTrace(activeTraceId),
@@ -84,6 +101,47 @@ export function ObservabilityPage() {
     const nextTraceId = value.trim();
     setDraftTraceId(nextTraceId);
     setTraceId(nextTraceId);
+  };
+  const exportPath = (item: ObservabilityExportItem) => {
+    if (item.name === "logs_jsonl") {
+      const searchParams = new URLSearchParams();
+      for (const [key, value] of Object.entries(logFilters)) {
+        const cleanValue = cleanFilter(value);
+        if (cleanValue) {
+          searchParams.set(key, cleanValue);
+        }
+      }
+      searchParams.set("limit", "100");
+      return `${item.url}?${searchParams.toString()}`;
+    }
+    if (item.name === "trace_json") {
+      return item.url.replace("{trace_id}", encodeURIComponent(activeTraceId));
+    }
+    return item.url;
+  };
+  const downloadExport = async (item: ObservabilityExportItem) => {
+    if (item.name === "trace_json" && !activeTraceId) {
+      setExportStatus(text("请先输入 Trace ID", "Enter a Trace ID first"));
+      return;
+    }
+    setExportStatus(text("正在导出...", "Exporting..."));
+    try {
+      const { blob, filename } = await downloadObservabilityExport(exportPath(item));
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setExportStatus(text(`已导出 ${filename}`, `Exported ${filename}`));
+    } catch (error) {
+      setExportStatus(
+        text(
+          `导出失败：${error instanceof Error ? error.message : "未知错误"}`,
+          `Export failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        ),
+      );
+    }
   };
 
   return (
@@ -154,6 +212,48 @@ export function ObservabilityPage() {
             <DistributionTable items={data?.sandboxes_by_status ?? []} emptyText={text("暂无沙箱实例", "No sandbox instances")} />
           </Card>
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Download className="h-4 w-4" /> {text("观测导出", "Observability Exports")}
+            </div>
+            <span className="text-xs text-slate-500">
+              {exportStatus ||
+                text("导出日志、Trace、Grafana dashboard 和服务健康快照", "Export logs, traces, dashboards, and health snapshots")}
+            </span>
+          </CardHeader>
+          <div className="grid grid-cols-4 gap-3 p-3">
+            {(exports.data?.items ?? []).map((item) => (
+              <div key={item.name} className="rounded-md border border-slate-100 p-3 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-semibold text-slate-900">{item.title}</div>
+                    <div className="mt-1 text-slate-500">{item.description}</div>
+                  </div>
+                  <Badge tone="info">{item.format}</Badge>
+                </div>
+                <Button
+                  className="mt-3 w-full"
+                  disabled={item.name === "trace_json" && !activeTraceId}
+                  onClick={() => void downloadExport(item)}
+                >
+                  <Download className="h-3 w-3" /> {text("导出", "Export")}
+                </Button>
+              </div>
+            ))}
+            {!exports.isLoading && (exports.data?.items.length ?? 0) === 0 && (
+              <div className="col-span-4 py-8 text-center text-xs text-slate-500">
+                {exports.error
+                  ? text(
+                      `导出入口读取受限：${exports.error.message}`,
+                      `Export access limited: ${exports.error.message}`,
+                    )
+                  : text("暂无观测导出入口", "No observability exports")}
+              </div>
+            )}
+          </div>
+        </Card>
 
         <Card>
           <CardHeader>

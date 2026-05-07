@@ -1871,6 +1871,258 @@
         }
       }
     },
+    "/api/observability/exports": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "查询观测导出入口",
+        "description": "仅 admin、operator 可访问。返回日志、Trace、Grafana 和服务健康导出入口。",
+        "operationId": "list_observability_exports_api_observability_exports_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityExportPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/observability/exports/logs": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "导出结构化日志",
+        "description": "仅 admin、operator 可访问。按任务、trace、服务和事件类型导出 JSONL；Loki 不可用时导出 Event Store 日志视图。",
+        "operationId": "export_observability_logs_api_observability_exports_logs_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "任务 ID",
+              "title": "Task Id"
+            },
+            "description": "任务 ID"
+          },
+          {
+            "name": "trace_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Trace ID",
+              "title": "Trace Id"
+            },
+            "description": "Trace ID"
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "服务名",
+              "title": "Service"
+            },
+            "description": "服务名"
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "事件类型",
+              "title": "Event Type"
+            },
+            "description": "事件类型"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "返回数量",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "返回数量"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/exports/traces/{trace_id}": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "导出 Trace 链路",
+        "description": "仅 admin、operator 可访问。按 trace_id 导出 Trace 链路 JSON。",
+        "operationId": "export_observability_trace_api_observability_exports_traces__trace_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityTraceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/observability/exports/grafana/dashboards": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "导出 Grafana Dashboard",
+        "description": "仅 admin、operator 可访问。导出后端代理可见的 Grafana dashboard 列表。",
+        "operationId": "export_grafana_dashboards_api_observability_exports_grafana_dashboards_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrafanaDashboardPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/observability/exports/services/health": {
+      "get": {
+        "tags": [
+          "observability"
+        ],
+        "summary": "导出观测服务健康",
+        "description": "仅 admin、operator 可访问。导出观测服务健康 JSON。",
+        "operationId": "export_observability_services_health_api_observability_exports_services_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilityServicesHealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/observability/traces/{trace_id}": {
       "get": {
         "tags": [
@@ -2472,6 +2724,76 @@
           "health"
         ],
         "title": "ModelSettingsResponse"
+      },
+      "ObservabilityExportItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "导出项名称"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "导出项标题"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "导出项说明"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "description": "HTTP 方法"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "导出地址"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "description": "导出格式"
+          },
+          "required_roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Roles",
+            "description": "所需角色"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "title",
+          "description",
+          "method",
+          "url",
+          "format",
+          "required_roles"
+        ],
+        "title": "ObservabilityExportItem"
+      },
+      "ObservabilityExportPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityExportItem"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "观测导出入口列表"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ObservabilityExportPage"
       },
       "ObservabilityLogEntry": {
         "properties": {

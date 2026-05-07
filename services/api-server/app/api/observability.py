@@ -6,7 +6,7 @@ from typing import Annotated
 from urllib import error, request
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,8 @@ from app.api.schemas import (
     CountItem,
     GrafanaDashboardPage,
     GrafanaDashboardResponse,
+    ObservabilityExportItem,
+    ObservabilityExportPage,
     ObservabilityLogEntry,
     ObservabilityLogPage,
     ObservabilityServiceHealthResponse,
@@ -121,6 +123,167 @@ def list_observability_logs(
     event_type: str | None = Query(default=None, description="事件类型"),
     limit: int = Query(default=100, ge=1, le=500, description="返回数量"),
 ) -> ObservabilityLogPage:
+    return _observability_logs(
+        session=session,
+        principal=principal,
+        task_id=task_id,
+        trace_id=trace_id,
+        service=service,
+        event_type=event_type,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/exports",
+    response_model=ObservabilityExportPage,
+    summary="查询观测导出入口",
+    description="仅 admin、operator 可访问。返回日志、Trace、Grafana 和服务健康导出入口。",
+)
+def list_observability_exports(principal: Principal) -> ObservabilityExportPage:
+    require_observability_operator(principal)
+    return ObservabilityExportPage(
+        items=[
+            ObservabilityExportItem(
+                name="logs_jsonl",
+                title="结构化日志 JSONL",
+                description="按任务、Trace、服务和事件类型导出结构化日志。",
+                method="GET",
+                url="/api/observability/exports/logs",
+                format="jsonl",
+                required_roles=["admin", "operator"],
+            ),
+            ObservabilityExportItem(
+                name="trace_json",
+                title="Trace 链路 JSON",
+                description="按 trace_id 导出 Tempo 或 Event Store 链路 span。",
+                method="GET",
+                url="/api/observability/exports/traces/{trace_id}",
+                format="json",
+                required_roles=["admin", "operator"],
+            ),
+            ObservabilityExportItem(
+                name="grafana_dashboards_json",
+                title="Grafana Dashboard JSON",
+                description="导出后端代理可见的 Grafana dashboard 列表。",
+                method="GET",
+                url="/api/observability/exports/grafana/dashboards",
+                format="json",
+                required_roles=["admin", "operator"],
+            ),
+            ObservabilityExportItem(
+                name="services_health_json",
+                title="观测服务健康 JSON",
+                description="导出 Prometheus、Grafana、Loki、OTel Collector 和 Tempo 健康状态。",
+                method="GET",
+                url="/api/observability/exports/services/health",
+                format="json",
+                required_roles=["admin", "operator"],
+            ),
+        ]
+    )
+
+
+@router.get(
+    "/exports/logs",
+    summary="导出结构化日志",
+    description=(
+        "仅 admin、operator 可访问。按任务、trace、服务和事件类型导出 JSONL；"
+        "Loki 不可用时导出 Event Store 日志视图。"
+    ),
+)
+def export_observability_logs(
+    session: DbSession,
+    principal: Principal,
+    task_id: str | None = Query(default=None, description="任务 ID"),
+    trace_id: str | None = Query(default=None, description="Trace ID"),
+    service: str | None = Query(default=None, description="服务名"),
+    event_type: str | None = Query(default=None, description="事件类型"),
+    limit: int = Query(default=100, ge=1, le=500, description="返回数量"),
+) -> Response:
+    require_observability_operator(principal)
+    page = _observability_logs(
+        session=session,
+        principal=principal,
+        task_id=task_id,
+        trace_id=trace_id,
+        service=service,
+        event_type=event_type,
+        limit=limit,
+    )
+    lines = [
+        json.dumps(item.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
+        for item in page.items
+    ]
+    body = "\n".join(lines) + ("\n" if lines else "")
+    return Response(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": 'attachment; filename="observability-logs.jsonl"',
+            "X-Harness-Export-Count": str(len(page.items)),
+            "X-Harness-Export-Source": page.source,
+        },
+    )
+
+
+@router.get(
+    "/exports/traces/{trace_id}",
+    response_model=ObservabilityTraceResponse,
+    summary="导出 Trace 链路",
+    description="仅 admin、operator 可访问。按 trace_id 导出 Trace 链路 JSON。",
+)
+def export_observability_trace(
+    trace_id: str,
+    session: DbSession,
+    principal: Principal,
+    response: Response,
+) -> ObservabilityTraceResponse:
+    require_observability_operator(principal)
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="observability-trace-{trace_id}.json"'
+    )
+    return _observability_trace(trace_id=trace_id, session=session, principal=principal)
+
+
+@router.get(
+    "/exports/grafana/dashboards",
+    response_model=GrafanaDashboardPage,
+    summary="导出 Grafana Dashboard",
+    description="仅 admin、operator 可访问。导出后端代理可见的 Grafana dashboard 列表。",
+)
+def export_grafana_dashboards(
+    principal: Principal,
+    response: Response,
+) -> GrafanaDashboardPage:
+    response.headers["Content-Disposition"] = 'attachment; filename="grafana-dashboards.json"'
+    return list_grafana_dashboards(principal)
+
+
+@router.get(
+    "/exports/services/health",
+    response_model=ObservabilityServicesHealthResponse,
+    summary="导出观测服务健康",
+    description="仅 admin、operator 可访问。导出观测服务健康 JSON。",
+)
+def export_observability_services_health(
+    principal: Principal,
+    response: Response,
+) -> ObservabilityServicesHealthResponse:
+    response.headers["Content-Disposition"] = 'attachment; filename="observability-health.json"'
+    return get_observability_services_health(principal)
+
+
+def _observability_logs(
+    *,
+    session: Session,
+    principal: Principal,
+    task_id: str | None,
+    trace_id: str | None,
+    service: str | None,
+    event_type: str | None,
+    limit: int,
+) -> ObservabilityLogPage:
     loki_entries = _query_loki_logs(
         task_id=task_id,
         trace_id=trace_id,
@@ -157,6 +320,15 @@ def list_observability_logs(
 def get_observability_trace(
     trace_id: str,
     session: DbSession,
+    principal: Principal,
+) -> ObservabilityTraceResponse:
+    return _observability_trace(trace_id=trace_id, session=session, principal=principal)
+
+
+def _observability_trace(
+    *,
+    trace_id: str,
+    session: Session,
     principal: Principal,
 ) -> ObservabilityTraceResponse:
     tempo_spans = _query_tempo_trace(trace_id=trace_id)

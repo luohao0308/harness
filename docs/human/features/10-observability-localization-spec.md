@@ -32,6 +32,11 @@ GET /api/observability/grafana/dashboards
 GET /api/observability/logs
 GET /api/observability/traces/{trace_id}
 GET /api/observability/services/health
+GET /api/observability/exports
+GET /api/observability/exports/logs
+GET /api/observability/exports/traces/{trace_id}
+GET /api/observability/exports/grafana/dashboards
+GET /api/observability/exports/services/health
 GET /api/subagents/recovery/summary
 ```
 
@@ -42,6 +47,7 @@ GET /api/subagents/recovery/summary
 | `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary`、`GET /metrics` | 运行摘要、恢复运营摘要和指标 |
 | `/observability` 日志区 | `GET /api/observability/logs` | 按任务、Trace、服务和事件类型筛选日志 |
 | `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 手动输入 Trace ID 或从日志行跳转查询 span 列表 |
+| `/observability` 导出区 | `GET /api/observability/exports` 与导出接口 | 导出日志、Trace、Grafana dashboard 和服务健康快照 |
 | `/settings/models` | Settings API | 模型设置 |
 | `/settings/policies` | Settings API | 策略设置 |
 | 控制台 Shell | i18n 字典 | 中文与 English 切换 |
@@ -92,6 +98,7 @@ SANDBOX_COMMAND_FAILED
 | Trace 查看 | admin、operator |
 | Grafana dashboard 代理 | admin、operator |
 | 观测服务健康 | admin、operator |
+| 观测导出 | admin、operator |
 | 设置读 | admin、engineer |
 | 设置写 | admin |
 
@@ -201,6 +208,7 @@ cookie
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store；控制台支持手动 Trace 查询和日志行跳转 |
 | 观测服务健康 | 已落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo，并限定 admin/operator 访问 |
+| 观测导出 | 已落地 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health`；控制台提供下载入口 |
 | 子 Agent 恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 与控制台观测页展示批次、任务聚合和动作统计 |
 | 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
 
@@ -229,6 +237,9 @@ cookie
 - 后端 Grafana dashboard 代理使用配置凭据查询。
 - `GET /api/observability/grafana/dashboards` 对 engineer 返回 403，对 admin 和 operator 返回 200。
 - `GET /api/observability/services/health` 对 engineer 返回 403，对 admin 和 operator 返回 200。
+- `GET /api/observability/exports` 对 engineer 返回 403，对 admin 和 operator 返回 200。
+- `GET /api/observability/exports/logs` 返回 JSONL，并带 `X-Harness-Export-Count`。
+- `GET /api/observability/exports/traces/{trace_id}` 返回 Trace JSON，并带下载文件名。
 - Grafana 自动加载 Prometheus 和 Loki 数据源。
 - Grafana 自动加载 Agent Harness dashboard。
 - Loki ready 返回 ready。
@@ -242,3 +253,4 @@ cookie
 - 控制台切换 English 后页面表头、按钮、空状态和错误状态切换为英文。
 - 技术值保留原始值，并显示当前语言说明。
 - 观测页必须展示子 Agent 恢复运营摘要，包含批次数、任务数、扫描数、恢复数和动作统计。
+- 观测页必须展示观测导出入口，支持日志、Trace、Grafana dashboard 和服务健康导出。

@@ -217,6 +217,62 @@ def test_observability_logs_returns_event_store_entries(db_session: Session) -> 
     assert payload["items"][0]["event_type"] == "TASK_STARTED"
 
 
+def test_observability_exports_require_operator_role() -> None:
+    client = TestClient(app)
+
+    engineer = client.get("/api/observability/exports", headers=AUTH_HEADERS)
+    operator = client.get("/api/observability/exports", headers=OPERATOR_HEADERS)
+
+    assert engineer.status_code == 403
+    assert operator.status_code == 200
+    assert {item["name"] for item in operator.json()["items"]} == {
+        "logs_jsonl",
+        "trace_json",
+        "grafana_dashboards_json",
+        "services_health_json",
+    }
+
+
+def test_export_observability_logs_returns_jsonl(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Export logs",
+        goal="Export logs",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_STARTED,
+        payload_json={"summary": "started"},
+        trace_id="trace-export",
+    )
+    db_session.commit()
+
+    response = TestClient(app).get(
+        "/api/observability/exports/logs",
+        headers=OPERATOR_HEADERS,
+        params={"task_id": task.id, "trace_id": "trace-export"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert response.headers["x-harness-export-count"] == "1"
+    payload = json.loads(response.text.strip())
+    assert payload["task_id"] == task.id
+    assert payload["trace_id"] == "trace-export"
+
+
 def test_loki_label_selector_uses_filter_labels() -> None:
     selector = _loki_label_selector(
         service=None,
@@ -321,6 +377,48 @@ def test_observability_trace_returns_event_spans(db_session: Session) -> None:
     assert payload["source"] == "event_store"
     assert [span["name"] for span in payload["spans"]] == ["TASK_STARTED", "TASK_COMPLETED"]
     assert payload["spans"][1]["parent_span_id"] == "event-1"
+
+
+def test_export_observability_trace_uses_operator_role(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Export trace",
+        goal="Export trace",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_STARTED,
+        payload_json={"summary": "started"},
+        trace_id="trace-export-chain",
+    )
+    db_session.commit()
+
+    client = TestClient(app)
+    engineer = client.get(
+        "/api/observability/exports/traces/trace-export-chain",
+        headers=AUTH_HEADERS,
+    )
+    operator = client.get(
+        "/api/observability/exports/traces/trace-export-chain",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert engineer.status_code == 403
+    assert operator.status_code == 200
+    assert operator.headers["content-disposition"].startswith("attachment;")
+    assert operator.json()["trace_id"] == "trace-export-chain"
 
 
 def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:

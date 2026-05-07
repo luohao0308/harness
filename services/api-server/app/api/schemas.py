@@ -415,6 +415,20 @@ class ObservabilityServicesHealthResponse(BaseModel):
     services: list[ObservabilityServiceHealthResponse] = Field(description="服务健康列表")
 
 
+class ObservabilityExportItem(BaseModel):
+    name: str = Field(description="导出项名称")
+    title: str = Field(description="导出项标题")
+    description: str = Field(description="导出项说明")
+    method: str = Field(description="HTTP 方法")
+    url: str = Field(description="导出地址")
+    format: str = Field(description="导出格式")
+    required_roles: list[str] = Field(description="所需角色")
+
+
+class ObservabilityExportPage(BaseModel):
+    items: list[ObservabilityExportItem] = Field(description="观测导出入口列表")
+
+
 class ModelCallResponse(BaseModel):
     id: str = Field(description="模型调用 ID")
     task_id: str = Field(description="任务 ID")

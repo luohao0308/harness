@@ -130,19 +130,20 @@ model_call_errors_total
 | Grafana Basic Auth 代理 | 已落地 | 后端使用 Grafana 凭据查询 dashboard 元数据，并限定 admin/operator 访问 |
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo 数据源和 Harness dashboard |
 | Tempo Trace 后端 | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span |
+| 观测导出 | 已落地 | `GET /api/observability/exports`、日志 JSONL、Trace JSON、Grafana dashboard JSON 和服务健康 JSON |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 观测导出 | 日志、Trace 和 Dashboard 已能查询，运营导出尚未形成统一入口 | 导出观测查询结果 |
+| 观测导出留存 | 导出结果已能下载，导出文件尚未进入对象存储留存 | 导出文件留存和下载历史 |
 
 ## 实现顺序
 
 ```text
 1. 保持 Settings API 与 OpenAPI 同步
 2. 保持 Settings 生效链路测试
-3. 增强观测导出入口
+3. 增强观测导出留存
 4. 保持日志页、Trace 页和 dashboard 深链测试
 5. 更新部署 Runbook 和排障 Runbook
 ```
@@ -160,4 +161,6 @@ model_call_errors_total
 - Observability 聚合结果按组织隔离。
 - Observability 展示任务、模型、工具、沙箱指标。
 - Grafana dashboard 与观测服务健康接口对 engineer 返回 403，对 admin 和 operator 返回 200。
+- 观测导出入口对 engineer 返回 403，对 admin 和 operator 返回 200。
+- 观测导出支持日志 JSONL、Trace JSON、Grafana dashboard JSON 和服务健康 JSON。
 - 控制台 settings 页面不使用占位页。
