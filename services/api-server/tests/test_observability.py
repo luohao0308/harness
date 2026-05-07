@@ -230,6 +230,8 @@ def test_observability_logs_returns_event_store_entries(db_session: Session) -> 
     assert payload["items"][0]["task_id"] == task.id
     assert payload["items"][0]["trace_id"] == "trace-logs"
     assert payload["items"][0]["event_type"] == "TASK_STARTED"
+    assert payload["facets"]["event_type"] == [{"name": "TASK_STARTED", "count": 1}]
+    assert payload["facets"]["service"] == [{"name": "api-server", "count": 1}]
 
 
 def test_observability_exports_require_operator_role() -> None:
@@ -417,6 +419,22 @@ def test_observability_trace_returns_event_spans(db_session: Session) -> None:
     assert payload["source"] == "event_store"
     assert [span["name"] for span in payload["spans"]] == ["TASK_STARTED", "TASK_COMPLETED"]
     assert payload["spans"][1]["parent_span_id"] == "event-1"
+    assert payload["service_nodes"] == [
+        {
+            "service": "api-server",
+            "span_count": 2,
+            "error_count": 0,
+            "total_duration_ms": 0,
+        }
+    ]
+    assert payload["service_edges"] == [
+        {
+            "source": "api-server",
+            "target": "api-server",
+            "span_count": 1,
+            "total_duration_ms": 0,
+        }
+    ]
 
 
 def test_export_observability_trace_uses_operator_role(db_session: Session) -> None:
@@ -535,6 +553,8 @@ def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:
     assert payload["spans"][0]["trace_id"] == "trace-chain"
     assert payload["spans"][0]["span_id"] == "span-2"
     assert payload["spans"][0]["duration_ms"] == 200
+    assert payload["service_nodes"][0]["service"] == "api-server"
+    assert payload["service_nodes"][0]["span_count"] == 1
     assert len(payload["spans"]) == 1
 
 
@@ -643,6 +663,10 @@ def test_observability_services_health_returns_all_services() -> None:
         "otel-collector",
         "tempo",
     }
+    assert {service["alert_status"] for service in payload["services"]}.issubset(
+        {"ok", "firing"}
+    )
+    assert all(service["runbook_url"].endswith("#observability") for service in payload["services"])
 
 
 def test_observability_services_health_requires_operator_role() -> None:

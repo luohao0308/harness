@@ -528,7 +528,17 @@ class Executor:
         self.event_store.append(
             task_id=task.id,
             event_type=EventType.STEP_STARTED,
-            payload_json={"step_id": step_row.id, "step_key": step.key},
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "execution_mode": step.execution_mode,
+                "requires_sandbox": step.requires_sandbox,
+                "can_spawn_subagent": step.can_spawn_subagent,
+                "tool_hints": step.tool_hints,
+                "risk_level": step.risk_level,
+                "artifact_expectations": step.artifact_expectations,
+                "trace_summary": f"开始{step.execution_mode}步骤 {step.key}",
+            },
         )
         if step.can_spawn_subagent:
             agent_run = SubagentManager(self.session).spawn(
@@ -546,7 +556,7 @@ class Executor:
                 status="STEP_COMPLETED",
                 summary=f"Subagent spawned: {agent_run.id}",
                 tool_calls=[],
-                next_action="continue",
+                next_action="spawn_subagent",
             )
             step_row.status = result.status
             step_row.completed_at = utc_now()
@@ -559,6 +569,27 @@ class Executor:
                     "step_key": step.key,
                     "summary": result.summary,
                     "assigned_agent_id": agent_run.id,
+                    "execution_mode": step.execution_mode,
+                    "next_action": result.next_action,
+                    "trace_summary": (
+                        f"异步步骤 {step.key} 已派生子 Agent {agent_run.id[:8]}"
+                    ),
+                    "react_trace": {
+                        "reason": {
+                            "step_key": step.key,
+                            "summary": f"异步执行需要独立子 Agent：{step.description}",
+                        },
+                        "act": {
+                            "step_key": step.key,
+                            "tool_name": "subagent.spawn",
+                            "input_json": {"agent_run_id": agent_run.id},
+                        },
+                        "observe": {
+                            "step_key": step.key,
+                            "status": "SUBAGENT_SPAWNED",
+                            "summary": result.summary,
+                        },
+                    },
                 },
             )
             self.session.flush()
@@ -632,6 +663,15 @@ class Executor:
                 "step_id": step_row.id,
                 "step_key": step.key,
                 "summary": result.summary,
+                "execution_mode": step.execution_mode,
+                "tool_call_id": execution.tool_call.id,
+                "tool_name": tool_name,
+                "duration_ms": execution.tool_call.duration_ms,
+                "next_action": result.next_action,
+                "trace_summary": (
+                    f"同步步骤 {step.key} 通过 {tool_name} 完成，"
+                    f"耗时 {execution.tool_call.duration_ms}ms"
+                ),
                 "react_trace": trace.model_dump(),
             },
         )

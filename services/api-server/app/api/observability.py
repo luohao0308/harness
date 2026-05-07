@@ -28,6 +28,8 @@ from app.api.schemas import (
     ObservabilityServicesHealthResponse,
     ObservabilitySummaryResponse,
     ObservabilityTraceResponse,
+    ObservabilityTraceServiceEdge,
+    ObservabilityTraceServiceNode,
     ObservabilityTraceSpan,
     WarmPoolResponse,
 )
@@ -450,19 +452,26 @@ def _observability_logs(
         limit=limit,
     )
     if loki_entries:
-        return ObservabilityLogPage(items=loki_entries, next_cursor=None, source="loki")
+        return ObservabilityLogPage(
+            items=loki_entries,
+            next_cursor=None,
+            source="loki",
+            facets=_log_facets(loki_entries),
+        )
+    event_entries = _event_logs(
+        session=session,
+        principal=principal,
+        task_id=task_id,
+        trace_id=trace_id,
+        service=service,
+        event_type=event_type,
+        limit=limit,
+    )
     return ObservabilityLogPage(
-        items=_event_logs(
-            session=session,
-            principal=principal,
-            task_id=task_id,
-            trace_id=trace_id,
-            service=service,
-            event_type=event_type,
-            limit=limit,
-        ),
+        items=event_entries,
         next_cursor=None,
         source="event_store",
+        facets=_log_facets(event_entries),
     )
 
 
@@ -507,28 +516,34 @@ def _observability_trace(
 ) -> ObservabilityTraceResponse:
     tempo_spans = _query_tempo_trace(trace_id=trace_id)
     if tempo_spans:
-        return ObservabilityTraceResponse(
-            trace_id=trace_id,
-            spans=_filter_spans(
-                tempo_spans,
-                service=service,
-                span_name=span_name,
-                attribute_key=attribute_key,
-                attribute_value=attribute_value,
-            ),
-            source="tempo",
-        )
-    spans = _event_trace_spans(session=session, principal=principal, trace_id=trace_id)
-    return ObservabilityTraceResponse(
-        trace_id=trace_id,
-        spans=_filter_spans(
-            spans,
+        filtered_spans = _filter_spans(
+            tempo_spans,
             service=service,
             span_name=span_name,
             attribute_key=attribute_key,
             attribute_value=attribute_value,
-        ),
+        )
+        return ObservabilityTraceResponse(
+            trace_id=trace_id,
+            spans=filtered_spans,
+            source="tempo",
+            service_nodes=_trace_service_nodes(filtered_spans),
+            service_edges=_trace_service_edges(filtered_spans),
+        )
+    spans = _event_trace_spans(session=session, principal=principal, trace_id=trace_id)
+    filtered_spans = _filter_spans(
+        spans,
+        service=service,
+        span_name=span_name,
+        attribute_key=attribute_key,
+        attribute_value=attribute_value,
+    )
+    return ObservabilityTraceResponse(
+        trace_id=trace_id,
+        spans=filtered_spans,
         source="event_store",
+        service_nodes=_trace_service_nodes(filtered_spans),
+        service_edges=_trace_service_edges(filtered_spans),
     )
 
 
@@ -756,6 +771,71 @@ def _span_attribute_matches(
     if attribute_value is None or attribute_value == "":
         return True
     return str(span.attributes.get(attribute_key)) == attribute_value
+
+
+def _trace_service_nodes(
+    spans: list[ObservabilityTraceSpan],
+) -> list[ObservabilityTraceServiceNode]:
+    totals: dict[str, dict[str, int]] = {}
+    for span in spans:
+        bucket = totals.setdefault(
+            span.service,
+            {"span_count": 0, "error_count": 0, "total_duration_ms": 0},
+        )
+        bucket["span_count"] += 1
+        bucket["total_duration_ms"] += span.duration_ms
+        status_code = str(
+            span.attributes.get("http.response.status_code")
+            or span.attributes.get("http.status_code")
+            or ""
+        )
+        if status_code.startswith("5") or "ERROR" in span.name.upper():
+            bucket["error_count"] += 1
+    return [
+        ObservabilityTraceServiceNode(service=service, **values)
+        for service, values in sorted(totals.items())
+    ]
+
+
+def _trace_service_edges(
+    spans: list[ObservabilityTraceSpan],
+) -> list[ObservabilityTraceServiceEdge]:
+    spans_by_id = {span.span_id: span for span in spans if span.span_id}
+    totals: dict[tuple[str, str], dict[str, int]] = {}
+    for span in spans:
+        if not span.parent_span_id:
+            continue
+        parent = spans_by_id.get(span.parent_span_id)
+        if parent is None:
+            continue
+        key = (parent.service, span.service)
+        bucket = totals.setdefault(key, {"span_count": 0, "total_duration_ms": 0})
+        bucket["span_count"] += 1
+        bucket["total_duration_ms"] += span.duration_ms
+    return [
+        ObservabilityTraceServiceEdge(source=source, target=target, **values)
+        for (source, target), values in sorted(totals.items())
+    ]
+
+
+def _log_facets(entries: list[ObservabilityLogEntry]) -> dict[str, list[CountItem]]:
+    return {
+        "service": _facet_counts(entry.service for entry in entries),
+        "event_type": _facet_counts(entry.event_type or "unknown" for entry in entries),
+        "level": _facet_counts(entry.level for entry in entries),
+        "source": _facet_counts(entry.source for entry in entries),
+    }
+
+
+def _facet_counts(values) -> list[CountItem]:
+    counts: dict[str, int] = {}
+    for raw_value in values:
+        value = str(raw_value or "unknown")
+        counts[value] = counts.get(value, 0) + 1
+    return [
+        CountItem(name=name, count=count)
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 
 def _query_tempo_trace(*, trace_id: str) -> list[ObservabilityTraceSpan]:
@@ -989,20 +1069,36 @@ def _probe_service(*, name: str, url: str) -> ObservabilityServiceHealthResponse
         with request.urlopen(http_request, timeout=0.35) as response:
             status = "healthy" if 200 <= response.status < 500 else "unhealthy"
     except (OSError, error.HTTPError) as exc:
+        alert_status, alert_severity = _service_alert(status="unreachable")
         return ObservabilityServiceHealthResponse(
             name=name,
             status="unreachable",
             url=url,
             latency_ms=int((time.monotonic() - started_at) * 1000),
             error_message=str(exc),
+            alert_status=alert_status,
+            alert_severity=alert_severity,
+            runbook_url="/docs/runbooks/troubleshooting#observability",
         )
+    alert_status, alert_severity = _service_alert(status=status)
     return ObservabilityServiceHealthResponse(
         name=name,
         status=status,
         url=url,
         latency_ms=int((time.monotonic() - started_at) * 1000),
         error_message=None,
+        alert_status=alert_status,
+        alert_severity=alert_severity,
+        runbook_url="/docs/runbooks/troubleshooting#observability",
     )
+
+
+def _service_alert(*, status: str) -> tuple[str, str]:
+    if status == "healthy":
+        return "ok", "none"
+    if status == "unhealthy":
+        return "firing", "warning"
+    return "firing", "critical"
 
 
 def _get_json(url: str, *, timeout: float, headers: dict[str, str] | None = None) -> dict | list:

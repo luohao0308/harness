@@ -99,7 +99,7 @@ class DeterministicPlanner:
             planner_source="deterministic",
             planner_attempts=1,
         )
-        return ExecutionPlan.model_validate(plan.model_dump())
+        return self._with_quality_report(plan)
 
     def _plan_from_model_content(
         self,
@@ -120,9 +120,10 @@ class DeterministicPlanner:
             planner_attempts=planner_attempts,
         )
         try:
-            return ExecutionPlan.model_validate(normalized)
+            plan = ExecutionPlan.model_validate(normalized)
         except ValidationError:
             return None
+        return self._with_quality_report(plan)
 
     def _parse_model_json(self, model_content: str) -> dict[str, Any] | None:
         text = model_content.strip()
@@ -155,6 +156,7 @@ class DeterministicPlanner:
         if not isinstance(steps, list):
             steps = []
         normalized_steps = []
+        seen_keys: set[str] = set()
         for index, raw_step in enumerate(steps, start=1):
             if not isinstance(raw_step, dict):
                 continue
@@ -162,11 +164,19 @@ class DeterministicPlanner:
             execution_mode = "async" if mode == "async" else "sync"
             key = str(raw_step.get("key") or raw_step.get("step_key") or f"step_{index}")
             key = self._normalize_step_key(key, index)
+            key = self._deduplicate_step_key(key=key, seen_keys=seen_keys)
+            seen_keys.add(key)
             can_spawn_subagent = bool(raw_step.get("can_spawn_subagent"))
             if execution_mode == "async":
                 can_spawn_subagent = True
             tool_hints = self._normalize_tool_hints(raw_step.get("tool_hints"))
             risk_level = self._normalize_risk_level(raw_step.get("risk_level"), tool_hints)
+            quality_notes = self._step_quality_notes(
+                raw_step=raw_step,
+                execution_mode=execution_mode,
+                can_spawn_subagent=can_spawn_subagent,
+                tool_hints=tool_hints,
+            )
             normalized_steps.append(
                 {
                     "key": key,
@@ -188,6 +198,7 @@ class DeterministicPlanner:
                         raw_step.get("artifact_expectations"),
                         default=[],
                     ),
+                    "quality_notes": quality_notes,
                 }
             )
         return {
@@ -195,7 +206,91 @@ class DeterministicPlanner:
             "steps": normalized_steps,
             "planner_source": planner_source,
             "planner_attempts": planner_attempts,
+            "planner_prompt_version": PLANNER_PROMPT_VERSION,
         }
+
+    def _with_quality_report(self, plan: ExecutionPlan) -> ExecutionPlan:
+        warnings: list[str] = []
+        steps = plan.steps
+        step_count = len(steps)
+        async_steps = [step for step in steps if step.execution_mode == "async"]
+        tool_steps = [step for step in steps if step.tool_hints]
+        high_risk_without_sandbox = [
+            step.key
+            for step in steps
+            if step.risk_level in {"high", "critical"} and not step.requires_sandbox
+        ]
+        missing_acceptance = [step.key for step in steps if not step.acceptance_criteria]
+        missing_artifacts = [
+            step.key
+            for step in steps
+            if step.execution_mode == "async" and not step.artifact_expectations
+        ]
+        duplicate_keys = step_count != len({step.key for step in steps})
+        if step_count < 3:
+            warnings.append("计划步骤少于 3 个，复杂任务拆解粒度可能不足。")
+        if step_count > 8:
+            warnings.append("计划步骤超过 8 个，执行链路需要拆分为更小批次。")
+        if not tool_steps:
+            warnings.append("计划未声明工具意图，Executor 审计细节会减少。")
+        if not async_steps:
+            warnings.append("计划未包含异步步骤，长任务并发能力未被使用。")
+        if high_risk_without_sandbox:
+            warnings.append(
+                "高风险步骤缺少沙箱约束：" + "、".join(high_risk_without_sandbox)
+            )
+        if missing_acceptance:
+            warnings.append("步骤缺少验收标准：" + "、".join(missing_acceptance))
+        if missing_artifacts:
+            warnings.append("异步步骤缺少预期产物：" + "、".join(missing_artifacts))
+        if duplicate_keys:
+            warnings.append("计划存在重复步骤键，已在规范化阶段处理。")
+        gates = {
+            "step_count_in_range": 3 <= step_count <= 8,
+            "has_tool_intent": bool(tool_steps),
+            "has_acceptance_criteria": not missing_acceptance,
+            "async_steps_have_artifacts": not missing_artifacts,
+            "high_risk_requires_sandbox": not high_risk_without_sandbox,
+            "unique_step_keys": not duplicate_keys,
+        }
+        score = 100
+        score -= 12 * sum(1 for passed in gates.values() if not passed)
+        score -= min(12, len(warnings) * 2)
+        payload = plan.model_dump()
+        payload.update(
+            {
+                "planner_prompt_version": PLANNER_PROMPT_VERSION,
+                "quality_score": max(score, 0),
+                "validation_warnings": warnings,
+                "quality_gates": gates,
+            }
+        )
+        return ExecutionPlan.model_validate(payload)
+
+    def _deduplicate_step_key(self, *, key: str, seen_keys: set[str]) -> str:
+        if key not in seen_keys:
+            return key
+        index = 2
+        while f"{key}_{index}" in seen_keys:
+            index += 1
+        return f"{key}_{index}"
+
+    def _step_quality_notes(
+        self,
+        *,
+        raw_step: dict[str, Any],
+        execution_mode: str,
+        can_spawn_subagent: bool,
+        tool_hints: list[str],
+    ) -> list[str]:
+        notes: list[str] = []
+        if execution_mode == "async" and not can_spawn_subagent:
+            notes.append("异步步骤已自动允许派生子 Agent。")
+        if raw_step.get("tool_hints") and not tool_hints:
+            notes.append("模型给出的工具意图未命中 Tool Registry。")
+        if not raw_step.get("acceptance_criteria"):
+            notes.append("已补充默认验收标准。")
+        return notes
 
     def _normalize_step_key(self, value: str, index: int) -> str:
         key = re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")

@@ -64,6 +64,9 @@ def test_planner_uses_model_generated_sync_and_async_steps(db_session: Session) 
     assert plan.steps[0].acceptance_criteria == ["完成结构检查"]
     assert plan.steps[0].artifact_expectations == ["结构摘要"]
     assert plan.steps[1].risk_level == "medium"
+    assert plan.planner_prompt_version == PLANNER_PROMPT_VERSION
+    assert plan.quality_gates["unique_step_keys"] is True
+    assert plan.quality_score > 0
 
 
 def test_start_task_repairs_invalid_model_plan(
@@ -192,6 +195,71 @@ def test_start_task_uses_planner_prompt_version_and_returns_step_metadata(
     events = client.get(f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS).json()["items"]
     plan_events = [event for event in events if event["event_type"] == "PLAN_GENERATED"]
     assert plan_events[0]["payload_json"]["prompt_version"] == PLANNER_PROMPT_VERSION
+
+
+def test_plan_api_returns_quality_report_and_step_execution_trace(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class FakeGateway:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def complete(self, request_payload: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                content="""
+                {
+                  "summary": "执行轨迹计划",
+                  "steps": [
+                    {
+                      "key": "inspect_trace",
+                      "description": "检查轨迹",
+                      "execution_mode": "sync",
+                      "requires_sandbox": false,
+                      "can_spawn_subagent": false,
+                      "tool_hints": ["list_files"],
+                      "acceptance_criteria": ["写入步骤轨迹"],
+                      "risk_level": "low",
+                      "artifact_expectations": ["轨迹摘要"]
+                    }
+                  ]
+                }
+                """,
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={},
+                raw_response={"mode": "fake"},
+            )
+
+    monkeypatch.setattr("app.agents.executor.AuditedModelGateway", FakeGateway)
+    client = TestClient(app)
+    created = client.post(
+        "/api/tasks",
+        headers=AUTH_HEADERS,
+        json={
+            "title": "Trace plan",
+            "goal": "验证步骤执行轨迹",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+        },
+    ).json()
+
+    started = client.post(f"/api/tasks/{created['id']}/start", headers=AUTH_HEADERS)
+    plan_response = client.get(f"/api/tasks/{created['id']}/plan", headers=AUTH_HEADERS)
+
+    assert started.status_code == 202
+    payload = plan_response.json()
+    assert payload["planner_prompt_version"] == PLANNER_PROMPT_VERSION
+    assert payload["quality_score"] > 0
+    assert "has_acceptance_criteria" in payload["quality_gates"]
+    step = payload["steps"][0]
+    assert step["trace_summary"].startswith("同步步骤 inspect_trace")
+    assert step["last_event_sequence"] > 0
+    assert [item["event_type"] for item in step["execution_trace"]] == [
+        "STEP_STARTED",
+        "STEP_COMPLETED",
+    ]
+    assert step["execution_trace"][1]["payload_json"]["tool_name"] == "read_file"
 
 
 def test_start_task_generates_plan_steps_and_completion_events(db_session: Session) -> None:

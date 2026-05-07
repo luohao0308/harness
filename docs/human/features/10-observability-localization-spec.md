@@ -211,8 +211,11 @@ cookie
 | Grafana provisioning | 已落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store；控制台支持手动 Trace 查询和日志行跳转 |
 | Trace 属性检索 | 已落地 | Trace API 支持 `service`、`span_name`、`attribute_key`、`attribute_value` 查询参数；控制台提供 Span 筛选表单 |
+| Trace 跨服务视图 | 已落地 | Trace API 返回 `service_nodes` 和 `service_edges`，控制台展示服务节点和边 |
 | 观测服务健康 | 已落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo，并限定 admin/operator 访问 |
+| 观测服务健康告警 | 已落地 | 服务健康响应返回 `alert_status`、`alert_severity` 和 runbook 深链 |
 | 观测导出 | 已落地 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health`；控制台提供下载入口 |
+| 日志聚合维度 | 已落地 | 日志 API 返回 service、event_type、level 和 source facets |
 | 观测导出留存 | 已落地 | `observability_export_records` 记录导出元数据，`OBSERVABILITY_EXPORT_DIR` 保存文件，`GET /api/observability/exports/history` 和下载接口提供历史文件 |
 | 子 Agent 队列图表 | 已落地 | `GET /api/observability/summary` 返回 `subagent_queue`，控制台展示等待、运行、容量、剩余槽位和使用率 |
 | 子 Agent 恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 与控制台观测页展示批次、任务聚合和动作统计 |
@@ -222,7 +225,7 @@ cookie
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 控制台边缘文案巡检 | 新增页面已按双语接入；后续新增页面仍需持续巡检 | 默认中文，顶栏切换 English，技术值保留原值并提供说明 |
+| 无当前缺口 | 新增 Planner 质量、步骤轨迹、日志 facets、Trace 服务图和健康告警区域已按双语接入 | 保持新增页面表头、按钮、空状态和错误状态巡检 |
 
 ## 实现顺序
 

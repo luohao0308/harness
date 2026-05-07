@@ -116,14 +116,14 @@ User Goal
 -> OpenAPI / Console / Website
 ```
 
-## 当前持续增强主线
+## 当前增强收口状态
 
-| 主线 | 规格文件 | 目标 |
+| 主线 | 规格文件 | 当前结果 |
 |---|---|---|
-| 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增页面继续保持默认中文与 English 切换 |
-| LLM Planner 质量治理 | `docs/human/features/02-planner-executor.md` | 计划结构校验、版本治理和回归数据集 |
-| 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 工具结果解析、超时分类和控制台细节 |
-| 企业级运营回归 | `docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md` | Worker 接管、恢复运营、fallback、配额、导出和 dashboard 持续验收 |
+| 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增 Planner 质量、步骤轨迹、日志聚合、Trace 服务图和健康告警区域已保持中英文切换 |
+| LLM Planner 质量治理 | `docs/human/features/02-planner-executor.md` | 计划质量分、质量门禁、告警、Prompt 版本和步骤质量提示已进入 Plan API |
+| 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 工具结果解析、超时分类、沙箱标记和控制台审计详情已落地并回归 |
+| 企业级运营回归 | `docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md` | Worker 接管、恢复运营、fallback、配额、导出、dashboard、日志 facets、Trace 服务图和服务健康告警已进入验收 |
 
 ## 交付分层
 

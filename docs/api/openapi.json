@@ -3867,6 +3867,17 @@
             "type": "string",
             "title": "Source",
             "description": "数据来源"
+          },
+          "facets": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/CountItem"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Facets",
+            "description": "日志聚合维度"
           }
         },
         "type": "object",
@@ -3984,6 +3995,24 @@
             ],
             "title": "Error Message",
             "description": "错误信息"
+          },
+          "alert_status": {
+            "type": "string",
+            "title": "Alert Status",
+            "description": "告警状态",
+            "default": "ok"
+          },
+          "alert_severity": {
+            "type": "string",
+            "title": "Alert Severity",
+            "description": "告警级别",
+            "default": "none"
+          },
+          "runbook_url": {
+            "type": "string",
+            "title": "Runbook Url",
+            "description": "排障手册地址",
+            "default": "/docs/runbooks/troubleshooting"
           }
         },
         "type": "object",
@@ -4129,6 +4158,22 @@
             "type": "string",
             "title": "Source",
             "description": "数据来源"
+          },
+          "service_nodes": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityTraceServiceNode"
+            },
+            "type": "array",
+            "title": "Service Nodes",
+            "description": "跨服务 Trace 节点"
+          },
+          "service_edges": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityTraceServiceEdge"
+            },
+            "type": "array",
+            "title": "Service Edges",
+            "description": "跨服务 Trace 边"
           }
         },
         "type": "object",
@@ -4138,6 +4183,70 @@
           "source"
         ],
         "title": "ObservabilityTraceResponse"
+      },
+      "ObservabilityTraceServiceEdge": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "上游服务"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target",
+            "description": "下游服务"
+          },
+          "span_count": {
+            "type": "integer",
+            "title": "Span Count",
+            "description": "关联 Span 数量"
+          },
+          "total_duration_ms": {
+            "type": "integer",
+            "title": "Total Duration Ms",
+            "description": "累计耗时毫秒"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "span_count",
+          "total_duration_ms"
+        ],
+        "title": "ObservabilityTraceServiceEdge"
+      },
+      "ObservabilityTraceServiceNode": {
+        "properties": {
+          "service": {
+            "type": "string",
+            "title": "Service",
+            "description": "服务名"
+          },
+          "span_count": {
+            "type": "integer",
+            "title": "Span Count",
+            "description": "Span 数量"
+          },
+          "error_count": {
+            "type": "integer",
+            "title": "Error Count",
+            "description": "错误 Span 数量"
+          },
+          "total_duration_ms": {
+            "type": "integer",
+            "title": "Total Duration Ms",
+            "description": "累计耗时毫秒"
+          }
+        },
+        "type": "object",
+        "required": [
+          "service",
+          "span_count",
+          "error_count",
+          "total_duration_ms"
+        ],
+        "title": "ObservabilityTraceServiceNode"
       },
       "ObservabilityTraceSpan": {
         "properties": {
@@ -6125,6 +6234,32 @@
             "title": "Planner Attempts",
             "description": "计划生成尝试次数"
           },
+          "planner_prompt_version": {
+            "type": "string",
+            "title": "Planner Prompt Version",
+            "description": "Planner Prompt 版本"
+          },
+          "quality_score": {
+            "type": "integer",
+            "title": "Quality Score",
+            "description": "计划质量分"
+          },
+          "validation_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Validation Warnings",
+            "description": "计划质量告警"
+          },
+          "quality_gates": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object",
+            "title": "Quality Gates",
+            "description": "计划质量门禁"
+          },
           "plan_json": {
             "additionalProperties": true,
             "type": "object",
@@ -6154,6 +6289,8 @@
           "status",
           "planner_source",
           "planner_attempts",
+          "planner_prompt_version",
+          "quality_score",
           "plan_json",
           "steps",
           "created_at"
@@ -6263,6 +6400,14 @@
             "title": "Artifact Expectations",
             "description": "预期产物"
           },
+          "quality_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Quality Notes",
+            "description": "步骤质量提示"
+          },
           "status": {
             "type": "string",
             "title": "Status",
@@ -6291,6 +6436,39 @@
             ],
             "title": "Error Message",
             "description": "错误信息"
+          },
+          "trace_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Summary",
+            "description": "步骤执行轨迹摘要"
+          },
+          "last_event_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event Sequence",
+            "description": "步骤最近事件序号"
+          },
+          "execution_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Execution Trace",
+            "description": "步骤执行事件轨迹"
           }
         },
         "type": "object",

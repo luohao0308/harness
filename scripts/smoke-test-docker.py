@@ -19,6 +19,7 @@ GRAFANA_BASE_URL = "http://127.0.0.1:3001"
 LOKI_BASE_URL = "http://127.0.0.1:3100"
 TEMPO_BASE_URL = "http://127.0.0.1:3200"
 AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
+OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
 
 
 @dataclass
@@ -43,8 +44,14 @@ class SmokeClient:
         self.results.append(CheckResult(name=name, ok=True, detail=f"{duration_ms}ms"))
         return value
 
-    def get_json(self, path: str, *, auth: bool = True) -> dict:
-        return self.request_json("GET", path, auth=auth)
+    def get_json(
+        self,
+        path: str,
+        *,
+        auth: bool = True,
+        headers: dict[str, str] | None = None,
+    ) -> dict:
+        return self.request_json("GET", path, auth=auth, extra_headers=headers)
 
     def post_json(self, path: str, payload: dict | None = None, *, auth: bool = True) -> dict:
         return self.request_json("POST", path, payload=payload or {}, auth=auth)
@@ -56,8 +63,11 @@ class SmokeClient:
         *,
         payload: dict | None = None,
         auth: bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict:
         headers = {"Content-Type": "application/json"}
+        if extra_headers is not None:
+            headers.update(extra_headers)
         if auth:
             headers.update(AUTH_HEADERS)
         data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -140,6 +150,8 @@ def main() -> int:
         assert_true("acceptance_criteria" in plan_step, "plan step missing acceptance_criteria")
         assert_true("risk_level" in plan_step, "plan step missing risk_level")
         assert_true("artifact_expectations" in plan_step, "plan step missing artifact_expectations")
+        assert_true("quality_score" in plan, "plan missing quality_score")
+        assert_true("execution_trace" in plan_step, "plan step missing execution_trace")
 
         steps = client.check("Step query", lambda: client.get_json(f"/api/tasks/{task_id}/steps"))
         assert_true(len(steps["items"]) >= 1, "steps empty")
@@ -205,9 +217,14 @@ def main() -> int:
 
         service_health = client.check(
             "Observability service health",
-            lambda: client.get_json("/api/observability/services/health"),
+            lambda: client.get_json(
+                "/api/observability/services/health",
+                headers=OPERATOR_HEADERS,
+                auth=False,
+            ),
         )
         assert_true(len(service_health["services"]) >= 1, "service health empty")
+        assert_true("alert_status" in service_health["services"][0], "service health missing alert status")
         service_names = {item["name"] for item in service_health["services"]}
         assert_true("tempo" in service_names, "service health missing tempo")
         assert_true(
@@ -276,6 +293,7 @@ def main() -> int:
             ),
             "observability trace did not return tempo spans",
         )
+        assert_true("service_nodes" in observability_trace, "trace missing service nodes")
 
         def query_loki_api_logs() -> dict:
             now_ns = int(time.time() * 1_000_000_000)
@@ -319,6 +337,7 @@ def main() -> int:
             ),
             "observability logs did not return loki label-filtered task events",
         )
+        assert_true("facets" in observability_logs, "observability logs missing facets")
     except Exception as exc:
         client.print_summary()
         print(f"FAIL detail {exc}")

@@ -205,6 +205,7 @@ export type ObservabilityLogs = {
   items: ObservabilityLogEntry[];
   next_cursor: string | null;
   source: string;
+  facets: Record<string, CountItem[]>;
 };
 
 export type ObservabilityTraceSpan = {
@@ -223,6 +224,18 @@ export type ObservabilityTrace = {
   trace_id: string;
   spans: ObservabilityTraceSpan[];
   source: string;
+  service_nodes: Array<{
+    service: string;
+    span_count: number;
+    error_count: number;
+    total_duration_ms: number;
+  }>;
+  service_edges: Array<{
+    source: string;
+    target: string;
+    span_count: number;
+    total_duration_ms: number;
+  }>;
 };
 
 export type GrafanaDashboard = {
@@ -244,6 +257,9 @@ export type ObservabilityServiceHealth = {
   url: string;
   latency_ms: number | null;
   error_message: string | null;
+  alert_status: string;
+  alert_severity: string;
+  runbook_url: string;
 };
 
 export type ObservabilityServicesHealth = {
@@ -445,9 +461,13 @@ export type TaskPlanStep = {
   acceptance_criteria: string[];
   risk_level: string;
   artifact_expectations: string[];
+  quality_notes: string[];
   status: string;
   assigned_agent_id: string | null;
   error_message: string | null;
+  trace_summary: string | null;
+  last_event_sequence: number | null;
+  execution_trace: Array<Record<string, unknown>>;
 };
 
 export type TaskPlan = {
@@ -458,6 +478,10 @@ export type TaskPlan = {
   summary: string | null;
   planner_source: string;
   planner_attempts: number;
+  planner_prompt_version: string;
+  quality_score: number;
+  validation_warnings: string[];
+  quality_gates: Record<string, boolean>;
   plan_json: Record<string, unknown>;
   steps: TaskPlanStep[];
   created_at: string;

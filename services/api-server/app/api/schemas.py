@@ -141,9 +141,13 @@ class TaskPlanStepState(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list, description="验收标准")
     risk_level: str = Field(default="low", description="风险等级")
     artifact_expectations: list[str] = Field(default_factory=list, description="预期产物")
+    quality_notes: list[str] = Field(default_factory=list, description="步骤质量提示")
     status: str = Field(description="当前步骤状态")
     assigned_agent_id: str | None = Field(default=None, description="分配的 Agent ID")
     error_message: str | None = Field(default=None, description="错误信息")
+    trace_summary: str | None = Field(default=None, description="步骤执行轨迹摘要")
+    last_event_sequence: int | None = Field(default=None, description="步骤最近事件序号")
+    execution_trace: list[dict] = Field(default_factory=list, description="步骤执行事件轨迹")
 
 
 class TaskPlanResponse(BaseModel):
@@ -154,6 +158,10 @@ class TaskPlanResponse(BaseModel):
     summary: str | None = Field(default=None, description="计划摘要")
     planner_source: str = Field(description="计划来源")
     planner_attempts: int = Field(description="计划生成尝试次数")
+    planner_prompt_version: str = Field(description="Planner Prompt 版本")
+    quality_score: int = Field(description="计划质量分")
+    validation_warnings: list[str] = Field(default_factory=list, description="计划质量告警")
+    quality_gates: dict[str, bool] = Field(default_factory=dict, description="计划质量门禁")
     plan_json: dict = Field(description="计划原始 JSON")
     steps: list[TaskPlanStepState] = Field(description="计划步骤状态")
     created_at: datetime = Field(description="创建时间")
@@ -497,6 +505,7 @@ class ObservabilityLogPage(BaseModel):
     items: list[ObservabilityLogEntry] = Field(description="日志列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
     source: str = Field(description="数据来源")
+    facets: dict[str, list[CountItem]] = Field(default_factory=dict, description="日志聚合维度")
 
 
 class ObservabilityTraceSpan(BaseModel):
@@ -511,10 +520,32 @@ class ObservabilityTraceSpan(BaseModel):
     source: str = Field(description="数据来源")
 
 
+class ObservabilityTraceServiceNode(BaseModel):
+    service: str = Field(description="服务名")
+    span_count: int = Field(description="Span 数量")
+    error_count: int = Field(description="错误 Span 数量")
+    total_duration_ms: int = Field(description="累计耗时毫秒")
+
+
+class ObservabilityTraceServiceEdge(BaseModel):
+    source: str = Field(description="上游服务")
+    target: str = Field(description="下游服务")
+    span_count: int = Field(description="关联 Span 数量")
+    total_duration_ms: int = Field(description="累计耗时毫秒")
+
+
 class ObservabilityTraceResponse(BaseModel):
     trace_id: str = Field(description="Trace ID")
     spans: list[ObservabilityTraceSpan] = Field(description="Span 列表")
     source: str = Field(description="数据来源")
+    service_nodes: list[ObservabilityTraceServiceNode] = Field(
+        default_factory=list,
+        description="跨服务 Trace 节点",
+    )
+    service_edges: list[ObservabilityTraceServiceEdge] = Field(
+        default_factory=list,
+        description="跨服务 Trace 边",
+    )
 
 
 class GrafanaDashboardResponse(BaseModel):
@@ -536,6 +567,9 @@ class ObservabilityServiceHealthResponse(BaseModel):
     url: str = Field(description="服务地址")
     latency_ms: int | None = Field(default=None, description="探测耗时毫秒")
     error_message: str | None = Field(default=None, description="错误信息")
+    alert_status: str = Field(default="ok", description="告警状态")
+    alert_severity: str = Field(default="none", description="告警级别")
+    runbook_url: str = Field(default="/docs/runbooks/troubleshooting", description="排障手册地址")
 
 
 class ObservabilityServicesHealthResponse(BaseModel):

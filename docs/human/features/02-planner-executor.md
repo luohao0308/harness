@@ -188,9 +188,11 @@ agent_subagents_running
 | LLM Planner | 已落地 | Model Gateway 返回结构化 JSON 时直接作为计划来源 |
 | LLM Planner Prompt 1.1 | 已落地 | Prompt 要求工具意图、验收标准、风险等级和预期产物 |
 | LLM Planner 结构重试 | 已落地 | 第一次模型计划非法时，自动请求修复一次 |
+| LLM Planner 质量治理 | 已落地 | Plan API 返回 `quality_score`、`quality_gates`、`validation_warnings` 和 `planner_prompt_version` |
 | 计划来源展示 | 已落地 | Plan API 和控制台展示 `planner_source`、`planner_attempts` 和步骤元数据 |
 | 异步步骤识别 | 已落地 | 模型 JSON 或关键词触发 async 步骤 |
 | Executor 步骤执行 | 已落地 | 同步步骤写入工具审计与事件 |
+| Executor ReAct 轨迹细节 | 已落地 | Plan API 每个步骤返回 `trace_summary`、`last_event_sequence` 和 `execution_trace` |
 | Subagent 派生 | 已落地 | async 步骤写入 `agent_runs` 并请求 Dramatiq 入队 |
 | 真实 Tool Runner | 已落地 | 低风险文件工具真实执行，高风险工具进入沙箱路径 |
 | 工具公开执行接口 | 已落地 | `POST /api/tasks/{task_id}/tools/execute` |
@@ -201,14 +203,13 @@ agent_subagents_running
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| LLM Planner 质量治理 | 复杂目标拆解质量依赖模型输出稳定性 | 强化计划 schema 校验、版本治理和回归数据集 |
-| Executor ReAct 轨迹细节 | 多轮工具执行轨迹已写入，复杂失败定位需要更细粒度摘要 | 强化同步步骤、异步步骤和工具轮次的统一轨迹展示 |
+| 无当前缺口 | Planner 质量治理、Executor 步骤轨迹、同步执行、异步派生、计划版本和步骤续跑均已落地 | 保持计划质量、执行轨迹和恢复链路回归 |
 
 ## 实现顺序
 
 ```text
 1. 固化 Plan / Step schema
-2. 增强 Executor ReAct 循环
+2. 保持 Executor ReAct 循环轨迹回归
 3. 保持 Worker 跨进程接管回归
 4. 保持 Worker 级恢复历史查询
 ```

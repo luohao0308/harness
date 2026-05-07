@@ -142,6 +142,7 @@ docs/SPEC.md
 | 官网最终接入 | 官网首页能力文案中文优先，控制台页面清单已链接真实控制台路径，产品页补充子 Agent 详情入口 | `apps/web-site/components/Homepage.tsx`、`apps/web-site/components/Product.tsx` |
 | 企业级观测运营 | 已新增导出文件留存、历史下载、子 Agent 队列摘要和 Trace span 属性检索 | `GET /api/observability/exports/history`、`GET /api/observability/summary`、`GET /api/observability/traces/{trace_id}` |
 | 企业级深度运营增强 | 已新增 Worker 接管、Subagent 批量取消、沙箱配额审计、模型 fallback 观测、审计详情验收、Replay/SSE 重连测试和 Grafana 指标覆盖 | `POST /api/subagents/bulk`、`GET /api/sandboxes/quota/usage`、`GET /api/sandboxes/quota/history`、`GET /api/settings/models/fallbacks` |
+| Spec 增强收口 | 已新增 Planner 质量报告、Executor 步骤轨迹、日志 facets、Trace 服务图、服务健康告警和控制台双语展示 | `GET /api/tasks/{task_id}/plan`、`GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、`GET /api/observability/services/health` |
 
 ## 持续回归队列
 
@@ -150,6 +151,7 @@ docs/SPEC.md
 | Worker 级恢复跨组织运营 | 组织级恢复运营摘要、跨组织汇总和全局导出已落地 | `docs/human/features/04-subagent-orchestration.md` |
 | 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口、导出留存、队列图表和 Span 属性检索已落地 | `docs/human/features/10-observability-localization-spec.md` |
 | Worker 跨进程接管 | 已落地，卡住 `RUNNING` 子 Agent 自动接管为 `PENDING` 并记录接管代次、执行者和时间 | `docs/human/features/04-subagent-orchestration.md` |
+| Planner 与观测增强 | 已落地，计划质量、步骤轨迹、日志聚合维度、Trace 服务图和健康告警已进入 API、控制台和测试 | `docs/human/features/02-planner-executor.md`、`docs/human/features/10-observability-localization-spec.md` |
 
 ## 流程进展
 
@@ -160,11 +162,11 @@ docs/SPEC.md
 | 阶段 03 | `docs/ai/04-stage-03-repository-scaffold.md` | 已完成 |
 | 阶段 04 | `docs/ai/05-stage-04-backend-foundation.md` | 已完成 |
 | 阶段 05 | `docs/ai/06-stage-05-task-event-store.md` | 已完成 |
-| 阶段 06 | `docs/ai/07-stage-06-planner-executor.md` | 已完成，Planner 质量治理和 Executor 轨迹细节进入持续增强主线 |
+| 阶段 06 | `docs/ai/07-stage-06-planner-executor.md` | 已完成，Planner 质量治理和 Executor 轨迹细节已落地 |
 | 阶段 07 | `docs/ai/08-stage-07-react-console.md` | 已完成，页面细节仍按功能 Spec 增强 |
 | 阶段 08 | `docs/ai/09-stage-08-dramatiq-subagent.md` | 已完成，恢复运营、Worker 接管和子 Agent 详情持续回归 |
 | 阶段 09 | `docs/ai/10-stage-09-sandbox-warmpool.md` | 已完成，配额、WarmPool 和沙箱审计持续回归 |
-| 阶段 10 | `docs/ai/11-stage-10-observability-deployment.md` | 已完成，Loki、Tempo、Grafana、导出和服务健康持续回归 |
+| 阶段 10 | `docs/ai/11-stage-10-observability-deployment.md` | 已完成，Loki、Tempo、Grafana、导出、服务健康、日志 facets 和 Trace 服务图持续回归 |
 | 阶段 11 | `docs/ai/12-stage-11-review-p1-hardening.md` | 已完成 |
 | 阶段 12 | `docs/ai/13-stage-12-runtime-product-completion.md` | 企业级增强已补齐，后续变更按功能 Spec 回归 |
 | 阶段 13 | `docs/ai/14-stage-13-website-code-integration.md` | 已完成本轮官网与控制台收口 |

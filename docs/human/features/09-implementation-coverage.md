@@ -114,8 +114,8 @@
 | Tool Runner | 统一入口和任务级公开执行接口已落地，支持 Settings 策略、低风险工具真实执行、策略拒绝审计、工具结果解析、超时分类、控制台细节、工具审计筛选、Trace 深链和审计详情验收测试 | 保持策略拒绝回归 |
 | Replay Snapshot | 每 100 个事件自动生成，Replay 从最近 snapshot 续扫，并发写入和 SSE 断线重连测试已落地 | 保持并发回归 |
 | Observability | 聚合 API、深度观测接口、控制台摘要、Prometheus 指标、Grafana Basic Auth 代理、Grafana admin/operator RBAC、服务健康 RBAC、观测导出、导出留存、下载历史、队列图表、配额指标、fallback 指标和 Tempo Trace 查询已落地 | 保持 dashboard 指标覆盖 |
-| Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集、标签查询和控制台深链筛选已落地 | 增强日志导出 |
-| OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口、Event Store 回退、控制台 Trace 深链和 span 属性检索已落地 | 增强跨服务 Trace 视图 |
+| Loki | 日志接口、Event Store 回退、Loki 容器、Promtail 采集、标签查询、控制台深链筛选、日志 facets 和导出留存已落地 | 保持日志导出回归 |
+| OpenTelemetry | trace_id 响应头、OTLP exporter、OTel Collector、Tempo 存储、Trace 查询接口、Event Store 回退、控制台 Trace 深链、span 属性检索和跨服务 Trace 视图已落地 | 保持跨服务 Trace 回归 |
 | 控制台本地化 | 顶栏语言切换、默认中文、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面双语已落地 | 持续巡检新增页面表头、按钮、空状态和错误状态 |
 | Settings 生效链路 | 模型设置已被 Model Gateway 读取，策略设置已被 Policy Engine、Sandbox Manager 和网络请求策略读取，模型健康探测写回设置快照，沙箱资源规格、network allowlist、配额用量统计和历史审计已落地 | 保持设置回归 |
 

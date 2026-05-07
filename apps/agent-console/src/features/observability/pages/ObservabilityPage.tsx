@@ -563,6 +563,14 @@ export function ObservabilityPage() {
                       <Badge tone={statusTone(service.status)}>
                         {service.status === "unreachable" ? text("不可达", "Unreachable") : statusLabel(service.status)}
                       </Badge>
+                      {service.alert_status !== "ok" && (
+                        <Badge
+                          tone={service.alert_severity === "critical" ? "failed" : "warning"}
+                          className="ml-1"
+                        >
+                          {text("告警", "Alert")} {service.alert_severity}
+                        </Badge>
+                      )}
                     </Td>
                     <Td className="text-right font-mono text-slate-600">
                       {service.latency_ms ?? "-"}ms
@@ -727,10 +735,25 @@ export function ObservabilityPage() {
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Logs className="h-4 w-4" /> {text("结构化日志", "Structured Logs")}
               </div>
-              <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-500">
                 {text("来源：", "Source: ")}{logs.data?.source ?? text("读取中", "loading")}
               </span>
             </CardHeader>
+            <div className="flex flex-wrap gap-1.5 border-b border-slate-100 px-3 pb-2 text-[10px]">
+              {Object.entries(logs.data?.facets ?? {}).flatMap(([facet, items]) =>
+                items.slice(0, 3).map((item) => (
+                  <Badge key={`${facet}-${item.name}`} tone="info">
+                    {text(logFacetLabel(facet), logFacetLabelEn(facet))} {statusLabel(item.name)}
+                    <span className="font-mono">{item.count}</span>
+                  </Badge>
+                )),
+              )}
+              {Object.keys(logs.data?.facets ?? {}).length === 0 && (
+                <span className="text-slate-500">
+                  {text("等待日志聚合维度", "Waiting for log facets")}
+                </span>
+              )}
+            </div>
             <Table>
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
@@ -791,6 +814,26 @@ export function ObservabilityPage() {
               </span>
             </CardHeader>
             <div className="space-y-2 p-3">
+              {(trace.data?.service_nodes.length ?? 0) > 0 && (
+                <div className="rounded-md border border-slate-100 bg-slate-50 p-2 text-[10px]">
+                  <div className="mb-1 text-slate-500">
+                    {text("跨服务视图", "Cross-service view")}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(trace.data?.service_nodes ?? []).map((node) => (
+                      <Badge key={node.service} tone={node.error_count > 0 ? "warning" : "success"}>
+                        {node.service} <span className="font-mono">{node.span_count}</span>
+                      </Badge>
+                    ))}
+                    {(trace.data?.service_edges ?? []).map((edge) => (
+                      <Badge key={`${edge.source}-${edge.target}`} tone="purple">
+                        {edge.source} → {edge.target}
+                        <span className="font-mono">{edge.span_count}</span>
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
               {(trace.data?.spans ?? []).map((span) => (
                 <div key={span.span_id} className="rounded-md border border-slate-100 px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
@@ -834,6 +877,26 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="mt-1 font-mono text-base font-semibold text-slate-900">{value}</div>
     </div>
   );
+}
+
+function logFacetLabel(facet: string) {
+  const labels: Record<string, string> = {
+    service: "服务",
+    event_type: "事件",
+    level: "级别",
+    source: "来源",
+  };
+  return labels[facet] ?? facet;
+}
+
+function logFacetLabelEn(facet: string) {
+  const labels: Record<string, string> = {
+    service: "Service",
+    event_type: "Event",
+    level: "Level",
+    source: "Source",
+  };
+  return labels[facet] ?? facet;
 }
 
 function QueueCount({

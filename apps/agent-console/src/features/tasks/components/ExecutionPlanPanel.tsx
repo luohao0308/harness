@@ -7,6 +7,7 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
 import { useI18n } from "../../../lib/i18n";
 import {
+  eventLabel,
   executionModeLabel,
   planDiffLabel,
   plannerSourceLabel,
@@ -26,6 +27,10 @@ type PlanStep = {
   acceptance_criteria?: string[];
   risk_level?: string;
   artifact_expectations?: string[];
+  quality_notes?: string[];
+  trace_summary?: string | null;
+  last_event_sequence?: number | null;
+  execution_trace?: Array<Record<string, unknown>>;
 };
 
 function diffTone(changeType: string): BadgeTone {
@@ -80,6 +85,10 @@ export function ExecutionPlanPanel({
       acceptance_criteria: step.acceptance_criteria,
       risk_level: step.risk_level,
       artifact_expectations: step.artifact_expectations,
+      quality_notes: step.quality_notes,
+      trace_summary: step.trace_summary,
+      last_event_sequence: step.last_event_sequence,
+      execution_trace: step.execution_trace,
     })) ??
     eventPlan?.steps ??
     [];
@@ -141,6 +150,32 @@ export function ExecutionPlanPanel({
           )}
         </div>
       )}
+      {plan && (
+        <div className="border-b border-slate-100 px-3 py-2 text-[10px] text-slate-500">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>{text("Planner 质量", "Planner quality")}</span>
+            <Badge tone={plan.quality_score >= 80 ? "success" : plan.quality_score >= 60 ? "warning" : "failed"}>
+              {plan.quality_score}
+            </Badge>
+            <span>Prompt {plan.planner_prompt_version}</span>
+            {Object.entries(plan.quality_gates).map(([gate, passed]) => (
+              <Badge key={gate} tone={passed ? "success" : "warning"}>
+                {text(qualityGateLabel(gate), qualityGateLabelEn(gate))}{" "}
+                {passed ? text("通过", "Passed") : text("需关注", "Check")}
+              </Badge>
+            ))}
+          </div>
+          {plan.validation_warnings.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {plan.validation_warnings.slice(0, 4).map((warning) => (
+                <div key={warning} className="rounded border border-amber-100 bg-amber-50 px-2 py-1 text-amber-700">
+                  {warning}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="space-y-1 p-2">
         {steps.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-200 p-3 text-xs text-slate-500">
@@ -177,6 +212,8 @@ export function ExecutionPlanPanel({
             const toolHints = step.tool_hints ?? [];
             const acceptanceCriteria = step.acceptance_criteria ?? [];
             const artifactExpectations = step.artifact_expectations ?? [];
+            const qualityNotes = step.quality_notes ?? [];
+            const executionTrace = step.execution_trace ?? [];
             return (
               <div
                 key={stepKey}
@@ -223,7 +260,8 @@ export function ExecutionPlanPanel({
                 </div>
                 {(toolHints.length > 0 ||
                   acceptanceCriteria.length > 0 ||
-                  artifactExpectations.length > 0) && (
+                  artifactExpectations.length > 0 ||
+                  qualityNotes.length > 0) && (
                   <div className="mt-2 space-y-1 pl-6 text-[10px] text-slate-500">
                     {toolHints.length > 0 && (
                       <div className="flex flex-wrap gap-1">
@@ -248,6 +286,32 @@ export function ExecutionPlanPanel({
                       <div>
                         <span className="text-slate-400">{text("产物 ", "Artifacts ")}</span>
                         <span>{artifactExpectations.join("；")}</span>
+                      </div>
+                    )}
+                    {qualityNotes.length > 0 && (
+                      <div>
+                        <span className="text-slate-400">{text("质量提示 ", "Quality ")}</span>
+                        <span>{qualityNotes.join("；")}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {(step.trace_summary || executionTrace.length > 0) && (
+                  <div className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1.5 pl-6 text-[10px] text-slate-500">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-slate-400">{text("执行轨迹", "Execution trace")}</span>
+                      {step.trace_summary && <span>{step.trace_summary}</span>}
+                      {step.last_event_sequence && (
+                        <span className="font-mono text-slate-700">#{step.last_event_sequence}</span>
+                      )}
+                    </div>
+                    {executionTrace.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {executionTrace.slice(-4).map((item) => (
+                          <Badge key={`${item.sequence}-${item.event_type}`} tone={statusTone(String(item.event_type))}>
+                            {eventLabel(String(item.event_type))} #{String(item.sequence)}
+                          </Badge>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -275,4 +339,28 @@ export function ExecutionPlanPanel({
       </div>
     </Card>
   );
+}
+
+function qualityGateLabel(gate: string) {
+  const labels: Record<string, string> = {
+    step_count_in_range: "步骤数",
+    has_tool_intent: "工具意图",
+    has_acceptance_criteria: "验收标准",
+    async_steps_have_artifacts: "异步产物",
+    high_risk_requires_sandbox: "高风险沙箱",
+    unique_step_keys: "步骤键",
+  };
+  return labels[gate] ?? gate;
+}
+
+function qualityGateLabelEn(gate: string) {
+  const labels: Record<string, string> = {
+    step_count_in_range: "Step count",
+    has_tool_intent: "Tool intent",
+    has_acceptance_criteria: "Acceptance",
+    async_steps_have_artifacts: "Async artifacts",
+    high_risk_requires_sandbox: "Risk sandbox",
+    unique_step_keys: "Step keys",
+  };
+  return labels[gate] ?? gate;
 }
