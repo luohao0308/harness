@@ -585,10 +585,16 @@ stages:
       - apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx
       - apps/agent-console/src/features/subagents/pages/SubagentsPage.tsx
       - apps/agent-console/src/features/tasks/api.ts
+      - apps/agent-console/src/features/tasks/components/ExecutionPlanPanel.tsx
       - apps/agent-console/src/features/tasks/components/TaskResultPanel.tsx
+      - apps/agent-console/src/features/tasks/pages/TaskDetailPage.tsx
+      - services/api-server/app/agents/executor.py
       - services/api-server/app/api/schemas.py
       - services/api-server/app/api/subagents.py
       - services/api-server/tests/test_subagents.py
+      - services/api-server/app/api/tasks.py
+      - services/api-server/app/events/event_store.py
+      - services/api-server/tests/test_tasks.py
       - deploy/docker-compose/docker-compose.yml
       - deploy/nginx/agent-harness.conf
       - docs/SPEC-INDEX.md
@@ -618,8 +624,8 @@ stages:
       - bash scripts/check-docs.sh
     verification_result: passed
     branch: stage/stage-13-website-code-integration
-    commit_sha: 0b900ed2723688c6a77e2ef53c01fe2f51a14d76
+    commit_sha: dd09a57bf8c91ac77c0350ccc8b584e4ff324311
     pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, observability export retention, queue chart, span attribute search, and synchronized Spec coverage."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, observability export retention, queue chart, span attribute search, step-level resume, and synchronized Spec coverage."
     next_stage: completed
