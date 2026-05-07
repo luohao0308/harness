@@ -301,7 +301,12 @@ export function ObservabilityPage() {
                 {!health.isLoading && (health.data?.services.length ?? 0) === 0 && (
                   <tr className="border-t border-slate-100">
                     <Td colSpan={3} className="py-8 text-center text-slate-500">
-                      {text("暂无服务健康数据", "No service health data")}
+                      {health.error
+                        ? text(
+                            `服务健康读取受限：${health.error.message}`,
+                            `Service health access limited: ${health.error.message}`,
+                          )
+                        : text("暂无服务健康数据", "No service health data")}
                     </Td>
                   </tr>
                 )}
@@ -331,7 +336,12 @@ export function ObservabilityPage() {
               ))}
               {!dashboards.isLoading && (dashboards.data?.items.length ?? 0) === 0 && (
                 <div className="py-8 text-center text-xs text-slate-500">
-                  {text("暂无 Grafana dashboard", "No Grafana dashboards")}
+                  {dashboards.error
+                    ? text(
+                        `Grafana 访问受限：${dashboards.error.message}`,
+                        `Grafana access limited: ${dashboards.error.message}`,
+                      )
+                    : text("暂无 Grafana dashboard", "No Grafana dashboards")}
                 </div>
               )}
             </div>

@@ -20,6 +20,9 @@ from app.events.event_types import EventType
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
+ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
+OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
+
 
 def test_metrics_endpoint_exposes_required_metrics() -> None:
     client = TestClient(app)
@@ -408,12 +411,25 @@ def test_tempo_trace_span_parser_handles_resource_spans() -> None:
 
 
 def test_grafana_dashboards_returns_configured_fallback() -> None:
-    response = TestClient(app).get("/api/observability/grafana/dashboards", headers=AUTH_HEADERS)
+    response = TestClient(app).get(
+        "/api/observability/grafana/dashboards",
+        headers=OPERATOR_HEADERS,
+    )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["items"][0]["uid"] == "agent-harness"
     assert payload["items"][0]["source"] in {"configured", "grafana"}
+
+
+def test_grafana_dashboards_require_operator_role() -> None:
+    client = TestClient(app)
+
+    engineer = client.get("/api/observability/grafana/dashboards", headers=AUTH_HEADERS)
+    admin = client.get("/api/observability/grafana/dashboards", headers=ADMIN_HEADERS)
+
+    assert engineer.status_code == 403
+    assert admin.status_code == 200
 
 
 def test_grafana_auth_headers_use_basic_auth_settings() -> None:
@@ -423,7 +439,10 @@ def test_grafana_auth_headers_use_basic_auth_settings() -> None:
 
 
 def test_observability_services_health_returns_all_services() -> None:
-    response = TestClient(app).get("/api/observability/services/health", headers=AUTH_HEADERS)
+    response = TestClient(app).get(
+        "/api/observability/services/health",
+        headers=OPERATOR_HEADERS,
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -434,3 +453,9 @@ def test_observability_services_health_returns_all_services() -> None:
         "otel-collector",
         "tempo",
     }
+
+
+def test_observability_services_health_requires_operator_role() -> None:
+    response = TestClient(app).get("/api/observability/services/health", headers=AUTH_HEADERS)
+
+    assert response.status_code == 403

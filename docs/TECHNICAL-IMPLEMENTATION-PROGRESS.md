@@ -66,7 +66,7 @@ docs/SPEC.md
 | Replay | snapshot + event replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
 | 模型网关 | OpenAI-compatible | 基础落地 | Model Gateway、model_calls |
 | 工具治理 | Tool Registry + Policy Engine | 基础落地 | Tool Runner、tool_calls |
-| 观测 | Prometheus + Grafana + Loki + OTel | 深度观测接口、Grafana provisioning、Promtail 采集和 Loki 标签检索基础落地 | `/metrics`、Observability Summary、Logs、Trace、Dashboard、Health |
+| 观测 | Prometheus + Grafana + Loki + OTel | 深度观测接口、Grafana provisioning、Grafana admin/operator RBAC、Promtail 采集和 Loki 标签检索已落地 | `/metrics`、Observability Summary、Logs、Trace、Dashboard、Health |
 | 本地化 | 默认中文，English 切换 | 已落地 | 控制台 Shell、任务、详情、事件、Subagent、沙箱、观测、模型设置和策略设置页面 |
 
 ## 功能实现与接口进展
@@ -126,11 +126,11 @@ docs/SPEC.md
 |---|---|---|---|
 | Prometheus 指标 | 已落地 | `GET /metrics` | 增强 dashboard 指标覆盖 |
 | 观测摘要 | 已落地 | `GET /api/observability/summary` | 增加队列、耗时分位和深链 |
-| Grafana | 基础落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning | 增强权限模型 |
+| Grafana | 已落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning、admin/operator RBAC | 增强 dashboard 指标覆盖 |
 | Loki | 基础落地 | `GET /api/observability/logs`、Promtail 采集、标签检索 | 增强日志检索深链 |
 | OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 增强 Trace 深链 |
 | 日志与 Trace 深链 | 已落地 | `GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、控制台筛选查询台 | 增强导出和 span 属性检索 |
-| 服务健康 | 基础落地 | `GET /health`、`GET /api/observability/services/health` | 增强告警联动 |
+| 服务健康 | 已落地 | `GET /health`、`GET /api/observability/services/health`、admin/operator RBAC | 增强告警联动 |
 
 ## 本轮完成收口
 
@@ -145,7 +145,7 @@ docs/SPEC.md
 | 增强项 | 说明 | 目标文档 |
 |---|---|---|
 | Worker 级恢复跨任务汇总 | 已落地组织级恢复运营摘要；后续增强跨组织汇总和导出 | `docs/human/features/04-subagent-orchestration.md` |
-| 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，后续增强 Grafana 权限、导出和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
+| 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，后续增强导出和队列图表 | `docs/human/features/10-observability-localization-spec.md` |
 | 步骤级断点续跑 | 当前任务级恢复和已完成步骤跳过已落地，后续增强步骤级人工选择与批量恢复 | `docs/human/features/02-planner-executor.md` |
 
 ## 流程进展
@@ -170,7 +170,7 @@ docs/SPEC.md
 
 ```text
 1. 持续增强 Worker 级恢复跨任务汇总
-2. 增强观测深链、队列图表和 Grafana 权限模型
+2. 增强观测深链、队列图表和导出
 3. 增强步骤级断点续跑与批量操作
 ```
 

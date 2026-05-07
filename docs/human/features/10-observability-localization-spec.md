@@ -90,6 +90,8 @@ SANDBOX_COMMAND_FAILED
 | 指标查看 | admin、operator |
 | 日志查看 | admin、operator |
 | Trace 查看 | admin、operator |
+| Grafana dashboard 代理 | admin、operator |
+| 观测服务健康 | admin、operator |
 | 设置读 | admin、engineer |
 | 设置写 | admin |
 
@@ -108,7 +110,7 @@ Trace span -> OTel Collector -> traces API -> 控制台 Trace 页
 | 服务 | 当前入口 | 目标用途 | Harness 后端代理 |
 |---|---|---|---|
 | Prometheus | `http://127.0.0.1:9091` | 抓取并查询指标 | `GET /metrics` 已落地 |
-| Grafana | `http://127.0.0.1:3001` | 展示仪表盘 | `GET /api/observability/grafana/dashboards` 基础落地 |
+| Grafana | `http://127.0.0.1:3001` | 展示仪表盘 | `GET /api/observability/grafana/dashboards` 已落地，含 admin/operator RBAC |
 | Loki | `http://127.0.0.1:3100` | 查询结构化日志 | `GET /api/observability/logs` 基础落地 |
 | OpenTelemetry Collector | `http://127.0.0.1:4317`、`http://127.0.0.1:4318` | 接收并转发 trace | `GET /api/observability/traces/{trace_id}` 已落地 |
 | Tempo | `http://127.0.0.1:3200` | 存储并查询真实 trace | `GET /api/observability/traces/{trace_id}` 已落地 |
@@ -195,10 +197,10 @@ cookie
 | Loki 日志查询 API | 基础落地 | `GET /api/observability/logs`，Loki 不可用时回退 Event Store |
 | Loki 真实采集链路 | 基础落地 | Promtail 通过 Docker socket 采集容器日志并写入 Loki |
 | Loki 标签检索体验 | 已落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector；控制台提供深链筛选 |
-| Grafana 后端代理 | 基础落地 | `GET /api/observability/grafana/dashboards`，后端使用 Basic Auth 查询 dashboard 元数据 |
+| Grafana 后端代理 | 已落地 | `GET /api/observability/grafana/dashboards`，后端使用 Basic Auth 查询 dashboard 元数据，并限定 admin/operator 访问 |
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo datasource 和 Agent Harness dashboard |
 | Trace 查询 API | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span，异常时回退 Event Store；控制台支持手动 Trace 查询和日志行跳转 |
-| 观测服务健康 | 基础落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo |
+| 观测服务健康 | 已落地 | `GET /api/observability/services/health` 覆盖 Prometheus、Grafana、Loki、OTel Collector 和 Tempo，并限定 admin/operator 访问 |
 | 子 Agent 恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 与控制台观测页展示批次、任务聚合和动作统计 |
 | 控制台主要页面 i18n | 已落地 | Shell、任务、详情、事件、Subagent、子 Agent 详情、沙箱、观测、模型设置和策略设置页面支持中文默认与 English 切换 |
 
@@ -206,17 +208,14 @@ cookie
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Grafana 权限模型 | 当前接口已有 Basic Auth 查询、dashboard 列表、配置回退和 provisioning | 后端代理 Grafana 权限 |
 | 控制台边缘文案巡检 | 新增页面已按双语接入；后续新增页面仍需持续巡检 | 默认中文，顶栏切换 English，技术值保留原值并提供说明 |
 
 ## 实现顺序
 
 ```text
-1. 增强 Grafana dashboard 权限模型
-2. 增强 Grafana dashboard 权限
-3. 增强控制台 i18n 字典复用
-4. 持续巡检新页面表头、按钮、空状态和错误状态双语
-5. 更新 OpenAPI、控制台页面和验收测试
+1. 持续巡检新页面表头、按钮、空状态和错误状态双语
+2. 增强控制台 i18n 字典复用
+3. 更新 OpenAPI、控制台页面和验收测试
 ```
 
 ## 验收标准
@@ -228,6 +227,8 @@ cookie
 - Prometheus rules 中加载 Subagent 恢复告警。
 - Grafana health 返回 ok。
 - 后端 Grafana dashboard 代理使用配置凭据查询。
+- `GET /api/observability/grafana/dashboards` 对 engineer 返回 403，对 admin 和 operator 返回 200。
+- `GET /api/observability/services/health` 对 engineer 返回 403，对 admin 和 operator 返回 200。
 - Grafana 自动加载 Prometheus 和 Loki 数据源。
 - Grafana 自动加载 Agent Harness dashboard。
 - Loki ready 返回 ready。

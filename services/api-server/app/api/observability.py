@@ -27,7 +27,7 @@ from app.core.config import Settings, get_settings
 from app.db.models import AgentEvent, AgentRun, ModelCall, SandboxInstance, Task, ToolCall
 from app.db.session import get_db_session
 from app.sandbox.warm_pool import WarmPoolManager
-from app.security.auth import Principal
+from app.security.auth import Principal, require_role
 
 router = APIRouter(prefix="/observability", tags=["observability"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -171,11 +171,12 @@ def get_observability_trace(
     response_model=GrafanaDashboardPage,
     summary="查询 Grafana Dashboard",
     description=(
-        "返回 Grafana dashboard 列表；"
+        "仅 admin、operator 可访问。返回 Grafana dashboard 列表；"
         "Grafana 不可用时返回已配置的 Harness dashboard 深链。"
     ),
 )
-def list_grafana_dashboards() -> GrafanaDashboardPage:
+def list_grafana_dashboards(principal: Principal) -> GrafanaDashboardPage:
+    require_observability_operator(principal)
     dashboards = _query_grafana_dashboards()
     if dashboards:
         return GrafanaDashboardPage(items=dashboards, next_cursor=None)
@@ -198,9 +199,15 @@ def list_grafana_dashboards() -> GrafanaDashboardPage:
     "/services/health",
     response_model=ObservabilityServicesHealthResponse,
     summary="查询观测服务健康",
-    description="探测 Prometheus、Grafana、Loki、OpenTelemetry Collector 和 Tempo 健康状态。",
+    description=(
+        "仅 admin、operator 可访问。"
+        "探测 Prometheus、Grafana、Loki、OpenTelemetry Collector 和 Tempo 健康状态。"
+    ),
 )
-def get_observability_services_health() -> ObservabilityServicesHealthResponse:
+def get_observability_services_health(
+    principal: Principal,
+) -> ObservabilityServicesHealthResponse:
+    require_observability_operator(principal)
     settings = get_settings()
     services = [
         ("prometheus", f"{str(settings.prometheus_base_url).rstrip('/')}/-/ready"),
@@ -212,6 +219,10 @@ def get_observability_services_health() -> ObservabilityServicesHealthResponse:
     return ObservabilityServicesHealthResponse(
         services=[_probe_service(name=name, url=url) for name, url in services]
     )
+
+
+def require_observability_operator(principal: Principal) -> None:
+    require_role(principal, {"admin", "operator"})
 
 
 def _count_items(session: Session, statement) -> list[CountItem]:

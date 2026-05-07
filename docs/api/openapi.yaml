@@ -1164,7 +1164,8 @@ paths:
       tags:
       - observability
       summary: 查询 Grafana Dashboard
-      description: 返回 Grafana dashboard 列表；Grafana 不可用时返回已配置的 Harness dashboard 深链。
+      description: 仅 admin、operator 可访问。返回 Grafana dashboard 列表；Grafana 不可用时返回已配置的
+        Harness dashboard 深链。
       operationId: list_grafana_dashboards_api_observability_grafana_dashboards_get
       responses:
         '200':
@@ -1173,12 +1174,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GrafanaDashboardPage'
+      security:
+      - HTTPBearer: []
   /api/observability/services/health:
     get:
       tags:
       - observability
       summary: 查询观测服务健康
-      description: 探测 Prometheus、Grafana、Loki、OpenTelemetry Collector 和 Tempo 健康状态。
+      description: 仅 admin、operator 可访问。探测 Prometheus、Grafana、Loki、OpenTelemetry Collector
+        和 Tempo 健康状态。
       operationId: get_observability_services_health_api_observability_services_health_get
       responses:
         '200':
@@ -1187,6 +1191,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ObservabilityServicesHealthResponse'
+      security:
+      - HTTPBearer: []
 components:
   schemas:
     CountItem:

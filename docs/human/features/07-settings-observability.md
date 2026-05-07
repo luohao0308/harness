@@ -124,10 +124,10 @@ model_call_errors_total
 | 设置变更审计 | 已落地 | `admin_audit_events` |
 | Model Gateway 读取设置 | 已落地 | Model Gateway |
 | Policy Engine 读取设置 | 已落地 | Policy Engine |
-| Grafana / Loki 控制台入口 | 基础落地 | `/observability` 已展示日志、Trace、Dashboard 和服务健康 |
+| Grafana / Loki 控制台入口 | 已落地 | `/observability` 已展示日志、Trace、Dashboard 和服务健康 |
 | Loki 真实采集链路 | 基础落地 | Promtail 采集 Docker 容器日志进入 Loki |
 | Loki 标签查询体验 | 基础落地 | API 按 service、task_id、trace_id、event_type 生成 Loki label selector |
-| Grafana Basic Auth 代理 | 基础落地 | 后端使用 Grafana 凭据查询 dashboard 元数据 |
+| Grafana Basic Auth 代理 | 已落地 | 后端使用 Grafana 凭据查询 dashboard 元数据，并限定 admin/operator 访问 |
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo 数据源和 Harness dashboard |
 | Tempo Trace 后端 | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span |
 
@@ -135,15 +135,15 @@ model_call_errors_total
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Grafana 权限模型 | 当前接口有 Basic Auth 查询、配置回退和 provisioning | 后端代理 Grafana dashboard 权限 |
+| 观测导出 | 日志、Trace 和 Dashboard 已能查询，运营导出尚未形成统一入口 | 导出观测查询结果 |
 
 ## 实现顺序
 
 ```text
 1. 保持 Settings API 与 OpenAPI 同步
 2. 保持 Settings 生效链路测试
-3. 增加 Loki、Grafana、Trace 代理接口
-4. 前端补日志页、Trace 页和 dashboard 深链
+3. 增强观测导出入口
+4. 保持日志页、Trace 页和 dashboard 深链测试
 5. 更新部署 Runbook 和排障 Runbook
 ```
 
@@ -159,4 +159,5 @@ model_call_errors_total
 - 沙箱策略变更影响后续沙箱创建和命令执行。
 - Observability 聚合结果按组织隔离。
 - Observability 展示任务、模型、工具、沙箱指标。
+- Grafana dashboard 与观测服务健康接口对 engineer 返回 403，对 admin 和 operator 返回 200。
 - 控制台 settings 页面不使用占位页。
