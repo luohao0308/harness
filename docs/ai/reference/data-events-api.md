@@ -22,7 +22,7 @@
 Tasks: create, list, detail, start, cancel, resume, step resume, result
 Events: list, stream
 Replay: replay
-Subagents: list, create, detail, cancel
+Subagents: list, create, detail, cancel, recovery summary, global recovery summary, global recovery export
 Sandboxes: list, warm-pool, detail, terminate
 Settings: models read/write, model health, policies read/write
 Audit: model-calls, tool-calls

@@ -295,6 +295,30 @@ export type SubagentRecoverySummary = {
   recent_batches: SubagentRecoveryBatch[];
 };
 
+export type SubagentRecoveryOrganizationSummary = {
+  organization_id: string | null;
+  batch_total: number;
+  task_total: number;
+  scanned_total: number;
+  recovered_total: number;
+  lock_skipped_total: number;
+  action_counts: Record<string, number>;
+  latest_completed_at: string | null;
+};
+
+export type SubagentRecoveryGlobalSummary = {
+  organization_count: number;
+  batch_total: number;
+  task_total: number;
+  scanned_total: number;
+  recovered_total: number;
+  lock_skipped_total: number;
+  action_counts: Record<string, number>;
+  latest_completed_at: string | null;
+  organizations: SubagentRecoveryOrganizationSummary[];
+  recent_batches: SubagentRecoveryBatch[];
+};
+
 export type TaskResult = {
   task_id: string;
   status: TaskStatus;
@@ -620,6 +644,12 @@ export async function recoverTaskSubagents(taskId: string) {
 
 export async function getSubagentRecoverySummary() {
   return request<SubagentRecoverySummary>("/api/subagents/recovery/summary");
+}
+
+export async function getSubagentRecoveryGlobalSummary(limit = 100) {
+  return request<SubagentRecoveryGlobalSummary>(
+    `/api/subagents/recovery/global-summary?limit=${limit}`,
+  );
 }
 
 export async function listModelCalls(taskId: string) {

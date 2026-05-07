@@ -32,6 +32,7 @@ import {
   getObservabilityServicesHealth,
   getObservabilitySummary,
   getObservabilityTrace,
+  getSubagentRecoveryGlobalSummary,
   getSubagentRecoverySummary,
   listObservabilityExportHistory,
   listObservabilityExports,
@@ -83,6 +84,11 @@ export function ObservabilityPage() {
   const recovery = useQuery({
     queryKey: ["subagents", "recovery-summary"],
     queryFn: getSubagentRecoverySummary,
+  });
+  const globalRecovery = useQuery({
+    queryKey: ["subagents", "recovery-global-summary"],
+    queryFn: () => getSubagentRecoveryGlobalSummary(100),
+    retry: false,
   });
   const logs = useQuery({
     queryKey: ["observability", "logs", logFilters],
@@ -193,6 +199,28 @@ export function ObservabilityPage() {
         text(
           `下载失败：${error instanceof Error ? error.message : "未知错误"}`,
           `Download failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        ),
+      );
+    }
+  };
+  const downloadGlobalRecoveryExport = async () => {
+    setExportStatus(text("正在导出全局恢复摘要...", "Exporting global recovery summary..."));
+    try {
+      const { blob, filename } = await downloadObservabilityExport(
+        "/api/subagents/recovery/global-summary/export",
+      );
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setExportStatus(text(`已导出 ${filename}`, `Exported ${filename}`));
+    } catch (error) {
+      setExportStatus(
+        text(
+          `导出失败：${error instanceof Error ? error.message : "未知错误"}`,
+          `Export failed: ${error instanceof Error ? error.message : "unknown error"}`,
         ),
       );
     }
@@ -357,14 +385,23 @@ export function ObservabilityPage() {
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
               <RotateCcw className="h-4 w-4" /> {text("子 Agent 恢复运营", "Subagent Recovery Operations")}
             </div>
-            <span className="text-xs text-slate-500">
-              {recovery.data?.latest_completed_at
-                ? text(
-                    `最近完成 ${formatShortDate(recovery.data.latest_completed_at)}`,
-                    `Latest ${formatShortDate(recovery.data.latest_completed_at)}`,
-                  )
-                : text("等待恢复批次", "Waiting for recovery batches")}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">
+                {recovery.data?.latest_completed_at
+                  ? text(
+                      `最近完成 ${formatShortDate(recovery.data.latest_completed_at)}`,
+                      `Latest ${formatShortDate(recovery.data.latest_completed_at)}`,
+                    )
+                  : text("等待恢复批次", "Waiting for recovery batches")}
+              </span>
+              <Button
+                className="h-7 px-2"
+                onClick={downloadGlobalRecoveryExport}
+                disabled={!globalRecovery.data}
+              >
+                <Download className="h-3.5 w-3.5" /> {text("导出全局", "Export Global")}
+              </Button>
+            </div>
           </CardHeader>
           <div className="grid grid-cols-6 gap-3 border-b border-slate-100 p-3 text-xs">
             <Metric label={text("恢复批次", "Batches")} value={formatNumber(recovery.data?.batch_total)} />
@@ -376,6 +413,43 @@ export function ObservabilityPage() {
               label={text("动作类型", "Actions")}
               value={formatNumber(Object.keys(recovery.data?.action_counts ?? {}).length)}
             />
+          </div>
+          <div className="grid grid-cols-[0.9fr_1.1fr] gap-4 border-b border-slate-100 p-3">
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <Metric
+                label={text("全局组织", "Global Orgs")}
+                value={formatNumber(globalRecovery.data?.organization_count)}
+              />
+              <Metric
+                label={text("全局批次", "Global Batches")}
+                value={formatNumber(globalRecovery.data?.batch_total)}
+              />
+              <Metric
+                label={text("全局恢复", "Global Recovered")}
+                value={formatNumber(globalRecovery.data?.recovered_total)}
+              />
+            </div>
+            <div className="min-w-0">
+              {globalRecovery.data ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {globalRecovery.data.organizations.slice(0, 6).map((item) => (
+                    <Badge key={item.organization_id ?? "none"} tone="purple">
+                      <span className="font-mono">{item.organization_id ?? "unscoped"}</span>
+                      <span className="font-mono">{item.recovered_total}</span>
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                  {globalRecovery.error
+                    ? text(
+                        `全局恢复摘要受限：${globalRecovery.error.message}`,
+                        `Global recovery summary limited: ${globalRecovery.error.message}`,
+                      )
+                    : text("全局恢复摘要加载中", "Loading global recovery summary")}
+                </div>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 p-3">
             <div className="overflow-hidden rounded-md border border-slate-100">

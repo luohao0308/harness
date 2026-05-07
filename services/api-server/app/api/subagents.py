@@ -1,8 +1,9 @@
+import json
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,8 @@ from app.api.schemas import (
     SubagentPage,
     SubagentRecoverRequest,
     SubagentRecoveryBatchPage,
+    SubagentRecoveryGlobalSummaryResponse,
+    SubagentRecoveryOrganizationSummary,
     SubagentRecoveryResponse,
     SubagentRecoverySummaryResponse,
     SubagentRecoveryTaskSummary,
@@ -26,7 +29,7 @@ from app.api.schemas import (
 from app.api.tasks import get_owned_task
 from app.db.models import AgentRun, SubagentRecoveryBatch, Task
 from app.db.session import get_db_session
-from app.security.auth import Principal
+from app.security.auth import Principal, require_role
 
 router = APIRouter(tags=["subagents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -233,29 +236,142 @@ def get_subagent_recovery_summary(
         .limit(capped_limit)
     )
     batches = list(session.execute(statement).scalars())
-    batch_ids = {batch.batch_id for batch in batches}
-    task_ids = {batch.task_id for batch in batches if batch.task_id}
-    action_counts: dict[str, int] = {}
-    action_counted_batch_ids: set[str] = set()
-    for batch in batches:
-        if batch.batch_id in action_counted_batch_ids:
-            continue
-        action_counted_batch_ids.add(batch.batch_id)
-        for action, count in (batch.action_counts or {}).items():
-            action_counts[str(action)] = action_counts.get(str(action), 0) + int(count)
     task_summaries = _recovery_task_summaries(batches)
+    totals = _recovery_batch_totals(batches)
     return SubagentRecoverySummaryResponse(
         organization_id=principal.organization_id,
-        batch_total=len(batch_ids),
-        task_total=len(task_ids),
-        scanned_total=sum(batch.scanned_count for batch in batches),
-        recovered_total=sum(batch.recovered_count for batch in batches),
-        lock_skipped_total=sum(1 for batch in batches if not batch.lock_acquired),
-        action_counts=action_counts,
-        latest_completed_at=batches[0].completed_at if batches else None,
+        batch_total=totals["batch_total"],
+        task_total=totals["task_total"],
+        scanned_total=totals["scanned_total"],
+        recovered_total=totals["recovered_total"],
+        lock_skipped_total=totals["lock_skipped_total"],
+        action_counts=totals["action_counts"],
+        latest_completed_at=totals["latest_completed_at"],
         tasks=task_summaries,
         recent_batches=batches,
     )
+
+
+@router.get(
+    "/subagents/recovery/global-summary",
+    response_model=SubagentRecoveryGlobalSummaryResponse,
+    summary="查询全局子 Agent 恢复运营摘要",
+    description="仅 admin 可访问。跨组织聚合最近的子 Agent 自动恢复与手动恢复批次。",
+)
+def get_subagent_recovery_global_summary(
+    session: DbSession,
+    principal: Principal,
+    limit: int = Query(default=100, ge=1, le=500, description="返回批次数量"),
+) -> SubagentRecoveryGlobalSummaryResponse:
+    require_role(principal, {"admin"})
+    return _subagent_recovery_global_summary(session=session, limit=limit)
+
+
+@router.get(
+    "/subagents/recovery/global-summary/export",
+    response_class=Response,
+    summary="导出全局子 Agent 恢复运营摘要",
+    description="仅 admin 可访问。导出跨组织子 Agent 恢复运营摘要 JSON。",
+    responses={
+        200: {
+            "description": "JSON 导出文件",
+            "content": {"application/json": {}},
+        }
+    },
+)
+def export_subagent_recovery_global_summary(
+    session: DbSession,
+    principal: Principal,
+    limit: int = Query(default=100, ge=1, le=500, description="返回批次数量"),
+) -> Response:
+    require_role(principal, {"admin"})
+    payload = _subagent_recovery_global_summary(session=session, limit=limit)
+    body = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False, indent=2).encode("utf-8")
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="subagent-recovery-global-summary.json"',
+            "X-Harness-Export-Count": str(payload.batch_total),
+            "X-Harness-Export-Source": "subagent_recovery",
+        },
+    )
+
+
+def _subagent_recovery_global_summary(
+    *,
+    session: Session,
+    limit: int,
+) -> SubagentRecoveryGlobalSummaryResponse:
+    capped_limit = max(1, min(limit, 500))
+    batches = list(
+        session.execute(
+            select(SubagentRecoveryBatch)
+            .order_by(SubagentRecoveryBatch.completed_at.desc(), SubagentRecoveryBatch.id.desc())
+            .limit(capped_limit)
+        ).scalars()
+    )
+    totals = _recovery_batch_totals(batches)
+    organization_batches: dict[str | None, list[SubagentRecoveryBatch]] = {}
+    for batch in batches:
+        organization_batches.setdefault(batch.organization_id, []).append(batch)
+    organization_summaries = [
+        _recovery_organization_summary(organization_id, grouped_batches)
+        for organization_id, grouped_batches in organization_batches.items()
+    ]
+    organization_summaries.sort(
+        key=lambda item: (item.recovered_total, item.scanned_total, item.organization_id or ""),
+        reverse=True,
+    )
+    return SubagentRecoveryGlobalSummaryResponse(
+        organization_count=len(
+            {batch.organization_id for batch in batches if batch.organization_id is not None}
+        ),
+        batch_total=totals["batch_total"],
+        task_total=totals["task_total"],
+        scanned_total=totals["scanned_total"],
+        recovered_total=totals["recovered_total"],
+        lock_skipped_total=totals["lock_skipped_total"],
+        action_counts=totals["action_counts"],
+        latest_completed_at=totals["latest_completed_at"],
+        organizations=organization_summaries,
+        recent_batches=batches,
+    )
+
+
+def _recovery_organization_summary(
+    organization_id: str | None,
+    batches: list[SubagentRecoveryBatch],
+) -> SubagentRecoveryOrganizationSummary:
+    totals = _recovery_batch_totals(batches)
+    return SubagentRecoveryOrganizationSummary(
+        organization_id=organization_id,
+        batch_total=totals["batch_total"],
+        task_total=totals["task_total"],
+        scanned_total=totals["scanned_total"],
+        recovered_total=totals["recovered_total"],
+        lock_skipped_total=totals["lock_skipped_total"],
+        action_counts=totals["action_counts"],
+        latest_completed_at=totals["latest_completed_at"],
+    )
+
+
+def _recovery_batch_totals(batches: list[SubagentRecoveryBatch]) -> dict:
+    action_counts: dict[str, int] = {}
+    for batch in batches:
+        recovered_actions = recovery_action_counts(list(batch.recovered or []))
+        source_counts = recovered_actions or dict(batch.action_counts or {})
+        for action, count in source_counts.items():
+            action_counts[str(action)] = action_counts.get(str(action), 0) + int(count)
+    return {
+        "batch_total": len({batch.batch_id for batch in batches}),
+        "task_total": len({batch.task_id for batch in batches if batch.task_id}),
+        "scanned_total": sum(batch.scanned_count for batch in batches),
+        "recovered_total": sum(batch.recovered_count for batch in batches),
+        "lock_skipped_total": sum(1 for batch in batches if not batch.lock_acquired),
+        "action_counts": action_counts,
+        "latest_completed_at": max((batch.completed_at for batch in batches), default=None),
+    }
 
 
 def _recovery_task_summaries(

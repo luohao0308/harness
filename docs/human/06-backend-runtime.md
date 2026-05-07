@@ -106,6 +106,10 @@ Subagent：
 
 ```text
 GET    /api/tasks/{task_id}/subagents
+GET    /api/subagents
+GET    /api/subagents/recovery/summary
+GET    /api/subagents/recovery/global-summary
+GET    /api/subagents/recovery/global-summary/export
 GET    /api/subagents/{subagent_id}
 POST   /api/subagents/{subagent_id}/cancel
 ```

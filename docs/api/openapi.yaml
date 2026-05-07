@@ -977,6 +977,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents/recovery/global-summary:
+    get:
+      tags:
+      - subagents
+      summary: 查询全局子 Agent 恢复运营摘要
+      description: 仅 admin 可访问。跨组织聚合最近的子 Agent 自动恢复与手动恢复批次。
+      operationId: get_subagent_recovery_global_summary_api_subagents_recovery_global_summary_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: 返回批次数量
+          default: 100
+          title: Limit
+        description: 返回批次数量
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentRecoveryGlobalSummaryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents/recovery/global-summary/export:
+    get:
+      tags:
+      - subagents
+      summary: 导出全局子 Agent 恢复运营摘要
+      description: 仅 admin 可访问。导出跨组织子 Agent 恢复运营摘要 JSON。
+      operationId: export_subagent_recovery_global_summary_api_subagents_recovery_global_summary_export_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          description: 返回批次数量
+          default: 100
+          title: Limit
+        description: 返回批次数量
+      responses:
+        '200':
+          description: JSON 导出文件
+          content:
+            application/json: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/subagents/{subagent_id}:
     get:
       tags:
@@ -2958,6 +3024,69 @@ components:
       - recovered
       - completed_at
       title: SubagentRecoveryBatchResponse
+    SubagentRecoveryGlobalSummaryResponse:
+      properties:
+        organization_count:
+          type: integer
+          title: Organization Count
+          description: 组织数量
+        batch_total:
+          type: integer
+          title: Batch Total
+          description: 恢复批次数
+        task_total:
+          type: integer
+          title: Task Total
+          description: 涉及任务数
+        scanned_total:
+          type: integer
+          title: Scanned Total
+          description: 累计扫描子 Agent 数
+        recovered_total:
+          type: integer
+          title: Recovered Total
+          description: 累计恢复子 Agent 数
+        lock_skipped_total:
+          type: integer
+          title: Lock Skipped Total
+          description: 未获取恢复锁次数
+        action_counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Action Counts
+          description: 恢复动作统计
+        latest_completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Latest Completed At
+          description: 最近完成时间
+        organizations:
+          items:
+            $ref: '#/components/schemas/SubagentRecoveryOrganizationSummary'
+          type: array
+          title: Organizations
+          description: 按组织聚合
+        recent_batches:
+          items:
+            $ref: '#/components/schemas/SubagentRecoveryBatchResponse'
+          type: array
+          title: Recent Batches
+          description: 最近恢复批次
+      type: object
+      required:
+      - organization_count
+      - batch_total
+      - task_total
+      - scanned_total
+      - recovered_total
+      - lock_skipped_total
+      - action_counts
+      - organizations
+      - recent_batches
+      title: SubagentRecoveryGlobalSummaryResponse
     SubagentRecoveryItem:
       properties:
         id:
@@ -2994,6 +3123,56 @@ components:
       - action
       - reason
       title: SubagentRecoveryItem
+    SubagentRecoveryOrganizationSummary:
+      properties:
+        organization_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Organization Id
+          description: 组织 ID
+        batch_total:
+          type: integer
+          title: Batch Total
+          description: 恢复批次数
+        task_total:
+          type: integer
+          title: Task Total
+          description: 涉及任务数
+        scanned_total:
+          type: integer
+          title: Scanned Total
+          description: 累计扫描子 Agent 数
+        recovered_total:
+          type: integer
+          title: Recovered Total
+          description: 累计恢复子 Agent 数
+        lock_skipped_total:
+          type: integer
+          title: Lock Skipped Total
+          description: 未获取恢复锁次数
+        action_counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Action Counts
+          description: 恢复动作统计
+        latest_completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Latest Completed At
+          description: 最近完成时间
+      type: object
+      required:
+      - batch_total
+      - task_total
+      - scanned_total
+      - recovered_total
+      - lock_skipped_total
+      - action_counts
+      title: SubagentRecoveryOrganizationSummary
     SubagentRecoveryResponse:
       properties:
         batch_id:

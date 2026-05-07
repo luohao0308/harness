@@ -80,7 +80,7 @@ docs/SPEC.md
 | 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
 | Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent、恢复批次历史 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 并发 | 查询、创建、取消、状态追踪、组织级批量状态筛选 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
-| Subagent 恢复运营 | 跨任务查看恢复批次、扫描数、恢复数、动作统计和任务聚合 | `GET /api/subagents/recovery/summary`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
+| Subagent 恢复运营 | 跨任务和跨组织查看恢复批次、扫描数、恢复数、动作统计、任务聚合和全局导出 | `GET /api/subagents/recovery/summary`、`GET /api/subagents/recovery/global-summary`、`GET /api/subagents/recovery/global-summary/export`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
 | 工具执行 | 按策略执行工具 | `POST /api/tasks/{task_id}/tools/execute` | 基础落地 |
@@ -146,7 +146,7 @@ docs/SPEC.md
 
 | 增强项 | 说明 | 目标文档 |
 |---|---|---|
-| Worker 级恢复跨任务汇总 | 已落地组织级恢复运营摘要；后续增强跨组织汇总和导出 | `docs/human/features/04-subagent-orchestration.md` |
+| Worker 级恢复跨组织运营 | 组织级恢复运营摘要、跨组织汇总和全局导出已落地 | `docs/human/features/04-subagent-orchestration.md` |
 | 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口、导出留存、队列图表和 Span 属性检索已落地 | `docs/human/features/10-observability-localization-spec.md` |
 | Worker 跨进程接管 | 步骤级断点续跑已落地，后续增强 Worker 崩溃后的自动接管 | `docs/human/features/02-planner-executor.md` |
 
@@ -171,7 +171,7 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 持续增强 Worker 级恢复跨任务汇总
+1. 持续增强 Worker 级恢复批量操作
 2. 增强观测深链、队列图表和导出留存
 3. 增强 Worker 跨进程接管与批量操作
 ```

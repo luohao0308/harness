@@ -13,6 +13,8 @@ Subagent 负责异步、长耗时、并发探索类任务。主 Executor 不被�
 | 查看单个子 Agent | `/subagents/:subagentId` | 查看 assignment、状态、结果和错误 |
 | 取消子 Agent | `/subagents/:subagentId` | 子 Agent 进入 `CANCELLED` |
 | 查看异步派生关系 | `/tasks/:taskId` | 从 async step 看到对应子 Agent |
+| 查看恢复运营摘要 | `/observability` | 查看组织级和全局恢复批次、扫描数、恢复数和动作统计 |
+| 导出全局恢复摘要 | `/observability` | 下载跨组织恢复运营 JSON |
 
 ## 后端契约
 
@@ -22,6 +24,8 @@ POST /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents/recover
 GET  /api/subagents
 GET  /api/subagents/recovery/summary
+GET  /api/subagents/recovery/global-summary
+GET  /api/subagents/recovery/global-summary/export
 GET  /api/subagents/{subagent_id}
 POST /api/subagents/{subagent_id}/cancel
 ```
@@ -34,6 +38,7 @@ POST /api/subagents/{subagent_id}/cancel
 | `/tasks/:taskId/subagents` | Subagent API | 展示列表和状态 |
 | `/subagents` | Subagent API | 展示组织级批量状态、状态筛选、任务跳转和详情跳转 |
 | `/subagents/:subagentId` | Subagent API | 展示详情并取消 |
+| `/observability` | Recovery Summary API | 展示组织级恢复运营摘要、全局恢复摘要和导出入口 |
 
 异步执行在页面上的体现：
 
@@ -69,6 +74,7 @@ POST /api/subagents/{subagent_id}/cancel
 | `agent_runs.context_json.result.react_trace[]` | `agent_runs` | 子 Agent 多轮工具规划轨迹 |
 | `agent_runs.context_json.result.context_summary` | `agent_runs` | 子 Agent 长上下文压缩摘要 |
 | `agent_runs.context_json.max_tool_rounds` | `agent_runs` | 子 Agent ReAct 工具轮次上限，最大 5 |
+| `subagent_recovery_batches` | 恢复批次 | 手动恢复、自动巡检、跨组织汇总和导出数据源 |
 
 assignment 工具声明：
 
@@ -104,6 +110,9 @@ SUBAGENT_CANCELLED
 | 查看子 Agent | admin、engineer、operator |
 | 创建子 Agent | admin、engineer |
 | 取消子 Agent | admin、engineer |
+| 查看组织恢复摘要 | admin、engineer、operator |
+| 查看全局恢复摘要 | admin |
+| 导出全局恢复摘要 | admin |
 
 ## 状态流转
 
@@ -164,6 +173,8 @@ agent_subagent_recovery_last_recovered
 | 恢复批次详情 | 基础落地 | 手动恢复和自动巡检返回批次 ID、扫描数量、恢复数量、动作统计和完成时间 |
 | 恢复批次历史 | 已落地 | `subagent_recovery_batches` 与 `GET /api/tasks/{task_id}/subagents/recovery-batches` |
 | 跨任务恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/summary` 按组织聚合批次数、涉及任务、扫描数、恢复数、锁跳过次数、动作统计和最近批次 |
+| 跨组织恢复运营摘要 | 已落地 | `GET /api/subagents/recovery/global-summary` 按组织聚合恢复运营数据，限定 admin |
+| 跨组织恢复导出 | 已落地 | `GET /api/subagents/recovery/global-summary/export` 导出 JSON，限定 admin |
 | 恢复观测指标 | 已落地 | `/metrics` 与 Grafana 默认 Dashboard 展示恢复动作 |
 | 恢复告警规则 | 已落地 | Prometheus 加载 `deploy/monitoring/alert-rules.yml` |
 | 并发上限 | 已落地 | 固定 5 |
@@ -180,16 +191,14 @@ agent_subagent_recovery_last_recovered
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 自动恢复批次汇总 | 跨任务恢复运营摘要已落地，控制台观测页已展示组织级恢复批次和任务聚合 | 增强跨组织汇总和导出 |
 | 派生关系展示 | 已落地，执行计划、Subagent 面板、组织级批量状态页和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量操作 |
 
 ## 实现顺序
 
 ```text
 1. 固化 agent_runs 字段和状态机
-2. 增强跨组织汇总和导出
-3. 增强批量操作
-4. 增加超时和取消测试
+2. 增强批量操作
+3. 增加超时和取消测试
 ```
 
 ## 验收标准
@@ -211,4 +220,7 @@ agent_subagent_recovery_last_recovered
 - 任务结果页和子 Agent 页面必须展示上下文压缩摘要。
 - 手动恢复必须在任务详情页展示最近恢复批次摘要。
 - 观测页必须展示跨任务恢复运营摘要。
+- 观测页必须展示跨组织恢复运营摘要。
+- 全局恢复摘要必须限定 admin 访问。
+- 全局恢复导出必须返回 JSON 文件。
 - 事件时间线必须展示异步步骤到子 Agent 的并行执行拓扑。

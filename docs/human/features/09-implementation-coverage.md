@@ -68,7 +68,7 @@
 | 计划与步骤 | 已落地 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/steps/resume` |
 | 事件流 | 已落地 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` |
 | Replay | 基础落地 | `POST /api/tasks/{task_id}/replay` |
-| Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches`、`GET /api/subagents`、`GET /api/subagents/recovery/summary`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
+| Subagent | 已落地 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches`、`GET /api/subagents`、`GET /api/subagents/recovery/summary`、`GET /api/subagents/recovery/global-summary`、`GET /api/subagents/recovery/global-summary/export`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` |
 | Subagent 结果聚合 | 已落地 | `GET /api/tasks/{task_id}/result` 返回 `subagent_results` |
 | Subagent 工具链 | 基础落地 | `GET /api/tasks/{task_id}/tool-calls` 返回 worker 工具审计 |
 | 工具执行 | 基础落地 | `POST /api/tasks/{task_id}/tools/execute` |
@@ -94,7 +94,7 @@
 | `/subagents` | Subagent API | 已接入，展示组织级批量状态、状态筛选、任务跳转和详情跳转 |
 | `/subagents/:subagentId` | Subagent API、Task Result API | 已接入，展示单个子 Agent assignment、状态、取消、产物、工具结果、ReAct 轨迹和上下文压缩 |
 | `/sandboxes` | Sandbox API | 已接入 |
-| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary` 与 `/metrics` | 已接入，展示运行摘要、队列摘要、恢复运营摘要和指标入口 |
+| `/observability` | `GET /api/observability/summary`、`GET /api/subagents/recovery/summary`、`GET /api/subagents/recovery/global-summary` 与 `/metrics` | 已接入，展示运行摘要、队列摘要、组织级恢复运营摘要、全局恢复摘要、导出入口和指标入口 |
 | `/observability` 日志区 | `GET /api/observability/logs` | 已接入，支持任务、Trace、服务和事件类型筛选 |
 | `/observability` Trace 区 | `GET /api/observability/traces/{trace_id}` | 已接入，支持手动 Trace 查询、日志行跳转和 Span 属性筛选 |
 | `/observability` 导出区 | `GET /api/observability/exports`、`GET /api/observability/exports/history` 与下载接口 | 已接入，支持导出日志、Trace、Grafana dashboard、服务健康快照和历史文件 |
@@ -107,7 +107,7 @@
 |---|---|---|
 | Planner | 已接入 Prompt 1.1、模型 JSON 计划解析、一次结构修复、确定性回退、计划来源展示、计划版本对比、差异可视化和步骤断点续跑契约 | 增强 Worker 跨进程接管 |
 | Executor | 同步执行、异步步骤派生 Subagent、恢复时跳过已完成步骤、从指定步骤续跑后续未完成步骤已落地 | 增强 Worker 跨进程接管 |
-| Worker 恢复 | 手动恢复、巡检函数、service loop、跨节点恢复锁、批次详情、批次历史、跨任务恢复运营摘要、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已落地 | 增强跨组织汇总和导出 |
+| Worker 恢复 | 手动恢复、巡检函数、service loop、跨节点恢复锁、批次详情、批次历史、跨任务恢复运营摘要、跨组织恢复摘要、全局恢复导出、Compose 服务、Prometheus 指标、Grafana 面板和 Prometheus 告警规则已落地 | 保持恢复导出权限和运营页面验证 |
 | 同步与异步可视化 | 执行计划已显示中文标签、assigned_agent_id、Subagent 状态链路、步骤续跑动作、组织级批量状态和时间线并行执行拓扑 | 增强批量操作 |
 | Subagent Worker | assignment 工具执行、工具审计、结果回写、多轮 `next_tools` ReAct 执行、产物摘要、长上下文压缩、组织级批量状态、单个子 Agent 详情页和跨任务恢复运营摘要已基础落地 | 增强批量操作 |
 | Model Gateway | OpenAI-compatible 调用、审计、失败、fallback、RPM 限流、TPM 限流、主动探测和供应商级熔断已落地 | 增强多供应商 fallback 策略观测 |

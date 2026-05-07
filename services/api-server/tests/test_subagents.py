@@ -18,6 +18,8 @@ from app.workers.subagent_worker import (
 )
 from tests.conftest import AUTH_HEADERS
 
+ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
+
 
 class SequencedModelGateway:
     def __init__(self, contents: list[dict]) -> None:
@@ -36,9 +38,9 @@ class SequencedModelGateway:
         )
 
 
-def create_task(db_session: Session) -> Task:
+def create_task(db_session: Session, organization_id: str = "dev-org") -> Task:
     task = Task(
-        organization_id="dev-org",
+        organization_id=organization_id,
         created_by="dev-engineer",
         title="Demo",
         goal="Analyze project",
@@ -476,6 +478,59 @@ def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:
     assert 'agent_subagent_recovery_total{action="marked_timeout"}' in metrics
     assert "agent_subagent_recovery_sweeps_total" in metrics
     assert "agent_subagent_recovery_last_recovered" in metrics
+
+
+def test_subagent_recovery_global_summary_and_export_require_admin(db_session: Session) -> None:
+    first_task = create_task(db_session)
+    second_task = create_task(db_session, organization_id="other-org")
+    first_stale = SubagentManager(db_session).spawn(
+        task=first_task,
+        assignment={"step_key": "first_org_stale"},
+        timeout_seconds=1800,
+    )
+    first_stale.status = "RUNNING"
+    first_stale.started_at = utc_now() - timedelta(seconds=901)
+    second_expired = SubagentManager(db_session).spawn(
+        task=second_task,
+        assignment={"step_key": "second_org_expired"},
+        timeout_seconds=1,
+    )
+    second_expired.status = "RUNNING"
+    second_expired.started_at = utc_now() - timedelta(seconds=60)
+    second_expired.timeout_at = utc_now() - timedelta(seconds=1)
+    db_session.commit()
+    recover_stalled_subagents(stale_after_seconds=900, enqueue=False, session=db_session)
+    client = TestClient(app)
+
+    engineer = client.get("/api/subagents/recovery/global-summary", headers=AUTH_HEADERS)
+    summary = client.get("/api/subagents/recovery/global-summary", headers=ADMIN_HEADERS)
+    exported = client.get(
+        "/api/subagents/recovery/global-summary/export",
+        headers=ADMIN_HEADERS,
+    )
+
+    assert engineer.status_code == 403
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["organization_count"] == 2
+    assert payload["batch_total"] == 1
+    assert payload["task_total"] == 2
+    assert payload["scanned_total"] == 2
+    assert payload["recovered_total"] == 2
+    assert payload["action_counts"] == {
+        "marked_timeout": 1,
+        "reset_to_pending": 1,
+    }
+    assert {item["organization_id"] for item in payload["organizations"]} == {
+        "dev-org",
+        "other-org",
+    }
+    assert all(item["recovered_total"] == 1 for item in payload["organizations"])
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("application/json")
+    assert exported.headers["x-harness-export-count"] == "1"
+    assert "subagent-recovery-global-summary.json" in exported.headers["content-disposition"]
+    assert exported.json()["organization_count"] == 2
 
 
 def test_subagent_recovery_sweep_skips_when_lease_is_held(db_session: Session) -> None:
