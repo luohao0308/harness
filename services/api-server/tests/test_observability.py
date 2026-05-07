@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -46,6 +47,9 @@ def test_metrics_endpoint_exposes_required_metrics() -> None:
     assert "sandbox_containers_total" in body
     assert "warm_pool_hit_total" in body
     assert "model_calls_total" in body
+    assert "model_fallback_total" in body
+    assert "sandbox_running_memory_limit_mb_total" in body
+    assert "sandbox_running_cpu_limit_total" in body
 
 
 def test_json_formatter_includes_required_fields_and_redacts_sensitive_values() -> None:
@@ -580,6 +584,32 @@ def test_grafana_dashboards_returns_configured_fallback() -> None:
     payload = response.json()
     assert payload["items"][0]["uid"] == "agent-harness"
     assert payload["items"][0]["source"] in {"configured", "grafana"}
+
+
+def test_grafana_dashboard_json_covers_enterprise_operating_metrics() -> None:
+    dashboard_path = Path(__file__).resolve().parents[3] / (
+        "deploy/monitoring/grafana-dashboard-agent-harness.json"
+    )
+    dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+    panels = dashboard["panels"]
+    titles = {panel["title"] for panel in panels}
+    expressions = {
+        target["expr"]
+        for panel in panels
+        for target in panel.get("targets", [])
+        if "expr" in target
+    }
+
+    assert {
+        "Subagent Recovery",
+        "Model Fallback",
+        "Sandbox Quota",
+        "Replay & Recovery",
+        "API Logs",
+    }.issubset(titles)
+    assert "model_fallback_total" in expressions
+    assert "sandbox_running_memory_limit_mb_total" in expressions
+    assert "agent_subagent_recovery_sweeps_total" in expressions
 
 
 def test_grafana_dashboards_require_operator_role() -> None:

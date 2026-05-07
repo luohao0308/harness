@@ -77,18 +77,18 @@ docs/SPEC.md
 | 计划与执行 | 查看计划、步骤、同步执行、异步派生、版本对比、步骤断点续跑 | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/plans`、`GET /api/tasks/{task_id}/plans/diff`、`GET /api/tasks/{task_id}/steps`、`POST /api/tasks/{task_id}/steps/resume`、`POST /api/tasks/{task_id}/start` | 已落地，已支持 Planner Prompt 1.1、模型 JSON 计划解析、一次修复、来源展示、步骤元数据、版本对比和步骤断点续跑 |
 | 同步执行 | Executor 直接执行 step | `GET /api/tasks/{task_id}/steps`、`GET /api/tasks/{task_id}/events` | 基础落地 |
 | 异步执行 | async step 派生 Subagent | `GET /api/tasks/{task_id}/plan`、`GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents` | 基础落地，已请求 Dramatiq 入队 |
-| 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地 |
+| 事件流 | 事件查询、SSE、断线续读 | `GET /api/tasks/{task_id}/events`、`GET /api/tasks/{task_id}/events/stream` | 已落地，已补 after_sequence 与 Last-Event-ID 优先级测试 |
 | Replay 与恢复 | 重放状态、定位失败点、恢复执行、恢复卡住的子 Agent、恢复批次历史 | `POST /api/tasks/{task_id}/replay`、`POST /api/tasks/{task_id}/resume`、`POST /api/tasks/{task_id}/subagents/recover`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
-| Subagent 并发 | 查询、创建、取消、状态追踪、组织级批量状态筛选 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
+| Subagent 并发 | 查询、创建、取消、批量取消、状态追踪、组织级批量状态筛选 | `GET /api/tasks/{task_id}/subagents`、`POST /api/tasks/{task_id}/subagents`、`GET /api/subagents`、`POST /api/subagents/bulk`、`GET /api/subagents/{subagent_id}`、`POST /api/subagents/{subagent_id}/cancel` | 已落地 |
 | Subagent 恢复运营 | 跨任务和跨组织查看恢复批次、扫描数、恢复数、动作统计、任务聚合和全局导出 | `GET /api/subagents/recovery/summary`、`GET /api/subagents/recovery/global-summary`、`GET /api/subagents/recovery/global-summary/export`、`GET /api/tasks/{task_id}/subagents/recovery-batches` | 已落地 |
 | Subagent 结果聚合 | 在父任务结果中查看异步摘要 | `GET /api/tasks/{task_id}/result` | 已落地 |
 | Subagent 工具链 | worker 执行 assignment 内工具并审计 | `GET /api/tasks/{task_id}/tool-calls`、`GET /api/tasks/{task_id}/result` | 基础落地 |
 | 工具执行 | 按策略执行工具 | `POST /api/tasks/{task_id}/tools/execute` | 基础落地 |
 | 模型调用审计 | 查询供应商、模型、token、延迟、失败 | `GET /api/tasks/{task_id}/model-calls` | 基础落地 |
 | 工具调用审计 | 查询入参、结果、耗时、拒绝、失败、Trace 深链 | `GET /api/tasks/{task_id}/tool-calls` | 已落地，支持工具、状态、风险和 Trace 筛选 |
-| 沙箱治理 | 沙箱列表、详情、终止、资源规格和网络白名单 | `GET /api/sandboxes`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate`、`GET/PUT /api/settings/policies` | 已落地 |
+| 沙箱治理 | 沙箱列表、详情、终止、资源规格、配额用量、配额历史和网络白名单 | `GET /api/sandboxes`、`GET /api/sandboxes/quota/usage`、`GET /api/sandboxes/quota/history`、`GET /api/sandboxes/{sandbox_id}`、`POST /api/sandboxes/{sandbox_id}/terminate`、`GET/PUT /api/settings/policies` | 已落地 |
 | WarmPool | 查看预热池状态，自定义资源绕过默认池 | `GET /api/sandboxes/warm-pool` | 已落地 |
-| 模型设置 | 供应商、模型、RPM、TPM、主动探测、熔断状态 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health` | 已落地 |
+| 模型设置 | 供应商、模型、RPM、TPM、主动探测、熔断状态、fallback 观测 | `GET /api/settings/models`、`PUT /api/settings/models`、`GET /api/settings/models/health`、`GET /api/settings/models/fallbacks` | 已落地 |
 | 策略设置 | 工具风险、审批、沙箱、审计要求 | `GET /api/settings/policies`、`PUT /api/settings/policies` | 已落地 |
 | 观测摘要 | 任务、模型、工具、沙箱、WarmPool 与 Subagent 队列汇总 | `GET /api/observability/summary`、`GET /metrics` | 已落地 |
 | 观测导出留存 | 查询导出入口、导出文件、查看历史、下载历史文件 | `GET /api/observability/exports`、`GET /api/observability/exports/logs`、`GET /api/observability/exports/traces/{trace_id}`、`GET /api/observability/exports/grafana/dashboards`、`GET /api/observability/exports/services/health`、`GET /api/observability/exports/history`、`GET /api/observability/exports/history/{export_id}/download` | 已落地 |
@@ -125,9 +125,9 @@ docs/SPEC.md
 
 | 能力 | 当前状态 | 已有入口 | 待补目标 |
 |---|---|---|---|
-| Prometheus 指标 | 已落地 | `GET /metrics` | 增强 dashboard 指标覆盖 |
+| Prometheus 指标 | 已落地 | `GET /metrics` | 已补模型 fallback 和沙箱配额指标 |
 | 观测摘要 | 已落地 | `GET /api/observability/summary` | 已返回子 Agent 队列容量、等待、运行、剩余槽位和使用率 |
-| Grafana | 已落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning、admin/operator RBAC | 增强 dashboard 指标覆盖 |
+| Grafana | 已落地 | `GET /api/observability/grafana/dashboards`、Basic Auth 代理、provisioning、admin/operator RBAC | Dashboard 已覆盖 Subagent Recovery、Model Fallback、Sandbox Quota、Replay & Recovery 和 API Logs |
 | Loki | 基础落地 | `GET /api/observability/logs`、Promtail 采集、标签检索 | 增强日志检索深链 |
 | OpenTelemetry | 已落地 | `GET /api/observability/traces/{trace_id}`、Tempo、OTel Collector | 已支持服务、Span 名称和属性键值检索 |
 | 日志与 Trace 深链 | 已落地 | `GET /api/observability/logs`、`GET /api/observability/traces/{trace_id}`、控制台筛选查询台、观测导出接口、导出历史接口 | 已支持导出留存和 span 属性检索 |
@@ -141,6 +141,7 @@ docs/SPEC.md
 | 控制台边缘文案巡检 | 新增详情页按默认中文、English 切换接入；列表、任务结果和详情入口均使用双语文案 | `apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx` |
 | 官网最终接入 | 官网首页能力文案中文优先，控制台页面清单已链接真实控制台路径，产品页补充子 Agent 详情入口 | `apps/web-site/components/Homepage.tsx`、`apps/web-site/components/Product.tsx` |
 | 企业级观测运营 | 已新增导出文件留存、历史下载、子 Agent 队列摘要和 Trace span 属性检索 | `GET /api/observability/exports/history`、`GET /api/observability/summary`、`GET /api/observability/traces/{trace_id}` |
+| 企业级深度运营增强 | 已新增 Worker 接管、Subagent 批量取消、沙箱配额审计、模型 fallback 观测、审计详情验收、Replay/SSE 重连测试和 Grafana 指标覆盖 | `POST /api/subagents/bulk`、`GET /api/sandboxes/quota/usage`、`GET /api/sandboxes/quota/history`、`GET /api/settings/models/fallbacks` |
 
 ## 后续增强队列
 
@@ -148,7 +149,7 @@ docs/SPEC.md
 |---|---|---|
 | Worker 级恢复跨组织运营 | 组织级恢复运营摘要、跨组织汇总和全局导出已落地 | `docs/human/features/04-subagent-orchestration.md` |
 | 观测深链 | Loki 与 Tempo 控制台深链筛选已落地，Grafana 与服务健康 RBAC 已落地，观测导出入口、导出留存、队列图表和 Span 属性检索已落地 | `docs/human/features/10-observability-localization-spec.md` |
-| Worker 跨进程接管 | 步骤级断点续跑已落地，后续增强 Worker 崩溃后的自动接管 | `docs/human/features/02-planner-executor.md` |
+| Worker 跨进程接管 | 已落地，卡住 `RUNNING` 子 Agent 自动接管为 `PENDING` 并记录接管代次、执行者和时间 | `docs/human/features/04-subagent-orchestration.md` |
 
 ## 流程进展
 
@@ -171,9 +172,9 @@ docs/SPEC.md
 ## 后续执行顺序
 
 ```text
-1. 持续增强 Worker 级恢复批量操作
-2. 增强观测深链、队列图表和导出留存
-3. 增强 Worker 跨进程接管与批量操作
+1. 保持 Worker 接管、批量操作和恢复运营回归
+2. 保持观测深链、队列图表和导出留存回归
+3. 保持配额审计、fallback 观测和 dashboard 覆盖回归
 ```
 
 ## 验证命令

@@ -122,6 +122,97 @@
     },
     {
       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "model_fallback_total",
+          "legendFormat": "{{primary_provider}} -> {{fallback_provider}}"
+        },
+        {
+          "expr": "model_call_errors_total",
+          "legendFormat": "model errors"
+        }
+      ],
+      "title": "Model Fallback",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sandbox_running_memory_limit_mb_total",
+          "legendFormat": "running memory MB"
+        },
+        {
+          "expr": "sandbox_running_cpu_limit_total",
+          "legendFormat": "running cpu"
+        },
+        {
+          "expr": "sandbox_network_enabled_total",
+          "legendFormat": "network enabled"
+        }
+      ],
+      "title": "Sandbox Quota",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "agent_subagent_recovery_sweeps_total",
+          "legendFormat": "recovery sweeps"
+        },
+        {
+          "expr": "agent_task_resume_total",
+          "legendFormat": "task resume"
+        }
+      ],
+      "title": "Replay & Recovery",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
         "type": "loki",
         "uid": "loki"
       },
@@ -133,9 +224,9 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 24
       },
-      "id": 5,
+      "id": 8,
       "options": {
         "dedupStrategy": "none",
         "enableLogDetails": true,

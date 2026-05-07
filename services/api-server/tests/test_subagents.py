@@ -385,12 +385,22 @@ def test_subagent_recovery_resets_stale_running_and_times_out_expired(
     assert refreshed_stale.status == "PENDING"
     assert refreshed_stale.started_at is None
     assert refreshed_stale.context_json["recovery_attempts"] == 1
+    assert refreshed_stale.context_json["takeover_generation"] == 1
+    assert refreshed_stale.context_json["last_takeover_owner"] == "api:dev-engineer"
     assert refreshed_expired is not None
     assert refreshed_expired.status == "TIMEOUT"
     events = EventStore(db_session).list_by_task(task_id=task.id)
     event_types = [event.event_type for event in events]
     assert "SUBAGENT_PROGRESS" in event_types
     assert event_types[-1] == "SUBAGENT_TIMEOUT"
+    takeover_events = [
+        event
+        for event in events
+        if event.event_type == "SUBAGENT_PROGRESS"
+        and event.payload_json.get("stage") == "worker_takeover"
+    ]
+    assert takeover_events[0].payload_json["takeover_generation"] == 1
+    assert takeover_events[0].payload_json["takeover_owner"] == "api:dev-engineer"
 
     history = client.get(
         f"/api/tasks/{task.id}/subagents/recovery-batches",
@@ -405,6 +415,40 @@ def test_subagent_recovery_resets_stale_running_and_times_out_expired(
     assert batch["task_count"] == 1
     assert batch["scanned_count"] == 2
     assert batch["recovered_count"] == 2
+
+
+def test_subagent_bulk_cancel_cancels_selected_owned_runs(db_session: Session) -> None:
+    task = create_task(db_session)
+    manager = SubagentManager(db_session)
+    pending = manager.spawn(task=task, assignment={"step_key": "pending_bulk"})
+    running = manager.spawn(task=task, assignment={"step_key": "running_bulk"})
+    running.status = "RUNNING"
+    completed = manager.spawn(task=task, assignment={"step_key": "done_bulk"})
+    completed.status = "SUCCESS"
+    db_session.commit()
+
+    response = TestClient(app).post(
+        "/api/subagents/bulk",
+        headers=AUTH_HEADERS,
+        json={
+            "action": "cancel",
+            "subagent_ids": [pending.id, running.id, completed.id, "missing-subagent"],
+        },
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["requested_count"] == 4
+    assert payload["succeeded_count"] == 3
+    assert payload["failed_count"] == 1
+    items = {item["id"]: item for item in payload["items"]}
+    assert items[pending.id]["action"] == "cancelled"
+    assert items[running.id]["status"] == "CANCELLED"
+    assert items[completed.id]["action"] == "skipped_terminal"
+    assert items["missing-subagent"]["success"] is False
+    assert db_session.get(AgentRun, pending.id).status == "CANCELLED"
+    assert db_session.get(AgentRun, running.id).status == "CANCELLED"
+    assert db_session.get(AgentRun, completed.id).status == "SUCCESS"
 
 
 def test_subagent_recovery_sweep_scans_all_tasks(db_session: Session) -> None:

@@ -1,3 +1,4 @@
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,9 @@ from app.agents.model_gateway import (
 )
 from app.db.models import ModelCall, SystemSetting, Task, utc_now
 from app.events.event_store import EventStore
+from app.events.event_types import EventType
+from app.main import app
+from tests.conftest import AUTH_HEADERS
 
 
 class SequenceGateway:
@@ -121,6 +125,56 @@ def test_audited_model_gateway_records_failure_and_fallback(db_session: Session)
         "MODEL_CALLED",
         "MODEL_RESPONSE_RECEIVED",
     ]
+    fallback_event = events[2]
+    assert fallback_event.payload_json["primary_model_name"] == "primary"
+    assert fallback_event.payload_json["model_name"] == "fallback"
+    assert fallback_event.payload_json["fallback_index"] == 1
+    assert fallback_event.payload_json["reason"] == "primary failed"
+    metrics = TestClient(app).get("/metrics").text
+    assert "model_fallback_total" in metrics
+    assert 'fallback_provider="openai-compatible"' in metrics
+    assert 'primary_provider="openai-compatible"' in metrics
+
+
+def test_model_fallback_summary_endpoint_aggregates_current_org(db_session: Session) -> None:
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    other_task = create_task(db_session)
+    other_task.organization_id = "other-org"
+    gateway = SequenceGateway(
+        [
+            ModelGatewayError("primary unavailable"),
+            ModelResponse(
+                content="{}",
+                model_provider="openai-compatible",
+                model_name="fallback",
+                usage={"prompt_tokens": 1, "completion_tokens": 1},
+            ),
+        ]
+    )
+
+    AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=gateway,
+    ).complete(model_request("primary"), fallback_requests=[model_request("fallback")])
+    EventStore(db_session).append(
+        task_id=other_task.id,
+        event_type=EventType.MODEL_FALLBACK_USED,
+        payload_json={"model_provider": "ignored", "model_name": "ignored"},
+    )
+    db_session.commit()
+
+    response = TestClient(app).get("/api/settings/models/fallbacks", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["organization_id"] == "dev-org"
+    assert payload["fallback_total"] == 1
+    assert payload["primary_failure_total"] == 1
+    assert payload["providers"] == [{"name": "openai-compatible", "count": 1}]
+    assert payload["recent_events"][0]["primary_model"] == "primary"
+    assert payload["recent_events"][0]["fallback_model"] == "fallback"
 
 
 def test_openai_compatible_gateway_normalizes_chat_completion(monkeypatch) -> None:

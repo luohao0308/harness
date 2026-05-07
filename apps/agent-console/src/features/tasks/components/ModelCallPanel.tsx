@@ -86,11 +86,27 @@ export function ModelCallPanel({
           {modelCalls.slice(0, 3).map((call) => (
             <tr key={call.id} className="border-t border-slate-100">
               <Td>{text("模型", "Model")}</Td>
-              <Td className="font-mono">{call.model_name}</Td>
+              <Td>
+                <div className="font-mono">{call.model_name}</div>
+                <div className="mt-0.5 text-[10px] text-slate-400">{call.model_provider}</div>
+              </Td>
               <Td>{statusLabel(call.status)}</Td>
               <Td>{call.duration_ms}ms</Td>
               <Td className="text-slate-500">
-                {text("Token", "Tokens")} {call.prompt_tokens + call.completion_tokens}
+                <div>
+                  {text("Token", "Tokens")} {call.prompt_tokens + call.completion_tokens}
+                </div>
+                <div className="mt-0.5 max-w-[240px] truncate text-[10px] text-slate-400">
+                  {modelCallDetail(call)}
+                </div>
+                {call.trace_id ? (
+                  <Link
+                    to={`/observability?trace_id=${encodeURIComponent(call.trace_id)}`}
+                    className="mt-0.5 block text-[10px] text-slate-500 hover:text-slate-900"
+                  >
+                    Trace {call.trace_id.slice(0, 8)}
+                  </Link>
+                ) : null}
               </Td>
             </tr>
           ))}
@@ -136,4 +152,13 @@ export function ModelCallPanel({
       </Table>
     </Card>
   );
+}
+
+function modelCallDetail(call: ModelCall) {
+  if (call.error_message) return call.error_message;
+  const contentPreview = call.response_json.content_preview;
+  if (typeof contentPreview === "string" && contentPreview.length > 0) return contentPreview;
+  const estimatedTokens = call.request_json.estimated_prompt_tokens;
+  if (typeof estimatedTokens === "number") return `estimated_prompt_tokens=${estimatedTokens}`;
+  return "无模型响应详情";
 }

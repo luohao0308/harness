@@ -516,7 +516,17 @@ def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> 
             .order_by(ModelCall.created_at.desc())
         ).scalars()
     )
-    return ModelCallPage(items=calls)
+    trace_ids = _model_call_trace_ids(
+        task_id=task_id,
+        model_call_ids=[call.id for call in calls],
+        session=session,
+    )
+    return ModelCallPage(
+        items=[
+            _to_model_call_response(call, trace_id=trace_ids.get(call.id))
+            for call in calls
+        ]
+    )
 
 
 @router.get(
@@ -601,6 +611,62 @@ def execute_task_tool(
         allowed=execution.allowed,
         output=execution.output,
     )
+
+
+def _to_model_call_response(
+    model_call: ModelCall,
+    trace_id: str | None = None,
+):
+    return {
+        "id": model_call.id,
+        "task_id": model_call.task_id,
+        "agent_run_id": model_call.agent_run_id,
+        "trace_id": trace_id,
+        "model_provider": model_call.model_provider,
+        "model_name": model_call.model_name,
+        "status": model_call.status,
+        "prompt_tokens": model_call.prompt_tokens,
+        "completion_tokens": model_call.completion_tokens,
+        "duration_ms": model_call.duration_ms,
+        "request_json": model_call.request_json,
+        "response_json": model_call.response_json,
+        "error_message": model_call.error_message,
+        "created_at": model_call.created_at,
+    }
+
+
+def _model_call_trace_ids(
+    *,
+    task_id: str,
+    model_call_ids: list[str],
+    session: Session,
+) -> dict[str, str]:
+    if not model_call_ids:
+        return {}
+    events = session.execute(
+        select(AgentEvent).where(
+            AgentEvent.task_id == task_id,
+            AgentEvent.event_type.in_(
+                [
+                    EventType.MODEL_CALLED.value,
+                    EventType.MODEL_RESPONSE_RECEIVED.value,
+                    EventType.MODEL_CALL_FAILED.value,
+                ]
+            ),
+        )
+    ).scalars()
+    trace_ids: dict[str, str] = {}
+    model_call_id_set = set(model_call_ids)
+    for event in events:
+        model_call_id = event.payload_json.get("model_call_id")
+        if (
+            isinstance(model_call_id, str)
+            and model_call_id in model_call_id_set
+            and isinstance(event.trace_id, str)
+            and model_call_id not in trace_ids
+        ):
+            trace_ids[model_call_id] = event.trace_id
+    return trace_ids
 
 
 def _to_tool_call_response(tool_call: ToolCall, trace_id: str | None = None) -> ToolCallResponse:

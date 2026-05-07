@@ -3,7 +3,16 @@ from datetime import timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import AgentRun, ExecutionPlan, Task, TaskSnapshot, TaskStep, ToolCall, utc_now
+from app.db.models import (
+    AgentRun,
+    ExecutionPlan,
+    ModelCall,
+    Task,
+    TaskSnapshot,
+    TaskStep,
+    ToolCall,
+    utc_now,
+)
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
@@ -230,6 +239,82 @@ def test_tool_calls_support_filters_and_trace_deep_link(db_session: Session) -> 
     payload = response.json()
     assert [item["id"] for item in payload["items"]] == [matching.id]
     assert payload["items"][0]["trace_id"] == "trace-tool-filter"
+
+
+def test_audit_detail_endpoints_include_console_acceptance_fields(
+    db_session: Session,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Audit detail acceptance",
+        goal="Validate console audit detail fields",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    model_call = ModelCall(
+        task_id=task.id,
+        model_provider="openai-compatible",
+        model_name="default",
+        status="SUCCESS",
+        prompt_tokens=3,
+        completion_tokens=5,
+        duration_ms=11,
+        request_json={"estimated_prompt_tokens": 8, "messages": [{"content_length": 20}]},
+        response_json={"content_preview": "模型响应摘要"},
+    )
+    tool_call = ToolCall(
+        task_id=task.id,
+        tool_name="read_file",
+        status="SUCCESS",
+        risk_level="low",
+        requires_sandbox=False,
+        duration_ms=7,
+        input_json={"path": "README.md"},
+        output_json={"content": "ok", "size_bytes": 2},
+    )
+    db_session.add_all([model_call, tool_call])
+    db_session.flush()
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.MODEL_RESPONSE_RECEIVED,
+        payload_json={"model_call_id": model_call.id},
+        trace_id="trace-model-detail",
+    )
+    EventStore(db_session).append(
+        task_id=task.id,
+        event_type=EventType.TOOL_RESULT_RECEIVED,
+        payload_json={"tool_call_id": tool_call.id},
+        trace_id="trace-tool-detail",
+    )
+    db_session.commit()
+    client = TestClient(app)
+
+    model_calls = client.get(f"/api/tasks/{task.id}/model-calls", headers=AUTH_HEADERS)
+    tool_calls = client.get(f"/api/tasks/{task.id}/tool-calls", headers=AUTH_HEADERS)
+
+    assert model_calls.status_code == 200
+    model_payload = model_calls.json()["items"][0]
+    assert model_payload["trace_id"] == "trace-model-detail"
+    assert model_payload["request_json"]["estimated_prompt_tokens"] == 8
+    assert model_payload["response_json"]["content_preview"] == "模型响应摘要"
+    assert model_payload["error_message"] is None
+    assert tool_calls.status_code == 200
+    tool_payload = tool_calls.json()["items"][0]
+    assert tool_payload["trace_id"] == "trace-tool-detail"
+    assert tool_payload["input_json"] == {"path": "README.md"}
+    assert tool_payload["output_json"]["content"] == "ok"
+    assert tool_payload["output_kind"] == "file_content"
+    assert tool_payload["output_summary"].startswith("文件内容")
 
 
 def test_task_plan_versions_and_diff_endpoint(db_session: Session) -> None:

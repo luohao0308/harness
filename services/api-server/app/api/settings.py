@@ -1,12 +1,19 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelHealthChecker
-from app.api.schemas import ModelHealthPage, ModelSettingsResponse, PolicySettingsResponse
-from app.db.models import AdminAuditEvent, SystemSetting, utc_now
+from app.api.schemas import (
+    CountItem,
+    ModelFallbackEventItem,
+    ModelFallbackSummaryResponse,
+    ModelHealthPage,
+    ModelSettingsResponse,
+    PolicySettingsResponse,
+)
+from app.db.models import AdminAuditEvent, AgentEvent, ModelCall, SystemSetting, Task, utc_now
 from app.db.session import get_db_session
 from app.events.event_types import EventType
 from app.security.auth import AuthenticatedPrincipal, Principal, require_role
@@ -190,6 +197,57 @@ def get_model_health(session: DbSession, principal: Principal) -> ModelHealthPag
 
 
 @router.get(
+    "/models/fallbacks",
+    response_model=ModelFallbackSummaryResponse,
+    summary="查询模型 fallback 观测",
+    description="按当前组织聚合模型 fallback 事件、主模型失败次数和最近 fallback 明细。",
+)
+def get_model_fallbacks(
+    session: DbSession,
+    principal: Principal,
+    limit: int = 20,
+) -> ModelFallbackSummaryResponse:
+    task_ids = select(Task.id).where(Task.organization_id == principal.organization_id)
+    capped_limit = max(1, min(limit, 100))
+    fallback_events = list(
+        session.execute(
+            select(AgentEvent)
+            .where(
+                AgentEvent.task_id.in_(task_ids),
+                AgentEvent.event_type == EventType.MODEL_FALLBACK_USED.value,
+            )
+            .order_by(AgentEvent.created_at.desc(), AgentEvent.sequence.desc())
+        ).scalars()
+    )
+    provider_counts: dict[str, int] = {}
+    for event in fallback_events:
+        provider = str(event.payload_json.get("model_provider") or "unknown")
+        provider_counts[provider] = provider_counts.get(provider, 0) + 1
+    primary_failure_total = int(
+        session.execute(
+            select(func.count(ModelCall.id)).where(
+                ModelCall.task_id.in_(task_ids),
+                ModelCall.status == "FAILED",
+            )
+        ).scalar_one()
+        or 0
+    )
+    return ModelFallbackSummaryResponse(
+        organization_id=principal.organization_id,
+        fallback_total=len(fallback_events),
+        primary_failure_total=primary_failure_total,
+        providers=[
+            CountItem(name=provider, count=count)
+            for provider, count in sorted(provider_counts.items())
+        ],
+        recent_events=[
+            _model_fallback_event_item(event)
+            for event in fallback_events[:capped_limit]
+        ],
+    )
+
+
+@router.get(
     "/policies",
     response_model=PolicySettingsResponse,
     summary="查询策略设置",
@@ -233,3 +291,20 @@ def update_policy_settings(
     )
     session.commit()
     return payload
+
+
+def _model_fallback_event_item(event: AgentEvent) -> ModelFallbackEventItem:
+    payload = event.payload_json
+    return ModelFallbackEventItem(
+        event_id=event.id,
+        task_id=event.task_id,
+        sequence=event.sequence,
+        primary_provider=payload.get("primary_model_provider"),
+        primary_model=payload.get("primary_model_name"),
+        fallback_provider=str(payload.get("model_provider") or "unknown"),
+        fallback_model=str(payload.get("model_name") or "unknown"),
+        fallback_index=int(payload.get("fallback_index") or 1),
+        reason=payload.get("reason"),
+        trace_id=event.trace_id,
+        created_at=event.created_at,
+    )

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { GitBranch, ListFilter } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckSquare, GitBranch, ListFilter, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -11,7 +11,7 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { listSubagents, type SubagentListItem } from "../../tasks/api";
+import { bulkCancelSubagents, listSubagents, type SubagentListItem } from "../../tasks/api";
 
 const statusFilters = ["ALL", "PENDING", "RUNNING", "SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"];
 
@@ -48,7 +48,9 @@ function statusCounts(items: SubagentListItem[]) {
 
 export function SubagentsPage() {
   const { text } = useI18n();
+  const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const subagentsQuery = useQuery({
     queryKey: ["subagents", statusFilter],
     queryFn: () => listSubagents({ status: statusFilter, limit: 200 }),
@@ -59,6 +61,32 @@ export function SubagentsPage() {
   });
   const subagents = subagentsQuery.data?.items ?? [];
   const counts = statusCounts(allSubagentsQuery.data?.items ?? []);
+  const selectableIds = subagents
+    .filter((subagent) => ["PENDING", "RUNNING"].includes(subagent.status))
+    .map((subagent) => subagent.id);
+  const selectedSet = new Set(selectedIds);
+  const allVisibleSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selectedSet.has(id));
+  const bulkCancel = useMutation({
+    mutationFn: () => bulkCancelSubagents(selectedIds),
+    onSuccess: () => {
+      setSelectedIds([]);
+      void queryClient.invalidateQueries({ queryKey: ["subagents"] });
+    },
+  });
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
+  const toggleAllVisible = () => {
+    setSelectedIds((current) => {
+      if (allVisibleSelected) {
+        return current.filter((id) => !selectableIds.includes(id));
+      }
+      return Array.from(new Set([...current, ...selectableIds]));
+    });
+  };
 
   return (
     <ConsoleShell title={text("子 Agent", "Subagents")}>
@@ -128,9 +156,37 @@ export function SubagentsPage() {
                 : text(`${subagents.length} 个子 Agent`, `${subagents.length} subagents`)}
             </span>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+            <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+              <CheckSquare className="h-3.5 w-3.5" />
+              {text(
+                `已选择 ${selectedIds.length} 个可取消子 Agent`,
+                `${selectedIds.length} cancellable subagents selected`,
+              )}
+            </div>
+            <Button
+              disabled={selectedIds.length === 0 || bulkCancel.isPending}
+              onClick={() => bulkCancel.mutate()}
+              variant="ghost"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <XCircle className="h-3.5 w-3.5" />
+                {bulkCancel.isPending ? text("取消中", "Cancelling") : text("批量取消", "Bulk Cancel")}
+              </span>
+            </Button>
+          </div>
           <Table>
             <thead className="bg-slate-50 text-slate-500">
               <tr>
+                <Th>
+                  <input
+                    aria-label={text("选择当前页", "Select visible")}
+                    checked={allVisibleSelected}
+                    disabled={selectableIds.length === 0}
+                    onChange={toggleAllVisible}
+                    type="checkbox"
+                  />
+                </Th>
                 <Th>{text("子 Agent", "Subagent")}</Th>
                 <Th>{text("任务", "Task")}</Th>
                 <Th>{text("状态", "Status")}</Th>
@@ -143,6 +199,15 @@ export function SubagentsPage() {
             <tbody>
               {subagents.map((subagent) => (
                 <tr key={subagent.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                  <Td>
+                    <input
+                      aria-label={text("选择子 Agent", "Select subagent")}
+                      checked={selectedSet.has(subagent.id)}
+                      disabled={!["PENDING", "RUNNING"].includes(subagent.status)}
+                      onChange={() => toggleSelected(subagent.id)}
+                      type="checkbox"
+                    />
+                  </Td>
                   <Td>
                     <Link
                       to={`/subagents/${subagent.id}`}
@@ -183,7 +248,7 @@ export function SubagentsPage() {
               ))}
               {!subagentsQuery.isLoading && subagents.length === 0 && (
                 <tr>
-                  <Td colSpan={7} className="py-12 text-center text-slate-500">
+                  <Td colSpan={8} className="py-12 text-center text-slate-500">
                     {text(
                       "暂无符合筛选条件的子 Agent。",
                       "No subagents match the selected filters.",

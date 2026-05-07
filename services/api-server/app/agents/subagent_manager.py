@@ -1,3 +1,5 @@
+import os
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -85,6 +87,7 @@ class SubagentManager:
         task: Task,
         stale_after_seconds: int,
         enqueue: bool,
+        takeover_owner: str | None = None,
     ) -> tuple[int, list[dict], int]:
         replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
         replay_subagents = replay_state.get("subagents", {})
@@ -123,6 +126,7 @@ class SubagentManager:
                         replay_status=replay_status,
                         stale_after_seconds=stale_after_seconds,
                         enqueue=enqueue,
+                        takeover_owner=takeover_owner or _default_takeover_owner(),
                     )
                 )
                 continue
@@ -190,10 +194,19 @@ class SubagentManager:
         replay_status: str | None,
         stale_after_seconds: int,
         enqueue: bool,
+        takeover_owner: str,
     ) -> dict:
         previous_status = agent_run.status
         recovery_attempts = int(agent_run.context_json.get("recovery_attempts", 0) or 0) + 1
-        agent_run.context_json = {**agent_run.context_json, "recovery_attempts": recovery_attempts}
+        takeover_generation = int(agent_run.context_json.get("takeover_generation", 0) or 0) + 1
+        takeover_at = utc_now()
+        agent_run.context_json = {
+            **agent_run.context_json,
+            "recovery_attempts": recovery_attempts,
+            "takeover_generation": takeover_generation,
+            "last_takeover_at": takeover_at.isoformat(),
+            "last_takeover_owner": takeover_owner,
+        }
         agent_run.status = "PENDING"
         agent_run.started_at = None
         agent_subagent_recovery_total.labels(action="reset_to_pending").inc()
@@ -204,10 +217,13 @@ class SubagentManager:
             event_type=EventType.SUBAGENT_PROGRESS,
             payload_json={
                 "agent_run_id": agent_run.id,
-                "stage": "worker_recovered",
+                "stage": "worker_takeover",
                 "from_status": previous_status,
                 "to_status": agent_run.status,
                 "recovery_attempts": recovery_attempts,
+                "takeover_generation": takeover_generation,
+                "takeover_owner": takeover_owner,
+                "takeover_at": takeover_at.isoformat(),
                 "reason": reason,
                 "replay_status": replay_status,
             },
@@ -225,6 +241,9 @@ class SubagentManager:
             "action": "reset_to_pending",
             "reason": reason,
             "replay_status": replay_status,
+            "takeover_generation": takeover_generation,
+            "takeover_owner": takeover_owner,
+            "takeover_at": takeover_at.isoformat(),
         }
 
     def _is_timed_out(self, *, agent_run: AgentRun, now) -> bool:
@@ -243,3 +262,8 @@ def _align_datetime(*, now, value):
     if value.tzinfo is None:
         return now.replace(tzinfo=None)
     return now
+
+
+def _default_takeover_owner() -> str:
+    hostname = os.getenv("HOSTNAME") or "local"
+    return f"worker:{hostname}:{os.getpid()}"

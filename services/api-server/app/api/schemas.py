@@ -276,6 +276,9 @@ class SubagentRecoveryItem(BaseModel):
     action: str = Field(description="恢复动作")
     reason: str = Field(description="恢复原因")
     replay_status: str | None = Field(default=None, description="Replay 中的子 Agent 状态")
+    takeover_generation: int | None = Field(default=None, description="Worker 接管代次")
+    takeover_owner: str | None = Field(default=None, description="Worker 接管执行者")
+    takeover_at: datetime | None = Field(default=None, description="Worker 接管时间")
 
 
 class SubagentRecoveryResponse(BaseModel):
@@ -352,6 +355,28 @@ class SubagentRecoveryGlobalSummaryResponse(BaseModel):
     recent_batches: list[SubagentRecoveryBatchResponse] = Field(description="最近恢复批次")
 
 
+class SubagentBulkActionRequest(BaseModel):
+    action: Literal["cancel"] = Field(description="批量动作")
+    subagent_ids: list[str] = Field(min_length=1, max_length=100, description="子 Agent ID 列表")
+
+
+class SubagentBulkActionItem(BaseModel):
+    id: str = Field(description="子 Agent ID")
+    previous_status: str | None = Field(default=None, description="操作前状态")
+    status: str | None = Field(default=None, description="操作后状态")
+    action: str = Field(description="实际动作")
+    success: bool = Field(description="是否成功")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class SubagentBulkActionResponse(BaseModel):
+    action: str = Field(description="批量动作")
+    requested_count: int = Field(description="请求数量")
+    succeeded_count: int = Field(description="成功数量")
+    failed_count: int = Field(description="失败数量")
+    items: list[SubagentBulkActionItem] = Field(description="批量结果明细")
+
+
 class SandboxResponse(BaseModel):
     id: str = Field(description="沙箱 ID")
     task_id: str = Field(description="任务 ID")
@@ -368,6 +393,45 @@ class SandboxResponse(BaseModel):
 
 class SandboxPage(BaseModel):
     items: list[SandboxResponse] = Field(description="沙箱列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class SandboxQuotaUsageResponse(BaseModel):
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    configured_memory_mb: int = Field(description="策略配置内存上限（MB）")
+    configured_cpus: str = Field(description="策略配置 CPU 上限")
+    configured_workspace_quota_mb: int = Field(description="策略配置工作区配额（MB）")
+    configured_network_enabled: bool = Field(description="策略配置网络开关")
+    configured_network_allowlist: list[str] = Field(description="策略配置网络白名单")
+    sandbox_total: int = Field(description="沙箱总数")
+    running_total: int = Field(description="运行中沙箱数")
+    destroyed_total: int = Field(description="已销毁沙箱数")
+    memory_limit_mb_total: int = Field(description="累计沙箱内存配额（MB）")
+    running_memory_limit_mb_total: int = Field(description="运行中沙箱内存配额（MB）")
+    cpu_limit_total: float = Field(description="累计沙箱 CPU 配额")
+    running_cpu_limit_total: float = Field(description="运行中沙箱 CPU 配额")
+    network_enabled_total: int = Field(description="启用网络的沙箱数")
+    warm_pool_reused_total: int = Field(description="复用 WarmPool 的沙箱数")
+    latest_created_at: datetime | None = Field(default=None, description="最近创建时间")
+
+
+class SandboxQuotaHistoryItem(BaseModel):
+    id: str = Field(description="沙箱 ID")
+    task_id: str = Field(description="任务 ID")
+    container_id: str = Field(description="容器 ID")
+    status: str = Field(description="沙箱状态")
+    cpu_limit: str = Field(description="CPU 限制")
+    cpu_limit_value: float = Field(description="CPU 限制数值")
+    memory_limit_mb: int = Field(description="内存限制（MB）")
+    network_enabled: bool = Field(description="是否启用网络")
+    warm_pool_reused: bool = Field(description="是否复用 WarmPool")
+    lifetime_seconds: int | None = Field(default=None, description="生命周期秒数")
+    created_at: datetime = Field(description="创建时间")
+    destroyed_at: datetime | None = Field(default=None, description="销毁时间")
+
+
+class SandboxQuotaHistoryPage(BaseModel):
+    items: list[SandboxQuotaHistoryItem] = Field(description="沙箱配额历史")
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
@@ -519,6 +583,7 @@ class ModelCallResponse(BaseModel):
     id: str = Field(description="模型调用 ID")
     task_id: str = Field(description="任务 ID")
     agent_run_id: str | None = Field(default=None, description="Agent 运行 ID")
+    trace_id: str | None = Field(default=None, description="Trace ID")
     model_provider: str = Field(description="模型供应商")
     model_name: str = Field(description="模型名称")
     status: str = Field(description="调用状态")
@@ -536,6 +601,28 @@ class ModelCallResponse(BaseModel):
 class ModelCallPage(BaseModel):
     items: list[ModelCallResponse] = Field(description="模型调用列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class ModelFallbackEventItem(BaseModel):
+    event_id: str = Field(description="事件 ID")
+    task_id: str = Field(description="任务 ID")
+    sequence: int = Field(description="事件序号")
+    primary_provider: str | None = Field(default=None, description="主供应商")
+    primary_model: str | None = Field(default=None, description="主模型")
+    fallback_provider: str = Field(description="fallback 供应商")
+    fallback_model: str = Field(description="fallback 模型")
+    fallback_index: int = Field(description="fallback 顺序")
+    reason: str | None = Field(default=None, description="触发原因")
+    trace_id: str | None = Field(default=None, description="Trace ID")
+    created_at: datetime = Field(description="创建时间")
+
+
+class ModelFallbackSummaryResponse(BaseModel):
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    fallback_total: int = Field(description="fallback 事件总数")
+    primary_failure_total: int = Field(description="主模型失败次数")
+    providers: list[CountItem] = Field(description="fallback 供应商分布")
+    recent_events: list[ModelFallbackEventItem] = Field(description="最近 fallback 事件")
 
 
 class ToolCallResponse(BaseModel):

@@ -726,6 +726,36 @@ paths:
                 $ref: '#/components/schemas/ModelHealthPage'
       security:
       - HTTPBearer: []
+  /api/settings/models/fallbacks:
+    get:
+      tags:
+      - settings
+      summary: 查询模型 fallback 观测
+      description: 按当前组织聚合模型 fallback 事件、主模型失败次数和最近 fallback 明细。
+      operationId: get_model_fallbacks_api_settings_models_fallbacks_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelFallbackSummaryResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/settings/policies:
     get:
       tags:
@@ -911,6 +941,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/subagents/bulk:
+    post:
+      tags:
+      - subagents
+      summary: 批量操作子 Agent
+      description: 对当前组织内选中的子 Agent 执行批量取消动作，并返回逐条结果。
+      operationId: bulk_action_subagents_api_subagents_bulk_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubagentBulkActionRequest'
+        required: true
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubagentBulkActionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
   /api/tasks/{task_id}/subagents/recovery-batches:
     get:
       tags:
@@ -1117,6 +1175,52 @@ paths:
                 $ref: '#/components/schemas/SandboxPage'
       security:
       - HTTPBearer: []
+  /api/sandboxes/quota/usage:
+    get:
+      tags:
+      - sandboxes
+      summary: 查询沙箱配额用量
+      description: 聚合当前组织沙箱资源配额、运行中用量和策略配置。
+      operationId: get_sandbox_quota_usage_api_sandboxes_quota_usage_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxQuotaUsageResponse'
+      security:
+      - HTTPBearer: []
+  /api/sandboxes/quota/history:
+    get:
+      tags:
+      - sandboxes
+      summary: 查询沙箱配额历史
+      description: 返回当前组织最近的沙箱资源配额审计记录。
+      operationId: list_sandbox_quota_history_api_sandboxes_quota_history_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxQuotaHistoryPage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/sandboxes/warm-pool:
     get:
       tags:
@@ -1833,6 +1937,12 @@ components:
           - type: 'null'
           title: Agent Run Id
           description: Agent 运行 ID
+        trace_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Trace Id
+          description: Trace ID
         model_provider:
           type: string
           title: Model Provider
@@ -1892,6 +2002,106 @@ components:
       - response_json
       - created_at
       title: ModelCallResponse
+    ModelFallbackEventItem:
+      properties:
+        event_id:
+          type: string
+          title: Event Id
+          description: 事件 ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        sequence:
+          type: integer
+          title: Sequence
+          description: 事件序号
+        primary_provider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Primary Provider
+          description: 主供应商
+        primary_model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Primary Model
+          description: 主模型
+        fallback_provider:
+          type: string
+          title: Fallback Provider
+          description: fallback 供应商
+        fallback_model:
+          type: string
+          title: Fallback Model
+          description: fallback 模型
+        fallback_index:
+          type: integer
+          title: Fallback Index
+          description: fallback 顺序
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reason
+          description: 触发原因
+        trace_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Trace Id
+          description: Trace ID
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+      type: object
+      required:
+      - event_id
+      - task_id
+      - sequence
+      - fallback_provider
+      - fallback_model
+      - fallback_index
+      - created_at
+      title: ModelFallbackEventItem
+    ModelFallbackSummaryResponse:
+      properties:
+        organization_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Organization Id
+          description: 组织 ID
+        fallback_total:
+          type: integer
+          title: Fallback Total
+          description: fallback 事件总数
+        primary_failure_total:
+          type: integer
+          title: Primary Failure Total
+          description: 主模型失败次数
+        providers:
+          items:
+            $ref: '#/components/schemas/CountItem'
+          type: array
+          title: Providers
+          description: fallback 供应商分布
+        recent_events:
+          items:
+            $ref: '#/components/schemas/ModelFallbackEventItem'
+          type: array
+          title: Recent Events
+          description: 最近 fallback 事件
+      type: object
+      required:
+      - fallback_total
+      - primary_failure_total
+      - providers
+      - recent_events
+      title: ModelFallbackSummaryResponse
     ModelHealthPage:
       properties:
         items:
@@ -2577,6 +2787,183 @@ components:
       required:
       - items
       title: SandboxPage
+    SandboxQuotaHistoryItem:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 沙箱 ID
+        task_id:
+          type: string
+          title: Task Id
+          description: 任务 ID
+        container_id:
+          type: string
+          title: Container Id
+          description: 容器 ID
+        status:
+          type: string
+          title: Status
+          description: 沙箱状态
+        cpu_limit:
+          type: string
+          title: Cpu Limit
+          description: CPU 限制
+        cpu_limit_value:
+          type: number
+          title: Cpu Limit Value
+          description: CPU 限制数值
+        memory_limit_mb:
+          type: integer
+          title: Memory Limit Mb
+          description: 内存限制（MB）
+        network_enabled:
+          type: boolean
+          title: Network Enabled
+          description: 是否启用网络
+        warm_pool_reused:
+          type: boolean
+          title: Warm Pool Reused
+          description: 是否复用 WarmPool
+        lifetime_seconds:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Lifetime Seconds
+          description: 生命周期秒数
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+          description: 创建时间
+        destroyed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Destroyed At
+          description: 销毁时间
+      type: object
+      required:
+      - id
+      - task_id
+      - container_id
+      - status
+      - cpu_limit
+      - cpu_limit_value
+      - memory_limit_mb
+      - network_enabled
+      - warm_pool_reused
+      - created_at
+      title: SandboxQuotaHistoryItem
+    SandboxQuotaHistoryPage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SandboxQuotaHistoryItem'
+          type: array
+          title: Items
+          description: 沙箱配额历史
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+          description: 下一页游标
+      type: object
+      required:
+      - items
+      title: SandboxQuotaHistoryPage
+    SandboxQuotaUsageResponse:
+      properties:
+        organization_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Organization Id
+          description: 组织 ID
+        configured_memory_mb:
+          type: integer
+          title: Configured Memory Mb
+          description: 策略配置内存上限（MB）
+        configured_cpus:
+          type: string
+          title: Configured Cpus
+          description: 策略配置 CPU 上限
+        configured_workspace_quota_mb:
+          type: integer
+          title: Configured Workspace Quota Mb
+          description: 策略配置工作区配额（MB）
+        configured_network_enabled:
+          type: boolean
+          title: Configured Network Enabled
+          description: 策略配置网络开关
+        configured_network_allowlist:
+          items:
+            type: string
+          type: array
+          title: Configured Network Allowlist
+          description: 策略配置网络白名单
+        sandbox_total:
+          type: integer
+          title: Sandbox Total
+          description: 沙箱总数
+        running_total:
+          type: integer
+          title: Running Total
+          description: 运行中沙箱数
+        destroyed_total:
+          type: integer
+          title: Destroyed Total
+          description: 已销毁沙箱数
+        memory_limit_mb_total:
+          type: integer
+          title: Memory Limit Mb Total
+          description: 累计沙箱内存配额（MB）
+        running_memory_limit_mb_total:
+          type: integer
+          title: Running Memory Limit Mb Total
+          description: 运行中沙箱内存配额（MB）
+        cpu_limit_total:
+          type: number
+          title: Cpu Limit Total
+          description: 累计沙箱 CPU 配额
+        running_cpu_limit_total:
+          type: number
+          title: Running Cpu Limit Total
+          description: 运行中沙箱 CPU 配额
+        network_enabled_total:
+          type: integer
+          title: Network Enabled Total
+          description: 启用网络的沙箱数
+        warm_pool_reused_total:
+          type: integer
+          title: Warm Pool Reused Total
+          description: 复用 WarmPool 的沙箱数
+        latest_created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Latest Created At
+          description: 最近创建时间
+      type: object
+      required:
+      - configured_memory_mb
+      - configured_cpus
+      - configured_workspace_quota_mb
+      - configured_network_enabled
+      - configured_network_allowlist
+      - sandbox_total
+      - running_total
+      - destroyed_total
+      - memory_limit_mb_total
+      - running_memory_limit_mb_total
+      - cpu_limit_total
+      - running_cpu_limit_total
+      - network_enabled_total
+      - warm_pool_reused_total
+      title: SandboxQuotaUsageResponse
     SandboxResponse:
       properties:
         id:
@@ -2764,6 +3151,96 @@ components:
       - description
       - status
       title: SubagentArtifact
+    SubagentBulkActionItem:
+      properties:
+        id:
+          type: string
+          title: Id
+          description: 子 Agent ID
+        previous_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Previous Status
+          description: 操作前状态
+        status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+          description: 操作后状态
+        action:
+          type: string
+          title: Action
+          description: 实际动作
+        success:
+          type: boolean
+          title: Success
+          description: 是否成功
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+          description: 错误信息
+      type: object
+      required:
+      - id
+      - action
+      - success
+      title: SubagentBulkActionItem
+    SubagentBulkActionRequest:
+      properties:
+        action:
+          type: string
+          const: cancel
+          title: Action
+          description: 批量动作
+        subagent_ids:
+          items:
+            type: string
+          type: array
+          maxItems: 100
+          minItems: 1
+          title: Subagent Ids
+          description: 子 Agent ID 列表
+      type: object
+      required:
+      - action
+      - subagent_ids
+      title: SubagentBulkActionRequest
+    SubagentBulkActionResponse:
+      properties:
+        action:
+          type: string
+          title: Action
+          description: 批量动作
+        requested_count:
+          type: integer
+          title: Requested Count
+          description: 请求数量
+        succeeded_count:
+          type: integer
+          title: Succeeded Count
+          description: 成功数量
+        failed_count:
+          type: integer
+          title: Failed Count
+          description: 失败数量
+        items:
+          items:
+            $ref: '#/components/schemas/SubagentBulkActionItem'
+          type: array
+          title: Items
+          description: 批量结果明细
+      type: object
+      required:
+      - action
+      - requested_count
+      - succeeded_count
+      - failed_count
+      - items
+      title: SubagentBulkActionResponse
     SubagentCreateRequest:
       properties:
         assignment:
@@ -3115,6 +3592,25 @@ components:
           - type: 'null'
           title: Replay Status
           description: Replay 中的子 Agent 状态
+        takeover_generation:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Takeover Generation
+          description: Worker 接管代次
+        takeover_owner:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Takeover Owner
+          description: Worker 接管执行者
+        takeover_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Takeover At
+          description: Worker 接管时间
       type: object
       required:
       - id

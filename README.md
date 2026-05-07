@@ -65,7 +65,7 @@ Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、
 官网与控制台接入：已接入
 ```
 
-当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、跨组织恢复摘要与导出、沙箱动态资源、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
+当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、Subagent 批量取消、Worker 接管、跨组织恢复摘要与导出、沙箱动态资源、沙箱配额审计、模型 fallback 观测、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
 步骤级断点续跑已接入，控制台任务详情页支持从指定步骤继续执行后续未完成步骤。
 
 当前运行时接口：
@@ -87,6 +87,7 @@ GET  /api/tasks/{task_id}/events/stream
 GET  /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents
 GET  /api/subagents
+POST /api/subagents/bulk
 GET  /api/subagents/recovery/summary
 GET  /api/subagents/recovery/global-summary
 GET  /api/subagents/recovery/global-summary/export
@@ -96,6 +97,8 @@ GET  /api/tasks/{task_id}/model-calls
 GET  /api/tasks/{task_id}/tool-calls
 POST /api/tasks/{task_id}/tools/execute
 GET  /api/sandboxes
+GET  /api/sandboxes/quota/usage
+GET  /api/sandboxes/quota/history
 GET  /api/sandboxes/warm-pool
 GET  /api/sandboxes/{sandbox_id}
 POST /api/sandboxes/{sandbox_id}/terminate
@@ -114,6 +117,7 @@ GET  /api/observability/exports/history/{export_id}/download
 GET  /api/settings/models
 PUT  /api/settings/models
 GET  /api/settings/models/health
+GET  /api/settings/models/fallbacks
 GET  /api/settings/policies
 PUT  /api/settings/policies
 GET  /health

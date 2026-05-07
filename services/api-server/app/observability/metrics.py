@@ -38,6 +38,30 @@ sandbox_command_timeout_total = Counter(
     "sandbox_command_timeout_total",
     "Sandbox command timeouts.",
 )
+sandbox_memory_limit_mb_total = Gauge(
+    "sandbox_memory_limit_mb_total",
+    "Sandbox memory quota across all recorded sandboxes.",
+)
+sandbox_running_memory_limit_mb_total = Gauge(
+    "sandbox_running_memory_limit_mb_total",
+    "Sandbox memory quota across running sandboxes.",
+)
+sandbox_cpu_limit_total = Gauge(
+    "sandbox_cpu_limit_total",
+    "Sandbox CPU quota across all recorded sandboxes.",
+)
+sandbox_running_cpu_limit_total = Gauge(
+    "sandbox_running_cpu_limit_total",
+    "Sandbox CPU quota across running sandboxes.",
+)
+sandbox_network_enabled_total = Gauge(
+    "sandbox_network_enabled_total",
+    "Sandboxes with network enabled.",
+)
+sandbox_warm_pool_reused_total = Gauge(
+    "sandbox_warm_pool_reused_total",
+    "Sandboxes reused from WarmPool.",
+)
 
 warm_pool_idle_containers = Gauge("warm_pool_idle_containers", "WarmPool idle containers.")
 warm_pool_busy_containers = Gauge("warm_pool_busy_containers", "WarmPool busy containers.")
@@ -53,3 +77,8 @@ model_call_duration_seconds = Histogram("model_call_duration_seconds", "Model ca
 model_call_errors_total = Counter("model_call_errors_total", "Model call errors.")
 model_tokens_input_total = Counter("model_tokens_input_total", "Input tokens.")
 model_tokens_output_total = Counter("model_tokens_output_total", "Output tokens.")
+model_fallback_total = Counter(
+    "model_fallback_total",
+    "Model fallback attempts.",
+    ["primary_provider", "fallback_provider"],
+)

@@ -585,18 +585,33 @@ stages:
       - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
       - apps/agent-console/src/features/subagents/pages/SubagentDetailPage.tsx
       - apps/agent-console/src/features/subagents/pages/SubagentsPage.tsx
+      - apps/agent-console/src/features/sandboxes/pages/SandboxesPage.tsx
+      - apps/agent-console/src/features/settings/pages/ModelSettingsPage.tsx
       - apps/agent-console/src/features/tasks/api.ts
       - apps/agent-console/src/features/tasks/components/ExecutionPlanPanel.tsx
+      - apps/agent-console/src/features/tasks/components/ModelCallPanel.tsx
       - apps/agent-console/src/features/tasks/components/TaskResultPanel.tsx
       - apps/agent-console/src/features/tasks/pages/TaskDetailPage.tsx
       - services/api-server/app/agents/executor.py
+      - services/api-server/app/agents/model_gateway.py
+      - services/api-server/app/agents/subagent_manager.py
+      - services/api-server/app/api/metrics.py
+      - services/api-server/app/api/sandboxes.py
       - services/api-server/app/api/schemas.py
+      - services/api-server/app/api/settings.py
       - services/api-server/app/api/subagents.py
       - services/api-server/tests/test_subagents.py
       - services/api-server/app/api/tasks.py
+      - services/api-server/app/observability/metrics.py
       - services/api-server/app/events/event_store.py
+      - services/api-server/tests/test_event_store.py
+      - services/api-server/tests/test_events_stream.py
+      - services/api-server/tests/test_model_gateway.py
+      - services/api-server/tests/test_observability.py
+      - services/api-server/tests/test_sandbox.py
       - services/api-server/tests/test_tasks.py
       - deploy/docker-compose/docker-compose.yml
+      - deploy/monitoring/grafana-dashboard-agent-harness.json
       - deploy/nginx/agent-harness.conf
       - docs/SPEC-INDEX.md
       - docs/SPEC.md
@@ -606,7 +621,11 @@ stages:
       - docs/human/06-backend-runtime.md
       - docs/human/07-deployment-operations.md
       - docs/human/10-task-progress.md
+      - docs/human/features/03-event-sourcing-replay.md
       - docs/human/features/04-subagent-orchestration.md
+      - docs/human/features/05-sandbox-warmpool.md
+      - docs/human/features/06-model-tool-audit.md
+      - docs/human/features/07-settings-observability.md
       - docs/human/features/08-website-console-openapi.md
       - docs/human/features/09-implementation-coverage.md
       - docs/human/features/10-observability-localization-spec.md
@@ -629,5 +648,5 @@ stages:
     commit_sha: 9802f9c2e964de2ca7d09993eb4e7b21b21d8d02
     pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, observability export retention, queue chart, span attribute search, step-level resume, global subagent recovery summary and export, and synchronized Spec coverage."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, bulk cancel, worker takeover, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, sandbox quota audit, model fallback observability, network allowlist, observability export retention, queue chart, span attribute search, step-level resume, Replay and SSE reconnect tests, global subagent recovery summary and export, and synchronized Spec coverage."
     next_stage: completed

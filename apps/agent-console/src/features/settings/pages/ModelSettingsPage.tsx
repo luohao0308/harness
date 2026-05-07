@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Brain } from "lucide-react";
+import { Brain, GitBranch } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Card, CardHeader } from "../../../components/ui/card";
@@ -7,12 +8,16 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { getModelHealth, getModelSettings } from "../../tasks/api";
+import { getModelFallbackSummary, getModelHealth, getModelSettings } from "../../tasks/api";
 
 export function ModelSettingsPage() {
   const { text } = useI18n();
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
   const health = useQuery({ queryKey: ["settings", "models", "health"], queryFn: getModelHealth });
+  const fallbacks = useQuery({
+    queryKey: ["settings", "models", "fallbacks"],
+    queryFn: () => getModelFallbackSummary(20),
+  });
   const healthByProvider = new Map(
     (health.data?.items ?? []).map((item) => [`${item.provider}:${item.model}`, item]),
   );
@@ -39,7 +44,81 @@ export function ModelSettingsPage() {
                 settings.data?.circuit_breaker.cooldown_seconds ?? "...",
               )} 秒`}
             />
+            <Metric
+              label="Fallback"
+              value={String(fallbacks.data?.fallback_total ?? "...")}
+            />
           </div>
+        </Card>
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <GitBranch className="h-4 w-4" /> {text("Fallback 策略观测", "Fallback Observability")}
+            </div>
+            <span className="text-xs text-slate-500">
+              {text("展示主模型失败、fallback 供应商分布和最近切换事件", "Shows primary failures, fallback provider distribution, and recent switch events")}
+            </span>
+          </CardHeader>
+          <div className="grid grid-cols-3 gap-3 p-3 text-xs">
+            <Metric
+              label={text("切换次数", "Fallbacks")}
+              value={String(fallbacks.data?.fallback_total ?? "...")}
+            />
+            <Metric
+              label={text("主模型失败", "Primary Failures")}
+              value={String(fallbacks.data?.primary_failure_total ?? "...")}
+            />
+            <Metric
+              label={text("供应商分布", "Providers")}
+              value={(fallbacks.data?.providers ?? [])
+                .map((item) => `${item.name}:${item.count}`)
+                .join(" / ") || "..."}
+            />
+          </div>
+          <Table>
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <Th>{text("主模型", "Primary")}</Th>
+                <Th>Fallback</Th>
+                <Th>{text("原因", "Reason")}</Th>
+                <Th>Trace</Th>
+                <Th>{text("时间", "Time")}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {(fallbacks.data?.recent_events ?? []).map((event) => (
+                <tr key={event.event_id} className="border-t border-slate-100">
+                  <Td className="font-mono">
+                    {event.primary_provider ?? "-"} / {event.primary_model ?? "-"}
+                  </Td>
+                  <Td className="font-mono">
+                    {event.fallback_provider} / {event.fallback_model}
+                  </Td>
+                  <Td className="max-w-64 truncate text-slate-500">{event.reason ?? "-"}</Td>
+                  <Td>
+                    {event.trace_id ? (
+                      <Link
+                        to={`/observability?trace_id=${encodeURIComponent(event.trace_id)}`}
+                        className="font-mono text-slate-600 hover:text-slate-950"
+                      >
+                        {event.trace_id.slice(0, 8)}
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </Td>
+                  <Td className="font-mono text-slate-500">{formatShortDate(event.created_at)}</Td>
+                </tr>
+              ))}
+              {!fallbacks.isLoading && (fallbacks.data?.recent_events ?? []).length === 0 && (
+                <tr>
+                  <Td colSpan={5} className="py-8 text-center text-slate-500">
+                    {text("暂无模型 fallback 事件", "No model fallback events")}
+                  </Td>
+                </tr>
+              )}
+            </tbody>
+          </Table>
         </Card>
         <Card>
           <CardHeader>

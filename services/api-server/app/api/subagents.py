@@ -13,6 +13,9 @@ from app.agents.subagent_recovery_history import (
     recovery_action_counts,
 )
 from app.api.schemas import (
+    SubagentBulkActionItem,
+    SubagentBulkActionRequest,
+    SubagentBulkActionResponse,
     SubagentCreateRequest,
     SubagentListItemResponse,
     SubagentListPage,
@@ -153,6 +156,7 @@ def recover_task_subagents(
         task=task,
         stale_after_seconds=request.stale_after_seconds,
         enqueue=request.enqueue,
+        takeover_owner=f"api:{principal.user_id}",
     )
     response = SubagentRecoveryResponse(
         batch_id=f"manual-{uuid4()}",
@@ -171,7 +175,7 @@ def recover_task_subagents(
         session=session,
         organization_id=task.organization_id,
         payload={
-            **response.model_dump(),
+            **response.model_dump(mode="json"),
             "lock_acquired": True,
             "task_count": 1,
             "recovered_by_task": [
@@ -189,6 +193,64 @@ def recover_task_subagents(
     )
     session.commit()
     return response
+
+
+@router.post(
+    "/subagents/bulk",
+    response_model=SubagentBulkActionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="批量操作子 Agent",
+    description="对当前组织内选中的子 Agent 执行批量取消动作，并返回逐条结果。",
+)
+def bulk_action_subagents(
+    request: SubagentBulkActionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> SubagentBulkActionResponse:
+    statement = (
+        select(AgentRun)
+        .join(Task, Task.id == AgentRun.task_id)
+        .where(
+            AgentRun.id.in_(request.subagent_ids),
+            AgentRun.agent_type == "subagent",
+            Task.organization_id == principal.organization_id,
+        )
+    )
+    owned = {agent_run.id: agent_run for agent_run in session.execute(statement).scalars()}
+    manager = SubagentManager(session)
+    items: list[SubagentBulkActionItem] = []
+    for subagent_id in request.subagent_ids:
+        agent_run = owned.get(subagent_id)
+        if agent_run is None:
+            items.append(
+                SubagentBulkActionItem(
+                    id=subagent_id,
+                    action="not_found",
+                    success=False,
+                    error_message="子 Agent 未找到或无权限",
+                )
+            )
+            continue
+        previous_status = agent_run.status
+        cancelled = manager.cancel(agent_run)
+        actual_action = "cancelled" if cancelled.status != previous_status else "skipped_terminal"
+        items.append(
+            SubagentBulkActionItem(
+                id=subagent_id,
+                previous_status=previous_status,
+                status=cancelled.status,
+                action=actual_action,
+                success=True,
+            )
+        )
+    session.commit()
+    return SubagentBulkActionResponse(
+        action=request.action,
+        requested_count=len(request.subagent_ids),
+        succeeded_count=sum(1 for item in items if item.success),
+        failed_count=sum(1 for item in items if not item.success),
+        items=items,
+    )
 
 
 @router.get(

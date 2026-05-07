@@ -19,6 +19,7 @@ Settings 管理运行规则。Observability 展示运行结果。两者共同构
 GET /api/settings/models
 PUT /api/settings/models
 GET /api/settings/models/health
+GET /api/settings/models/fallbacks
 GET /api/settings/policies
 PUT /api/settings/policies
 GET /api/observability/summary
@@ -104,6 +105,10 @@ warm_pool_idle_containers
 warm_pool_hit_total
 model_calls_total
 model_call_errors_total
+model_fallback_total
+sandbox_running_memory_limit_mb_total
+sandbox_running_cpu_limit_total
+sandbox_network_enabled_total
 ```
 
 ## 当前实现状态
@@ -116,6 +121,7 @@ model_call_errors_total
 | 模型健康状态 | 已落地 | `GET /api/settings/models/health` |
 | 模型主动探测 | 已落地 | `GET /api/settings/models/health` 对真实供应商发起探测并写回健康快照 |
 | 模型熔断可视化 | 已落地 | `/settings/models` 展示熔断状态、连续失败次数和打开截止时间 |
+| 模型 fallback 观测 | 已落地 | `/settings/models` 展示 fallback 次数、主模型失败、供应商分布和最近切换事件 |
 | 策略设置读取 | 已落地 | `GET /api/settings/policies` |
 | 策略设置写入 | 已落地 | `PUT /api/settings/policies` |
 | 策略设置生效 | 已落地 | Tool Runner 读取组织级风险、角色、审批和沙箱要求 |
@@ -131,12 +137,14 @@ model_call_errors_total
 | Grafana provisioning | 基础落地 | 自动加载 Prometheus、Loki、Tempo 数据源和 Harness dashboard |
 | Tempo Trace 后端 | 已落地 | `GET /api/observability/traces/{trace_id}` 优先返回 Tempo 真实 span |
 | 观测导出 | 已落地 | `GET /api/observability/exports`、日志 JSONL、Trace JSON、Grafana dashboard JSON 和服务健康 JSON |
+| Grafana 指标覆盖 | 已落地 | 默认 Dashboard 覆盖 Subagent Recovery、Model Fallback、Sandbox Quota、Replay & Recovery 和 API Logs |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
 | 观测导出留存 | 导出记录、文件留存和历史下载已落地 | 保持留存目录备份和下载权限审计 |
+| Dashboard 指标覆盖 | 已落地，Grafana JSON 覆盖模型 fallback、沙箱配额和恢复链路 | 保持 dashboard JSON 自动验收 |
 
 ## 实现顺序
 
@@ -156,6 +164,7 @@ model_call_errors_total
 - 设置变更重新读取后保持最新值。
 - 模型健康探测写回 `system_settings.health` 与 provider `last_health`。
 - 模型页面展示 RPM、TPM、探测模式和熔断状态。
+- 模型页面展示 fallback 运营摘要。
 - 策略变更影响后续工具调用。
 - 沙箱策略变更影响后续沙箱创建和命令执行。
 - Observability 聚合结果按组织隔离。
@@ -163,4 +172,5 @@ model_call_errors_total
 - Grafana dashboard 与观测服务健康接口对 engineer 返回 403，对 admin 和 operator 返回 200。
 - 观测导出入口对 engineer 返回 403，对 admin 和 operator 返回 200。
 - 观测导出支持日志 JSONL、Trace JSON、Grafana dashboard JSON 和服务健康 JSON。
+- Grafana Dashboard 必须覆盖模型 fallback、沙箱配额和 Replay/Recovery 指标。
 - 控制台 settings 页面不使用占位页。

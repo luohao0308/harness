@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.models import Base, Task, TaskSnapshot, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.events.replay import EventReplay
 
 
 def test_event_store_assigns_task_local_sequence(db_session: Session) -> None:
@@ -85,6 +86,17 @@ def test_event_store_assigns_unique_sequences_under_concurrent_writes(tmp_path) 
         sequences = list(executor.map(append_event, range(10)))
 
     assert sorted(sequences) == list(range(1, 11))
+
+    with SessionLocal() as session:
+        replay = EventReplay(session).replay_task(task_id=task_id, sequence=5)
+        assert replay.sequence == 5
+        assert "sequence=5" in replay.state_summary
+        events_after_reconnect = EventStore(session).list_by_task(
+            task_id=task_id,
+            after_sequence=5,
+            limit=10,
+        )
+        assert [event.sequence for event in events_after_reconnect] == [6, 7, 8, 9, 10]
 
 
 def test_event_store_creates_snapshot_every_100_events(db_session: Session) -> None:

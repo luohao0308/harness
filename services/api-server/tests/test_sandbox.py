@@ -270,3 +270,85 @@ def test_sandbox_api_list_warm_pool_get_and_terminate(
     refreshed = db_session.get(SandboxInstance, sandbox.id)
     assert refreshed is not None
     assert refreshed.destroyed_at is not None
+
+
+def test_sandbox_quota_usage_and_history_aggregate_policy_and_instances(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session)
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {
+                    "default_network": True,
+                    "default_timeout_seconds": 7,
+                    "memory_mb": 2048,
+                    "cpus": "2.5",
+                    "workspace_quota_mb": 4096,
+                    "network_allowlist": ["api.example.test"],
+                },
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    running = SandboxInstance(
+        task_id=task.id,
+        container_id="running-container",
+        image="agent-runtime:latest",
+        status="RUNNING",
+        cpu_limit="2.5",
+        memory_limit_mb=2048,
+        network_enabled=True,
+        warm_pool_reused=True,
+        created_at=utc_now(),
+    )
+    destroyed = SandboxInstance(
+        task_id=task.id,
+        container_id="destroyed-container",
+        image="agent-runtime:latest",
+        status="DESTROYED",
+        cpu_limit="1.0",
+        memory_limit_mb=1024,
+        network_enabled=False,
+        warm_pool_reused=False,
+        created_at=utc_now(),
+        destroyed_at=utc_now(),
+    )
+    db_session.add_all([running, destroyed])
+    db_session.commit()
+    client = TestClient(app)
+
+    usage = client.get("/api/sandboxes/quota/usage", headers=AUTH_HEADERS)
+    history = client.get("/api/sandboxes/quota/history", headers=AUTH_HEADERS)
+
+    assert usage.status_code == 200
+    payload = usage.json()
+    assert payload["configured_memory_mb"] == 2048
+    assert payload["configured_cpus"] == "2.5"
+    assert payload["configured_workspace_quota_mb"] == 4096
+    assert payload["configured_network_enabled"] is True
+    assert payload["configured_network_allowlist"] == ["api.example.test"]
+    assert payload["sandbox_total"] == 2
+    assert payload["running_total"] == 1
+    assert payload["destroyed_total"] == 1
+    assert payload["memory_limit_mb_total"] == 3072
+    assert payload["running_memory_limit_mb_total"] == 2048
+    assert payload["cpu_limit_total"] == 3.5
+    assert payload["running_cpu_limit_total"] == 2.5
+    assert payload["network_enabled_total"] == 1
+    assert payload["warm_pool_reused_total"] == 1
+    assert history.status_code == 200
+    items = history.json()["items"]
+    assert {item["container_id"] for item in items} == {
+        "running-container",
+        "destroyed-container",
+    }
+    assert any(item["lifetime_seconds"] == 0 for item in items)

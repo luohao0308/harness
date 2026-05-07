@@ -15,6 +15,8 @@ Subagent 负责异步、长耗时、并发探索类任务。主 Executor 不被�
 | 查看异步派生关系 | `/tasks/:taskId` | 从 async step 看到对应子 Agent |
 | 查看恢复运营摘要 | `/observability` | 查看组织级和全局恢复批次、扫描数、恢复数和动作统计 |
 | 导出全局恢复摘要 | `/observability` | 下载跨组织恢复运营 JSON |
+| 批量取消子 Agent | `/subagents` | 选择多个 `PENDING`、`RUNNING` 子 Agent 后统一取消 |
+| 查看 Worker 接管 | `/observability`、`/subagents/:subagentId` | 查看卡住 worker 被接管的代次、执行者和恢复批次 |
 
 ## 后端契约
 
@@ -23,6 +25,7 @@ GET  /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents
 POST /api/tasks/{task_id}/subagents/recover
 GET  /api/subagents
+POST /api/subagents/bulk
 GET  /api/subagents/recovery/summary
 GET  /api/subagents/recovery/global-summary
 GET  /api/subagents/recovery/global-summary/export
@@ -37,6 +40,7 @@ POST /api/subagents/{subagent_id}/cancel
 | `/tasks/:taskId` | Subagent API | 展示任务相关子 Agent |
 | `/tasks/:taskId/subagents` | Subagent API | 展示列表和状态 |
 | `/subagents` | Subagent API | 展示组织级批量状态、状态筛选、任务跳转和详情跳转 |
+| `/subagents` | Bulk Subagent API | 选择多个子 Agent 后批量取消 |
 | `/subagents/:subagentId` | Subagent API | 展示详情并取消 |
 | `/observability` | Recovery Summary API | 展示组织级恢复运营摘要、全局恢复摘要和导出入口 |
 
@@ -74,6 +78,9 @@ POST /api/subagents/{subagent_id}/cancel
 | `agent_runs.context_json.result.react_trace[]` | `agent_runs` | 子 Agent 多轮工具规划轨迹 |
 | `agent_runs.context_json.result.context_summary` | `agent_runs` | 子 Agent 长上下文压缩摘要 |
 | `agent_runs.context_json.max_tool_rounds` | `agent_runs` | 子 Agent ReAct 工具轮次上限，最大 5 |
+| `agent_runs.context_json.takeover_generation` | `agent_runs` | Worker 接管代次 |
+| `agent_runs.context_json.last_takeover_owner` | `agent_runs` | 最近接管执行者 |
+| `agent_runs.context_json.last_takeover_at` | `agent_runs` | 最近接管时间 |
 | `subagent_recovery_batches` | 恢复批次 | 手动恢复、自动巡检、跨组织汇总和导出数据源 |
 
 assignment 工具声明：
@@ -101,6 +108,7 @@ SUBAGENT_COMPLETED
 SUBAGENT_FAILED
 SUBAGENT_TIMEOUT
 SUBAGENT_CANCELLED
+SUBAGENT_PROGRESS stage=worker_takeover
 ```
 
 ## 权限模型
@@ -110,6 +118,7 @@ SUBAGENT_CANCELLED
 | 查看子 Agent | admin、engineer、operator |
 | 创建子 Agent | admin、engineer |
 | 取消子 Agent | admin、engineer |
+| 批量取消子 Agent | admin、engineer |
 | 查看组织恢复摘要 | admin、engineer、operator |
 | 查看全局恢复摘要 | admin |
 | 导出全局恢复摘要 | admin |
@@ -122,6 +131,7 @@ PENDING -> RUNNING -> FAILED
 PENDING -> RUNNING -> TIMEOUT
 PENDING -> CANCELLED
 RUNNING -> CANCELLED
+RUNNING -> PENDING 由 Worker 接管触发
 ```
 
 异步非阻塞流转：
@@ -177,6 +187,8 @@ agent_subagent_recovery_last_recovered
 | 跨组织恢复导出 | 已落地 | `GET /api/subagents/recovery/global-summary/export` 导出 JSON，限定 admin |
 | 恢复观测指标 | 已落地 | `/metrics` 与 Grafana 默认 Dashboard 展示恢复动作 |
 | 恢复告警规则 | 已落地 | Prometheus 加载 `deploy/monitoring/alert-rules.yml` |
+| Worker 崩溃接管 | 已落地 | 卡住 `RUNNING` 子 Agent 重置为 `PENDING`，写入 `takeover_generation`、`last_takeover_owner`、`last_takeover_at` 和 `SUBAGENT_PROGRESS stage=worker_takeover` |
+| 子 Agent 批量取消 | 已落地 | `POST /api/subagents/bulk` 与控制台 `/subagents` 选择框、批量取消按钮 |
 | 并发上限 | 已落地 | 固定 5 |
 | Dramatiq worker | 基础落地 | `agent-worker` |
 | 异步派生可见性 | 基础落地 | 任务详情页 Subagent 面板和 `/subagents` 页面 |
@@ -191,14 +203,16 @@ agent_subagent_recovery_last_recovered
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 派生关系展示 | 已落地，执行计划、Subagent 面板、组织级批量状态页和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 增强批量操作 |
+| 派生关系展示 | 已落地，执行计划、Subagent 面板、组织级批量状态页和事件时间线已展示 step key、assigned_agent_id、状态和并行执行拓扑 | 保持页面验收 |
+| 批量操作 | 已落地，组织级列表支持选择和批量取消 | 保持权限与审计测试 |
+| Worker 接管 | 已落地，恢复批次保存接管代次、执行者和时间 | 保持恢复巡检测试 |
 
 ## 实现顺序
 
 ```text
 1. 固化 agent_runs 字段和状态机
-2. 增强批量操作
-3. 增加超时和取消测试
+2. 固化批量取消接口和页面
+3. 增加超时、接管和批量取消测试
 ```
 
 ## 验收标准
@@ -224,3 +238,6 @@ agent_subagent_recovery_last_recovered
 - 全局恢复摘要必须限定 admin 访问。
 - 全局恢复导出必须返回 JSON 文件。
 - 事件时间线必须展示异步步骤到子 Agent 的并行执行拓扑。
+- Worker 接管必须写入 `takeover_generation`、`last_takeover_owner` 和 `last_takeover_at`。
+- 批量取消必须返回逐条成功、失败和跳过状态。
+- `/subagents` 必须展示批量选择和批量取消入口。

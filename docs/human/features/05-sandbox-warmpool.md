@@ -12,11 +12,15 @@ Docker Sandbox 承接高风险工具执行，提供容器级隔离。WarmPool �
 | 查看 WarmPool | `/sandboxes` | 查看 idle、busy、hit、miss |
 | 查看任务沙箱 | `/tasks/:taskId` | 查看任务关联的沙箱事件 |
 | 终止沙箱 | `/sandboxes` | 停止指定沙箱 |
+| 查看配额用量 | `/sandboxes` | 查看当前组织 CPU、内存、网络和工作区配额 |
+| 查看配额历史 | `/sandboxes` | 查看沙箱规格、生命周期和 WarmPool 复用审计 |
 
 ## 后端契约
 
 ```text
 GET  /api/sandboxes
+GET  /api/sandboxes/quota/usage
+GET  /api/sandboxes/quota/history
 GET  /api/sandboxes/warm-pool
 GET  /api/sandboxes/{sandbox_id}
 POST /api/sandboxes/{sandbox_id}/terminate
@@ -26,7 +30,7 @@ POST /api/sandboxes/{sandbox_id}/terminate
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/sandboxes` | Sandbox API、WarmPool API | 列表、详情、终止 |
+| `/sandboxes` | Sandbox API、WarmPool API、Quota API | 列表、详情、终止、配额摘要和历史审计 |
 | `/tasks/:taskId` | Events API、Tool Audit | 查看任务沙箱事件 |
 
 ## 数据模型
@@ -85,6 +89,12 @@ warm_pool_idle_containers
 warm_pool_busy_containers
 warm_pool_hit_total
 warm_pool_miss_total
+sandbox_memory_limit_mb_total
+sandbox_running_memory_limit_mb_total
+sandbox_cpu_limit_total
+sandbox_running_cpu_limit_total
+sandbox_network_enabled_total
+sandbox_warm_pool_reused_total
 ```
 
 ## 当前实现状态
@@ -102,19 +112,22 @@ warm_pool_miss_total
 | WarmPool 预热 | 已落地 | WarmPool API |
 | 非默认网络绕过 WarmPool | 已落地 | Sandbox Manager |
 | 非默认资源绕过 WarmPool | 已落地 | 自定义 memory、cpu、workspace quota 或 allowlist 时创建专用沙箱 |
+| 配额用量统计 | 已落地 | `GET /api/sandboxes/quota/usage` 返回策略配置、总沙箱数、运行中用量、CPU、内存、网络和 WarmPool 复用 |
+| 配额历史审计 | 已落地 | `GET /api/sandboxes/quota/history` 返回最近沙箱规格、生命周期和销毁时间 |
+| 配额指标 | 已落地 | `/metrics` 输出 sandbox quota gauge，Grafana Dashboard 展示 Sandbox Quota 面板 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 资源配额留存审计 | 资源规格、工作区配额和网络白名单已进入事件与容器 label | 增强配额用量统计和历史审计 |
+| 资源配额留存审计 | 已落地，配额摘要、历史审计、指标和控制台页面均已接入 | 保持配额查询与页面验收 |
 
 ## 实现顺序
 
 ```text
 1. 固化 Sandbox API 与 WarmPool API
-2. 增强配额用量统计
-3. 增强资源历史审计
+2. 固化配额用量统计
+3. 固化资源历史审计
 4. 控制台展示资源和策略说明
 ```
 
@@ -132,3 +145,6 @@ warm_pool_miss_total
 - 自定义资源规格不得复用默认 WarmPool 容器。
 - WarmPool 状态在 API 进程重启后不丢失。
 - WarmPool benchmark 覆盖获取耗时。
+- `/api/sandboxes/quota/usage` 必须返回策略配置和运行中资源用量。
+- `/api/sandboxes/quota/history` 必须返回沙箱规格与生命周期。
+- Grafana 必须展示 Sandbox Quota 面板。

@@ -65,6 +65,28 @@ export type ModelSettings = {
   circuit_breaker: Record<string, unknown>;
 };
 
+export type ModelFallbackEvent = {
+  event_id: string;
+  task_id: string;
+  sequence: number;
+  primary_provider: string | null;
+  primary_model: string | null;
+  fallback_provider: string;
+  fallback_model: string;
+  fallback_index: number;
+  reason: string | null;
+  trace_id: string | null;
+  created_at: string;
+};
+
+export type ModelFallbackSummary = {
+  organization_id: string | null;
+  fallback_total: number;
+  primary_failure_total: number;
+  providers: CountItem[];
+  recent_events: ModelFallbackEvent[];
+};
+
 export type ModelHealth = {
   provider: string;
   model: string;
@@ -98,6 +120,40 @@ export type WarmPool = {
   failed: number;
   hit_total: number;
   miss_total: number;
+};
+
+export type SandboxQuotaUsage = {
+  organization_id: string | null;
+  configured_memory_mb: number;
+  configured_cpus: string;
+  configured_workspace_quota_mb: number;
+  configured_network_enabled: boolean;
+  configured_network_allowlist: string[];
+  sandbox_total: number;
+  running_total: number;
+  destroyed_total: number;
+  memory_limit_mb_total: number;
+  running_memory_limit_mb_total: number;
+  cpu_limit_total: number;
+  running_cpu_limit_total: number;
+  network_enabled_total: number;
+  warm_pool_reused_total: number;
+  latest_created_at: string | null;
+};
+
+export type SandboxQuotaHistoryItem = {
+  id: string;
+  task_id: string;
+  container_id: string;
+  status: string;
+  cpu_limit: string;
+  cpu_limit_value: number;
+  memory_limit_mb: number;
+  network_enabled: boolean;
+  warm_pool_reused: boolean;
+  lifetime_seconds: number | null;
+  created_at: string;
+  destroyed_at: string | null;
 };
 
 export type CountItem = {
@@ -264,8 +320,26 @@ export type SubagentRecoveryResponse = {
     action: string;
     reason: string;
     replay_status: string | null;
+    takeover_generation: number | null;
+    takeover_owner: string | null;
+    takeover_at: string | null;
   }>;
   completed_at: string;
+};
+
+export type SubagentBulkActionResult = {
+  action: string;
+  requested_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  items: Array<{
+    id: string;
+    previous_status: string | null;
+    status: string | null;
+    action: string;
+    success: boolean;
+    error_message: string | null;
+  }>;
 };
 
 export type SubagentRecoveryBatch = SubagentRecoveryResponse & {
@@ -458,12 +532,18 @@ export type StepResumeResult = {
 
 export type ModelCall = {
   id: string;
+  task_id: string;
+  agent_run_id: string | null;
+  trace_id: string | null;
   model_provider: string;
   model_name: string;
   status: string;
   prompt_tokens: number;
   completion_tokens: number;
   duration_ms: number;
+  request_json: Record<string, unknown>;
+  response_json: Record<string, unknown>;
+  error_message: string | null;
   created_at: string;
 };
 
@@ -629,6 +709,13 @@ export async function cancelSubagent(subagentId: string) {
   return request<Subagent>(`/api/subagents/${subagentId}/cancel`, { method: "POST" });
 }
 
+export async function bulkCancelSubagents(subagentIds: string[]) {
+  return request<SubagentBulkActionResult>("/api/subagents/bulk", {
+    method: "POST",
+    body: JSON.stringify({ action: "cancel", subagent_ids: subagentIds }),
+  });
+}
+
 export async function listTaskSubagentRecoveryBatches(taskId: string) {
   return request<{ items: SubagentRecoveryBatch[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/subagents/recovery-batches`,
@@ -691,12 +778,26 @@ export async function getModelHealth() {
   return request<ModelHealthPage>("/api/settings/models/health");
 }
 
+export async function getModelFallbackSummary(limit = 20) {
+  return request<ModelFallbackSummary>(`/api/settings/models/fallbacks?limit=${limit}`);
+}
+
 export async function getPolicySettings() {
   return request<PolicySettings>("/api/settings/policies");
 }
 
 export async function getWarmPool() {
   return request<WarmPool>("/api/sandboxes/warm-pool");
+}
+
+export async function getSandboxQuotaUsage() {
+  return request<SandboxQuotaUsage>("/api/sandboxes/quota/usage");
+}
+
+export async function listSandboxQuotaHistory(limit = 100) {
+  return request<{ items: SandboxQuotaHistoryItem[]; next_cursor: string | null }>(
+    `/api/sandboxes/quota/history?limit=${limit}`,
+  );
 }
 
 export async function getObservabilitySummary() {

@@ -21,6 +21,7 @@ from app.observability.metrics import (
     model_call_duration_seconds,
     model_call_errors_total,
     model_calls_total,
+    model_fallback_total,
     model_tokens_input_total,
     model_tokens_output_total,
 )
@@ -516,21 +517,32 @@ class AuditedModelGateway:
         fallback_requests: list[ModelRequest] | None = None,
     ) -> ModelResponse:
         fallbacks = fallback_requests or []
+        primary_error: str | None = None
         try:
             return self._attempt(request_payload)
-        except ModelGatewayError:
+        except ModelGatewayError as exc:
+            primary_error = str(exc)
             if not fallbacks:
                 raise
 
         last_error: ModelGatewayError | None = None
-        for fallback in fallbacks:
+        for fallback_index, fallback in enumerate(fallbacks, start=1):
+            model_fallback_total.labels(
+                primary_provider=request_payload.model_provider,
+                fallback_provider=fallback.model_provider,
+            ).inc()
             self.event_store.append(
                 task_id=self.task_id,
                 agent_run_id=self.agent_run_id,
                 event_type=EventType.MODEL_FALLBACK_USED,
                 payload_json={
+                    "primary_model_provider": request_payload.model_provider,
+                    "primary_model_name": request_payload.model_name,
                     "model_provider": fallback.model_provider,
                     "model_name": fallback.model_name,
+                    "fallback_index": fallback_index,
+                    "fallback_count": len(fallbacks),
+                    "reason": primary_error,
                 },
             )
             try:

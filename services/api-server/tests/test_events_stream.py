@@ -48,6 +48,33 @@ def test_sse_stream_accepts_last_event_id_header() -> None:
     assert "TASK_CREATED" not in response.text
 
 
+def test_sse_after_sequence_overrides_last_event_id_for_reconnect() -> None:
+    client = TestClient(app)
+    task_id = create_started_task(client)
+
+    response = client.get(
+        f"/api/tasks/{task_id}/events/stream?after_sequence=2&once=true",
+        headers={**AUTH_HEADERS, "Last-Event-ID": "1"},
+    )
+
+    assert response.status_code == 200
+    assert "PLAN_GENERATED" in response.text
+    assert "PLAN_REQUESTED" not in response.text
+
+
+def test_sse_invalid_last_event_id_falls_back_to_full_stream() -> None:
+    client = TestClient(app)
+    task_id = create_started_task(client)
+
+    response = client.get(
+        f"/api/tasks/{task_id}/events/stream?once=true",
+        headers={**AUTH_HEADERS, "Last-Event-ID": "not-a-sequence"},
+    )
+
+    assert response.status_code == 200
+    assert "TASK_CREATED" in response.text
+
+
 def test_sse_stream_emits_heartbeat_when_no_new_events() -> None:
     client = TestClient(app)
     task_id = create_started_task(client)

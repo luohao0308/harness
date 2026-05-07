@@ -14,6 +14,7 @@
 | 执行工具 | `/tasks/:taskId` | 按策略执行工具并写入审计 |
 | 查看指标 | `/observability` | 查看模型和工具汇总指标 |
 | 管理策略 | `/settings/models`、`/settings/policies` | 调整模型网关和工具策略 |
+| 查看 fallback 策略观测 | `/settings/models` | 查看主模型失败、fallback 分布和最近切换事件 |
 
 ## 后端契约
 
@@ -21,6 +22,7 @@
 GET  /api/tasks/{task_id}/model-calls
 GET  /api/tasks/{task_id}/tool-calls?tool_name=&status=&risk_level=&trace_id=&limit=
 POST /api/tasks/{task_id}/tools/execute
+GET  /api/settings/models/fallbacks
 ```
 
 ## 前端入口
@@ -31,6 +33,7 @@ POST /api/tasks/{task_id}/tools/execute
 | `/observability?trace_id=` | Observability Trace | 从工具审计跳转 Trace 链路 |
 | `/observability` | Observability Summary | 模型与工具指标 |
 | `/settings/models` | Settings API | 模型供应商、模型、限流、健康状态 |
+| `/settings/models` | Model Fallback API | fallback 次数、主模型失败次数、供应商分布和 Trace 深链 |
 | `/settings/policies` | Settings API | 工具风险、审批、沙箱、审计要求 |
 
 ## 数据模型
@@ -93,6 +96,7 @@ TOOL_CALLED -> TOOL_TIMEOUT
 model_calls_total
 model_call_duration_seconds
 model_call_errors_total
+model_fallback_total
 model_tokens_input_total
 model_tokens_output_total
 tool_calls_total
@@ -127,22 +131,27 @@ tool_policy_denied_total
 | 模型调用成功审计 | 已落地 | `model_calls` |
 | 模型调用失败审计 | 已落地 | `model_calls` |
 | 模型 fallback 事件 | 已落地 | `MODEL_FALLBACK_USED` |
+| 模型 fallback 策略观测 | 已落地 | `GET /api/settings/models/fallbacks` 返回 fallback 总数、主模型失败、供应商分布和最近事件 |
+| 模型审计 Trace | 已落地 | `GET /api/tasks/{task_id}/model-calls` 返回 `trace_id`、请求摘要、响应预览和错误信息 |
 | 工具产物摘要 | 基础落地 | Result API 从工具结果派生 Subagent `artifacts[]` |
 | 工具结果解析 | 基础落地 | Tool Call API 返回 `output_kind`、`output_summary` 和 `timeout_category` |
 | 控制台工具审计详情 | 基础落地 | 控制台展示工具输出类型、输出摘要、沙箱标记、风险等级和超时分类 |
 | 工具审计筛选和深链 | 已落地 | `GET /api/tasks/{task_id}/tool-calls` 支持 `tool_name`、`status`、`risk_level`、`trace_id` 和 `limit`；响应返回 `trace_id`；控制台可跳转任务事件和观测 Trace |
+| 控制台审计详情验收测试 | 已落地 | 后端自动验收覆盖模型 trace、请求摘要、响应预览、工具输入、工具输出、输出类型和输出摘要 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 控制台审计详情验收测试 | 页面能力已有实现，自动验收仍需增强 | 覆盖模型审计、工具审计和策略拒绝展示 |
+| 控制台审计详情验收测试 | 已落地，模型审计和工具审计详情字段已进入自动验收 | 保持策略拒绝场景回归 |
+| fallback 策略观测 | 已落地，设置页展示 fallback 总数、主模型失败和最近事件 | 保持多供应商回归 |
 
 ## 实现顺序
 
 ```text
 1. 保持审计表与 OpenAPI 同步
-2. 补控制台审计详情验收测试
+2. 固化控制台审计详情验收测试
+3. 固化 fallback 策略观测
 ```
 
 ## 验收标准
@@ -157,4 +166,7 @@ tool_policy_denied_total
 - 工具审计响应必须返回关联 `trace_id`。
 - 控制台工具审计必须能跳转任务事件和观测 Trace。
 - 控制台展示模型 TPM、健康探测和供应商熔断状态。
+- 控制台展示模型 fallback 次数、主模型失败次数和最近切换事件。
+- 模型 fallback 必须写入 `MODEL_FALLBACK_USED` 事件和 `model_fallback_total` 指标。
+- 模型审计响应必须返回 `trace_id`、`request_json`、`response_json` 和 `error_message`。
 - 高风险工具必须经过策略检查和沙箱路径。

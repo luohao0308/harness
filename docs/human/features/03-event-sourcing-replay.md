@@ -69,6 +69,8 @@ POST /api/tasks/{task_id}/subagents/recover
 事件禁止 delete。
 SSE 支持 after_sequence。
 SSE 支持 Last-Event-ID。
+after_sequence 优先级高于 Last-Event-ID。
+Last-Event-ID 非数字时从头读取。
 Replay 本身不写历史事件。
 Resume 写入 TASK_RESUMED。
 Step Resume 写入 STEP_RETRIED 与 STEP_SKIPPED。
@@ -112,12 +114,15 @@ agent_subagent_recovery_last_recovered
 | Worker 恢复批次历史 | 已落地 | `GET /api/tasks/{task_id}/subagents/recovery-batches` 查询持久化批次 |
 | Worker 恢复指标 | 已落地 | `subagent-recovery:9102/metrics` 输出恢复动作、巡检次数和最近恢复数量 |
 | Worker 恢复告警 | 已落地 | `deploy/monitoring/alert-rules.yml` |
+| Replay 并发测试 | 已落地 | 并发写入后按 sequence=5 重放，并从 after_sequence=5 续读 6-10 |
+| SSE 断线重连测试 | 已落地 | 覆盖 after_sequence、Last-Event-ID、优先级和非法 Last-Event-ID 回退 |
 
 ## 缺口
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Worker 级恢复编排 | 当前已支持恢复锁、批次详情、批次历史、超时标记、卡住 worker 重置、巡检函数、Compose 服务、Prometheus 指标和告警规则 | 增强批次筛选和跨任务汇总 |
+| Worker 级恢复编排 | 当前已支持恢复锁、批次详情、批次历史、超时标记、卡住 worker 接管、巡检函数、Compose 服务、Prometheus 指标和告警规则 | 保持批次筛选和跨任务汇总 |
+| Replay 并发与断线重连 | 已落地，自动测试覆盖并发写入、指定序号重放和 SSE 重连优先级 | 保持高并发回归 |
 
 ## 实现顺序
 
@@ -125,13 +130,15 @@ agent_subagent_recovery_last_recovered
 1. 保持事件枚举与 OpenAPI 同步
 2. 保持 snapshot 规则与 Replay service 同步
 3. 前端展示 sequence、payload 摘要和 failure point
-4. 补并发和断线重连测试
+4. 固化并发和断线重连测试
 ```
 
 ## 验收标准
 
 - 并发写入 sequence 不冲突。
 - 断线重连不丢事件。
+- after_sequence 必须优先于 Last-Event-ID。
+- Last-Event-ID 非数字时必须回退到完整事件流。
 - Replay 指定 sequence 返回状态摘要。
 - 失败任务返回 failure point。
 - 第 100 个事件生成 task snapshot。
