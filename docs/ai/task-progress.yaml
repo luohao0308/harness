@@ -579,6 +579,7 @@ stages:
       - apps/web-site/public/openapi.yaml
       - apps/web-site/tailwind.config.ts
       - apps/web-site/tsconfig.json
+      - README.md
       - apps/agent-console/src/app/routes.tsx
       - apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx
       - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
@@ -602,6 +603,7 @@ stages:
       - docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md
       - docs/api/openapi.json
       - docs/api/openapi.yaml
+      - docs/human/06-backend-runtime.md
       - docs/human/07-deployment-operations.md
       - docs/human/10-task-progress.md
       - docs/human/features/04-subagent-orchestration.md
@@ -624,8 +626,8 @@ stages:
       - bash scripts/check-docs.sh
     verification_result: passed
     branch: stage/stage-13-website-code-integration
-    commit_sha: dd09a57bf8c91ac77c0350ccc8b584e4ff324311
+    commit_sha: 9802f9c2e964de2ca7d09993eb4e7b21b21d8d02
     pr_url: https://github.com/luohao0308/harness/pull/11
     merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, observability export retention, queue chart, span attribute search, step-level resume, and synchronized Spec coverage."
+    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Final polish added the subagent detail console route, subagent result artifact drilldown, Chinese-first website console deep links, organization-level subagent recovery operations summary, organization-level subagent batch status filtering, logs and Trace deep search, Grafana dashboard and service health admin/operator RBAC, observability export APIs, console download entry, tool audit filters, tool audit Trace deep links, sandbox dynamic resources, network allowlist, observability export retention, queue chart, span attribute search, step-level resume, global subagent recovery summary and export, and synchronized Spec coverage."
     next_stage: completed
