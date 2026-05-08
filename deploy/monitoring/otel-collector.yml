@@ -9,11 +9,21 @@ receivers:
 processors:
   batch:
 
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
 exporters:
   debug:
     verbosity: basic
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
 
 service:
+  extensions:
+    - health_check
   pipelines:
     traces:
       receivers:
@@ -22,3 +32,4 @@ service:
         - batch
       exporters:
         - debug
+        - otlp/tempo

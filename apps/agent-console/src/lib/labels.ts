@@ -11,7 +11,13 @@ const statusLabels: Record<string, string> = {
   PENDING: "待处理",
   TIMEOUT: "超时",
   healthy: "健康",
+  degraded: "降级",
   unhealthy: "异常",
+  open: "已熔断",
+  closed: "未熔断",
+  mock: "本地模拟",
+  probe: "主动探测",
+  configured: "配置状态",
 };
 
 const eventLabels: Record<string, string> = {
@@ -99,6 +105,10 @@ const settingsKeyLabels: Record<string, string> = {
   deny_on_missing_policy: "缺失策略时拒绝",
   default_network: "默认网络",
   default_timeout_seconds: "默认超时秒数",
+  memory_mb: "内存 MB",
+  cpus: "CPU",
+  workspace_quota_mb: "工作区配额 MB",
+  network_allowlist: "网络白名单",
   model_calls: "模型调用审计",
   tool_calls: "工具调用审计",
   policy_actions: "策略动作审计",
@@ -106,6 +116,44 @@ const settingsKeyLabels: Record<string, string> = {
   tpm: "每分钟 Token 数",
   status: "状态",
   updated_at: "更新时间",
+};
+
+const executionModeLabels: Record<string, string> = {
+  sync: "同步执行",
+  async: "异步执行",
+};
+
+const plannerSourceLabels: Record<string, string> = {
+  llm: "LLM 计划",
+  llm_repaired: "LLM 修复计划",
+  deterministic: "确定性计划",
+};
+
+const planDiffLabels: Record<string, string> = {
+  added: "新增",
+  changed: "变更",
+  removed: "移除",
+  unchanged: "未变更",
+};
+
+const toolOutputKindLabels: Record<string, string> = {
+  file_content: "文件内容",
+  file_list: "文件列表",
+  file_write: "文件写入",
+  shell_result: "命令结果",
+  http_response: "HTTP 响应",
+  policy_denied: "策略拒绝",
+  timeout: "工具超时",
+  error: "执行错误",
+  empty: "无输出",
+  json: "JSON 输出",
+  unknown: "未知输出",
+};
+
+const timeoutCategoryLabels: Record<string, string> = {
+  sandbox_command_timeout: "沙箱命令超时",
+  tool_timeout: "工具执行超时",
+  unknown_timeout: "未知超时",
 };
 
 export function statusLabel(status: string) {
@@ -148,4 +196,24 @@ export function environmentLabel(environment: string) {
 
 export function settingsKeyLabel(key: string) {
   return settingsKeyLabels[key] ?? key;
+}
+
+export function executionModeLabel(mode: string) {
+  return executionModeLabels[mode] ?? mode;
+}
+
+export function plannerSourceLabel(source: string) {
+  return plannerSourceLabels[source] ?? source;
+}
+
+export function planDiffLabel(changeType: string) {
+  return planDiffLabels[changeType] ?? changeType;
+}
+
+export function toolOutputKindLabel(kind: string) {
+  return toolOutputKindLabels[kind] ?? kind;
+}
+
+export function timeoutCategoryLabel(category: string | null | undefined) {
+  return category ? (timeoutCategoryLabels[category] ?? category) : "无超时";
 }

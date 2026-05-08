@@ -12,16 +12,15 @@ docs/ai/reference/architecture-and-decisions.md
 
 | 技术 | 执行文档 |
 |---|---|
-| GitHub 与 Git | [02-stage-01-git-github.md](../ai/02-stage-01-git-github.md) |
-| Figma | [03-stage-02-figma-design.md](../ai/03-stage-02-figma-design.md) |
-| 仓库脚手架 | [04-stage-03-repository-scaffold.md](../ai/04-stage-03-repository-scaffold.md) |
-| FastAPI | [05-stage-04-backend-foundation.md](../ai/05-stage-04-backend-foundation.md) |
-| Task 与 Event Store | [06-stage-05-task-event-store.md](../ai/06-stage-05-task-event-store.md) |
-| Planner 与 Executor | [07-stage-06-planner-executor.md](../ai/07-stage-06-planner-executor.md) |
-| React 控制台 | [08-stage-07-react-console.md](../ai/08-stage-07-react-console.md) |
-| Dramatiq Subagent | [09-stage-08-dramatiq-subagent.md](../ai/09-stage-08-dramatiq-subagent.md) |
-| Docker Sandbox 与 WarmPool | [10-stage-09-sandbox-warmpool.md](../ai/10-stage-09-sandbox-warmpool.md) |
-| 监控、日志、部署 | [11-stage-10-observability-deployment.md](../ai/11-stage-10-observability-deployment.md) |
+| Agent Graph Runtime | [01-agent-graph-runtime.md](../ai/stages/01-agent-graph-runtime.md) |
+| Event Store + Recovery | [02-event-store-recovery.md](../ai/stages/02-event-store-recovery.md) |
+| Agent Run Console | [03-agent-run-console.md](../ai/stages/03-agent-run-console.md) |
+| Tool / MCP Runtime | [04-tool-mcp-runtime.md](../ai/stages/04-tool-mcp-runtime.md) |
+| Guardrail / Policy Engine | [05-guardrail-policy-engine.md](../ai/stages/05-guardrail-policy-engine.md) |
+| Eval Harness | [06-eval-harness.md](../ai/stages/06-eval-harness.md) |
+| Memory / Context / Model Routing | [07-memory-context-router.md](../ai/stages/07-memory-context-router.md) |
+| WarmPool + Benchmark | [08-warmpool-benchmark.md](../ai/stages/08-warmpool-benchmark.md) |
+| Portfolio Demo + Docs | [09-portfolio-demo-docs.md](../ai/stages/09-portfolio-demo-docs.md) |
 
 ## 机器契约
 
@@ -51,4 +50,3 @@ docs/ai/reference/architecture-and-decisions.md
 | 测试策略 | [test-strategy.md](../qa/test-strategy.md) |
 | 端到端演示 | [e2e-demo-script.md](../demo/e2e-demo-script.md) |
 | Prompt Eval | [prompt-eval-runbook.md](../evals/prompt-eval-runbook.md) |
-

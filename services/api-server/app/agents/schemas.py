@@ -10,11 +10,22 @@ class PlanStep(BaseModel):
     requires_sandbox: bool
     can_spawn_subagent: bool
     expected_events: list[str] = Field(default_factory=lambda: ["STEP_STARTED", "STEP_COMPLETED"])
+    tool_hints: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    risk_level: Literal["low", "medium", "high", "critical"] = "low"
+    artifact_expectations: list[str] = Field(default_factory=list)
+    quality_notes: list[str] = Field(default_factory=list)
 
 
 class ExecutionPlan(BaseModel):
     summary: str = Field(min_length=1)
     steps: list[PlanStep] = Field(min_length=1)
+    planner_source: Literal["llm", "llm_repaired", "deterministic"] = "deterministic"
+    planner_attempts: int = Field(default=1, ge=1)
+    planner_prompt_version: str = "1.1.0"
+    quality_score: int = Field(default=100, ge=0, le=100)
+    validation_warnings: list[str] = Field(default_factory=list)
+    quality_gates: dict[str, bool] = Field(default_factory=dict)
 
     model_config = ConfigDict(extra="forbid")
 

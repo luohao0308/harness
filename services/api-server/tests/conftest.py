@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 
+from app.agents.model_gateway import ModelCircuitBreaker, ModelRateLimiter  # noqa: E402
 from app.db.models import Base  # noqa: E402
 from app.db.session import get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -33,6 +34,9 @@ def db_session() -> Generator[Session, None, None]:
 
 @pytest.fixture(autouse=True)
 def override_db_session(db_session: Session) -> Generator[None, None, None]:
+    ModelCircuitBreaker.clear()
+    ModelRateLimiter.clear()
+
     def _get_db_session() -> Generator[Session, None, None]:
         yield db_session
 
@@ -40,4 +44,6 @@ def override_db_session(db_session: Session) -> Generator[None, None, None]:
     try:
         yield
     finally:
+        ModelCircuitBreaker.clear()
+        ModelRateLimiter.clear()
         app.dependency_overrides.clear()

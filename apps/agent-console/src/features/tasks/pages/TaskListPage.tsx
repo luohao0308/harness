@@ -7,24 +7,42 @@ import { Dot } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { useI18n } from "../../../lib/i18n";
 import { enabledLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { listTasks } from "../api";
+import { getObservabilitySummary, listTasks } from "../api";
 import { TaskStatusBadge } from "../components/TaskStatusBadge";
 
-const statCards = [
-  ["运行任务", "12", "较 1 小时前 +3", "running"],
-  ["今日失败", "4", "失败率 0.6%", "failed"],
-  ["平均耗时", "6m 12s", "p95 18m", "neutral"],
-  ["WarmPool 命中率", "94.2%", "目标 >= 90%", "success"],
-] as const;
-
 export function TaskListPage() {
+  const { text } = useI18n();
   const tasksQuery = useQuery({ queryKey: ["tasks"], queryFn: listTasks });
+  const summaryQuery = useQuery({ queryKey: ["observability-summary"], queryFn: getObservabilitySummary });
   const tasks = tasksQuery.data?.items ?? [];
+  const summary = summaryQuery.data;
+  const runningTasks =
+    summary?.tasks_by_status.find((item) => item.name === "RUNNING")?.count ?? 0;
+  const failedTasks = summary?.failed_task_total ?? 0;
+  const warmPoolHitTotal = summary?.warm_pool.hit_total ?? 0;
+  const warmPoolMissTotal = summary?.warm_pool.miss_total ?? 0;
+  const warmPoolRequests = warmPoolHitTotal + warmPoolMissTotal;
+  const warmPoolHitRate =
+    warmPoolRequests > 0 ? `${Math.round((warmPoolHitTotal / warmPoolRequests) * 100)}%` : "0%";
+  const statCards = [
+    [text("运行任务", "Running runs"), String(runningTasks), text("来自后端状态投影", "From backend projection"), "running"],
+    [text("失败任务", "Failed runs"), String(failedTasks), text("来自 Event Store / Task 表", "From Event Store / Task table"), "failed"],
+    [text("工具调用", "Tool calls"), String(summary?.tool_call_total ?? 0), text("真实审计记录", "Real audit records"), "neutral"],
+    [text("WarmPool 命中率", "WarmPool hit rate"), warmPoolHitRate, text(`${warmPoolHitTotal}/${warmPoolRequests} 次复用`, `${warmPoolHitTotal}/${warmPoolRequests} reused`), "success"],
+  ] as const;
+  const filters = [
+    text("状态：全部", "Status: all"),
+    text("负责人：全部", "Owner: all"),
+    text("模型：全部", "Model: all"),
+    text("创建：24h", "Created: 24h"),
+    text("沙箱：已启用", "Sandbox: enabled"),
+  ];
 
   return (
-    <ConsoleShell title="任务">
+    <ConsoleShell title={text("任务", "Tasks")}>
       <div className="mx-auto max-w-[1440px] p-6">
         <div className="mb-5 grid grid-cols-4 gap-3">
           {statCards.map(([title, value, subtitle, tone]) => (
@@ -41,16 +59,16 @@ export function TaskListPage() {
 
         <div className="mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs">
-            {["状态：全部", "负责人：全部", "模型：全部", "创建：24h", "沙箱：已启用"].map(
-              (filter) => (
-                <Button key={filter} className="gap-1.5">
-                  <Filter className="h-3 w-3" /> {filter}
-                </Button>
-              ),
-            )}
+            {filters.map((filter) => (
+              <Button key={filter} className="gap-1.5">
+                <Filter className="h-3 w-3" /> {filter}
+              </Button>
+            ))}
           </div>
           <span className="text-xs text-slate-500">
-            {tasksQuery.isLoading ? "任务加载中..." : `当前显示 ${tasks.length} 个任务`}
+            {tasksQuery.isLoading
+              ? text("任务加载中...", "Loading tasks...")
+              : text(`当前显示 ${tasks.length} 个任务`, `${tasks.length} tasks shown`)}
           </span>
         </div>
 
@@ -58,13 +76,13 @@ export function TaskListPage() {
           <Table>
             <thead className="bg-slate-50 text-slate-500">
               <tr>
-                <Th>任务名称</Th>
-                <Th>状态</Th>
-                <Th>模型</Th>
-                <Th>沙箱</Th>
-                <Th>网络</Th>
-                <Th>创建时间</Th>
-                <Th>更新时间</Th>
+                <Th>{text("任务名称", "Task")}</Th>
+                <Th>{text("状态", "Status")}</Th>
+                <Th>{text("模型", "Model")}</Th>
+                <Th>{text("沙箱", "Sandbox")}</Th>
+                <Th>{text("网络", "Network")}</Th>
+                <Th>{text("创建时间", "Created")}</Th>
+                <Th>{text("更新时间", "Updated")}</Th>
                 <Th />
               </tr>
             </thead>
@@ -107,17 +125,20 @@ export function TaskListPage() {
               {!tasksQuery.isLoading && tasks.length === 0 && (
                 <tr>
                   <Td colSpan={8} className="py-12 text-center text-slate-500">
-                    暂无任务。创建任务后将在这里看到事件流。
+                    {text(
+                      "暂无任务。创建任务后将在这里看到事件流。",
+                      "No tasks yet. Create a task to see its event stream here.",
+                    )}
                   </Td>
                 </tr>
               )}
             </tbody>
           </Table>
           <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/40 px-3 py-2 text-[11px] text-slate-500">
-            <span>通过查询缓存失效自动刷新</span>
+            <span>{text("通过查询缓存失效自动刷新", "Auto-refreshes when query cache is invalidated")}</span>
             <div className="flex gap-1">
-              <Button>上一页</Button>
-              <Button>下一页</Button>
+              <Button>{text("上一页", "Previous")}</Button>
+              <Button>{text("下一页", "Next")}</Button>
             </div>
           </div>
         </Card>

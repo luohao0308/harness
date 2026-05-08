@@ -8,10 +8,10 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_DEV_BEARER_TOKEN=$VITE_DEV_BEARER_TOKEN
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
-RUN npm run build
+RUN npm run build:docker
 
 FROM nginx:1.27-alpine
 

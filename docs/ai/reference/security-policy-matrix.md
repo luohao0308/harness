@@ -45,12 +45,25 @@ service_account
 | git_command | high | true | restricted | admin, engineer | elevated |
 | secret_read | critical | true | none | owner, admin | critical |
 
+## Runtime Settings Binding
+
+```text
+settings_key: settings.policies
+runtime_reader: PolicyEngine
+decision_consumer: ToolRunner
+effective_fields: risk_levels, approvals, sandbox, audit
+sandbox_consumer: DockerManager, WarmPoolManager
+sandbox_effective_fields: default_network, default_timeout_seconds, memory_mb, cpus, workspace_quota_mb, network_allowlist
+```
+
 ## Sandbox Policy
 
 ```yaml
 default_network: none
 default_memory: 1024m
 default_cpus: "1.0"
+default_workspace_quota_mb: 1024
+network_allowlist: []
 default_user: non-root
 workspace_scope: task
 command_timeout_required: true
@@ -137,4 +150,3 @@ Secret access:
 ```text
 SECRET_ACCESSED
 ```
-

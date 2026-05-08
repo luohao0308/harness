@@ -1,8 +1,8 @@
-version: 1.0.0
+version: 1.1.0
 prompt_family: agent-harness
 prompts:
   planner:
-    version: 1.0.0
+    version: 1.1.0
     input_schema:
       goal: string
       context: object
@@ -12,6 +12,10 @@ prompts:
     output_schema:
       summary: string
       steps: array
+      steps[].tool_hints: array
+      steps[].acceptance_criteria: array
+      steps[].risk_level: string
+      steps[].artifact_expectations: array
     required_events:
       - PLAN_REQUESTED
       - PLAN_GENERATED
@@ -102,4 +106,3 @@ prompts:
       failure_point: object
       diagnosis: string
       next_debug_actions: array
-

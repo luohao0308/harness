@@ -118,6 +118,8 @@ warm_pool_target_acquire_ms: 50
 sandbox_default_network: none
 sandbox_default_memory: 1024m
 sandbox_default_cpus: 1.0
+sandbox_default_workspace_quota_mb: 1024
+sandbox_network_allowlist_default: []
 kubernetes_in_initial_delivery: false
 direct_host_command_execution: forbidden
 direct_model_sdk_usage_in_business_code: forbidden

@@ -16,9 +16,12 @@ jobs:
       - name: Check required AI docs
         run: |
           test -f docs/ai/README.md
+          test -f docs/ai/00-execution-protocol.md
           test -f docs/ai/01-task-progress.md
           test -f docs/ai/task-progress.yaml
           test -f docs/human/10-task-progress.md
+          test -f docs/ai/stages/01-agent-graph-runtime.md
+          test -f docs/ai/stages/09-portfolio-demo-docs.md
 
       - name: Check docs avoid loose wording
         run: |
@@ -26,7 +29,5 @@ jobs:
             exit 1
           fi
 
-      - name: Check stage terminology
-        run: |
-          grep -RIn "阶段 01" docs/ai/02-stage-01-git-github.md
-          grep -RIn "stage-01-git-github" docs/ai/task-progress.yaml
+      - name: Run Spec Mode docs validation
+        run: python3 scripts/validate-docs.py

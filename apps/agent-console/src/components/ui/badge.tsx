@@ -24,6 +24,7 @@ export function statusTone(status: string): BadgeTone {
     WAITING_SUBAGENTS: "warning",
     WAITING_SUBAGENT: "warning",
     PENDING: "pending",
+    QUEUED: "warning",
     TIMEOUT: "warning",
     PLAN_GENERATED: "success",
     PLAN_REQUESTED: "info",

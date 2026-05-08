@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import AgentEvent, TaskSnapshot
+from app.events.event_store import replay_events_to_state
 
 
 @dataclass(frozen=True)
@@ -23,31 +24,10 @@ class EventReplay:
         self.session = session
 
     def replay_task(self, *, task_id: str, sequence: int | None = None) -> ReplayState:
-        statement = select(AgentEvent).where(AgentEvent.task_id == task_id)
-        if sequence is not None:
-            statement = statement.where(AgentEvent.sequence <= sequence)
-        events = list(self.session.execute(statement.order_by(AgentEvent.sequence.asc())).scalars())
-
-        snapshot = self._latest_snapshot(task_id=task_id, sequence=sequence)
-        current_status = snapshot.state_json.get("status") if snapshot is not None else "UNKNOWN"
-        failure_point: dict | None = None
-        last_sequence = 0
-
-        for event in events:
-            last_sequence = event.sequence
-            if event.event_type in {"TASK_CREATED", "TASK_RESUMED"}:
-                current_status = "CREATED" if event.event_type == "TASK_CREATED" else "RUNNING"
-            if event.event_type == "TASK_CANCELLED":
-                current_status = "CANCELLED"
-            if event.event_type == "TASK_COMPLETED":
-                current_status = "COMPLETED"
-            if event.event_type in {"TASK_FAILED", "STEP_FAILED", "TOOL_FAILED"}:
-                current_status = "FAILED"
-                failure_point = {
-                    "sequence": event.sequence,
-                    "event_type": event.event_type,
-                    "payload": event.payload_json,
-                }
+        state = self.replay_state_json(task_id=task_id, sequence=sequence)
+        current_status = state["status"]
+        failure_point = state.get("failure_point")
+        last_sequence = int(state.get("last_sequence") or 0)
 
         effective_sequence = sequence or last_sequence
         diagnosis = "未发现失败事件。"
@@ -64,6 +44,23 @@ class EventReplay:
             diagnosis=diagnosis,
             requires_manual_review=requires_manual_review,
         )
+
+    def replay_state_json(self, *, task_id: str, sequence: int | None = None) -> dict:
+        snapshot = self._latest_snapshot(task_id=task_id, sequence=sequence)
+        statement = select(AgentEvent).where(AgentEvent.task_id == task_id)
+        if snapshot is not None:
+            statement = statement.where(AgentEvent.sequence > snapshot.sequence)
+        if sequence is not None:
+            statement = statement.where(AgentEvent.sequence <= sequence)
+        events = list(self.session.execute(statement.order_by(AgentEvent.sequence.asc())).scalars())
+
+        state = replay_events_to_state(
+            events=events,
+            initial_state=snapshot.state_json if snapshot is not None else None,
+        )
+        if snapshot is not None and not events:
+            state["last_sequence"] = snapshot.sequence
+        return state
 
     def _latest_snapshot(self, *, task_id: str, sequence: int | None) -> TaskSnapshot | None:
         statement = select(TaskSnapshot).where(TaskSnapshot.task_id == task_id)

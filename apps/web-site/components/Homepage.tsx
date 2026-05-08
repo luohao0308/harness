@@ -18,7 +18,7 @@ import {
 import Link from "next/link";
 import { MarketingShell } from "./MarketingShell";
 import { ConsolePreview } from "./ConsolePreview";
-import { siteLinks } from "./site-links";
+import { consolePath, siteLinks } from "./site-links";
 
 export function Homepage({ onNav }: { onNav?: (k: string) => void }) {
   return (
@@ -154,15 +154,15 @@ export function Homepage({ onNav }: { onNav?: (k: string) => void }) {
           <h2 className="text-slate-900 tracking-tight mb-8">十大已实现核心能力</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden">
             {[
-              { i: <ListChecks className="w-4 h-4" />, t: "Task Lifecycle", s: "创建 / 启动 / 取消 / 恢复 / 详情 / 列表" },
-              { i: <Database className="w-4 h-4" />, t: "Event Sourcing", s: "append-only 事件存储，可审计可重建" },
-              { i: <Play className="w-4 h-4" />, t: "Replay", s: "任意时刻重放任务状态，便于调试" },
-              { i: <GitBranch className="w-4 h-4" />, t: "Subagent", s: "并发上限 5，可查询、可取消" },
-              { i: <Box className="w-4 h-4" />, t: "Docker Sandbox", s: "查询、详情、终止，默认禁网" },
-              { i: <Zap className="w-4 h-4" />, t: "WarmPool", s: "状态查询，目标 < 50ms 启动" },
-              { i: <FileSearch className="w-4 h-4" />, t: "Model / Tool Audit", s: "Model Call、Tool Call 审计查询" },
-              { i: <SettingsIcon className="w-4 h-4" />, t: "Settings", s: "模型设置、策略设置查询/更新" },
-              { i: <Activity className="w-4 h-4" />, t: "Observability", s: "Prometheus /metrics、SSE 实时事件" },
+              { i: <ListChecks className="w-4 h-4" />, t: "任务生命周期", s: "创建 / 启动 / 取消 / 恢复 / 详情 / 列表" },
+              { i: <Database className="w-4 h-4" />, t: "事件溯源", s: "append-only 事件存储，可审计可重建" },
+              { i: <Play className="w-4 h-4" />, t: "Replay 调试", s: "任意时刻重放任务状态，便于调试" },
+              { i: <GitBranch className="w-4 h-4" />, t: "Subagent 编排", s: "并发上限 5，可查询、可取消、可看结果产物" },
+              { i: <Box className="w-4 h-4" />, t: "Docker 沙箱", s: "查询、详情、终止，默认禁网" },
+              { i: <Zap className="w-4 h-4" />, t: "WarmPool 预热池", s: "状态查询，目标 < 50ms 启动" },
+              { i: <FileSearch className="w-4 h-4" />, t: "模型与工具审计", s: "Model Call、Tool Call 审计查询" },
+              { i: <SettingsIcon className="w-4 h-4" />, t: "运行设置", s: "模型设置、策略设置查询/更新" },
+              { i: <Activity className="w-4 h-4" />, t: "观测与运营", s: "Prometheus /metrics、SSE 实时事件" },
               { i: <FileJson className="w-4 h-4" />, t: "OpenAPI", s: "JSON / YAML 可导入 Swagger / Apifox" },
             ].map((c) => (
               <div key={c.t} className="bg-white p-5">
@@ -189,16 +189,17 @@ export function Homepage({ onNav }: { onNav?: (k: string) => void }) {
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
             {[
-              ["任务列表", <ListChecks className="w-4 h-4" />],
-              ["任务详情", <Workflow className="w-4 h-4" />],
-              ["事件时间线", <Activity className="w-4 h-4" />],
-              ["结果面板", <FileSearch className="w-4 h-4" />],
-              ["模型审计", <Brain className="w-4 h-4" />],
-              ["工具审计", <Wrench className="w-4 h-4" />],
-              ["Settings", <SettingsIcon className="w-4 h-4" />],
-            ].map(([t, ic]) => (
-              <div
+              ["任务列表", <ListChecks className="w-4 h-4" />, consolePath("/tasks")],
+              ["创建任务", <Workflow className="w-4 h-4" />, consolePath("/tasks/new")],
+              ["子 Agent", <GitBranch className="w-4 h-4" />, consolePath("/subagents")],
+              ["沙箱治理", <Box className="w-4 h-4" />, consolePath("/sandboxes")],
+              ["观测运营", <Activity className="w-4 h-4" />, consolePath("/observability")],
+              ["策略设置", <ShieldCheck className="w-4 h-4" />, consolePath("/settings/policies")],
+              ["模型设置", <Brain className="w-4 h-4" />, consolePath("/settings/models")],
+            ].map(([t, ic, href]) => (
+              <Link
                 key={t as string}
+                href={href as string}
                 className="bg-white border border-slate-200 rounded-lg p-3 hover:border-slate-300 transition-colors"
               >
                 <div className="w-7 h-7 rounded bg-slate-100 flex items-center justify-center text-slate-600 mb-2">
@@ -206,7 +207,7 @@ export function Homepage({ onNav }: { onNav?: (k: string) => void }) {
                 </div>
                 <div className="text-[12px] text-slate-900">{t as string}</div>
                 <div className="text-[10px] text-slate-500 mt-0.5">已上线</div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
