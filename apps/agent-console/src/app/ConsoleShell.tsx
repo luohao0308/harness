@@ -7,8 +7,10 @@ import {
   Box,
   Brain,
   ChevronDown,
+  FlaskConical,
   ListChecks,
   Plus,
+  PlugZap,
   Search,
   Settings,
   ShieldCheck,
@@ -20,10 +22,13 @@ import { environmentLabel } from "../lib/labels";
 import { cn } from "../lib/utils";
 
 const navItems = [
-  { to: "/tasks", label: "任务", en: "Tasks", icon: ListChecks },
-  { to: "/tasks/demo/subagents", label: "子 Agent", en: "Subagents", icon: Bot },
+  { to: "/agents", label: "Agent", en: "Agents", icon: Bot },
+  { to: "/tasks", label: "运行记录", en: "Runs", icon: ListChecks },
+  { to: "/subagents", label: "子 Agent", en: "Subagents", icon: Bot },
   { to: "/sandboxes", label: "沙箱", en: "Sandboxes", icon: Box },
+  { to: "/tools", label: "工具", en: "Tools", icon: PlugZap },
   { to: "/observability", label: "观测", en: "Observability", icon: Activity },
+  { to: "/evals", label: "评测", en: "Evals", icon: FlaskConical },
   { to: "/settings/policies", label: "策略", en: "Policies", icon: ShieldCheck },
   { to: "/settings/models", label: "模型", en: "Models", icon: Brain },
 ];
@@ -109,8 +114,8 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <Button variant="ghost" className="w-8 px-0" aria-label={isChinese ? "告警" : "Alerts"}>
               <Bell className="h-4 w-4" />
             </Button>
-            <Button variant="primary" onClick={() => navigate("/tasks/new")}>
-              <Plus className="h-3.5 w-3.5" /> {isChinese ? "创建任务" : "Create Task"}
+            <Button variant="primary" onClick={() => navigate("/agents/default/chat")}>
+              <Plus className="h-3.5 w-3.5" /> {isChinese ? "打开 Agent" : "Open Agent"}
             </Button>
             <div className="ml-1 flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700">
               LH

@@ -381,5 +381,5 @@ API 改动 -> 更新 docs/ai/reference/data-events-api.md
 技术栈改动 -> 更新 docs/ai/reference/architecture-and-decisions.md
 页面结构改动 -> 更新 docs/human/05-frontend-product.md 和 docs/ai/reference/frontend-spec.md
 部署改动 -> 更新 docs/human/07-deployment-operations.md 和 docs/ai/reference/runtime-deployment-spec.md
-Git 流程改动 -> 更新 docs/human/00-git-github-workflow.md 和 docs/ai/02-stage-01-git-github.md
+Git 流程改动 -> 更新 docs/human/00-git-github-workflow.md 和 docs/ai/task-progress.yaml
 ```

@@ -47,6 +47,8 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+      tempo:
+        condition: service_started
     environment:
       APP_ENV: production
       APP_BASE_URL: http://127.0.0.1:3000
@@ -55,8 +57,18 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      PROMETHEUS_BASE_URL: http://prometheus:9090
+      GRAFANA_BASE_URL: http://grafana:3000
+      GRAFANA_USERNAME: admin
+      GRAFANA_PASSWORD: admin
+      LOKI_BASE_URL: http://loki:3100
+      OTEL_COLLECTOR_HTTP_URL: http://otel-collector:13133
+      TEMPO_BASE_URL: http://tempo:3200
+      OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
     ports:
       - "8000:8000"
+    volumes:
+      - observability-exports:/var/lib/agent-harness/exports
 
   db-migrate:
     image: agent-harness-api-server:latest
@@ -83,10 +95,46 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     command: python -m dramatiq app.workers.subagent_worker
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+
+  agent-assignment-worker:
+    image: agent-harness-api-server:latest
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    command: python -m dramatiq app.workers.agent_assignment_worker --queues agent_assignments
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+
+  subagent-recovery:
+    image: agent-harness-api-server:latest
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    command: python -m app.workers.subagent_recovery_worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      SUBAGENT_RECOVERY_METRICS_PORT: 9102
+    expose:
+      - "9102"
 
   warm-pool:
     image: agent-harness-api-server:latest
@@ -157,6 +205,7 @@ services:
       - "${PROMETHEUS_PORT:-9091}:9090"
     volumes:
       - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
 
   grafana:
     image: grafana/grafana:11.3.0
@@ -165,8 +214,12 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: ""
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_ENABLE_ALPHA: "false"
     volumes:
       - ../monitoring/grafana-dashboard-agent-harness.json:/var/lib/grafana/dashboards/agent-harness.json:ro
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
 
   loki:
     image: grafana/loki:3.2.1
@@ -177,18 +230,40 @@ services:
       - ../monitoring/loki.yml:/etc/loki/loki.yml:ro
       - loki-data:/loki
 
+  promtail:
+    image: grafana/promtail:3.2.1
+    command: -config.file=/etc/promtail/promtail.yml
+    depends_on:
+      - loki
+    volumes:
+      - ../monitoring/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.113.0
+    depends_on:
+      - tempo
     command:
       - --config=/etc/otel-collector.yml
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "13133:13133"
     volumes:
       - ../monitoring/otel-collector.yml:/etc/otel-collector.yml:ro
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command:
+      - -config.file=/etc/tempo.yml
+    ports:
+      - "3200:3200"
+    volumes:
+      - ../monitoring/tempo.yml:/etc/tempo.yml:ro
 
 volumes:
   agent-workspaces:
   loki-data:
+  observability-exports:
   postgres-data:
   redis-data:

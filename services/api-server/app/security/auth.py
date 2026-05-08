@@ -25,6 +25,11 @@ DEV_TOKEN_PRINCIPALS = {
         organization_id="dev-org",
         roles=["engineer"],
     ),
+    "dev-operator-token": AuthenticatedPrincipal(
+        user_id="dev-operator",
+        organization_id="dev-org",
+        roles=["operator"],
+    ),
     "dev-other-org-token": AuthenticatedPrincipal(
         user_id="dev-other-engineer",
         organization_id="other-org",

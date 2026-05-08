@@ -16,6 +16,7 @@ export function Deployment({ onNav }: { onNav?: (k: string) => void }) {
     ["grafana", "运行时仪表盘", "3001", "active"],
     ["loki", "结构化日志聚合", "3100", "active"],
     ["otel-collector", "OpenTelemetry 接收转发", "4317", "active"],
+    ["tempo", "真实 Trace 存储与查询", "3200", "active"],
   ];
 
   return (
@@ -39,7 +40,7 @@ export function Deployment({ onNav }: { onNav?: (k: string) => void }) {
               <div className="text-[11px] tracking-widest text-slate-500 inline-flex items-center gap-1.5">
                 <Server className="w-3 h-3" /> COMPOSE 服务状态
               </div>
-              <span className="text-[10px] font-mono text-slate-400">12 services</span>
+              <span className="text-[10px] font-mono text-slate-400">13 services</span>
             </div>
             <table className="w-full text-[12px]">
               <thead className="bg-slate-50/60 text-slate-500">
@@ -94,6 +95,7 @@ export function Deployment({ onNav }: { onNav?: (k: string) => void }) {
                 <li>· Grafana 加载默认仪表盘</li>
                 <li>· Loki 接收 api / worker 日志</li>
                 <li>· otel-collector 统一上行链路</li>
+                <li>· Tempo 存储真实 Trace span</li>
               </ul>
             </div>
           </div>

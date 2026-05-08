@@ -157,6 +157,9 @@ model_tokens_output_total
 - Subagent 队列积压。
 - 沙箱启动失败。
 - WarmPool 命中率低于阈值。
+- Subagent 恢复服务不可用。
+- Subagent 恢复巡检未产生心跳。
+- Subagent 反复超时或重置。
 - API 错误率超过阈值。
 - PostgreSQL 连接数超过阈值。
 - Redis 不可用。

@@ -53,7 +53,23 @@ TOOL_TIMEOUT
 ```text
 机器契约：docs/ai/reference/tool-registry.yaml
 后端实现：services/api-server/app/tools/registry.py
+执行入口：services/api-server/app/tools/runner.py
+公开接口：POST /api/tasks/{task_id}/tools/execute
 策略实现：services/api-server/app/sandbox/policies.py
 审计实现：services/api-server/app/events/event_store.py
 ```
 
+## Current Runtime Coverage
+
+```text
+read_file: real workspace read
+list_files: real workspace listing
+write_file: sandbox command path
+run_shell: sandbox command path
+run_tests: sandbox command path
+network_request: sandbox command path, admin role only
+git_command: sandbox command path
+public_execute_api: task scoped tool execution with audit record
+policy_denied: writes POLICY_CHECKED, POLICY_DENIED, TOOL_DENIED_BY_POLICY
+policy_settings: risk level, approval, role and sandbox rules are read from system_settings
+```

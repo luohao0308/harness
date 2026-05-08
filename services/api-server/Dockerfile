@@ -6,11 +6,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml ./
+RUN python -c "import pathlib, tomllib; data = tomllib.loads(pathlib.Path('pyproject.toml').read_text()); pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(data['project']['dependencies']) + '\n')" \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
+
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-deps .
 
 EXPOSE 8000
 

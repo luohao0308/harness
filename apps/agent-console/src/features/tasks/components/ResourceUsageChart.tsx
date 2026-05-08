@@ -1,6 +1,7 @@
 import { Activity } from "lucide-react";
 
 import { Card, CardHeader } from "../../../components/ui/card";
+import { useI18n } from "../../../lib/i18n";
 
 export function ResourceUsageChart({
   modelCallCount,
@@ -9,6 +10,7 @@ export function ResourceUsageChart({
   modelCallCount: number;
   toolCallCount: number;
 }) {
+  const { text } = useI18n();
   const total = Math.max(modelCallCount + toolCallCount, 1);
   const modelWidth = Math.round((modelCallCount / total) * 100);
   const toolWidth = Math.round((toolCallCount / total) * 100);
@@ -17,12 +19,12 @@ export function ResourceUsageChart({
     <Card>
       <CardHeader>
         <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
-          <Activity className="h-3 w-3" /> 资源使用
+          <Activity className="h-3 w-3" /> {text("资源使用", "Resource Usage")}
         </div>
       </CardHeader>
       <div className="space-y-3 p-3 text-xs">
-        <Bar label="模型调用" value={modelCallCount} width={modelWidth} className="bg-cyan-500" />
-        <Bar label="工具调用" value={toolCallCount} width={toolWidth} className="bg-emerald-500" />
+        <Bar label={text("模型调用", "Model calls")} value={modelCallCount} width={modelWidth} className="bg-cyan-500" />
+        <Bar label={text("工具调用", "Tool calls")} value={toolCallCount} width={toolWidth} className="bg-emerald-500" />
       </div>
     </Card>
   );

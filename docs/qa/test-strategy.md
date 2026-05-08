@@ -63,8 +63,11 @@ Targets:
 
 ```text
 rebuild task state from events
+read latest task_snapshots before scanning events
+create task_snapshots every 100 events
 resume from stable step
 ignore completed steps during recovery
+write STEP_SKIPPED for completed steps during resume
 mark timed-out Subagents
 replace lost Sandbox
 ```

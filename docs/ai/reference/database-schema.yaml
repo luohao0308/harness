@@ -118,9 +118,116 @@ tables:
       sequence: bigint
       state_json: jsonb
       created_at: timestamptz
+  warm_pool_containers:
+    primary_key: id
+    columns:
+      id: uuid
+      container_id: text
+      image: text
+      status: text
+      locked_by: text nullable
+      task_id: uuid nullable
+      sandbox_id: uuid nullable
+      idle_since: timestamptz nullable
+      created_at: timestamptz
+      updated_at: timestamptz
+    unique_indexes:
+      - warm_pool_containers_container_id_uidx
+  model_calls:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+      agent_run_id: agent_runs.id
+    columns:
+      id: uuid
+      task_id: uuid
+      agent_run_id: uuid nullable
+      model_provider: text
+      model_name: text
+      status: text
+      prompt_tokens: integer
+      completion_tokens: integer
+      duration_ms: integer
+      request_json: jsonb
+      response_json: jsonb
+      error_message: text nullable
+      created_at: timestamptz
+    indexes:
+      - model_calls_task_id_idx
+  tool_calls:
+    primary_key: id
+    foreign_keys:
+      task_id: tasks.id
+      agent_run_id: agent_runs.id
+      sandbox_id: sandbox_instances.id
+    columns:
+      id: uuid
+      task_id: uuid
+      agent_run_id: uuid nullable
+      tool_name: text
+      status: text
+      risk_level: text
+      requires_sandbox: boolean
+      sandbox_id: uuid nullable
+      duration_ms: integer
+      input_json: jsonb
+      output_json: jsonb
+      error_message: text nullable
+      created_at: timestamptz
+    indexes:
+      - tool_calls_task_id_idx
+  admin_audit_events:
+    primary_key: id
+    columns:
+      id: uuid
+      organization_id: uuid nullable
+      actor_id: text nullable
+      event_type: text
+      resource_type: text
+      resource_id: text
+      action: text
+      payload_json: jsonb
+      created_at: timestamptz
+    indexes:
+      - admin_audit_events_org_idx
+      - admin_audit_events_event_type_idx
+  observability_export_records:
+    primary_key: id
+    columns:
+      id: uuid
+      organization_id: uuid nullable
+      actor_id: text nullable
+      export_type: text
+      filename: text
+      content_type: text
+      format: text
+      source: text
+      row_count: integer
+      filter_json: jsonb
+      storage_driver: text
+      storage_uri: text
+      size_bytes: integer
+      sha256: text
+      created_at: timestamptz
+    indexes:
+      - observability_export_records_organization_id_idx
+      - observability_export_records_export_type_idx
+  system_settings:
+    primary_key: id
+    columns:
+      id: uuid
+      organization_id: uuid nullable
+      key: text
+      value_json: jsonb
+      updated_by: text nullable
+      updated_at: timestamptz
+    unique_indexes:
+      - system_settings_org_key_uidx
+    indexes:
+      - system_settings_organization_id_idx
+      - system_settings_key_idx
 migration_rules:
   migration_tool: alembic
   downgrade_required: true
   event_store_append_only: true
   snapshot_frequency_events: 100
-

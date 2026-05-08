@@ -1,600 +1,118 @@
-current_stage: stage-13-website-code-integration
-current_status: ready_for_review
-last_updated_at: 2026-05-04T21:40:02Z
+current_stage: 09-portfolio-demo-docs
+current_status: completed
+last_updated_at: 2026-05-08T07:27:47Z
 last_updated_by: codex
-next_stage: completed
+execution_mode: spec_first_stage_gated_vertical_slice
+product: Production Agent Harness Platform
 
 stages:
-  - id: stage-01-git-github
-    document: docs/ai/02-stage-01-git-github.md
+  - id: 01-agent-graph-runtime
+    document: docs/ai/stages/01-agent-graph-runtime.md
     status: completed
-    started_at: 2026-05-04T11:41:43Z
-    completed_at: 2026-05-04T11:43:30Z
-    changed_files:
-      - .gitignore
-      - .github/pull_request_template.md
-      - .github/ISSUE_TEMPLATE/feature.yml
-      - .github/ISSUE_TEMPLATE/bug.yml
-      - .github/ISSUE_TEMPLATE/docs.yml
-      - .github/workflows/docs.yml
-      - .github/workflows/frontend.yml
-      - .github/workflows/backend.yml
-      - .github/workflows/docker.yml
-      - docs/ai/task-progress.yaml
-    verification_commands:
-      - git status --short
-      - test -f .gitignore
-      - test -f .github/pull_request_template.md
-      - test -f .github/ISSUE_TEMPLATE/feature.yml
-      - test -f .github/ISSUE_TEMPLATE/bug.yml
-      - test -f .github/ISSUE_TEMPLATE/docs.yml
-      - test -f .github/workflows/docs.yml
-      - test -f .github/workflows/frontend.yml
-      - test -f .github/workflows/backend.yml
-      - test -f .github/workflows/docker.yml
-      - git remote -v
+    demo: Agent Console input creates a plan, runs sync executor, spawns async branches, and displays status.
     verification_result: passed
-    branch: legacy_no_pr
-    commit_sha: legacy_no_pr
-    pr_url: legacy_no_pr
-    merged_at: legacy_no_pr
-    notes: "Git repository initialized on main branch and connected to https://github.com/luohao0308/harness.git. GitHub PR template, Issue templates, placeholder workflows, and expanded ignore rules are present. README.md already contains AI docs and GitHub workflow entry links."
-    next_stage: stage-02-figma-design
-
-  - id: stage-02-figma-design
-    document: docs/ai/03-stage-02-figma-design.md
-    status: completed
-    started_at: 2026-05-04T11:52:03Z
-    completed_at: 2026-05-04T11:53:41Z
-    changed_files:
-      - docs/design/figma-production-brief.md
-      - docs/design/design-tokens.json
-      - docs/design/page-inventory.md
-      - docs/ai/task-progress.yaml
     verification_commands:
-      - test -f docs/design/figma-production-brief.md
-      - test -f docs/design/design-tokens.json
-      - test -f docs/design/page-inventory.md
-      - rg -n "Task Detail|Event Timeline|Subagent|Sandbox|WarmPool|Next.js|React" docs/design
-    verification_result: passed
-    branch: legacy_no_pr
-    commit_sha: legacy_no_pr
-    pr_url: legacy_no_pr
-    merged_at: legacy_no_pr
-    notes: "Figma production brief, design tokens, and page inventory are complete for website and console design source requirements. Figma is documented as the design source of truth; Gemini/H5 outputs are restricted to reference use."
-    next_stage: stage-03-repository-scaffold
-
-  - id: stage-03-repository-scaffold
-    document: docs/ai/04-stage-03-repository-scaffold.md
-    status: completed
-    started_at: 2026-05-04T11:59:10Z
-    completed_at: 2026-05-04T12:00:18Z
-    changed_files:
-      - .env.example
-      - README.md
-      - apps/web-site/.env.example
-      - apps/agent-console/.env.example
-      - services/api-server/.env.example
-      - services/sandbox-worker/.gitkeep
-      - deploy/docker-compose/.env.example
-      - deploy/systemd/.gitkeep
-      - deploy/nginx/.gitkeep
-      - deploy/monitoring/.gitkeep
-      - scripts/check-docs.sh
-      - scripts/check-env.sh
-      - docs/ai/task-progress.yaml
-    verification_commands:
-      - test -d apps/web-site
-      - test -d apps/agent-console
-      - test -d services/api-server
-      - test -d services/sandbox-worker
-      - test -d deploy/docker-compose
-      - test -d deploy/systemd
-      - test -d deploy/nginx
-      - test -d deploy/monitoring
-      - test -d scripts
-      - test -f .env.example
-      - test -f services/api-server/.env.example
-      - test -f apps/web-site/.env.example
-      - test -f apps/agent-console/.env.example
-      - test -f deploy/docker-compose/.env.example
-      - test -x scripts/check-docs.sh
-      - test -x scripts/check-env.sh
-    verification_result: passed
-    branch: legacy_no_pr
-    commit_sha: legacy_no_pr
-    pr_url: legacy_no_pr
-    merged_at: legacy_no_pr
-    notes: "Fixed monorepo directories, environment examples, executable check scripts, and README project structure are present. No business logic was implemented."
-    next_stage: stage-04-backend-foundation
-
-  - id: stage-04-backend-foundation
-    document: docs/ai/05-stage-04-backend-foundation.md
-    status: completed
-    started_at: 2026-05-04T12:12:00Z
-    completed_at: 2026-05-04T12:23:53Z
-    changed_files:
-      - services/api-server/pyproject.toml
-      - services/api-server/app/__init__.py
-      - services/api-server/app/main.py
-      - services/api-server/app/api/__init__.py
-      - services/api-server/app/api/health.py
-      - services/api-server/app/core/__init__.py
-      - services/api-server/app/core/config.py
-      - services/api-server/app/core/logging.py
-      - services/api-server/app/db/__init__.py
-      - services/api-server/app/db/session.py
-      - services/api-server/tests/test_health.py
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd services/api-server && /Users/luohao/.local/bin/uv venv --python /Users/luohao/.local/bin/python3.11 .venv
-      - cd services/api-server && /Users/luohao/.local/bin/uv pip install -e '.[dev]'
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-      - curl --fail http://127.0.0.1:8000/health
-      - curl --fail http://127.0.0.1:8000/openapi.json
-    verification_result: passed
-    branch: stage/stage-04-backend-foundation
-    commit_sha: 7474e68e16d739b4c884f70cf4928079af175480
-    pr_url: https://github.com/luohao0308/harness/pull/2
-    merged_at: 2026-05-04T12:23:53Z
-    notes: "FastAPI backend foundation is implemented with Python 3.11 project metadata, settings, JSON logging, SQLAlchemy session, health route, OpenAPI generation, and health tests. PR was merged into develop."
-    next_stage: stage-05-task-event-store
-
-  - id: stage-05-task-event-store
-    document: docs/ai/06-stage-05-task-event-store.md
-    status: completed
-    started_at: 2026-05-04T12:24:30Z
-    completed_at: 2026-05-04T12:38:37Z
-    changed_files:
-      - services/api-server/alembic.ini
-      - services/api-server/alembic/env.py
-      - services/api-server/alembic/script.py.mako
-      - services/api-server/alembic/versions/20260504_0001_create_task_event_tables.py
-      - services/api-server/app/api/events.py
-      - services/api-server/app/api/schemas.py
-      - services/api-server/app/api/tasks.py
-      - services/api-server/app/db/models.py
-      - services/api-server/app/db/session.py
-      - services/api-server/app/events/__init__.py
-      - services/api-server/app/events/event_store.py
-      - services/api-server/app/events/event_types.py
-      - services/api-server/app/main.py
-      - services/api-server/tests/conftest.py
-      - services/api-server/tests/test_event_store.py
-      - services/api-server/tests/test_tasks.py
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage05_verify.db .venv/bin/alembic upgrade head
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage05_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-      - curl --fail -X POST http://127.0.0.1:8000/api/tasks -H "Content-Type: application/json" -d '{"title":"Demo","goal":"Analyze project","model_provider":"openai-compatible","model_name":"default","max_runtime_seconds":1800,"max_subagents":5,"enable_sandbox":true,"enable_network":false}'
-      - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events
-      - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events/stream
-    verification_result: passed
-    branch: stage/stage-05-task-event-store
-    commit_sha: c24064ff3cad1f9c3adfe717d248ef54f394867c
-    pr_url: https://github.com/luohao0308/harness/pull/3
-    merged_at: 2026-05-04T12:38:37Z
-    notes: "Task and Event Store foundation is implemented with SQLAlchemy models, Alembic migration, append-only EventStore, Task API, Events API, SSE endpoint, and tests proving TASK_CREATED sequence starts at 1. PR was merged into develop."
-    next_stage: stage-06-planner-executor
-
-  - id: stage-06-planner-executor
-    document: docs/ai/07-stage-06-planner-executor.md
-    status: completed
-    started_at: 2026-05-04T12:39:20Z
-    completed_at: 2026-05-04T12:48:59Z
-    changed_files:
-      - services/api-server/app/agents/__init__.py
-      - services/api-server/app/agents/schemas.py
-      - services/api-server/app/agents/planner.py
-      - services/api-server/app/agents/model_gateway.py
-      - services/api-server/app/agents/react_engine.py
-      - services/api-server/app/agents/executor.py
-      - services/api-server/app/tools/__init__.py
-      - services/api-server/app/tools/registry.py
-      - services/api-server/app/api/tasks.py
-      - services/api-server/tests/test_planner_executor.py
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage06_verify.db .venv/bin/alembic upgrade head
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage06_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-      - curl --fail -X POST http://127.0.0.1:8000/api/tasks/{task_id}/start
-      - curl --fail http://127.0.0.1:8000/api/tasks/{task_id}/events
-    verification_result: passed
-    branch: stage/stage-06-planner-executor
-    commit_sha: daf326bb413e4c2212e223af14deff953211f0d8
-    pr_url: https://github.com/luohao0308/harness/pull/4
-    merged_at: 2026-05-04T12:48:59Z
-    notes: "Deterministic Planner, Model Gateway interface, Tool Registry, ReAct data structures, and Executor start-task loop are implemented. Starting a task persists execution_plans/task_steps and appends PLAN_REQUESTED, PLAN_GENERATED, STEP_STARTED, STEP_COMPLETED, and TASK_COMPLETED events. PR was merged into develop."
-    next_stage: stage-07-react-console
-
-  - id: stage-07-react-console
-    document: docs/ai/08-stage-07-react-console.md
-    status: completed
-    started_at: 2026-05-04T12:49:30Z
-    completed_at: 2026-05-04T13:17:57Z
-    changed_files:
-      - apps/agent-console/package.json
-      - apps/agent-console/package-lock.json
-      - apps/agent-console/index.html
-      - apps/agent-console/tsconfig.json
-      - apps/agent-console/vite.config.ts
-      - apps/agent-console/postcss.config.js
-      - apps/agent-console/tailwind.config.ts
-      - apps/agent-console/src/main.tsx
-      - apps/agent-console/src/app/routes.tsx
-      - apps/agent-console/src/app/ConsoleShell.tsx
-      - apps/agent-console/src/features/tasks/api.ts
-      - apps/agent-console/src/features/tasks/pages/TaskListPage.tsx
-      - apps/agent-console/src/features/tasks/pages/TaskCreatePage.tsx
-      - apps/agent-console/src/features/tasks/pages/TaskDetailPage.tsx
-      - apps/agent-console/src/features/events/useTaskEventStream.ts
-      - apps/agent-console/src/features/events/components/EventTimeline.tsx
-      - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
-      - apps/agent-console/src/features/sandboxes/components/SandboxPanel.tsx
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd apps/agent-console && npm run lint
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py tests/test_observability.py tests/test_event_store.py tests/test_evals.py
+      - cd services/api-server && .venv/bin/python -m ruff check app tests/test_evals.py tests/test_agents.py tests/test_observability.py tests/test_event_store.py
       - cd apps/agent-console && npm run build
-      - cd apps/agent-console && rg -n "EventSource|ExecutionPlanPanel|EventTimeline|SubagentPanel|SandboxPanel" src
-    verification_result: passed
-    branch: stage/stage-07-react-console
-    commit_sha: e2742014c5cc6cf373fd14f04cf4c26207076513
-    pr_url: https://github.com/luohao0308/harness/pull/5
-    merged_at: 2026-05-04T13:17:57Z
-    notes: "React + Vite + TypeScript + Tailwind console implemented using the supplied Figma React export as implementation reference. Routes, task API client, EventSource SSE hook, task list, task create, task detail, ExecutionPlanPanel, EventTimeline, SubagentPanel, SandboxPanel, TaskResultPanel, and placeholder operational routes are present. PR was merged into develop."
-    next_stage: stage-08-dramatiq-subagent
-
-  - id: stage-08-dramatiq-subagent
-    document: docs/ai/09-stage-08-dramatiq-subagent.md
-    status: completed
-    started_at: 2026-05-04T13:18:30Z
-    completed_at: 2026-05-04T13:34:57Z
-    changed_files:
-      - services/api-server/app/agents/subagent_manager.py
-      - services/api-server/app/api/schemas.py
-      - services/api-server/app/api/subagents.py
-      - services/api-server/app/main.py
-      - services/api-server/app/workers/__init__.py
-      - services/api-server/app/workers/broker.py
-      - services/api-server/app/workers/subagent_worker.py
-      - services/api-server/tests/test_subagents.py
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && .venv/bin/python -m dramatiq --help
-      - cd services/api-server && .venv/bin/python -c "from app.workers.broker import broker; from app.workers.subagent_worker import run_subagent; print(type(broker).__name__, run_subagent.actor_name)"
-      - scripts/check-docs.sh
-    verification_result: passed
-    branch: stage/stage-08-dramatiq-subagent
-    commit_sha: 484e2cf961e9804a9672a9f81ae908c6c681f8bf
-    pr_url: https://github.com/luohao0308/harness/pull/6
-    merged_at: 2026-05-04T13:34:57Z
-    notes: "Dramatiq RedisBroker, subagent worker actor, SubagentManager, list/detail/cancel APIs, fixed concurrency limit 5, fixed timeout 900, and subagent tests are implemented. PR was merged into develop."
-    next_stage: stage-09-sandbox-warmpool
-
-  - id: stage-09-sandbox-warmpool
-    document: docs/ai/10-stage-09-sandbox-warmpool.md
-    status: completed
-    started_at: 2026-05-04T13:35:30Z
-    completed_at: 2026-05-04T13:53:34Z
-    changed_files:
-      - services/api-server/app/api/sandboxes.py
-      - services/api-server/app/api/schemas.py
-      - services/api-server/app/main.py
-      - services/api-server/app/sandbox/__init__.py
-      - services/api-server/app/sandbox/docker_manager.py
-      - services/api-server/app/sandbox/policies.py
-      - services/api-server/app/sandbox/warm_pool.py
-      - services/api-server/app/tools/registry.py
-      - services/api-server/app/tools/shell.py
-      - services/api-server/tests/test_sandbox.py
-      - services/api-server/tests/test_warm_pool.py
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && rg -n "subprocess" app/tools app/sandbox
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage09_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-      - curl --fail --silent http://127.0.0.1:8000/api/sandboxes/warm-pool
-      - scripts/check-docs.sh
-    verification_result: passed
-    branch: stage/stage-09-sandbox-warmpool
-    commit_sha: e14dd194cbc30c928e77f951af9657b68161985f
-    pr_url: https://github.com/luohao0308/harness/pull/7
-    merged_at: 2026-05-04T13:53:34Z
-    notes: "Docker Sandbox runtime is implemented with Docker SDK container creation, fixed defaults memory 1024m, cpus 1.0, network none, non-root user, command timeout enforcement, stdout/stderr/exit_code/duration capture, sandbox events, WarmPool MIN_SIZE 3 MAX_SIZE 10 IDLE_TTL_SECONDS 600, WarmPool status API, sandbox list/detail/terminate APIs, and tests using a fake Docker client. The subprocess search produced no matches in app/tools or app/sandbox. PR was merged into develop."
-    next_stage: stage-10-observability-deployment
-
-  - id: stage-10-observability-deployment
-    document: docs/ai/11-stage-10-observability-deployment.md
-    status: completed
-    started_at: 2026-05-04T13:54:10Z
-    completed_at: 2026-05-04T14:20:39Z
-    changed_files:
-      - deploy/docker-compose/docker-compose.yml
-      - deploy/monitoring/prometheus.yml
-      - deploy/monitoring/loki.yml
-      - deploy/monitoring/otel-collector.yml
-      - deploy/monitoring/grafana-dashboard-agent-harness.json
-      - deploy/nginx/agent-harness.conf
-      - deploy/systemd/agent-api.service
-      - deploy/systemd/agent-worker.service
-      - deploy/systemd/agent-sandbox-worker.service
-      - deploy/systemd/agent-warm-pool.service
-      - services/api-server/Dockerfile
-      - services/api-server/app/agents/executor.py
-      - services/api-server/app/agents/model_gateway.py
-      - services/api-server/app/agents/subagent_manager.py
-      - services/api-server/app/api/metrics.py
-      - services/api-server/app/api/tasks.py
-      - services/api-server/app/core/logging.py
-      - services/api-server/app/core/tracing.py
-      - services/api-server/app/events/event_store.py
-      - services/api-server/app/main.py
-      - services/api-server/app/observability/__init__.py
-      - services/api-server/app/observability/metrics.py
-      - services/api-server/app/sandbox/docker_manager.py
-      - services/api-server/app/sandbox/warm_pool.py
-      - services/api-server/app/workers/subagent_worker.py
-      - services/api-server/tests/test_observability.py
-      - docs/ai/task-progress.yaml
-      - docs/human/10-task-progress.md
-    verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:///./stage10_verify.db .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-      - curl --fail --silent http://127.0.0.1:8000/metrics
-      - cd deploy/docker-compose && docker compose config
-      - test -f deploy/monitoring/prometheus.yml
-      - test -f deploy/monitoring/loki.yml
-      - test -f deploy/monitoring/otel-collector.yml
-      - test -f deploy/monitoring/grafana-dashboard-agent-harness.json
-      - test -f deploy/nginx/agent-harness.conf
-      - test -f deploy/systemd/agent-api.service
-      - test -f deploy/systemd/agent-worker.service
-      - test -f deploy/systemd/agent-sandbox-worker.service
-      - test -f deploy/systemd/agent-warm-pool.service
-      - scripts/check-docs.sh
-    verification_result: passed
-    branch: stage/stage-10-observability-deployment
-    commit_sha: 412e714ad5a1eec7a243af143b728cd52386e6a1
-    pr_url: https://github.com/luohao0308/harness/pull/8
-    merged_at: 2026-05-04T14:20:39Z
-    notes: "Prometheus /metrics, required counters/gauges/histograms, JSON stdout logging fields, sensitive log redaction, OpenTelemetry trace middleware, trace_id propagation to agent_events, Docker Compose services, Prometheus/Loki/OTel configs, Grafana dashboard JSON, systemd units, and Nginx SSE proxy buffering settings are implemented. PR was merged into develop; all planned stages are complete."
-    next_stage: stage-11-review-p1-hardening
-
-  - id: stage-11-review-p1-hardening
-    document: docs/ai/12-stage-11-review-p1-hardening.md
-    status: completed
-    started_at: 2026-05-04T15:41:17Z
-    completed_at: null
-    changed_files:
-      - .env.example
-      - .gitignore
-      - README.md
-      - apps/agent-console/.env.example
-      - apps/agent-console/Dockerfile
-      - apps/agent-console/nginx.conf
-      - apps/agent-console/src/features/events/useTaskEventStream.ts
-      - apps/agent-console/src/features/tasks/api.ts
-      - deploy/docker-compose/.env.example
-      - deploy/docker-compose/docker-compose.yml
-      - deploy/nginx/agent-harness.conf
-      - deploy/systemd/agent-warm-pool.service
-      - docs/ai/12-stage-11-review-p1-hardening.md
-      - docs/ai/README.md
-      - docs/ai/reference/architecture-and-decisions.md
-      - docs/ai/task-progress.yaml
-      - docs/api/openapi.yaml
-      - docs/human/03-system-architecture.md
-      - docs/human/07-deployment-operations.md
-      - docs/human/10-task-progress.md
-      - docs/qa/test-strategy.md
-      - docs/runbooks/deployment.md
-      - docs/runbooks/local-development.md
-      - scripts/validate-docs.py
-      - services/agent-runtime/Dockerfile
-      - services/api-server/alembic/versions/20260504_0002_create_warm_pool_containers.py
-      - services/api-server/app/api/events.py
-      - services/api-server/app/api/sandboxes.py
-      - services/api-server/app/api/subagents.py
-      - services/api-server/app/api/tasks.py
-      - services/api-server/app/db/models.py
-      - services/api-server/app/events/event_store.py
-      - services/api-server/app/main.py
-      - services/api-server/app/sandbox/warm_pool.py
-      - services/api-server/app/security/__init__.py
-      - services/api-server/app/security/auth.py
-      - services/api-server/app/workers/warm_pool_service.py
-      - services/api-server/tests/conftest.py
-      - services/api-server/tests/test_auth.py
-      - services/api-server/tests/test_event_store.py
-      - services/api-server/tests/test_events_stream.py
-      - services/api-server/tests/test_observability.py
-      - services/api-server/tests/test_planner_executor.py
-      - services/api-server/tests/test_sandbox.py
-      - services/api-server/tests/test_subagents.py
-      - services/api-server/tests/test_tasks.py
-      - services/api-server/tests/test_warm_pool.py
-    verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:////tmp/harness_stage11.db .venv/bin/alembic upgrade head
-      - cd apps/agent-console && npm run lint && npm run build
-      - docker compose -f deploy/docker-compose/docker-compose.yml config
       - python3 scripts/validate-docs.py
-      - docker compose -f deploy/docker-compose/docker-compose.yml up -d --build api-server agent-worker sandbox-worker warm-pool agent-console nginx
-      - docker compose -f deploy/docker-compose/docker-compose.yml ps
-      - curl --noproxy '*' --fail http://127.0.0.1:8000/health
-      - curl --noproxy '*' --fail http://127.0.0.1:8080/health
-      - curl --noproxy '*' --fail http://127.0.0.1:9091/-/healthy
-      - curl --noproxy '*' --fail http://127.0.0.1:3000/api/health
-      - "browser check: open http://127.0.0.1:5173/tasks and verify Docker E2E Final is visible with zero browser errors"
+      - docker compose -f deploy/docker-compose/docker-compose.yml config
+  - id: 02-event-store-recovery
+    document: docs/ai/stages/02-event-store-recovery.md
+    status: completed
+    demo: Run writes events, service restarts, state recovers, replay reaches requested sequence.
     verification_result: passed
-    branch: stage/stage-11-review-p1-hardening
-    commit_sha: 8931a50
-    pr_url: https://github.com/luohao0308/harness/pull/9
-    merged_at: 2026-05-04T17:16:56Z
-    notes: "All five P1 review findings are implemented and verified. Docker Compose is running with API 8000, Console 5173, Nginx 8080, Prometheus 9091, Grafana 3000, Loki 3100, OTel 4317/4318, Postgres, Redis, agent-worker, sandbox-worker, and warm-pool. Browser console showed Docker E2E Final visible and zero error or warning logs. Additional review follow-up exposed backend subagent, sandbox, WarmPool, observability, and metrics capabilities in the console; generated docs/api/openapi.json as an import mirror; localized OpenAPI human-facing metadata to Chinese; and clarified Bearer Token usage. Implementation commits include 8f783eb and c14ec28; PR #9 was created and then merged."
-    next_stage: stage-12-runtime-product-completion
-
-  - id: stage-12-runtime-product-completion
-    document: docs/ai/13-stage-12-runtime-product-completion.md
-    status: ready_for_review
-    started_at: 2026-05-04T19:35:57Z
-    completed_at: null
-    changed_files:
-      - README.md
-      - apps/agent-console/src/app/ConsoleShell.tsx
-      - apps/agent-console/src/app/routes.tsx
-      - apps/agent-console/src/features/events/components/EventTimeline.tsx
-      - apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx
-      - apps/agent-console/src/features/policies/components/PolicyBadge.tsx
-      - apps/agent-console/src/features/sandboxes/components/SandboxPanel.tsx
-      - apps/agent-console/src/features/sandboxes/pages/SandboxesPage.tsx
-      - apps/agent-console/src/features/settings/pages/ModelSettingsPage.tsx
-      - apps/agent-console/src/features/settings/pages/PolicySettingsPage.tsx
-      - apps/agent-console/src/features/subagents/components/SubagentPanel.tsx
-      - apps/agent-console/src/features/tasks/api.ts
-      - apps/agent-console/src/features/tasks/components/ExecutionPlanPanel.tsx
-      - apps/agent-console/src/features/tasks/components/ModelCallPanel.tsx
-      - apps/agent-console/src/features/tasks/components/ResourceUsageChart.tsx
-      - apps/agent-console/src/features/tasks/components/TaskResultPanel.tsx
-      - apps/agent-console/src/features/tasks/components/TaskStatusBadge.tsx
-      - apps/agent-console/src/features/tasks/pages/TaskCreatePage.tsx
-      - apps/agent-console/src/features/tasks/pages/TaskDetailPage.tsx
-      - apps/agent-console/src/features/tasks/pages/TaskListPage.tsx
-      - apps/agent-console/src/lib/labels.ts
-      - apps/agent-console/src/stores/consoleStore.ts
-      - docs/ai/README.md
-      - docs/ai/13-stage-12-runtime-product-completion.md
-      - docs/ai/14-stage-13-website-code-integration.md
-      - docs/ai/reference/frontend-spec.md
-      - docs/ai/task-progress.yaml
-      - docs/api/openapi.json
-      - docs/api/openapi.yaml
-      - docs/design/figma-production-brief.md
-      - docs/design/page-inventory.md
-      - docs/human/10-task-progress.md
-      - docs/human/11-website-usage-flow.md
-      - docs/human/README.md
-      - docs/human/features/01-task-lifecycle.md
-      - docs/human/features/02-planner-executor.md
-      - docs/human/features/03-event-sourcing-replay.md
-      - docs/human/features/04-subagent-orchestration.md
-      - docs/human/features/05-sandbox-warmpool.md
-      - docs/human/features/06-model-tool-audit.md
-      - docs/human/features/07-settings-observability.md
-      - docs/human/features/08-website-console-openapi.md
-      - docs/human/features/README.md
-      - scripts/validate-docs.py
-      - services/api-server/alembic/versions/20260504_0003_create_model_tool_calls.py
-      - services/api-server/app/agents/executor.py
-      - services/api-server/app/api/events.py
-      - services/api-server/app/api/health.py
-      - services/api-server/app/api/sandboxes.py
-      - services/api-server/app/api/schemas.py
-      - services/api-server/app/api/settings.py
-      - services/api-server/app/api/subagents.py
-      - services/api-server/app/api/tasks.py
-      - services/api-server/app/db/models.py
-      - services/api-server/app/events/replay.py
-      - services/api-server/app/main.py
-      - services/api-server/app/security/auth.py
-      - services/api-server/app/tools/filesystem.py
-      - services/api-server/app/tools/http.py
-      - services/api-server/app/tools/registry.py
-      - services/api-server/tests/test_health.py
-      - services/api-server/tests/test_planner_executor.py
-      - services/api-server/tests/test_sandbox.py
-      - services/api-server/tests/test_settings.py
-      - services/api-server/tests/test_tasks.py
+    acceptance_notes:
+      - Run Detail supports replay to an explicit event sequence.
+      - Replay panel displays state summary, diagnosis, and failure point payload.
+  - id: 03-agent-run-console
+    document: docs/ai/stages/03-agent-run-console.md
+    status: completed
+    demo: Console shows chat, DAG, trace, tools, guardrails, eval, cost, latency, and replay.
+    verification_result: passed
+    acceptance_notes:
+      - Run Detail includes inline Eval regression controls.
+      - Run Detail includes Guardrail and denied tool-call aggregation.
+      - Replay, Eval, Subagent, Multi-Agent, Sandbox, Model, Tool, and Result panels are visible from one run page.
+  - id: 04-tool-mcp-runtime
+    document: docs/ai/stages/04-tool-mcp-runtime.md
+    status: completed
+    demo: Tool Registry executes built-in and MCP-shaped tools with trace and policy records.
+    verification_result: passed
+    acceptance_notes:
+      - Tool Registry API exposes builtin and MCP-shaped tools from one metadata contract.
+      - MCP-shaped tools execute through ToolRunner, PolicyEngine, ToolCall audit, and EventStore.
+      - Console /tools page shows source, risk, sandbox, roles, schema, and MCP method.
+  - id: 05-guardrail-policy-engine
+    document: docs/ai/stages/05-guardrail-policy-engine.md
+    status: completed
+    demo: High-risk shell command is blocked or routed to approval.
+    verification_result: passed
+    acceptance_notes:
+      - High-risk or admin-required tool calls create ToolApproval records instead of silent static UI state.
+      - Run Detail Guardrail panel lists pending approvals and supports admin approve or reject actions.
+      - Approval decisions append task events and update ToolCall status.
+  - id: 06-eval-harness
+    document: docs/ai/stages/06-eval-harness.md
+    status: completed
+    demo: Dataset saves a run as case, runs grader, displays metrics.
+    verification_result: passed
+    acceptance_notes:
+      - Eval can be triggered from /evals and from Run Detail.
+      - Run Detail can save the current run as an Eval Case and execute the selected Dataset.
     verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd services/api-server && DATABASE_URL=sqlite+pysqlite:////tmp/harness_stage12_verify.db .venv/bin/alembic upgrade head
-      - cd apps/agent-console && npm run lint
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_evals.py
       - cd apps/agent-console && npm run build
-      - docker compose -f deploy/docker-compose/docker-compose.yml config
-      - python3 scripts/validate-docs.py
+  - id: 07-memory-context-router
+    document: docs/ai/stages/07-memory-context-router.md
+    status: completed
+    demo: Model Router selects models by task type and memory context is visible in trace.
     verification_result: passed
-    branch: stage/stage-12-runtime-product-completion
-    commit_sha: dc0cf2f1fd7e27bdb91ec6076c4d7b2ee63c72e7
-    pr_url: https://github.com/luohao0308/harness/pull/10
-    merged_at: 2026-05-04T20:23:53Z
-    notes: "Runtime product surface is implemented and verified: task cancel/resume/result/replay, model/tool audit records, filesystem/http tools, settings APIs, ADMIN_ACTION audit rows, Chinese OpenAPI JSON/YAML, default Chinese console, Chinese/English switch, settings, sandboxes, observability, replay, result, and audit panels."
-    next_stage: stage-13-website-code-integration
-
-  - id: stage-13-website-code-integration
-    document: docs/ai/14-stage-13-website-code-integration.md
-    status: ready_for_review
-    started_at: 2026-05-04T20:21:17Z
-    completed_at: null
-    changed_files:
-      - .gitignore
-      - apps/web-site/.dockerignore
-      - apps/web-site/.env.example
-      - apps/web-site/Dockerfile
-      - apps/web-site/app/architecture/page.tsx
-      - apps/web-site/app/contact/page.tsx
-      - apps/web-site/app/deployment/page.tsx
-      - apps/web-site/app/docs/page.tsx
-      - apps/web-site/app/globals.css
-      - apps/web-site/app/layout.tsx
-      - apps/web-site/app/page.tsx
-      - apps/web-site/app/product/page.tsx
-      - apps/web-site/app/security/page.tsx
-      - apps/web-site/app/solutions/page.tsx
-      - apps/web-site/components/ConsolePreview.tsx
-      - apps/web-site/components/Contact.tsx
-      - apps/web-site/components/Deployment.tsx
-      - apps/web-site/components/Docs.tsx
-      - apps/web-site/components/Homepage.tsx
-      - apps/web-site/components/MarketingArchitecture.tsx
-      - apps/web-site/components/MarketingShell.tsx
-      - apps/web-site/components/Product.tsx
-      - apps/web-site/components/Security.tsx
-      - apps/web-site/components/Solutions.tsx
-      - apps/web-site/components/shared.tsx
-      - apps/web-site/components/site-links.ts
-      - apps/web-site/next-env.d.ts
-      - apps/web-site/next.config.mjs
-      - apps/web-site/package-lock.json
-      - apps/web-site/package.json
-      - apps/web-site/postcss.config.mjs
-      - apps/web-site/public/openapi.json
-      - apps/web-site/public/openapi.yaml
-      - apps/web-site/tailwind.config.ts
-      - apps/web-site/tsconfig.json
-      - deploy/docker-compose/docker-compose.yml
-      - deploy/nginx/agent-harness.conf
-      - docs/human/07-deployment-operations.md
-      - docs/human/10-task-progress.md
-      - docs/qa/test-strategy.md
-      - docs/runbooks/deployment.md
-      - docs/runbooks/local-development.md
+    acceptance_notes:
+      - Run Context API returns working memory, long-term memory, artifact memory, RAG context, trace memory, compression, and model routing.
+      - Route Context API appends CONTEXT_COMPRESSED and MODEL_ROUTED events.
+      - Run Detail displays Context Router state from backend data and can refresh persisted routing trace.
     verification_commands:
-      - cd apps/web-site && npm run lint
-      - cd apps/web-site && npm run build
-      - docker compose -f deploy/docker-compose/docker-compose.yml config
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_context_router.py
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_context_router.py tests/test_model_gateway.py tests/test_tasks.py
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/context_router.py app/api/tasks.py app/api/schemas.py tests/test_context_router.py
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm run build
       - python3 scripts/validate-docs.py
+  - id: 08-warmpool-benchmark
+    document: docs/ai/stages/08-warmpool-benchmark.md
+    status: completed
+    demo: WarmPool benchmark proves startup target under 50 ms.
     verification_result: passed
-    branch: stage/stage-13-website-code-integration
-    commit_sha: 1101c3ccd39f4f7b0301d0051bc122507710e6e0
-    pr_url: https://github.com/luohao0308/harness/pull/11
-    merged_at: null
-    notes: "Stage started for user-supplied website code integration. Scope covers keeping supplied visual structure, Next.js engineering, backend and console links, OpenAPI links, docs entry points, Docker Compose, and Nginx deployment entry. Verification commands passed after adding the site .dockerignore and rebuilding the website image and compose stack."
-    next_stage: completed
+    acceptance_notes:
+      - WarmPool Benchmark API records target, warm avg, warm p95, cold baseline, hit rate, and report payload.
+      - Sandboxes page can run a benchmark and displays latest benchmark latency from backend data.
+      - Benchmark history API returns persisted reports by organization.
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_warm_pool.py tests/test_sandbox.py
+      - cd services/api-server && .venv/bin/python -m ruff check app/sandbox/benchmark.py app/api/sandboxes.py app/api/schemas.py app/db/models.py tests/test_warm_pool.py
+      - cd apps/agent-console && npm run build
+  - id: 09-portfolio-demo-docs
+    document: docs/ai/stages/09-portfolio-demo-docs.md
+    status: completed
+    demo: GitHub Issue demo flows through plan, tools, guardrail, replay, eval, and benchmark report.
+    verification_result: passed
+    acceptance_notes:
+      - OpenAPI JSON and YAML were regenerated from the FastAPI app for docs and public website assets.
+      - Portfolio Demo Guide, Eval Report, Benchmark Report, SDK Example, and Capability Map were added.
+      - README now points to the current Production Agent Harness Platform deliverables.
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+
+stage_completion_rule:
+  - run_backend_tests
+  - run_frontend_build
+  - run_docs_validation
+  - update_docs_ai_task_progress_yaml
+  - update_docs_task_progress_md
+  - record_acceptance_result

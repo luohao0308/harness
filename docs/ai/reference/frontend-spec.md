@@ -73,6 +73,9 @@ ModelCallPanel
 ResourceUsageChart
 TaskResultPanel
 PolicyBadge
+ObservabilityExportHistory
+TraceSpanFilterPanel
+SubagentQueueChart
 ```
 
 语言与文案：

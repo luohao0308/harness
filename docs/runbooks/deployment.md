@@ -11,14 +11,15 @@
 ├─ shared
 │  ├─ .env
 │  ├─ logs
-│  └─ workspaces
+│  ├─ workspaces
+│  └─ observability-exports
 └─ backups
 ```
 
 ## First Deployment
 
 ```bash
-sudo mkdir -p /opt/agent-harness/{current,releases,shared/logs,shared/workspaces,backups}
+sudo mkdir -p /opt/agent-harness/{current,releases,shared/logs,shared/workspaces,shared/observability-exports,backups}
 sudo chown -R "$USER":"$USER" /opt/agent-harness
 ```
 
@@ -70,15 +71,17 @@ Grafana: http://127.0.0.1:3001
 ```bash
 sudo cp deploy/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable agent-api agent-worker agent-sandbox-worker agent-warm-pool
-sudo systemctl start agent-api agent-worker agent-sandbox-worker agent-warm-pool
+sudo systemctl enable agent-api agent-worker agent-assignment-worker agent-sandbox-worker agent-warm-pool
+sudo systemctl start agent-api agent-worker agent-assignment-worker agent-sandbox-worker agent-warm-pool
 ```
 
 Verify:
 
 ```bash
 systemctl status agent-api
+systemctl status agent-assignment-worker
 journalctl -u agent-api -n 100
+journalctl -u agent-assignment-worker -n 100
 ```
 
 ## Nginx Install
@@ -100,7 +103,7 @@ git pull --ff-only origin main
 docker compose -f deploy/docker-compose/docker-compose.yml up -d --build
 ```
 
-Docker Compose 执行 `db-migrate` 一次性服务，迁移完成后 API、worker 和 WarmPool 服务启动。
+Docker Compose 执行 `db-migrate` 一次性服务，迁移完成后 API、Subagent worker、Agent Assignment worker、Subagent 恢复巡检和 WarmPool 服务启动。
 
 ## Post Deployment Verification
 
@@ -108,6 +111,8 @@ Docker Compose 执行 `db-migrate` 一次性服务，迁移完成后 API、worke
 curl https://<domain>/health
 curl https://<domain>/metrics
 docker compose -f deploy/docker-compose/docker-compose.yml ps
+docker compose -f deploy/docker-compose/docker-compose.yml logs --tail=100 agent-assignment-worker
+curl https://<domain>/api/observability/summary -H "Authorization: Bearer <token>"
 ```
 
 Grafana verification:
@@ -116,6 +121,17 @@ Grafana verification:
 agent_tasks_total visible
 warm_pool_hit_total visible
 sandbox_command_duration_seconds visible
+agent_subagent_recovery_total visible
+assignment_queue returned by /api/observability/summary
+```
+
+Prometheus alert rule verification:
+
+```text
+HarnessSubagentRecoveryServiceDown loaded
+HarnessSubagentRecoverySweepMissing loaded
+HarnessSubagentRecoveryMarkedTimeout loaded
+HarnessSubagentRecoveryRepeatedReset loaded
 ```
 
 Loki verification:
@@ -123,4 +139,12 @@ Loki verification:
 ```text
 query by service="api-server"
 query by task_id
+```
+
+Observability export verification:
+
+```text
+GET /api/observability/exports/history
+GET /api/observability/exports/history/{export_id}/download
+OBSERVABILITY_EXPORT_DIR mounted on observability-exports volume
 ```

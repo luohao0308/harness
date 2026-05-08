@@ -7,6 +7,8 @@ image: agent-runtime:latest
 memory: 1024m
 cpus: "1.0"
 network: none
+workspace_quota_mb: 1024
+network_allowlist: []
 user: non-root
 workspace_mount: /workspace
 command_timeout_required: true
@@ -76,6 +78,37 @@ loki
 otel-collector
 ```
 
+## 外部观测服务入口
+
+```text
+Prometheus: http://127.0.0.1:9091
+Grafana: http://127.0.0.1:3001
+Loki: http://127.0.0.1:3100
+OTel gRPC: http://127.0.0.1:4317
+OTel HTTP: http://127.0.0.1:4318
+```
+
+## 目标后端代理接口
+
+```text
+GET /api/observability/grafana/dashboards
+GET /api/observability/logs
+GET /api/observability/traces/{trace_id}
+GET /api/observability/services/health
+GET /api/observability/exports/history
+GET /api/observability/exports/history/{export_id}/download
+```
+
+## 观测导出留存
+
+```yaml
+OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
+storage_driver: local_file
+docker_volume: observability-exports
+metadata_table: observability_export_records
+download_api: GET /api/observability/exports/history/{export_id}/download
+```
+
 ## systemd
 
 ```text
@@ -108,4 +141,3 @@ raw_api_key
 full_prompt
 raw_sensitive_file_content
 ```
-
