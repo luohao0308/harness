@@ -16,6 +16,7 @@ from app.api.observability import (
 from app.core.config import Settings
 from app.core.logging import JsonFormatter
 from app.db.models import (
+    AgentAssignment,
     AgentRun,
     ModelCall,
     ObservabilityExportRecord,
@@ -44,6 +45,12 @@ def test_metrics_endpoint_exposes_required_metrics() -> None:
     assert "agent_subagents_running" in body
     assert "agent_subagent_recovery_total" in body
     assert "agent_subagent_recovery_sweeps_total" in body
+    assert "agent_assignments_total" in body
+    assert "agent_assignments_running" in body
+    assert "agent_assignment_duration_seconds" in body
+    assert "agent_handoffs_total" in body
+    assert "agent_parallel_branches_running" in body
+    assert "agent_reduce_duration_seconds" in body
     assert "sandbox_containers_total" in body
     assert "warm_pool_hit_total" in body
     assert "model_calls_total" in body
@@ -138,6 +145,14 @@ def test_observability_summary_aggregates_current_organization(db_session: Sessi
     db_session.add_all(
         [
             AgentRun(task_id=task.id, agent_type="subagent", status="FAILED", context_json={}),
+            AgentAssignment(
+                run_id=task.id,
+                agent_id="reviewer",
+                role="reviewer",
+                status="QUEUED",
+                input_json={},
+                output_json={},
+            ),
             ModelCall(
                 task_id=task.id,
                 model_provider="openai-compatible",
@@ -187,9 +202,12 @@ def test_observability_summary_aggregates_current_organization(db_session: Sessi
     assert payload["sandbox_total"] == 1
     assert payload["tasks_by_status"] == [{"name": "FAILED", "count": 1}]
     assert payload["subagents_by_status"] == [{"name": "FAILED", "count": 1}]
+    assert payload["agent_assignments_by_status"] == [{"name": "QUEUED", "count": 1}]
     assert payload["subagent_queue"]["failed"] == 1
     assert payload["subagent_queue"]["active_total"] == 0
     assert payload["subagent_queue"]["capacity"] == 0
+    assert payload["assignment_queue"]["queued"] == 1
+    assert payload["assignment_queue"]["active_total"] == 1
 
 
 def test_observability_logs_returns_event_store_entries(db_session: Session) -> None:

@@ -13,22 +13,74 @@
 
 ## 总体架构图
 
+生产级 AI Agent 平台采用六层架构。外部入口、渠道路由、认知执行核心、记忆协同、安全隔离和基础设施必须分层明确，避免把 Agent 做成只有 API Harness、没有对话与执行主体的后台系统。
+
+```text
+Layer 1: External Access 外部接入层
+├─ CLI Console
+├─ FastAPI Server
+├─ Event Bus
+└─ Webhook Endpoints
+
+Layer 2: Channels & Routing 渠道与路由层
+├─ Feishu Adapter
+├─ WeCom Adapter
+├─ Agent Router
+└─ Policy Manager
+
+Layer 3: Cognitive & Execution Core 认知与执行核心
+├─ Planner：任务分解规划
+├─ ReAct Engine：同步推理与工具执行
+├─ DeepAgents Wrapper / LangGraph：复杂 Agent 图编排
+├─ Tool Registry：工具注册表
+└─ Agent Runner：生命周期管理
+
+Layer 4: Memory & Coordination 记忆与协同层
+├─ Memory Manager
+├─ Subagent Spawner：子 Agent 派生
+├─ Session Manager
+└─ Todos Manager
+
+Layer 5: Isolation Sandbox 隔离沙箱层
+├─ Firecracker / microVM：强隔离升级方向
+├─ Docker Secure：默认容器隔离
+├─ Warm Pool：预热池管理
+├─ Snapshot Manager：快照恢复
+└─ Secure Executor：受控执行器
+
+Layer 6: Infrastructure 基础设施层
+├─ LLM Providers / OpenAI-compatible
+├─ PostgreSQL Storage：生产主存储
+├─ SQLite Storage：本地开发或嵌入式场景可选
+├─ Monitoring
+├─ Config System
+└─ KVM Support
+```
+
 ```mermaid
 flowchart TD
     U["User / Admin"] --> WEB["Next.js Website"]
-    U --> CONSOLE["React Agent Console"]
+    U --> WORKSPACE["Agent Workspace"]
+    WORKSPACE --> CONSOLE["React Agent Console"]
     CONSOLE --> API["FastAPI API Layer"]
     API --> AUTH["Auth / RBAC / Policy"]
-    API --> TASK["Task Service"]
+    API --> AGENT["Agent Runtime API"]
+    AGENT --> MODE["Mode Router: Chat / Plan / Execute / Auto"]
+    MODE --> TASK["Run Service"]
     TASK --> PLANNER["Planner"]
     TASK --> EXEC["Executor / ReAct Engine"]
     TASK --> EVENTS["Event Store"]
+    TASK --> ORCH["Multi-Agent Orchestrator"]
+    ORCH --> ASSIGN["Agent Assignments"]
+    ORCH --> HANDOFF["Agent Handoffs"]
+    ASSIGN --> REDIS
     EXEC --> TOOLS["Tool Registry"]
     EXEC --> SUB["Subagent Manager"]
     EXEC --> SANDBOX["Sandbox Manager"]
     SUB --> REDIS["Redis"]
     REDIS --> DRAMATIQ["Dramatiq Workers"]
     DRAMATIQ --> SUBRUN["Subagent Runtime"]
+    DRAMATIQ --> ASSIGNRUN["Agent Assignment Worker"]
     SANDBOX --> DOCKER["Docker Engine"]
     DOCKER --> WARM["WarmPool"]
     EVENTS --> PG["PostgreSQL"]
@@ -50,7 +102,7 @@ flowchart TD
 
 ### Agent Console
 
-控制台使用 React + Vite + TypeScript + Tailwind CSS + shadcn/ui。控制台负责任务创建、计划查看、事件流展示、Subagent 状态、沙箱状态和监控入口。
+控制台使用 React + Vite + TypeScript + Tailwind CSS + shadcn/ui。控制台主入口是 Agent Workspace：用户选择 Agent、选择 Chat/Plan/Execute/Auto 模式并输入目标。任务列表只作为 Agent Run 历史与审计视图。
 
 ### API Layer
 
@@ -87,26 +139,43 @@ Nginx
 systemd
 ```
 
-## 任务执行流程
+## Agent Plan 流程
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Workspace
+    participant API
+    participant Planner
+    participant EventStore
+    participant Model
+
+    User->>Workspace: Select Agent + Plan mode
+    Workspace->>API: POST /api/agents/plan
+    API->>EventStore: TASK_CREATED
+    API->>EventStore: PLAN_REQUESTED
+    API->>Model: Planner prompt
+    Model-->>Planner: structured plan JSON
+    API->>EventStore: PLAN_GENERATED
+    API-->>Workspace: plan + run_id
+```
+
+## Agent Execute 流程
 
 ```mermaid
 sequenceDiagram
     participant User
     participant API
-    participant TaskService
-    participant Planner
+    participant RunService
     participant EventStore
     participant Executor
     participant Sandbox
     participant Subagent
 
-    User->>API: Create Task
-    API->>TaskService: create_task
-    TaskService->>EventStore: TASK_CREATED
-    TaskService->>Planner: generate_plan
-    Planner-->>TaskService: execution_plan
-    TaskService->>EventStore: PLAN_GENERATED
-    TaskService->>Executor: run
+    User->>API: Execute confirmed Agent Run
+    API->>RunService: load PLANNED run + latest plan
+    RunService->>EventStore: TASK_STARTED
+    RunService->>Executor: execute existing plan
     Executor->>EventStore: STEP_STARTED
     Executor->>Sandbox: execute_tool
     Sandbox-->>Executor: tool_result

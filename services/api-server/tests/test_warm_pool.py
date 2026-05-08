@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import SystemSetting, Task, utc_now
+from app.db.models import SystemSetting, Task, WarmPoolBenchmarkRun, WarmPoolContainer, utc_now
 from app.events.event_store import EventStore
+from app.main import app
 from app.sandbox.docker_manager import DockerManager
 from app.sandbox.warm_pool import (
     WARM_POOL_IDLE_TTL_SECONDS,
@@ -13,6 +15,7 @@ from app.sandbox.warm_pool import (
     WARM_POOL_MIN_SIZE,
     WarmPoolManager,
 )
+from tests.conftest import AUTH_HEADERS
 
 
 class FakeContainer:
@@ -167,3 +170,40 @@ def test_warm_pool_bypasses_pool_for_custom_resources(db_session: Session) -> No
     assert len(fake_client.containers.run_calls) == 4
     assert fake_client.containers.run_calls[-1]["mem_limit"] == "2048m"
     assert fake_client.containers.run_calls[-1]["nano_cpus"] == 2_000_000_000
+
+
+def test_warm_pool_benchmark_api_records_projection_report(db_session: Session) -> None:
+    db_session.add(
+        WarmPoolContainer(
+            container_id="warm-ready-1",
+            image="python:3.11-slim",
+            status="IDLE",
+            idle_since=utc_now(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    response = TestClient(app).post(
+        "/api/sandboxes/warm-pool/benchmark",
+        headers=AUTH_HEADERS,
+        json={"iterations": 3, "target_startup_ms": 50, "mode": "projection"},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "PASS"
+    assert payload["iteration_count"] == 3
+    assert payload["warm_p95_ms"] < 50
+    assert payload["cold_avg_ms"] >= 100
+    assert payload["hit_rate"] == 100
+    assert payload["report_json"]["warm_pool_idle"] == 1
+    assert db_session.query(WarmPoolBenchmarkRun).count() == 1
+
+    list_response = TestClient(app).get(
+        "/api/sandboxes/warm-pool/benchmarks",
+        headers=AUTH_HEADERS,
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["id"] == payload["id"]

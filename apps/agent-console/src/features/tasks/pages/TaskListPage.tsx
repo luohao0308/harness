@@ -10,20 +10,29 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { enabledLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { listTasks } from "../api";
+import { getObservabilitySummary, listTasks } from "../api";
 import { TaskStatusBadge } from "../components/TaskStatusBadge";
-
-const statCards = [
-  ["运行任务", "12", "较 1 小时前 +3", "running"],
-  ["今日失败", "4", "失败率 0.6%", "failed"],
-  ["平均耗时", "6m 12s", "p95 18m", "neutral"],
-  ["WarmPool 命中率", "94.2%", "目标 >= 90%", "success"],
-] as const;
 
 export function TaskListPage() {
   const { text } = useI18n();
   const tasksQuery = useQuery({ queryKey: ["tasks"], queryFn: listTasks });
+  const summaryQuery = useQuery({ queryKey: ["observability-summary"], queryFn: getObservabilitySummary });
   const tasks = tasksQuery.data?.items ?? [];
+  const summary = summaryQuery.data;
+  const runningTasks =
+    summary?.tasks_by_status.find((item) => item.name === "RUNNING")?.count ?? 0;
+  const failedTasks = summary?.failed_task_total ?? 0;
+  const warmPoolHitTotal = summary?.warm_pool.hit_total ?? 0;
+  const warmPoolMissTotal = summary?.warm_pool.miss_total ?? 0;
+  const warmPoolRequests = warmPoolHitTotal + warmPoolMissTotal;
+  const warmPoolHitRate =
+    warmPoolRequests > 0 ? `${Math.round((warmPoolHitTotal / warmPoolRequests) * 100)}%` : "0%";
+  const statCards = [
+    [text("运行任务", "Running runs"), String(runningTasks), text("来自后端状态投影", "From backend projection"), "running"],
+    [text("失败任务", "Failed runs"), String(failedTasks), text("来自 Event Store / Task 表", "From Event Store / Task table"), "failed"],
+    [text("工具调用", "Tool calls"), String(summary?.tool_call_total ?? 0), text("真实审计记录", "Real audit records"), "neutral"],
+    [text("WarmPool 命中率", "WarmPool hit rate"), warmPoolHitRate, text(`${warmPoolHitTotal}/${warmPoolRequests} 次复用`, `${warmPoolHitTotal}/${warmPoolRequests} reused`), "success"],
+  ] as const;
   const filters = [
     text("状态：全部", "Status: all"),
     text("负责人：全部", "Owner: all"),

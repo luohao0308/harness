@@ -252,50 +252,30 @@ export function ObservabilityPage() {
           <StatusLine isLoading={summary.isLoading} error={summary.error} />
         </Card>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <DistributionCard title={text("任务状态", "Task Status")} items={data?.tasks_by_status ?? []} />
           <DistributionCard title={text("子 Agent 状态", "Subagent Status")} items={data?.subagents_by_status ?? []} />
+          <DistributionCard
+            title={text("Agent Assignment 状态", "Agent Assignment Status")}
+            items={data?.agent_assignments_by_status ?? []}
+          />
           <DistributionCard title={text("模型调用状态", "Model Call Status")} items={data?.model_calls_by_status ?? []} />
           <DistributionCard title={text("工具调用状态", "Tool Call Status")} items={data?.tool_calls_by_status ?? []} />
         </div>
 
-        <Card>
-          <CardHeader>
-            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <GitBranch className="h-4 w-4" /> {text("子 Agent 队列", "Subagent Queue")}
-            </div>
-            <span className="text-xs text-slate-500">
-              {text("等待、运行、容量和剩余槽位", "Pending, running, capacity, and available slots")}
-            </span>
-          </CardHeader>
-          <div className="grid grid-cols-[0.8fr_1.2fr] gap-4 p-3">
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <Metric label={text("等待", "Pending")} value={formatNumber(data?.subagent_queue.pending)} />
-              <Metric label={text("运行中", "Running")} value={formatNumber(data?.subagent_queue.running)} />
-              <Metric label={text("队列容量", "Capacity")} value={formatNumber(data?.subagent_queue.capacity)} />
-              <Metric label={text("剩余槽位", "Available")} value={formatNumber(data?.subagent_queue.available_slots)} />
-            </div>
-            <div className="rounded-md border border-slate-100 p-3 text-xs">
-              <div className="mb-3 flex items-center justify-between text-slate-500">
-                <span>{text("槽位使用率", "Slot utilization")}</span>
-                <span className="font-mono text-slate-900">
-                  {formatNumber(data?.subagent_queue.utilization_percent)}%
-                </span>
-              </div>
-              <div className="h-2 overflow-hidden rounded bg-slate-100">
-                <div
-                  className="h-full rounded bg-slate-900"
-                  style={{ width: `${data?.subagent_queue.utilization_percent ?? 0}%` }}
-                />
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <QueueCount label={text("成功", "Success")} value={data?.subagent_queue.success} tone="success" />
-                <QueueCount label={text("失败", "Failed")} value={data?.subagent_queue.failed} tone="failed" />
-                <QueueCount label={text("超时", "Timeout")} value={data?.subagent_queue.timeout} tone="warning" />
-              </div>
-            </div>
-          </div>
-        </Card>
+        <div className="grid grid-cols-2 gap-4">
+          <QueuePanel
+            title={text("子 Agent 队列", "Subagent Queue")}
+            subtitle={text("异步长任务派生状态", "Async long-running work state")}
+            queue={data?.subagent_queue}
+            showTimeout
+          />
+          <QueuePanel
+            title={text("Agent Assignment 队列", "Agent Assignment Queue")}
+            subtitle={text("多 Agent 编排 worker 状态", "Multi-agent orchestration worker state")}
+            queue={data?.assignment_queue}
+          />
+        </div>
 
         <div className="grid grid-cols-[1fr_2fr] gap-4">
           <Card>
@@ -897,6 +877,73 @@ function logFacetLabelEn(facet: string) {
     source: "Source",
   };
   return labels[facet] ?? facet;
+}
+
+function QueuePanel({
+  title,
+  subtitle,
+  queue,
+  showTimeout = false,
+}: {
+  title: string;
+  subtitle: string;
+  queue:
+    | {
+        pending: number;
+        queued: number;
+        running: number;
+        success: number;
+        failed: number;
+        timeout: number;
+        capacity: number;
+        available_slots: number;
+        utilization_percent: number;
+      }
+    | undefined;
+  showTimeout?: boolean;
+}) {
+  const { text } = useI18n();
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <GitBranch className="h-4 w-4" /> {title}
+        </div>
+        <span className="text-xs text-slate-500">{subtitle}</span>
+      </CardHeader>
+      <div className="grid grid-cols-[0.8fr_1.2fr] gap-4 p-3">
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <Metric label={text("等待", "Pending")} value={formatNumber(queue?.pending)} />
+          <Metric label={text("已入队", "Queued")} value={formatNumber(queue?.queued)} />
+          <Metric label={text("运行中", "Running")} value={formatNumber(queue?.running)} />
+          <Metric label={text("剩余槽位", "Available")} value={formatNumber(queue?.available_slots)} />
+        </div>
+        <div className="rounded-md border border-slate-100 p-3 text-xs">
+          <div className="mb-3 flex items-center justify-between text-slate-500">
+            <span>{text("槽位使用率", "Slot utilization")}</span>
+            <span className="font-mono text-slate-900">
+              {formatNumber(queue?.utilization_percent)}%
+            </span>
+          </div>
+          <div className="h-2 overflow-hidden rounded bg-slate-100">
+            <div
+              className="h-full rounded bg-slate-900"
+              style={{ width: `${queue?.utilization_percent ?? 0}%` }}
+            />
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <QueueCount label={text("成功", "Success")} value={queue?.success} tone="success" />
+            <QueueCount label={text("失败", "Failed")} value={queue?.failed} tone="failed" />
+            <QueueCount
+              label={showTimeout ? text("超时", "Timeout") : text("容量", "Capacity")}
+              value={showTimeout ? queue?.timeout : queue?.capacity}
+              tone="warning"
+            />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 function QueueCount({

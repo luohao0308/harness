@@ -218,6 +218,55 @@ class Executor:
         self.session.flush()
         return task
 
+    def execute_existing_plan(self, task: Task) -> Task:
+        plan_row = self._latest_plan(task)
+        if plan_row is None:
+            msg = "Execution plan not found"
+            raise ValueError(msg)
+        plan = ExecutionPlan.model_validate(plan_row.plan_json)
+
+        task.status = "RUNNING"
+        task.updated_at = utc_now()
+        task.completed_at = None
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.TASK_STARTED,
+            payload_json={
+                "task_id": task.id,
+                "plan_id": plan_row.id,
+                "mode": "execute_existing_plan",
+                "trace_summary": "用户确认 Agent Plan，开始执行现有计划。",
+            },
+        )
+        for step in plan.steps:
+            result = self._execute_step(task, plan_row, step)
+            if result.status == "STEP_FAILED":
+                task.status = "FAILED"
+                task.updated_at = utc_now()
+                self.event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.TASK_FAILED,
+                    payload_json={"failed_step": step.key, "summary": result.summary},
+                )
+                agent_tasks_failed_total.inc()
+                self.session.flush()
+                return task
+
+        task.status = "COMPLETED"
+        task.updated_at = utc_now()
+        task.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.TASK_COMPLETED,
+            payload_json={
+                "task_id": task.id,
+                "plan_id": plan_row.id,
+                "mode": "execute_existing_plan",
+            },
+        )
+        self.session.flush()
+        return task
+
     def resume_task(self, task: Task) -> Task:
         replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
         plan_row = self._latest_plan(task)

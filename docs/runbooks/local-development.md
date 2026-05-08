@@ -58,6 +58,22 @@ source .venv/bin/activate
 dramatiq app.workers.subagent_worker
 ```
 
+## Agent Assignment Worker
+
+```bash
+cd services/api-server
+source .venv/bin/activate
+dramatiq app.workers.agent_assignment_worker --queues agent_assignments
+```
+
+Verify:
+
+```bash
+curl --noproxy '*' http://127.0.0.1:8000/api/observability/summary -H "Authorization: Bearer dev-engineer-token"
+```
+
+The `assignment_queue` object reports queued and running multi-agent assignments.
+
 ## Subagent Recovery Worker
 
 ```bash

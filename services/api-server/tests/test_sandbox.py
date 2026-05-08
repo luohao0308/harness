@@ -227,7 +227,7 @@ def test_docker_manager_uses_policy_timeout_when_command_timeout_missing(
 def test_tool_registry_matches_stage12_required_tools() -> None:
     registry = ToolRegistry.default()
 
-    assert set(registry.tools) == {
+    assert {
         "read_file",
         "list_files",
         "write_file",
@@ -235,7 +235,9 @@ def test_tool_registry_matches_stage12_required_tools() -> None:
         "run_tests",
         "network_request",
         "git_command",
-    }
+    }.issubset(set(registry.tools))
+    assert registry.tools["mcp_context_search"].source == "mcp"
+    assert registry.tools["mcp_artifact_put"].source == "mcp"
     for name in ["write_file", "run_shell", "run_tests", "network_request", "git_command"]:
         assert registry.tools[name].requires_sandbox is True
 

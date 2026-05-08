@@ -10,10 +10,14 @@ from app.api.schemas import (
     SandboxQuotaHistoryPage,
     SandboxQuotaUsageResponse,
     SandboxResponse,
+    WarmPoolBenchmarkPage,
+    WarmPoolBenchmarkRequest,
+    WarmPoolBenchmarkResponse,
     WarmPoolResponse,
 )
-from app.db.models import SandboxInstance, SystemSetting, Task
+from app.db.models import SandboxInstance, SystemSetting, Task, WarmPoolBenchmarkRun
 from app.db.session import get_db_session
+from app.sandbox.benchmark import WarmPoolBenchmarkConfig, WarmPoolBenchmarkRunner
 from app.sandbox.docker_manager import DockerManager
 from app.sandbox.policies import (
     DEFAULT_POLICY_SETTINGS,
@@ -134,6 +138,56 @@ def list_sandbox_quota_history(
 def get_warm_pool(session: DbSession, principal: Principal) -> WarmPoolResponse:
     _ = principal
     return WarmPoolResponse.model_validate(warm_pool_manager.status(session=session).__dict__)
+
+
+@router.post(
+    "/sandboxes/warm-pool/benchmark",
+    response_model=WarmPoolBenchmarkResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="运行 WarmPool Benchmark",
+    description="记录 WarmPool reserve path 延迟、冷启动基线、命中率和目标达成状态。",
+)
+def run_warm_pool_benchmark(
+    request: WarmPoolBenchmarkRequest,
+    session: DbSession,
+    principal: Principal,
+) -> WarmPoolBenchmarkRun:
+    benchmark = WarmPoolBenchmarkRunner(warm_pool_manager).run(
+        session=session,
+        organization_id=principal.organization_id,
+        created_by=principal.user_id,
+        config=WarmPoolBenchmarkConfig(
+            iterations=request.iterations,
+            target_startup_ms=request.target_startup_ms,
+            mode=request.mode,
+        ),
+    )
+    session.commit()
+    session.refresh(benchmark)
+    return benchmark
+
+
+@router.get(
+    "/sandboxes/warm-pool/benchmarks",
+    response_model=WarmPoolBenchmarkPage,
+    summary="查询 WarmPool Benchmark 记录",
+    description="返回当前组织最近 WarmPool Benchmark 报告。",
+)
+def list_warm_pool_benchmarks(
+    session: DbSession,
+    principal: Principal,
+    limit: int = 20,
+) -> WarmPoolBenchmarkPage:
+    capped_limit = max(1, min(limit, 100))
+    records = list(
+        session.execute(
+            select(WarmPoolBenchmarkRun)
+            .where(WarmPoolBenchmarkRun.organization_id == principal.organization_id)
+            .order_by(WarmPoolBenchmarkRun.created_at.desc(), WarmPoolBenchmarkRun.id.desc())
+            .limit(capped_limit)
+        ).scalars()
+    )
+    return WarmPoolBenchmarkPage(items=records)
 
 
 def get_owned_sandbox(sandbox_id: str, session: Session, principal: Principal) -> SandboxInstance:

@@ -15,6 +15,95 @@ class TaskCreateRequest(BaseModel):
     enable_network: bool = Field(default=False, description="是否启用网络访问")
 
 
+class AgentPlanRequest(BaseModel):
+    agent_id: str = Field(default="default", min_length=1, description="Agent ID")
+    goal: str = Field(min_length=1, description="用户目标")
+    title: str | None = Field(default=None, description="运行标题")
+    model_provider: str = Field(
+        default="default",
+        description="模型供应商，default 表示使用模型设置",
+    )
+    model_name: str = Field(
+        default="default",
+        description="模型名称，default 表示使用模型设置",
+    )
+    max_runtime_seconds: int = Field(default=1800, ge=1, description="最大运行秒数")
+    max_subagents: int = Field(default=5, ge=0, description="最大子 Agent 数")
+    enable_sandbox: bool = Field(default=True, description="是否启用容器沙箱")
+    enable_network: bool = Field(default=False, description="是否启用网络访问")
+
+
+class AgentResponse(BaseModel):
+    id: str = Field(description="Agent ID")
+    name: str = Field(description="Agent 名称")
+    description: str = Field(description="Agent 描述")
+    role: str = Field(description="Agent 角色")
+    status: str = Field(description="Agent 状态")
+    model_provider: str = Field(description="默认模型供应商")
+    model_name: str = Field(description="默认模型名称")
+    system_prompt: str = Field(description="系统提示词")
+    tools_json: list[str] = Field(description="可用工具")
+    routing_tags: list[str] = Field(description="路由标签")
+    max_parallel_assignments: int = Field(description="最大并行分配数")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentPage(BaseModel):
+    items: list[AgentResponse] = Field(description="Agent 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class AgentSessionCreateRequest(BaseModel):
+    title: str | None = Field(default=None, description="会话标题")
+
+
+class AgentSessionResponse(BaseModel):
+    id: str = Field(description="Session ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    agent_id: str = Field(description="Agent ID")
+    created_by: str | None = Field(default=None, description="创建者")
+    title: str = Field(description="会话标题")
+    status: str = Field(description="会话状态")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentSessionPage(BaseModel):
+    items: list[AgentSessionResponse] = Field(description="Agent Session 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class AgentMessageResponse(BaseModel):
+    id: str = Field(description="Message ID")
+    session_id: str = Field(description="Session ID")
+    agent_id: str = Field(description="Agent ID")
+    role: str = Field(description="消息角色")
+    content: str = Field(description="消息内容")
+    metadata_json: dict = Field(description="消息元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentMessagePage(BaseModel):
+    items: list[AgentMessageResponse] = Field(description="消息列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class AgentChatRequest(BaseModel):
+    content: str = Field(min_length=1, description="用户消息")
+
+
+class AgentChatResponse(BaseModel):
+    session: AgentSessionResponse = Field(description="会话")
+    messages: list[AgentMessageResponse] = Field(description="本次写入的消息")
+
+
 class TaskResponse(BaseModel):
     id: str = Field(description="任务 ID")
     title: str = Field(description="任务标题")
@@ -167,6 +256,63 @@ class TaskPlanResponse(BaseModel):
     created_at: datetime = Field(description="创建时间")
 
 
+class AgentPlanResponse(BaseModel):
+    agent_id: str = Field(description="Agent ID")
+    run_id: str = Field(description="Agent Run ID，兼容 task_id")
+    task: TaskResponse = Field(description="Run 基础信息")
+    plan: TaskPlanResponse = Field(description="结构化计划")
+    message: str = Field(description="Agent 给用户的计划摘要")
+
+
+class AgentAssignmentResponse(BaseModel):
+    id: str = Field(description="Assignment ID")
+    run_id: str = Field(description="Agent Run ID")
+    agent_id: str = Field(description="Agent ID")
+    parent_assignment_id: str | None = Field(default=None, description="父 Assignment ID")
+    step_key: str | None = Field(default=None, description="计划步骤键")
+    role: str = Field(description="Agent 角色")
+    status: str = Field(description="Assignment 状态")
+    input_json: dict = Field(description="Assignment 输入")
+    output_json: dict = Field(description="Assignment 输出")
+    created_at: datetime = Field(description="创建时间")
+    started_at: datetime | None = Field(default=None, description="开始时间")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentHandoffResponse(BaseModel):
+    id: str = Field(description="Handoff ID")
+    run_id: str = Field(description="Agent Run ID")
+    from_assignment_id: str | None = Field(default=None, description="来源 Assignment ID")
+    to_assignment_id: str = Field(description="目标 Assignment ID")
+    handoff_type: str = Field(description="交接类型")
+    status: str = Field(description="交接状态")
+    payload_json: dict = Field(description="交接载荷")
+    created_at: datetime = Field(description="创建时间")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentOrchestrateResponse(BaseModel):
+    run_id: str = Field(description="Agent Run ID")
+    strategy: str = Field(description="编排策略")
+    routing_reasoning: str | None = Field(default=None, description="路由决策依据")
+    assignments: list[AgentAssignmentResponse] = Field(description="Agent 分配列表")
+    handoffs: list[AgentHandoffResponse] = Field(description="Agent 交接列表")
+    message: str = Field(description="编排摘要")
+
+
+class AgentAutoResponse(BaseModel):
+    agent_id: str = Field(description="Agent ID")
+    run_id: str = Field(description="Agent Run ID")
+    task: TaskResponse = Field(description="Run 基础信息")
+    plan: TaskPlanResponse = Field(description="结构化计划")
+    orchestration: AgentOrchestrateResponse = Field(description="多 Agent 编排结果")
+    message: str = Field(description="Auto 模式摘要")
+
+
 class TaskPlanVersionSummary(BaseModel):
     id: str = Field(description="计划 ID")
     task_id: str = Field(description="任务 ID")
@@ -213,6 +359,19 @@ class ReplayResponse(BaseModel):
     failure_point: dict | None = Field(default=None, description="故障点")
     diagnosis: str = Field(description="诊断结论")
     requires_manual_review: bool = Field(description="是否需要人工复核")
+
+
+class RunContextResponse(BaseModel):
+    task_id: str = Field(description="任务 ID")
+    generated_at: datetime = Field(description="上下文生成时间")
+    working_memory: dict = Field(description="单次 Run 工作记忆")
+    long_term_memory: dict = Field(description="跨 Run 长期记忆摘要")
+    artifact_memory: dict = Field(description="产物记忆摘要")
+    rag_context: dict = Field(description="检索上下文摘要")
+    trace_memory: dict = Field(description="事件 Trace 记忆")
+    context_compression: dict = Field(description="上下文压缩结果")
+    model_routing: dict = Field(description="模型路由决策")
+    latest_agent_router: dict | None = Field(default=None, description="最近一次 Agent 路由事件")
 
 
 class EventResponse(BaseModel):
@@ -454,6 +613,35 @@ class WarmPoolResponse(BaseModel):
     miss_total: int = Field(description="未命中总数")
 
 
+class WarmPoolBenchmarkRequest(BaseModel):
+    iterations: int = Field(default=5, ge=1, le=50, description="基准测试迭代次数")
+    target_startup_ms: int = Field(default=50, ge=1, le=1000, description="目标启动耗时")
+    mode: Literal["projection"] = Field(default="projection", description="基准测试模式")
+
+
+class WarmPoolBenchmarkResponse(BaseModel):
+    id: str = Field(description="Benchmark Run ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    mode: str = Field(description="基准测试模式")
+    status: str = Field(description="状态")
+    target_startup_ms: int = Field(description="目标启动耗时")
+    iteration_count: int = Field(description="迭代次数")
+    warm_avg_ms: int = Field(description="WarmPool 平均耗时")
+    warm_p95_ms: int = Field(description="WarmPool P95 耗时")
+    cold_avg_ms: int = Field(description="冷启动基线平均耗时")
+    hit_rate: int = Field(description="命中率百分比")
+    report_json: dict = Field(description="完整报告")
+    created_by: str | None = Field(default=None, description="创建者")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WarmPoolBenchmarkPage(BaseModel):
+    items: list[WarmPoolBenchmarkResponse] = Field(description="Benchmark Run 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
 class CountItem(BaseModel):
     name: str = Field(description="名称")
     count: int = Field(description="数量")
@@ -461,6 +649,7 @@ class CountItem(BaseModel):
 
 class ObservabilityQueueResponse(BaseModel):
     pending: int = Field(description="等待执行的子 Agent 数")
+    queued: int = Field(default=0, description="已入队等待 worker 消费的数量")
     running: int = Field(description="正在执行的子 Agent 数")
     success: int = Field(description="成功完成的子 Agent 数")
     failed: int = Field(description="失败的子 Agent 数")
@@ -475,10 +664,14 @@ class ObservabilityQueueResponse(BaseModel):
 class ObservabilitySummaryResponse(BaseModel):
     tasks_by_status: list[CountItem] = Field(description="任务状态分布")
     subagents_by_status: list[CountItem] = Field(description="子 Agent 状态分布")
+    agent_assignments_by_status: list[CountItem] = Field(description="Agent Assignment 状态分布")
     model_calls_by_status: list[CountItem] = Field(description="模型调用状态分布")
     tool_calls_by_status: list[CountItem] = Field(description="工具调用状态分布")
     sandboxes_by_status: list[CountItem] = Field(description="沙箱状态分布")
     subagent_queue: ObservabilityQueueResponse = Field(description="子 Agent 队列运营摘要")
+    assignment_queue: ObservabilityQueueResponse = Field(
+        description="Agent Assignment 队列运营摘要"
+    )
     warm_pool: WarmPoolResponse = Field(description="WarmPool 状态")
     event_total: int = Field(description="事件总数")
     task_total: int = Field(description="任务总数")
@@ -486,6 +679,88 @@ class ObservabilitySummaryResponse(BaseModel):
     model_call_total: int = Field(description="模型调用总数")
     tool_call_total: int = Field(description="工具调用总数")
     sandbox_total: int = Field(description="沙箱总数")
+
+
+class PlannerExecutorArchitectureResponse(BaseModel):
+    enabled: bool = Field(description="Planner/Executor 架构是否启用")
+    planner: str = Field(description="Planner 实现")
+    executor: str = Field(description="Executor 实现")
+    react_engine: str = Field(description="同步执行引擎")
+    planner_prompt_version: str = Field(description="Planner Prompt 版本")
+    plan_total: int = Field(description="当前组织计划总数")
+    sync_step_total: int = Field(description="同步步骤总数")
+    async_step_total: int = Field(description="异步步骤总数")
+    status: str = Field(description="当前能力状态")
+
+
+class EventSourcingArchitectureResponse(BaseModel):
+    enabled: bool = Field(description="事件溯源是否启用")
+    event_total: int = Field(description="当前组织事件总数")
+    snapshot_total: int = Field(description="当前组织快照总数")
+    snapshot_frequency_events: int = Field(description="每多少个事件生成快照")
+    replay_enabled: bool = Field(description="是否支持重放")
+    resume_enabled: bool = Field(description="是否支持断点恢复")
+    audit_log_enabled: bool = Field(description="是否支持完整审计日志")
+    time_travel_debugging_enabled: bool = Field(description="是否支持按序号重放调试")
+    last_sequence: int = Field(description="当前组织最大事件序号")
+
+
+class SubagentArchitectureResponse(BaseModel):
+    enabled: bool = Field(description="Subagent 编排是否启用")
+    concurrency_limit: int = Field(description="子 Agent 并发上限")
+    timeout_seconds: int = Field(description="默认超时秒数")
+    pending: int = Field(description="等待执行数量")
+    running: int = Field(description="正在执行数量")
+    success: int = Field(description="成功数量")
+    failed: int = Field(description="失败数量")
+    timeout: int = Field(description="超时数量")
+    cancelled: int = Field(description="取消数量")
+    active_total: int = Field(description="PENDING + RUNNING 数量")
+    state_machine: list[str] = Field(description="状态机")
+    status: str = Field(description="当前能力状态")
+
+
+class WarmPoolArchitectureResponse(BaseModel):
+    enabled: bool = Field(description="WarmPool 是否启用")
+    target_startup_ms: int = Field(description="WarmPool 目标启动耗时毫秒")
+    cold_start_min_ms: int = Field(description="传统冷启动最小耗时毫秒")
+    cold_start_max_ms: int = Field(description="传统冷启动最大耗时毫秒")
+    min_size: int = Field(description="预热池最小数量")
+    max_size: int = Field(description="预热池最大数量")
+    idle: int = Field(description="空闲数量")
+    busy: int = Field(description="忙碌数量")
+    failed: int = Field(description="失败数量")
+    hit_total: int = Field(description="命中总数")
+    miss_total: int = Field(description="未命中总数")
+    status: str = Field(description="当前能力状态")
+
+
+class MultiAgentArchitectureResponse(BaseModel):
+    enabled: bool = Field(description="多 Agent 编排是否启用")
+    agent_total: int = Field(description="当前组织可用 Agent 数")
+    assignment_total: int = Field(description="当前组织 Assignment 总数")
+    handoff_total: int = Field(description="当前组织 Handoff 总数")
+    pending: int = Field(description="等待执行数量")
+    queued: int = Field(description="已入队数量")
+    running: int = Field(description="正在执行数量")
+    success: int = Field(description="成功数量")
+    failed: int = Field(description="失败数量")
+    active_total: int = Field(description="QUEUED + RUNNING 数量")
+    state_machine: list[str] = Field(description="状态机")
+    strategy: str = Field(description="编排策略")
+    reducer_enabled: bool = Field(description="是否启用 Reducer 聚合")
+    status: str = Field(description="当前能力状态")
+
+
+class RuntimeArchitectureResponse(BaseModel):
+    planner_executor: PlannerExecutorArchitectureResponse = Field(
+        description="Planner/Executor 任务分解与执行架构"
+    )
+    event_sourcing: EventSourcingArchitectureResponse = Field(description="事件溯源能力")
+    multi_agent: MultiAgentArchitectureResponse = Field(description="多 Agent 编排能力")
+    subagents: SubagentArchitectureResponse = Field(description="Subagent 编排能力")
+    warm_pool: WarmPoolArchitectureResponse = Field(description="WarmPool 性能优化能力")
+    notes: list[str] = Field(description="架构说明")
 
 
 class ObservabilityLogEntry(BaseModel):
@@ -697,6 +972,151 @@ class ToolExecuteResponse(BaseModel):
     tool_call: ToolCallResponse = Field(description="工具调用审计记录")
     allowed: bool = Field(description="是否通过策略")
     output: dict = Field(description="工具输出")
+
+
+class ToolApprovalResponse(BaseModel):
+    id: str = Field(description="审批 ID")
+    task_id: str = Field(description="任务 ID")
+    tool_call_id: str = Field(description="工具调用 ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    requested_by: str | None = Field(default=None, description="请求人")
+    decided_by: str | None = Field(default=None, description="审批人")
+    status: str = Field(description="审批状态")
+    risk_level: str = Field(description="风险等级")
+    reason: str = Field(description="审批原因")
+    request_json: dict = Field(description="审批请求")
+    decision_json: dict = Field(description="审批决定")
+    created_at: datetime = Field(description="创建时间")
+    decided_at: datetime | None = Field(default=None, description="审批时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ToolApprovalPage(BaseModel):
+    items: list[ToolApprovalResponse] = Field(description="工具审批列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class ToolApprovalDecisionRequest(BaseModel):
+    reason: str = Field(default="", description="审批说明")
+
+
+class ToolMetadataResponse(BaseModel):
+    name: str = Field(description="工具名称")
+    description: str = Field(description="工具描述")
+    category: str = Field(description="工具分类")
+    source: str = Field(description="工具来源")
+    risk_level: str = Field(description="风险等级")
+    requires_sandbox: bool = Field(description="是否需要沙箱")
+    network_policy: str = Field(description="网络策略")
+    timeout_seconds: int = Field(description="超时秒数")
+    allowed_roles: list[str] = Field(description="允许角色")
+    audit_level: str = Field(description="审计等级")
+    idempotent: bool = Field(description="是否幂等")
+    input_schema: dict = Field(description="输入 schema")
+    mcp_server: str | None = Field(default=None, description="MCP Server")
+    mcp_method: str | None = Field(default=None, description="MCP Method")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ToolRegistryResponse(BaseModel):
+    items: list[ToolMetadataResponse] = Field(description="工具列表")
+    categories: list[str] = Field(description="工具分类")
+    sources: list[str] = Field(description="工具来源")
+
+
+class EvalDatasetCreateRequest(BaseModel):
+    name: str = Field(min_length=1, description="Dataset 名称")
+    description: str = Field(default="", description="Dataset 说明")
+
+
+class EvalDatasetResponse(BaseModel):
+    id: str = Field(description="Dataset ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    name: str = Field(description="Dataset 名称")
+    description: str = Field(description="Dataset 说明")
+    status: str = Field(description="Dataset 状态")
+    created_by: str | None = Field(default=None, description="创建者")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+    case_count: int = Field(default=0, description="Case 数量")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalDatasetPage(BaseModel):
+    items: list[EvalDatasetResponse] = Field(description="Dataset 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class EvalCaseCreateRequest(BaseModel):
+    input_json: dict = Field(default_factory=dict, description="Case 输入")
+    expected_json: dict = Field(default_factory=dict, description="期望输出")
+    tags_json: list[str] = Field(default_factory=list, description="标签")
+
+
+class EvalCaseFromRunRequest(BaseModel):
+    expected_json: dict = Field(default_factory=dict, description="期望输出")
+    tags_json: list[str] = Field(default_factory=list, description="标签")
+
+
+class EvalCaseResponse(BaseModel):
+    id: str = Field(description="Case ID")
+    dataset_id: str = Field(description="Dataset ID")
+    source_task_id: str | None = Field(default=None, description="来源 Run ID")
+    input_json: dict = Field(description="Case 输入")
+    expected_json: dict = Field(description="期望输出")
+    tags_json: list[str] = Field(description="标签")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalCasePage(BaseModel):
+    items: list[EvalCaseResponse] = Field(description="Case 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class EvalRunCreateRequest(BaseModel):
+    agent_id: str | None = Field(default=None, description="Agent 版本或 Agent ID")
+
+
+class EvalResultResponse(BaseModel):
+    id: str = Field(description="Result ID")
+    eval_run_id: str = Field(description="Eval Run ID")
+    eval_case_id: str = Field(description="Eval Case ID")
+    task_id: str | None = Field(default=None, description="关联 Run ID")
+    status: str = Field(description="评分状态")
+    scores_json: dict = Field(description="评分明细")
+    grader_trace_json: dict = Field(description="Grader trace")
+    latency_ms: int = Field(description="耗时毫秒")
+    cost_usd: str = Field(description="成本美元")
+    error_message: str | None = Field(default=None, description="错误信息")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalRunResponse(BaseModel):
+    id: str = Field(description="Eval Run ID")
+    dataset_id: str = Field(description="Dataset ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    status: str = Field(description="Eval Run 状态")
+    metrics_json: dict = Field(description="聚合指标")
+    created_by: str | None = Field(default=None, description="创建者")
+    started_at: datetime | None = Field(default=None, description="开始时间")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+    created_at: datetime = Field(description="创建时间")
+    results: list[EvalResultResponse] = Field(default_factory=list, description="评分结果")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalRunPage(BaseModel):
+    items: list[EvalRunResponse] = Field(description="Eval Run 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
 class ModelSettingsResponse(BaseModel):

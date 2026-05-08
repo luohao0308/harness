@@ -8,12 +8,13 @@ from shlex import quote
 
 from sqlalchemy.orm import Session
 
-from app.db.models import SandboxInstance, ToolCall, utc_now
+from app.db.models import SandboxInstance, Task, ToolApproval, ToolCall, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.sandbox.docker_manager import SandboxCommandTimeoutError
 from app.sandbox.policies import PolicyEngine, SandboxPolicyDecision
 from app.tools.filesystem import WorkspaceFileTool
+from app.tools.mcp_adapter import MCPAdapter
 from app.tools.registry import ToolMetadata, ToolRegistry
 from app.tools.shell import ShellTool, ShellToolRequest
 
@@ -33,11 +34,13 @@ class ToolRunner:
         workspace_root: Path | None = None,
         registry: ToolRegistry | None = None,
         shell_tool: ShellTool | None = None,
+        mcp_adapter: MCPAdapter | None = None,
     ) -> None:
         self.session = session
         self.workspace_root = (workspace_root or Path.cwd()).resolve()
         self.registry = registry or ToolRegistry.default()
         self.shell_tool = shell_tool or ShellTool()
+        self.mcp_adapter = mcp_adapter or MCPAdapter()
         self.event_store = EventStore(session)
         self.policy_engine = PolicyEngine(session)
 
@@ -65,6 +68,15 @@ class ToolRunner:
             else metadata.requires_sandbox
         )
         if not decision.allowed:
+            if decision.policy_id == "tool-approval-required":
+                return self._request_approval(
+                    task_id=task_id,
+                    agent_run_id=agent_run_id,
+                    metadata=metadata,
+                    input_json=input_json,
+                    decision=decision,
+                    requires_sandbox=requires_sandbox,
+                )
             return self._deny(
                 task_id=task_id,
                 agent_run_id=agent_run_id,
@@ -236,6 +248,82 @@ class ToolRunner:
         self.session.flush()
         return ToolExecution(tool_call=tool_call, allowed=False, output={})
 
+    def _request_approval(
+        self,
+        *,
+        task_id: str,
+        agent_run_id: str | None,
+        metadata: ToolMetadata,
+        input_json: dict,
+        decision: SandboxPolicyDecision,
+        requires_sandbox: bool,
+    ) -> ToolExecution:
+        task = self.session.get(Task, task_id)
+        tool_call = ToolCall(
+            task_id=task_id,
+            agent_run_id=agent_run_id,
+            tool_name=metadata.name,
+            status="PENDING_APPROVAL",
+            risk_level=metadata.risk_level,
+            requires_sandbox=requires_sandbox,
+            duration_ms=0,
+            input_json=input_json,
+            output_json={},
+            error_message=decision.reason,
+            created_at=utc_now(),
+        )
+        self.session.add(tool_call)
+        self.session.flush()
+        approval = ToolApproval(
+            task_id=task_id,
+            tool_call_id=tool_call.id,
+            organization_id=task.organization_id if task is not None else None,
+            requested_by=None,
+            status="PENDING",
+            risk_level=metadata.risk_level,
+            reason=decision.reason,
+            request_json={
+                "tool_name": metadata.name,
+                "input_json": input_json,
+                "requires_sandbox": requires_sandbox,
+                "policy_id": decision.policy_id,
+                "audit_level": decision.audit_level,
+            },
+            decision_json={},
+            created_at=utc_now(),
+        )
+        self.session.add(approval)
+        self.session.flush()
+        payload = {
+            "tool_call_id": tool_call.id,
+            "tool_approval_id": approval.id,
+            "tool_name": metadata.name,
+            "allowed": False,
+            "requires_approval": True,
+            "policy_id": decision.policy_id,
+            "reason": decision.reason,
+            "audit_level": decision.audit_level,
+            "requires_sandbox": requires_sandbox,
+        }
+        self.event_store.append(
+            task_id=task_id,
+            agent_run_id=agent_run_id,
+            event_type=EventType.POLICY_CHECKED,
+            payload_json=payload,
+        )
+        self.event_store.append(
+            task_id=task_id,
+            agent_run_id=agent_run_id,
+            event_type=EventType.TOOL_APPROVAL_REQUESTED,
+            payload_json=payload,
+        )
+        self.session.flush()
+        return ToolExecution(
+            tool_call=tool_call,
+            allowed=False,
+            output={"approval_id": approval.id, "status": approval.status},
+        )
+
     def _execute_allowed(
         self,
         metadata: ToolMetadata,
@@ -243,6 +331,13 @@ class ToolRunner:
         sandbox: SandboxInstance | None,
     ) -> dict:
         filesystem = WorkspaceFileTool(self.workspace_root)
+        if metadata.source == "mcp":
+            result = self.mcp_adapter.execute(metadata=metadata, input_json=input_json)
+            return {
+                "mcp_server": result.server,
+                "mcp_method": result.method,
+                "result": result.output_json,
+            }
         if metadata.name == "read_file":
             result = filesystem.read_file(str(input_json["path"]))
             return {"content": result.content, "size_bytes": result.size_bytes}

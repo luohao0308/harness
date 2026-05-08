@@ -2,13 +2,13 @@
 
 ## 目标
 
-Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，并通过 ReAct 循环驱动工具、模型和 Subagent。任务分解与执行架构必须明确区分同步执行和异步执行。
+Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，并通过 ReAct 循环驱动工具、模型和 Subagent。目标分解与执行架构必须明确区分同步执行和异步执行。
 
 目标架构：
 
 ```text
-任务分解与执行架构
-├─ Planner：任务分解与规划
+目标分解与执行架构
+├─ Planner：目标分解与规划
 ├─ Executor：同步执行（ReAct Engine）
 └─ Subagent：异步执行（长时间任务）
 ```
@@ -17,7 +17,8 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 输入目标 | `/tasks/new` | 创建待规划任务 |
+| 输入目标 | `/agents/:agentId/chat` | 在 Agent Plan 模式中输入目标 |
+| 只规划不执行 | `/agents/:agentId/chat` | 返回结构化计划，Run 状态为 `PLANNED` |
 | 查看计划 | `/tasks/:taskId` | 查看计划版本、步骤和原始 JSON |
 | 查看步骤 | `/tasks/:taskId` | 查看步骤状态、耗时和错误 |
 | 执行工具 | `/tasks/:taskId` | 按策略执行工具并记录审计 |
@@ -29,6 +30,8 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 ## 后端契约
 
 ```text
+POST /api/agents/plan
+POST /api/agents/runs/{run_id}/execute
 POST /api/tasks/{task_id}/start
 GET  /api/tasks/{task_id}/result
 GET  /api/tasks/{task_id}/plan
@@ -43,7 +46,9 @@ POST /api/tasks/{task_id}/tools/execute
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/tasks/new` | Task API | 输入目标、模型、策略和沙箱约束 |
+| `/agents/:agentId/chat` | Agent Plan API | Chat/Plan/Execute/Auto 模式切换，Plan 模式只生成计划 |
+| `/agents/:agentId/chat` | Agent Execute API | Execute 模式执行同一个已规划 Run，不重新规划 |
+| `/runs/new` | Run API；当前可复用 Task API 兼容层 | 输入目标、模型、策略和沙箱约束 |
 | `/tasks/:taskId` | Plan、Steps、Step Resume、Tool Execute、Subagent API | 查看同步步骤、异步步骤、步骤断点续跑、工具执行结果和子 Agent |
 
 同步与异步在页面上的体现：
@@ -94,6 +99,7 @@ POST /api/tasks/{task_id}/tools/execute
 ```text
 PLAN_REQUESTED
 PLAN_GENERATED
+TASK_STARTED
 STEP_STARTED
 STEP_COMPLETED
 STEP_FAILED
@@ -138,6 +144,7 @@ SUBAGENT_TIMEOUT
 ## 状态流转
 
 ```text
+PLAN_MODE_REQUESTED -> TASK_CREATED -> PLAN_REQUESTED -> PLAN_GENERATED -> PLANNED
 TASK_CREATED -> PLANNING -> RUNNING
 STEP_PENDING -> STEP_RUNNING -> STEP_COMPLETED
 STEP_PENDING -> STEP_RUNNING -> STEP_FAILED
@@ -176,6 +183,8 @@ agent_subagents_running
 | 能力 | 状态 | 证据 |
 |---|---|---|
 | 结构化计划 | 已落地 | `planner.py` 先解析模型 JSON，失败时回退确定性计划 |
+| Agent Plan 模式 | 基础落地 | `POST /api/agents/plan` 和 `/agents/:agentId/chat` |
+| Agent Execute 已确认计划 | 基础落地 | `POST /api/agents/runs/{run_id}/execute` 复用最新计划 |
 | 计划查询接口 | 已落地 | `GET /api/tasks/{task_id}/plan` |
 | 计划版本接口 | 已落地 | `GET /api/tasks/{task_id}/plans` |
 | 计划版本对比 | 已落地 | `GET /api/tasks/{task_id}/plans/diff` |
@@ -203,30 +212,37 @@ agent_subagents_running
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| 无当前缺口 | Planner 质量治理、Executor 步骤轨迹、同步执行、异步派生、计划版本和步骤续跑均已落地 | 保持计划质量、执行轨迹和恢复链路回归 |
+| Plan 模式入口缺失 | 用户不知道目标分解与规划在哪里 | 在 Agent Workspace 中提供显式 Plan 模式 |
+| 旧创建页语义过重 | 用户感受到的是后台运行记录，不是 Agent | 产品概念统一为 Agent Session / Agent Run，主入口切到 Agent Chat |
+| Execute 不能复用 Plan-only Run | 用户确认计划后无法在同一个 Run 继续执行 | `POST /api/agents/runs/{run_id}/execute` 执行现有计划且不重新规划 |
+| 只有 Subagent 派生 | 只能表达单个 Run 内的异步分工，不是多 Agent 编排 | 引入 Agent Router、Orchestrator、handoff、parallel fan-out、reduce |
 
 ## 实现顺序
 
 ```text
 1. 固化 Plan / Step schema
-2. 保持 Executor ReAct 循环轨迹回归
-3. 保持 Worker 跨进程接管回归
-4. 保持 Worker 级恢复历史查询
+2. 新增 Agent Plan-only API
+3. 新增 Agent Workspace Plan 模式页面
+4. 新增 Agent Execute existing-plan API
+5. 保持 Executor ReAct 循环轨迹回归
+6. 保持 Worker 跨进程接管回归
+7. 新增多 Agent 编排层
 ```
 
 ## 验收标准
 
-- 每个任务有结构化计划。
+- 每个 Agent Run 有结构化计划。
 - 每个步骤有稳定 key 和状态。
 - 同步步骤在计划和步骤接口中显示 `execution_mode=sync`。
 - 异步步骤在计划和步骤接口中显示 `execution_mode=async`。
 - 异步步骤必须生成 `agent_runs` 记录，并在 Subagent 面板展示。
+- Agent Execute API 必须执行已确认计划，不新增第二个 `PLAN_GENERATED`。
 - 异步步骤在执行计划面板展示关联子 Agent ID 和状态。
 - Plan API 返回计划来源和尝试次数。
 - Plan API 返回步骤工具意图、验收标准、风险等级和预期产物。
 - Plan Version API 返回版本列表和版本差异。
 - 控制台必须展示计划版本新增、变更和移除步骤清单。
-- 控制台必须在任务失败或取消后展示步骤级“从此续跑”动作。
+- 控制台必须在 Run 失败或取消后展示步骤级“从此续跑”动作。
 - Step Resume API 必须写入 `TASK_RESUMED`、`STEP_RETRIED` 和 `STEP_SKIPPED`。
 - Step Resume API 必须从最靠前的请求步骤继续执行后续未完成步骤。
 - Step Resume API 必须返回实际断点、执行步骤、跳过步骤和剩余步骤。

@@ -52,6 +52,10 @@ Model + Harness = Agent
 ## 控制台路由
 
 ```text
+/agents
+/agents/:agentId/chat
+/runs
+/runs/:runId
 /tasks
 /tasks/new
 /tasks/:taskId
@@ -63,7 +67,25 @@ Model + Harness = Agent
 /settings/policies
 ```
 
-## 任务详情布局
+`/tasks` 路由保留为兼容入口，产品文案逐步迁移为 `Runs`。新主入口是 `/agents/:agentId/chat`。
+
+## Agent Workspace 布局
+
+```text
+顶部：Agent 名称、默认模型、Chat / Plan / Execute / Auto 模式切换
+中间：对话消息、Agent 思考/计划/执行输出
+右侧：Plan、Events、Tools、Subagents、Sandbox、Artifacts
+底部：输入框、Plan 按钮、Execute 按钮、Auto 按钮
+```
+
+Plan 模式要求：
+
+- 只做任务分解与规划，不执行工具。
+- 中间区域展示 Agent 对用户目标的计划响应。
+- 右侧结构化展示步骤、风险、工具意图、是否需要 Subagent/Sandbox。
+- 用户可从 Plan 结果进入 Run 详情或继续 Execute。
+
+## Run 详情布局
 
 ```text
 顶部：任务状态、耗时、操作按钮
@@ -73,11 +95,30 @@ Model + Harness = Agent
 底部：最终结果与产物
 ```
 
+Run 详情必须展示多 Agent 编排面板：
+
+- `agent_assignments` 节点状态。
+- `agent_handoffs` 交接边。
+- Reducer 汇总输出。
+- QUEUED 或 RUNNING assignment 存在时自动刷新。
+
+## 观测页动态数据
+
+`/observability` 必须读取后端动态摘要，不使用静态状态。页面展示：
+
+- Task、Subagent、Agent Assignment、Model Call、Tool Call 状态分布。
+- Subagent 队列和 Agent Assignment 队列。
+- WarmPool、Sandbox、日志、Trace、导出和服务健康。
+
 ## 控制台组件
 
 核心组件：
 
 ```text
+AgentWorkspace
+AgentModeSwitch
+AgentMessageList
+AgentPlanCard
 TaskTable
 TaskCreateForm
 TaskStatusBadge

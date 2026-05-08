@@ -58,19 +58,33 @@ Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、
 ## 当前实现状态
 
 ```text
-当前阶段：阶段 13 Website Code Integration
-当前状态：ready_for_review
-当前 PR：https://github.com/luohao0308/harness/pull/11
-运行时补齐：企业级增强持续推进
+当前阶段：Spec Stage 09 Portfolio Demo + Docs
+当前状态：completed
+运行时补齐：Agent Harness 核心闭环已接入
 官网与控制台接入：已接入
+验证结果：后端 118 tests passed，前端 build passed，docs validation passed
 ```
 
-当前已补齐认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、Subagent 批量取消、Worker 接管、跨组织恢复摘要与导出、沙箱动态资源、沙箱配额审计、模型 fallback 观测、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
+当前已补齐 Agent Workspace、多 Agent 编排、Eval Harness、Tool / MCP Runtime、Guardrail Approval、Context Router、WarmPool Benchmark、认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、Subagent 批量取消、Worker 接管、跨组织恢复摘要与导出、沙箱动态资源、沙箱配额审计、模型 fallback 观测、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
 步骤级断点续跑已接入，控制台任务详情页支持从指定步骤继续执行后续未完成步骤。
 
 当前运行时接口：
 
 ```text
+GET  /api/agents
+GET  /api/agents/{agent_id}
+POST /api/agents/{agent_id}/sessions
+GET  /api/agents/{agent_id}/sessions
+POST /api/agents/sessions/{session_id}/messages
+GET  /api/agents/sessions/{session_id}/messages
+POST /api/agents/plan
+POST /api/agents/auto
+POST /api/agents/runs/{run_id}/execute
+POST /api/agents/runs/{run_id}/orchestrate
+POST /api/agents/runs/{run_id}/orchestrate/execute
+POST /api/agents/runs/{run_id}/orchestrate/enqueue
+GET  /api/agents/runs/{run_id}/assignments
+GET  /api/agents/runs/{run_id}/handoffs
 POST /api/tasks
 GET  /api/tasks
 GET  /api/tasks/{task_id}
@@ -82,6 +96,8 @@ GET  /api/tasks/{task_id}/plan
 GET  /api/tasks/{task_id}/steps
 POST /api/tasks/{task_id}/steps/resume
 POST /api/tasks/{task_id}/replay
+GET  /api/tasks/{task_id}/context
+POST /api/tasks/{task_id}/context/route
 GET  /api/tasks/{task_id}/events
 GET  /api/tasks/{task_id}/events/stream
 GET  /api/tasks/{task_id}/subagents
@@ -96,10 +112,24 @@ POST /api/subagents/{subagent_id}/cancel
 GET  /api/tasks/{task_id}/model-calls
 GET  /api/tasks/{task_id}/tool-calls
 POST /api/tasks/{task_id}/tools/execute
+GET  /api/tasks/{task_id}/tool-approvals
+POST /api/tasks/{task_id}/tool-approvals/{approval_id}/approve
+POST /api/tasks/{task_id}/tool-approvals/{approval_id}/reject
+GET  /api/tools/registry
+GET  /api/evals/datasets
+POST /api/evals/datasets
+POST /api/evals/datasets/{dataset_id}/cases
+POST /api/evals/datasets/{dataset_id}/cases/from-run/{task_id}
+GET  /api/evals/datasets/{dataset_id}/cases
+POST /api/evals/datasets/{dataset_id}/runs
+GET  /api/evals/runs
+GET  /api/evals/runs/{eval_run_id}
 GET  /api/sandboxes
 GET  /api/sandboxes/quota/usage
 GET  /api/sandboxes/quota/history
 GET  /api/sandboxes/warm-pool
+POST /api/sandboxes/warm-pool/benchmark
+GET  /api/sandboxes/warm-pool/benchmarks
 GET  /api/sandboxes/{sandbox_id}
 POST /api/sandboxes/{sandbox_id}/terminate
 GET  /api/observability/summary
@@ -195,25 +225,33 @@ ORM：SQLAlchemy 2.0
 
 AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，强调唯一事实源、固定目录、接口契约、事件枚举、任务顺序和禁止事项。
 
+- [Product Spec](./docs/00-product-spec.md)
+- [System Architecture](./docs/01-system-architecture.md)
+- [Data Model And Event Spec](./docs/02-data-model-and-event-spec.md)
+- [API Spec](./docs/03-api-spec.md)
+- [Agent Runtime Spec](./docs/04-agent-runtime-spec.md)
+- [Tool MCP Runtime Spec](./docs/05-tool-mcp-runtime-spec.md)
+- [Guardrail Policy Spec](./docs/06-guardrail-policy-spec.md)
+- [Eval Harness Spec](./docs/07-eval-harness-spec.md)
+- [Console UI Spec](./docs/08-console-ui-spec.md)
+- [Benchmark Spec](./docs/09-benchmark-spec.md)
+- [Portfolio Demo Spec](./docs/10-portfolio-demo-spec.md)
+- [Spec Mode Task Progress](./docs/task-progress.md)
 - [AI 读文档入口](./docs/ai/README.md)
 - [AI Master Prompt](./docs/ai/00-master-prompt.md)
 - [执行协议](./docs/ai/00-execution-protocol.md)
 - [任务进度](./docs/ai/01-task-progress.md)
 - [机器可读任务进度](./docs/ai/task-progress.yaml)
 - [人读任务进度看板](./docs/human/10-task-progress.md)
-- [阶段 01：GitHub 与 Git 初始化](./docs/ai/02-stage-01-git-github.md)
-- [阶段 02：Figma 设计源](./docs/ai/03-stage-02-figma-design.md)
-- [阶段 03：仓库脚手架](./docs/ai/04-stage-03-repository-scaffold.md)
-- [阶段 04：FastAPI 后端基础](./docs/ai/05-stage-04-backend-foundation.md)
-- [阶段 05：Task 与 Event Store](./docs/ai/06-stage-05-task-event-store.md)
-- [阶段 06：Planner 与 Executor](./docs/ai/07-stage-06-planner-executor.md)
-- [阶段 07：React 控制台](./docs/ai/08-stage-07-react-console.md)
-- [阶段 08：Dramatiq Subagent](./docs/ai/09-stage-08-dramatiq-subagent.md)
-- [阶段 09：Docker Sandbox 与 WarmPool](./docs/ai/10-stage-09-sandbox-warmpool.md)
-- [阶段 10：监控、日志、部署](./docs/ai/11-stage-10-observability-deployment.md)
-- [阶段 11：Review P1 Production Hardening](./docs/ai/12-stage-11-review-p1-hardening.md)
-- [阶段 12：Runtime Product Completion](./docs/ai/13-stage-12-runtime-product-completion.md)
-- [阶段 13：Website Code Integration](./docs/ai/14-stage-13-website-code-integration.md)
+- [阶段 01：Agent Graph Runtime](./docs/ai/stages/01-agent-graph-runtime.md)
+- [阶段 02：Event Store + Recovery](./docs/ai/stages/02-event-store-recovery.md)
+- [阶段 03：Agent Run Console](./docs/ai/stages/03-agent-run-console.md)
+- [阶段 04：Tool / MCP Runtime](./docs/ai/stages/04-tool-mcp-runtime.md)
+- [阶段 05：Guardrail / Policy Engine](./docs/ai/stages/05-guardrail-policy-engine.md)
+- [阶段 06：Eval Harness](./docs/ai/stages/06-eval-harness.md)
+- [阶段 07：Memory / Context / Model Routing](./docs/ai/stages/07-memory-context-router.md)
+- [阶段 08：WarmPool + Benchmark](./docs/ai/stages/08-warmpool-benchmark.md)
+- [阶段 09：Portfolio Demo + Docs](./docs/ai/stages/09-portfolio-demo-docs.md)
 - [运行时 Agent Prompts](./docs/ai/reference/runtime-agent-prompts.md)
 - [Tool Registry 契约](./docs/ai/reference/tool-registry-spec.md)
 - [Tool Registry YAML](./docs/ai/reference/tool-registry.yaml)
@@ -225,9 +263,15 @@ AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，�
 - [OpenAPI YAML](./docs/api/openapi.yaml)
 - [Prompt Eval Cases](./docs/evals/prompt-eval-cases.yaml)
 - [Prompt Eval Runbook](./docs/evals/prompt-eval-runbook.md)
+- [Eval Harness Report](./docs/reports/eval-report.md)
+- [WarmPool Benchmark Report](./docs/reports/benchmark-report.md)
+- [AI Harness Engineer Capability Map](./docs/reports/ai-harness-engineer-capability-map.md)
+- [Python Agent SDK Example](./docs/sdk/python-agent-sdk-example.md)
 - [安全威胁模型](./docs/security/threat-model.md)
 - [QA 测试策略](./docs/qa/test-strategy.md)
 - [端到端 Demo 剧本](./docs/demo/e2e-demo-script.md)
+- [Portfolio Demo Guide](./docs/demo/portfolio-demo-guide.md)
+- [Demo Video And GIF Recording Plan](./docs/demo/video-gif-recording-plan.md)
 - [本地开发 Runbook](./docs/runbooks/local-development.md)
 - [部署 Runbook](./docs/runbooks/deployment.md)
 - [迁移 Runbook](./docs/runbooks/migrations.md)
@@ -276,19 +320,15 @@ harness/
 ## 执行顺序
 
 ```text
-阶段 01：GitHub 与 Git 初始化
-阶段 02：Figma 设计源
-阶段 03：仓库脚手架
-阶段 04：FastAPI 后端基础
-阶段 05：Task 与 Event Store
-阶段 06：Planner 与 Executor
-阶段 07：React 控制台
-阶段 08：Dramatiq Subagent
-阶段 09：Docker Sandbox 与 WarmPool
-阶段 10：监控、日志、部署
-阶段 11：Review P1 Production Hardening
-阶段 12：Runtime Product Completion
-阶段 13：Website Code Integration
+阶段 01：Agent Graph Runtime
+阶段 02：Event Store + Recovery
+阶段 03：Agent Run Console
+阶段 04：Tool / MCP Runtime
+阶段 05：Guardrail / Policy Engine
+阶段 06：Eval Harness
+阶段 07：Memory / Context / Model Routing
+阶段 08：WarmPool + Benchmark
+阶段 09：Portfolio Demo + Docs
 ```
 
 ## 交付版本术语

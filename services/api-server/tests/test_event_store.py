@@ -138,3 +138,93 @@ def test_event_store_creates_snapshot_every_100_events(db_session: Session) -> N
     assert snapshot.sequence == 100
     assert snapshot.state_json["status"] == "COMPLETED"
     assert snapshot.state_json["last_sequence"] == 100
+
+
+def test_replay_tracks_multi_agent_assignments_handoffs_and_reduce(
+    db_session: Session,
+) -> None:
+    task = Task(
+        title="Multi-agent replay",
+        goal="Replay assignments",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    event_store = EventStore(db_session)
+
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.AGENT_ASSIGNMENT_CREATED,
+        payload_json={
+            "assignment_id": "assignment-researcher",
+            "agent_id": "researcher",
+            "role": "researcher",
+        },
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.AGENT_ASSIGNMENT_QUEUED,
+        payload_json={
+            "assignment_id": "assignment-researcher",
+            "agent_id": "researcher",
+        },
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.AGENT_ASSIGNMENT_STARTED,
+        payload_json={
+            "assignment_id": "assignment-researcher",
+            "agent_id": "researcher",
+        },
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.AGENT_HANDOFF_COMPLETED,
+        payload_json={
+            "handoff_id": "handoff-review",
+            "from_assignment_id": "assignment-researcher",
+            "to_assignment_id": "assignment-reviewer",
+            "handoff_type": "reduce_input",
+        },
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.AGENT_ASSIGNMENT_COMPLETED,
+        payload_json={
+            "assignment_id": "assignment-researcher",
+            "agent_id": "researcher",
+        },
+    )
+    event_store.append(
+        task_id=task.id,
+        event_type=EventType.AGENT_REDUCE_COMPLETED,
+        payload_json={
+            "reducer_assignment_id": "assignment-reviewer",
+            "assignment_count": 2,
+            "summary": "researcher and reviewer completed",
+        },
+    )
+
+    replay_state = EventReplay(db_session).replay_state_json(task_id=task.id)
+
+    assert replay_state["agent_assignments"]["assignment-researcher"] == {
+        "status": "SUCCESS",
+        "agent_id": "researcher",
+        "role": "researcher",
+        "sequence": 5,
+    }
+    assert replay_state["agent_handoffs"]["handoff-review"]["status"] == "COMPLETED"
+    assert (
+        replay_state["agent_handoffs"]["handoff-review"]["from_assignment_id"]
+        == "assignment-researcher"
+    )
+    assert replay_state["agent_reduce"]["status"] == "COMPLETED"
+    assert replay_state["agent_reduce"]["assignment_count"] == 2

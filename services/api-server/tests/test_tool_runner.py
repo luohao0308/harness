@@ -3,7 +3,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import SandboxInstance, SystemSetting, Task, ToolCall, utc_now
+from app.db.models import SandboxInstance, SystemSetting, Task, ToolApproval, ToolCall, utc_now
 from app.events.event_store import EventStore
 from app.sandbox.docker_manager import SandboxCommandResult
 from app.tools.runner import ToolRunner
@@ -164,8 +164,13 @@ def test_tool_runner_uses_policy_settings_admin_approval(db_session: Session) ->
     )
 
     assert execution.allowed is False
-    assert execution.tool_call.status == "DENIED"
+    assert execution.tool_call.status == "PENDING_APPROVAL"
     assert execution.tool_call.error_message == "tool requires admin approval"
+    approval = db_session.execute(select(ToolApproval)).scalar_one()
+    assert approval.status == "PENDING"
+    assert approval.tool_call_id == execution.tool_call.id
+    events = [event.event_type for event in EventStore(db_session).list_by_task(task_id=task.id)]
+    assert events == ["POLICY_CHECKED", "TOOL_APPROVAL_REQUESTED"]
 
 
 class FakeShellTool:

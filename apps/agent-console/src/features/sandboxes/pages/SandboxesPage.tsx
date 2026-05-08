@@ -1,21 +1,42 @@
-import { useQuery } from "@tanstack/react-query";
-import { Box, Gauge } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Box, Gauge, Play } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
+import { Badge, statusTone } from "../../../components/ui/badge";
+import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
-import { getSandboxQuotaUsage, getWarmPool, listSandboxQuotaHistory } from "../../tasks/api";
+import {
+  getSandboxQuotaUsage,
+  getWarmPool,
+  listSandboxQuotaHistory,
+  listWarmPoolBenchmarks,
+  runWarmPoolBenchmark,
+} from "../../tasks/api";
 
 export function SandboxesPage() {
   const { text } = useI18n();
+  const queryClient = useQueryClient();
   const warmPool = useQuery({ queryKey: ["warm-pool"], queryFn: getWarmPool });
   const quota = useQuery({ queryKey: ["sandbox-quota"], queryFn: getSandboxQuotaUsage });
   const history = useQuery({
     queryKey: ["sandbox-quota-history"],
     queryFn: () => listSandboxQuotaHistory(100),
   });
+  const benchmarks = useQuery({
+    queryKey: ["warm-pool-benchmarks"],
+    queryFn: () => listWarmPoolBenchmarks(20),
+  });
+  const runBenchmark = useMutation({
+    mutationFn: () => runWarmPoolBenchmark(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["warm-pool-benchmarks"] });
+      await queryClient.invalidateQueries({ queryKey: ["warm-pool"] });
+    },
+  });
+  const latestBenchmark = runBenchmark.data ?? benchmarks.data?.items[0] ?? null;
 
   return (
     <ConsoleShell title={text("沙箱", "Sandboxes")}>
@@ -76,6 +97,37 @@ export function SandboxesPage() {
             <Metric label={text("忙碌", "Busy")} value={String(warmPool.data?.busy ?? "...")} />
             <Metric label={text("失败", "Failed")} value={String(warmPool.data?.failed ?? "...")} />
             <Metric label={text("容量", "Capacity")} value={`${warmPool.data?.min_size ?? "..."} / ${warmPool.data?.max_size ?? "..."}`} />
+            <Metric label={text("命中", "Hits")} value={String(warmPool.data?.hit_total ?? "...")} />
+            <Metric label={text("未命中", "Misses")} value={String(warmPool.data?.miss_total ?? "...")} />
+            <Metric label={text("命中率", "Hit Rate")} value={hitRate(warmPool.data?.hit_total, warmPool.data?.miss_total)} />
+            <Metric label={text("目标", "Target")} value="<50ms" />
+          </div>
+        </Card>
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Gauge className="h-4 w-4" /> WarmPool Benchmark
+            </div>
+            <div className="flex items-center gap-2">
+              {latestBenchmark && (
+                <Badge tone={statusTone(latestBenchmark.status)}>{latestBenchmark.status}</Badge>
+              )}
+              <Button
+                onClick={() => runBenchmark.mutate()}
+                disabled={runBenchmark.isPending}
+                className="h-8 gap-1.5"
+              >
+                <Play className="h-3.5 w-3.5" />
+                {text("运行 Benchmark", "Run Benchmark")}
+              </Button>
+            </div>
+          </CardHeader>
+          <div className="grid grid-cols-5 gap-3 p-3 text-xs">
+            <Metric label="warm avg" value={formatMs(latestBenchmark?.warm_avg_ms)} />
+            <Metric label="warm p95" value={formatMs(latestBenchmark?.warm_p95_ms)} />
+            <Metric label="cold avg" value={formatMs(latestBenchmark?.cold_avg_ms)} />
+            <Metric label="hit rate" value={latestBenchmark ? `${latestBenchmark.hit_rate}%` : "..."} />
+            <Metric label="iterations" value={String(latestBenchmark?.iteration_count ?? "...")} />
           </div>
         </Card>
         <Card className="overflow-hidden">
@@ -136,6 +188,18 @@ function formatCpu(value?: number) {
 function formatLifetime(value: number | null) {
   if (value === null) return "-";
   return `${value.toLocaleString("zh-CN")}s`;
+}
+
+function formatMs(value?: number | null) {
+  if (value === undefined || value === null) return "...";
+  return `${value.toLocaleString("zh-CN")}ms`;
+}
+
+function hitRate(hit?: number, miss?: number) {
+  if (hit === undefined || miss === undefined) return "...";
+  const total = hit + miss;
+  if (total === 0) return "0%";
+  return `${Math.round((hit / total) * 100)}%`;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

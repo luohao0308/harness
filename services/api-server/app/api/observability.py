@@ -13,10 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.planner import PLANNER_PROMPT_VERSION
+from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT
 from app.api.schemas import (
     CountItem,
+    EventSourcingArchitectureResponse,
     GrafanaDashboardPage,
     GrafanaDashboardResponse,
+    MultiAgentArchitectureResponse,
     ObservabilityExportHistoryItem,
     ObservabilityExportHistoryPage,
     ObservabilityExportItem,
@@ -31,21 +35,32 @@ from app.api.schemas import (
     ObservabilityTraceServiceEdge,
     ObservabilityTraceServiceNode,
     ObservabilityTraceSpan,
+    PlannerExecutorArchitectureResponse,
+    RuntimeArchitectureResponse,
+    SubagentArchitectureResponse,
+    WarmPoolArchitectureResponse,
     WarmPoolResponse,
 )
 from app.core.config import Settings, get_settings
 from app.db.models import (
+    Agent,
+    AgentAssignment,
     AgentEvent,
+    AgentHandoff,
     AgentRun,
+    ExecutionPlan,
     ModelCall,
     ObservabilityExportRecord,
     SandboxInstance,
     Task,
+    TaskSnapshot,
     ToolCall,
 )
 from app.db.session import get_db_session
+from app.events.event_store import SNAPSHOT_FREQUENCY_EVENTS
 from app.sandbox.warm_pool import WarmPoolManager
 from app.security.auth import Principal, require_role
+from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 
 router = APIRouter(prefix="/observability", tags=["observability"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -74,6 +89,12 @@ def get_observability_summary(
             session,
             select(AgentRun.status, func.count(AgentRun.id)).where(AgentRun.task_id.in_(task_ids)),
         ),
+        agent_assignments_by_status=_count_items(
+            session,
+            select(AgentAssignment.status, func.count(AgentAssignment.id)).where(
+                AgentAssignment.run_id.in_(task_ids)
+            ),
+        ),
         model_calls_by_status=_count_items(
             session,
             select(ModelCall.status, func.count(ModelCall.id)).where(
@@ -91,6 +112,10 @@ def get_observability_summary(
             ),
         ),
         subagent_queue=_subagent_queue_summary(
+            session=session,
+            organization_id=principal.organization_id,
+        ),
+        assignment_queue=_assignment_queue_summary(
             session=session,
             organization_id=principal.organization_id,
         ),
@@ -122,6 +147,170 @@ def get_observability_summary(
             session,
             select(func.count(SandboxInstance.id)).where(SandboxInstance.task_id.in_(task_ids)),
         ),
+    )
+
+
+@router.get(
+    "/architecture",
+    response_model=RuntimeArchitectureResponse,
+    summary="查询运行时架构能力",
+    description=(
+        "返回 Planner/Executor、Event Sourcing、Subagent 编排和 WarmPool 的"
+        "当前组织能力摘要。"
+    ),
+)
+def get_runtime_architecture(
+    session: DbSession,
+    principal: Principal,
+) -> RuntimeArchitectureResponse:
+    task_ids = select(Task.id).where(Task.organization_id == principal.organization_id)
+    plan_rows = list(
+        session.execute(
+            select(ExecutionPlan.plan_json).where(ExecutionPlan.task_id.in_(task_ids))
+        )
+    )
+    sync_step_total = 0
+    async_step_total = 0
+    for (plan_json,) in plan_rows:
+        for raw_step in plan_json.get("steps", []) if isinstance(plan_json, dict) else []:
+            if not isinstance(raw_step, dict):
+                continue
+            if raw_step.get("execution_mode") == "async":
+                async_step_total += 1
+            else:
+                sync_step_total += 1
+
+    event_total = _count_total(
+        session,
+        select(func.count(AgentEvent.id)).where(AgentEvent.task_id.in_(task_ids)),
+    )
+    snapshot_total = _count_total(
+        session,
+        select(func.count(TaskSnapshot.id)).where(TaskSnapshot.task_id.in_(task_ids)),
+    )
+    last_sequence = int(
+        session.execute(
+            select(func.coalesce(func.max(AgentEvent.sequence), 0)).where(
+                AgentEvent.task_id.in_(task_ids)
+            )
+        ).scalar_one()
+        or 0
+    )
+    subagent_queue = _subagent_queue_summary(
+        session=session,
+        organization_id=principal.organization_id,
+    )
+    assignment_queue = _assignment_queue_summary(
+        session=session,
+        organization_id=principal.organization_id,
+    )
+    agent_total = _count_total(
+        session,
+        select(func.count(Agent.id)).where(
+            (Agent.organization_id == principal.organization_id) | (Agent.organization_id.is_(None))
+        ),
+    )
+    assignment_total = _count_total(
+        session,
+        select(func.count(AgentAssignment.id)).where(AgentAssignment.run_id.in_(task_ids)),
+    )
+    handoff_total = _count_total(
+        session,
+        select(func.count(AgentHandoff.id)).where(AgentHandoff.run_id.in_(task_ids)),
+    )
+    warm_pool = WarmPoolResponse.model_validate(WarmPoolManager().status(session=session).__dict__)
+    subagent_status = (
+        "saturated" if subagent_queue.active_total >= SUBAGENT_CONCURRENCY_LIMIT else "ready"
+    )
+    multi_agent_status = "active" if assignment_queue.active_total > 0 else "ready"
+    warm_pool_status = "ready" if warm_pool.idle > 0 else "cold"
+    return RuntimeArchitectureResponse(
+        planner_executor=PlannerExecutorArchitectureResponse(
+            enabled=True,
+            planner="LLM-driven planner with deterministic fallback",
+            executor="Executor",
+            react_engine="ReAct Engine",
+            planner_prompt_version=PLANNER_PROMPT_VERSION,
+            plan_total=len(plan_rows),
+            sync_step_total=sync_step_total,
+            async_step_total=async_step_total,
+            status="active",
+        ),
+        event_sourcing=EventSourcingArchitectureResponse(
+            enabled=True,
+            event_total=event_total,
+            snapshot_total=snapshot_total,
+            snapshot_frequency_events=SNAPSHOT_FREQUENCY_EVENTS,
+            replay_enabled=True,
+            resume_enabled=True,
+            audit_log_enabled=True,
+            time_travel_debugging_enabled=True,
+            last_sequence=last_sequence,
+        ),
+        multi_agent=MultiAgentArchitectureResponse(
+            enabled=True,
+            agent_total=agent_total,
+            assignment_total=assignment_total,
+            handoff_total=handoff_total,
+            pending=assignment_queue.pending,
+            queued=assignment_queue.queued,
+            running=assignment_queue.running,
+            success=assignment_queue.success,
+            failed=assignment_queue.failed,
+            active_total=assignment_queue.active_total,
+            state_machine=[
+                "PENDING",
+                "QUEUED",
+                "RUNNING",
+                "SUCCESS",
+                "FAILED",
+            ],
+            strategy="router_parallel_fanout_reduce",
+            reducer_enabled=True,
+            status=multi_agent_status,
+        ),
+        subagents=SubagentArchitectureResponse(
+            enabled=True,
+            concurrency_limit=SUBAGENT_CONCURRENCY_LIMIT,
+            timeout_seconds=DEFAULT_SUBAGENT_TIMEOUT_SECONDS,
+            pending=subagent_queue.pending,
+            running=subagent_queue.running,
+            success=subagent_queue.success,
+            failed=subagent_queue.failed,
+            timeout=subagent_queue.timeout,
+            cancelled=subagent_queue.cancelled,
+            active_total=subagent_queue.active_total,
+            state_machine=[
+                "PENDING",
+                "RUNNING",
+                "SUCCESS",
+                "FAILED",
+                "TIMEOUT",
+                "CANCELLED",
+            ],
+            status=subagent_status,
+        ),
+        warm_pool=WarmPoolArchitectureResponse(
+            enabled=warm_pool.enabled,
+            target_startup_ms=50,
+            cold_start_min_ms=100,
+            cold_start_max_ms=500,
+            min_size=warm_pool.min_size,
+            max_size=warm_pool.max_size,
+            idle=warm_pool.idle,
+            busy=warm_pool.busy,
+            failed=warm_pool.failed,
+            hit_total=warm_pool.hit_total,
+            miss_total=warm_pool.miss_total,
+            status=warm_pool_status,
+        ),
+        notes=[
+            "Planner 负责结构化任务分解，Executor 负责同步 ReAct 步骤。",
+            "多 Agent 编排由 Router 创建具名 Agent assignments，并通过 Reducer 聚合分支输出。",
+            "异步长任务通过 Subagent 派生，父 Executor 不等待 worker 完成。",
+            "全部关键操作进入事件流，可用于审计、重放和恢复。",
+            "WarmPool 命中默认资源策略时复用预热容器，目标启动耗时小于 50ms。",
+        ],
     )
 
 
@@ -641,11 +830,45 @@ def _subagent_queue_summary(
     utilization_percent = int((active_total / capacity) * 100) if capacity > 0 else 0
     return ObservabilityQueueResponse(
         pending=pending,
+        queued=0,
         running=running,
         success=counts.get("SUCCESS", 0),
         failed=counts.get("FAILED", 0),
         timeout=counts.get("TIMEOUT", 0),
         cancelled=counts.get("CANCELLED", 0),
+        active_total=active_total,
+        capacity=capacity,
+        available_slots=available_slots,
+        utilization_percent=min(utilization_percent, 100),
+    )
+
+
+def _assignment_queue_summary(
+    *,
+    session: Session,
+    organization_id: str,
+) -> ObservabilityQueueResponse:
+    task_ids = select(Task.id).where(Task.organization_id == organization_id)
+    rows = session.execute(
+        select(AgentAssignment.status, func.count(AgentAssignment.id))
+        .where(AgentAssignment.run_id.in_(task_ids))
+        .group_by(AgentAssignment.status)
+    ).all()
+    counts = {str(status).upper(): int(count) for status, count in rows}
+    queued = counts.get("QUEUED", 0)
+    running = counts.get("RUNNING", 0)
+    active_total = queued + running
+    capacity = max(active_total, 5)
+    available_slots = max(capacity - active_total, 0)
+    utilization_percent = int((active_total / capacity) * 100) if capacity > 0 else 0
+    return ObservabilityQueueResponse(
+        pending=counts.get("PENDING", 0),
+        queued=queued,
+        running=running,
+        success=counts.get("SUCCESS", 0),
+        failed=counts.get("FAILED", 0),
+        timeout=0,
+        cancelled=0,
         active_total=active_total,
         capacity=capacity,
         available_slots=available_slots,

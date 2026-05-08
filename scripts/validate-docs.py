@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -18,100 +17,57 @@ BLOCKED_TERMS = [
     "\u5747\u53ef",
 ]
 
+TOP_LEVEL_SPECS = [
+    "docs/00-product-spec.md",
+    "docs/01-system-architecture.md",
+    "docs/02-data-model-and-event-spec.md",
+    "docs/03-api-spec.md",
+    "docs/04-agent-runtime-spec.md",
+    "docs/05-tool-mcp-runtime-spec.md",
+    "docs/06-guardrail-policy-spec.md",
+    "docs/07-eval-harness-spec.md",
+    "docs/08-console-ui-spec.md",
+    "docs/09-benchmark-spec.md",
+    "docs/10-portfolio-demo-spec.md",
+    "docs/task-progress.md",
+]
+
+STAGE_FILES = [
+    "docs/ai/stages/01-agent-graph-runtime.md",
+    "docs/ai/stages/02-event-store-recovery.md",
+    "docs/ai/stages/03-agent-run-console.md",
+    "docs/ai/stages/04-tool-mcp-runtime.md",
+    "docs/ai/stages/05-guardrail-policy-engine.md",
+    "docs/ai/stages/06-eval-harness.md",
+    "docs/ai/stages/07-memory-context-router.md",
+    "docs/ai/stages/08-warmpool-benchmark.md",
+    "docs/ai/stages/09-portfolio-demo-docs.md",
+]
+
 REQUIRED_FILES = [
     "README.md",
-    "docs/SPEC.md",
-    "docs/SPEC-INDEX.md",
-    "docs/SPEC-TEMPLATE.md",
-    "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
     "docs/ai/README.md",
-    "docs/ai/00-master-prompt.md",
     "docs/ai/00-execution-protocol.md",
     "docs/ai/01-task-progress.md",
     "docs/ai/task-progress.yaml",
     "docs/human/10-task-progress.md",
-    "docs/ai/reference/architecture-and-decisions.md",
-    "docs/ai/reference/data-events-api.md",
-    "docs/ai/reference/frontend-spec.md",
-    "docs/ai/reference/runtime-deployment-spec.md",
-    "docs/ai/reference/runtime-agent-prompts.md",
-    "docs/ai/reference/tool-registry-spec.md",
-    "docs/ai/reference/tool-registry.yaml",
-    "docs/ai/reference/prompt-contracts.yaml",
-    "docs/ai/reference/security-policy-matrix.md",
-    "docs/ai/reference/database-erd-migrations.md",
-    "docs/ai/reference/database-schema.yaml",
-    "docs/api/openapi-contract.md",
-    "docs/api/openapi.yaml",
-    "docs/api/openapi.json",
-    "docs/evals/prompt-eval-cases.yaml",
-    "docs/evals/prompt-eval-runbook.md",
-    "docs/runbooks/local-development.md",
-    "docs/runbooks/deployment.md",
-    "docs/runbooks/migrations.md",
-    "docs/runbooks/rollback.md",
-    "docs/runbooks/troubleshooting.md",
-    "docs/security/threat-model.md",
-    "docs/qa/test-strategy.md",
-    "docs/demo/e2e-demo-script.md",
-    "docs/human/11-website-usage-flow.md",
-    "docs/human/features/README.md",
-    "docs/human/features/01-task-lifecycle.md",
-    "docs/human/features/02-planner-executor.md",
-    "docs/human/features/03-event-sourcing-replay.md",
-    "docs/human/features/04-subagent-orchestration.md",
-    "docs/human/features/05-sandbox-warmpool.md",
-    "docs/human/features/06-model-tool-audit.md",
-    "docs/human/features/07-settings-observability.md",
-    "docs/human/features/08-website-console-openapi.md",
-    "docs/human/features/09-implementation-coverage.md",
-    "docs/human/features/10-observability-localization-spec.md",
+    "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
+    *TOP_LEVEL_SPECS,
+    *STAGE_FILES,
 ]
 
-FEATURE_SPEC_FILES = [
-    "docs/human/features/01-task-lifecycle.md",
-    "docs/human/features/02-planner-executor.md",
-    "docs/human/features/03-event-sourcing-replay.md",
-    "docs/human/features/04-subagent-orchestration.md",
-    "docs/human/features/05-sandbox-warmpool.md",
-    "docs/human/features/06-model-tool-audit.md",
-    "docs/human/features/07-settings-observability.md",
-    "docs/human/features/08-website-console-openapi.md",
-    "docs/human/features/09-implementation-coverage.md",
-    "docs/human/features/10-observability-localization-spec.md",
-]
-
-FEATURE_SPEC_SECTIONS = [
-    "## \u76ee\u6807",
-    "## \u7528\u6237\u53ef\u89c1\u80fd\u529b",
-    "## \u540e\u7aef\u5951\u7ea6",
-    "## \u524d\u7aef\u5165\u53e3",
-    "## \u6570\u636e\u6a21\u578b",
-    "## \u4e8b\u4ef6\u6a21\u578b",
-    "## \u6743\u9650\u6a21\u578b",
-    "## \u72b6\u6001\u6d41\u8f6c",
-    "## \u5916\u90e8\u670d\u52a1\u5951\u7ea6",
-    "## \u89c2\u6d4b\u6307\u6807",
-    "## \u5f53\u524d\u5b9e\u73b0\u72b6\u6001",
-    "## \u7f3a\u53e3",
-    "## \u5b9e\u73b0\u987a\u5e8f",
-    "## \u9a8c\u6536\u6807\u51c6",
-]
-
-STAGE_FILES = [
-    "docs/ai/02-stage-01-git-github.md",
-    "docs/ai/03-stage-02-figma-design.md",
-    "docs/ai/04-stage-03-repository-scaffold.md",
-    "docs/ai/05-stage-04-backend-foundation.md",
-    "docs/ai/06-stage-05-task-event-store.md",
-    "docs/ai/07-stage-06-planner-executor.md",
-    "docs/ai/08-stage-07-react-console.md",
-    "docs/ai/09-stage-08-dramatiq-subagent.md",
-    "docs/ai/10-stage-09-sandbox-warmpool.md",
-    "docs/ai/11-stage-10-observability-deployment.md",
-    "docs/ai/12-stage-11-review-p1-hardening.md",
-    "docs/ai/13-stage-12-runtime-product-completion.md",
-    "docs/ai/14-stage-13-website-code-integration.md",
+STAGE_SECTIONS = [
+    "## Goal",
+    "## Input",
+    "## Output",
+    "## Modules",
+    "## API And Schema Changes",
+    "## Event Types",
+    "## Frontend Display",
+    "## Tests",
+    "## Acceptance",
+    "## Not Doing",
+    "## Vertical Slice Demo",
 ]
 
 
@@ -125,14 +81,31 @@ def fail(message: str) -> None:
 
 
 def check_required_files() -> None:
-    for rel in REQUIRED_FILES + STAGE_FILES:
-        path = ROOT / rel
-        if not path.is_file():
+    for rel in REQUIRED_FILES:
+        if not (ROOT / rel).is_file():
             fail(f"missing required file: {rel}")
 
 
+def check_no_old_stage_docs() -> None:
+    old_stage_docs = list((ROOT / "docs/ai").glob("[0-9][0-9]-stage-*.md"))
+    if old_stage_docs:
+        names = ", ".join(str(path.relative_to(ROOT)) for path in old_stage_docs)
+        fail(f"old stage docs still present: {names}")
+
+
 def check_blocked_terms() -> None:
-    targets = [ROOT / "README.md", ROOT / "docs", ROOT / ".github"]
+    targets = [
+        ROOT / "README.md",
+        *[ROOT / rel for rel in TOP_LEVEL_SPECS],
+        *[ROOT / rel for rel in STAGE_FILES],
+        ROOT / "docs/ai/README.md",
+        ROOT / "docs/ai/00-execution-protocol.md",
+        ROOT / "docs/ai/01-task-progress.md",
+        ROOT / "docs/ai/task-progress.yaml",
+        ROOT / "docs/human/10-task-progress.md",
+        ROOT / "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
+        ROOT / ".github",
+    ]
     files: list[Path] = []
     for target in targets:
         if target.is_file():
@@ -152,13 +125,7 @@ def check_blocked_terms() -> None:
 def check_stage_docs() -> None:
     for rel in STAGE_FILES:
         text = read_text(ROOT / rel)
-        required_sections = [
-            "## Required Context",
-            "## AI \u6267\u884c\u63d0\u793a\u8bcd",
-            "## Verification Commands",
-            "## Progress Update Rule",
-        ]
-        for section in required_sections:
+        for section in STAGE_SECTIONS:
             if section not in text:
                 fail(f"{rel} missing section {section}")
 
@@ -166,63 +133,33 @@ def check_stage_docs() -> None:
 def check_progress_alignment() -> None:
     yaml_text = read_text(ROOT / "docs/ai/task-progress.yaml")
     human_text = read_text(ROOT / "docs/human/10-task-progress.md")
-    stage_ids = re.findall(r"stage-\d{2}-[a-z0-9-]+", yaml_text)
     for rel in STAGE_FILES:
         if rel not in yaml_text:
             fail(f"{rel} missing from task-progress.yaml")
-    for stage_id in sorted(set(stage_ids)):
-        if yaml_text.count(stage_id) < 2:
-            fail(f"{stage_id} has incomplete progress metadata")
-    for required_field in ["branch:", "commit_sha:", "pr_url:", "merged_at:"]:
-        if required_field not in yaml_text:
-            fail(f"task-progress.yaml missing {required_field}")
-    for label in ["ready_for_review", "PR", "当前阶段"]:
-        if label not in human_text:
-            fail(f"human progress missing {label}")
-    if "legacy_no_pr" not in human_text:
-        fail("human progress missing legacy_no_pr explanation")
+        stage_id = Path(rel).stem
+        if stage_id not in human_text:
+            fail(f"{stage_id} missing from human task progress")
+    if "spec_first_stage_gated_vertical_slice" not in yaml_text:
+        fail("task-progress.yaml missing spec execution mode")
+    if "Eval Harness" not in human_text:
+        fail("human progress missing Eval Harness")
 
 
-def check_reference_links() -> None:
-    readme = read_text(ROOT / "docs/ai/README.md")
-    for rel in [
-        "./00-master-prompt.md",
-        "./task-progress.yaml",
-        "./reference/runtime-agent-prompts.md",
-        "./reference/tool-registry-spec.md",
-        "./reference/tool-registry.yaml",
-        "./reference/prompt-contracts.yaml",
-        "./reference/security-policy-matrix.md",
-        "../api/openapi-contract.md",
-        "../api/openapi.yaml",
-        "../evals/prompt-eval-cases.yaml",
-        "../evals/prompt-eval-runbook.md",
-        "../security/threat-model.md",
-        "../qa/test-strategy.md",
-        "../demo/e2e-demo-script.md",
-        "../human/11-website-usage-flow.md",
-        "../human/features/README.md",
-        "../runbooks/local-development.md",
-    ]:
-        if rel not in readme:
-            fail(f"AI README missing link {rel}")
-
-
-def check_feature_specs() -> None:
-    for rel in FEATURE_SPEC_FILES:
-        text = read_text(ROOT / rel)
-        for section in FEATURE_SPEC_SECTIONS:
-            if section not in text:
-                fail(f"{rel} missing feature spec section {section}")
+def check_readme_links() -> None:
+    readme = read_text(ROOT / "README.md")
+    for rel in TOP_LEVEL_SPECS + STAGE_FILES:
+        link = f"./{rel}"
+        if link not in readme and rel not in readme:
+            fail(f"README missing link {rel}")
 
 
 def main() -> None:
     check_required_files()
+    check_no_old_stage_docs()
     check_blocked_terms()
     check_stage_docs()
     check_progress_alignment()
-    check_reference_links()
-    check_feature_specs()
+    check_readme_links()
     print("docs validation passed")
 
 

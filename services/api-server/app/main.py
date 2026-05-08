@@ -3,6 +3,8 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.agents import router as agents_router
+from app.api.evals import router as evals_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
@@ -11,6 +13,7 @@ from app.api.sandboxes import router as sandboxes_router
 from app.api.settings import router as settings_router
 from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
+from app.api.tools import router as tools_router
 from app.core.config import get_settings
 from app.core.logging import configure_json_logging
 from app.core.tracing import OpenTelemetryTraceMiddleware
@@ -53,7 +56,10 @@ app.add_middleware(OpenTelemetryTraceMiddleware)
 
 app.include_router(health_router)
 app.include_router(metrics_router)
+app.include_router(agents_router, prefix="/api")
+app.include_router(evals_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
+app.include_router(tools_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(subagents_router, prefix="/api")

@@ -24,6 +24,35 @@ agent_subagent_recovery_last_recovered = Gauge(
     "Subagents recovered by the last recovery sweep.",
 )
 
+agent_assignments_total = Counter(
+    "agent_assignments_total",
+    "Agent assignments created by multi-agent orchestration.",
+    ["agent_id", "role"],
+)
+agent_assignments_running = Gauge(
+    "agent_assignments_running",
+    "Agent assignments currently running.",
+    ["agent_id", "role"],
+)
+agent_assignment_duration_seconds = Histogram(
+    "agent_assignment_duration_seconds",
+    "Agent assignment execution duration.",
+    ["agent_id", "role", "status"],
+)
+agent_handoffs_total = Counter(
+    "agent_handoffs_total",
+    "Agent handoffs created by multi-agent orchestration.",
+    ["handoff_type"],
+)
+agent_parallel_branches_running = Gauge(
+    "agent_parallel_branches_running",
+    "Parallel agent branches currently running.",
+)
+agent_reduce_duration_seconds = Histogram(
+    "agent_reduce_duration_seconds",
+    "Reducer duration for multi-agent orchestration.",
+)
+
 sandbox_containers_total = Counter("sandbox_containers_total", "Sandbox containers allocated.")
 sandbox_containers_running = Gauge("sandbox_containers_running", "Sandbox containers running.")
 sandbox_start_duration_seconds = Histogram(

@@ -4,11 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.context_router import RunContextRouter
 from app.agents.executor import Executor
 from app.api.schemas import (
     ModelCallPage,
     ReplayRequest,
     ReplayResponse,
+    RunContextResponse,
     StepResumeRequest,
     StepResumeResponse,
     TaskArtifact,
@@ -24,6 +26,8 @@ from app.api.schemas import (
     TaskResultResponse,
     TaskStepPage,
     TaskSubagentResult,
+    ToolApprovalDecisionRequest,
+    ToolApprovalPage,
     ToolCallPage,
     ToolCallResponse,
     ToolExecuteRequest,
@@ -37,6 +41,7 @@ from app.db.models import (
     SandboxInstance,
     Task,
     TaskStep,
+    ToolApproval,
     ToolCall,
     utc_now,
 )
@@ -50,7 +55,7 @@ from app.observability.metrics import (
     agent_tasks_total,
 )
 from app.sandbox.docker_manager import DockerManager
-from app.security.auth import Principal
+from app.security.auth import Principal, require_role
 from app.tools.runner import ToolRunner
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -520,6 +525,35 @@ def replay_task(
 
 
 @router.get(
+    "/{task_id}/context",
+    response_model=RunContextResponse,
+    summary="查询 Run 记忆与模型路由",
+    description="返回工作记忆、产物记忆、Trace 压缩和模型路由投影；本接口不写事件。",
+)
+def get_task_context(task_id: str, session: DbSession, principal: Principal) -> dict:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    return RunContextRouter(session).build(task=task)
+
+
+@router.post(
+    "/{task_id}/context/route",
+    response_model=RunContextResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="刷新 Run 上下文路由",
+    description="重新生成上下文压缩和模型路由决策，并写入 CONTEXT_COMPRESSED / MODEL_ROUTED 事件。",
+)
+def route_task_context(task_id: str, session: DbSession, principal: Principal) -> dict:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    context = RunContextRouter(session).build(
+        task=task,
+        persist_events=True,
+        actor_id=principal.user_id,
+    )
+    session.commit()
+    return context
+
+
+@router.get(
     "/{task_id}/model-calls",
     response_model=ModelCallPage,
     summary="查询模型调用",
@@ -631,6 +665,77 @@ def execute_task_tool(
     )
 
 
+@router.get(
+    "/{task_id}/tool-approvals",
+    response_model=ToolApprovalPage,
+    summary="查询工具审批",
+    description="返回当前 Run 的工具审批请求。",
+)
+def list_task_tool_approvals(
+    task_id: str,
+    session: DbSession,
+    principal: Principal,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> ToolApprovalPage:
+    task = get_owned_task(task_id, session, principal.organization_id)
+    statement = select(ToolApproval).where(ToolApproval.task_id == task.id)
+    if status_filter is not None:
+        statement = statement.where(ToolApproval.status == status_filter)
+    approvals = list(
+        session.execute(statement.order_by(ToolApproval.created_at.desc()).limit(limit)).scalars()
+    )
+    return ToolApprovalPage(items=approvals)
+
+
+@router.post(
+    "/{task_id}/tool-approvals/{approval_id}/approve",
+    response_model=ToolApprovalPage,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="批准工具审批",
+    description="仅 admin 可批准高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
+)
+def approve_tool_approval(
+    task_id: str,
+    approval_id: str,
+    request: ToolApprovalDecisionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> ToolApprovalPage:
+    return _decide_tool_approval(
+        task_id=task_id,
+        approval_id=approval_id,
+        decision="APPROVED",
+        request=request,
+        session=session,
+        principal=principal,
+    )
+
+
+@router.post(
+    "/{task_id}/tool-approvals/{approval_id}/reject",
+    response_model=ToolApprovalPage,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="拒绝工具审批",
+    description="仅 admin 可拒绝高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
+)
+def reject_tool_approval(
+    task_id: str,
+    approval_id: str,
+    request: ToolApprovalDecisionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> ToolApprovalPage:
+    return _decide_tool_approval(
+        task_id=task_id,
+        approval_id=approval_id,
+        decision="REJECTED",
+        request=request,
+        session=session,
+        principal=principal,
+    )
+
+
 def _to_model_call_response(
     model_call: ModelCall,
     trace_id: str | None = None,
@@ -651,6 +756,67 @@ def _to_model_call_response(
         "error_message": model_call.error_message,
         "created_at": model_call.created_at,
     }
+
+
+def _decide_tool_approval(
+    *,
+    task_id: str,
+    approval_id: str,
+    decision: str,
+    request: ToolApprovalDecisionRequest,
+    session: Session,
+    principal,
+) -> ToolApprovalPage:
+    require_role(principal, {"admin"})
+    task = get_owned_task(task_id, session, principal.organization_id)
+    approval = session.execute(
+        select(ToolApproval).where(
+            ToolApproval.id == approval_id,
+            ToolApproval.task_id == task.id,
+            ToolApproval.organization_id == principal.organization_id,
+        )
+    ).scalar_one_or_none()
+    if approval is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工具审批未找到")
+    if approval.status != "PENDING":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="工具审批已处理")
+    tool_call = session.get(ToolCall, approval.tool_call_id)
+    if tool_call is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工具调用未找到")
+
+    approval.status = decision
+    approval.decided_by = principal.user_id
+    approval.decided_at = utc_now()
+    approval.decision_json = {"reason": request.reason, "decision": decision}
+    tool_call.status = "APPROVED" if decision == "APPROVED" else "DENIED"
+    tool_call.error_message = None if decision == "APPROVED" else request.reason or approval.reason
+    event_type = (
+        EventType.TOOL_APPROVAL_APPROVED
+        if decision == "APPROVED"
+        else EventType.TOOL_APPROVAL_REJECTED
+    )
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=event_type,
+        payload_json={
+            "tool_approval_id": approval.id,
+            "tool_call_id": tool_call.id,
+            "tool_name": tool_call.tool_name,
+            "decision": decision,
+            "reason": request.reason,
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    session.commit()
+    approvals = list(
+        session.execute(
+            select(ToolApproval)
+            .where(ToolApproval.task_id == task.id)
+            .order_by(ToolApproval.created_at.desc())
+        ).scalars()
+    )
+    return ToolApprovalPage(items=approvals)
 
 
 def _model_call_trace_ids(

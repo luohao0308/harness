@@ -103,6 +103,21 @@ services:
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
 
+  agent-assignment-worker:
+    image: agent-harness-api-server:latest
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    command: python -m dramatiq app.workers.agent_assignment_worker --queues agent_assignments
+    environment:
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+
   subagent-recovery:
     image: agent-harness-api-server:latest
     depends_on:

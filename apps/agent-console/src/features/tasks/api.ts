@@ -1,15 +1,18 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
+const DEV_ADMIN_BEARER_TOKEN =
+  import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? "dev-admin-token";
 
-function authHeaders(): HeadersInit {
+function authHeaders(token = DEV_BEARER_TOKEN): HeadersInit {
   return {
-    Authorization: `Bearer ${DEV_BEARER_TOKEN}`,
+    Authorization: `Bearer ${token}`,
   };
 }
 
 export type TaskStatus =
   | "CREATED"
   | "PLANNING"
+  | "PLANNED"
   | "RUNNING"
   | "WAITING_SUBAGENTS"
   | "FAILED"
@@ -41,6 +44,105 @@ export type TaskCreatePayload = {
   max_subagents: number;
   enable_sandbox: boolean;
   enable_network: boolean;
+};
+
+export type AgentPlanPayload = {
+  agent_id: string;
+  title?: string | null;
+  goal: string;
+  model_provider: string;
+  model_name: string;
+  max_runtime_seconds: number;
+  max_subagents: number;
+  enable_sandbox: boolean;
+  enable_network: boolean;
+};
+
+export type AgentDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  status: string;
+  model_provider: string;
+  model_name: string;
+  system_prompt: string;
+  tools_json: string[];
+  routing_tags: string[];
+  max_parallel_assignments: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgentAssignment = {
+  id: string;
+  run_id: string;
+  agent_id: string;
+  parent_assignment_id: string | null;
+  step_key: string | null;
+  role: string;
+  status: string;
+  input_json: Record<string, unknown>;
+  output_json: Record<string, unknown>;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type AgentHandoff = {
+  id: string;
+  run_id: string;
+  from_assignment_id: string | null;
+  to_assignment_id: string;
+  handoff_type: string;
+  status: string;
+  payload_json: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type AgentOrchestrateResult = {
+  run_id: string;
+  strategy: string;
+  routing_reasoning: string | null;
+  assignments: AgentAssignment[];
+  handoffs: AgentHandoff[];
+  message: string;
+};
+
+export type AgentSession = {
+  id: string;
+  organization_id: string | null;
+  agent_id: string;
+  created_by: string | null;
+  title: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgentMessage = {
+  id: string;
+  session_id: string;
+  agent_id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AgentChatResult = {
+  session: AgentSession;
+  messages: AgentMessage[];
+};
+
+export type AgentAutoResult = {
+  agent_id: string;
+  run_id: string;
+  task: Task;
+  plan: TaskPlan;
+  orchestration: AgentOrchestrateResult;
+  message: string;
 };
 
 export type AgentEvent = {
@@ -122,6 +224,22 @@ export type WarmPool = {
   miss_total: number;
 };
 
+export type WarmPoolBenchmark = {
+  id: string;
+  organization_id: string | null;
+  mode: string;
+  status: string;
+  target_startup_ms: number;
+  iteration_count: number;
+  warm_avg_ms: number;
+  warm_p95_ms: number;
+  cold_avg_ms: number;
+  hit_rate: number;
+  report_json: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+};
+
 export type SandboxQuotaUsage = {
   organization_id: string | null;
   configured_memory_mb: number;
@@ -164,11 +282,26 @@ export type CountItem = {
 export type ObservabilitySummary = {
   tasks_by_status: CountItem[];
   subagents_by_status: CountItem[];
+  agent_assignments_by_status: CountItem[];
   model_calls_by_status: CountItem[];
   tool_calls_by_status: CountItem[];
   sandboxes_by_status: CountItem[];
   subagent_queue: {
     pending: number;
+    queued: number;
+    running: number;
+    success: number;
+    failed: number;
+    timeout: number;
+    cancelled: number;
+    active_total: number;
+    capacity: number;
+    available_slots: number;
+    utilization_percent: number;
+  };
+  assignment_queue: {
+    pending: number;
+    queued: number;
     running: number;
     success: number;
     failed: number;
@@ -487,6 +620,14 @@ export type TaskPlan = {
   created_at: string;
 };
 
+export type AgentPlanResult = {
+  agent_id: string;
+  run_id: string;
+  task: Task;
+  plan: TaskPlan;
+  message: string;
+};
+
 export type TaskPlanVersionSummary = {
   id: string;
   task_id: string;
@@ -554,6 +695,19 @@ export type StepResumeResult = {
   last_sequence: number;
 };
 
+export type RunContext = {
+  task_id: string;
+  generated_at: string;
+  working_memory: Record<string, unknown>;
+  long_term_memory: Record<string, unknown>;
+  artifact_memory: Record<string, unknown>;
+  rag_context: Record<string, unknown>;
+  trace_memory: Record<string, unknown>;
+  context_compression: Record<string, unknown>;
+  model_routing: Record<string, unknown>;
+  latest_agent_router: Record<string, unknown> | null;
+};
+
 export type ModelCall = {
   id: string;
   task_id: string;
@@ -612,6 +766,95 @@ export type ToolCallFilters = {
   limit?: number;
 };
 
+export type ToolApproval = {
+  id: string;
+  task_id: string;
+  tool_call_id: string;
+  organization_id: string | null;
+  requested_by: string | null;
+  decided_by: string | null;
+  status: string;
+  risk_level: string;
+  reason: string;
+  request_json: Record<string, unknown>;
+  decision_json: Record<string, unknown>;
+  created_at: string;
+  decided_at: string | null;
+};
+
+export type ToolMetadata = {
+  name: string;
+  description: string;
+  category: string;
+  source: string;
+  risk_level: string;
+  requires_sandbox: boolean;
+  network_policy: string;
+  timeout_seconds: number;
+  allowed_roles: string[];
+  audit_level: string;
+  idempotent: boolean;
+  input_schema: Record<string, unknown>;
+  mcp_server: string | null;
+  mcp_method: string | null;
+};
+
+export type ToolRegistry = {
+  items: ToolMetadata[];
+  categories: string[];
+  sources: string[];
+};
+
+export type EvalDataset = {
+  id: string;
+  organization_id: string | null;
+  name: string;
+  description: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  case_count: number;
+};
+
+export type EvalCase = {
+  id: string;
+  dataset_id: string;
+  source_task_id: string | null;
+  input_json: Record<string, unknown>;
+  expected_json: Record<string, unknown>;
+  tags_json: string[];
+  created_at: string;
+};
+
+export type EvalResult = {
+  id: string;
+  eval_run_id: string;
+  eval_case_id: string;
+  task_id: string | null;
+  status: string;
+  scores_json: Record<string, number>;
+  grader_trace_json: Record<string, unknown>;
+  latency_ms: number;
+  cost_usd: string;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type EvalRun = {
+  id: string;
+  dataset_id: string;
+  organization_id: string | null;
+  agent_id: string | null;
+  status: string;
+  metrics_json: Record<string, number>;
+  created_by: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  results: EvalResult[];
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
@@ -639,6 +882,72 @@ export async function createTask(payload: TaskCreatePayload) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function listAgents() {
+  return request<{ items: AgentDefinition[]; next_cursor: string | null }>("/api/agents");
+}
+
+export async function getAgent(agentId: string) {
+  return request<AgentDefinition>(`/api/agents/${agentId}`);
+}
+
+export async function createAgentSession(agentId: string, title?: string) {
+  return request<AgentSession>(`/api/agents/${agentId}/sessions`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function sendAgentMessage(sessionId: string, content: string) {
+  return request<AgentChatResult>(`/api/agents/sessions/${sessionId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function planWithAgent(payload: AgentPlanPayload) {
+  return request<AgentPlanResult>("/api/agents/plan", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function autoWithAgent(payload: AgentPlanPayload) {
+  return request<AgentAutoResult>("/api/agents/auto", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function executeAgentRun(runId: string) {
+  return request<Task>(`/api/agents/runs/${runId}/execute`, { method: "POST" });
+}
+
+export async function orchestrateAgentRun(runId: string) {
+  return request<AgentOrchestrateResult>(`/api/agents/runs/${runId}/orchestrate`, {
+    method: "POST",
+  });
+}
+
+export async function executeAgentOrchestration(runId: string) {
+  return request<AgentOrchestrateResult>(`/api/agents/runs/${runId}/orchestrate/execute`, {
+    method: "POST",
+  });
+}
+
+export async function enqueueAgentOrchestration(runId: string) {
+  return request<AgentOrchestrateResult>(`/api/agents/runs/${runId}/orchestrate/enqueue`, {
+    method: "POST",
+  });
+}
+
+export async function listAgentRunAssignments(runId: string) {
+  return request<AgentAssignment[]>(`/api/agents/runs/${runId}/assignments`);
+}
+
+export async function listAgentRunHandoffs(runId: string) {
+  return request<AgentHandoff[]>(`/api/agents/runs/${runId}/handoffs`);
 }
 
 export async function getTask(taskId: string) {
@@ -697,6 +1006,14 @@ export async function replayTask(taskId: string, sequence?: number) {
     method: "POST",
     body: JSON.stringify({ sequence }),
   });
+}
+
+export async function getTaskContext(taskId: string) {
+  return request<RunContext>(`/api/tasks/${taskId}/context`);
+}
+
+export async function routeTaskContext(taskId: string) {
+  return request<RunContext>(`/api/tasks/${taskId}/context/route`, { method: "POST" });
 }
 
 export async function listTaskEvents(taskId: string) {
@@ -789,6 +1106,86 @@ export async function executeTaskTool(taskId: string, payload: ToolExecutePayloa
   });
 }
 
+export async function getToolRegistry() {
+  return request<ToolRegistry>("/api/tools/registry");
+}
+
+export async function listTaskToolApprovals(taskId: string, params?: { status?: string }) {
+  const searchParams = new URLSearchParams();
+  if (params?.status) {
+    searchParams.set("status", params.status);
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<{ items: ToolApproval[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/tool-approvals${suffix}`,
+  );
+}
+
+export async function approveToolApproval(taskId: string, approvalId: string, reason: string) {
+  return request<{ items: ToolApproval[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/tool-approvals/${approvalId}/approve`,
+    {
+      method: "POST",
+      headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+      body: JSON.stringify({ reason }),
+    },
+  );
+}
+
+export async function rejectToolApproval(taskId: string, approvalId: string, reason: string) {
+  return request<{ items: ToolApproval[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/tool-approvals/${approvalId}/reject`,
+    {
+      method: "POST",
+      headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+      body: JSON.stringify({ reason }),
+    },
+  );
+}
+
+export async function listEvalDatasets() {
+  return request<{ items: EvalDataset[]; next_cursor: string | null }>("/api/evals/datasets");
+}
+
+export async function createEvalDataset(payload: { name: string; description: string }) {
+  return request<EvalDataset>("/api/evals/datasets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listEvalCases(datasetId: string) {
+  return request<{ items: EvalCase[]; next_cursor: string | null }>(
+    `/api/evals/datasets/${datasetId}/cases`,
+  );
+}
+
+export async function createEvalCaseFromRun(
+  datasetId: string,
+  taskId: string,
+  payload: { expected_json: Record<string, unknown>; tags_json: string[] },
+) {
+  return request<EvalCase>(`/api/evals/datasets/${datasetId}/cases/from-run/${taskId}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createEvalRun(datasetId: string, payload: { agent_id?: string | null }) {
+  return request<EvalRun>(`/api/evals/datasets/${datasetId}/runs`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listEvalRuns() {
+  return request<{ items: EvalRun[]; next_cursor: string | null }>("/api/evals/runs");
+}
+
+export async function getEvalRun(evalRunId: string) {
+  return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
+}
+
 export function taskEventStreamUrl(taskId: string) {
   const params = new URLSearchParams({ access_token: DEV_BEARER_TOKEN });
   return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
@@ -796,6 +1193,14 @@ export function taskEventStreamUrl(taskId: string) {
 
 export async function getModelSettings() {
   return request<ModelSettings>("/api/settings/models");
+}
+
+export async function updateModelSettings(payload: ModelSettings) {
+  return request<ModelSettings>("/api/settings/models", {
+    method: "PUT",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function getModelHealth() {
@@ -812,6 +1217,19 @@ export async function getPolicySettings() {
 
 export async function getWarmPool() {
   return request<WarmPool>("/api/sandboxes/warm-pool");
+}
+
+export async function runWarmPoolBenchmark(payload = { iterations: 5, target_startup_ms: 50, mode: "projection" }) {
+  return request<WarmPoolBenchmark>("/api/sandboxes/warm-pool/benchmark", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listWarmPoolBenchmarks(limit = 20) {
+  return request<{ items: WarmPoolBenchmark[]; next_cursor: string | null }>(
+    `/api/sandboxes/warm-pool/benchmarks?limit=${limit}`,
+  );
 }
 
 export async function getSandboxQuotaUsage() {

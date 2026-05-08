@@ -103,9 +103,13 @@ cd apps/web-site && npm run build
 
 ## 当前规格主线
 
+最终目标是独立设计并实现生产级 AI Agent 平台。平台必须让用户理解并应用 Harness Engineering 理念：模型本身不是 Agent，模型加上规划、工具、策略、隔离、事件、恢复、观测和多 Agent 编排之后才是可生产运行的 Agent。
+
 ```text
 Model + Harness = Agent
 User Goal
+-> Agent Workspace
+-> Mode: Chat / Plan / Execute / Auto
 -> Planner
 -> Executor
 -> Tool / Model / Subagent
@@ -116,10 +120,22 @@ User Goal
 -> OpenAPI / Console / Website
 ```
 
+## 生产级 Agent 平台能力闭环
+
+| 能力 | 平台结论 | 产品入口 |
+|---|---|---|
+| Harness Engineering | Agent 是模型与工程运行时的组合，不是单次 LLM 调用 | Agent Workspace、Run Detail |
+| 安全隔离选型 | Docker 是默认隔离边界，Firecracker/microVM 是强隔离升级方向，KVM 支撑硬件隔离能力 | Sandbox Settings、Run Detail |
+| 事件溯源 | 所有关键操作持久化为事件流，支持审计、恢复、回放和时间旅行调试 | Event Timeline、Replay |
+| 多 Agent 编排 | Agent Router 选择多个具名 Agent，Orchestrator 管理 handoff、parallel fan-out 和 reduce；Subagent 只是异步工作单元，不等同于多 Agent 编排 | Agent Workspace、Run Orchestration |
+| 性能优化 | WarmPool 预热隔离环境，把沙箱启动延迟压到交互可接受范围 | Sandbox Observability |
+
 ## 当前增强收口状态
 
 | 主线 | 规格文件 | 当前结果 |
 |---|---|---|
+| Agent Workspace 与 Plan 模式 | `docs/human/features/11-agent-workspace.md` | 新增 Agent-first 主入口规格，产品语义统一为 Agent Session / Agent Run，Plan 模式必须显式可用 |
+| 多 Agent 编排 | `docs/human/features/12-multi-agent-orchestration.md` | Agent Registry、Router、assignment 执行、handoff、Reducer、Worker 入队、Worker 部署、动态观测和 Run 详情拓扑基础落地；交互式拓扑待增强 |
 | 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增 Planner 质量、步骤轨迹、日志聚合、Trace 服务图和健康告警区域已保持中英文切换 |
 | LLM Planner 质量治理 | `docs/human/features/02-planner-executor.md` | 计划质量分、质量门禁、告警、Prompt 版本和步骤质量提示已进入 Plan API |
 | 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 工具结果解析、超时分类、沙箱标记和控制台审计详情已落地并回归 |

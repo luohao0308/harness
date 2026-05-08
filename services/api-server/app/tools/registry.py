@@ -9,6 +9,7 @@ class ToolMetadata(BaseModel):
     name: str
     description: str
     category: str
+    source: Literal["builtin", "mcp"] = "builtin"
     risk_level: RiskLevel
     requires_sandbox: bool
     network_policy: str = "none"
@@ -16,6 +17,9 @@ class ToolMetadata(BaseModel):
     allowed_roles: list[str] = Field(default_factory=lambda: ["admin", "engineer"])
     audit_level: str = "standard"
     idempotent: bool = True
+    input_schema: dict = Field(default_factory=dict)
+    mcp_server: str | None = None
+    mcp_method: str | None = None
 
 
 class ToolRegistry(BaseModel):
@@ -101,6 +105,50 @@ class ToolRegistry(BaseModel):
                 timeout_seconds=120,
                 audit_level="elevated",
                 idempotent=False,
+            ),
+            ToolMetadata(
+                name="mcp_context_search",
+                description="通过 MCP Adapter 查询外部上下文。",
+                category="mcp",
+                source="mcp",
+                risk_level="low",
+                requires_sandbox=False,
+                network_policy="restricted",
+                timeout_seconds=30,
+                audit_level="standard",
+                idempotent=True,
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "default": 5},
+                    },
+                    "required": ["query"],
+                },
+                mcp_server="local-context",
+                mcp_method="context.search",
+            ),
+            ToolMetadata(
+                name="mcp_artifact_put",
+                description="通过 MCP Adapter 写入任务 Artifact 记录。",
+                category="mcp",
+                source="mcp",
+                risk_level="medium",
+                requires_sandbox=False,
+                network_policy="none",
+                timeout_seconds=30,
+                audit_level="elevated",
+                idempotent=False,
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["name", "content"],
+                },
+                mcp_server="local-artifacts",
+                mcp_method="artifact.put",
             ),
         ]
         return cls(tools={tool.name: tool for tool in tools})

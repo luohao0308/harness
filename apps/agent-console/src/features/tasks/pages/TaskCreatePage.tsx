@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Play } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -7,7 +8,7 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Input, Textarea } from "../../../components/ui/input";
 import { useI18n } from "../../../lib/i18n";
-import { createTask, type TaskCreatePayload } from "../api";
+import { createTask, startTask, type TaskCreatePayload } from "../api";
 
 export function TaskCreatePage() {
   const { text } = useI18n();
@@ -24,18 +25,31 @@ export function TaskCreatePage() {
     enable_network: false,
   });
 
-  const createMutation = useMutation({
+  const createDraftMutation = useMutation({
     mutationFn: createTask,
     onSuccess: async (task) => {
       await queryClient.invalidateQueries({ queryKey: ["tasks"] });
       navigate(`/tasks/${task.id}`);
     },
   });
+  const runAgentMutation = useMutation({
+    mutationFn: async (nextPayload: TaskCreatePayload) => {
+      const task = await createTask(nextPayload);
+      return startTask(task.id);
+    },
+    onSuccess: async (task) => {
+      await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      await queryClient.invalidateQueries({ queryKey: ["observability", "summary"] });
+      navigate(`/tasks/${task.id}`);
+    },
+  });
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    createMutation.mutate(payload);
+    runAgentMutation.mutate(payload);
   }
+
+  const isSubmitting = createDraftMutation.isPending || runAgentMutation.isPending;
 
   return (
     <ConsoleShell title={text("任务 / 新建", "Tasks / New")}>
@@ -128,8 +142,16 @@ export function TaskCreatePage() {
               <Button type="button" onClick={() => navigate("/tasks")}>
                 {text("取消", "Cancel")}
               </Button>
-              <Button type="submit" variant="primary" disabled={createMutation.isPending}>
-                {createMutation.isPending ? text("创建中...", "Creating...") : text("创建任务", "Create Task")}
+              <Button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => createDraftMutation.mutate(payload)}
+              >
+                {createDraftMutation.isPending ? text("创建中...", "Creating...") : text("保存草稿", "Save Draft")}
+              </Button>
+              <Button type="submit" variant="primary" disabled={isSubmitting}>
+                <Play className="h-3.5 w-3.5" />
+                {runAgentMutation.isPending ? text("启动中...", "Starting...") : text("创建并启动 Agent", "Create & Run Agent")}
               </Button>
             </div>
           </form>

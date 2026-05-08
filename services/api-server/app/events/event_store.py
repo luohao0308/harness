@@ -117,6 +117,9 @@ def replay_events_to_state(
         "tool_calls": [],
         "model_calls": [],
         "subagents": {},
+        "agent_assignments": {},
+        "agent_handoffs": {},
+        "agent_reduce": {},
         "sandboxes": {},
         "failure_point": None,
         "last_sequence": 0,
@@ -128,6 +131,9 @@ def replay_events_to_state(
         state["tool_calls"] = list(initial_state.get("tool_calls", []))
         state["model_calls"] = list(initial_state.get("model_calls", []))
         state["subagents"] = dict(initial_state.get("subagents", {}))
+        state["agent_assignments"] = dict(initial_state.get("agent_assignments", {}))
+        state["agent_handoffs"] = dict(initial_state.get("agent_handoffs", {}))
+        state["agent_reduce"] = dict(initial_state.get("agent_reduce", {}))
         state["sandboxes"] = dict(initial_state.get("sandboxes", {}))
 
     for event in events:
@@ -216,6 +222,53 @@ def replay_events_to_state(
             if agent_run_id is not None:
                 state["subagents"][agent_run_id] = event.event_type.removeprefix("SUBAGENT_")
         if event.event_type in {
+            EventType.AGENT_ASSIGNMENT_CREATED.value,
+            EventType.AGENT_ASSIGNMENT_QUEUED.value,
+            EventType.AGENT_ASSIGNMENT_STARTED.value,
+            EventType.AGENT_ASSIGNMENT_COMPLETED.value,
+            EventType.AGENT_ASSIGNMENT_FAILED.value,
+            EventType.AGENT_PARALLEL_BRANCH_COMPLETED.value,
+        }:
+            assignment_id = payload.get("assignment_id")
+            if assignment_id is not None:
+                current_assignment = state["agent_assignments"].get(assignment_id, {})
+                state["agent_assignments"][assignment_id] = {
+                    **current_assignment,
+                    "status": _agent_assignment_replay_status(event.event_type),
+                    "agent_id": payload.get("agent_id") or current_assignment.get("agent_id"),
+                    "role": payload.get("role") or current_assignment.get("role"),
+                    "sequence": event.sequence,
+                }
+        if event.event_type in {
+            EventType.AGENT_HANDOFF_STARTED.value,
+            EventType.AGENT_HANDOFF_COMPLETED.value,
+        }:
+            handoff_id = payload.get("handoff_id")
+            if handoff_id is not None:
+                current_handoff = state["agent_handoffs"].get(handoff_id, {})
+                state["agent_handoffs"][handoff_id] = {
+                    **current_handoff,
+                    "status": event.event_type.removeprefix("AGENT_HANDOFF_"),
+                    "from_assignment_id": payload.get("from_assignment_id")
+                    or current_handoff.get("from_assignment_id"),
+                    "to_assignment_id": payload.get("to_assignment_id")
+                    or current_handoff.get("to_assignment_id"),
+                    "handoff_type": payload.get("handoff_type")
+                    or current_handoff.get("handoff_type"),
+                    "sequence": event.sequence,
+                }
+        if event.event_type in {
+            EventType.AGENT_REDUCE_STARTED.value,
+            EventType.AGENT_REDUCE_COMPLETED.value,
+        }:
+            state["agent_reduce"] = {
+                "status": event.event_type.removeprefix("AGENT_REDUCE_"),
+                "reducer_assignment_id": payload.get("reducer_assignment_id"),
+                "assignment_count": payload.get("assignment_count"),
+                "summary": payload.get("summary"),
+                "sequence": event.sequence,
+            }
+        if event.event_type in {
             EventType.SANDBOX_ALLOCATED.value,
             EventType.SANDBOX_RELEASED.value,
             EventType.SANDBOX_DESTROYED.value,
@@ -225,3 +278,15 @@ def replay_events_to_state(
                 state["sandboxes"][sandbox_id] = event.event_type.removeprefix("SANDBOX_")
 
     return state
+
+
+def _agent_assignment_replay_status(event_type: str) -> str:
+    status_map = {
+        EventType.AGENT_ASSIGNMENT_CREATED.value: "PENDING",
+        EventType.AGENT_ASSIGNMENT_QUEUED.value: "QUEUED",
+        EventType.AGENT_ASSIGNMENT_STARTED.value: "RUNNING",
+        EventType.AGENT_ASSIGNMENT_COMPLETED.value: "SUCCESS",
+        EventType.AGENT_ASSIGNMENT_FAILED.value: "FAILED",
+        EventType.AGENT_PARALLEL_BRANCH_COMPLETED.value: "SUCCESS",
+    }
+    return status_map[event_type]

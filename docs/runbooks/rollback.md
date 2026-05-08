@@ -47,7 +47,7 @@ python -m pytest
 
 ```bash
 cp /opt/agent-harness/backups/.env.previous /opt/agent-harness/shared/.env
-sudo systemctl restart agent-api agent-worker agent-sandbox-worker agent-warm-pool
+sudo systemctl restart agent-api agent-worker agent-assignment-worker agent-sandbox-worker agent-warm-pool
 ```
 
 ## Rollback Completion Criteria
@@ -60,4 +60,3 @@ event stream works
 Grafana error rate returns to normal
 Loki logs have no repeated fatal errors
 ```
-
