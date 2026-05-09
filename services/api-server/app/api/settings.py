@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agents.model_gateway import ModelHealthChecker
+from app.agents.model_gateway import ModelHealthChecker, normalize_model_settings
 from app.api.schemas import (
     CountItem,
     ModelFallbackEventItem,
@@ -25,9 +25,25 @@ MODEL_SETTINGS_KEY = "settings.models"
 POLICY_SETTINGS_KEY = "settings.policies"
 
 DEFAULT_MODEL_SETTINGS = ModelSettingsResponse(
-    default_provider="openai-compatible",
-    default_model="default",
+    default_provider="minimax",
+    default_model="MiniMax-M2.7-highspeed",
     providers=[
+        {
+            "name": "minimax",
+            "label": "MiniMax Anthropic Compatible",
+            "status": "healthy",
+            "api_format": "anthropic",
+            "model": "MiniMax-M2.7-highspeed",
+            "base_url": "https://api.minimaxi.com/anthropic",
+            "api_key": "replace-me",
+            "api_key_env": "MINIMAX_API_KEY",
+            "model_context_window_tokens": 400000,
+            "rate_limit_rpm": 300,
+            "rate_limit_tpm": 400000,
+            "timeout_seconds": 60,
+            "health_timeout_seconds": 5,
+            "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+        },
         {
             "name": "openai-compatible",
             "status": "healthy",
@@ -105,8 +121,12 @@ def read_setting(
         )
     ).scalar_one_or_none()
     if setting is None:
-        return default_value
-    return setting.value_json
+        value = default_value
+    else:
+        value = setting.value_json
+    if key == MODEL_SETTINGS_KEY:
+        return normalize_model_settings(value)
+    return value
 
 
 def write_setting(
@@ -165,21 +185,24 @@ def update_model_settings(
     principal: Principal,
 ) -> ModelSettingsResponse:
     require_admin(principal)
+    normalized_payload = ModelSettingsResponse.model_validate(
+        normalize_model_settings(payload.model_dump())
+    )
     write_setting(
         session=session,
         principal=principal,
         key=MODEL_SETTINGS_KEY,
-        value=payload.model_dump(),
+        value=normalized_payload.model_dump(),
     )
     write_admin_action(
         session=session,
         principal=principal,
         resource_id="models",
         action="settings.models.update",
-        payload=payload.model_dump(),
+        payload=normalized_payload.model_dump(),
     )
     session.commit()
-    return payload
+    return normalized_payload
 
 
 @router.get(

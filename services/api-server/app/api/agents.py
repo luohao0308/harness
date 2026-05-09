@@ -1,6 +1,10 @@
+import json
+import time
+from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +25,7 @@ from app.api.schemas import (
     AgentAutoResponse,
     AgentChatRequest,
     AgentChatResponse,
+    AgentChatStreamRequest,
     AgentHandoffResponse,
     AgentMessagePage,
     AgentOrchestrateResponse,
@@ -28,21 +33,34 @@ from app.api.schemas import (
     AgentPlanRequest,
     AgentPlanResponse,
     AgentResponse,
+    AgentRunCreateRequest,
+    AgentRunWorkspaceResponse,
     AgentSessionCreateRequest,
     AgentSessionPage,
     AgentSessionResponse,
+    EventResponse,
+    ModelCallResponse,
+    SubagentResponse,
+    TaskPage,
     TaskPlanResponse,
     TaskPlanStepState,
     TaskResponse,
+    ToolApprovalResponse,
+    ToolCallResponse,
 )
 from app.db.models import (
     Agent,
     AgentAssignment,
+    AgentEvent,
     AgentHandoff,
     AgentMessage,
+    AgentRun,
     AgentSession,
     ExecutionPlan,
+    ModelCall,
     Task,
+    ToolApproval,
+    ToolCall,
     utc_now,
 )
 from app.db.session import get_db_session
@@ -154,7 +172,8 @@ def list_agent_messages(
     "/sessions/{session_id}/messages",
     response_model=AgentChatResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="发送 Agent Chat 消息",
+    include_in_schema=False,
+    summary="内部兼容：发送 Agent 会话消息",
 )
 def send_agent_message(
     session_id: str,
@@ -195,15 +214,195 @@ def send_agent_message(
     )
 
 
-@router.get(
-    "/{agent_id}",
-    response_model=AgentResponse,
-    summary="查询 Agent 详情",
-    description="返回指定具名 Agent 的模型、工具、角色和路由标签。",
+@router.post(
+    "/{agent_id}/runs",
+    response_model=AgentPlanResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="创建 Agent Run",
+    description="Agent Workspace 的主入口，固定使用 Plan 模式生成可审计 DAG，不自动执行工具。",
 )
-def get_agent(agent_id: str, session: DbSession, principal: Principal) -> Agent:
-    require_role(principal, {"admin", "engineer", "operator"})
-    return _get_agent(agent_id=agent_id, session=session, principal=principal)
+def create_agent_run(
+    agent_id: str,
+    request: AgentRunCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AgentPlanResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    payload = request.model_copy(update={"agent_id": agent_id})
+    return plan_with_agent(request=payload, session=session, principal=principal)
+
+
+@router.post(
+    "/{agent_id}/runs/plan/stream",
+    summary="流式创建 Agent Plan",
+    description=(
+        "local Agent CLI 风格入口：用户只提交目标，服务端流式返回计划进度，"
+        "最终创建 Agent Run。"
+    ),
+)
+def stream_agent_plan_run(
+    agent_id: str,
+    request: AgentRunCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> StreamingResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+
+    def sse(event: str, payload: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def iterator() -> Iterator[str]:
+        yield sse(
+            "delta",
+            {"content": "我会先理解目标，然后生成一个可审计的执行计划。\n"},
+        )
+        time.sleep(0.05)
+        yield sse(
+            "delta",
+            {"content": "Planner 正在拆解步骤，Harness 会同步记录事件流。\n"},
+        )
+        time.sleep(0.05)
+        try:
+            payload = request.model_copy(update={"agent_id": agent_id, "mode": "plan"})
+            planned = plan_with_agent(request=payload, session=session, principal=principal)
+        except Exception as exc:
+            yield sse("error", {"message": str(exc)})
+            return
+        yield sse(
+            "delta",
+            {"content": f"计划已生成：{len(planned.plan.steps)} 个步骤。右侧已同步 Plan DAG。\n"},
+        )
+        yield sse(
+            "run_created",
+            {
+                "run_id": planned.run_id,
+                "status": planned.task.status,
+                "step_count": len(planned.plan.steps),
+                "message": planned.message,
+            },
+        )
+
+    return StreamingResponse(iterator(), media_type="text/event-stream")
+
+
+@router.post(
+    "/{agent_id}/runs/chat/stream",
+    summary="Workspace Pro 对话流",
+    description=(
+        "Cursor/Workspace artifacts 风格 Workspace Pro 入口。服务端通过 SSE 返回 "
+        "think、delta、artifact、usage 和 done 事件；底层仍创建 Agent Run 和可审计 Plan。"
+    ),
+)
+def stream_agent_chat_run(
+    agent_id: str,
+    request: AgentChatStreamRequest,
+    session: DbSession,
+    principal: Principal,
+) -> StreamingResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+
+    def sse(event: str, payload: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def message_goal() -> str:
+        if request.goal and request.goal.strip():
+            return request.goal.strip()
+        user_messages = [node for node in request.messages if node.role == "user"]
+        if user_messages:
+            return user_messages[-1].content.strip()
+        return "Generate an auditable Agent Plan."
+
+    def estimated_input_tokens() -> int:
+        pinned = {node.id for node in request.messages if node.id in set(request.pinned_node_ids)}
+        carried = [
+            node
+            for node in request.messages[-request.context_window_turns :]
+            if node.role in {"user", "assistant", "system"}
+        ]
+        pinned_nodes = [
+            node for node in request.messages if node.id in pinned and node not in carried
+        ]
+        content_length = sum(len(node.content) for node in [*pinned_nodes, *carried])
+        return max(1, content_length // 4)
+
+    def iterator() -> Iterator[str]:
+        started_at = time.monotonic()
+        first_byte_at = time.monotonic()
+        goal = message_goal()
+        yield sse(
+            "think_delta",
+            {
+                "content": "已读取当前分支、Pinned 消息和上下文窗口，准备生成可审计计划。\n",
+                "active_leaf_id": request.active_leaf_id,
+                "pinned_node_ids": request.pinned_node_ids,
+                "context_window_turns": request.context_window_turns,
+            },
+        )
+        if request.tool_mentions:
+            for mention in request.tool_mentions:
+                yield sse(
+                    "tool_call_requested",
+                    {
+                        "tool_name": mention.name,
+                        "source": mention.source,
+                        "input_json": mention.payload,
+                        "status": "preview",
+                    },
+                )
+        try:
+            payload = AgentPlanRequest(
+                agent_id=agent_id,
+                goal=goal,
+                title=None,
+                model_provider="default",
+                model_name="default",
+                max_runtime_seconds=1800,
+                max_subagents=5,
+                enable_sandbox=True,
+                enable_network=False,
+            )
+            planned = plan_with_agent(request=payload, session=session, principal=principal)
+        except Exception as exc:
+            yield sse("error", {"message": str(exc)})
+            return
+        plan_json = planned.plan.plan_json
+        summary = planned.plan.summary or planned.message
+        yield sse("delta", {"content": f"{summary}\n"})
+        yield sse(
+            "artifact_created",
+            {
+                "name": "plan.json",
+                "artifact_type": "json",
+                "status": "ready",
+                "content": plan_json,
+                "run_id": planned.run_id,
+            },
+        )
+        output_tokens = max(1, len(summary) // 4)
+        yield sse(
+            "usage",
+            {
+                "input_tokens": estimated_input_tokens(),
+                "output_tokens": output_tokens,
+                "cost_usd": "0",
+                "ttfb_ms": int((first_byte_at - started_at) * 1000),
+                "duration_ms": int((time.monotonic() - started_at) * 1000),
+            },
+        )
+        yield sse(
+            "done",
+            {
+                "run_id": planned.run_id,
+                "status": planned.task.status,
+                "step_count": len(planned.plan.steps),
+                "message": planned.message,
+            },
+        )
+
+    return StreamingResponse(iterator(), media_type="text/event-stream")
 
 
 @router.post(
@@ -316,8 +515,9 @@ def plan_with_agent(
     "/auto",
     response_model=AgentAutoResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Agent Auto 模式",
-    description="自动完成 Plan、多 Agent 编排执行和 Run 执行。",
+    include_in_schema=False,
+    summary="内部兼容：自动执行 Agent Run",
+    description="内部兼容端点。主产品入口只暴露 Plan，自动执行能力保留给测试和后台编排。",
 )
 def auto_with_agent(
     request: AgentPlanRequest,
@@ -353,7 +553,119 @@ def auto_with_agent(
             handoffs=handoffs,
             message=f"已执行 {len(assignments)} 个具名 Agent assignment 并完成 Reduce。",
         ),
-        message="Auto 模式已完成计划、多 Agent 编排和 Run 执行。",
+        message="内部自动流程已完成计划、多 Agent 编排和 Run 执行。",
+    )
+
+
+@router.get(
+    "/runs",
+    response_model=TaskPage,
+    summary="查询 Agent Run 历史",
+    description="返回 Agent Workspace 创建的 Run 历史；底层兼容 tasks 表。",
+)
+def list_agent_runs(
+    session: DbSession,
+    principal: Principal,
+) -> TaskPage:
+    require_role(principal, {"admin", "engineer", "operator"})
+    runs = list(
+        session.execute(
+            select(Task)
+            .where(Task.organization_id == principal.organization_id)
+            .order_by(Task.created_at.desc())
+            .limit(100)
+        ).scalars()
+    )
+    return TaskPage(items=runs)
+
+
+@router.get(
+    "/runs/{run_id}/workspace",
+    response_model=AgentRunWorkspaceResponse,
+    summary="查询 Agent Workspace 聚合视图",
+    description=(
+        "返回一个 Agent Run 的 Plan DAG、事件流、Subagent、工具调用、"
+        "模型调用、审批和多 Agent 编排状态。"
+    ),
+)
+def get_agent_run_workspace(
+    run_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> AgentRunWorkspaceResponse:
+    require_role(principal, {"admin", "engineer", "operator"})
+    run = _owned_run(run_id=run_id, session=session, principal=principal)
+    plan = _latest_plan(run_id=run.id, session=session)
+    events = list(
+        session.execute(
+            select(AgentEvent)
+            .where(AgentEvent.task_id == run.id)
+            .order_by(AgentEvent.sequence.asc())
+            .limit(200)
+        ).scalars()
+    )
+    subagents = list(
+        session.execute(
+            select(AgentRun)
+            .where(AgentRun.task_id == run.id)
+            .order_by(AgentRun.started_at.asc().nullsfirst(), AgentRun.id.asc())
+        ).scalars()
+    )
+    tool_calls = list(
+        session.execute(
+            select(ToolCall)
+            .where(ToolCall.task_id == run.id)
+            .order_by(ToolCall.created_at.desc())
+            .limit(100)
+        ).scalars()
+    )
+    model_calls = list(
+        session.execute(
+            select(ModelCall)
+            .where(ModelCall.task_id == run.id)
+            .order_by(ModelCall.created_at.desc())
+            .limit(100)
+        ).scalars()
+    )
+    approvals = list(
+        session.execute(
+            select(ToolApproval)
+            .where(ToolApproval.task_id == run.id)
+            .order_by(ToolApproval.created_at.desc())
+            .limit(50)
+        ).scalars()
+    )
+    assignments = list(
+        session.execute(
+            select(AgentAssignment)
+            .where(AgentAssignment.run_id == run.id)
+            .order_by(AgentAssignment.created_at.asc(), AgentAssignment.id.asc())
+        ).scalars()
+    )
+    handoffs = list(
+        session.execute(
+            select(AgentHandoff)
+            .where(AgentHandoff.run_id == run.id)
+            .order_by(AgentHandoff.created_at.asc(), AgentHandoff.id.asc())
+        ).scalars()
+    )
+    trace_ids = _trace_ids_by_subject(events=events)
+    return AgentRunWorkspaceResponse(
+        run=run,
+        plan=_plan_response(plan) if plan is not None else None,
+        events=[EventResponse.model_validate(event) for event in events],
+        subagents=[SubagentResponse.model_validate(subagent) for subagent in subagents],
+        tool_calls=[
+            _tool_call_response(call, trace_id=trace_ids.get(("tool", call.id)))
+            for call in tool_calls
+        ],
+        model_calls=[
+            _model_call_response(call, trace_id=trace_ids.get(("model", call.id)))
+            for call in model_calls
+        ],
+        approvals=[ToolApprovalResponse.model_validate(approval) for approval in approvals],
+        assignments=assignments,
+        handoffs=handoffs,
     )
 
 
@@ -532,6 +844,17 @@ def list_agent_run_handoffs(
     )
 
 
+@router.get(
+    "/{agent_id}",
+    response_model=AgentResponse,
+    summary="查询 Agent 详情",
+    description="返回指定具名 Agent 的模型、工具、角色和路由标签。",
+)
+def get_agent(agent_id: str, session: DbSession, principal: Principal) -> Agent:
+    require_role(principal, {"admin", "engineer", "operator"})
+    return _get_agent(agent_id=agent_id, session=session, principal=principal)
+
+
 def _complete_plan_prompt(*, task: Task, session: Session) -> str:
     try:
         response = AuditedModelGateway(session=session, task_id=task.id).complete(
@@ -639,6 +962,109 @@ def _latest_plan(*, run_id: str, session: Session) -> ExecutionPlan | None:
     ).scalar_one_or_none()
 
 
+def _trace_ids_by_subject(*, events: list[AgentEvent]) -> dict[tuple[str, str], str]:
+    trace_ids: dict[tuple[str, str], str] = {}
+    for event in events:
+        if not isinstance(event.trace_id, str):
+            continue
+        model_call_id = event.payload_json.get("model_call_id")
+        if isinstance(model_call_id, str):
+            trace_ids.setdefault(("model", model_call_id), event.trace_id)
+        tool_call_id = event.payload_json.get("tool_call_id")
+        if isinstance(tool_call_id, str):
+            trace_ids.setdefault(("tool", tool_call_id), event.trace_id)
+    return trace_ids
+
+
+def _model_call_response(
+    model_call: ModelCall,
+    *,
+    trace_id: str | None,
+) -> ModelCallResponse:
+    return ModelCallResponse(
+        id=model_call.id,
+        task_id=model_call.task_id,
+        agent_run_id=model_call.agent_run_id,
+        trace_id=trace_id,
+        model_provider=model_call.model_provider,
+        model_name=model_call.model_name,
+        status=model_call.status,
+        prompt_tokens=model_call.prompt_tokens,
+        completion_tokens=model_call.completion_tokens,
+        duration_ms=model_call.duration_ms,
+        request_json=model_call.request_json,
+        response_json=model_call.response_json,
+        error_message=model_call.error_message,
+        created_at=model_call.created_at,
+    )
+
+
+def _tool_call_response(
+    tool_call: ToolCall,
+    *,
+    trace_id: str | None,
+) -> ToolCallResponse:
+    output = tool_call.output_json if isinstance(tool_call.output_json, dict) else {}
+    return ToolCallResponse(
+        id=tool_call.id,
+        task_id=tool_call.task_id,
+        agent_run_id=tool_call.agent_run_id,
+        trace_id=trace_id,
+        tool_name=tool_call.tool_name,
+        status=tool_call.status,
+        risk_level=tool_call.risk_level,
+        requires_sandbox=tool_call.requires_sandbox,
+        sandbox_id=tool_call.sandbox_id,
+        duration_ms=tool_call.duration_ms,
+        input_json=tool_call.input_json,
+        output_json=tool_call.output_json,
+        output_kind=_tool_output_kind(tool_call, output),
+        output_summary=_tool_output_summary(tool_call, output),
+        timeout_category="tool_timeout" if tool_call.status == "TIMEOUT" else None,
+        error_message=tool_call.error_message,
+        created_at=tool_call.created_at,
+    )
+
+
+def _tool_output_kind(tool_call: ToolCall, output: dict) -> str:
+    if tool_call.status == "DENIED":
+        return "policy_denied"
+    if tool_call.status == "TIMEOUT":
+        return "timeout"
+    if "content" in output:
+        return "file_content"
+    if "files" in output:
+        return "file_list"
+    if "exit_code" in output:
+        return "shell_result"
+    if "status_code" in output:
+        return "http_response"
+    if "path" in output and "bytes_written" in output:
+        return "file_write"
+    if tool_call.status == "FAILED":
+        return "error"
+    return "empty" if not output else "json"
+
+
+def _tool_output_summary(tool_call: ToolCall, output: dict) -> str:
+    if tool_call.error_message and tool_call.status in {"DENIED", "FAILED", "TIMEOUT"}:
+        return tool_call.error_message[:300]
+    if "content" in output:
+        content = str(output.get("content") or "")
+        return f"文件内容 {len(content)} 字符"
+    if "files" in output and isinstance(output.get("files"), list):
+        return f"文件列表 {len(output['files'])} 项"
+    if "exit_code" in output:
+        return f"命令退出码 {output.get('exit_code')}"
+    if "status_code" in output:
+        return f"HTTP {output.get('status_code')}"
+    if "path" in output and "bytes_written" in output:
+        return f"写入 {output.get('path')}，{output.get('bytes_written')} bytes"
+    if not output:
+        return "无输出"
+    return f"JSON 输出字段 {len(output)} 个"
+
+
 def _get_agent(*, agent_id: str, session: Session, principal: Principal) -> Agent:
     ensure_default_agents(session, principal.organization_id)
     session.commit()
@@ -668,6 +1094,6 @@ def _owned_session(
 def _chat_reply(*, agent_id: str, content: str) -> str:
     return (
         f"{agent_id} 已收到你的消息。"
-        "当前 Chat 模式会持久化会话上下文；需要执行时可切换到 Plan、编排 Agent 或 Execute。"
+        "当前会话端点仅作为内部兼容层；主工作台固定使用 Plan 模式。"
         f"消息摘要：{content[:80]}"
     )

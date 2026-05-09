@@ -2,19 +2,19 @@
 
 ## 目标
 
-任务生命周期负责把用户目标从创建、启动、执行、取消、恢复到结果输出串成闭环。任务是控制台、事件、Subagent、Sandbox、模型调用和工具调用的主线对象。
+任务生命周期负责把用户目标从创建、启动、执行、取消、恢复到结果输出串成闭环。产品语言使用 Agent Run；`tasks` 表和 `/api/tasks/*` 是当前兼容实现细节。Agent Run 是控制台、事件、Subagent、Sandbox、模型调用和工具调用的主线对象。
 
 ## 用户可见能力
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 创建任务 | `/tasks/new` | 生成任务并进入 `CREATED` |
-| 查看任务 | `/tasks`、`/tasks/:taskId` | 查看任务状态、目标、事件和结果 |
-| 启动任务 | `/tasks/:taskId` | 触发 Planner 与 Executor |
-| 取消任务 | `/tasks/:taskId` | 任务进入 `CANCELLED` |
-| 恢复任务 | `/tasks/:taskId` | 从 Replay 状态继续执行 |
-| 从步骤续跑 | `/tasks/:taskId` | 从指定步骤继续执行后续未完成步骤 |
-| 查看结果 | `/tasks/:taskId` | 查看摘要、产物和最后事件序号 |
+| 创建 Run | `/agents/:agentId/workspace` | 生成 Agent Run 并进入 `CREATED` 或 `PLANNED` |
+| 查看 Run | `/runs`、`/runs/:runId` | 查看 Run 状态、目标、事件和结果 |
+| 启动 Run | `/runs/:runId` | 触发 Planner 与 Executor |
+| 取消 Run | `/runs/:runId` | Run 进入 `CANCELLED` |
+| 恢复 Run | `/runs/:runId` | 从 Replay 状态继续执行 |
+| 从步骤续跑 | `/runs/:runId` | 从指定步骤继续执行后续未完成步骤 |
+| 查看结果 | `/runs/:runId` | 查看摘要、产物和最后事件序号 |
 
 ## 后端契约
 
@@ -33,15 +33,15 @@ GET  /api/tasks/{task_id}/result
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/tasks` | Task API | 列表、状态筛选、进入详情 |
-| `/tasks/new` | Task API | 输入目标并创建任务 |
-| `/tasks/:taskId` | Task、Result、Events、Replay、Step Resume | 启动、取消、恢复、步骤续跑、查看结果 |
+| `/agents/:agentId/workspace` | Agent Run Workspace API | 输入目标并创建 Agent Run |
+| `/runs` | Agent Run API | 列表、状态筛选、进入详情 |
+| `/runs/:runId` | Run、Result、Events、Replay、Step Resume | 启动、取消、恢复、步骤续跑、查看结果 |
 
 ## 数据模型
 
 | 数据 | 作用 |
 |---|---|
-| `tasks` | 任务事实表 |
+| `tasks` | Agent Run 兼容事实表 |
 | `execution_plans` | Planner 输出计划 |
 | `task_steps` | 步骤执行状态 |
 | `agent_events` | 任务全量事件流 |
@@ -99,7 +99,7 @@ agent_task_resume_total
 
 | 能力 | 状态 | 证据 |
 |---|---|---|
-| 创建任务 | 已落地 | `POST /api/tasks` |
+| 创建 Run | 已落地 | `POST /api/agents/{agent_id}/runs` 与 Workspace Pro stream；`POST /api/tasks` 为兼容层 |
 | 启动任务 | 已落地 | `POST /api/tasks/{task_id}/start` |
 | 取消任务 | 已落地 | `POST /api/tasks/{task_id}/cancel` |
 | 恢复任务 | 已落地 | `POST /api/tasks/{task_id}/resume` |

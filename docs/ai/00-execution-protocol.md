@@ -44,4 +44,4 @@ Then update:
 
 ## Product Boundary
 
-The console entry is Agent Chat. The product is the Harness: Planner, Executor, Subagent Orchestrator, Event Sourcing, Tool Runtime, Guardrails, Eval Harness, Memory, Model Router, WarmPool, Trace, Replay, and Recovery.
+The console entry is Agent Workspace with a single Plan surface. The product is the Harness: Planner, Executor, Subagent Orchestrator, Event Sourcing, Tool Runtime, Guardrails, Eval Harness, Memory, Model Router, WarmPool, Trace, Replay, and Recovery.

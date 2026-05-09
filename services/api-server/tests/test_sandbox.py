@@ -261,7 +261,7 @@ def test_sandbox_api_list_warm_pool_get_and_terminate(
 
     warm_pool = client.get("/api/sandboxes/warm-pool", headers=AUTH_HEADERS)
     assert warm_pool.status_code == 200
-    assert warm_pool.json()["min_size"] == 3
+    assert warm_pool.json()["min_size"] == 2
 
     fetched = client.get(f"/api/sandboxes/{sandbox.id}", headers=AUTH_HEADERS)
     assert fetched.status_code == 200

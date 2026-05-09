@@ -15,6 +15,7 @@ export type TaskStatus =
   | "PLANNED"
   | "RUNNING"
   | "WAITING_SUBAGENTS"
+  | "WAITING_APPROVAL"
   | "FAILED"
   | "COMPLETED"
   | "CANCELLED";
@@ -131,19 +132,91 @@ export type AgentMessage = {
   created_at: string;
 };
 
-export type AgentChatResult = {
-  session: AgentSession;
-  messages: AgentMessage[];
+export type AgentRunCreatePayload = AgentPlanPayload & {
+  mode: "plan";
 };
 
-export type AgentAutoResult = {
-  agent_id: string;
-  run_id: string;
-  task: Task;
-  plan: TaskPlan;
-  orchestration: AgentOrchestrateResult;
-  message: string;
+export type AgentPlanStreamEvent =
+  | { type: "delta"; content: string }
+  | {
+      type: "run_created";
+      run_id: string;
+      status: string;
+      step_count: number;
+      message: string;
+    }
+  | { type: "error"; message: string };
+
+export type AgentChatStreamMessage = {
+  id: string;
+  parent_id: string | null;
+  children_ids: string[];
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  state: "draft" | "streaming" | "paused" | "done" | "error";
+  run_id?: string;
+  metadata: Record<string, unknown>;
+  tool_calls: Array<Record<string, unknown>>;
+  artifacts: Array<Record<string, unknown>>;
 };
+
+export type ToolMention = {
+  name: string;
+  source?: string | null;
+  payload: Record<string, unknown>;
+};
+
+export type AgentChatStreamPayload = {
+  goal?: string | null;
+  messages: AgentChatStreamMessage[];
+  active_leaf_id?: string | null;
+  pinned_node_ids: string[];
+  context_window_turns: number;
+  continue_from_node_id?: string | null;
+  partial_assistant_content?: string | null;
+  tool_mentions?: ToolMention[];
+};
+
+export type AgentChatStreamEvent =
+  | { type: "delta"; content: string }
+  | { type: "think_delta"; content: string }
+  | {
+      type: "tool_call_requested";
+      tool_name: string;
+      source: string | null;
+      input_json: Record<string, unknown>;
+      status: string;
+    }
+  | {
+      type: "tool_call_result";
+      tool_name: string;
+      output_json: Record<string, unknown>;
+      status: string;
+    }
+  | {
+      type: "artifact_created";
+      name: string;
+      artifact_type: "code" | "json" | "diff" | "chart" | "text";
+      status: string;
+      content: unknown;
+      run_id?: string;
+    }
+  | {
+      type: "usage";
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: string;
+      ttfb_ms: number;
+      duration_ms: number;
+    }
+  | {
+      type: "done";
+      run_id: string;
+      status: string;
+      step_count: number;
+      message: string;
+    }
+  | { type: "error"; message: string };
 
 export type AgentEvent = {
   id: string;
@@ -628,6 +701,18 @@ export type AgentPlanResult = {
   message: string;
 };
 
+export type AgentRunWorkspace = {
+  run: Task;
+  plan: TaskPlan | null;
+  events: AgentEvent[];
+  subagents: Subagent[];
+  tool_calls: ToolCall[];
+  model_calls: ModelCall[];
+  approvals: ToolApproval[];
+  assignments: AgentAssignment[];
+  handoffs: AgentHandoff[];
+};
+
 export type TaskPlanVersionSummary = {
   id: string;
   task_id: string;
@@ -892,29 +977,89 @@ export async function getAgent(agentId: string) {
   return request<AgentDefinition>(`/api/agents/${agentId}`);
 }
 
-export async function createAgentSession(agentId: string, title?: string) {
-  return request<AgentSession>(`/api/agents/${agentId}/sessions`, {
-    method: "POST",
-    body: JSON.stringify({ title }),
-  });
-}
-
-export async function sendAgentMessage(sessionId: string, content: string) {
-  return request<AgentChatResult>(`/api/agents/sessions/${sessionId}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ content }),
-  });
-}
-
-export async function planWithAgent(payload: AgentPlanPayload) {
-  return request<AgentPlanResult>("/api/agents/plan", {
+export async function createAgentRun(agentId: string, payload: AgentRunCreatePayload) {
+  return request<AgentPlanResult>(`/api/agents/${agentId}/runs`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function autoWithAgent(payload: AgentPlanPayload) {
-  return request<AgentAutoResult>("/api/agents/auto", {
+export async function streamAgentPlanRun(
+  agentId: string,
+  payload: AgentRunCreatePayload,
+  onEvent: (event: AgentPlanStreamEvent) => void,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(`${API_BASE_URL}/api/agents/${agentId}/runs/plan/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ ...payload, mode: "plan" }),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败 ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const event = parseSseFrame(frame);
+      if (event) onEvent(event);
+    }
+  }
+  const finalEvent = parseSseFrame(buffer);
+  if (finalEvent) onEvent(finalEvent);
+}
+
+export async function streamAgentChatRun(
+  agentId: string,
+  payload: AgentChatStreamPayload,
+  onEvent: (event: AgentChatStreamEvent) => void,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(`${API_BASE_URL}/api/agents/${agentId}/runs/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败 ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const event = parseChatSseFrame(frame);
+      if (event) onEvent(event);
+    }
+  }
+  const finalEvent = parseChatSseFrame(buffer);
+  if (finalEvent) onEvent(finalEvent);
+}
+
+export async function listRuns() {
+  return request<{ items: Task[]; next_cursor: string | null }>("/api/agents/runs");
+}
+
+export async function getAgentRunWorkspace(runId: string) {
+  return request<AgentRunWorkspace>(`/api/agents/runs/${runId}/workspace`);
+}
+
+export async function planWithAgent(payload: AgentPlanPayload) {
+  return request<AgentPlanResult>("/api/agents/plan", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -1143,6 +1288,22 @@ export async function rejectToolApproval(taskId: string, approvalId: string, rea
   );
 }
 
+export async function modifyToolApproval(
+  taskId: string,
+  approvalId: string,
+  modifiedInputJson: Record<string, unknown>,
+  reason: string,
+) {
+  return request<{ items: ToolApproval[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/tool-approvals/${approvalId}/modify`,
+    {
+      method: "POST",
+      headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+      body: JSON.stringify({ modified_input_json: modifiedInputJson, reason }),
+    },
+  );
+}
+
 export async function listEvalDatasets() {
   return request<{ items: EvalDataset[]; next_cursor: string | null }>("/api/evals/datasets");
 }
@@ -1189,6 +1350,106 @@ export async function getEvalRun(evalRunId: string) {
 export function taskEventStreamUrl(taskId: string) {
   const params = new URLSearchParams({ access_token: DEV_BEARER_TOKEN });
   return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+}
+
+function parseSseFrame(frame: string): AgentPlanStreamEvent | null {
+  if (!frame.trim()) return null;
+  const eventLine = frame.split("\n").find((line) => line.startsWith("event:"));
+  const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
+  if (!eventLine || !dataLine) return null;
+  const eventType = eventLine.slice("event:".length).trim();
+  const payload = JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>;
+  if (eventType === "delta") {
+    return { type: "delta", content: String(payload.content ?? "") };
+  }
+  if (eventType === "run_created") {
+    return {
+      type: "run_created",
+      run_id: String(payload.run_id),
+      status: String(payload.status),
+      step_count: Number(payload.step_count ?? 0),
+      message: String(payload.message ?? ""),
+    };
+  }
+  if (eventType === "error") {
+    return { type: "error", message: String(payload.message ?? "stream failed") };
+  }
+  return null;
+}
+
+function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
+  if (!frame.trim()) return null;
+  const eventLine = frame.split("\n").find((line) => line.startsWith("event:"));
+  const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
+  if (!eventLine || !dataLine) return null;
+  const eventType = eventLine.slice("event:".length).trim();
+  const payload = JSON.parse(dataLine.slice("data:".length).trim()) as Record<string, unknown>;
+  if (eventType === "delta") return { type: "delta", content: String(payload.content ?? "") };
+  if (eventType === "think_delta") {
+    return { type: "think_delta", content: String(payload.content ?? "") };
+  }
+  if (eventType === "tool_call_requested") {
+    return {
+      type: "tool_call_requested",
+      tool_name: String(payload.tool_name ?? ""),
+      source: typeof payload.source === "string" ? payload.source : null,
+      input_json: asRecord(payload.input_json),
+      status: String(payload.status ?? "preview"),
+    };
+  }
+  if (eventType === "tool_call_result") {
+    return {
+      type: "tool_call_result",
+      tool_name: String(payload.tool_name ?? ""),
+      output_json: asRecord(payload.output_json),
+      status: String(payload.status ?? ""),
+    };
+  }
+  if (eventType === "artifact_created") {
+    return {
+      type: "artifact_created",
+      name: String(payload.name ?? "artifact"),
+      artifact_type: artifactType(payload.artifact_type),
+      status: String(payload.status ?? "ready"),
+      content: payload.content,
+      run_id: typeof payload.run_id === "string" ? payload.run_id : undefined,
+    };
+  }
+  if (eventType === "usage") {
+    return {
+      type: "usage",
+      input_tokens: Number(payload.input_tokens ?? 0),
+      output_tokens: Number(payload.output_tokens ?? 0),
+      cost_usd: String(payload.cost_usd ?? "0"),
+      ttfb_ms: Number(payload.ttfb_ms ?? 0),
+      duration_ms: Number(payload.duration_ms ?? 0),
+    };
+  }
+  if (eventType === "done") {
+    return {
+      type: "done",
+      run_id: String(payload.run_id),
+      status: String(payload.status),
+      step_count: Number(payload.step_count ?? 0),
+      message: String(payload.message ?? ""),
+    };
+  }
+  if (eventType === "error") {
+    return { type: "error", message: String(payload.message ?? "stream failed") };
+  }
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function artifactType(value: unknown): "code" | "json" | "diff" | "chart" | "text" {
+  return ["code", "json", "diff", "chart", "text"].includes(String(value))
+    ? (String(value) as "code" | "json" | "diff" | "chart" | "text")
+    : "text";
 }
 
 export async function getModelSettings() {

@@ -17,15 +17,15 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 输入目标 | `/agents/:agentId/chat` | 在 Agent Plan 模式中输入目标 |
-| 只规划不执行 | `/agents/:agentId/chat` | 返回结构化计划，Run 状态为 `PLANNED` |
-| 查看计划 | `/tasks/:taskId` | 查看计划版本、步骤和原始 JSON |
-| 查看步骤 | `/tasks/:taskId` | 查看步骤状态、耗时和错误 |
-| 执行工具 | `/tasks/:taskId` | 按策略执行工具并记录审计 |
-| 查看同步执行 | `/tasks/:taskId` | 计划步骤显示 `sync`，步骤由 Executor 直接执行 |
-| 查看异步执行 | `/tasks/:taskId`、`/tasks/:taskId/subagents` | 计划步骤显示 `async`，步骤派生 Subagent 并展示子 Agent 状态 |
-| 查看计划版本 | `/tasks/:taskId` | 查看计划版本数量、最新版本和相邻版本差异 |
-| 从步骤断点续跑 | `/tasks/:taskId` | 选择步骤作为断点，从该步骤继续执行后续未完成步骤 |
+| 输入目标 | `/agents/:agentId/workspace` | 在 Workspace Pro Plan-Act surface 中输入目标 |
+| 只规划不执行 | `/agents/:agentId/workspace` | 生成结构化计划和 Agent Run 投影，Run 状态为 `PLANNED` |
+| 查看计划 | `/runs/:runId` | 查看计划版本、步骤和原始 JSON |
+| 查看步骤 | `/runs/:runId` | 查看步骤状态、耗时和错误 |
+| 执行工具 | `/runs/:runId` 或 Workspace Tool Card | 按策略执行工具并记录审计 |
+| 查看同步执行 | `/runs/:runId` | 计划步骤显示 `sync`，步骤由 Executor 直接执行 |
+| 查看异步执行 | `/runs/:runId`、`/runs/:runId/subagents` | 计划步骤显示 `async`，步骤派生 Subagent 并展示子 Agent 状态 |
+| 查看计划版本 | `/runs/:runId` | 查看计划版本数量、最新版本和相邻版本差异 |
+| 从步骤断点续跑 | `/runs/:runId` | 选择步骤作为断点，从该步骤继续执行后续未完成步骤 |
 
 ## 后端契约
 
@@ -46,10 +46,9 @@ POST /api/tasks/{task_id}/tools/execute
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/agents/:agentId/chat` | Agent Plan API | Chat/Plan/Execute/Auto 模式切换，Plan 模式只生成计划 |
-| `/agents/:agentId/chat` | Agent Execute API | Execute 模式执行同一个已规划 Run，不重新规划 |
-| `/runs/new` | Run API；当前可复用 Task API 兼容层 | 输入目标、模型、策略和沙箱约束 |
-| `/tasks/:taskId` | Plan、Steps、Step Resume、Tool Execute、Subagent API | 查看同步步骤、异步步骤、步骤断点续跑、工具执行结果和子 Agent |
+| `/agents/:agentId/workspace` | Workspace Pro stream API | 单一 Plan-Act surface 创建 Agent Run、展示计划、工具意图和产物 |
+| `/runs/:runId` | Agent Run Workspace projection | 执行同一个已规划 Run、查看计划、事件、工具、Subagent 和 Replay |
+| deprecated `/api/tasks/*` compatibility | Task compatibility API | 兼容内部存储和旧 API，不作为当前产品入口 |
 
 同步与异步在页面上的体现：
 
@@ -183,7 +182,7 @@ agent_subagents_running
 | 能力 | 状态 | 证据 |
 |---|---|---|
 | 结构化计划 | 已落地 | `planner.py` 先解析模型 JSON，失败时回退确定性计划 |
-| Agent Plan 模式 | 基础落地 | `POST /api/agents/plan` 和 `/agents/:agentId/chat` |
+| Agent Plan-Act Workspace | 基础落地 | `POST /api/agents/{agent_id}/runs/chat/stream` 和 `/agents/:agentId/workspace` |
 | Agent Execute 已确认计划 | 基础落地 | `POST /api/agents/runs/{run_id}/execute` 复用最新计划 |
 | 计划查询接口 | 已落地 | `GET /api/tasks/{task_id}/plan` |
 | 计划版本接口 | 已落地 | `GET /api/tasks/{task_id}/plans` |
@@ -212,8 +211,8 @@ agent_subagents_running
 
 | 缺口 | 影响 | 目标 |
 |---|---|---|
-| Plan 模式入口缺失 | 用户不知道目标分解与规划在哪里 | 在 Agent Workspace 中提供显式 Plan 模式 |
-| 旧创建页语义过重 | 用户感受到的是后台运行记录，不是 Agent | 产品概念统一为 Agent Session / Agent Run，主入口切到 Agent Chat |
+| Full-spec Workspace Pro gaps | Workspace Pro 垂直切片已落地，但 tool_call_result、continue run/branch 语义、Artifacts 抽取和前端测试基础设施仍需追踪 | 在 Workspace Pro gap register 中逐项验证和实现 |
+| deprecated `/api/tasks/*` 兼容层仍存在 | 文档若混用 Task 当前入口会误导用户 | 产品概念统一为 Agent Run，Task 仅作为兼容实现细节 |
 | Execute 不能复用 Plan-only Run | 用户确认计划后无法在同一个 Run 继续执行 | `POST /api/agents/runs/{run_id}/execute` 执行现有计划且不重新规划 |
 | 只有 Subagent 派生 | 只能表达单个 Run 内的异步分工，不是多 Agent 编排 | 引入 Agent Router、Orchestrator、handoff、parallel fan-out、reduce |
 
@@ -222,7 +221,7 @@ agent_subagents_running
 ```text
 1. 固化 Plan / Step schema
 2. 新增 Agent Plan-only API
-3. 新增 Agent Workspace Plan 模式页面
+3. 通过 Agent Workspace Pro Plan-Act surface 创建 Agent Run
 4. 新增 Agent Execute existing-plan API
 5. 保持 Executor ReAct 循环轨迹回归
 6. 保持 Worker 跨进程接管回归

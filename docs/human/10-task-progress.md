@@ -1,69 +1,88 @@
 # 10 任务进度看板
 
-本文件是人读任务进度看板。机器事实源是 [task-progress.yaml](../ai/task-progress.yaml)。
+本文件是人读进度看板。机器事实源是 [task-progress.yaml](../ai/task-progress.yaml)。
 
 ## 当前状态
 
 ```text
-当前阶段：09-portfolio-demo-docs
+当前产品：AI Harness Platform
+核心公式：Model + Harness = Agent
+当前阶段：06-warmpool-infra
 当前状态：completed
-当前验证：passed
 执行模式：Spec-first development + stage-gated implementation + vertical slice demo
+官网策略：保留为 public shell，不作为控制台核心
+关键模块：Agent Studio / Agent Workspace / Harness Management / Observability / Eval Harness / Infra
 ```
 
 ## 阶段进度
 
 | 阶段 | 名称 | 状态 | 文档 | Demo 闭环 | 验证结果 |
 |---|---|---|---|---|---|
-| 01 | Agent Graph Runtime | completed | `docs/ai/stages/01-agent-graph-runtime.md` | Agent 输入 -> Plan DAG -> Executor -> Subagent/Assignments -> Console 状态 | passed |
-| 02 | Event Store + Recovery | completed | `docs/ai/stages/02-event-store-recovery.md` | Run -> Events -> Restart -> Recovery -> Replay | passed |
-| 03 | Agent Run Console | completed | `docs/ai/stages/03-agent-run-console.md` | Chat + DAG + Trace + Tools + Guardrails + Eval + Replay | passed |
-| 04 | Tool / MCP Runtime | completed | `docs/ai/stages/04-tool-mcp-runtime.md` | Tool Registry -> Policy -> Execute -> Trace | passed |
-| 05 | Guardrail / Policy Engine | completed | `docs/ai/stages/05-guardrail-policy-engine.md` | Dangerous action -> Policy block or approval -> Audit | passed |
-| 06 | Eval Harness | completed | `docs/ai/stages/06-eval-harness.md` | Dataset -> Case from Run -> Eval Run -> Metrics | passed |
-| 07 | Memory / Context / Model Routing | completed | `docs/ai/stages/07-memory-context-router.md` | Task type -> Router -> Model choice -> Trace | passed |
-| 08 | WarmPool + Benchmark | completed | `docs/ai/stages/08-warmpool-benchmark.md` | WarmPool reserve -> Benchmark -> Report | passed |
-| 09 | Portfolio Demo + Docs | completed | `docs/ai/stages/09-portfolio-demo-docs.md` | GitHub Issue -> Agent -> Guardrail -> Replay -> Eval -> Benchmark | passed |
+| 01 | Agent Workspace 三栏控制台 | completed | `docs/ai/stages/01-agent-workspace-console.md` | Agent Workspace -> Agent Run -> Plan DAG -> Event Stream -> Tool/Model Calls | passed |
+| 02 | Agent Studio 配置闭环 | completed | `docs/ai/stages/02-agent-studio-config.md` | Studio -> Model settings -> MiniMax preset -> Workspace config | passed |
+| 03 | Harness 管理与 Tool/MCP | completed | `docs/ai/stages/03-harness-tool-mcp.md` | Tool Registry -> Policy -> Sandbox -> Trace | passed |
+| 04 | Event Sourcing + Replay UI | completed | `docs/ai/stages/04-event-sourcing-replay-ui.md` | Run -> Events -> Replay sequence -> State reconstruction | passed |
+| 05 | Eval + Regression | completed | `docs/ai/stages/05-eval-regression.md` | Run -> Eval Case -> Dataset Eval -> Metrics | passed |
+| 06 | WarmPool + Infra 展示 | completed | `docs/ai/stages/06-warmpool-infra.md` | WarmPool -> Benchmark -> Sandbox lifecycle -> Infra status | passed |
 
 ## 本轮完成记录
 
-- 新增 `docs/00-product-spec.md` 到 `docs/10-portfolio-demo-spec.md`。
-- 新增 `docs/ai/stages/` 九阶段执行规格。
-- 删除旧 `docs/ai/02-stage...14-stage...` 执行历史。
-- 新增 Eval Harness 后端垂直切片。
-- 新增 Console `/evals` 页面。
-- Runs 页面静态 KPI 改为后端 Observability 动态数据。
-- Run Detail 新增指定事件序号 Replay，显示 state summary、diagnosis、failure point。
-- Run Detail 新增 Eval 回归面板，支持创建 Dataset、保存当前 Run 为 Case、运行 Dataset Eval。
-- Run Detail 新增 Guardrail 面板，聚合 policy/denied 事件和被拒绝工具调用。
-- Guardrail 新增 Tool Approval 后端状态和 Run Detail 审批操作，支持 admin 批准或拒绝高风险工具调用。
-- Tool Runtime 新增统一 Tool Registry API 和 Console `/tools` 页面，内置工具与 MCP-shaped 工具共用策略、审计和 trace。
-- Memory / Context / Model Routing 新增 Run Context API，返回 working memory、long-term memory、artifact memory、RAG context、trace memory、context compression、model routing。
-- Route Context API 写入 `CONTEXT_COMPRESSED` 和 `MODEL_ROUTED` 事件，Run Detail 新增 Context Router 动态面板。
-- WarmPool Benchmark 新增报告 API，记录 warm avg、warm p95、cold baseline、hit rate、target status。
-- Sandboxes 页面新增 Benchmark 执行动作和最新性能指标展示。
-- OpenAPI JSON/YAML 已从 FastAPI app 重新导出并同步到 docs 与官网 public assets。
-- 新增 Portfolio Demo Guide、Eval Report、Benchmark Report、SDK Example、AI Harness Engineer Capability Map。
-- README 已更新当前状态、运行时接口和最终交付链接。
+- 核心 Spec 收敛为 Agent Studio、Agent Workspace、Harness 管理、Observability、Eval & Testing、Infra。
+- 删除旧九阶段执行路径，建立新六阶段执行规格。
+- 产品语义从 Task 主流程改为 Agent Run 主流程。
+- `/tasks/new` 从控制台路由移除，`/tasks` 仅作为 `/runs` 兼容跳转。
+- 新增 Agent Run 创建和 Workspace 聚合 API。
+- 新建 `/runs` 和 `/runs/:runId` 页面。
+- 重写 `/agents/:agentId/workspace` 为三栏 Agent Workspace Pro 控制台。
+- MiniMax 作为默认模型配置路径保留并通过测试。
+- Executor 接入 WarmPool-backed sandbox acquire/release。
+- Agent Studio 增加 Model、Tools/MCP、Prompt、RAG、Templates、Orchestration 六个能力入口。
+- MiniMax 默认上下文窗口元数据统一为 400000 tokens。
+- MiniMax 内置预置增加规范化，旧数据库中的 204800 tokens 设置会按 400000 tokens 读出。
+- `/tools` 增加 Registry、Policy、Sandbox、MCP、Trigger 禁用态五个 Harness 管理区块。
+- Tool/MCP/approval/agent 编排相关测试通过。
+- Run Detail 增加指定 sequence Replay 输入，展示 state summary、diagnosis 和 failure point。
+- Observability 修复 Run 事件与 Subagent 深链，指向具体 Run。
+- Eval 页面增加 Regression Gate、Trace Grader、A/B 禁用态和人工复核禁用态。
+- WarmPool 默认容量调整为 min_ready=2、max_ready=5。
+- Sandboxes 页面增加 Tenant Isolation、WarmPool、API Gateway 禁用态和 Version Rollout 禁用态。
+- OpenAPI JSON/YAML 已重新导出到 docs 和官网 public assets。
+- 旧 `/api/tasks/*` OpenAPI 文案已降级为 deprecated Agent Run 兼容层。
+- 最终全量回归通过。
 
 ## 验证记录
 
 ```text
-cd services/api-server && .venv/bin/python -m pytest tests/test_context_router.py -> 2 passed
-cd services/api-server && .venv/bin/python -m ruff check app/agents/context_router.py app/api/tasks.py app/api/schemas.py tests/test_context_router.py -> passed
-cd services/api-server && .venv/bin/python -m pytest tests/test_context_router.py tests/test_model_gateway.py tests/test_tasks.py -> 24 passed
-cd services/api-server && .venv/bin/python -m pytest -> 118 passed
-cd services/api-server && .venv/bin/python -m ruff check app tests -> passed
-cd services/api-server && .venv/bin/python -m pytest tests/test_warm_pool.py tests/test_sandbox.py -> 11 passed
-cd services/api-server && .venv/bin/python -m ruff check app/sandbox/benchmark.py app/api/sandboxes.py app/api/schemas.py app/db/models.py tests/test_warm_pool.py -> passed
-OpenAPI export from FastAPI app -> passed
-cd services/api-server && .venv/bin/python -m pytest tests/test_evals.py tests/test_agents.py tests/test_observability.py tests/test_event_store.py -> 38 passed
-cd services/api-server && .venv/bin/python -m ruff check app tests/test_evals.py tests/test_agents.py tests/test_observability.py tests/test_event_store.py -> passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py -> 29 passed
+cd apps/agent-console && npm run build -> passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 122 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
+python3 scripts/validate-docs.py -> passed
+python3 scripts/smoke-test-docker.py -> passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py -> 15 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_tool_registry.py services/api-server/tests/test_tool_runner.py services/api-server/tests/test_tool_approvals.py services/api-server/tests/test_agents.py -> 24 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_event_store.py services/api-server/tests/test_events_stream.py services/api-server/tests/test_observability.py -> 28 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_evals.py -> 2 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_warm_pool.py services/api-server/tests/test_sandbox.py -> 11 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 122 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
 cd apps/agent-console && npm run build -> passed
 python3 scripts/validate-docs.py -> passed
-docker compose -f deploy/docker-compose/docker-compose.yml config -> passed
+python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
+Docker runtime verification -> MiniMax healthy/probe and context 400000
 ```
+
+## 未完成项
+
+- 本轮 AI Harness Platform 六阶段聚焦重构的 vertical slice 已完成。
+- Workspace Pro full-spec gaps 仍作为后续实现项追踪：
+  - `tool_call_result` 后端事件发射与 Workspace UI 消费。
+  - Continue 保留原始 Run 与 branch 语义。
+  - 除 `plan.json` 以外的 Artifact 抽取。
+  - 有意义的 cost 语义。
+  - Conversation Tree 分支 sibling 导航。
+  - 前端 component/e2e 测试基础设施。
 
 ## 阶段完成定义
 

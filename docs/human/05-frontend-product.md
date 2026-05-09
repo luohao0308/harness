@@ -9,7 +9,7 @@ apps/web-site
 apps/agent-console
 ```
 
-官网使用 Next.js + TypeScript + Tailwind CSS。控制台使用 React + Vite + TypeScript + Tailwind CSS + shadcn/ui。
+官网使用 Next.js + TypeScript + Tailwind CSS。控制台使用 React + Vite + TypeScript + Tailwind CSS、本地 UI primitives、lucide-react 和 ECharts；shadcn/ui 仅作为历史设计目标参考，不是当前实现依赖。
 
 ## 官网页面
 
@@ -53,37 +53,38 @@ Model + Harness = Agent
 
 ```text
 /agents
-/agents/:agentId/chat
+/agents/:agentId/workspace
 /runs
 /runs/:runId
-/tasks
-/tasks/new
-/tasks/:taskId
-/tasks/:taskId/events
-/tasks/:taskId/subagents
+/runs/:runId/events
+/runs/:runId/subagents
 /sandboxes
 /observability
 /settings/models
 /settings/policies
+/tools
+/evals
+/subagents
 ```
 
-`/tasks` 路由保留为兼容入口，产品文案逐步迁移为 `Runs`。新主入口是 `/agents/:agentId/chat`。
+`/agents/:agentId/workspace` 是当前主入口。`/tasks` 是 deprecated 兼容入口并跳转到 `/runs`；历史 `/tasks/new` 创建页不是当前产品路由。
 
 ## Agent Workspace 布局
 
 ```text
-顶部：Agent 名称、默认模型、Chat / Plan / Execute / Auto 模式切换
-中间：对话消息、Agent 思考/计划/执行输出
-右侧：Plan、Events、Tools、Subagents、Sandbox、Artifacts
-底部：输入框、Plan 按钮、Execute 按钮、Auto 按钮
+左侧 Explorer：Agent 模型、Tool Tray、上下文窗口、Pinned 消息、文件桥接状态
+中列 Chat Console：Conversation Tree、流式 Plan-Act 输出、暂停/继续、编辑重发、结构化 @ mention
+右侧 Artifacts / Runtime：Artifacts、Metadata、Plan DAG、Events、Tool Cards、Approvals、Model Calls
+底部输入区：目标输入、发送、暂停、Continue
 ```
 
-Plan 模式要求：
+Workspace Pro 要求：
 
-- 只做任务分解与规划，不执行工具。
-- 中间区域展示 Agent 对用户目标的计划响应。
-- 右侧结构化展示步骤、风险、工具意图、是否需要 Subagent/Sandbox。
-- 用户可从 Plan 结果进入 Run 详情或继续 Execute。
+- 不再提供历史 Chat / Plan / Execute / Auto 多 Tab 作为当前主交互。
+- 单一 Plan-Act surface 创建或继续 Agent Run。
+- 中列展示树状对话、流式输出和折叠的规划/思考轨迹。
+- 右侧展示 Plan、Events、Tools、Subagents、Sandbox、Artifacts、Approvals 和 Model Calls。
+- 用户可从 Workspace 跳转到 Run Detail 执行、编排、Replay 或保存 Eval。
 
 ## Run 详情布局
 
@@ -119,8 +120,14 @@ AgentWorkspace
 AgentModeSwitch
 AgentMessageList
 AgentPlanCard
-TaskTable
-TaskCreateForm
+RunHistory
+RunDetail
+AgentWorkspacePro
+ConversationTree
+ContextExplorer
+ToolTray
+ToolCallingCard
+ArtifactPreview
 TaskStatusBadge
 ExecutionPlanPanel
 EventTimeline
@@ -138,7 +145,7 @@ PolicyBadge
 
 ```text
 Tailwind CSS
-shadcn/ui
+local UI primitives
 lucide-react
 ECharts
 ```
@@ -146,7 +153,7 @@ ECharts
 交互规范：
 
 - 图标按钮使用 lucide-react。
-- 表单使用 shadcn/ui Form。
+- 表单使用当前控制台本地 UI primitives；shadcn/ui 只保留为历史设计目标参考。
 - 表格使用密集型布局。
 - 状态使用 Badge。
 - 时间线用于事件流。
@@ -160,8 +167,9 @@ Figma 文件包含：
 ```text
 官网首页
 产品架构页
-任务列表
-任务详情
+Agent Workspace Pro
+Run History
+Run Detail
 事件流与 Subagent 面板
 ```
 

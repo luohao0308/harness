@@ -1,6 +1,14 @@
 # AI Execution Docs
 
-This directory is the machine-readable execution contract for the AI Harness project.
+This directory is the machine-readable execution contract for AI Harness Platform.
+
+## Product Contract
+
+```text
+Model + Harness = Agent
+```
+
+The active product structure is Agent Studio, Agent Workspace, Harness Management, Observability, Eval & Testing, and Infra.
 
 ## Required Reading Order
 
@@ -9,14 +17,15 @@ This directory is the machine-readable execution contract for the AI Harness pro
 3. Current stage file under `stages/`
 4. Top-level product specs in `docs/00-product-spec.md` through `docs/10-portfolio-demo-spec.md`
 
-## Stage Files
+## Active Stage Files
 
-- `stages/01-agent-graph-runtime.md`
-- `stages/02-event-store-recovery.md`
-- `stages/03-agent-run-console.md`
-- `stages/04-tool-mcp-runtime.md`
-- `stages/05-guardrail-policy-engine.md`
-- `stages/06-eval-harness.md`
-- `stages/07-memory-context-router.md`
-- `stages/08-warmpool-benchmark.md`
-- `stages/09-portfolio-demo-docs.md`
+- `stages/01-agent-workspace-console.md`
+- `stages/02-agent-studio-config.md`
+- `stages/03-harness-tool-mcp.md`
+- `stages/04-event-sourcing-replay-ui.md`
+- `stages/05-eval-regression.md`
+- `stages/06-warmpool-infra.md`
+
+## Removed From Active Execution
+
+Old task-management and nine-stage history docs are outside the active execution path. The website remains in the repository as a public information shell.

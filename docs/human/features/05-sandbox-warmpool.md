@@ -10,7 +10,7 @@ Docker Sandbox 承接高风险工具执行，提供容器级隔离。WarmPool �
 |---|---|---|
 | 查看沙箱 | `/sandboxes` | 查看容器实例、状态和资源 |
 | 查看 WarmPool | `/sandboxes` | 查看 idle、busy、hit、miss |
-| 查看任务沙箱 | `/tasks/:taskId` | 查看任务关联的沙箱事件 |
+| 查看 Run 沙箱 | `/runs/:runId` | 查看 Run 关联的沙箱事件 |
 | 终止沙箱 | `/sandboxes` | 停止指定沙箱 |
 | 查看配额用量 | `/sandboxes` | 查看当前组织 CPU、内存、网络和工作区配额 |
 | 查看配额历史 | `/sandboxes` | 查看沙箱规格、生命周期和 WarmPool 复用审计 |
@@ -31,7 +31,7 @@ POST /api/sandboxes/{sandbox_id}/terminate
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
 | `/sandboxes` | Sandbox API、WarmPool API、Quota API | 列表、详情、终止、配额摘要和历史审计 |
-| `/tasks/:taskId` | Events API、Tool Audit | 查看任务沙箱事件 |
+| `/runs/:runId` | Events API、Tool Audit | 查看 Run 沙箱事件 |
 
 ## 数据模型
 

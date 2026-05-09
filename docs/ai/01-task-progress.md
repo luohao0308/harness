@@ -2,4 +2,6 @@
 
 Machine progress is stored in `docs/ai/task-progress.yaml`.
 
-The current program is the nine-stage Production Agent Harness roadmap. Older stage history has been removed from the execution path because it no longer matches the product target.
+The active program is the six-stage AI Harness Platform focused roadmap: Agent Studio, Agent Workspace, Harness Management, Observability, Eval & Testing, and Infra.
+
+Old task-management execution history has been removed from the active path because it no longer matches the product target.

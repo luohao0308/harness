@@ -23,6 +23,7 @@ export function statusTone(status: string): BadgeTone {
     PLANNING: "info",
     WAITING_SUBAGENTS: "warning",
     WAITING_SUBAGENT: "warning",
+    WAITING_APPROVAL: "warning",
     PENDING: "pending",
     QUEUED: "warning",
     TIMEOUT: "warning",

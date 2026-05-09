@@ -123,8 +123,45 @@ class TaskResponse(BaseModel):
 
 
 class TaskPage(BaseModel):
-    items: list[TaskResponse] = Field(description="任务列表")
+    items: list[TaskResponse] = Field(description="Agent Run 列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class AgentRunCreateRequest(AgentPlanRequest):
+    mode: Literal["plan"] = Field(default="plan", description="Agent Workspace 固定使用 Plan 模式")
+
+
+class ConversationNode(BaseModel):
+    id: str = Field(description="对话节点 ID")
+    parent_id: str | None = Field(default=None, description="父节点 ID")
+    children_ids: list[str] = Field(default_factory=list, description="子节点 ID")
+    role: Literal["user", "assistant", "system", "tool"] = Field(description="消息角色")
+    content: str = Field(default="", description="消息内容")
+    state: Literal["draft", "streaming", "paused", "done", "error"] = Field(
+        default="done",
+        description="节点状态",
+    )
+    run_id: str | None = Field(default=None, description="关联 Agent Run ID")
+    metadata: dict = Field(default_factory=dict, description="消息元数据")
+    tool_calls: list[dict] = Field(default_factory=list, description="工具调用摘要")
+    artifacts: list[dict] = Field(default_factory=list, description="产物摘要")
+
+
+class ToolMention(BaseModel):
+    name: str = Field(description="工具名称")
+    source: str | None = Field(default=None, description="工具来源")
+    payload: dict = Field(default_factory=dict, description="结构化 mention 载荷")
+
+
+class AgentChatStreamRequest(BaseModel):
+    goal: str | None = Field(default=None, description="用户目标")
+    messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
+    active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
+    pinned_node_ids: list[str] = Field(default_factory=list, description="强制注入上下文节点")
+    context_window_turns: int = Field(default=8, ge=1, le=50, description="最近上下文轮数")
+    continue_from_node_id: str | None = Field(default=None, description="继续生成的节点 ID")
+    partial_assistant_content: str | None = Field(default=None, description="已生成的片段")
+    tool_mentions: list[ToolMention] = Field(default_factory=list, description="结构化工具 mention")
 
 
 class TaskArtifact(BaseModel):
@@ -310,7 +347,7 @@ class AgentAutoResponse(BaseModel):
     task: TaskResponse = Field(description="Run 基础信息")
     plan: TaskPlanResponse = Field(description="结构化计划")
     orchestration: AgentOrchestrateResponse = Field(description="多 Agent 编排结果")
-    message: str = Field(description="Auto 模式摘要")
+    message: str = Field(description="内部自动流程摘要")
 
 
 class TaskPlanVersionSummary(BaseModel):
@@ -997,8 +1034,31 @@ class ToolApprovalPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
+class AgentRunWorkspaceResponse(BaseModel):
+    run: TaskResponse = Field(description="Agent Run 基础信息")
+    plan: TaskPlanResponse | None = Field(default=None, description="最新 Plan DAG")
+    events: list[EventResponse] = Field(default_factory=list, description="Event Sourcing 事件流")
+    subagents: list[SubagentResponse] = Field(default_factory=list, description="Subagent 状态")
+    tool_calls: list[ToolCallResponse] = Field(default_factory=list, description="工具调用日志")
+    model_calls: list[ModelCallResponse] = Field(default_factory=list, description="模型调用日志")
+    approvals: list[ToolApprovalResponse] = Field(
+        default_factory=list,
+        description="待处理与历史审批",
+    )
+    assignments: list[AgentAssignmentResponse] = Field(
+        default_factory=list,
+        description="多 Agent 分配",
+    )
+    handoffs: list[AgentHandoffResponse] = Field(default_factory=list, description="多 Agent 交接")
+
+
 class ToolApprovalDecisionRequest(BaseModel):
     reason: str = Field(default="", description="审批说明")
+
+
+class ToolApprovalModifyRequest(BaseModel):
+    modified_input_json: dict = Field(default_factory=dict, description="修改后的工具输入")
+    reason: str = Field(default="", description="修改说明")
 
 
 class ToolMetadataResponse(BaseModel):

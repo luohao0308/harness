@@ -19,11 +19,11 @@
 
 | Figma Page | Route | Owner | Implementation | Required Modules |
 |---|---|---|---|---|
-| Task List | `/tasks` | agent-console | React | TaskTable, TaskStatusBadge, filters, create action |
-| Task Create | `/tasks/new` | agent-console | React | TaskCreateForm, model selector, policy selector |
-| Task Detail | `/tasks/:taskId` | agent-console | React | ExecutionPlanPanel, EventTimeline, TaskResultPanel |
-| Event Timeline | `/tasks/:taskId/events` | agent-console | React | SSE stream, event payload, replay position |
-| Subagent Panel | `/tasks/:taskId/subagents` | agent-console | React | SubagentPanel, assignment state, result summary |
+| Agent Workspace Pro | `/agents/:agentId/workspace` | agent-console | React | ConversationTree, ContextExplorer, ToolTray, ToolCallingCard, ArtifactPreview |
+| Run History | `/runs` | agent-console | React | Run table, status badges, filters |
+| Run Detail | `/runs/:runId` | agent-console | React | ExecutionPlanPanel, EventTimeline, TaskResultPanel |
+| Event Timeline | `/runs/:runId/events` | agent-console | React | SSE stream, event payload, replay position |
+| Subagent Panel | `/runs/:runId/subagents` | agent-console | React | SubagentPanel, assignment state, result summary |
 | Sandbox Panel | `/sandboxes` | agent-console | React | SandboxPanel, Docker Sandbox, WarmPool, resource usage |
 | Observability | `/observability` | agent-console | React | ResourceUsageChart, model calls, task throughput |
 | Model Settings | `/settings/models` | agent-console | React | ModelCallPanel, gateway status, limits |
@@ -64,13 +64,13 @@
 
 | Component | Figma Source | Frontend Target | States |
 |---|---|---|---|
-| Button | `03 Components/Button` | shadcn/ui Button | default, hover, active, focus, disabled, loading |
-| Input | `03 Components/Input` | shadcn/ui Input/Form | default, focus, disabled, error |
-| Select | `03 Components/Select` | shadcn/ui Select | default, open, selected, disabled, error |
-| Table | `03 Components/Table` | shadcn/ui Table | loading, empty, sorted, selected |
-| Badge | `03 Components/Badge` | shadcn/ui Badge | CREATED, PLANNING, RUNNING, FAILED, COMPLETED |
-| Tabs | `03 Components/Tabs` | shadcn/ui Tabs | default, active, disabled |
-| Dialog | `03 Components/Dialog` | shadcn/ui Dialog | confirm, form, destructive |
+| Button | `03 Components/Button` | Local Button primitive | default, hover, active, focus, disabled, loading |
+| Input | `03 Components/Input` | Local Input/Textarea primitives | default, focus, disabled, error |
+| Select | `03 Components/Select` | Local select/control primitive | default, open, selected, disabled, error |
+| Table | `03 Components/Table` | Local Table primitive | loading, empty, sorted, selected |
+| Badge | `03 Components/Badge` | Local Badge primitive | CREATED, PLANNING, RUNNING, FAILED, COMPLETED |
+| Tabs | `03 Components/Tabs` | Local tabs/segmented control primitive | default, active, disabled |
+| Dialog | `03 Components/Dialog` | Local dialog primitive | confirm, form, destructive |
 | Timeline | `03 Components/Timeline` | EventTimeline | running, success, failed, selected |
 | Status Card | `03 Components/Status Card` | StatusCard | pending, success, timeout, failed |
 
@@ -80,4 +80,4 @@
 - Website implementation must use Next.js.
 - Console implementation must use React + Vite.
 - Gemini/H5 output is reference material only.
-- Task Detail, Event Timeline, Subagent, Sandbox, and WarmPool must remain explicit user-facing concepts.
+- Run Detail, Event Timeline, Subagent, Sandbox, and WarmPool must remain explicit user-facing concepts.

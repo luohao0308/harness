@@ -1,151 +1,81 @@
-# Harness 正式规格总入口
+# AI Harness Platform Spec
 
-## 定位
+## Positioning
 
-本目录下所有文档统一纳入 Spec 体系。Spec 是产品、工程、运行、验收和变更的唯一事实源。代码实现、OpenAPI、控制台页面、部署配置和测试必须回到本规格体系校验。
-
-配套索引：
-
-- [Spec 功能索引](./SPEC-INDEX.md)
-- [Spec 模板](./SPEC-TEMPLATE.md)
-
-## Spec 层级
-
-| 层级 | 目录 | 职责 |
-|---|---|---|
-| 产品规格 | `docs/human` | 用户能力、页面入口、使用流程、验收口径 |
-| 功能规格 | `docs/human/features` | 单功能目标、接口、数据、事件、权限、状态和缺口 |
-| 实施规格 | `docs/ai` | 阶段任务、执行协议、进度和 AI 落地步骤 |
-| 参考规格 | `docs/ai/reference` | 架构、数据、部署、工具、Prompt、安全和前端机器契约 |
-| API 规格 | `docs/api` | OpenAPI 机器契约和 API 变更规则 |
-| 设计规格 | `docs/design` | Figma、页面清单、设计 Token 和控制台视觉规则 |
-| 质量规格 | `docs/qa`、`docs/evals` | 测试策略、Prompt 评测和验收输入 |
-| 安全规格 | `docs/security`、`docs/adr` | 威胁模型和架构决策记录 |
-| 运行手册 | `docs/runbooks` | 本地开发、部署、迁移、回滚和排障步骤 |
-| 演示规格 | `docs/demo` | 端到端演示脚本 |
-
-## 规格优先级
-
-| 优先级 | 来源 |
-|---|---|
-| 1 | `docs/api/openapi.yaml` |
-| 2 | `docs/human/features/*.md` |
-| 3 | `docs/ai/reference/*.md`、`*.yaml` |
-| 4 | `docs/security/*`、`docs/qa/*`、`docs/evals/*` |
-| 5 | `docs/runbooks/*`、`docs/demo/*` |
-| 6 | 阶段执行文档 `docs/ai/*stage*.md` |
-
-冲突处理规则：
-
-```text
-OpenAPI 与后端不一致：以 OpenAPI 为变更目标，随后同步后端 schema、路由、前端 client 和测试。
-功能规格与阶段文档不一致：以功能规格为准，随后更新阶段文档和进度文档。
-运行手册与部署配置不一致：以当前部署配置为准，随后更新运行手册。
-设计规格与前端实现不一致：以设计规格为目标，随后同步组件和页面。
-```
-
-## 标准 Spec 结构
-
-每个功能规格必须包含：
-
-```text
-目标
-用户可见能力
-后端契约
-前端入口
-数据模型
-事件模型
-权限模型
-状态流转
-外部服务契约
-观测指标
-当前实现状态
-缺口
-实现顺序
-验收标准
-```
-
-不涉及的章节使用 `不涉及` 标记。
-
-## Spec 状态
-
-| 状态 | 含义 |
-|---|---|
-| 已落地 | 后端接口、数据来源、测试和前端入口已存在 |
-| 基础落地 | 主链路已存在，企业级细节待补齐 |
-| 持续回归 | 企业级能力已落地，后续变更必须保持测试和页面验收 |
-| 待增强 | Spec 已定义，代码只覆盖部分行为 |
-| 待落地 | Spec 已定义，代码尚无稳定入口 |
-
-## 变更流程
-
-```text
-1. 修改 Spec
-2. 同步 OpenAPI
-3. 修改后端 schema、路由、服务和测试
-4. 修改前端 client、页面和状态
-5. 修改部署配置和运行手册
-6. 执行验证
-7. 更新覆盖文档和进度文档
-```
-
-## 验证命令
-
-```bash
-python3 scripts/validate-docs.py
-cd services/api-server && .venv/bin/python -m pytest
-cd services/api-server && .venv/bin/python -m ruff check app tests
-cd apps/agent-console && npm run lint
-cd apps/agent-console && npm run build
-cd apps/web-site && npm run lint
-cd apps/web-site && npm run build
-```
-
-## 当前规格主线
-
-最终目标是独立设计并实现生产级 AI Agent 平台。平台必须让用户理解并应用 Harness Engineering 理念：模型本身不是 Agent，模型加上规划、工具、策略、隔离、事件、恢复、观测和多 Agent 编排之后才是可生产运行的 Agent。
+AI Harness Platform is a production Agent infrastructure product built around this invariant:
 
 ```text
 Model + Harness = Agent
-User Goal
--> Agent Workspace
--> Mode: Chat / Plan / Execute / Auto
--> Planner
--> Executor
--> Tool / Model / Subagent
--> Docker Sandbox / WarmPool
--> Event Store
--> Replay / Result
--> Observability / Settings
--> OpenAPI / Console / Website
 ```
 
-## 生产级 Agent 平台能力闭环
+A model provides reasoning and generation. Harness provides model configuration, prompt control, tool and MCP access, sandbox policy, planning, execution, event sourcing, replay, evaluation, WarmPool acceleration, and release operations. The product exists to create, run, observe, constrain, evaluate, and ship Agents.
 
-| 能力 | 平台结论 | 产品入口 |
+The public website remains in the repository as a public information shell. The product console is the implementation center.
+
+## Product Pillars
+
+| Pillar | Product Surface | Required Capability |
 |---|---|---|
-| Harness Engineering | Agent 是模型与工程运行时的组合，不是单次 LLM 调用 | Agent Workspace、Run Detail |
-| 安全隔离选型 | Docker 是默认隔离边界，Firecracker/microVM 是强隔离升级方向，KVM 支撑硬件隔离能力 | Sandbox Settings、Run Detail |
-| 事件溯源 | 所有关键操作持久化为事件流，支持审计、恢复、回放和时间旅行调试 | Event Timeline、Replay |
-| 多 Agent 编排 | Agent Router 选择多个具名 Agent，Orchestrator 管理 handoff、parallel fan-out 和 reduce；Subagent 只是异步工作单元，不等同于多 Agent 编排 | Agent Workspace、Run Orchestration |
-| 性能优化 | WarmPool 预热隔离环境，把沙箱启动延迟压到交互可接受范围 | Sandbox Observability |
+| Agent Studio | `/agents`, `/settings/models` | Build Agents from model, prompt, tools, MCP, RAG settings, templates, versions |
+| Agent Workspace | `/agents/:agentId/workspace` | Use an Agent through Workspace Pro: conversation tree, Plan-Act stream, context controls, Tool Cards, Artifacts, Plan DAG, Event Stream, Subagents, Tool Calls, Model Calls |
+| Harness Management | `/tools`, `/sandboxes` | Register tools, connect MCP, enforce permissions, sandbox actions, DAG and trigger controls |
+| Observability | `/observability`, `/runs/:runId` | Event browser, replay, cost, latency, success rate, alerts, audit exports |
+| Eval & Testing | `/evals` | Dataset, eval run, regression gate, A/B comparison, human review queue |
+| Infra | `/sandboxes`, `/settings/models` | WarmPool, multi-tenant isolation, API Gateway surface, version and rollout state |
 
-## 当前增强收口状态
+## Product Concepts
 
-| 主线 | 规格文件 | 当前结果 |
-|---|---|---|
-| Agent Workspace 与 Plan 模式 | `docs/human/features/11-agent-workspace.md` | 新增 Agent-first 主入口规格，产品语义统一为 Agent Session / Agent Run，Plan 模式必须显式可用 |
-| 多 Agent 编排 | `docs/human/features/12-multi-agent-orchestration.md` | Agent Registry、Router、assignment 执行、handoff、Reducer、Worker 入队、Worker 部署、动态观测和 Run 详情拓扑基础落地；交互式拓扑待增强 |
-| 控制台新增页面 i18n 巡检 | `docs/human/features/10-observability-localization-spec.md` | 新增 Planner 质量、步骤轨迹、日志聚合、Trace 服务图和健康告警区域已保持中英文切换 |
-| LLM Planner 质量治理 | `docs/human/features/02-planner-executor.md` | 计划质量分、质量门禁、告警、Prompt 版本和步骤质量提示已进入 Plan API |
-| 沙箱工具细节 | `docs/human/features/06-model-tool-audit.md` | 工具结果解析、超时分类、沙箱标记和控制台审计详情已落地并回归 |
-| 企业级运营回归 | `docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md` | Worker 接管、恢复运营、fallback、配额、导出、dashboard、日志 facets、Trace 服务图和服务健康告警已进入验收 |
-
-## 交付分层
-
-| 交付层 | 含义 |
+| Concept | Meaning |
 |---|---|
-| 阶段 | 单项工程阶段 |
-| 首个交付版 | 核心任务闭环 |
-| 集成演示版 | 官网、控制台、后端、监控和部署打通 |
-| 企业版 | 权限、审计、观测、恢复、沙箱治理和私有化增强 |
+| Agent | A named runtime made from Model plus Harness configuration |
+| Agent Session | Internal compatibility conversation context; not the primary product mode |
+| Agent Run | A durable execution attempt created from Agent Workspace |
+| Conversation Tree | Branch-preserving Workspace UI graph for user, assistant, system, and tool messages |
+| Active Path | Current branch path used to assemble Workspace context |
+| Pinned Message | Conversation node forced into each Workspace Pro request context |
+| Artifact | Previewable output derived from plan JSON, code block, tool result, diff, chart, or subagent output |
+| Plan DAG | Planner output for an Agent Run |
+| Executor Step | Synchronous ReAct execution unit |
+| Subagent | Async worker for long-running branch execution |
+| Assignment | Multi-Agent orchestration branch assigned to a named Agent |
+| Event | Append-only audit fact for replay and recovery |
+| Eval Case | Reusable test case derived from a Run or written dataset row |
+
+The database table named `tasks` remains an internal compatibility detail during migration. Product copy, console navigation, new API entry points, and specs use `Agent Run`.
+
+## Active Console Routes
+
+| Route | Role |
+|---|---|
+| `/agents` | Agent Studio registry and entry |
+| `/agents/:agentId/workspace` | Agent Workspace Pro IDE-style console |
+| `/runs` | Agent Run audit history |
+| `/runs/:runId` | Run detail with Plan, Trace, Replay, Tool Calls, Model Calls, Approvals |
+| `/settings/models` | Model configuration with built-in MiniMax preset |
+| `/tools` | Tool and MCP registry |
+| `/observability` | Event, metric, latency, cost, service health |
+| `/evals` | Eval datasets, runs, regression results |
+| `/sandboxes` | Sandbox and WarmPool operations |
+| `/subagents` | Async Subagent monitoring |
+
+`/agents/:agentId/chat` and `/tasks` are compatibility redirects. `/tasks/new` is not a product route.
+
+## Data Source Rule
+
+Console state comes from APIs. Static fake metrics, fake models, fake tool statuses, fake run statuses, and fake eval results are prohibited. Future surfaces such as template marketplace, trigger editor, and RAG setup render as disabled entries until backed by API state.
+
+## Workspace Pro Rules
+
+- Workspace Pro uses a tree-shaped conversation graph rather than a flat message list.
+- Editing a historical user message creates a new branch and keeps the previous branch intact.
+- The active path, pinned nodes, and context window determine request context.
+- Streaming output supports pause and continue through client-side abort control.
+- Plan and thought text render as collapsible trace blocks.
+- Side-effect tools enter the Tool Approval path before execution.
+- Tool Cards show tool name, risk, sandbox requirement, input JSON, output JSON, latency, status, and trace.
+- Artifacts render in the right preview surface and never bypass Tool Policy or Sandbox.
+- Per-message metadata shows input tokens, output tokens, cost, first-byte latency, and total duration when returned by the API.
+
+## Current Implementation Focus
+
+This pass implements only the focused AI Harness Platform plan. Old task-management UX, marketing-like console pages, static dashboard cards, and unrelated historical stages leave the active execution path. Website code stays present.

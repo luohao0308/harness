@@ -8,10 +8,10 @@
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 查看模型调用 | `/tasks/:taskId` | 查看供应商、模型、token、耗时和失败 |
-| 查看工具调用 | `/tasks/:taskId` | 查看工具、入参摘要、结果摘要、耗时和策略 |
-| 筛选工具审计 | `/tasks/:taskId` | 按工具、状态、风险和 Trace 定位工具调用 |
-| 执行工具 | `/tasks/:taskId` | 按策略执行工具并写入审计 |
+| 查看模型调用 | `/runs/:runId` | 查看供应商、模型、token、耗时和失败 |
+| 查看工具调用 | `/runs/:runId` | 查看工具、入参摘要、结果摘要、耗时和策略 |
+| 筛选工具审计 | `/runs/:runId` | 按工具、状态、风险和 Trace 定位工具调用 |
+| 执行工具 | `/runs/:runId` | 按策略执行工具并写入审计 |
 | 查看指标 | `/observability` | 查看模型和工具汇总指标 |
 | 管理策略 | `/settings/models`、`/settings/policies` | 调整模型网关和工具策略 |
 | 查看 fallback 策略观测 | `/settings/models` | 查看主模型失败、fallback 分布和最近切换事件 |
@@ -29,7 +29,7 @@ GET  /api/settings/models/fallbacks
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/tasks/:taskId` | Model Calls、Tool Calls、Tool Execute | 审计列表、工具筛选、Trace 深链和工具执行 |
+| `/runs/:runId` | Model Calls、Tool Calls、Tool Execute | 审计列表、工具筛选、Trace 深链和工具执行 |
 | `/observability?trace_id=` | Observability Trace | 从工具审计跳转 Trace 链路 |
 | `/observability` | Observability Summary | 模型与工具指标 |
 | `/settings/models` | Settings API | 模型供应商、模型、限流、健康状态 |

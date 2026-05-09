@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from copy import deepcopy
 from dataclasses import dataclass
@@ -55,9 +56,28 @@ MODEL_SETTINGS_KEY = "settings.models"
 
 
 DEFAULT_MODEL_SETTINGS = {
-    "default_provider": "openai-compatible",
-    "default_model": "default",
+    "default_provider": "minimax",
+    "default_model": "MiniMax-M2.7-highspeed",
     "providers": [
+        {
+            "name": "minimax",
+            "label": "MiniMax Anthropic Compatible",
+            "status": "healthy",
+            "api_format": "anthropic",
+            "model": "MiniMax-M2.7-highspeed",
+            "base_url": "https://api.minimaxi.com/anthropic",
+            "api_key": "replace-me",
+            "api_key_env": "MINIMAX_API_KEY",
+            "model_context_window_tokens": 400000,
+            "rate_limit_rpm": 300,
+            "rate_limit_tpm": 400000,
+            "timeout_seconds": 60,
+            "health_timeout_seconds": 5,
+            "circuit_breaker": {
+                "failure_threshold": 3,
+                "cooldown_seconds": 60,
+            },
+        },
         {
             "name": "openai-compatible",
             "status": "healthy",
@@ -79,6 +99,54 @@ DEFAULT_MODEL_SETTINGS = {
     },
     "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
 }
+
+
+def normalize_model_settings(settings: dict | None) -> dict:
+    """Merge persisted settings with current built-in provider invariants."""
+    if not isinstance(settings, dict):
+        normalized = deepcopy(DEFAULT_MODEL_SETTINGS)
+    else:
+        normalized = deepcopy(settings)
+    defaults = deepcopy(DEFAULT_MODEL_SETTINGS)
+    normalized.setdefault("default_provider", defaults["default_provider"])
+    if not normalized.get("default_model") or normalized.get("default_model") == "default":
+        normalized["default_model"] = defaults["default_model"]
+    normalized.setdefault("providers", [])
+    normalized.setdefault("rate_limits", defaults["rate_limits"])
+    normalized.setdefault("health", defaults["health"])
+    normalized.setdefault("circuit_breaker", defaults["circuit_breaker"])
+
+    providers = normalized["providers"]
+    if not isinstance(providers, list):
+        providers = []
+        normalized["providers"] = providers
+    minimax_default = next(
+        provider
+        for provider in defaults["providers"]
+        if provider.get("name") == "minimax"
+    )
+    _upsert_minimax_provider(providers=providers, default_provider=minimax_default)
+    return normalized
+
+
+def _upsert_minimax_provider(*, providers: list, default_provider: dict) -> None:
+    forced_keys = {
+        "label",
+        "api_format",
+        "model",
+        "base_url",
+        "api_key_env",
+        "model_context_window_tokens",
+        "rate_limit_tpm",
+    }
+    for index, provider in enumerate(providers):
+        if isinstance(provider, dict) and provider.get("name") == "minimax":
+            merged = {**deepcopy(default_provider), **deepcopy(provider)}
+            for key in forced_keys:
+                merged[key] = deepcopy(default_provider[key])
+            providers[index] = merged
+            return
+    providers.insert(0, deepcopy(default_provider))
 
 
 @dataclass(frozen=True)
@@ -296,6 +364,115 @@ class OpenAICompatibleModelGateway:
         return content
 
 
+class AnthropicCompatibleModelGateway:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout_seconds: int = 30,
+        max_tokens: int = 4096,
+    ) -> None:
+        settings = get_settings()
+        self.base_url = str(base_url or settings.model_gateway_base_url)
+        self.api_key = api_key if api_key is not None else settings.model_gateway_api_key
+        self.timeout_seconds = timeout_seconds
+        self.max_tokens = max_tokens
+
+    def complete(self, request_payload: ModelRequest) -> ModelResponse:
+        started_at = time.monotonic()
+        if self._uses_local_mock():
+            response = MockModelGateway().complete(request_payload)
+            model_call_duration_seconds.observe(time.monotonic() - started_at)
+            return response
+
+        payload = self._payload(request_payload)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        http_request = request.Request(
+            urljoin(self.base_url.rstrip("/") + "/", "v1/messages"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+        except (OSError, error.HTTPError, json.JSONDecodeError) as exc:
+            model_call_errors_total.inc()
+            raise ModelGatewayError(str(exc)) from exc
+
+        usage = self._normalize_usage(raw.get("usage", {}))
+        content = self._extract_content(raw)
+        model_calls_total.inc()
+        model_tokens_input_total.inc(int(usage.get("prompt_tokens", 0) or 0))
+        model_tokens_output_total.inc(int(usage.get("completion_tokens", 0) or 0))
+        model_call_duration_seconds.observe(time.monotonic() - started_at)
+        return ModelResponse(
+            content=content,
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage=usage,
+            raw_response=raw,
+        )
+
+    def _payload(self, request_payload: ModelRequest) -> dict:
+        messages = []
+        system_parts = []
+        for message in request_payload.messages:
+            if message.role == "system":
+                system_parts.append(message.content)
+                continue
+            role = message.role if message.role in {"user", "assistant"} else "user"
+            messages.append({"role": role, "content": message.content})
+        if not messages:
+            messages.append({"role": "user", "content": ""})
+        payload: dict = {
+            "model": request_payload.model_name,
+            "max_tokens": self.max_tokens,
+            "messages": messages,
+        }
+        if system_parts:
+            payload["system"] = "\n\n".join(system_parts)
+        if request_payload.response_format == "json":
+            payload["system"] = (
+                str(payload.get("system") or "")
+                + "\n\nReturn only valid JSON without Markdown fences."
+            ).strip()
+        return payload
+
+    def _uses_local_mock(self) -> bool:
+        return self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
+
+    def _normalize_usage(self, usage: dict) -> dict:
+        prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        completion_tokens = int(
+            usage.get("completion_tokens") or usage.get("output_tokens") or 0
+        )
+        return {
+            **usage,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }
+
+    def _extract_content(self, raw: dict) -> str:
+        content = raw.get("content")
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list) or not content:
+            raise ModelGatewayError("model response content is missing")
+        text_parts = [
+            block.get("text")
+            for block in content
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        ]
+        if not text_parts:
+            raise ModelGatewayError("model response text content is missing")
+        return "\n".join(text_parts)
+
+
 class ModelSettingsResolver:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -352,7 +529,7 @@ class ModelSettingsResolver:
 
     def _settings_for_org(self, organization_id: str | None) -> dict:
         if organization_id is None:
-            return DEFAULT_MODEL_SETTINGS
+            return normalize_model_settings(DEFAULT_MODEL_SETTINGS)
         setting = self.session.execute(
             select(SystemSetting).where(
                 SystemSetting.organization_id == organization_id,
@@ -360,8 +537,8 @@ class ModelSettingsResolver:
             )
         ).scalar_one_or_none()
         if setting is None:
-            return deepcopy(DEFAULT_MODEL_SETTINGS)
-        return setting.value_json
+            return normalize_model_settings(DEFAULT_MODEL_SETTINGS)
+        return normalize_model_settings(setting.value_json)
 
     def _provider(self, *, settings: dict, provider_name: str) -> dict:
         for provider in settings.get("providers", []):
@@ -392,9 +569,8 @@ class ModelHealthChecker:
             else:
                 mode = "probe"
                 try:
-                    OpenAICompatibleModelGateway(
-                        base_url=provider.get("base_url"),
-                        api_key=provider.get("api_key"),
+                    model_gateway_for_provider(
+                        provider,
                         timeout_seconds=int(provider.get("health_timeout_seconds") or 5),
                     ).complete(
                         ModelRequest(
@@ -470,8 +646,8 @@ class ModelHealthChecker:
             )
         ).scalar_one_or_none()
         if setting is None:
-            return deepcopy(DEFAULT_MODEL_SETTINGS)
-        return setting.value_json
+            return normalize_model_settings(DEFAULT_MODEL_SETTINGS)
+        return normalize_model_settings(setting.value_json)
 
     def _write_settings_for_org(self, *, organization_id: str, settings: dict) -> None:
         setting = self.session.execute(
@@ -681,8 +857,35 @@ class AuditedModelGateway:
         return max(1, (content_length // 4) + message_overhead)
 
     def _gateway_from_settings(self, provider: dict) -> ModelGateway:
-        return OpenAICompatibleModelGateway(
+        return model_gateway_for_provider(provider)
+
+
+def provider_api_key(provider: dict) -> str | None:
+    api_key = provider.get("api_key")
+    if isinstance(api_key, str) and api_key not in {"", "replace-me"}:
+        return api_key
+    api_key_env = provider.get("api_key_env")
+    if isinstance(api_key_env, str) and api_key_env:
+        return os.environ.get(api_key_env) or api_key
+    return api_key if isinstance(api_key, str) else None
+
+
+def model_gateway_for_provider(
+    provider: dict,
+    *,
+    timeout_seconds: int | None = None,
+) -> ModelGateway:
+    timeout = int(timeout_seconds or provider.get("timeout_seconds") or 30)
+    api_key = provider_api_key(provider)
+    if str(provider.get("api_format") or "openai").lower() == "anthropic":
+        return AnthropicCompatibleModelGateway(
             base_url=provider.get("base_url"),
-            api_key=provider.get("api_key"),
-            timeout_seconds=int(provider.get("timeout_seconds") or 30),
+            api_key=api_key,
+            timeout_seconds=timeout,
+            max_tokens=int(provider.get("max_output_tokens") or 4096),
         )
+    return OpenAICompatibleModelGateway(
+        base_url=provider.get("base_url"),
+        api_key=api_key,
+        timeout_seconds=timeout,
+    )
