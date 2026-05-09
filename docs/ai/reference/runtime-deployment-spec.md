@@ -28,8 +28,8 @@ command_timeout_required: true
 
 ```yaml
 WARM_POOL_ENABLED: "true"
-WARM_POOL_MIN_SIZE: "3"
-WARM_POOL_MAX_SIZE: "10"
+WARM_POOL_MIN_SIZE: "2"
+WARM_POOL_MAX_SIZE: "5"
 WARM_POOL_IDLE_TTL_SECONDS: "600"
 WARM_POOL_CONTAINER_IMAGE: "agent-runtime:latest"
 ```

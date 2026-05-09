@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, Play, Plus, Save } from "lucide-react";
+import { FlaskConical, GitCompare, Play, Plus, Save, ShieldCheck, UserCheck } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
@@ -293,6 +293,35 @@ export function EvalHarnessPage() {
           <Card>
             <CardHeader>
               <div className="text-sm font-semibold text-slate-900">
+                {text("回归门禁", "Regression Gate")}
+              </div>
+              <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
+                {latestRun?.status === "COMPLETED" ? "API-backed" : "waiting"}
+              </Badge>
+            </CardHeader>
+            <div className="space-y-2 p-3 text-xs">
+              <EvalReadiness
+                icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                label={text("Trace Grader", "Trace Grader")}
+                status={latestRun ? "active" : "waiting"}
+              />
+              <EvalReadiness
+                icon={<GitCompare className="h-3.5 w-3.5" />}
+                label="A/B"
+                status={text("未启用", "Disabled")}
+                disabled
+              />
+              <EvalReadiness
+                icon={<UserCheck className="h-3.5 w-3.5" />}
+                label={text("人工复核", "Human Review")}
+                status={text("未启用", "Disabled")}
+                disabled
+              />
+            </div>
+          </Card>
+          <Card>
+            <CardHeader>
+              <div className="text-sm font-semibold text-slate-900">
                 {text("评测运行历史", "Eval Run History")}
               </div>
             </CardHeader>
@@ -321,5 +350,27 @@ export function EvalHarnessPage() {
         </aside>
       </div>
     </ConsoleShell>
+  );
+}
+
+function EvalReadiness({
+  icon,
+  label,
+  status,
+  disabled = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  status: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={disabled ? "flex items-center justify-between rounded-md border border-slate-100 p-2 opacity-60" : "flex items-center justify-between rounded-md border border-slate-100 p-2"}>
+      <span className="inline-flex items-center gap-2 text-slate-700">
+        {icon}
+        {label}
+      </span>
+      <Badge tone={disabled ? "neutral" : "success"}>{status}</Badge>
+    </div>
   );
 }

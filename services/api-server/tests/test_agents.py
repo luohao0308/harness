@@ -1,12 +1,118 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelResponse
-from app.db.models import Agent, AgentAssignment, AgentEvent, ExecutionPlan, Task, TaskStep
+from app.db.models import (
+    Agent,
+    AgentAssignment,
+    AgentEvent,
+    ExecutionPlan,
+    SandboxInstance,
+    SystemSetting,
+    Task,
+    TaskStep,
+    ToolApproval,
+    ToolCall,
+    utc_now,
+)
 from app.main import app
+from app.sandbox.docker_manager import SandboxCommandResult
 from app.workers.agent_assignment_worker import execute_agent_assignment
 from tests.conftest import AUTH_HEADERS
+
+
+class FakeWarmPoolManager:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def acquire(
+        self,
+        *,
+        session: Session,
+        task_id: str,
+        agent_run_id: str | None = None,
+    ) -> SandboxInstance:
+        sandbox = SandboxInstance(
+            task_id=task_id,
+            agent_run_id=agent_run_id,
+            container_id=f"fake-{task_id}",
+            image="fake-sandbox",
+            status="IDLE",
+            cpu_limit="1",
+            memory_limit_mb=512,
+            network_enabled=False,
+            warm_pool_reused=True,
+        )
+        session.add(sandbox)
+        session.flush()
+        return sandbox
+
+    def release(self, *, session: Session, sandbox: SandboxInstance) -> SandboxInstance:
+        sandbox.status = "IDLE"
+        session.flush()
+        return sandbox
+
+
+def fake_run_command(
+    self,
+    *,
+    session: Session,
+    sandbox: SandboxInstance,
+    command: str,
+    timeout_seconds: int | None,
+    cwd: str = "/workspace",
+) -> SandboxCommandResult:
+    return SandboxCommandResult(
+        stdout=f"{command}\n",
+        stderr="",
+        exit_code=0,
+        duration_ms=1,
+    )
+
+
+def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Session) -> None:
+    client = TestClient(app)
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Build a Workspace Pro regression plan",
+            "messages": [
+                {
+                    "id": "user-1",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "Build a Workspace Pro regression plan",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-1",
+            "pinned_node_ids": ["user-1"],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "mcp_context_search", "source": "mcp", "payload": {}}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "event: think_delta" in body
+    assert "event: tool_call_requested" in body
+    assert "event: artifact_created" in body
+    assert "event: usage" in body
+    assert "event: done" in body
+    assert db_session.execute(select(Task)).scalar_one_or_none() is not None
+
+
+@pytest.fixture(autouse=True)
+def fake_sandbox_runtime(monkeypatch) -> None:
+    monkeypatch.setattr("app.agents.executor.WarmPoolManager", FakeWarmPoolManager)
+    monkeypatch.setattr("app.sandbox.docker_manager.DockerManager.run_command", fake_run_command)
 
 
 def test_list_agents_initializes_named_agent_registry(db_session: Session) -> None:
@@ -105,6 +211,47 @@ def test_agent_plan_mode_creates_plan_without_execution(db_session: Session) -> 
     ]
 
 
+def test_agent_run_create_entry_and_workspace_projection(db_session: Session) -> None:
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents/default/runs",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "plan",
+            "goal": "通过 Agent Workspace 创建 Run 并查看聚合视图",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "max_subagents": 5,
+            "enable_sandbox": True,
+            "enable_network": False,
+        },
+    )
+
+    assert created.status_code == 201
+    run_id = created.json()["run_id"]
+
+    listed = client.get("/api/agents/runs", headers=AUTH_HEADERS)
+    assert listed.status_code == 200
+    assert any(item["id"] == run_id for item in listed.json()["items"])
+
+    workspace = client.get(f"/api/agents/runs/{run_id}/workspace", headers=AUTH_HEADERS)
+
+    assert workspace.status_code == 200
+    payload = workspace.json()
+    assert payload["run"]["id"] == run_id
+    assert payload["plan"]["steps"]
+    assert [event["event_type"] for event in payload["events"]] == [
+        "TASK_CREATED",
+        "PLAN_REQUESTED",
+        "MODEL_CALLED",
+        "MODEL_RESPONSE_RECEIVED",
+        "PLAN_GENERATED",
+    ]
+    assert payload["tool_calls"] == []
+    assert payload["model_calls"][0]["model_provider"] == "openai-compatible"
+
+
 def test_agent_execute_run_uses_existing_plan_without_replanning(db_session: Session) -> None:
     client = TestClient(app)
     plan_response = client.post(
@@ -165,6 +312,68 @@ def test_agent_execute_run_rejects_non_planned_status(db_session: Session) -> No
     response = TestClient(app).post(f"/api/agents/runs/{task.id}/execute", headers=AUTH_HEADERS)
 
     assert response.status_code == 409
+
+
+def test_agent_execute_run_waits_for_admin_approval(db_session: Session) -> None:
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {
+                        "name": "low",
+                        "requires_sandbox": False,
+                        "approval": "admin",
+                        "allowed_roles": ["admin", "engineer"],
+                    }
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {"default_network": False, "default_timeout_seconds": 60},
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    client = TestClient(app)
+    plan_response = client.post(
+        "/api/agents/plan",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "goal": "规划后执行只读检查，并在策略要求时等待审批",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "max_subagents": 0,
+            "enable_sandbox": False,
+            "enable_network": False,
+        },
+    )
+    assert plan_response.status_code == 201
+    run_id = plan_response.json()["run_id"]
+
+    execute_response = client.post(f"/api/agents/runs/{run_id}/execute", headers=AUTH_HEADERS)
+
+    assert execute_response.status_code == 202
+    assert execute_response.json()["status"] == "WAITING_APPROVAL"
+    run = db_session.get(Task, run_id)
+    assert run is not None
+    assert run.status == "WAITING_APPROVAL"
+    tool_call = db_session.execute(select(ToolCall).where(ToolCall.task_id == run_id)).scalar_one()
+    assert tool_call.status == "PENDING_APPROVAL"
+    approval = db_session.execute(
+        select(ToolApproval).where(ToolApproval.task_id == run_id)
+    ).scalar_one()
+    assert approval.status == "PENDING"
+    failed_event = db_session.execute(
+        select(AgentEvent)
+        .where(AgentEvent.task_id == run_id, AgentEvent.event_type == "TASK_FAILED")
+        .order_by(AgentEvent.sequence.desc())
+    ).scalars().first()
+    assert failed_event is not None
+    assert failed_event.payload_json["awaiting_approval"] is True
 
 
 def test_agent_orchestrate_run_creates_named_assignments_and_events(

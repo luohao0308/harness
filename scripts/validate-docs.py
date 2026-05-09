@@ -33,15 +33,12 @@ TOP_LEVEL_SPECS = [
 ]
 
 STAGE_FILES = [
-    "docs/ai/stages/01-agent-graph-runtime.md",
-    "docs/ai/stages/02-event-store-recovery.md",
-    "docs/ai/stages/03-agent-run-console.md",
-    "docs/ai/stages/04-tool-mcp-runtime.md",
-    "docs/ai/stages/05-guardrail-policy-engine.md",
-    "docs/ai/stages/06-eval-harness.md",
-    "docs/ai/stages/07-memory-context-router.md",
-    "docs/ai/stages/08-warmpool-benchmark.md",
-    "docs/ai/stages/09-portfolio-demo-docs.md",
+    "docs/ai/stages/01-agent-workspace-console.md",
+    "docs/ai/stages/02-agent-studio-config.md",
+    "docs/ai/stages/03-harness-tool-mcp.md",
+    "docs/ai/stages/04-event-sourcing-replay-ui.md",
+    "docs/ai/stages/05-eval-regression.md",
+    "docs/ai/stages/06-warmpool-infra.md",
 ]
 
 REQUIRED_FILES = [

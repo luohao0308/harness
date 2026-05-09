@@ -88,9 +88,9 @@
 
 | 页面 | 数据来源 | 状态 |
 |---|---|---|
-| `/tasks` | Task API | 已接入 |
-| `/tasks/new` | Task API | 已接入 |
-| `/tasks/:taskId` | Task、Result、Events、Replay、Step Resume、Audit、Subagent、Subagent Result | 已接入，执行计划面板支持从指定步骤续跑 |
+| `/agents/:agentId/workspace` | Workspace Pro stream、Agent Run Workspace projection | 已接入，创建 Agent Run、展示 Plan-Act 流、Artifacts、Tool Cards、Approvals 和模型元数据 |
+| `/runs` | Agent Run API | 已接入 |
+| `/runs/:runId` | Run、Result、Events、Replay、Step Resume、Audit、Subagent、Subagent Result | 已接入，执行计划面板支持从指定步骤续跑 |
 | `/subagents` | Subagent API | 已接入，展示组织级批量状态、状态筛选、任务跳转、详情跳转和批量取消 |
 | `/subagents/:subagentId` | Subagent API、Task Result API | 已接入，展示单个子 Agent assignment、状态、取消、产物、工具结果、ReAct 轨迹和上下文压缩 |
 | `/sandboxes` | Sandbox API、Quota API | 已接入，展示 WarmPool、资源配额摘要和历史审计 |

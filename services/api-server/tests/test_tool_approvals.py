@@ -123,3 +123,35 @@ def test_tool_approval_reject_requires_admin(db_session) -> None:
     )
     assert rejected.status_code == 202
     assert rejected.json()["items"][0]["status"] == "REJECTED"
+
+
+def test_tool_approval_modify_updates_input_and_approves(db_session) -> None:
+    client = TestClient(app)
+    task_id = _create_task(client)
+    _force_read_file_admin_approval(task_id, db_session)
+    requested = client.post(
+        f"/api/tasks/{task_id}/tools/execute",
+        headers=AUTH_HEADERS,
+        json={"tool_name": "read_file", "input_json": {"path": "pyproject.toml"}},
+    ).json()
+    approval_id = requested["output"]["approval_id"]
+    tool_call_id = requested["tool_call"]["id"]
+
+    modified = client.post(
+        f"/api/tasks/{task_id}/tool-approvals/{approval_id}/modify",
+        headers=ADMIN_HEADERS,
+        json={
+            "modified_input_json": {"path": "README.md"},
+            "reason": "Use a safer preview file",
+        },
+    )
+
+    assert modified.status_code == 202
+    approval = db_session.get(ToolApproval, approval_id)
+    tool_call = db_session.get(ToolCall, tool_call_id)
+    assert approval is not None
+    assert approval.status == "APPROVED"
+    assert approval.request_json["input_json"] == {"path": "README.md"}
+    assert approval.decision_json["modified"] is True
+    assert tool_call is not None
+    assert tool_call.input_json == {"path": "README.md"}

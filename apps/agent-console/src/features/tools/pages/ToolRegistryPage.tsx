@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { PlugZap, ShieldCheck } from "lucide-react";
+import { GitBranch, PlugZap, ShieldAlert, ShieldCheck, Timer, Workflow } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
@@ -22,16 +22,52 @@ export function ToolRegistryPage() {
   );
   const mcpCount = tools.filter((tool) => tool.source === "mcp").length;
   const sandboxCount = tools.filter((tool) => tool.requires_sandbox).length;
+  const highRiskCount = tools.filter((tool) => ["high", "critical"].includes(tool.risk_level)).length;
+  const adminOnlyCount = tools.filter((tool) => tool.allowed_roles.includes("admin")).length;
 
   return (
     <ConsoleShell title={text("工具运行层", "Tool Runtime")}>
       <div className="space-y-4 p-4">
-        <div className="grid grid-cols-4 gap-3">
+        <section className="grid grid-cols-4 gap-3">
           <Metric label={text("工具总数", "Tools")} value={tools.length} />
           <Metric label="MCP" value={mcpCount} />
           <Metric label={text("需要沙箱", "Sandboxed")} value={sandboxCount} />
           <Metric label={text("分类", "Categories")} value={registryQuery.data?.categories.length ?? 0} />
-        </div>
+        </section>
+
+        <section className="grid grid-cols-5 gap-3">
+          <HarnessTile
+            icon={<PlugZap className="h-4 w-4" />}
+            title="Tool Registry"
+            status={text("API 已接入", "API-backed")}
+            description={text("工具元数据、来源、schema、风险和角色权限来自后端注册表。", "Metadata, source, schema, risk, and role access come from the backend registry.")}
+          />
+          <HarnessTile
+            icon={<ShieldAlert className="h-4 w-4" />}
+            title={text("策略", "Policy")}
+            status={`${highRiskCount} ${text("高风险", "high risk")}`}
+            description={text("高风险工具进入沙箱、审批或拒绝路径，并写入审计事件。", "High-risk tools enter sandbox, approval, or denial paths and append audit events.")}
+          />
+          <HarnessTile
+            icon={<ShieldCheck className="h-4 w-4" />}
+            title={text("沙箱", "Sandbox")}
+            status={`${sandboxCount} ${text("需要隔离", "isolated")}`}
+            description={text("Shell、测试、写文件、Git 和网络动作通过 Docker Sandbox 执行。", "Shell, tests, writes, Git, and network actions run through Docker Sandbox.")}
+          />
+          <HarnessTile
+            icon={<GitBranch className="h-4 w-4" />}
+            title="MCP"
+            status={`${mcpCount} ${text("已注册", "registered")}`}
+            description={text("MCP-shaped 工具复用同一 ToolRunner、Policy、ToolCall 和 Event path。", "MCP-shaped tools reuse the same ToolRunner, Policy, ToolCall, and Event path.")}
+          />
+          <HarnessTile
+            icon={<Workflow className="h-4 w-4" />}
+            title={text("触发器", "Triggers")}
+            status={text("未启用", "Disabled")}
+            description={text("触发器配置保留禁用态，不展示伪造数据。", "Trigger configuration stays disabled and shows no fake data.")}
+            disabled
+          />
+        </section>
 
         <Card>
           <CardHeader>
@@ -66,6 +102,7 @@ export function ToolRegistryPage() {
                 <Th>{text("来源", "Source")}</Th>
                 <Th>{text("风险", "Risk")}</Th>
                 <Th>{text("权限", "Permissions")}</Th>
+                <Th>{text("审计", "Audit")}</Th>
                 <Th>{text("MCP", "MCP")}</Th>
                 <Th>{text("Schema", "Schema")}</Th>
               </tr>
@@ -98,6 +135,17 @@ export function ToolRegistryPage() {
                       {tool.allowed_roles.join(", ")}
                     </div>
                   </Td>
+                  <Td>
+                    <div className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+                      <Timer className="h-3.5 w-3.5" />
+                      {tool.audit_level}
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">
+                      {adminOnlyCount > 0 && tool.allowed_roles.includes("admin")
+                        ? text("Admin only", "Admin only")
+                        : text("Role scoped", "Role scoped")}
+                    </div>
+                  </Td>
                   <Td className="font-mono text-[11px] text-slate-600">
                     {tool.mcp_server ? `${tool.mcp_server}.${tool.mcp_method}` : "--"}
                   </Td>
@@ -110,7 +158,7 @@ export function ToolRegistryPage() {
               ))}
               {!registryQuery.isLoading && filteredTools.length === 0 && (
                 <tr>
-                  <Td colSpan={6} className="py-10 text-center text-slate-500">
+                  <Td colSpan={7} className="py-10 text-center text-slate-500">
                     {text("没有符合筛选的工具", "No tools match the filter")}
                   </Td>
                 </tr>
@@ -120,6 +168,33 @@ export function ToolRegistryPage() {
         </Card>
       </div>
     </ConsoleShell>
+  );
+}
+
+function HarnessTile({
+  icon,
+  title,
+  status,
+  description,
+  disabled = false,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  status: string;
+  description: string;
+  disabled?: boolean;
+}) {
+  return (
+    <Card className={disabled ? "p-3 opacity-60" : "p-3"}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          {icon}
+          {title}
+        </div>
+        <Badge tone={disabled ? "neutral" : "success"}>{status}</Badge>
+      </div>
+      <p className="mt-2 min-h-12 text-xs leading-5 text-slate-500">{description}</p>
+    </Card>
   );
 }
 

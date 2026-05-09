@@ -20,10 +20,10 @@ Multi-agent Orchestration
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
 | 查看 Agent 列表 | `/agents` | 看到 Researcher、Coder、Reviewer、Operator 等具名 Agent |
-| 选择入口 Agent | `/agents/:agentId/chat` | 以某个 Agent 开始会话和运行 |
-| 自动路由 | `/agents/:agentId/chat` Auto 模式 | Router 选择参与 Agent |
-| 手动选择协作 Agent | `/agents/:agentId/chat` Advanced | 用户指定参与 Agent |
-| 查看编排图 | Run 详情 | 展示 handoff、parallel fan-out、reduce 的拓扑 |
+| 选择入口 Agent | `/agents/:agentId/workspace` | 以某个 Agent 开始 Workspace Pro Plan-Act 运行 |
+| 自动路由 | `/agents/:agentId/workspace` 与 Run 编排动作 | Router 选择参与 Agent |
+| 手动选择协作 Agent | `/agents/:agentId/workspace` 的 Harness/Run 操作 | 用户指定或确认参与 Agent |
+| 查看编排图 | `/runs/:runId` | 展示 handoff、parallel fan-out、reduce 的拓扑 |
 | 查看跨 Agent 事件 | Event Timeline | 每个事件绑定 agent_id、assignment_id 和 run_id |
 
 ## 后端契约
@@ -44,7 +44,7 @@ GET  /api/observability/summary
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
 | `/agents` | Agent Registry API | Agent 列表、默认模型、工具权限、状态 |
-| `/agents/:agentId/chat` | Agent Run API | Chat/Plan/Execute/Auto、协作 Agent 选择 |
+| `/agents/:agentId/workspace` | Workspace Pro stream 与 Agent Run API | 单一 Plan-Act surface 创建 Run，并从 Run/Harness 操作进入编排 |
 | `/runs/:runId` | Assignment、Handoff、Events API | 编排拓扑、事件、产物和错误 |
 | `/observability` | Observability Summary API | Assignment 状态分布和队列状态 |
 
@@ -167,7 +167,7 @@ agent_reduce_duration_seconds
 |---|---|---|
 | Subagent 派生 | 已落地 | async step 通过 `SubagentManager.spawn` 写入子运行记录 |
 | Subagent 状态追踪 | 已落地 | PENDING、RUNNING、SUCCESS、FAILED、TIMEOUT、CANCELLED |
-| Agent Workspace | 基础落地 | `/agents/:agentId/chat` |
+| Agent Workspace | 基础落地 | `/agents/:agentId/workspace` |
 | Agent Plan/Execute | 基础落地 | Plan-only 和 execute existing plan |
 | Agent Registry | 基础落地 | `agents` 表、默认 preset、`GET /api/agents` |
 | Agent Router | 基础落地 | `orchestrate` 根据目标、工具意图和风险选择具名 Agent |

@@ -13,15 +13,27 @@ from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.security.auth import Principal
 
-router = APIRouter(prefix="/tasks/{task_id}/events", tags=["events"])
+RUN_COMPATIBILITY_DESCRIPTION = (
+    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs "
+    "和 /api/agents/runs/*。"
+)
+
+router = APIRouter(
+    prefix="/tasks/{task_id}/events",
+    tags=["agent-run-compatibility"],
+    deprecated=True,
+)
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
 @router.get(
     "",
     response_model=EventPage,
-    summary="查询任务事件",
-    description="返回指定任务的事件溯源流，支持从指定序号之后读取。",
+    summary="兼容层：查询 Agent Run 事件",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 的事件溯源流，"
+        "支持从指定序号之后读取。"
+    ),
 )
 def list_task_events(
     task_id: str,
@@ -41,8 +53,11 @@ def list_task_events(
 
 @router.get(
     "/stream",
-    summary="订阅任务事件流",
-    description="通过 Server-Sent Events 持续推送任务事件。",
+    summary="兼容层：订阅 Agent Run 事件流",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 通过 Server-Sent Events 持续推送 "
+        "Agent Run 事件。"
+    ),
 )
 def stream_task_events(
     request: Request,

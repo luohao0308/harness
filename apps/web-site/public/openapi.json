@@ -206,13 +206,16 @@
             }
           }
         }
-      },
+      }
+    },
+    "/api/agents/{agent_id}/runs": {
       "post": {
         "tags": [
           "agents"
         ],
-        "summary": "发送 Agent Chat 消息",
-        "operationId": "send_agent_message_api_agents_sessions__session_id__messages_post",
+        "summary": "创建 Agent Run",
+        "description": "Agent Workspace 的主入口，固定使用 Plan 模式生成可审计 DAG，不自动执行工具。",
+        "operationId": "create_agent_run_api_agents__agent_id__runs_post",
         "security": [
           {
             "HTTPBearer": []
@@ -220,12 +223,12 @@
         ],
         "parameters": [
           {
-            "name": "session_id",
+            "name": "agent_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Session Id"
+              "title": "Agent Id"
             }
           }
         ],
@@ -234,7 +237,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgentChatRequest"
+                "$ref": "#/components/schemas/AgentRunCreateRequest"
               }
             }
           }
@@ -245,7 +248,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentChatResponse"
+                  "$ref": "#/components/schemas/AgentPlanResponse"
                 }
               }
             }
@@ -263,14 +266,14 @@
         }
       }
     },
-    "/api/agents/{agent_id}": {
-      "get": {
+    "/api/agents/{agent_id}/runs/plan/stream": {
+      "post": {
         "tags": [
           "agents"
         ],
-        "summary": "查询 Agent 详情",
-        "description": "返回指定具名 Agent 的模型、工具、角色和路由标签。",
-        "operationId": "get_agent_api_agents__agent_id__get",
+        "summary": "流式创建 Agent Plan",
+        "description": "Claude Code 风格入口：用户只提交目标，服务端流式返回计划进度，最终创建 Agent Run。",
+        "operationId": "stream_agent_plan_run_api_agents__agent_id__runs_plan_stream_post",
         "security": [
           {
             "HTTPBearer": []
@@ -287,14 +290,78 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRunCreateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{agent_id}/runs/chat/stream": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Workspace Pro 对话流",
+        "description": "Cursor/Claude Artifacts 风格 Workspace Pro 入口。服务端通过 SSE 返回 think、delta、artifact、usage 和 done 事件；底层仍创建 Agent Run 和可审计 Plan。",
+        "operationId": "stream_agent_chat_run_api_agents__agent_id__runs_chat_stream_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChatStreamRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -358,31 +425,64 @@
         ]
       }
     },
-    "/api/agents/auto": {
-      "post": {
+    "/api/agents/runs": {
+      "get": {
         "tags": [
           "agents"
         ],
-        "summary": "Agent Auto 模式",
-        "description": "自动完成 Plan、多 Agent 编排执行和 Run 执行。",
-        "operationId": "auto_with_agent_api_agents_auto_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentPlanRequest"
-              }
-            }
-          },
-          "required": true
-        },
+        "summary": "查询 Agent Run 历史",
+        "description": "返回 Agent Workspace 创建的 Run 历史；底层兼容 tasks 表。",
+        "operationId": "list_agent_runs_api_agents_runs_get",
         "responses": {
-          "202": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentAutoResponse"
+                  "$ref": "#/components/schemas/TaskPage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/agents/runs/{run_id}/workspace": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "查询 Agent Workspace 聚合视图",
+        "description": "返回一个 Agent Run 的 Plan DAG、事件流、Subagent、工具调用、模型调用、审批和多 Agent 编排状态。",
+        "operationId": "get_agent_run_workspace_api_agents_runs__run_id__workspace_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunWorkspaceResponse"
                 }
               }
             }
@@ -397,12 +497,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/api/agents/runs/{run_id}/execute": {
@@ -682,6 +777,54 @@
                     "$ref": "#/components/schemas/AgentHandoffResponse"
                   },
                   "title": "Response List Agent Run Handoffs Api Agents Runs  Run Id  Handoffs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{agent_id}": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "查询 Agent 详情",
+        "description": "返回指定具名 Agent 的模型、工具、角色和路由标签。",
+        "operationId": "get_agent_api_agents__agent_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentResponse"
                 }
               }
             }
@@ -1138,11 +1281,12 @@
     "/api/tasks": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "创建任务",
-        "description": "创建一条新的任务记录，并写入 TASK_CREATED 事件。",
+        "summary": "兼容层：创建 Agent Run 记录",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 创建一条 Agent Run 兼容记录，并写入 TASK_CREATED 事件。",
         "operationId": "create_task_api_tasks_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1183,11 +1327,12 @@
       },
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务列表",
-        "description": "按组织查询任务列表，支持状态过滤和分页大小。",
+        "summary": "兼容层：查询 Agent Run 列表",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 按组织查询 Agent Run 列表，支持状态过滤和分页大小。",
         "operationId": "list_tasks_api_tasks_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1250,11 +1395,12 @@
     "/api/tasks/{task_id}": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务详情",
-        "description": "返回指定任务的完整基础信息。",
+        "summary": "兼容层：查询 Agent Run 详情",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回指定 Agent Run 的完整基础信息。",
         "operationId": "get_task_api_tasks__task_id__get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1298,11 +1444,12 @@
     "/api/tasks/{task_id}/start": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "启动任务",
-        "description": "将 CREATED 或 FAILED 任务启动为运行态。",
+        "summary": "兼容层：启动 Agent Run",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 将 CREATED 或 FAILED Agent Run 启动为运行态。",
         "operationId": "start_task_api_tasks__task_id__start_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1346,11 +1493,12 @@
     "/api/tasks/{task_id}/cancel": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "取消任务",
-        "description": "将当前任务状态切换为 CANCELLED，并写入 TASK_CANCELLED 事件。",
+        "summary": "兼容层：取消 Agent Run",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 将当前 Agent Run 状态切换为 CANCELLED，并写入 TASK_CANCELLED 事件。",
         "operationId": "cancel_task_api_tasks__task_id__cancel_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1394,11 +1542,12 @@
     "/api/tasks/{task_id}/resume": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "恢复任务",
-        "description": "将 FAILED 或 CANCELLED 任务恢复为 RUNNING，并写入 TASK_RESUMED 事件。",
+        "summary": "兼容层：恢复 Agent Run",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 将 FAILED 或 CANCELLED Agent Run 恢复为 RUNNING，并写入 TASK_RESUMED 事件。",
         "operationId": "resume_task_api_tasks__task_id__resume_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1442,11 +1591,12 @@
     "/api/tasks/{task_id}/steps/resume": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "从指定步骤续跑任务",
-        "description": "将 FAILED 或 CANCELLED 任务按最新执行计划恢复，从请求中最靠前的步骤键开始续跑，已完成步骤写入 STEP_SKIPPED。",
+        "summary": "兼容层：从指定步骤续跑 Agent Run",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 将 FAILED 或 CANCELLED Agent Run 按最新执行计划恢复，从请求中最靠前的步骤键开始续跑，已完成步骤写入 STEP_SKIPPED。",
         "operationId": "resume_task_steps_api_tasks__task_id__steps_resume_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1500,11 +1650,12 @@
     "/api/tasks/{task_id}/result": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务结果",
-        "description": "返回任务状态、摘要、执行计划、产物列表和最后事件序号。",
+        "summary": "兼容层：查询 Agent Run 结果",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回 Agent Run 状态、摘要、执行计划、产物列表和最后事件序号。",
         "operationId": "get_task_result_api_tasks__task_id__result_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1548,11 +1699,12 @@
     "/api/tasks/{task_id}/plan": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务执行计划",
-        "description": "返回任务最新执行计划，并合并已落库步骤的当前状态。",
+        "summary": "兼容层：查询 Agent Run Plan",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回 Agent Run 最新执行计划，并合并已落库步骤的当前状态。",
         "operationId": "get_task_plan_api_tasks__task_id__plan_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1596,11 +1748,12 @@
     "/api/tasks/{task_id}/plans": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务计划版本",
-        "description": "返回任务全部执行计划版本，用于计划变更对比。",
+        "summary": "兼容层：查询 Agent Run Plan 版本",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回 Agent Run 全部执行计划版本，用于计划变更对比。",
         "operationId": "list_task_plan_versions_api_tasks__task_id__plans_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1644,11 +1797,12 @@
     "/api/tasks/{task_id}/plans/diff": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "对比任务计划版本",
-        "description": "按两个计划版本对比步骤新增、移除和变更。",
+        "summary": "兼容层：对比 Agent Run Plan 版本",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 按两个 Agent Run 计划版本对比步骤新增、移除和变更。",
         "operationId": "diff_task_plan_versions_api_tasks__task_id__plans_diff_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1712,11 +1866,12 @@
     "/api/tasks/{task_id}/steps": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务步骤",
-        "description": "返回任务已执行或已派生的步骤状态列表。",
+        "summary": "兼容层：查询 Agent Run 步骤",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回 Agent Run 已执行或已派生的步骤状态列表。",
         "operationId": "list_task_steps_api_tasks__task_id__steps_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1760,11 +1915,12 @@
     "/api/tasks/{task_id}/replay": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "重放任务状态",
-        "description": "根据事件流和快照重放任务状态，返回故障点和诊断摘要。",
+        "summary": "兼容层：Replay Agent Run",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 根据事件流和快照重放 Agent Run 状态，返回故障点和诊断摘要。",
         "operationId": "replay_task_api_tasks__task_id__replay_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1818,11 +1974,12 @@
     "/api/tasks/{task_id}/context": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询 Run 记忆与模型路由",
-        "description": "返回工作记忆、产物记忆、Trace 压缩和模型路由投影；本接口不写事件。",
+        "summary": "兼容层：查询 Agent Run 记忆与模型路由",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回工作记忆、产物记忆、Trace 压缩和模型路由投影；本接口不写事件。",
         "operationId": "get_task_context_api_tasks__task_id__context_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1866,11 +2023,12 @@
     "/api/tasks/{task_id}/context/route": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "刷新 Run 上下文路由",
-        "description": "重新生成上下文压缩和模型路由决策，并写入 CONTEXT_COMPRESSED / MODEL_ROUTED 事件。",
+        "summary": "兼容层：刷新 Agent Run 上下文路由",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 重新生成上下文压缩和模型路由决策，并写入 CONTEXT_COMPRESSED / MODEL_ROUTED 事件。",
         "operationId": "route_task_context_api_tasks__task_id__context_route_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1914,11 +2072,12 @@
     "/api/tasks/{task_id}/model-calls": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询模型调用",
-        "description": "返回当前任务关联的模型调用审计列表。",
+        "summary": "兼容层：查询模型调用",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回当前 Agent Run 关联的模型调用审计列表。",
         "operationId": "list_model_calls_api_tasks__task_id__model_calls_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -1962,11 +2121,12 @@
     "/api/tasks/{task_id}/tool-calls": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询工具调用",
-        "description": "返回当前任务关联的工具调用审计列表。",
+        "summary": "兼容层：查询工具调用",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回当前 Agent Run 关联的工具调用审计列表。",
         "operationId": "list_tool_calls_api_tasks__task_id__tool_calls_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2096,11 +2256,12 @@
     "/api/tasks/{task_id}/tools/execute": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "执行任务工具",
-        "description": "按工具注册表和策略执行工具，并写入工具调用审计与事件流。",
+        "summary": "兼容层：执行工具",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 按工具注册表和策略执行工具，并写入工具调用审计与事件流。",
         "operationId": "execute_task_tool_api_tasks__task_id__tools_execute_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2154,11 +2315,12 @@
     "/api/tasks/{task_id}/tool-approvals": {
       "get": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "查询工具审批",
-        "description": "返回当前 Run 的工具审批请求。",
+        "summary": "兼容层：查询工具审批",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回当前 Agent Run 的工具审批请求。",
         "operationId": "list_task_tool_approvals_api_tasks__task_id__tool_approvals_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2230,11 +2392,12 @@
     "/api/tasks/{task_id}/tool-approvals/{approval_id}/approve": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "批准工具审批",
-        "description": "仅 admin 可批准高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
+        "summary": "兼容层：批准工具审批",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 仅 admin 可批准高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
         "operationId": "approve_tool_approval_api_tasks__task_id__tool_approvals__approval_id__approve_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2297,11 +2460,12 @@
     "/api/tasks/{task_id}/tool-approvals/{approval_id}/reject": {
       "post": {
         "tags": [
-          "tasks"
+          "agent-run-compatibility"
         ],
-        "summary": "拒绝工具审批",
-        "description": "仅 admin 可拒绝高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
+        "summary": "兼容层：拒绝工具审批",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 仅 admin 可拒绝高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
         "operationId": "reject_tool_approval_api_tasks__task_id__tool_approvals__approval_id__reject_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2361,6 +2525,74 @@
         }
       }
     },
+    "/api/tasks/{task_id}/tool-approvals/{approval_id}/modify": {
+      "post": {
+        "tags": [
+          "agent-run-compatibility"
+        ],
+        "summary": "兼容层：修改并批准工具审批",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 仅 admin 可修改高风险工具输入并批准，本接口会同步更新审批 request_json、ToolCall input_json 和审批事件。",
+        "operationId": "modify_tool_approval_api_tasks__task_id__tool_approvals__approval_id__modify_post",
+        "deprecated": true,
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Approval Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolApprovalModifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolApprovalPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tools/registry": {
       "get": {
         "tags": [
@@ -2391,11 +2623,12 @@
     "/api/tasks/{task_id}/events": {
       "get": {
         "tags": [
-          "events"
+          "agent-run-compatibility"
         ],
-        "summary": "查询任务事件",
-        "description": "返回指定任务的事件溯源流，支持从指定序号之后读取。",
+        "summary": "兼容层：查询 Agent Run 事件",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回指定 Agent Run 的事件溯源流，支持从指定序号之后读取。",
         "operationId": "list_task_events_api_tasks__task_id__events_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2467,11 +2700,12 @@
     "/api/tasks/{task_id}/events/stream": {
       "get": {
         "tags": [
-          "events"
+          "agent-run-compatibility"
         ],
-        "summary": "订阅任务事件流",
-        "description": "通过 Server-Sent Events 持续推送任务事件。",
+        "summary": "兼容层：订阅 Agent Run 事件流",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 通过 Server-Sent Events 持续推送 Agent Run 事件。",
         "operationId": "stream_task_events_api_tasks__task_id__events_stream_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2767,9 +3001,10 @@
         "tags": [
           "subagents"
         ],
-        "summary": "查询任务子 Agent",
-        "description": "返回指定任务派生出的子 Agent 列表。",
+        "summary": "兼容层：查询 Agent Run 子 Agent",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回指定 Agent Run 派生出的子 Agent 列表。",
         "operationId": "list_task_subagents_api_tasks__task_id__subagents_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2813,9 +3048,10 @@
         "tags": [
           "subagents"
         ],
-        "summary": "创建任务子 Agent",
-        "description": "为指定任务派生一个子 Agent，并写入 SUBAGENT_SPAWNED 事件。",
+        "summary": "兼容层：创建 Agent Run 子 Agent",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 为指定 Agent Run 派生一个子 Agent，并写入 SUBAGENT_SPAWNED 事件。",
         "operationId": "create_task_subagent_api_tasks__task_id__subagents_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -2942,9 +3178,10 @@
         "tags": [
           "subagents"
         ],
-        "summary": "恢复任务子 Agent",
-        "description": "基于 Replay 状态恢复超时或卡住的子 Agent，并按需重新入队。",
+        "summary": "兼容层：恢复 Agent Run 子 Agent",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 基于 Replay 状态恢复超时或卡住的子 Agent，并按需重新入队。",
         "operationId": "recover_task_subagents_api_tasks__task_id__subagents_recover_post",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -3047,9 +3284,10 @@
         "tags": [
           "subagents"
         ],
-        "summary": "查询子 Agent 恢复批次",
-        "description": "返回指定任务最近的子 Agent 恢复批次历史。",
+        "summary": "兼容层：查询 Agent Run 子 Agent 恢复批次",
+        "description": "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。 返回指定 Agent Run 最近的子 Agent 恢复批次历史。",
         "operationId": "list_task_subagent_recovery_batches_api_tasks__task_id__subagents_recovery_batches_get",
+        "deprecated": true,
         "security": [
           {
             "HTTPBearer": []
@@ -4571,83 +4809,91 @@
         ],
         "title": "AgentAssignmentResponse"
       },
-      "AgentAutoResponse": {
+      "AgentChatStreamRequest": {
         "properties": {
-          "agent_id": {
-            "type": "string",
-            "title": "Agent Id",
-            "description": "Agent ID"
-          },
-          "run_id": {
-            "type": "string",
-            "title": "Run Id",
-            "description": "Agent Run ID"
-          },
-          "task": {
-            "$ref": "#/components/schemas/TaskResponse",
-            "description": "Run 基础信息"
-          },
-          "plan": {
-            "$ref": "#/components/schemas/TaskPlanResponse",
-            "description": "结构化计划"
-          },
-          "orchestration": {
-            "$ref": "#/components/schemas/AgentOrchestrateResponse",
-            "description": "多 Agent 编排结果"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "description": "Auto 模式摘要"
-          }
-        },
-        "type": "object",
-        "required": [
-          "agent_id",
-          "run_id",
-          "task",
-          "plan",
-          "orchestration",
-          "message"
-        ],
-        "title": "AgentAutoResponse"
-      },
-      "AgentChatRequest": {
-        "properties": {
-          "content": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Content",
-            "description": "用户消息"
-          }
-        },
-        "type": "object",
-        "required": [
-          "content"
-        ],
-        "title": "AgentChatRequest"
-      },
-      "AgentChatResponse": {
-        "properties": {
-          "session": {
-            "$ref": "#/components/schemas/AgentSessionResponse",
-            "description": "会话"
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal",
+            "description": "用户目标"
           },
           "messages": {
             "items": {
-              "$ref": "#/components/schemas/AgentMessageResponse"
+              "$ref": "#/components/schemas/ConversationNode"
             },
             "type": "array",
             "title": "Messages",
-            "description": "本次写入的消息"
+            "description": "当前分支消息"
+          },
+          "active_leaf_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Leaf Id",
+            "description": "当前活动叶子节点"
+          },
+          "pinned_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pinned Node Ids",
+            "description": "强制注入上下文节点"
+          },
+          "context_window_turns": {
+            "type": "integer",
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Context Window Turns",
+            "description": "最近上下文轮数",
+            "default": 8
+          },
+          "continue_from_node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continue From Node Id",
+            "description": "继续生成的节点 ID"
+          },
+          "partial_assistant_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partial Assistant Content",
+            "description": "已生成的片段"
+          },
+          "tool_mentions": {
+            "items": {
+              "$ref": "#/components/schemas/ToolMention"
+            },
+            "type": "array",
+            "title": "Tool Mentions",
+            "description": "结构化工具 mention"
           }
         },
         "type": "object",
-        "required": [
-          "session",
-          "messages"
-        ],
-        "title": "AgentChatResponse"
+        "title": "AgentChatStreamRequest"
       },
       "AgentHandoffResponse": {
         "properties": {
@@ -5094,6 +5340,165 @@
         ],
         "title": "AgentResponse"
       },
+      "AgentRunCreateRequest": {
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Agent Id",
+            "description": "Agent ID",
+            "default": "default"
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Goal",
+            "description": "用户目标"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "运行标题"
+          },
+          "model_provider": {
+            "type": "string",
+            "title": "Model Provider",
+            "description": "模型供应商，default 表示使用模型设置",
+            "default": "default"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "模型名称，default 表示使用模型设置",
+            "default": "default"
+          },
+          "max_runtime_seconds": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Runtime Seconds",
+            "description": "最大运行秒数",
+            "default": 1800
+          },
+          "max_subagents": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Subagents",
+            "description": "最大子 Agent 数",
+            "default": 5
+          },
+          "enable_sandbox": {
+            "type": "boolean",
+            "title": "Enable Sandbox",
+            "description": "是否启用容器沙箱",
+            "default": true
+          },
+          "enable_network": {
+            "type": "boolean",
+            "title": "Enable Network",
+            "description": "是否启用网络访问",
+            "default": false
+          },
+          "mode": {
+            "type": "string",
+            "const": "plan",
+            "title": "Mode",
+            "description": "Agent Workspace 固定使用 Plan 模式",
+            "default": "plan"
+          }
+        },
+        "type": "object",
+        "required": [
+          "goal"
+        ],
+        "title": "AgentRunCreateRequest"
+      },
+      "AgentRunWorkspaceResponse": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/TaskResponse",
+            "description": "Agent Run 基础信息"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPlanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最新 Plan DAG"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/EventResponse"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "Event Sourcing 事件流"
+          },
+          "subagents": {
+            "items": {
+              "$ref": "#/components/schemas/SubagentResponse"
+            },
+            "type": "array",
+            "title": "Subagents",
+            "description": "Subagent 状态"
+          },
+          "tool_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCallResponse"
+            },
+            "type": "array",
+            "title": "Tool Calls",
+            "description": "工具调用日志"
+          },
+          "model_calls": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCallResponse"
+            },
+            "type": "array",
+            "title": "Model Calls",
+            "description": "模型调用日志"
+          },
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/ToolApprovalResponse"
+            },
+            "type": "array",
+            "title": "Approvals",
+            "description": "待处理与历史审批"
+          },
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/AgentAssignmentResponse"
+            },
+            "type": "array",
+            "title": "Assignments",
+            "description": "多 Agent 分配"
+          },
+          "handoffs": {
+            "items": {
+              "$ref": "#/components/schemas/AgentHandoffResponse"
+            },
+            "type": "array",
+            "title": "Handoffs",
+            "description": "多 Agent 交接"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run"
+        ],
+        "title": "AgentRunWorkspaceResponse"
+      },
       "AgentSessionCreateRequest": {
         "properties": {
           "title": {
@@ -5210,6 +5615,107 @@
           "updated_at"
         ],
         "title": "AgentSessionResponse"
+      },
+      "ConversationNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "对话节点 ID"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id",
+            "description": "父节点 ID"
+          },
+          "children_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Children Ids",
+            "description": "子节点 ID"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              "tool"
+            ],
+            "title": "Role",
+            "description": "消息角色"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "消息内容",
+            "default": ""
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "streaming",
+              "paused",
+              "done",
+              "error"
+            ],
+            "title": "State",
+            "description": "节点状态",
+            "default": "done"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id",
+            "description": "关联 Agent Run ID"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata",
+            "description": "消息元数据"
+          },
+          "tool_calls": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tool Calls",
+            "description": "工具调用摘要"
+          },
+          "artifacts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Artifacts",
+            "description": "产物摘要"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "role"
+        ],
+        "title": "ConversationNode"
       },
       "CountItem": {
         "properties": {
@@ -9374,7 +9880,7 @@
             },
             "type": "array",
             "title": "Items",
-            "description": "任务列表"
+            "description": "Agent Run 列表"
           },
           "next_cursor": {
             "anyOf": [
@@ -10243,6 +10749,24 @@
         "type": "object",
         "title": "ToolApprovalDecisionRequest"
       },
+      "ToolApprovalModifyRequest": {
+        "properties": {
+          "modified_input_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Modified Input Json",
+            "description": "修改后的工具输入"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "修改说明",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ToolApprovalModifyRequest"
+      },
       "ToolApprovalPage": {
         "properties": {
           "items": {
@@ -10621,6 +11145,38 @@
           "output"
         ],
         "title": "ToolExecuteResponse"
+      },
+      "ToolMention": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "工具名称"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source",
+            "description": "工具来源"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload",
+            "description": "结构化 mention 载荷"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ToolMention"
       },
       "ToolMetadataResponse": {
         "properties": {

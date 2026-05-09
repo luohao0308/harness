@@ -25,8 +25,11 @@ type ProviderConfig = {
   label?: string;
   model?: string;
   status?: string;
+  api_format?: string;
   base_url?: string;
   api_key?: string;
+  api_key_env?: string;
+  model_context_window_tokens?: number;
   rate_limit_rpm?: number;
   rate_limit_tpm?: number;
   timeout_seconds?: number;
@@ -40,9 +43,24 @@ type ProviderConfig = {
 
 const providerPresets: ProviderConfig[] = [
   {
+    name: "minimax",
+    label: "MiniMax Anthropic Compatible",
+    model: "MiniMax-M2.7-highspeed",
+    api_format: "anthropic",
+    base_url: "https://api.minimaxi.com/anthropic",
+    api_key: "",
+    api_key_env: "MINIMAX_API_KEY",
+    model_context_window_tokens: 400000,
+    rate_limit_rpm: 300,
+    rate_limit_tpm: 400000,
+    timeout_seconds: 60,
+    health_timeout_seconds: 5,
+  },
+  {
     name: "openai-compatible",
     label: "OpenAI Compatible",
     model: "gpt-4.1-mini",
+    api_format: "openai",
     base_url: "https://api.openai.com/v1",
     api_key: "",
     rate_limit_rpm: 600,
@@ -54,6 +72,7 @@ const providerPresets: ProviderConfig[] = [
     name: "deepseek",
     label: "DeepSeek",
     model: "deepseek-chat",
+    api_format: "openai",
     base_url: "https://api.deepseek.com/v1",
     api_key: "",
     rate_limit_rpm: 300,
@@ -65,6 +84,7 @@ const providerPresets: ProviderConfig[] = [
     name: "qwen",
     label: "Qwen DashScope Compatible",
     model: "qwen-plus",
+    api_format: "openai",
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     api_key: "",
     rate_limit_rpm: 300,
@@ -76,6 +96,7 @@ const providerPresets: ProviderConfig[] = [
     name: "moonshot",
     label: "Moonshot",
     model: "moonshot-v1-8k",
+    api_format: "openai",
     base_url: "https://api.moonshot.cn/v1",
     api_key: "",
     rate_limit_rpm: 300,
@@ -89,8 +110,11 @@ const emptyProvider: ProviderConfig = {
   name: "custom-openai-compatible",
   label: "Custom OpenAI Compatible",
   model: "default",
+  api_format: "openai",
   base_url: "",
   api_key: "",
+  api_key_env: "",
+  model_context_window_tokens: 0,
   rate_limit_rpm: 300,
   rate_limit_tpm: 120000,
   timeout_seconds: 30,
@@ -265,7 +289,7 @@ export function ModelSettingsPage() {
                         </div>
                         <div className="mt-1 text-xs text-slate-500">{preset.label}</div>
                         <div className="mt-1 font-mono text-[11px] text-slate-500">
-                          {preset.model} · {preset.base_url}
+                          {preset.model} · {preset.api_format ?? "openai"} · {preset.base_url}
                         </div>
                       </div>
                       <Button
@@ -314,6 +338,16 @@ export function ModelSettingsPage() {
                     onChange={(event) => setDraftProvider({ ...draftProvider, model: event.target.value })}
                   />
                 </Field>
+                <Field label={text("协议", "Protocol")}>
+                  <select
+                    className="h-9 rounded-md border border-slate-200 bg-white px-3 text-xs outline-none transition focus:border-slate-400"
+                    value={String(draftProvider.api_format ?? "openai")}
+                    onChange={(event) => setDraftProvider({ ...draftProvider, api_format: event.target.value })}
+                  >
+                    <option value="openai">OpenAI /chat/completions</option>
+                    <option value="anthropic">Anthropic /v1/messages</option>
+                  </select>
+                </Field>
                 <Field label="Base URL">
                   <Input
                     value={String(draftProvider.base_url ?? "")}
@@ -327,6 +361,25 @@ export function ModelSettingsPage() {
                     value={String(draftProvider.api_key ?? "")}
                     placeholder="sk-..."
                     onChange={(event) => setDraftProvider({ ...draftProvider, api_key: event.target.value })}
+                  />
+                </Field>
+                <Field label={text("API Key 环境变量", "API Key Env")}>
+                  <Input
+                    value={String(draftProvider.api_key_env ?? "")}
+                    placeholder="MINIMAX_API_KEY"
+                    onChange={(event) => setDraftProvider({ ...draftProvider, api_key_env: event.target.value })}
+                  />
+                </Field>
+                <Field label={text("模型上下文 tokens", "Model context tokens")}>
+                  <Input
+                    type="number"
+                    value={Number(draftProvider.model_context_window_tokens ?? 0)}
+                    onChange={(event) =>
+                      setDraftProvider({
+                        ...draftProvider,
+                        model_context_window_tokens: Number(event.target.value),
+                      })
+                    }
                   />
                 </Field>
                 <Field label="RPM">
@@ -551,6 +604,10 @@ function normalizeProvider(provider: ProviderConfig): ProviderConfig {
     name,
     model,
     status: "healthy",
+    api_format: String(provider.api_format || "openai"),
+    api_key: String(provider.api_key || "replace-me"),
+    api_key_env: String(provider.api_key_env || ""),
+    model_context_window_tokens: Number(provider.model_context_window_tokens || 0),
     rate_limit_rpm: Number(provider.rate_limit_rpm || 300),
     rate_limit_tpm: Number(provider.rate_limit_tpm || 120000),
     timeout_seconds: Number(provider.timeout_seconds || 30),

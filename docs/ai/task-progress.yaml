@@ -1,113 +1,98 @@
-current_stage: 09-portfolio-demo-docs
+current_stage: 06-warmpool-infra
 current_status: completed
-last_updated_at: 2026-05-08T07:27:47Z
+last_updated_at: 2026-05-08T14:57:13Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
-product: Production Agent Harness Platform
+product: AI Harness Platform
+formula: Model + Harness = Agent
+website_policy: retained_public_shell_not_console_core
 
 stages:
-  - id: 01-agent-graph-runtime
-    document: docs/ai/stages/01-agent-graph-runtime.md
+  - id: 01-agent-workspace-console
+    document: docs/ai/stages/01-agent-workspace-console.md
     status: completed
-    demo: Agent Console input creates a plan, runs sync executor, spawns async branches, and displays status.
+    demo: Workspace creates Agent Run from a single Plan surface and shows Plan DAG, events, subagents, tool calls, approvals, and model calls.
     verification_result: passed
     verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py tests/test_observability.py tests/test_event_store.py tests/test_evals.py
-      - cd services/api-server && .venv/bin/python -m ruff check app tests/test_evals.py tests/test_agents.py tests/test_observability.py tests/test_event_store.py
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py
+      - cd apps/agent-console && npm run build
+    acceptance_notes:
+      - Agent Run creation and workspace projection tests pass.
+      - Frontend build passes.
+      - Docs validation, full backend tests, Ruff, frontend build, and Docker smoke pass.
+      - Legacy task-route OpenAPI copy is marked deprecated Agent Run compatibility.
+  - id: 02-agent-studio-config
+    document: docs/ai/stages/02-agent-studio-config.md
+    status: completed
+    demo: Agent Studio and Model Settings persist MiniMax-backed configuration.
+    verification_result: passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests
       - cd apps/agent-console && npm run build
       - python3 scripts/validate-docs.py
-      - docker compose -f deploy/docker-compose/docker-compose.yml config
-  - id: 02-event-store-recovery
-    document: docs/ai/stages/02-event-store-recovery.md
-    status: completed
-    demo: Run writes events, service restarts, state recovers, replay reaches requested sequence.
-    verification_result: passed
     acceptance_notes:
-      - Run Detail supports replay to an explicit event sequence.
-      - Replay panel displays state summary, diagnosis, and failure point payload.
-  - id: 03-agent-run-console
-    document: docs/ai/stages/03-agent-run-console.md
+      - Agent Studio displays Model, Tools/MCP, Prompt, RAG, Templates, and Orchestration surfaces.
+      - RAG and Templates render as disabled API-pending entries.
+      - MiniMax default context metadata is 400000 tokens.
+      - Legacy persisted MiniMax 204800-token settings are normalized to 400000 tokens.
+      - Docker runtime reports MiniMax healthy/probe with context 400000.
+  - id: 03-harness-tool-mcp
+    document: docs/ai/stages/03-harness-tool-mcp.md
     status: completed
-    demo: Console shows chat, DAG, trace, tools, guardrails, eval, cost, latency, and replay.
+    demo: Tool Registry and MCP-shaped tools execute through policy, sandbox, audit, and trace.
     verification_result: passed
-    acceptance_notes:
-      - Run Detail includes inline Eval regression controls.
-      - Run Detail includes Guardrail and denied tool-call aggregation.
-      - Replay, Eval, Subagent, Multi-Agent, Sandbox, Model, Tool, and Result panels are visible from one run page.
-  - id: 04-tool-mcp-runtime
-    document: docs/ai/stages/04-tool-mcp-runtime.md
-    status: completed
-    demo: Tool Registry executes built-in and MCP-shaped tools with trace and policy records.
-    verification_result: passed
-    acceptance_notes:
-      - Tool Registry API exposes builtin and MCP-shaped tools from one metadata contract.
-      - MCP-shaped tools execute through ToolRunner, PolicyEngine, ToolCall audit, and EventStore.
-      - Console /tools page shows source, risk, sandbox, roles, schema, and MCP method.
-  - id: 05-guardrail-policy-engine
-    document: docs/ai/stages/05-guardrail-policy-engine.md
-    status: completed
-    demo: High-risk shell command is blocked or routed to approval.
-    verification_result: passed
-    acceptance_notes:
-      - High-risk or admin-required tool calls create ToolApproval records instead of silent static UI state.
-      - Run Detail Guardrail panel lists pending approvals and supports admin approve or reject actions.
-      - Approval decisions append task events and update ToolCall status.
-  - id: 06-eval-harness
-    document: docs/ai/stages/06-eval-harness.md
-    status: completed
-    demo: Dataset saves a run as case, runs grader, displays metrics.
-    verification_result: passed
-    acceptance_notes:
-      - Eval can be triggered from /evals and from Run Detail.
-      - Run Detail can save the current run as an Eval Case and execute the selected Dataset.
     verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest tests/test_evals.py
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_tool_registry.py services/api-server/tests/test_tool_runner.py services/api-server/tests/test_tool_approvals.py services/api-server/tests/test_agents.py
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests
       - cd apps/agent-console && npm run build
-  - id: 07-memory-context-router
-    document: docs/ai/stages/07-memory-context-router.md
-    status: completed
-    demo: Model Router selects models by task type and memory context is visible in trace.
-    verification_result: passed
     acceptance_notes:
-      - Run Context API returns working memory, long-term memory, artifact memory, RAG context, trace memory, compression, and model routing.
-      - Route Context API appends CONTEXT_COMPRESSED and MODEL_ROUTED events.
-      - Run Detail displays Context Router state from backend data and can refresh persisted routing trace.
-    verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest tests/test_context_router.py
-      - cd services/api-server && .venv/bin/python -m pytest tests/test_context_router.py tests/test_model_gateway.py tests/test_tasks.py
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app/agents/context_router.py app/api/tasks.py app/api/schemas.py tests/test_context_router.py
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
-      - cd apps/agent-console && npm run build
-      - python3 scripts/validate-docs.py
-  - id: 08-warmpool-benchmark
-    document: docs/ai/stages/08-warmpool-benchmark.md
+      - Tools page shows Registry, Policy, Sandbox, MCP, and disabled Trigger surfaces.
+      - Tool Registry data remains API-backed.
+      - MCP-shaped tools reuse ToolRunner, Policy, ToolCall audit, and Event path.
+  - id: 04-event-sourcing-replay-ui
+    document: docs/ai/stages/04-event-sourcing-replay-ui.md
     status: completed
-    demo: WarmPool benchmark proves startup target under 50 ms.
+    demo: Run timeline supports replay to a selected sequence.
     verification_result: passed
-    acceptance_notes:
-      - WarmPool Benchmark API records target, warm avg, warm p95, cold baseline, hit rate, and report payload.
-      - Sandboxes page can run a benchmark and displays latest benchmark latency from backend data.
-      - Benchmark history API returns persisted reports by organization.
     verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest tests/test_warm_pool.py tests/test_sandbox.py
-      - cd services/api-server && .venv/bin/python -m ruff check app/sandbox/benchmark.py app/api/sandboxes.py app/api/schemas.py app/db/models.py tests/test_warm_pool.py
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_event_store.py services/api-server/tests/test_events_stream.py services/api-server/tests/test_observability.py
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests
       - cd apps/agent-console && npm run build
-  - id: 09-portfolio-demo-docs
-    document: docs/ai/stages/09-portfolio-demo-docs.md
+    acceptance_notes:
+      - Run Detail accepts replay sequence input and renders state summary, diagnosis, and failure point.
+      - Observability Run links point to concrete Run routes.
+      - Event stream and replay tests pass.
+  - id: 05-eval-regression
+    document: docs/ai/stages/05-eval-regression.md
     status: completed
-    demo: GitHub Issue demo flows through plan, tools, guardrail, replay, eval, and benchmark report.
+    demo: Run becomes Eval Case, Dataset Eval executes, regression metrics display.
     verification_result: passed
-    acceptance_notes:
-      - OpenAPI JSON and YAML were regenerated from the FastAPI app for docs and public website assets.
-      - Portfolio Demo Guide, Eval Report, Benchmark Report, SDK Example, and Capability Map were added.
-      - README now points to the current Production Agent Harness Platform deliverables.
     verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest
-      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_evals.py
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests
       - cd apps/agent-console && npm run build
-      - python3 scripts/validate-docs.py
-      - git diff --check
+    acceptance_notes:
+      - Eval page displays Dataset, Case Queue, Eval Run metrics, Trace Grader, and history from API.
+      - Regression Gate shows API-backed state when Eval Run exists.
+      - A/B and Human Review entries render disabled until API-backed.
+  - id: 06-warmpool-infra
+    document: docs/ai/stages/06-warmpool-infra.md
+    status: completed
+    demo: WarmPool benchmark and sandbox lifecycle are API-backed.
+    verification_result: passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_warm_pool.py services/api-server/tests/test_sandbox.py
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests
+      - cd apps/agent-console && npm run build
+    acceptance_notes:
+      - WarmPool defaults are min_ready=2 and max_ready=5.
+      - Sandboxes page displays Tenant Isolation, WarmPool, API Gateway, and Version Rollout infra surfaces.
+      - API Gateway and Version Rollout remain disabled until API-backed.
+      - OpenAPI JSON/YAML exported to docs and website public assets.
+      - Final backend tests, Ruff, frontend build, docs validation, and Docker smoke pass.
+      - git diff --check passes.
+      - Full backend regression is now 123 passed.
 
 stage_completion_rule:
   - run_backend_tests

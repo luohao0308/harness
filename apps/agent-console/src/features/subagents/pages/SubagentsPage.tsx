@@ -221,7 +221,7 @@ export function SubagentsPage() {
                   </Td>
                   <Td>
                     <Link
-                      to={`/tasks/${subagent.task_id}/subagents`}
+                      to={`/runs//subagents`}
                       className="text-xs text-slate-900 hover:text-slate-950"
                     >
                       {subagent.task_title}

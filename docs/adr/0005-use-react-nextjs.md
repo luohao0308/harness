@@ -10,7 +10,7 @@ The product needs a SEO-friendly marketing site and a dense enterprise console w
 
 ## Decision
 
-The website uses Next.js + TypeScript + Tailwind CSS. The console uses React + Vite + TypeScript + Tailwind CSS + shadcn/ui.
+The website uses Next.js + TypeScript + Tailwind CSS. The console uses React + Vite + TypeScript + Tailwind CSS, local UI primitives, lucide-react, and ECharts. Historical design references to shadcn/ui are treated as design-system targets, not current implementation dependencies.
 
 ## Consequences
 
@@ -18,4 +18,3 @@ The website uses Next.js + TypeScript + Tailwind CSS. The console uses React + V
 - Console routes live under `apps/agent-console`.
 - Figma is the design source.
 - Gemini/H5 output is reference material only.
-

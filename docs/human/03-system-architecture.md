@@ -65,8 +65,8 @@ flowchart TD
     CONSOLE --> API["FastAPI API Layer"]
     API --> AUTH["Auth / RBAC / Policy"]
     API --> AGENT["Agent Runtime API"]
-    AGENT --> MODE["Mode Router: Chat / Plan / Execute / Auto"]
-    MODE --> TASK["Run Service"]
+    AGENT --> WORKMODE["Workspace Pro Plan-Act Stream"]
+    WORKMODE --> TASK["Run Service"]
     TASK --> PLANNER["Planner"]
     TASK --> EXEC["Executor / ReAct Engine"]
     TASK --> EVENTS["Event Store"]
@@ -102,7 +102,7 @@ flowchart TD
 
 ### Agent Console
 
-控制台使用 React + Vite + TypeScript + Tailwind CSS + shadcn/ui。控制台主入口是 Agent Workspace：用户选择 Agent、选择 Chat/Plan/Execute/Auto 模式并输入目标。任务列表只作为 Agent Run 历史与审计视图。
+控制台使用 React + Vite + TypeScript + Tailwind CSS 和本地 UI primitives。控制台主入口是 Agent Workspace Pro：用户选择 Agent 后进入 `/agents/:agentId/workspace`，在单一 Plan-Act surface 中输入目标、查看流式计划、工具审批、Artifacts 和 Run 投影。任务列表只作为 deprecated `/tasks` 兼容层；产品视图使用 Agent Run 历史与审计。
 
 ### API Layer
 
@@ -150,8 +150,8 @@ sequenceDiagram
     participant EventStore
     participant Model
 
-    User->>Workspace: Select Agent + Plan mode
-    Workspace->>API: POST /api/agents/plan
+    User->>Workspace: Select Agent + enter goal
+    Workspace->>API: POST /api/agents/{agent_id}/runs/chat/stream
     API->>EventStore: TASK_CREATED
     API->>EventStore: PLAN_REQUESTED
     API->>Model: Planner prompt

@@ -34,6 +34,11 @@ from app.db.models import AgentRun, SubagentRecoveryBatch, Task
 from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
 
+RUN_COMPATIBILITY_DESCRIPTION = (
+    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs "
+    "和 /api/agents/runs/*。"
+)
+
 router = APIRouter(tags=["subagents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 
@@ -41,8 +46,9 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 @router.get(
     "/tasks/{task_id}/subagents",
     response_model=SubagentPage,
-    summary="查询任务子 Agent",
-    description="返回指定任务派生出的子 Agent 列表。",
+    summary="兼容层：查询 Agent Run 子 Agent",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 派生出的子 Agent 列表。",
+    deprecated=True,
 )
 def list_task_subagents(task_id: str, session: DbSession, principal: Principal) -> SubagentPage:
     get_owned_task(task_id, session, principal.organization_id)
@@ -110,8 +116,12 @@ def _subagent_step_key(agent_run: AgentRun) -> str | None:
     "/tasks/{task_id}/subagents",
     response_model=SubagentResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="创建任务子 Agent",
-    description="为指定任务派生一个子 Agent，并写入 SUBAGENT_SPAWNED 事件。",
+    summary="兼容层：创建 Agent Run 子 Agent",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 为指定 Agent Run 派生一个子 Agent，"
+        "并写入 SUBAGENT_SPAWNED 事件。"
+    ),
+    deprecated=True,
 )
 def create_task_subagent(
     task_id: str,
@@ -142,8 +152,12 @@ def create_task_subagent(
     "/tasks/{task_id}/subagents/recover",
     response_model=SubagentRecoveryResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="恢复任务子 Agent",
-    description="基于 Replay 状态恢复超时或卡住的子 Agent，并按需重新入队。",
+    summary="兼容层：恢复 Agent Run 子 Agent",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 基于 Replay 状态恢复超时或卡住的子 Agent，"
+        "并按需重新入队。"
+    ),
+    deprecated=True,
 )
 def recover_task_subagents(
     task_id: str,
@@ -256,8 +270,9 @@ def bulk_action_subagents(
 @router.get(
     "/tasks/{task_id}/subagents/recovery-batches",
     response_model=SubagentRecoveryBatchPage,
-    summary="查询子 Agent 恢复批次",
-    description="返回指定任务最近的子 Agent 恢复批次历史。",
+    summary="兼容层：查询 Agent Run 子 Agent 恢复批次",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 最近的子 Agent 恢复批次历史。",
+    deprecated=True,
 )
 def list_task_subagent_recovery_batches(
     task_id: str,

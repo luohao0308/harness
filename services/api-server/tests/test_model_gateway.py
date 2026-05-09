@@ -1,8 +1,11 @@
+import json
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import (
+    AnthropicCompatibleModelGateway,
     AuditedModelGateway,
     ModelCircuitBreaker,
     ModelGatewayError,
@@ -215,6 +218,61 @@ def test_openai_compatible_gateway_normalizes_chat_completion(monkeypatch) -> No
     assert b'"model": "default"' in captured["body"]
     assert response.content == '{"summary":"ok"}'
     assert response.usage == {"prompt_tokens": 2, "completion_tokens": 4}
+
+
+def test_anthropic_compatible_gateway_normalizes_messages(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return (
+                b'{"content":[{"type":"text","text":"{\\"summary\\":\\"ok\\"}"}],'
+                b'"usage":{"input_tokens":3,"output_tokens":6}}'
+            )
+
+    def fake_urlopen(http_request, timeout):
+        captured["url"] = http_request.full_url
+        captured["authorization"] = http_request.headers["Authorization"]
+        captured["body"] = http_request.data
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("app.agents.model_gateway.request.urlopen", fake_urlopen)
+
+    gateway = AnthropicCompatibleModelGateway(
+        base_url="https://api.minimaxi.com/anthropic",
+        api_key="secret-key",
+        timeout_seconds=9,
+        max_tokens=2048,
+    )
+    response = gateway.complete(
+        ModelRequest(
+            model_provider="minimax",
+            model_name="MiniMax-M2.7-highspeed",
+            messages=[
+                ModelMessage(role="system", content="You are concise."),
+                ModelMessage(role="user", content="plan this task"),
+            ],
+        )
+    )
+
+    assert captured["url"] == "https://api.minimaxi.com/anthropic/v1/messages"
+    assert captured["authorization"] == "Bearer secret-key"
+    assert captured["timeout"] == 9
+    body = json.loads(captured["body"].decode("utf-8"))
+    assert body["model"] == "MiniMax-M2.7-highspeed"
+    assert body["max_tokens"] == 2048
+    assert body["messages"] == [{"role": "user", "content": "plan this task"}]
+    assert "You are concise." in body["system"]
+    assert response.content == '{"summary":"ok"}'
+    assert response.usage["prompt_tokens"] == 3
+    assert response.usage["completion_tokens"] == 6
 
 
 def test_audited_model_gateway_uses_organization_model_settings(db_session: Session) -> None:

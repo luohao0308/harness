@@ -8,8 +8,8 @@ Event Sourcing 把任务状态变化记录为 append-only 事件流。Replay 通
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 查看事件 | `/tasks/:taskId` | 按 sequence 查看任务事件 |
-| 实时事件 | `/tasks/:taskId` | 断线重连后继续读取 |
+| 查看事件 | `/runs/:runId` | 按 sequence 查看 Run 事件 |
+| 实时事件 | `/runs/:runId` | 断线重连后继续读取 |
 | 重放现场 | Replay 面板 | 选择 sequence 并重建状态 |
 | 定位失败点 | Replay 面板 | 查看失败步骤、工具和错误摘要 |
 | 步骤续跑 | 执行计划面板 | 基于 Replay state 跳过已完成步骤并重试未完成步骤 |
@@ -29,9 +29,9 @@ POST /api/tasks/{task_id}/subagents/recover
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/tasks/:taskId` | Events API、SSE、Replay API、Step Resume API | 时间线、Replay 摘要、失败点、步骤续跑 |
-| `/tasks/:taskId` Subagent 面板 | Subagent Recovery API | 恢复卡住的子 Agent |
-| `/tasks/:taskId/events` | Events API、SSE | 事件流查看 |
+| `/runs/:runId` | Events API、SSE、Replay API、Step Resume API | 时间线、Replay 摘要、失败点、步骤续跑 |
+| `/runs/:runId` Subagent 面板 | Subagent Recovery API | 恢复卡住的子 Agent |
+| `/runs/:runId/events` | Events API、SSE | 事件流查看 |
 
 ## 数据模型
 

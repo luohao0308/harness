@@ -7,7 +7,7 @@ import { Input } from "../../../components/ui/input";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel, timeoutCategoryLabel, toolOutputKindLabel } from "../../../lib/labels";
-import type { ModelCall, ToolCall, ToolCallFilters } from "../api";
+import type { ModelCall, ToolCall, ToolCallFilters } from "../../tasks/api";
 
 export function ModelCallPanel({
   modelCalls,
@@ -125,7 +125,7 @@ export function ModelCallPanel({
                   <span>{text("风险", "Risk")} {call.risk_level}</span>
                   {call.timeout_category && <span>{timeoutCategoryLabel(call.timeout_category)}</span>}
                   {call.task_id && (
-                    <Link to={`/tasks/${call.task_id}/events`} className="hover:text-slate-900">
+                    <Link to={`/runs//events`} className="hover:text-slate-900">
                       {text("事件深链", "Events")}
                     </Link>
                   )}

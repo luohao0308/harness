@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,6 +28,7 @@ from app.api.schemas import (
     TaskStepPage,
     TaskSubagentResult,
     ToolApprovalDecisionRequest,
+    ToolApprovalModifyRequest,
     ToolApprovalPage,
     ToolCallPage,
     ToolCallResponse,
@@ -58,7 +60,16 @@ from app.sandbox.docker_manager import DockerManager
 from app.security.auth import Principal, require_role
 from app.tools.runner import ToolRunner
 
-router = APIRouter(prefix="/tasks", tags=["tasks"])
+RUN_COMPATIBILITY_DESCRIPTION = (
+    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs "
+    "和 /api/agents/runs/*。"
+)
+
+router = APIRouter(
+    prefix="/tasks",
+    tags=["agent-run-compatibility"],
+    deprecated=True,
+)
 DbSession = Annotated[Session, Depends(get_db_session)]
 SUBAGENT_TERMINAL_STATUSES = {"SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"}
 
@@ -76,8 +87,11 @@ def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task
     "",
     response_model=TaskResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="创建任务",
-    description="创建一条新的任务记录，并写入 TASK_CREATED 事件。",
+    summary="兼容层：创建 Agent Run 记录",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 创建一条 Agent Run 兼容记录，"
+        "并写入 TASK_CREATED 事件。"
+    ),
 )
 def create_task(
     request: TaskCreateRequest,
@@ -115,8 +129,11 @@ def create_task(
 @router.get(
     "",
     response_model=TaskPage,
-    summary="查询任务列表",
-    description="按组织查询任务列表，支持状态过滤和分页大小。",
+    summary="兼容层：查询 Agent Run 列表",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 按组织查询 Agent Run 列表，"
+        "支持状态过滤和分页大小。"
+    ),
 )
 def list_tasks(
     session: DbSession,
@@ -135,8 +152,8 @@ def list_tasks(
 @router.get(
     "/{task_id}",
     response_model=TaskResponse,
-    summary="查询任务详情",
-    description="返回指定任务的完整基础信息。",
+    summary="兼容层：查询 Agent Run 详情",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 的完整基础信息。",
 )
 def get_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     return get_owned_task(task_id, session, principal.organization_id)
@@ -146,8 +163,8 @@ def get_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     "/{task_id}/start",
     response_model=TaskResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="启动任务",
-    description="将 CREATED 或 FAILED 任务启动为运行态。",
+    summary="兼容层：启动 Agent Run",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 将 CREATED 或 FAILED Agent Run 启动为运行态。",
 )
 def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -166,8 +183,11 @@ def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     "/{task_id}/cancel",
     response_model=TaskResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="取消任务",
-    description="将当前任务状态切换为 CANCELLED，并写入 TASK_CANCELLED 事件。",
+    summary="兼容层：取消 Agent Run",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 将当前 Agent Run 状态切换为 CANCELLED，"
+        "并写入 TASK_CANCELLED 事件。"
+    ),
 )
 def cancel_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -193,8 +213,11 @@ def cancel_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     "/{task_id}/resume",
     response_model=TaskResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="恢复任务",
-    description="将 FAILED 或 CANCELLED 任务恢复为 RUNNING，并写入 TASK_RESUMED 事件。",
+    summary="兼容层：恢复 Agent Run",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 将 FAILED 或 CANCELLED Agent Run 恢复为 RUNNING，"
+        "并写入 TASK_RESUMED 事件。"
+    ),
 )
 def resume_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -222,9 +245,9 @@ def resume_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     "/{task_id}/steps/resume",
     response_model=StepResumeResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="从指定步骤续跑任务",
+    summary="兼容层：从指定步骤续跑 Agent Run",
     description=(
-        "将 FAILED 或 CANCELLED 任务按最新执行计划恢复，"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 将 FAILED 或 CANCELLED Agent Run 按最新执行计划恢复，"
         "从请求中最靠前的步骤键开始续跑，已完成步骤写入 STEP_SKIPPED。"
     ),
 )
@@ -296,8 +319,11 @@ def resume_task_steps(
 @router.get(
     "/{task_id}/result",
     response_model=TaskResultResponse,
-    summary="查询任务结果",
-    description="返回任务状态、摘要、执行计划、产物列表和最后事件序号。",
+    summary="兼容层：查询 Agent Run 结果",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 状态、摘要、执行计划、"
+        "产物列表和最后事件序号。"
+    ),
 )
 def get_task_result(task_id: str, session: DbSession, principal: Principal) -> TaskResultResponse:
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -373,8 +399,11 @@ def get_task_result(task_id: str, session: DbSession, principal: Principal) -> T
 @router.get(
     "/{task_id}/plan",
     response_model=TaskPlanResponse,
-    summary="查询任务执行计划",
-    description="返回任务最新执行计划，并合并已落库步骤的当前状态。",
+    summary="兼容层：查询 Agent Run Plan",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 最新执行计划，"
+        "并合并已落库步骤的当前状态。"
+    ),
 )
 def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> TaskPlanResponse:
     get_owned_task(task_id, session, principal.organization_id)
@@ -444,8 +473,11 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
 @router.get(
     "/{task_id}/plans",
     response_model=TaskPlanVersionPage,
-    summary="查询任务计划版本",
-    description="返回任务全部执行计划版本，用于计划变更对比。",
+    summary="兼容层：查询 Agent Run Plan 版本",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 全部执行计划版本，"
+        "用于计划变更对比。"
+    ),
 )
 def list_task_plan_versions(
     task_id: str,
@@ -466,8 +498,11 @@ def list_task_plan_versions(
 @router.get(
     "/{task_id}/plans/diff",
     response_model=TaskPlanDiffResponse,
-    summary="对比任务计划版本",
-    description="按两个计划版本对比步骤新增、移除和变更。",
+    summary="兼容层：对比 Agent Run Plan 版本",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 按两个 Agent Run 计划版本对比步骤新增、"
+        "移除和变更。"
+    ),
 )
 def diff_task_plan_versions(
     task_id: str,
@@ -487,8 +522,8 @@ def diff_task_plan_versions(
 @router.get(
     "/{task_id}/steps",
     response_model=TaskStepPage,
-    summary="查询任务步骤",
-    description="返回任务已执行或已派生的步骤状态列表。",
+    summary="兼容层：查询 Agent Run 步骤",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 已执行或已派生的步骤状态列表。",
 )
 def list_task_steps(task_id: str, session: DbSession, principal: Principal) -> TaskStepPage:
     get_owned_task(task_id, session, principal.organization_id)
@@ -503,8 +538,11 @@ def list_task_steps(task_id: str, session: DbSession, principal: Principal) -> T
 @router.post(
     "/{task_id}/replay",
     response_model=ReplayResponse,
-    summary="重放任务状态",
-    description="根据事件流和快照重放任务状态，返回故障点和诊断摘要。",
+    summary="兼容层：Replay Agent Run",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 根据事件流和快照重放 Agent Run 状态，"
+        "返回故障点和诊断摘要。"
+    ),
 )
 def replay_task(
     task_id: str,
@@ -527,8 +565,11 @@ def replay_task(
 @router.get(
     "/{task_id}/context",
     response_model=RunContextResponse,
-    summary="查询 Run 记忆与模型路由",
-    description="返回工作记忆、产物记忆、Trace 压缩和模型路由投影；本接口不写事件。",
+    summary="兼容层：查询 Agent Run 记忆与模型路由",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回工作记忆、产物记忆、Trace 压缩"
+        "和模型路由投影；本接口不写事件。"
+    ),
 )
 def get_task_context(task_id: str, session: DbSession, principal: Principal) -> dict:
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -539,8 +580,11 @@ def get_task_context(task_id: str, session: DbSession, principal: Principal) -> 
     "/{task_id}/context/route",
     response_model=RunContextResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="刷新 Run 上下文路由",
-    description="重新生成上下文压缩和模型路由决策，并写入 CONTEXT_COMPRESSED / MODEL_ROUTED 事件。",
+    summary="兼容层：刷新 Agent Run 上下文路由",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 重新生成上下文压缩和模型路由决策，"
+        "并写入 CONTEXT_COMPRESSED / MODEL_ROUTED 事件。"
+    ),
 )
 def route_task_context(task_id: str, session: DbSession, principal: Principal) -> dict:
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -556,8 +600,8 @@ def route_task_context(task_id: str, session: DbSession, principal: Principal) -
 @router.get(
     "/{task_id}/model-calls",
     response_model=ModelCallPage,
-    summary="查询模型调用",
-    description="返回当前任务关联的模型调用审计列表。",
+    summary="兼容层：查询模型调用",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回当前 Agent Run 关联的模型调用审计列表。",
 )
 def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> ModelCallPage:
     get_owned_task(task_id, session, principal.organization_id)
@@ -584,8 +628,8 @@ def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> 
 @router.get(
     "/{task_id}/tool-calls",
     response_model=ToolCallPage,
-    summary="查询工具调用",
-    description="返回当前任务关联的工具调用审计列表。",
+    summary="兼容层：查询工具调用",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回当前 Agent Run 关联的工具调用审计列表。",
 )
 def list_tool_calls(
     task_id: str,
@@ -634,8 +678,11 @@ def list_tool_calls(
     "/{task_id}/tools/execute",
     response_model=ToolExecuteResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="执行任务工具",
-    description="按工具注册表和策略执行工具，并写入工具调用审计与事件流。",
+    summary="兼容层：执行工具",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 按工具注册表和策略执行工具，"
+        "并写入工具调用审计与事件流。"
+    ),
 )
 def execute_task_tool(
     task_id: str,
@@ -649,7 +696,10 @@ def execute_task_tool(
         request=request,
         session=session,
     )
-    execution = ToolRunner(session=session).execute(
+    execution = ToolRunner(
+        session=session,
+        workspace_root=Path(__file__).resolve().parents[2],
+    ).execute(
         task_id=task.id,
         tool_name=request.tool_name,
         input_json=request.input_json,
@@ -668,8 +718,8 @@ def execute_task_tool(
 @router.get(
     "/{task_id}/tool-approvals",
     response_model=ToolApprovalPage,
-    summary="查询工具审批",
-    description="返回当前 Run 的工具审批请求。",
+    summary="兼容层：查询工具审批",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回当前 Agent Run 的工具审批请求。",
 )
 def list_task_tool_approvals(
     task_id: str,
@@ -692,8 +742,11 @@ def list_task_tool_approvals(
     "/{task_id}/tool-approvals/{approval_id}/approve",
     response_model=ToolApprovalPage,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="批准工具审批",
-    description="仅 admin 可批准高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
+    summary="兼容层：批准工具审批",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 仅 admin 可批准高风险工具调用，"
+        "本接口更新审批和 ToolCall 状态并写入事件。"
+    ),
 )
 def approve_tool_approval(
     task_id: str,
@@ -716,8 +769,11 @@ def approve_tool_approval(
     "/{task_id}/tool-approvals/{approval_id}/reject",
     response_model=ToolApprovalPage,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="拒绝工具审批",
-    description="仅 admin 可拒绝高风险工具调用，本接口更新审批和 ToolCall 状态并写入事件。",
+    summary="兼容层：拒绝工具审批",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 仅 admin 可拒绝高风险工具调用，"
+        "本接口更新审批和 ToolCall 状态并写入事件。"
+    ),
 )
 def reject_tool_approval(
     task_id: str,
@@ -733,6 +789,34 @@ def reject_tool_approval(
         request=request,
         session=session,
         principal=principal,
+    )
+
+
+@router.post(
+    "/{task_id}/tool-approvals/{approval_id}/modify",
+    response_model=ToolApprovalPage,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="兼容层：修改并批准工具审批",
+    description=(
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 仅 admin 可修改高风险工具输入并批准，"
+        "本接口会同步更新审批 request_json、ToolCall input_json 和审批事件。"
+    ),
+)
+def modify_tool_approval(
+    task_id: str,
+    approval_id: str,
+    request: ToolApprovalModifyRequest,
+    session: DbSession,
+    principal: Principal,
+) -> ToolApprovalPage:
+    return _decide_tool_approval(
+        task_id=task_id,
+        approval_id=approval_id,
+        decision="APPROVED",
+        request=ToolApprovalDecisionRequest(reason=request.reason),
+        session=session,
+        principal=principal,
+        modified_input_json=request.modified_input_json,
     )
 
 
@@ -766,6 +850,7 @@ def _decide_tool_approval(
     request: ToolApprovalDecisionRequest,
     session: Session,
     principal,
+    modified_input_json: dict | None = None,
 ) -> ToolApprovalPage:
     require_role(principal, {"admin"})
     task = get_owned_task(task_id, session, principal.organization_id)
@@ -784,10 +869,23 @@ def _decide_tool_approval(
     if tool_call is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工具调用未找到")
 
+    if modified_input_json is not None:
+        request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
+        approval.request_json = {
+            **request_json,
+            "input_json": modified_input_json,
+            "modified": True,
+        }
+        tool_call.input_json = modified_input_json
+
     approval.status = decision
     approval.decided_by = principal.user_id
     approval.decided_at = utc_now()
-    approval.decision_json = {"reason": request.reason, "decision": decision}
+    approval.decision_json = {
+        "reason": request.reason,
+        "decision": decision,
+        "modified": modified_input_json is not None,
+    }
     tool_call.status = "APPROVED" if decision == "APPROVED" else "DENIED"
     tool_call.error_message = None if decision == "APPROVED" else request.reason or approval.reason
     event_type = (
@@ -804,6 +902,7 @@ def _decide_tool_approval(
             "tool_name": tool_call.tool_name,
             "decision": decision,
             "reason": request.reason,
+            "modified": modified_input_json is not None,
         },
         actor_type="user",
         actor_id=principal.user_id,

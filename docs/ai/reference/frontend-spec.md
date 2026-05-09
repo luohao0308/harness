@@ -30,7 +30,7 @@ framework: React
 build_tool: Vite
 language: TypeScript
 styling: Tailwind CSS
-components: shadcn/ui
+components: local UI primitives compatible with current console style
 icons: lucide-react
 server_state: TanStack Query
 client_state: Zustand
@@ -48,22 +48,33 @@ locale_switch: top_bar_segmented_control
 路由：
 
 ```text
-/tasks
-/tasks/new
-/tasks/:taskId
-/tasks/:taskId/events
-/tasks/:taskId/subagents
+/agents
+/agents/:agentId/workspace
+/runs
+/runs/:runId
+/runs/:runId/events
+/runs/:runId/subagents
 /sandboxes
 /observability
 /settings/models
 /settings/policies
+/tools
+/evals
+/subagents
 ```
 
 核心组件：
 
 ```text
-TaskTable
-TaskCreateForm
+AgentWorkspacePro
+ConversationTree
+ContextExplorer
+ToolTray
+ToolCallingCard
+ArtifactPreview
+MetadataPanel
+RunHistory
+RunDetail
 TaskStatusBadge
 ExecutionPlanPanel
 EventTimeline
@@ -76,6 +87,51 @@ PolicyBadge
 ObservabilityExportHistory
 TraceSpanFilterPanel
 SubagentQueueChart
+```
+
+Workspace Pro 状态：
+
+```yaml
+store: Zustand
+shape:
+  nodesById: ConversationNode map
+  rootNodeId: string
+  activeLeafId: string
+  pinnedNodeIds: string array
+  contextWindowTurns: number
+  activeStream: AbortController metadata
+conversation_node:
+  id: string
+  parent_id: string | null
+  children_ids: string array
+  role: user | assistant | system | tool
+  content: string
+  state: draft | streaming | paused | done | error
+  run_id: string | null
+  metadata: token, cost, ttfb, duration
+  tool_calls: object array
+  artifacts: object array
+```
+
+
+技术取舍：
+
+- 不迁移到 Next.js App Router；控制台继续使用 React 18 + Vite。
+- 不引入 Node.js 作为核心后端；MCP 与文件桥接接入现有 FastAPI Tool Runtime。
+- 不引入 Vercel AI SDK 作为核心依赖；继续使用现有 SSE 与 Model Gateway。
+- 不新增 Recharts；图表类 artifact 使用现有 ECharts。
+- 不绕过 Sandbox 增加本地文件写入能力；文件副作用仍走 Tool Policy、Approval、Sandbox。
+- Conversation Tree 是 Workspace UI 状态与审计输入；不替代 Agent Run 或 Event Store。
+
+Workspace Pro 数据流：
+
+```text
+Chat Console submit
+-> build active path, pinned nodes, context window, tool mentions
+-> POST /api/agents/{agent_id}/runs/chat/stream
+-> SSE: think_delta, delta, tool_call_requested, artifact_created, usage, done
+-> update conversation node, metadata, tool cards, artifacts, active Run
+-> query /api/agents/runs/{run_id}/workspace for durable projection
 ```
 
 语言与文案：
@@ -110,7 +166,7 @@ technical_values_need_chinese_description: true
 
 前端规则：
 
-- shadcn/ui 用于 Button、Dialog、Form、Input、Select、Tabs、Table、Badge、Sheet。
+- 控制台保持当前本地 UI 组件风格；不强制引入 shadcn/ui。
 - lucide-react 用于图标。
 - ECharts 用于监控图表。
 - 控制台使用密集企业工具布局。

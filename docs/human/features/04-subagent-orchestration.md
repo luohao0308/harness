@@ -8,11 +8,11 @@ Subagent 负责异步、长耗时、并发探索类任务。主 Executor 不被�
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 查看任务子 Agent | `/tasks/:taskId` | 查看子 Agent 数量、状态和摘要 |
-| 查看子 Agent 列表 | `/tasks/:taskId/subagents` | 查看任务下全部子 Agent |
+| 查看 Run 子 Agent | `/runs/:runId` | 查看子 Agent 数量、状态和摘要 |
+| 查看子 Agent 列表 | `/runs/:runId/subagents` | 查看 Run 下全部子 Agent |
 | 查看单个子 Agent | `/subagents/:subagentId` | 查看 assignment、状态、结果和错误 |
 | 取消子 Agent | `/subagents/:subagentId` | 子 Agent 进入 `CANCELLED` |
-| 查看异步派生关系 | `/tasks/:taskId` | 从 async step 看到对应子 Agent |
+| 查看异步派生关系 | `/runs/:runId` | 从 async step 看到对应子 Agent |
 | 查看恢复运营摘要 | `/observability` | 查看组织级和全局恢复批次、扫描数、恢复数和动作统计 |
 | 导出全局恢复摘要 | `/observability` | 下载跨组织恢复运营 JSON |
 | 批量取消子 Agent | `/subagents` | 选择多个 `PENDING`、`RUNNING` 子 Agent 后统一取消 |
@@ -37,8 +37,8 @@ POST /api/subagents/{subagent_id}/cancel
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/tasks/:taskId` | Subagent API | 展示任务相关子 Agent |
-| `/tasks/:taskId/subagents` | Subagent API | 展示列表和状态 |
+| `/runs/:runId` | Subagent API | 展示 Run 相关子 Agent |
+| `/runs/:runId/subagents` | Subagent API | 展示列表和状态 |
 | `/subagents` | Subagent API | 展示组织级批量状态、状态筛选、任务跳转和详情跳转 |
 | `/subagents` | Bulk Subagent API | 选择多个子 Agent 后批量取消 |
 | `/subagents/:subagentId` | Subagent API | 展示详情并取消 |

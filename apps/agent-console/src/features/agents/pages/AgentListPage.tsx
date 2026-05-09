@@ -1,6 +1,17 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Brain, ChevronRight, GitBranch, Shield, Wrench } from "lucide-react";
+import {
+  Bot,
+  Brain,
+  ChevronRight,
+  Database,
+  GitBranch,
+  Package,
+  ScrollText,
+  Settings,
+  Shield,
+  Wrench,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -15,27 +26,75 @@ export function AgentListPage() {
   const agents = useQuery({ queryKey: ["agents"], queryFn: listAgents });
 
   return (
-    <ConsoleShell title={text("Agent 注册表", "Agent Registry")}>
+    <ConsoleShell title={text("Agent Studio", "Agent Studio")}>
       <div className="space-y-4 p-4">
         <section className="grid grid-cols-12 gap-4">
           <div className="col-span-8">
             <h1 className="text-lg font-semibold text-slate-950">
-              {text("具名 Agent", "Named Agents")}
+              {text("Agent Studio", "Agent Studio")}
             </h1>
             <p className="mt-1 max-w-3xl text-sm text-slate-500">
               {text(
-                "这里是真正的 Agent 入口。Subagent 只是 Run 中的异步工作单元，多 Agent 编排会从这些具名 Agent 中选择参与者。",
-                "This is the real Agent entry. Subagents are async work units inside a Run; orchestration chooses named Agents from this registry.",
+                "这里构建 Model + Harness = Agent。选择模型、工具、Prompt、沙箱和编排能力后进入 Workspace 运行。",
+                "Build Model + Harness = Agent here. Choose model, tools, prompt, sandbox, and orchestration before entering Workspace.",
               )}
             </p>
           </div>
-          <div className="col-span-4 flex items-start justify-end">
-            <Link to="/agents/default/chat">
+          <div className="col-span-4 flex items-start justify-end gap-2">
+            <Link to="/settings/models">
+              <Button>
+                <Settings className="h-3.5 w-3.5" /> {text("模型配置", "Models")}
+              </Button>
+            </Link>
+            <Link to="/agents/default/workspace">
               <Button variant="primary">
-                <Bot className="h-3.5 w-3.5" /> {text("打开默认 Agent", "Open Default Agent")}
+                <Bot className="h-3.5 w-3.5" /> {text("打开默认 Plan", "Open Default Plan")}
               </Button>
             </Link>
           </div>
+        </section>
+
+        <section className="grid grid-cols-6 gap-3">
+          <StudioCapability
+            icon={<Brain className="h-4 w-4" />}
+            title={text("Model", "Model")}
+            status={text("API 已接入", "API-backed")}
+            description={text("MiniMax 默认预置，自定义模型通过模型设置保存。", "MiniMax preset and custom providers are saved in Model Settings.")}
+            to="/settings/models"
+          />
+          <StudioCapability
+            icon={<Wrench className="h-4 w-4" />}
+            title={text("Tools / MCP", "Tools / MCP")}
+            status={text("API 已接入", "API-backed")}
+            description={text("工具权限来自 Agent 定义和 Tool Registry。", "Tool access comes from Agent definitions and Tool Registry.")}
+            to="/tools"
+          />
+          <StudioCapability
+            icon={<ScrollText className="h-4 w-4" />}
+            title="Prompt"
+            status={text("只读", "Read-only")}
+            description={text("当前展示 Agent system prompt 摘要，编辑器留到后续阶段。", "Shows Agent system prompt summary; editor belongs to a later stage.")}
+          />
+          <StudioCapability
+            icon={<Database className="h-4 w-4" />}
+            title="RAG"
+            status={text("未启用", "Disabled")}
+            description={text("知识库入口保留禁用态，不展示伪造数据。", "Knowledge entry remains disabled and shows no fake data.")}
+            disabled
+          />
+          <StudioCapability
+            icon={<Package className="h-4 w-4" />}
+            title={text("模板", "Templates")}
+            status={text("未启用", "Disabled")}
+            description={text("模板市场保留禁用态，等待 API 支撑。", "Template marketplace remains disabled until API-backed.")}
+            disabled
+          />
+          <StudioCapability
+            icon={<GitBranch className="h-4 w-4" />}
+            title={text("编排", "Orchestration")}
+            status={text("API 已接入", "API-backed")}
+            description={text("Workspace 只暴露 Plan；执行、编排和审批作为 Run 详情与 Harness 观测能力呈现。", "Workspace exposes Plan only; execution, orchestration, and approval appear as Run detail and Harness observability.")}
+          />
         </section>
 
         {agents.isLoading && (
@@ -62,6 +121,41 @@ export function AgentListPage() {
   );
 }
 
+function StudioCapability({
+  icon,
+  title,
+  status,
+  description,
+  to,
+  disabled = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  status: string;
+  description: string;
+  to?: string;
+  disabled?: boolean;
+}) {
+  const body = (
+    <Card className={disabled ? "opacity-60" : ""}>
+      <div className="space-y-2 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            {icon}
+            {title}
+          </div>
+          <Badge tone={disabled ? "neutral" : "success"}>{status}</Badge>
+        </div>
+        <p className="min-h-10 text-xs leading-5 text-slate-500">{description}</p>
+      </div>
+    </Card>
+  );
+  if (!to || disabled) {
+    return body;
+  }
+  return <Link to={to}>{body}</Link>;
+}
+
 function AgentCard({ agent }: { agent: AgentDefinition }) {
   const { text } = useI18n();
   return (
@@ -75,7 +169,7 @@ function AgentCard({ agent }: { agent: AgentDefinition }) {
           </div>
           <div className="mt-1 font-mono text-[11px] text-slate-500">{agent.id}</div>
         </div>
-        <Link to={`/agents/${agent.id}/chat`}>
+        <Link to={`/agents/${agent.id}/workspace`}>
           <Button>
             {text("打开", "Open")} <ChevronRight className="h-3.5 w-3.5" />
           </Button>

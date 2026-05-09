@@ -139,7 +139,7 @@ export function SubagentDetailPage() {
             <div className="mt-2 flex flex-wrap items-center gap-5 text-xs text-slate-500">
               <span>
                 {text("任务", "Task")}{" "}
-                <Link to={`/tasks/${subagent.task_id}`} className="font-mono text-slate-800 hover:text-slate-950">
+                <Link to={`/runs/`} className="font-mono text-slate-800 hover:text-slate-950">
                   {subagent.task_id.slice(0, 8)}
                 </Link>
               </span>
@@ -160,7 +160,7 @@ export function SubagentDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             <Button>
-              <Link to={`/tasks/${subagent.task_id}/subagents`}>
+              <Link to={`/runs//subagents`}>
                 <ListChecks className="h-3.5 w-3.5" /> {text("任务子 Agent", "Task Subagents")}
               </Link>
             </Button>

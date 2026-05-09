@@ -141,9 +141,13 @@ python -m pytest tests/warmpool
 Targets:
 
 ```text
-TaskTable renders statuses
-TaskCreateForm submits API request
-EventTimeline appends SSE events
+Workspace Pro route renders three-column layout
+Conversation tree creates branch on edit and resend
+Pause changes assistant node to paused and Continue preserves partial content
+Pinned messages and context window affect stream payloads
+Tool Cards render pending, approved, rejected, success, and failed states
+Artifacts panel renders code, JSON, and diff previews
+EventTimeline appends SSE events in Run Detail
 SubagentPanel renders state transitions
 SandboxPanel renders WarmPool status
 ```
@@ -152,9 +156,10 @@ Command:
 
 ```bash
 cd apps/agent-console
-npm run test
 npm run build
 ```
+
+Frontend component and e2e test infrastructure is tracked as a deferred Workspace Pro gap until `apps/agent-console/package.json` defines a real `test` script.
 
 ## Deployment Smoke Tests
 

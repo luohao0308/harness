@@ -74,17 +74,17 @@ def test_warm_pool_prewarm_acquire_and_release(db_session: Session) -> None:
 
     manager.prewarm(session=db_session)
 
-    assert WARM_POOL_MIN_SIZE == 3
-    assert WARM_POOL_MAX_SIZE == 10
+    assert WARM_POOL_MIN_SIZE == 2
+    assert WARM_POOL_MAX_SIZE == 5
     assert WARM_POOL_IDLE_TTL_SECONDS == 600
-    assert len(fake_client.containers.run_calls) == 3
-    assert manager.status(session=db_session).idle == 3
+    assert len(fake_client.containers.run_calls) == 2
+    assert manager.status(session=db_session).idle == 2
 
     sandbox = manager.acquire(session=db_session, task_id=task.id)
 
     assert sandbox.warm_pool_reused is True
     assert manager.status(session=db_session).hit_total == 1
-    assert manager.status(session=db_session).idle == 2
+    assert manager.status(session=db_session).idle == 1
     assert manager.status(session=db_session).busy == 1
     events = EventStore(db_session).list_by_task(task_id=task.id)
     assert [event.event_type for event in events] == [
@@ -95,7 +95,7 @@ def test_warm_pool_prewarm_acquire_and_release(db_session: Session) -> None:
 
     manager.release(session=db_session, sandbox=sandbox)
 
-    assert manager.status(session=db_session).idle == 3
+    assert manager.status(session=db_session).idle == 2
     assert manager.status(session=db_session).busy == 0
     assert EventStore(db_session).list_by_task(task_id=task.id)[-1].event_type == "SANDBOX_RELEASED"
 
@@ -127,7 +127,7 @@ def test_warm_pool_bypasses_pool_when_policy_requires_network(db_session: Sessio
 
     assert sandbox.warm_pool_reused is False
     assert sandbox.network_enabled is True
-    assert len(fake_client.containers.run_calls) == 4
+    assert len(fake_client.containers.run_calls) == 3
     assert fake_client.containers.run_calls[-1]["network_mode"] == "bridge"
     assert manager.status(session=db_session).miss_total == 1
 
@@ -167,7 +167,7 @@ def test_warm_pool_bypasses_pool_for_custom_resources(db_session: Session) -> No
     assert sandbox.warm_pool_reused is False
     assert sandbox.memory_limit_mb == 2048
     assert sandbox.cpu_limit == "2.0"
-    assert len(fake_client.containers.run_calls) == 4
+    assert len(fake_client.containers.run_calls) == 3
     assert fake_client.containers.run_calls[-1]["mem_limit"] == "2048m"
     assert fake_client.containers.run_calls[-1]["nano_cpus"] == 2_000_000_000
 

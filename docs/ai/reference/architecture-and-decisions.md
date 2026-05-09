@@ -20,7 +20,7 @@ metrics: Prometheus
 dashboards: Grafana
 tracing: OpenTelemetry
 website: Next.js + TypeScript + Tailwind CSS
-console: React + Vite + TypeScript + Tailwind CSS + shadcn/ui
+console: React + Vite + TypeScript + Tailwind CSS + local UI primitives + lucide-react + ECharts
 client_state: Zustand
 server_state: TanStack Query
 charts: ECharts

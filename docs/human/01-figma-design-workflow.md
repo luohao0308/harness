@@ -27,9 +27,9 @@ Agent Harness Platform
 │  ├─ Security
 │  └─ Deployment
 ├─ 02 Console
-│  ├─ Task List
-│  ├─ Task Create
-│  ├─ Task Detail
+│  ├─ Agent Workspace Pro
+│  ├─ Run History
+│  ├─ Run Detail
 │  ├─ Event Timeline
 │  ├─ Subagent Panel
 │  ├─ Sandbox Panel

@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, isRouteErrorResponse, Navigate, useRouteError } from "react-router-dom";
 
 import { AgentListPage } from "../features/agents/pages/AgentListPage";
 import { AgentWorkspacePage } from "../features/agents/pages/AgentWorkspacePage";
@@ -9,26 +9,65 @@ import { ModelSettingsPage } from "../features/settings/pages/ModelSettingsPage"
 import { PolicySettingsPage } from "../features/settings/pages/PolicySettingsPage";
 import { SubagentDetailPage } from "../features/subagents/pages/SubagentDetailPage";
 import { SubagentsPage } from "../features/subagents/pages/SubagentsPage";
-import { TaskCreatePage } from "../features/tasks/pages/TaskCreatePage";
-import { TaskDetailPage } from "../features/tasks/pages/TaskDetailPage";
-import { TaskListPage } from "../features/tasks/pages/TaskListPage";
+import { RunDetailPage } from "../features/runs/pages/RunDetailPage";
+import { RunHistoryPage } from "../features/runs/pages/RunHistoryPage";
 import { ToolRegistryPage } from "../features/tools/pages/ToolRegistryPage";
 
 export const router = createBrowserRouter([
-  { path: "/", element: <Navigate to="/agents/default/chat" replace /> },
-  { path: "/agents", element: <AgentListPage /> },
-  { path: "/agents/:agentId/chat", element: <AgentWorkspacePage /> },
-  { path: "/tasks", element: <TaskListPage /> },
-  { path: "/tasks/new", element: <TaskCreatePage /> },
-  { path: "/tasks/:taskId", element: <TaskDetailPage /> },
-  { path: "/tasks/:taskId/events", element: <TaskDetailPage focus="events" /> },
-  { path: "/tasks/:taskId/subagents", element: <TaskDetailPage focus="subagents" /> },
-  { path: "/subagents", element: <SubagentsPage /> },
-  { path: "/subagents/:subagentId", element: <SubagentDetailPage /> },
-  { path: "/sandboxes", element: <SandboxesPage /> },
-  { path: "/observability", element: <ObservabilityPage /> },
-  { path: "/tools", element: <ToolRegistryPage /> },
-  { path: "/evals", element: <EvalHarnessPage /> },
-  { path: "/settings/models", element: <ModelSettingsPage /> },
-  { path: "/settings/policies", element: <PolicySettingsPage /> },
+  {
+    path: "/",
+    errorElement: <ConsoleRouteError />,
+    children: [
+      { index: true, element: <Navigate to="/agents/default/workspace" replace /> },
+      { path: "agents", element: <AgentListPage /> },
+      { path: "agents/:agentId/workspace", element: <AgentWorkspacePage /> },
+      { path: "agents/:agentId/chat", element: <Navigate to="/agents/default/workspace" replace /> },
+      { path: "runs", element: <RunHistoryPage /> },
+      { path: "runs/:runId", element: <RunDetailPage /> },
+      { path: "runs/:runId/events", element: <RunDetailPage focus="events" /> },
+      { path: "runs/:runId/subagents", element: <RunDetailPage focus="subagents" /> },
+      { path: "tasks", element: <Navigate to="/runs" replace /> },
+      { path: "subagents", element: <SubagentsPage /> },
+      { path: "subagents/:subagentId", element: <SubagentDetailPage /> },
+      { path: "sandboxes", element: <SandboxesPage /> },
+      { path: "observability", element: <ObservabilityPage /> },
+      { path: "tools", element: <ToolRegistryPage /> },
+      { path: "evals", element: <EvalHarnessPage /> },
+      { path: "settings/models", element: <ModelSettingsPage /> },
+      { path: "settings/policies", element: <PolicySettingsPage /> },
+    ],
+  },
 ]);
+
+function ConsoleRouteError() {
+  const error = useRouteError();
+  const message = isRouteErrorResponse(error)
+    ? `${error.status} ${error.statusText}`
+    : error instanceof Error
+      ? error.message
+      : "未知错误";
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-slate-900">
+      <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-panel">
+        <div className="text-base font-semibold">控制台出现异常</div>
+        <div className="mt-1 text-xs text-slate-400">Console route error</div>
+        <p className="mt-3 rounded-md bg-slate-50 p-3 text-sm text-slate-600">{message}</p>
+        <div className="mt-4 flex gap-2">
+          <a
+            href="/agents/default/workspace"
+            className="inline-flex h-8 items-center rounded-md bg-slate-900 px-3 text-xs font-medium text-white"
+          >
+            返回 Agent 工作台
+          </a>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex h-8 items-center rounded-md border border-slate-200 px-3 text-xs font-medium text-slate-700"
+          >
+            刷新页面
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

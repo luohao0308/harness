@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -40,6 +41,7 @@ class MultiAgentOrchestrator:
         self.session = session
         self.event_store = EventStore(session)
         self.last_router_decision: AgentRouterDecision | None = None
+        self.workspace_root = Path(__file__).resolve().parents[2]
 
     def orchestrate(
         self,
@@ -336,7 +338,7 @@ class MultiAgentOrchestrator:
             ).scalars()
         )
 
-        runner = ToolRunner(session=self.session)
+        runner = ToolRunner(session=self.session, workspace_root=self.workspace_root)
         for assignment in assignments:
             self.execute_assignment(run=run, assignment=assignment, runner=runner)
             if assignment.status == "FAILED":
@@ -390,7 +392,7 @@ class MultiAgentOrchestrator:
     ) -> AgentAssignment:
         if assignment.status == "SUCCESS":
             return assignment
-        runner = runner or ToolRunner(session=self.session)
+        runner = runner or ToolRunner(session=self.session, workspace_root=self.workspace_root)
         agent = self.session.get(Agent, assignment.agent_id)
         allowed_tools = list(agent.tools_json) if agent is not None else []
         tool_name, tool_input = self._assignment_tool(assignment)

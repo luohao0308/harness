@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Box, Gauge, Play } from "lucide-react";
+import { Box, Gauge, Globe2, Play, ShieldCheck, Tags } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
@@ -85,6 +85,34 @@ export function SandboxesPage() {
             />
           </div>
         </Card>
+        <section className="grid grid-cols-4 gap-3">
+          <InfraTile
+            icon={<ShieldCheck className="h-4 w-4" />}
+            title={text("多租户隔离", "Tenant Isolation")}
+            status={quota.data?.organization_id ? "API-backed" : "loading"}
+            description={text("沙箱、Run、Eval 与观测查询按 organization_id 聚合和隔离。", "Sandbox, Run, Eval, and observability queries are scoped by organization_id.")}
+          />
+          <InfraTile
+            icon={<Box className="h-4 w-4" />}
+            title="WarmPool"
+            status={`${warmPool.data?.min_size ?? "..."} / ${warmPool.data?.max_size ?? "..."}`}
+            description={text("默认 min_ready=2、max_ready=5，目标启动耗时小于 50ms。", "Default min_ready=2 and max_ready=5, with startup target below 50ms.")}
+          />
+          <InfraTile
+            icon={<Globe2 className="h-4 w-4" />}
+            title="API Gateway"
+            status={text("未启用", "Disabled")}
+            description={text("对外发布 Agent 能力的入口保留禁用态，等待 API 支撑。", "External Agent publishing entry remains disabled until API-backed.")}
+            disabled
+          />
+          <InfraTile
+            icon={<Tags className="h-4 w-4" />}
+            title={text("版本灰度", "Version Rollout")}
+            status={text("未启用", "Disabled")}
+            description={text("版本与灰度发布状态保留禁用态，不展示伪造发布数据。", "Version and rollout state stays disabled and shows no fake release data.")}
+            disabled
+          />
+        </section>
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -177,6 +205,33 @@ export function SandboxesPage() {
         </Card>
       </div>
     </ConsoleShell>
+  );
+}
+
+function InfraTile({
+  icon,
+  title,
+  status,
+  description,
+  disabled = false,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  status: string;
+  description: string;
+  disabled?: boolean;
+}) {
+  return (
+    <Card className={disabled ? "p-3 opacity-60" : "p-3"}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          {icon}
+          {title}
+        </div>
+        <Badge tone={disabled ? "neutral" : "success"}>{status}</Badge>
+      </div>
+      <p className="mt-2 min-h-12 text-xs leading-5 text-slate-500">{description}</p>
+    </Card>
   );
 }
 

@@ -447,7 +447,7 @@ export function ObservabilityPage() {
                     <tr key={item.task_id} className="border-t border-slate-100">
                       <Td>
                         <Link
-                          to={`/tasks/${item.task_id}/subagents`}
+                          to={`/runs/${item.task_id}/subagents`}
                           className="font-mono text-slate-900 hover:text-slate-950"
                         >
                           {item.task_id.slice(0, 8)}
@@ -749,7 +749,7 @@ export function ObservabilityPage() {
                     <Td>{item.event_type ? eventLabel(item.event_type) : item.message}</Td>
                     <Td className="font-mono text-[11px] text-slate-600">
                       {item.task_id ? (
-                        <Link to={`/tasks/${item.task_id}/events`} className="hover:text-slate-950">
+                        <Link to={`/runs/${item.task_id}/events`} className="hover:text-slate-950">
                           {item.task_id.slice(0, 8)}
                         </Link>
                       ) : (

@@ -1,230 +1,104 @@
-# Enterprise AI Agent Harness Platform
+# AI Harness Platform
 
-本项目是生产级企业 AI Agent Harness 平台的定稿方案与工程规范。项目采用确定技术栈、确定架构边界、确定开发顺序，文档统一收敛为正式 Spec。
-
-核心公式：
+AI Harness Platform is a production Agent infrastructure project.
 
 ```text
 Model + Harness = Agent
 ```
 
-Model 负责理解、推理和生成。Harness 负责规划、执行、隔离、恢复、审计、监控和部署。平台目标是把大模型能力工程化为企业环境中的任务执行系统。
+A model handles reasoning and generation. Harness supplies model configuration, prompt control, tools, MCP, sandbox policy, planning, execution, event sourcing, replay, eval, observability, WarmPool, and rollout operations.
 
-## 产品功能范围
+The repository keeps the public website as a public information shell. The implementation center is the Agent Console and FastAPI backend.
 
-本平台交付的是企业 Agent 运行时和控制台，不只是任务列表页面。完整功能范围如下：
+## Product Scope
 
-| 功能域 | 用户可见能力 | 技术实现落点 |
+| Module | Console Surface | Purpose |
 |---|---|---|
-| 任务生命周期 | 创建任务、查看任务、启动任务、取消任务、恢复任务、查看结果 | Task API、Task 状态机、Event Store、OpenAPI |
-| 计划与执行 | 将目标拆解为执行计划，按步骤执行，保留步骤状态 | Planner、Executor、execution_plans、task_steps |
-| 事件流 | 实时查看任务事件、断线重连、按 sequence 继续读取 | append-only agent_events、SSE、Last-Event-ID、after_sequence |
-| Replay 与恢复 | 按事件序号重放任务状态，定位失败点，生成调试摘要 | replay service、task_snapshots、Replay API |
-| Subagent 并发 | 查看子 Agent、跟踪子任务、取消子 Agent | Dramatiq worker、agent_runs、Subagent API |
-| 工具执行 | shell、文件、HTTP、测试、Git 等工具按策略执行 | Tool Registry、Policy Engine、Docker Sandbox |
-| 模型调用审计 | 查看模型供应商、模型名、token、延迟、失败与 fallback | Model Gateway、model_calls、MODEL_* 事件 |
-| 工具调用审计 | 查看工具入参、结果、耗时、策略拒绝、超时和失败 | tool_calls、TOOL_* 事件、POLICY_* 事件 |
-| 沙箱治理 | 查看沙箱实例、预热池、运行状态、终止沙箱 | Sandbox API、WarmPool、Docker manager |
-| 模型设置 | 管理模型网关、供应商、限流、健康状态 | Settings API、admin RBAC、控制台 settings/models |
-| 策略设置 | 管理工具风险、审批规则、沙箱规则、审计要求 | Settings API、Policy Matrix、控制台 settings/policies |
-| 观测与运营 | 查看任务吞吐、失败率、资源、模型与工具指标 | Prometheus、Grafana、Loki、OpenTelemetry |
-| 控制台本地化 | 默认中文，顶栏切换中文/English，技术值保留原值并展示中文说明 | React Console i18n、frontend-spec、Figma brief |
-| OpenAPI 导入 | 输出中文 OpenAPI YAML/JSON，支持 Swagger/Postman/Apifox 导入 | docs/api/openapi.yaml、docs/api/openapi.json、FastAPI schema |
+| Agent Studio | `/agents`, `/settings/models` | Build Agents from model, prompt, tools, MCP, sandbox, RAG entry, templates entry |
+| Agent Workspace | `/agents/:agentId/workspace` | Use an Agent through a single Plan surface plus Plan DAG, Event Stream, Subagents, Tool Calls, Model Calls |
+| Harness Management | `/tools`, `/sandboxes` | Manage tools, MCP, permissions, sandbox policy, DAG and trigger entries |
+| Observability | `/observability`, `/runs/:runId` | Inspect events, replay, cost, latency, health, audit trail |
+| Eval & Testing | `/evals` | Manage datasets, eval runs, regression gates, grader traces |
+| Infra | `/sandboxes`, `/settings/models` | Show WarmPool, tenant boundaries, API Gateway entry, versions and rollout state |
 
-## 实现契约
+`Agent Run` is the product execution object. The database table named `tasks` remains an internal compatibility detail during migration.
 
-研发执行必须以契约文件为准，README 只做总入口和功能地图。
-
-| 契约 | 事实源 |
-|---|---|
-| 全局 Spec 入口、优先级、变更流程 | [Harness 正式规格总入口](./docs/SPEC.md) |
-| 功能域与文档映射 | [Spec 功能索引](./docs/SPEC-INDEX.md) |
-| 新增功能文档格式 | [Spec 模板](./docs/SPEC-TEMPLATE.md) |
-| 技术实现、接口和流程进展总览 | [技术实现与流程进展总览](./docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md) |
-| API 路径、请求、响应、安全方案 | [OpenAPI YAML](./docs/api/openapi.yaml) |
-| API 人读说明 | [OpenAPI 契约](./docs/api/openapi-contract.md) |
-| 数据表、字段、索引、关系 | [数据库 Schema YAML](./docs/ai/reference/database-schema.yaml) |
-| 事件枚举、Event Store 规则 | [数据、事件与 API](./docs/ai/reference/data-events-api.md) |
-| 工具列表、输入输出、风险等级 | [Tool Registry YAML](./docs/ai/reference/tool-registry.yaml) |
-| 工具治理规则 | [Tool Registry 契约](./docs/ai/reference/tool-registry-spec.md) |
-| 角色权限、工具策略、管理权限 | [安全策略矩阵](./docs/ai/reference/security-policy-matrix.md) |
-| Planner、Executor、Subagent、Replay Prompt | [运行时 Agent Prompts](./docs/ai/reference/runtime-agent-prompts.md) |
-| 前端路由、组件、中文文案规则 | [前端规格](./docs/ai/reference/frontend-spec.md) |
-| 设计源与页面清单 | [Figma 生产 Brief](./docs/design/figma-production-brief.md) 与 [页面清单](./docs/design/page-inventory.md) |
-| 使用流程与功能联动 | [网站使用流程](./docs/human/11-website-usage-flow.md) 与 [功能文档目录](./docs/human/features/README.md) |
-| 部署、运行时目录、指标、日志 | [运行时与部署规格](./docs/ai/reference/runtime-deployment-spec.md) |
-| 阶段执行状态 | [机器可读任务进度](./docs/ai/task-progress.yaml) |
-
-## 当前实现状态
+## Active Routes
 
 ```text
-当前阶段：Spec Stage 09 Portfolio Demo + Docs
-当前状态：completed
-运行时补齐：Agent Harness 核心闭环已接入
-官网与控制台接入：已接入
-验证结果：后端 118 tests passed，前端 build passed，docs validation passed
+/agents
+/agents/:agentId/workspace
+/runs
+/runs/:runId
+/settings/models
+/tools
+/observability
+/evals
+/sandboxes
+/subagents
 ```
 
-当前已补齐 Agent Workspace、多 Agent 编排、Eval Harness、Tool / MCP Runtime、Guardrail Approval、Context Router、WarmPool Benchmark、认证、租户隔离、Docker Compose migration、事件序号并发安全、SSE 恢复、WarmPool 数据库事实源、任务生命周期、Replay、模型与工具审计查询、Settings 持久化、Subagent 创建与查询、Subagent 批量取消、Worker 接管、跨组织恢复摘要与导出、沙箱动态资源、沙箱配额审计、模型 fallback 观测、网络白名单、观测导出留存、队列摘要、Span 属性检索、中文 OpenAPI JSON/YAML 和官网公开下载入口。
-步骤级断点续跑已接入，控制台任务详情页支持从指定步骤继续执行后续未完成步骤。
+`/tasks/new` is removed from the console. `/tasks` redirects to `/runs` while compatibility routes remain.
 
-当前运行时接口：
+## Current Implementation State
 
 ```text
-GET  /api/agents
-GET  /api/agents/{agent_id}
-POST /api/agents/{agent_id}/sessions
-GET  /api/agents/{agent_id}/sessions
-POST /api/agents/sessions/{session_id}/messages
-GET  /api/agents/sessions/{session_id}/messages
-POST /api/agents/plan
-POST /api/agents/auto
-POST /api/agents/runs/{run_id}/execute
-POST /api/agents/runs/{run_id}/orchestrate
-POST /api/agents/runs/{run_id}/orchestrate/execute
-POST /api/agents/runs/{run_id}/orchestrate/enqueue
-GET  /api/agents/runs/{run_id}/assignments
-GET  /api/agents/runs/{run_id}/handoffs
-POST /api/tasks
-GET  /api/tasks
-GET  /api/tasks/{task_id}
-POST /api/tasks/{task_id}/start
-POST /api/tasks/{task_id}/cancel
-POST /api/tasks/{task_id}/resume
-GET  /api/tasks/{task_id}/result
-GET  /api/tasks/{task_id}/plan
-GET  /api/tasks/{task_id}/steps
-POST /api/tasks/{task_id}/steps/resume
-POST /api/tasks/{task_id}/replay
-GET  /api/tasks/{task_id}/context
-POST /api/tasks/{task_id}/context/route
-GET  /api/tasks/{task_id}/events
-GET  /api/tasks/{task_id}/events/stream
-GET  /api/tasks/{task_id}/subagents
-POST /api/tasks/{task_id}/subagents
-GET  /api/subagents
-POST /api/subagents/bulk
-GET  /api/subagents/recovery/summary
-GET  /api/subagents/recovery/global-summary
-GET  /api/subagents/recovery/global-summary/export
-GET  /api/subagents/{subagent_id}
-POST /api/subagents/{subagent_id}/cancel
-GET  /api/tasks/{task_id}/model-calls
-GET  /api/tasks/{task_id}/tool-calls
-POST /api/tasks/{task_id}/tools/execute
-GET  /api/tasks/{task_id}/tool-approvals
-POST /api/tasks/{task_id}/tool-approvals/{approval_id}/approve
-POST /api/tasks/{task_id}/tool-approvals/{approval_id}/reject
-GET  /api/tools/registry
-GET  /api/evals/datasets
-POST /api/evals/datasets
-POST /api/evals/datasets/{dataset_id}/cases
-POST /api/evals/datasets/{dataset_id}/cases/from-run/{task_id}
-GET  /api/evals/datasets/{dataset_id}/cases
-POST /api/evals/datasets/{dataset_id}/runs
-GET  /api/evals/runs
-GET  /api/evals/runs/{eval_run_id}
-GET  /api/sandboxes
-GET  /api/sandboxes/quota/usage
-GET  /api/sandboxes/quota/history
-GET  /api/sandboxes/warm-pool
-POST /api/sandboxes/warm-pool/benchmark
-GET  /api/sandboxes/warm-pool/benchmarks
-GET  /api/sandboxes/{sandbox_id}
-POST /api/sandboxes/{sandbox_id}/terminate
-GET  /api/observability/summary
-GET  /api/observability/logs
-GET  /api/observability/traces/{trace_id}
-GET  /api/observability/grafana/dashboards
-GET  /api/observability/services/health
-GET  /api/observability/exports
-GET  /api/observability/exports/logs
-GET  /api/observability/exports/traces/{trace_id}
-GET  /api/observability/exports/grafana/dashboards
-GET  /api/observability/exports/services/health
-GET  /api/observability/exports/history
-GET  /api/observability/exports/history/{export_id}/download
-GET  /api/settings/models
-PUT  /api/settings/models
-GET  /api/settings/models/health
-GET  /api/settings/models/fallbacks
-GET  /api/settings/policies
-PUT  /api/settings/policies
-GET  /health
-GET  /metrics
+Current stage: 06-warmpool-infra
+Current status: completed
+Website policy: retained as public shell
 ```
 
-当前代码落地状态：
+Completed in the current focused pass:
 
-| 要求 | 当前状态 | 证据 |
-|---|---|---|
-| 官网使用 Next.js | 已实现 | `apps/web-site/package.json`、`app/`、`components/`、公开 OpenAPI 文件 |
-| 控制台使用 React + Vite | 已实现 | `apps/agent-console/package.json` 使用 Vite、React、TypeScript、Tailwind CSS |
-| 后端使用 Python 3.11 + FastAPI | 已实现 | `services/api-server/pyproject.toml` 固定 `requires-python ==3.11.*` 并依赖 FastAPI |
-| 异步任务使用 Dramatiq | 已实现 | `services/api-server/app/workers/subagent_worker.py` 和 Docker Compose `agent-worker` 使用 Dramatiq |
-| 数据库使用 PostgreSQL 16 | 已接入 | Docker Compose 使用 `postgres:16-alpine`，后端使用 SQLAlchemy 与 Alembic |
-| 缓存与队列使用 Redis 7 | 已接入 | Docker Compose 使用 `redis:7-alpine`，后端依赖 Redis 与 Dramatiq broker |
-| 容器沙箱使用 Docker SDK for Python | 已实现 | 后端依赖 `docker`，存在 Docker manager、WarmPool、shell 工具沙箱路径、配额审计和网络白名单 |
-| 日志使用 Loki | 已实现 | Docker Compose 包含 Loki 和 Promtail，后端提供日志查询与标签检索 |
-| 监控使用 Prometheus + Grafana | 已实现 | Docker Compose 包含 Prometheus 和 Grafana，后端提供 `/metrics`、dashboard provisioning 和服务健康接口 |
-| 设计稿使用 Figma | 文档已约束，外部设计源未纳入仓库 | `docs/design` 中有 Figma production brief、page inventory、design tokens |
-| Gemini/H5 产物只作为视觉参考和文案参考 | 文档已约束 | 生产前端必须由 React/Next.js 组件实现，不复制 AI 生成 H5 |
-| 文档统一使用阶段、首个交付版、集成演示版和企业版 | 已覆盖 | README 与阶段文档统一使用固定术语 |
+- Agent Run creation API: `POST /api/agents/{agent_id}/runs`
+- Agent Run history API: `GET /api/agents/runs`
+- Workspace aggregate API: `GET /api/agents/runs/{run_id}/workspace`
+- Agent Workspace three-column single Plan console
+- Run History and Run Detail pages
+- MiniMax default model preset and Anthropic-compatible gateway path
+- MiniMax context metadata set to 400000 tokens
+- MiniMax built-in preset normalization migrates old persisted 204800-token settings to 400000 tokens
+- Agent Studio configuration surfaces for Model, Tools/MCP, Prompt, RAG, Templates, and Orchestration
+- Tool Runtime page surfaces Registry, Policy, Sandbox, MCP, and disabled Trigger state
+- Run Detail replay-to-sequence UI with state summary, diagnosis, and failure point
+- Eval Regression Gate with Trace Grader state and disabled A/B plus Human Review entries
+- Executor sandbox acquire/release through WarmPool path
+- WarmPool defaults set to min_ready=2 and max_ready=5
+- Sandboxes Infra display for tenant isolation, WarmPool, API Gateway, and version rollout
+- OpenAPI JSON/YAML regenerated for docs and website public assets
+- Legacy `/api/tasks/*` OpenAPI copy downgraded to deprecated Agent Run compatibility
 
-生产级增强项记录在 [实现覆盖与缺口](./docs/human/features/09-implementation-coverage.md)。README、OpenAPI、控制台页面只表述真实代码已有能力。
-
-## 固定技术栈
+Validation completed:
 
 ```text
-后端语言：Python 3.11
-API 框架：FastAPI
-数据校验：Pydantic v2
-ORM：SQLAlchemy 2.0
-数据库迁移：Alembic
-数据库：PostgreSQL 16
-缓存与队列：Redis 7
-异步任务：Dramatiq + Redis Broker
-容器沙箱：Docker SDK for Python
-事件溯源：PostgreSQL append-only event table
-日志系统：Loki
-指标系统：Prometheus + Grafana
-链路追踪：OpenTelemetry
-官网：Next.js + TypeScript + Tailwind CSS
-控制台：React + Vite + TypeScript + Tailwind CSS + shadcn/ui
-状态与请求：Zustand + TanStack Query
-图表：ECharts
-部署：Docker Compose + systemd + Nginx
-设计：Figma
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py -> 29 passed
+cd apps/agent-console && npm run build -> passed
 ```
 
-## 文档结构
+Additional validation completed:
 
-正式 Spec 面向产品、研发、设计、交付、管理人员和 AI 执行 Agent。所有变更先进入 Spec，再同步 OpenAPI、后端、前端、部署和验证。
+```text
+services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 123 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
+python3 scripts/validate-docs.py -> passed
+python3 scripts/smoke-test-docker.py -> passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py -> 15 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_tool_registry.py services/api-server/tests/test_tool_runner.py services/api-server/tests/test_tool_approvals.py services/api-server/tests/test_agents.py -> 24 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_event_store.py services/api-server/tests/test_events_stream.py services/api-server/tests/test_observability.py -> 28 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_evals.py -> 2 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_warm_pool.py services/api-server/tests/test_sandbox.py -> 11 passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 123 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
+cd apps/agent-console && npm run build -> passed
+python3 scripts/validate-docs.py -> passed
+python3 scripts/smoke-test-docker.py -> passed
+git diff --check -> passed
+Docker runtime verification -> MiniMax healthy/probe and context 400000
+```
 
-- [Harness 正式规格总入口](./docs/SPEC.md)
-- [Spec 功能索引](./docs/SPEC-INDEX.md)
-- [Spec 模板](./docs/SPEC-TEMPLATE.md)
-- [技术实现与流程进展总览](./docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md)
+## Spec Documents
 
-人读文档面向产品、研发、设计、交付和管理人员，强调业务理解、系统边界、研发流程和验收标准。
-
-- [人读文档入口](./docs/human/README.md)
-- [GitHub 与 Git 工作流](./docs/human/00-git-github-workflow.md)
-- [Figma 设计工作流](./docs/human/01-figma-design-workflow.md)
-- [产品定位](./docs/human/02-product-positioning.md)
-- [总体架构](./docs/human/03-system-architecture.md)
-- [研发流程](./docs/human/04-development-flow.md)
-- [官网与控制台](./docs/human/05-frontend-product.md)
-- [后端与运行时](./docs/human/06-backend-runtime.md)
-- [部署与运营](./docs/human/07-deployment-operations.md)
-- [路线图与验收](./docs/human/08-roadmap-acceptance.md)
-- [技术落地流程](./docs/human/09-technology-operation-flows.md)
-- [任务进度看板](./docs/human/10-task-progress.md)
-- [网站使用流程](./docs/human/11-website-usage-flow.md)
-- [功能文档目录](./docs/human/features/README.md)
-
-AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，强调唯一事实源、固定目录、接口契约、事件枚举、任务顺序和禁止事项。
-
+- [Harness Platform Spec](./docs/SPEC.md)
 - [Product Spec](./docs/00-product-spec.md)
 - [System Architecture](./docs/01-system-architecture.md)
 - [Data Model And Event Spec](./docs/02-data-model-and-event-spec.md)
@@ -237,119 +111,53 @@ AI 读文档面向代码代理、自动化实现工具和工程执行 Agent，�
 - [Benchmark Spec](./docs/09-benchmark-spec.md)
 - [Portfolio Demo Spec](./docs/10-portfolio-demo-spec.md)
 - [Spec Mode Task Progress](./docs/task-progress.md)
-- [AI 读文档入口](./docs/ai/README.md)
-- [AI Master Prompt](./docs/ai/00-master-prompt.md)
-- [执行协议](./docs/ai/00-execution-protocol.md)
-- [任务进度](./docs/ai/01-task-progress.md)
-- [机器可读任务进度](./docs/ai/task-progress.yaml)
-- [人读任务进度看板](./docs/human/10-task-progress.md)
-- [阶段 01：Agent Graph Runtime](./docs/ai/stages/01-agent-graph-runtime.md)
-- [阶段 02：Event Store + Recovery](./docs/ai/stages/02-event-store-recovery.md)
-- [阶段 03：Agent Run Console](./docs/ai/stages/03-agent-run-console.md)
-- [阶段 04：Tool / MCP Runtime](./docs/ai/stages/04-tool-mcp-runtime.md)
-- [阶段 05：Guardrail / Policy Engine](./docs/ai/stages/05-guardrail-policy-engine.md)
-- [阶段 06：Eval Harness](./docs/ai/stages/06-eval-harness.md)
-- [阶段 07：Memory / Context / Model Routing](./docs/ai/stages/07-memory-context-router.md)
-- [阶段 08：WarmPool + Benchmark](./docs/ai/stages/08-warmpool-benchmark.md)
-- [阶段 09：Portfolio Demo + Docs](./docs/ai/stages/09-portfolio-demo-docs.md)
-- [运行时 Agent Prompts](./docs/ai/reference/runtime-agent-prompts.md)
-- [Tool Registry 契约](./docs/ai/reference/tool-registry-spec.md)
-- [Tool Registry YAML](./docs/ai/reference/tool-registry.yaml)
-- [Prompt 契约 YAML](./docs/ai/reference/prompt-contracts.yaml)
-- [安全策略矩阵](./docs/ai/reference/security-policy-matrix.md)
-- [数据库 ERD 与迁移规则](./docs/ai/reference/database-erd-migrations.md)
-- [数据库 Schema YAML](./docs/ai/reference/database-schema.yaml)
-- [OpenAPI 契约](./docs/api/openapi-contract.md)
-- [OpenAPI YAML](./docs/api/openapi.yaml)
-- [Prompt Eval Cases](./docs/evals/prompt-eval-cases.yaml)
-- [Prompt Eval Runbook](./docs/evals/prompt-eval-runbook.md)
-- [Eval Harness Report](./docs/reports/eval-report.md)
-- [WarmPool Benchmark Report](./docs/reports/benchmark-report.md)
-- [AI Harness Engineer Capability Map](./docs/reports/ai-harness-engineer-capability-map.md)
-- [Python Agent SDK Example](./docs/sdk/python-agent-sdk-example.md)
-- [安全威胁模型](./docs/security/threat-model.md)
-- [QA 测试策略](./docs/qa/test-strategy.md)
-- [端到端 Demo 剧本](./docs/demo/e2e-demo-script.md)
-- [Portfolio Demo Guide](./docs/demo/portfolio-demo-guide.md)
-- [Demo Video And GIF Recording Plan](./docs/demo/video-gif-recording-plan.md)
-- [本地开发 Runbook](./docs/runbooks/local-development.md)
-- [部署 Runbook](./docs/runbooks/deployment.md)
-- [迁移 Runbook](./docs/runbooks/migrations.md)
-- [回滚 Runbook](./docs/runbooks/rollback.md)
-- [排障 Runbook](./docs/runbooks/troubleshooting.md)
-- [ADR 目录](./docs/adr/0001-record-architecture-decisions.md)
+- [AI Execution Docs](./docs/ai/README.md)
+- [AI Execution Protocol](./docs/ai/00-execution-protocol.md)
+- [AI Task Progress](./docs/ai/01-task-progress.md)
+- [Machine Task Progress](./docs/ai/task-progress.yaml)
+- [Human Task Progress](./docs/human/10-task-progress.md)
 
-## 项目结构
+## Active Stage Specs
+
+- [Stage 01: Agent Workspace Three-Column Console](./docs/ai/stages/01-agent-workspace-console.md)
+- [Stage 02: Agent Studio Configuration Loop](./docs/ai/stages/02-agent-studio-config.md)
+- [Stage 03: Harness Management And Tool MCP Runtime](./docs/ai/stages/03-harness-tool-mcp.md)
+- [Stage 04: Event Sourcing And Replay UI](./docs/ai/stages/04-event-sourcing-replay-ui.md)
+- [Stage 05: Eval And Regression Harness](./docs/ai/stages/05-eval-regression.md)
+- [Stage 06: WarmPool And Infra Display](./docs/ai/stages/06-warmpool-infra.md)
+
+## Technical Stack
+
+```text
+Backend: Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic
+Database: PostgreSQL 16
+Queue: Redis 7, Dramatiq
+Sandbox: Docker SDK for Python, WarmPool
+Observability: Prometheus, Grafana, Loki, OpenTelemetry
+Console: React, Vite, TypeScript, Tailwind CSS
+Website: Next.js, TypeScript, Tailwind CSS
+Deployment: Docker Compose, systemd, Nginx
+```
+
+## Project Structure
 
 ```text
 harness/
-├─ README.md
-├─ .env.example
+├─ apps/
+│  ├─ agent-console/
+│  └─ web-site/
+├─ services/
+│  └─ api-server/
 ├─ docs/
 │  ├─ ai/
 │  ├─ human/
-│  ├─ design/
 │  ├─ api/
-│  ├─ evals/
-│  ├─ security/
-│  ├─ qa/
 │  ├─ demo/
-│  ├─ runbooks/
-│  └─ adr/
-├─ apps/
-│  ├─ web-site/
-│  │  └─ .env.example
-│  └─ agent-console/
-│     └─ .env.example
-├─ services/
-│  ├─ api-server/
-│  │  └─ .env.example
-│  └─ sandbox-worker/
+│  ├─ evals/
+│  ├─ qa/
+│  ├─ reports/
+│  └─ runbooks/
 ├─ deploy/
-│  ├─ docker-compose/
-│  │  └─ .env.example
-│  ├─ systemd/
-│  ├─ nginx/
-│  └─ monitoring/
+│  └─ docker-compose/
 └─ scripts/
-   ├─ check-docs.sh
-   ├─ check-env.sh
-   └─ validate-docs.py
 ```
-
-## 执行顺序
-
-```text
-阶段 01：Agent Graph Runtime
-阶段 02：Event Store + Recovery
-阶段 03：Agent Run Console
-阶段 04：Tool / MCP Runtime
-阶段 05：Guardrail / Policy Engine
-阶段 06：Eval Harness
-阶段 07：Memory / Context / Model Routing
-阶段 08：WarmPool + Benchmark
-阶段 09：Portfolio Demo + Docs
-```
-
-## 交付版本术语
-
-```text
-阶段：工程执行顺序，必须按 docs/ai/task-progress.yaml 推进。
-首个交付版：Docker Compose + systemd + Nginx + PostgreSQL + Redis + Prometheus + Grafana + Loki 的单环境交付形态。
-集成演示版：接入 OpenAI-compatible Model Gateway、完整控制台演示、端到端任务链路和观测演示。
-企业版：多组织、多用户、完整 RBAC、API Key 管理、审计导出、私有模型接入、Webhook、成本统计、备份与恢复。
-```
-
-## 对外表述
-
-正式官网使用以下表述：
-
-```text
-生产级企业 AI Agent Harness 平台
-```
-
-```text
-将大模型能力工程化为具备审计、恢复、隔离、并发编排和私有化部署能力的企业任务执行系统。
-```
-
-正式材料禁止把“复现 Claude Code”作为主宣传语。内部技术材料使用“参考现代 Agentic Coding 产品的 Planner、Executor、Subagent、事件流和工具执行范式”描述来源。

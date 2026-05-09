@@ -14,9 +14,9 @@ Agent Harness Platform
 │  ├─ Security
 │  └─ Deployment
 ├─ 02 Console
-│  ├─ Task List
-│  ├─ Task Create
-│  ├─ Task Detail
+│  ├─ Agent Workspace Pro
+│  ├─ Run History
+│  ├─ Run Detail
 │  ├─ Event Timeline
 │  ├─ Subagent Panel
 │  ├─ Sandbox Panel
@@ -100,7 +100,7 @@ Contact
 
 ## Console Layout
 
-控制台使用 React + Vite + TypeScript + Tailwind CSS + shadcn/ui。布局必须是密集企业工具界面，不使用营销型大 Hero。
+控制台使用 React + Vite + TypeScript + Tailwind CSS、本地 UI primitives、lucide-react 和 ECharts。历史设计中出现的 shadcn/ui 名称只代表设计系统目标，不是当前实现依赖。布局必须是密集企业工具界面，不使用营销型大 Hero。
 
 全局布局：
 
@@ -131,29 +131,29 @@ Contact
 
 | Figma Page | Route | Required Content |
 |---|---|---|
-| Task List | `/tasks` | 任务表格、状态筛选、模型筛选、创建入口、最近事件摘要 |
-| Task Create | `/tasks/new` | 目标输入、约束输入、模型选择、工具策略、提交确认 |
-| Task Detail | `/tasks/:taskId` | 状态、Execution Plan、Event Timeline、Executor 输出、结果产物 |
-| Event Timeline | `/tasks/:taskId/events` | 事件流、事件类型、payload 摘要、重放定位 |
-| Subagent Panel | `/tasks/:taskId/subagents` | Subagent 状态、分配任务、结果摘要、失败原因 |
+| Agent Workspace Pro | `/agents/:agentId/workspace` | 三栏 Plan-Act surface、Conversation Tree、Tool Tray、Artifacts、Approvals |
+| Run History | `/runs` | Agent Run 表格、状态筛选、模型筛选、最近事件摘要 |
+| Run Detail | `/runs/:runId` | 状态、Execution Plan、Event Timeline、Executor 输出、结果产物 |
+| Event Timeline | `/runs/:runId/events` | 事件流、事件类型、payload 摘要、重放定位 |
+| Subagent Panel | `/runs/:runId/subagents` | Subagent 状态、分配任务、结果摘要、失败原因 |
 | Sandbox Panel | `/sandboxes` | Docker Sandbox 实例、WarmPool、资源占用、回收状态 |
 | Observability | `/observability` | 任务吞吐、失败率、模型调用、工具执行、资源指标 |
 | Model Settings | `/settings/models` | Model Gateway 配置、供应商、限流、健康状态 |
 | Policy Settings | `/settings/policies` | 工具风险等级、审批策略、沙箱策略、审计要求 |
 
-## Task Detail Layout
+## Run Detail Layout
 
 ```text
-Top Bar: task id, task status, duration, retry/cancel actions
+Top Bar: run id, run status, duration, retry/cancel actions
 Left Panel: ExecutionPlanPanel
 Center Panel: EventTimeline and Executor output
 Right Panel: SubagentPanel, SandboxPanel, ModelCallPanel, ResourceUsageChart
-Bottom Panel: TaskResultPanel and artifacts
+Bottom Panel: Run result and artifacts
 ```
 
 ## Components
 
-组件必须在 Figma 的 `03 Components` 中维护变体，并在前端通过 shadcn/ui、lucide-react、Tailwind CSS 重建。
+组件必须在 Figma 的 `03 Components` 中维护变体，并在前端通过本地 UI primitives、lucide-react、Tailwind CSS 重建。shadcn/ui 是历史设计目标引用，不是当前控制台依赖。
 
 组件清单：
 
@@ -188,6 +188,6 @@ warning
 - `docs/design/page-inventory.md` 是页面交付清单。
 - 官网生产实现使用 Next.js；控制台生产实现使用 React + Vite。
 - Gemini/H5 产物不得直接复制进生产代码。
-- 控制台必须保留 Task Detail、Event Timeline、Subagent、Sandbox、WarmPool 等运行时概念。
+- 控制台必须保留 Run Detail、Event Timeline、Subagent、Sandbox、WarmPool 等运行时概念。
 - 状态 badge 必须使用固定状态枚举和状态色。
 - 所有复杂运行状态必须有 loading、empty、error、success 展示。

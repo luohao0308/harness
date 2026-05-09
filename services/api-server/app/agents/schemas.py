@@ -35,4 +35,4 @@ class StepResult(BaseModel):
     status: Literal["STEP_COMPLETED", "STEP_FAILED"]
     summary: str
     tool_calls: list[dict] = Field(default_factory=list)
-    next_action: Literal["continue", "stop", "spawn_subagent"] = "continue"
+    next_action: Literal["continue", "stop", "spawn_subagent", "await_approval"] = "continue"

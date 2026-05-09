@@ -60,6 +60,70 @@ EVAL_DATASET_CREATED, EVAL_CASE_CREATED, EVAL_RUN_STARTED, EVAL_CASE_GRADED,
 EVAL_RUN_COMPLETED, EVAL_RUN_FAILED
 ```
 
+
+## Workspace Pro UI State Model
+
+Workspace Pro stores conversation graph state in the frontend and sends selected nodes to the API. Durable execution truth remains in Agent Run, Event Store, ModelCall, ToolCall, ToolApproval, and artifact projections.
+
+### Conversation Node
+
+```json
+{
+  "id": "string",
+  "parent_id": "string|null",
+  "children_ids": [],
+  "role": "user|assistant|system|tool",
+  "content": "string",
+  "state": "draft|streaming|paused|done|error",
+  "run_id": "string|null",
+  "metadata": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": "0.0000",
+    "ttfb_ms": 0,
+    "duration_ms": 0
+  },
+  "tool_calls": [],
+  "artifacts": []
+}
+```
+
+### Workspace Store
+
+```json
+{
+  "nodesById": {},
+  "rootNodeId": "string",
+  "activeLeafId": "string",
+  "pinnedNodeIds": [],
+  "contextWindowTurns": 8,
+  "activeStream": {
+    "run_id": "string",
+    "assistant_node_id": "string",
+    "started_at": "iso8601"
+  }
+}
+```
+
+Historical user-message edits create a new child branch. The previous branch remains reachable through its leaf id.
+
+## Workspace Stream Event Types
+
+Workspace stream events may be persisted as event-store facts when they affect audit, recovery, or approval state:
+
+```text
+WORKSPACE_STREAM_STARTED, WORKSPACE_DELTA_EMITTED, WORKSPACE_THINK_DELTA_EMITTED,
+WORKSPACE_STREAM_PAUSED, WORKSPACE_STREAM_CONTINUED, WORKSPACE_STREAM_COMPLETED,
+WORKSPACE_ARTIFACT_CREATED, WORKSPACE_USAGE_RECORDED
+```
+
+Tool approval events:
+
+```text
+TOOL_APPROVAL_REQUESTED, TOOL_APPROVAL_APPROVED, TOOL_APPROVAL_REJECTED,
+TOOL_APPROVAL_MODIFIED_APPROVED
+```
+
 ## Tool Call Record
 
 ```json

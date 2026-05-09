@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -20,6 +21,7 @@ from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
 from app.observability.metrics import agent_tasks_failed_total
+from app.sandbox.warm_pool import WarmPoolManager
 from app.tools.runner import ToolRunner
 
 PLANNER_SYSTEM_PROMPT = f"""You are the Planner inside an enterprise AI Agent Harness platform.
@@ -94,6 +96,7 @@ class Executor:
         self.session = session
         self.planner = planner or DeterministicPlanner()
         self.event_store = EventStore(session)
+        self.workspace_root = Path(__file__).resolve().parents[2]
 
     def start_task(self, task: Task) -> Task:
         task.status = "PLANNING"
@@ -196,15 +199,7 @@ class Executor:
         for step in plan.steps:
             result = self._execute_step(task, plan_row, step)
             if result.status == "STEP_FAILED":
-                task.status = "FAILED"
-                task.updated_at = utc_now()
-                self.event_store.append(
-                    task_id=task.id,
-                    event_type=EventType.TASK_FAILED,
-                    payload_json={"failed_step": step.key, "summary": result.summary},
-                )
-                agent_tasks_failed_total.inc()
-                self.session.flush()
+                self._apply_step_failure(task=task, step=step, result=result)
                 return task
 
         task.status = "COMPLETED"
@@ -241,15 +236,7 @@ class Executor:
         for step in plan.steps:
             result = self._execute_step(task, plan_row, step)
             if result.status == "STEP_FAILED":
-                task.status = "FAILED"
-                task.updated_at = utc_now()
-                self.event_store.append(
-                    task_id=task.id,
-                    event_type=EventType.TASK_FAILED,
-                    payload_json={"failed_step": step.key, "summary": result.summary},
-                )
-                agent_tasks_failed_total.inc()
-                self.session.flush()
+                self._apply_step_failure(task=task, step=step, result=result)
                 return task
 
         task.status = "COMPLETED"
@@ -304,15 +291,7 @@ class Executor:
             )
             result = self._execute_step(task, plan_row, step)
             if result.status == "STEP_FAILED":
-                task.status = "FAILED"
-                task.updated_at = utc_now()
-                self.event_store.append(
-                    task_id=task.id,
-                    event_type=EventType.TASK_FAILED,
-                    payload_json={"failed_step": step.key, "summary": result.summary},
-                )
-                agent_tasks_failed_total.inc()
-                self.session.flush()
+                self._apply_step_failure(task=task, step=step, result=result)
                 return task
 
         task.status = "COMPLETED"
@@ -391,20 +370,15 @@ class Executor:
             if result.status == "STEP_FAILED":
                 failed_step_key = step.key
                 error_message = result.summary
-                task.status = "FAILED"
-                task.updated_at = utc_now()
-                self.event_store.append(
-                    task_id=task.id,
-                    event_type=EventType.TASK_FAILED,
-                    payload_json={
-                        "failed_step": step.key,
-                        "summary": result.summary,
+                self._apply_step_failure(
+                    task=task,
+                    step=step,
+                    result=result,
+                    extra_payload={
                         "resume_mode": resume_mode,
                         "resume_from_step_key": resume_from_step_key,
                     },
                 )
-                agent_tasks_failed_total.inc()
-                self.session.flush()
                 return self._step_resume_outcome(
                     task=task,
                     plan=plan,
@@ -466,6 +440,34 @@ class Executor:
             failed_step_key=failed_step_key,
             error_message=error_message,
         )
+
+    def _apply_step_failure(
+        self,
+        *,
+        task: Task,
+        step: PlanStep,
+        result: StepResult,
+        extra_payload: dict | None = None,
+    ) -> None:
+        awaiting_approval = result.next_action == "await_approval"
+        task.status = "WAITING_APPROVAL" if awaiting_approval else "FAILED"
+        task.updated_at = utc_now()
+        payload = {
+            "failed_step": step.key,
+            "summary": result.summary,
+            **(extra_payload or {}),
+        }
+        if awaiting_approval:
+            payload["awaiting_approval"] = True
+            payload["trace_summary"] = "工具调用需要人工审批，Run 已暂停等待批准。"
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.TASK_FAILED,
+            payload_json=payload,
+        )
+        if not awaiting_approval:
+            agent_tasks_failed_total.inc()
+        self.session.flush()
 
     def _step_resume_outcome(
         self,
@@ -653,16 +655,28 @@ class Executor:
             if step.requires_sandbox
             else {"path": "pyproject.toml"}
         )
-        execution = ToolRunner(session=self.session).execute(
-            task_id=task.id,
-            tool_name=tool_name,
-            input_json={
-                **tool_input,
-                "step_key": step.key,
-                "description": step.description,
-            },
-        )
+        sandbox = None
+        try:
+            if step.requires_sandbox and task.enable_sandbox:
+                sandbox = WarmPoolManager().acquire(session=self.session, task_id=task.id)
+            execution = ToolRunner(
+                session=self.session,
+                workspace_root=self.workspace_root,
+            ).execute(
+                task_id=task.id,
+                tool_name=tool_name,
+                input_json={
+                    **tool_input,
+                    "step_key": step.key,
+                    "description": step.description,
+                },
+                sandbox=sandbox,
+            )
+        finally:
+            if sandbox is not None:
+                WarmPoolManager().release(session=self.session, sandbox=sandbox)
         if not execution.allowed or execution.tool_call.status != "SUCCESS":
+            awaiting_approval = execution.tool_call.status == "PENDING_APPROVAL"
             result = StepResult(
                 step_key=step.key,
                 status="STEP_FAILED",
@@ -673,7 +687,7 @@ class Executor:
                         "tool_name": tool_name,
                     }
                 ],
-                next_action="stop",
+                next_action="await_approval" if awaiting_approval else "stop",
             )
             step_row.status = result.status
             step_row.error_message = result.summary
@@ -685,6 +699,8 @@ class Executor:
                     "step_id": step_row.id,
                     "step_key": step.key,
                     "summary": result.summary,
+                    "awaiting_approval": awaiting_approval,
+                    "tool_call_id": execution.tool_call.id,
                 },
             )
             self.session.flush()
