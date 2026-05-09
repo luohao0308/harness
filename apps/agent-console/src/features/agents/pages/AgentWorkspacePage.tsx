@@ -47,6 +47,7 @@ import {
   type ConversationArtifact,
   type ConversationNode,
 } from "../../../stores/workspaceStore";
+import { extractArtifactsFromNode } from "../workspaceArtifacts";
 
 export function AgentWorkspacePage() {
   const { text } = useI18n();
@@ -70,6 +71,8 @@ export function AgentWorkspacePage() {
   const updateNode = useWorkspaceStore((state) => state.updateNode);
   const togglePinned = useWorkspaceStore((state) => state.togglePinned);
   const startEdit = useWorkspaceStore((state) => state.startEdit);
+  const getSiblings = useWorkspaceStore((state) => state.getSiblings);
+  const switchToBranch = useWorkspaceStore((state) => state.switchToBranch);
   const setActiveStream = useWorkspaceStore((state) => state.setActiveStream);
   const draftFromNodeId = useWorkspaceStore((state) => state.draftFromNodeId);
 
@@ -325,8 +328,10 @@ export function AgentWorkspacePage() {
                     key={node.id}
                     node={node}
                     pinned={pinnedNodeIds.includes(node.id)}
+                    siblings={getSiblings(node.id)}
                     onPin={() => togglePinned(node.id)}
                     onEdit={() => startEdit(node.id)}
+                    onSwitchBranch={(nodeId) => switchToBranch(nodeId)}
                   />
                 ))}
                 <div ref={messagesEndRef} />
@@ -490,13 +495,17 @@ function Explorer({
 function Message({
   node,
   pinned,
+  siblings,
   onPin,
   onEdit,
+  onSwitchBranch,
 }: {
   node: ConversationNode;
   pinned: boolean;
+  siblings: ConversationNode[];
   onPin: () => void;
   onEdit: () => void;
+  onSwitchBranch: (nodeId: string) => void;
 }) {
   const isUser = node.role === "user";
   const thinkBlocks = extractThinkBlocks(node.content);
@@ -533,6 +542,9 @@ function Message({
           {node.metadata.input_tokens !== undefined && <span>{node.metadata.input_tokens} in</span>}
           {node.metadata.output_tokens !== undefined && <span>{node.metadata.output_tokens} out</span>}
           {node.metadata.duration_ms !== undefined && <span>{node.metadata.duration_ms}ms</span>}
+          {siblings.length > 1 && (
+            <BranchSwitcher activeNodeId={node.id} siblings={siblings} onSwitchBranch={onSwitchBranch} />
+          )}
           <button type="button" onClick={onPin} className={pinned ? "text-slate-900" : "hover:text-slate-700"}>
             Pin
           </button>
@@ -547,6 +559,36 @@ function Message({
         </div>
       )}
     </div>
+  );
+}
+
+function BranchSwitcher({
+  activeNodeId,
+  siblings,
+  onSwitchBranch,
+}: {
+  activeNodeId: string;
+  siblings: ConversationNode[];
+  onSwitchBranch: (nodeId: string) => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5">
+      <GitBranch className="h-3 w-3" />
+      {siblings.map((sibling, index) => (
+        <button
+          key={sibling.id}
+          type="button"
+          onClick={() => onSwitchBranch(sibling.id)}
+          className={cn(
+            "rounded-full px-1.5 py-0.5 font-mono",
+            sibling.id === activeNodeId ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900",
+          )}
+          title={sibling.content.slice(0, 80) || sibling.id}
+        >
+          {index + 1}
+        </button>
+      ))}
+    </span>
   );
 }
 
@@ -776,6 +818,7 @@ function buildContextPreview(nodes: ConversationNode[], pinnedNodeIds: string[],
 
 function collectArtifacts(nodes: ConversationNode[], workspace?: AgentRunWorkspace) {
   const nodeArtifacts = nodes.flatMap((node) => node.artifacts);
+  const extractedArtifacts = nodes.flatMap((node) => extractArtifactsFromNode(node));
   const planArtifact: ConversationArtifact[] = workspace?.plan
     ? [
         {
@@ -788,7 +831,13 @@ function collectArtifacts(nodes: ConversationNode[], workspace?: AgentRunWorkspa
         },
       ]
     : [];
-  return [...nodeArtifacts, ...planArtifact];
+  return dedupeArtifacts([...nodeArtifacts, ...extractedArtifacts, ...planArtifact]);
+}
+
+function dedupeArtifacts(artifacts: ConversationArtifact[]) {
+  const byId = new Map<string, ConversationArtifact>();
+  artifacts.forEach((artifact) => byId.set(artifact.id, artifact));
+  return [...byId.values()];
 }
 
 type UsageSummary = {
