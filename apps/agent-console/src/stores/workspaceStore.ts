@@ -23,9 +23,12 @@ export type ConversationNode = {
   metadata: {
     input_tokens?: number;
     output_tokens?: number;
-    cost_usd?: string;
+    cost_usd?: string | null;
+    cost_unavailable?: boolean;
     ttfb_ms?: number;
     duration_ms?: number;
+    model_call_id?: string | null;
+    active_branch_id?: string | null;
   };
   tool_calls: Array<Record<string, unknown>>;
   artifacts: ConversationArtifact[];

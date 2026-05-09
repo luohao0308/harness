@@ -67,6 +67,8 @@ from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.security.auth import Principal, require_role
+from app.tools.registry import ToolMetadata, ToolRegistry
+from app.tools.runner import ToolExecution, ToolRunner
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -328,6 +330,39 @@ def stream_agent_chat_run(
         content_length = sum(len(node.content) for node in [*pinned_nodes, *carried])
         return max(1, content_length // 4)
 
+    def requested_tool_payload(
+        mention,
+        metadata: ToolMetadata,
+        tool_call_id: str,
+        status: str,
+    ) -> dict:
+        return {
+            "tool_call_id": tool_call_id,
+            "tool_name": mention.name,
+            "source": mention.source or metadata.source,
+            "status": status,
+            "input_json": mention.payload,
+            "risk": metadata.category,
+            "sandbox": "sandboxed" if metadata.requires_sandbox else "none",
+        }
+
+    def result_payload(execution: ToolExecution, tool_call_id: str) -> dict:
+        tool_call = execution.tool_call
+        output_json = tool_call.output_json if isinstance(tool_call.output_json, dict) else {}
+        payload = {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_call.tool_name,
+            "status": _workspace_tool_status(tool_call.status),
+            "output_summary": _tool_output_summary(tool_call, output_json),
+            "output_json": output_json,
+            "duration_ms": tool_call.duration_ms,
+            "trace_id": _trace_id_for_tool_call(tool_call.id, session=session),
+        }
+        approval_id = output_json.get("approval_id")
+        if isinstance(approval_id, str):
+            payload["approval_id"] = approval_id
+        return payload
+
     def iterator() -> Iterator[str]:
         started_at = time.monotonic()
         first_byte_at = time.monotonic()
@@ -337,37 +372,110 @@ def stream_agent_chat_run(
             {
                 "content": "已读取当前分支、Pinned 消息和上下文窗口，准备生成可审计计划。\n",
                 "active_leaf_id": request.active_leaf_id,
+                "active_branch_id": request.active_branch_id,
                 "pinned_node_ids": request.pinned_node_ids,
                 "context_window_turns": request.context_window_turns,
             },
         )
-        if request.tool_mentions:
-            for mention in request.tool_mentions:
+        try:
+            if request.run_id:
+                existing_run = _owned_run(
+                    run_id=request.run_id,
+                    session=session,
+                    principal=principal,
+                )
+                planned = _agent_plan_response_from_run(
+                    agent_id=agent_id,
+                    run=existing_run,
+                    session=session,
+                    message_prefix="已继续原 Run",
+                )
+            else:
+                payload = AgentPlanRequest(
+                    agent_id=agent_id,
+                    goal=goal,
+                    title=None,
+                    model_provider="default",
+                    model_name="default",
+                    max_runtime_seconds=1800,
+                    max_subagents=5,
+                    enable_sandbox=True,
+                    enable_network=False,
+                )
+                planned = plan_with_agent(request=payload, session=session, principal=principal)
+        except HTTPException as exc:
+            if request.run_id:
                 yield sse(
-                    "tool_call_requested",
+                    "error",
                     {
-                        "tool_name": mention.name,
-                        "source": mention.source,
-                        "input_json": mention.payload,
-                        "status": "preview",
+                        "message": f"run_id cannot be continued: {request.run_id}",
+                        "recoverable": True,
+                        "run_id": request.run_id,
                     },
                 )
-        try:
-            payload = AgentPlanRequest(
-                agent_id=agent_id,
-                goal=goal,
-                title=None,
-                model_provider="default",
-                model_name="default",
-                max_runtime_seconds=1800,
-                max_subagents=5,
-                enable_sandbox=True,
-                enable_network=False,
-            )
-            planned = plan_with_agent(request=payload, session=session, principal=principal)
-        except Exception as exc:
-            yield sse("error", {"message": str(exc)})
+                return
+            yield sse("error", {"message": str(exc.detail), "recoverable": True})
             return
+        except Exception as exc:
+            yield sse("error", {"message": str(exc), "recoverable": False})
+            return
+        registry = ToolRegistry.default()
+        runner = ToolRunner(session=session, registry=registry)
+        if request.tool_mentions:
+            for index, mention in enumerate(request.tool_mentions):
+                metadata = registry.tools.get(mention.name)
+                tool_call_id = f"workspace-tool-{planned.run_id}-{index}"
+                if metadata is None:
+                    yield sse(
+                        "tool_call_requested",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": mention.name,
+                            "source": mention.source,
+                            "input_json": mention.payload,
+                            "status": "failed",
+                            "risk": "unknown",
+                            "sandbox": "none",
+                        },
+                    )
+                    yield sse(
+                        "tool_call_result",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": mention.name,
+                            "status": "failed",
+                            "output_summary": "unknown tool",
+                            "output_json": {},
+                            "duration_ms": 0,
+                            "trace_id": None,
+                        },
+                    )
+                    continue
+                executable = (
+                    metadata.risk_level == "low"
+                    and metadata.idempotent
+                    and not metadata.requires_sandbox
+                    and metadata.network_policy in {"none", "restricted"}
+                )
+                if not executable:
+                    yield sse(
+                        "tool_call_requested",
+                        requested_tool_payload(mention, metadata, tool_call_id, "pending_approval"),
+                    )
+                    continue
+                yield sse(
+                    "tool_call_requested",
+                    requested_tool_payload(mention, metadata, tool_call_id, "running"),
+                )
+                execution = runner.execute(
+                    task_id=planned.run_id,
+                    agent_run_id=planned.run_id,
+                    tool_name=mention.name,
+                    input_json=_normalize_tool_mention_payload(mention.name, mention.payload, goal),
+                    roles=principal.roles,
+                )
+                session.commit()
+                yield sse("tool_call_result", result_payload(execution, tool_call_id))
         plan_json = planned.plan.plan_json
         summary = planned.plan.summary or planned.message
         yield sse("delta", {"content": f"{summary}\n"})
@@ -387,15 +495,19 @@ def stream_agent_chat_run(
             {
                 "input_tokens": estimated_input_tokens(),
                 "output_tokens": output_tokens,
-                "cost_usd": "0",
+                "cost_usd": None,
+                "cost_unavailable": True,
                 "ttfb_ms": int((first_byte_at - started_at) * 1000),
                 "duration_ms": int((time.monotonic() - started_at) * 1000),
+                "model_call_id": _latest_model_call_id(planned.run_id, session=session),
             },
         )
         yield sse(
             "done",
             {
                 "run_id": planned.run_id,
+                "active_branch_id": request.active_branch_id,
+                "continue_from_node_id": request.continue_from_node_id,
                 "status": planned.task.status,
                 "step_count": len(planned.plan.steps),
                 "message": planned.message,
@@ -962,6 +1074,53 @@ def _latest_plan(*, run_id: str, session: Session) -> ExecutionPlan | None:
     ).scalar_one_or_none()
 
 
+def _latest_model_call_id(run_id: str, *, session: Session) -> str | None:
+    model_call = session.execute(
+        select(ModelCall)
+        .where(ModelCall.task_id == run_id)
+        .order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
+    ).scalars().first()
+    return model_call.id if model_call is not None else None
+
+
+def _agent_plan_response_from_run(
+    *,
+    agent_id: str,
+    run: Task,
+    session: Session,
+    message_prefix: str,
+) -> AgentPlanResponse:
+    plan = _latest_plan(run_id=run.id, session=session)
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent Run 尚未规划")
+    return AgentPlanResponse(
+        agent_id=agent_id,
+        run_id=run.id,
+        task=run,
+        plan=_plan_response(plan),
+        message=f"{message_prefix} {run.id}，当前未执行新的规划。",
+    )
+
+
+def _normalize_tool_mention_payload(tool_name: str, payload: dict, goal: str) -> dict:
+    if tool_name == "mcp_context_search" and "query" not in payload:
+        return {**payload, "query": goal, "limit": int(payload.get("limit", 5) or 5)}
+    if tool_name == "list_files" and "root" not in payload:
+        return {**payload, "root": ".", "glob": str(payload.get("glob", "**/*"))}
+    if tool_name == "read_file" and "path" not in payload:
+        return {**payload, "path": "README.md"}
+    return payload
+
+
+def _trace_id_for_tool_call(tool_call_id: str, *, session: Session) -> str | None:
+    event = session.execute(
+        select(AgentEvent)
+        .where(AgentEvent.payload_json["tool_call_id"].as_string() == tool_call_id)
+        .order_by(AgentEvent.sequence.desc())
+    ).scalars().first()
+    return event.trace_id if event is not None else None
+
+
 def _trace_ids_by_subject(*, events: list[AgentEvent]) -> dict[tuple[str, str], str]:
     trace_ids: dict[tuple[str, str], str] = {}
     for event in events:
@@ -974,6 +1133,17 @@ def _trace_ids_by_subject(*, events: list[AgentEvent]) -> dict[tuple[str, str], 
         if isinstance(tool_call_id, str):
             trace_ids.setdefault(("tool", tool_call_id), event.trace_id)
     return trace_ids
+
+
+def _workspace_tool_status(status_value: str) -> str:
+    return {
+        "SUCCESS": "success",
+        "FAILED": "failed",
+        "TIMEOUT": "failed",
+        "DENIED": "rejected",
+        "PENDING_APPROVAL": "pending_approval",
+        "RUNNING": "running",
+    }.get(status_value, status_value.lower())
 
 
 def _model_call_response(

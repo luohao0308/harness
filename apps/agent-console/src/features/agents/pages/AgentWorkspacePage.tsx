@@ -48,6 +48,7 @@ import {
   type ConversationNode,
 } from "../../../stores/workspaceStore";
 import { extractArtifactsFromNode } from "../workspaceArtifacts";
+import { formatUsageCost, mergeToolCallEvent, type WorkspaceStreamToolCall } from "../streamEvents";
 
 export function AgentWorkspacePage() {
   const { text } = useI18n();
@@ -170,6 +171,8 @@ export function AgentWorkspacePage() {
           goal,
           messages: serializeMessages(useWorkspaceStore.getState().activePath()),
           active_leaf_id: useWorkspaceStore.getState().activeLeafId,
+          run_id: continueFromNodeId ? activeRunId : undefined,
+          active_branch_id: useWorkspaceStore.getState().activeLeafId,
           pinned_node_ids: pinnedNodeIds,
           context_window_turns: contextWindowTurns,
           continue_from_node_id: continueFromNodeId,
@@ -203,16 +206,16 @@ export function AgentWorkspacePage() {
       return;
     }
     if (event.type === "tool_call_requested") {
+      const currentToolCalls = useWorkspaceStore.getState().nodesById[nodeId]?.tool_calls ?? [];
       updateNode(nodeId, {
-        tool_calls: [
-          ...(useWorkspaceStore.getState().nodesById[nodeId]?.tool_calls ?? []),
-          {
-            tool_name: event.tool_name,
-            source: event.source,
-            input_json: event.input_json,
-            status: event.status,
-          },
-        ],
+        tool_calls: mergeToolCallEvent(currentToolCalls, event),
+      });
+      return;
+    }
+    if (event.type === "tool_call_result") {
+      const currentToolCalls = useWorkspaceStore.getState().nodesById[nodeId]?.tool_calls ?? [];
+      updateNode(nodeId, {
+        tool_calls: mergeToolCallEvent(currentToolCalls, event),
       });
       return;
     }
@@ -233,8 +236,11 @@ export function AgentWorkspacePage() {
           input_tokens: event.input_tokens,
           output_tokens: event.output_tokens,
           cost_usd: event.cost_usd,
+          cost_unavailable: event.cost_unavailable,
           ttfb_ms: event.ttfb_ms,
           duration_ms: event.duration_ms || Math.round(performance.now() - startedAt),
+          model_call_id: event.model_call_id,
+          active_branch_id: useWorkspaceStore.getState().activeLeafId,
         },
       });
       return;
@@ -537,10 +543,23 @@ function Message({
           <span>{visibleContent || (node.state === "streaming" ? "正在生成..." : "")}</span>
           <span className={cn("ml-1 inline-block h-3 w-1 rounded-sm bg-slate-400 align-middle", node.state === "streaming" ? "animate-pulse opacity-100" : "opacity-0")} />
         </div>
+        {node.tool_calls.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {node.tool_calls.map((call, index) => (
+              <StreamToolCallCard
+                key={String((call as Record<string, unknown>).tool_call_id ?? (call as Record<string, unknown>).id ?? index)}
+                call={normalizeWorkspaceStreamToolCall(call)}
+              />
+            ))}
+          </div>
+        )}
         <div className={cn("mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400", isUser && "justify-end")}>
           <span>{formatShortDate(node.created_at)}</span>
           {node.metadata.input_tokens !== undefined && <span>{node.metadata.input_tokens} in</span>}
           {node.metadata.output_tokens !== undefined && <span>{node.metadata.output_tokens} out</span>}
+          {(node.metadata.cost_usd !== undefined || node.metadata.cost_unavailable) && (
+            <span>{formatUsageCost(node.metadata.cost_usd, node.metadata.cost_unavailable)}</span>
+          )}
           {node.metadata.duration_ms !== undefined && <span>{node.metadata.duration_ms}ms</span>}
           {siblings.length > 1 && (
             <BranchSwitcher activeNodeId={node.id} siblings={siblings} onSwitchBranch={onSwitchBranch} />
@@ -558,6 +577,35 @@ function Message({
           U
         </div>
       )}
+    </div>
+  );
+}
+
+function StreamToolCallCard({ call }: { call: WorkspaceStreamToolCall }) {
+  const hasOutput = call.output_json !== undefined || Boolean(call.output_summary);
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate font-mono text-slate-900">@{call.tool_name || "tool"}</div>
+          <div className="mt-0.5 truncate font-mono text-[10px] text-slate-400">{call.tool_call_id}</div>
+        </div>
+        <Badge tone={statusTone(call.status)}>{call.status}</Badge>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+        {call.duration_ms != null && <span>{call.duration_ms}ms</span>}
+        {call.trace_id && <span>trace {call.trace_id}</span>}
+        {call.approval_id && <span>approval {call.approval_id}</span>}
+      </div>
+      {call.output_summary && <div className="mt-2 text-slate-700">{call.output_summary}</div>}
+      <details className="mt-2">
+        <summary className="cursor-pointer text-slate-500">
+          {hasOutput ? "Input / Output JSON" : "Input JSON"}
+        </summary>
+        <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[10px] text-slate-600">
+          {JSON.stringify({ input: call.input_json, output: call.output_json ?? null }, null, 2)}
+        </pre>
+      </details>
     </div>
   );
 }
@@ -590,6 +638,27 @@ function BranchSwitcher({
       ))}
     </span>
   );
+}
+
+function normalizeWorkspaceStreamToolCall(call: Record<string, unknown>): WorkspaceStreamToolCall {
+  return {
+    tool_call_id: String(call.tool_call_id ?? call.id ?? "tool"),
+    tool_name: String(call.tool_name ?? ""),
+    source: typeof call.source === "string" ? call.source : null,
+    input_json:
+      call.input_json && typeof call.input_json === "object" && !Array.isArray(call.input_json)
+        ? (call.input_json as Record<string, unknown>)
+        : {},
+    output_json:
+      call.output_json && typeof call.output_json === "object" && !Array.isArray(call.output_json)
+        ? (call.output_json as Record<string, unknown>)
+        : undefined,
+    output_summary: typeof call.output_summary === "string" ? call.output_summary : null,
+    status: String(call.status ?? "unknown"),
+    duration_ms: typeof call.duration_ms === "number" ? call.duration_ms : null,
+    trace_id: typeof call.trace_id === "string" ? call.trace_id : null,
+    approval_id: typeof call.approval_id === "string" ? call.approval_id : null,
+  };
 }
 
 function MetricsPanel({ usage, workspace }: { usage: UsageSummary; workspace?: AgentRunWorkspace }) {
@@ -714,6 +783,11 @@ function ToolCallCard({ call }: { call: ToolCall }) {
         <Badge tone={statusTone(call.status)}>{call.status}</Badge>
       </div>
       <div className="mt-1 text-slate-500">{call.duration_ms}ms · {call.risk_level}</div>
+      {call.output_summary && <div className="mt-1 text-slate-700">{call.output_summary}</div>}
+      <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate-400">
+        {call.trace_id && <span>trace {call.trace_id}</span>}
+        {call.sandbox_id && <span>sandbox {call.sandbox_id}</span>}
+      </div>
       <details className="mt-2">
         <summary className="cursor-pointer text-slate-500">JSON</summary>
         <pre className="mt-1 max-h-32 overflow-auto rounded bg-slate-50 p-2 font-mono text-[10px] text-slate-600">
@@ -852,6 +926,11 @@ function summarizeUsage(nodes: ConversationNode[], workspace?: AgentRunWorkspace
   const nodeOutput = nodes.reduce((total, node) => total + Number(node.metadata.output_tokens ?? 0), 0);
   const modelInput = workspace?.model_calls.reduce((total, call) => total + call.prompt_tokens, 0) ?? 0;
   const modelOutput = workspace?.model_calls.reduce((total, call) => total + call.completion_tokens, 0) ?? 0;
+  const firstKnownCost = nodes.find(
+    (node) => node.metadata.cost_usd !== undefined && !node.metadata.cost_unavailable,
+  )?.metadata.cost_usd;
+  const costUnavailable =
+    firstKnownCost == null || nodes.some((node) => node.metadata.cost_unavailable === true);
   const durationMs = Math.max(
     0,
     ...nodes.map((node) => Number(node.metadata.duration_ms ?? 0)),
@@ -860,7 +939,7 @@ function summarizeUsage(nodes: ConversationNode[], workspace?: AgentRunWorkspace
   return {
     inputTokens: Math.max(nodeInput, modelInput),
     outputTokens: Math.max(nodeOutput, modelOutput),
-    costUsd: "0",
+    costUsd: formatUsageCost(firstKnownCost, costUnavailable),
     durationMs,
   };
 }

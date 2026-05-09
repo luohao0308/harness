@@ -44,10 +44,16 @@ The website remains present as a public information shell. Console execution foc
 - Regenerated OpenAPI JSON/YAML for docs and website public assets.
 - Downgraded legacy `/api/tasks/*` OpenAPI copy to deprecated Agent Run compatibility.
 - Completed final regression.
+- Closed the Workspace Pro gap register items for `tool_call_result`, Continue semantics, artifact extraction, cost unavailable state, and branch sibling navigation.
+- Kept frontend test infrastructure explicitly deferred instead of inventing a fake `test` script.
 
 ## Validation Record
 
 ```text
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_tool_approvals.py -> 22 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
+cd apps/agent-console && npm run build -> passed
+python3 scripts/validate-docs.py -> passed
 services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py -> 29 passed
 cd apps/agent-console && npm run build -> passed
 services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 123 passed
@@ -71,13 +77,8 @@ Docker runtime verification -> MiniMax healthy/probe and context 400000
 ## Not Completed Yet
 
 - Focused six-stage AI Harness Platform vertical slice is complete.
-- Workspace Pro full-spec gaps remain tracked for a later implementation pass:
-  - `tool_call_result` backend emission and Workspace UI handling.
-  - Continue preserving original Run and branch semantics.
-  - Artifact extraction beyond `plan.json`.
-  - Meaningful cost semantics beyond current placeholder values.
-  - Branch sibling navigation in Conversation Tree.
-  - Frontend component/e2e test infrastructure.
+- Workspace Pro product gaps are closed in this pass.
+- Frontend component/e2e test infrastructure remains explicitly deferred.
 
 ## Next Step
 

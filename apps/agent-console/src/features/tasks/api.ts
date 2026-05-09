@@ -170,6 +170,8 @@ export type AgentChatStreamPayload = {
   goal?: string | null;
   messages: AgentChatStreamMessage[];
   active_leaf_id?: string | null;
+  run_id?: string | null;
+  active_branch_id?: string | null;
   pinned_node_ids: string[];
   context_window_turns: number;
   continue_from_node_id?: string | null;
@@ -182,16 +184,25 @@ export type AgentChatStreamEvent =
   | { type: "think_delta"; content: string }
   | {
       type: "tool_call_requested";
+      tool_call_id: string;
       tool_name: string;
       source: string | null;
       input_json: Record<string, unknown>;
       status: string;
+      risk?: string;
+      sandbox?: string;
+      approval_id?: string | null;
     }
   | {
       type: "tool_call_result";
+      tool_call_id: string;
       tool_name: string;
       output_json: Record<string, unknown>;
+      output_summary?: string | null;
       status: string;
+      duration_ms?: number | null;
+      trace_id?: string | null;
+      approval_id?: string | null;
     }
   | {
       type: "artifact_created";
@@ -205,18 +216,22 @@ export type AgentChatStreamEvent =
       type: "usage";
       input_tokens: number;
       output_tokens: number;
-      cost_usd: string;
+      cost_usd: string | null;
+      cost_unavailable: boolean;
       ttfb_ms: number;
       duration_ms: number;
+      model_call_id?: string | null;
     }
   | {
       type: "done";
       run_id: string;
+      active_branch_id?: string | null;
+      continue_from_node_id?: string | null;
       status: string;
       step_count: number;
       message: string;
     }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; recoverable?: boolean };
 
 export type AgentEvent = {
   id: string;
@@ -1391,18 +1406,29 @@ function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
   if (eventType === "tool_call_requested") {
     return {
       type: "tool_call_requested",
+      tool_call_id: String(payload.tool_call_id ?? payload.id ?? ""),
       tool_name: String(payload.tool_name ?? ""),
       source: typeof payload.source === "string" ? payload.source : null,
       input_json: asRecord(payload.input_json),
       status: String(payload.status ?? "preview"),
+      risk: typeof payload.risk === "string" ? payload.risk : undefined,
+      sandbox: typeof payload.sandbox === "string" ? payload.sandbox : undefined,
+      approval_id: typeof payload.approval_id === "string" ? payload.approval_id : null,
     };
   }
   if (eventType === "tool_call_result") {
     return {
       type: "tool_call_result",
+      tool_call_id: String(payload.tool_call_id ?? payload.id ?? ""),
       tool_name: String(payload.tool_name ?? ""),
       output_json: asRecord(payload.output_json),
+      output_summary:
+        typeof payload.output_summary === "string" ? payload.output_summary : null,
       status: String(payload.status ?? ""),
+      duration_ms:
+        typeof payload.duration_ms === "number" ? payload.duration_ms : null,
+      trace_id: typeof payload.trace_id === "string" ? payload.trace_id : null,
+      approval_id: typeof payload.approval_id === "string" ? payload.approval_id : null,
     };
   }
   if (eventType === "artifact_created") {
@@ -1420,22 +1446,31 @@ function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
       type: "usage",
       input_tokens: Number(payload.input_tokens ?? 0),
       output_tokens: Number(payload.output_tokens ?? 0),
-      cost_usd: String(payload.cost_usd ?? "0"),
+      cost_usd: payload.cost_usd == null ? null : String(payload.cost_usd),
+      cost_unavailable: Boolean(payload.cost_unavailable ?? payload.cost_usd == null),
       ttfb_ms: Number(payload.ttfb_ms ?? 0),
       duration_ms: Number(payload.duration_ms ?? 0),
+      model_call_id: typeof payload.model_call_id === "string" ? payload.model_call_id : null,
     };
   }
   if (eventType === "done") {
     return {
       type: "done",
       run_id: String(payload.run_id),
+      active_branch_id: typeof payload.active_branch_id === "string" ? payload.active_branch_id : null,
+      continue_from_node_id:
+        typeof payload.continue_from_node_id === "string" ? payload.continue_from_node_id : null,
       status: String(payload.status),
       step_count: Number(payload.step_count ?? 0),
       message: String(payload.message ?? ""),
     };
   }
   if (eventType === "error") {
-    return { type: "error", message: String(payload.message ?? "stream failed") };
+    return {
+      type: "error",
+      message: String(payload.message ?? "stream failed"),
+      recoverable: Boolean(payload.recoverable ?? false),
+    };
   }
   return null;
 }

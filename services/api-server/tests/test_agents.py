@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -21,6 +23,22 @@ from app.main import app
 from app.sandbox.docker_manager import SandboxCommandResult
 from app.workers.agent_assignment_worker import execute_agent_assignment
 from tests.conftest import AUTH_HEADERS
+
+
+def parse_sse_events(body: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for frame in body.strip().split("\n\n"):
+        event_line = next((line for line in frame.splitlines() if line.startswith("event:")), None)
+        data_line = next((line for line in frame.splitlines() if line.startswith("data:")), None)
+        if event_line is None or data_line is None:
+            continue
+        events.append(
+            (
+                event_line.removeprefix("event:").strip(),
+                json.loads(data_line.removeprefix("data:").strip()),
+            )
+        )
+    return events
 
 
 class FakeWarmPoolManager:
@@ -93,9 +111,10 @@ def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Sessi
                 }
             ],
             "active_leaf_id": "user-1",
+            "active_branch_id": "branch-1",
             "pinned_node_ids": ["user-1"],
             "context_window_turns": 8,
-            "tool_mentions": [{"name": "mcp_context_search", "source": "mcp", "payload": {}}],
+            "tool_mentions": [{"name": "read_file", "source": "builtin", "payload": {}}],
         },
     )
 
@@ -103,10 +122,143 @@ def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Sessi
     body = response.text
     assert "event: think_delta" in body
     assert "event: tool_call_requested" in body
+    assert "event: tool_call_result" in body
     assert "event: artifact_created" in body
     assert "event: usage" in body
     assert "event: done" in body
+    events = parse_sse_events(body)
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    result = next(payload for event, payload in events if event == "tool_call_result")
+    usage = next(payload for event, payload in events if event == "usage")
+    done = next(payload for event, payload in events if event == "done")
+    assert requested["tool_call_id"] == result["tool_call_id"]
+    assert requested["status"] == "running"
+    assert result["status"] == "success"
+    assert result["output_summary"]
+    assert isinstance(result["duration_ms"], int)
+    assert done["active_branch_id"] == "branch-1"
+    assert done["continue_from_node_id"] is None
+    assert usage["cost_usd"] is None
+    assert usage["cost_unavailable"] is True
     assert db_session.execute(select(Task)).scalar_one_or_none() is not None
+
+
+def test_agent_workspace_pro_chat_stream_continue_preserves_run_identity(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Create a run for continue",
+            "messages": [
+                {
+                    "id": "user-continue",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "Create a run for continue",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-continue",
+            "active_branch_id": "branch-a",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+    assert created.status_code == 200
+    run_id = next(
+        payload for event, payload in parse_sse_events(created.text) if event == "done"
+    )["run_id"]
+
+    continued = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Continue the same run",
+            "run_id": run_id,
+            "active_branch_id": "branch-a",
+            "continue_from_node_id": "assistant-paused",
+            "partial_assistant_content": "partial",
+            "messages": [
+                {
+                    "id": "assistant-paused",
+                    "parent_id": "user-continue",
+                    "children_ids": [],
+                    "role": "assistant",
+                    "content": "partial",
+                    "state": "paused",
+                    "run_id": run_id,
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "assistant-paused",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert continued.status_code == 200
+    done = next(payload for event, payload in parse_sse_events(continued.text) if event == "done")
+    assert done["run_id"] == run_id
+    assert done["active_branch_id"] == "branch-a"
+    assert done["continue_from_node_id"] == "assistant-paused"
+
+
+def test_agent_workspace_pro_chat_stream_invalid_continue_is_recoverable(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Continue missing run",
+            "run_id": "missing-run",
+            "active_branch_id": "branch-missing",
+            "continue_from_node_id": "assistant-paused",
+            "messages": [],
+            "active_leaf_id": "assistant-paused",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    error = next(payload for event, payload in parse_sse_events(response.text) if event == "error")
+    assert error["recoverable"] is True
+    assert error["run_id"] == "missing-run"
+
+
+def test_agent_workspace_pro_chat_stream_side_effect_tool_stays_pending(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Do not auto execute shell",
+            "messages": [],
+            "active_leaf_id": "root",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [
+                {"name": "run_shell", "source": "builtin", "payload": {"command": "echo unsafe"}}
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    assert requested["status"] == "pending_approval"
+    assert not [payload for event, payload in events if event == "tool_call_result"]
 
 
 @pytest.fixture(autouse=True)
