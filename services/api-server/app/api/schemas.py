@@ -157,6 +157,8 @@ class AgentChatStreamRequest(BaseModel):
     goal: str | None = Field(default=None, description="用户目标")
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
+    run_id: str | None = Field(default=None, description="继续生成时绑定的原始 Agent Run ID")
+    active_branch_id: str | None = Field(default=None, description="前端当前分支 ID")
     pinned_node_ids: list[str] = Field(default_factory=list, description="强制注入上下文节点")
     context_window_turns: int = Field(default=8, ge=1, le=50, description="最近上下文轮数")
     continue_from_node_id: str | None = Field(default=None, description="继续生成的节点 ID")

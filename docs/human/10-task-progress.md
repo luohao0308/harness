@@ -49,10 +49,16 @@
 - OpenAPI JSON/YAML 已重新导出到 docs 和官网 public assets。
 - 旧 `/api/tasks/*` OpenAPI 文案已降级为 deprecated Agent Run 兼容层。
 - 最终全量回归通过。
+- 本轮还关闭了 Workspace Pro gap register 里的产品缺口：`tool_call_result`、Continue 语义、Artifact 抽取、成本不可用态、分支 sibling 导航都已实现并验证。
+- 前端测试基础设施继续显式延期，没有伪造 `test` 脚本。
 
 ## 验证记录
 
 ```text
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_tool_approvals.py -> 22 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
+cd apps/agent-console && npm run build -> passed
+python3 scripts/validate-docs.py -> passed
 services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_agents.py services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py -> 29 passed
 cd apps/agent-console && npm run build -> passed
 services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 122 passed
@@ -76,13 +82,8 @@ Docker runtime verification -> MiniMax healthy/probe and context 400000
 ## 未完成项
 
 - 本轮 AI Harness Platform 六阶段聚焦重构的 vertical slice 已完成。
-- Workspace Pro full-spec gaps 仍作为后续实现项追踪：
-  - `tool_call_result` 后端事件发射与 Workspace UI 消费。
-  - Continue 保留原始 Run 与 branch 语义。
-  - 除 `plan.json` 以外的 Artifact 抽取。
-  - 有意义的 cost 语义。
-  - Conversation Tree 分支 sibling 导航。
-  - 前端 component/e2e 测试基础设施。
+- Workspace Pro 产品缺口已在本轮闭环。
+- 前端 component/e2e 测试基础设施保持显式延期。
 
 ## 阶段完成定义
 
