@@ -57,6 +57,10 @@ type WorkspaceState = {
   appendArtifact: (nodeId: string, artifact: ConversationArtifact) => void;
   togglePinned: (nodeId: string) => void;
   startEdit: (nodeId: string) => void;
+  setActiveLeafId: (nodeId: string) => void;
+  getSiblings: (nodeId: string) => ConversationNode[];
+  getBranchLeafId: (nodeId: string) => string | null;
+  switchToBranch: (nodeId: string) => void;
   activePath: () => ConversationNode[];
 };
 
@@ -166,6 +170,36 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       draft: node.content,
       activeLeafId: node.parent_id ?? get().rootNodeId,
     });
+  },
+  setActiveLeafId: (nodeIdToActivate) => {
+    const leafId = get().getBranchLeafId(nodeIdToActivate);
+    if (!leafId) return;
+    set({ activeLeafId: leafId, draftFromNodeId: null });
+  },
+  getSiblings: (nodeIdToInspect) => {
+    const state = get();
+    const node = state.nodesById[nodeIdToInspect];
+    if (!node?.parent_id) return [];
+    const parent = state.nodesById[node.parent_id];
+    if (!parent) return [];
+    return parent.children_ids
+      .map((id) => state.nodesById[id])
+      .filter((candidate): candidate is ConversationNode => Boolean(candidate));
+  },
+  getBranchLeafId: (nodeIdToInspect) => {
+    const state = get();
+    let current = state.nodesById[nodeIdToInspect];
+    if (!current) return null;
+    while (current.children_ids.length > 0) {
+      const nextId = current.children_ids[current.children_ids.length - 1];
+      const next = state.nodesById[nextId];
+      if (!next) break;
+      current = next;
+    }
+    return current.id;
+  },
+  switchToBranch: (nodeIdToActivate) => {
+    get().setActiveLeafId(nodeIdToActivate);
   },
   activePath: () => {
     const state = get();
