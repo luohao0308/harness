@@ -1,6 +1,7 @@
 import type { ToolMention, ToolMetadata } from "../../tasks/api";
 
-const TOOL_MENTION_PATTERN = /@([\w-]+)/g;
+// Match standalone @tool tokens without treating email/user@host fragments as tools.
+const TOOL_MENTION_PATTERN = /(?:^|[^\w@.-])@([\w-]+)(?!\.[A-Za-z0-9])(?=$|[^\w-])/g;
 
 export function extractToolMentions(
   content: string,
