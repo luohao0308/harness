@@ -17,7 +17,7 @@ Planner 把用户目标拆成结构化计划。Executor 按计划执行步骤，
 
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
-| 输入目标 | `/agents/:agentId/workspace` | 在 Workspace Pro Plan-Act surface 中输入目标 |
+| 输入目标 | `/agents/:agentId/workspace` | 在 Workspace 中输入目标 |
 | 只规划不执行 | `/agents/:agentId/workspace` | 生成结构化计划和 Agent Run 投影，Run 状态为 `PLANNED` |
 | 查看计划 | `/runs/:runId` | 查看计划版本、步骤和原始 JSON |
 | 查看步骤 | `/runs/:runId` | 查看步骤状态、耗时和错误 |
@@ -46,7 +46,7 @@ POST /api/tasks/{task_id}/tools/execute
 
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
-| `/agents/:agentId/workspace` | Workspace Pro stream API | 单一 Plan-Act surface 创建 Agent Run、展示计划、工具意图和产物 |
+| `/agents/:agentId/workspace` | Workspace Pro stream API | workspace surface 创建 Agent Run、展示计划、工具意图和产物 |
 | `/runs/:runId` | Agent Run Workspace projection | 执行同一个已规划 Run、查看计划、事件、工具、Subagent 和 Replay |
 | deprecated `/api/tasks/*` compatibility | Task compatibility API | 兼容内部存储和旧 API，不作为当前产品入口 |
 
@@ -221,7 +221,7 @@ agent_subagents_running
 ```text
 1. 固化 Plan / Step schema
 2. 新增 Agent Plan-only API
-3. 通过 Agent Workspace Pro Plan-Act surface 创建 Agent Run
+3. 通过 Agent Workspace 创建 Agent Run
 4. 新增 Agent Execute existing-plan API
 5. 保持 Executor ReAct 循环轨迹回归
 6. 保持 Worker 跨进程接管回归

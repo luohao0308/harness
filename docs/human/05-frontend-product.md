@@ -73,17 +73,17 @@ Model + Harness = Agent
 
 ```text
 左侧 Explorer：Agent 模型、Tool Tray、上下文窗口、Pinned 消息、文件桥接状态
-中列 Chat Console：Conversation Tree、流式 Plan-Act 输出、暂停/继续、编辑重发、结构化 @ mention
-右侧 Artifacts / Runtime：Artifacts、Metadata、Plan DAG、Events、Tool Cards、Approvals、Model Calls
+中间对话区：Conversation Tree、真实模型回复、规划回复、暂停/继续、编辑重发、结构化 @ mention
+侧边观察区：Artifacts、Metadata、Plan DAG、Events、Tool Cards、Approvals、Model Calls
 底部输入区：目标输入、发送、暂停、Continue
 ```
 
 Workspace Pro 要求：
 
 - 不再提供历史 Chat / Plan / Execute / Auto 多 Tab 作为当前主交互。
-- 单一 Plan-Act surface 创建或继续 Agent Run。
+- 当前 Workspace 以可审计的对话与执行流创建或继续 Agent Run。
 - 中列展示树状对话、流式输出和折叠的规划/思考轨迹。
-- 右侧展示 Plan、Events、Tools、Subagents、Sandbox、Artifacts、Approvals 和 Model Calls。
+- 观察区展示 Plan、Events、Tools、Subagents、Sandbox、Artifacts、Approvals 和 Model Calls，具体承载方式可调整。
 - 用户可从 Workspace 跳转到 Run Detail 执行、编排、Replay 或保存 Eval。
 
 ## Run 详情布局
@@ -173,7 +173,7 @@ Run Detail
 事件流与 Subagent 面板
 ```
 
-Figma 是设计事实源。前端实现严格对齐 Figma 的页面结构、间距、颜色、组件状态和信息层级。
+Figma 是当前设计事实参考。前端实现应保留 Figma 的页面结构、间距、颜色、组件状态和信息层级；若与产品行为冲突，以产品 spec 为准。
 
 ## AI 生成视觉规则
 

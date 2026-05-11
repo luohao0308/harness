@@ -40,7 +40,7 @@ Primary product API uses Agent and Run semantics.
 | API | Purpose |
 |---|---|
 | `POST /api/agents/{agent_id}/runs` | Create an Agent Run from Workspace |
-| `POST /api/agents/{agent_id}/runs/chat/stream` | Stream Workspace Pro Plan-Act output |
+| `POST /api/agents/{agent_id}/runs/chat/stream` | Stream Workspace Pro output |
 | `GET /api/agents/runs` | List Agent Run history |
 | `GET /api/agents/runs/{run_id}/workspace` | Aggregate Workspace projection |
 | `POST /api/agents/runs/{run_id}/execute` | Execute existing Plan |
@@ -123,7 +123,7 @@ Projection APIs read current SQL state plus event history. Replay reconstructs R
 ## Runtime Execution
 
 - Planner emits Plan DAG and does not execute tools.
-- Workspace Pro streams Plan-Act output over SSE and creates durable Agent Runs.
+- Workspace Pro streams workspace output over SSE and creates durable Agent Runs.
 - Conversation Tree, active path, pinned nodes, and context window assemble request context.
 - Executor runs short synchronous ReAct steps.
 - Subagent handles long-running async branches.

@@ -18,7 +18,7 @@
 
 | 阶段 | 名称 | 状态 | 文档 | Demo 闭环 | 验证结果 |
 |---|---|---|---|---|---|
-| 01 | Agent Workspace 三栏控制台 | completed | `docs/ai/stages/01-agent-workspace-console.md` | Agent Workspace -> Agent Run -> Plan DAG -> Event Stream -> Tool/Model Calls | passed |
+| 01 | Agent Workspace 控制台 | completed | `docs/ai/stages/01-agent-workspace-console.md` | Agent Workspace -> Agent Run -> Plan DAG -> Event Stream -> Tool/Model Calls | passed |
 | 02 | Agent Studio 配置闭环 | completed | `docs/ai/stages/02-agent-studio-config.md` | Studio -> Model settings -> MiniMax preset -> Workspace config | passed |
 | 03 | Harness 管理与 Tool/MCP | completed | `docs/ai/stages/03-harness-tool-mcp.md` | Tool Registry -> Policy -> Sandbox -> Trace | passed |
 | 04 | Event Sourcing + Replay UI | completed | `docs/ai/stages/04-event-sourcing-replay-ui.md` | Run -> Events -> Replay sequence -> State reconstruction | passed |
@@ -33,7 +33,7 @@
 - `/tasks/new` 从控制台路由移除，`/tasks` 仅作为 `/runs` 兼容跳转。
 - 新增 Agent Run 创建和 Workspace 聚合 API。
 - 新建 `/runs` 和 `/runs/:runId` 页面。
-- 重写 `/agents/:agentId/workspace` 为三栏 Agent Workspace Pro 控制台。
+- 重写 `/agents/:agentId/workspace` 为 Agent Workspace Pro 控制台。
 - MiniMax 作为默认模型配置路径保留并通过测试。
 - Executor 接入 WarmPool-backed sandbox acquire/release。
 - Agent Studio 增加 Model、Tools/MCP、Prompt、RAG、Templates、Orchestration 六个能力入口。

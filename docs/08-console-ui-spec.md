@@ -3,8 +3,9 @@
 ## Product Frame
 
 The console is an AI Harness Platform workspace, not a task management app. Its top-level navigation groups Agent construction, Agent usage, Harness management, Observability, Eval, and Infra.
+This document is a current reference, not a frozen component contract. Equivalent panel decomposition is acceptable if the same behavior and data coverage remain visible.
 
-## Required Routes
+## Reference Routes
 
 | Route | Page | Status |
 |---|---|---|
@@ -19,7 +20,7 @@ The console is an AI Harness Platform workspace, not a task management app. Its 
 | `/sandboxes` | Sandbox and WarmPool | Active |
 | `/subagents` | Subagent monitor | Active |
 
-`/tasks/new` is deleted. `/tasks` redirects to `/runs` during compatibility migration.
+`/tasks/new` is not part of the primary product routes. `/tasks` redirects to `/runs` during compatibility migration.
 
 ## Agent Workspace Pro Layout
 
@@ -28,13 +29,15 @@ The console is an AI Harness Platform workspace, not a task management app. Its 
 │ Explorer     │ Chat Console                │ Artifacts / Runtime  │
 │              │                            │                      │
 │ Model        │ Conversation Tree          │ Metadata             │
-│ Tool Tray    │ Streamed Plan-Act output   │ Artifacts Preview    │
+│ Tool Tray    │ Streamed assistant output   │ Artifacts Preview    │
 │ Context      │ Pause / Continue           │ Plan DAG             │
 │ Pinned       │ Edit and Resend            │ Tool Cards           │
 │ Files        │ @ tool mentions            │ Approvals            │
 │              │                            │ Model Calls          │
 └──────────────┴────────────────────────────┴──────────────────────┘
 ```
+
+This layout is a reference composition, not a component lock.
 
 
 ## Workspace Pro Integration Decisions
@@ -43,7 +46,7 @@ Workspace Pro upgrades the existing `/agents/:agentId/workspace` route. It is no
 
 | Requirement | Current project base | Decision |
 |---|---|---|
-| IDE-style three-column layout | Existing Agent Workspace route | Upgrade in place |
+| Chat-first workspace surface | Existing Agent Workspace route | Upgrade in place |
 | Client state | Zustand already present | Extend with conversation graph store |
 | Styling and icons | Tailwind and Lucide already present | Continue current stack |
 | UI primitives | Local UI components already present | Keep local component style; no forced shadcn adoption |
@@ -54,6 +57,12 @@ Workspace Pro upgrades the existing `/agents/:agentId/workspace` route. It is no
 | Artifacts | Artifact-shaped data exists | Add right-side preview panel as first-class surface |
 | Token and latency | ModelCall records tokens and duration | Render per-message and run metadata |
 
+## Workspace Mode Semantics
+
+- `chat` is the default mode for normal conversation.
+- `codex_plan` is the visible planning mode and should return markdown plan text only.
+- `plan` is the explicit Plan-Act mode and should remain separate from `codex_plan`.
+
 ## Context Assembly
 
 The request context is assembled from three sets:
@@ -62,7 +71,7 @@ The request context is assembled from three sets:
 2. Pinned nodes listed in `pinnedNodeIds`.
 3. Recent turns from the active path limited by `contextWindowTurns`.
 
-Before sending a request, the left Explorer shows the context preview: message count, pinned count, estimated tokens, and compression state. Pinned nodes always remain in the request payload.
+Before sending a request, the left Explorer shows the context preview: message count, pinned count, estimated tokens, and compression state. Pinned nodes are expected to remain in the request payload.
 
 ## Stream Control
 
@@ -110,16 +119,14 @@ Shows Chat Console:
 
 - Conversation graph active path
 - User and assistant messages
-- Streamed Plan-Act output
+- Streamed assistant output
 - Pause through `AbortController`
 - Continue from paused assistant output
 - Edit and Resend for historical user messages
 - Collapsed Planner trace and thought-like blocks
 - `@` tool mention menu backed by Tool Registry
 
-Workspace Pro has no Chat, Execute, or Auto tabs. The single surface creates an Agent Run
-and streams Plan-Act output. Run execution, orchestration, replay, and eval saving remain
-Run/Harness actions outside the mode selector.
+Workspace Pro can omit Chat, Execute, or Auto tabs from the primary experience. The main surface creates an Agent Run and streams assistant output. Run execution, orchestration, replay, and eval saving remain Run/Harness actions outside the default chat experience.
 
 ## Right Column
 
@@ -135,6 +142,8 @@ Shows Artifacts and Runtime internals:
 - Tool approvals with approve, reject, and modify actions for admin
 - Model Calls with provider, model, token, latency, status
 - Replay entry for selected Run
+
+The named panels above are current reference surfaces; if a later implementation uses different component names or grouping, it only needs to preserve the same user-visible behavior and traceability.
 
 ## Conversation Tree
 
@@ -222,7 +231,7 @@ python3 scripts/validate-docs.py
 
 ## Run History
 
-`/runs` displays Agent Run audit history. It must use `GET /api/agents/runs` and observability summary APIs. It must not show fake KPI cards.
+`/runs` displays Agent Run audit history. It should use `GET /api/agents/runs` and observability summary APIs. It should not show fake KPI cards.
 
 ## Run Detail
 
@@ -230,4 +239,4 @@ python3 scripts/validate-docs.py
 
 ## Disabled Future Surfaces
 
-Template marketplace, RAG setup, trigger editor, API Gateway publishing, version rollout, and human review queue stay visible only as disabled product entries until backed by API state.
+Template marketplace, RAG setup, trigger editor, API Gateway publishing, version rollout, and human review queue can stay visible as disabled product entries until backed by API state.

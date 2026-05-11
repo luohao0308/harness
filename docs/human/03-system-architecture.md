@@ -102,7 +102,7 @@ flowchart TD
 
 ### Agent Console
 
-控制台使用 React + Vite + TypeScript + Tailwind CSS 和本地 UI primitives。控制台主入口是 Agent Workspace Pro：用户选择 Agent 后进入 `/agents/:agentId/workspace`，在单一 Plan-Act surface 中输入目标、查看流式计划、工具审批、Artifacts 和 Run 投影。任务列表只作为 deprecated `/tasks` 兼容层；产品视图使用 Agent Run 历史与审计。
+控制台使用 React + Vite + TypeScript + Tailwind CSS 和本地 UI primitives。控制台主入口是 Agent Workspace Pro：用户选择 Agent 后进入 `/agents/:agentId/workspace`，在 chat-first workspace 中输入目标、查看真实模型回复、规划、工具审批、Artifacts 和 Run 投影。任务列表只作为 deprecated `/tasks` 兼容层；产品视图使用 Agent Run 历史与审计。
 
 ### API Layer
 

@@ -122,6 +122,7 @@ conversation_node:
 - 不新增 Recharts；图表类 artifact 使用现有 ECharts。
 - 不绕过 Sandbox 增加本地文件写入能力；文件副作用仍走 Tool Policy、Approval、Sandbox。
 - Conversation Tree 是 Workspace UI 状态与审计输入；不替代 Agent Run 或 Event Store。
+- 本文件描述的是当前前端参考合同，不是永久不变的组件清单；等价实现只要保留行为、数据覆盖和审计链路即可。
 
 Workspace Pro 数据流：
 
@@ -169,7 +170,7 @@ technical_values_need_chinese_description: true
 - 控制台保持当前本地 UI 组件风格；不强制引入 shadcn/ui。
 - lucide-react 用于图标。
 - ECharts 用于监控图表。
-- 控制台使用密集企业工具布局。
+- 控制台默认偏向密集企业工具布局，但具体结构可按页面类型调整。
 - 控制台默认语言为中文，顶栏提供中文/English 切换。
 - 控制台所有页面文案、按钮、表头、空状态、加载状态、状态说明默认使用中文。
 - 运行时代码值、API 路径、事件类型、指标名、镜像名、模型名、ID、枚举值等技术字段必须保留原值，并在相邻位置提供中文说明或中文标签。
@@ -177,4 +178,4 @@ technical_values_need_chinese_description: true
 - 官网首屏必须出现产品名。
 - 控制台页面禁止使用营销型大 Hero。
 - 生产代码禁止复制 AI 生成 H5。
-- 实现严格对齐 Figma Brief。
+- 实现应保留 Figma Brief 的视觉意图和信息层级；如与产品行为冲突，以活跃产品规格为准。

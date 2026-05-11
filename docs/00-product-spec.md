@@ -4,6 +4,8 @@
 
 AI Harness Platform is a Production Agent Harness Platform for AI Harness Engineers and Agent Infrastructure Engineers. It is not a plain chatbot, not a generic task tracker, and not a static showcase console.
 
+This is a living product reference, not a component lock. Equivalent UI decomposition is acceptable when the user-visible behavior, traceability, and audit records stay intact.
+
 The product turns a configured model into a production Agent through Harness capabilities: model routing, prompt control, tool and MCP runtime, sandbox policy, planning, execution, event sourcing, replay, eval, observability, Workspace Pro conversation control, Artifacts preview, and WarmPool.
 
 ## Target Users
@@ -20,7 +22,7 @@ The product turns a configured model into a production Agent through Harness cap
 
 Users create and configure Agents.
 
-Required surfaces:
+Reference surfaces:
 
 - Model selection and provider configuration
 - Built-in MiniMax model preset
@@ -32,22 +34,24 @@ Required surfaces:
 
 ### Agent Workspace
 
-Users operate an Agent through Workspace Pro, a three-column IDE-style console.
+Users operate an Agent through Workspace Pro, a chat-first workspace that can surface context, tools, artifacts, and run state without locking the UI to a single panel layout.
 
-Required layout:
+Reference layout:
 
 ```text
-Left:  Explorer: Model, MCP Tool Tray, context window, pinned messages, file bridge status
-Center: Chat Console: conversation tree, stream pause, continue, edit and resend
-Right: Artifacts and Runtime: previews, Plan DAG, Event Stream, Tool Cards, Approvals, Model Calls
+Workspace Pro may organize its surface around context, chat, and runtime views.
+One valid shape is a left/context region, a central conversation region, and a right/runtime region.
 ```
 
-The Workspace has exactly one user-facing mode: Plan-Act. Plan generation, streamed
-conversation output, tool approval, and artifact preview live inside the same surface.
-Execution, orchestration, replay, and eval saving remain Run/Harness capabilities shown
-around the Run and in Run Detail.
+The Workspace can center on auditable planning and execution behavior. Planning, streamed conversation output, tool approval, and artifact preview may share the same screen or be split across coordinated views as long as the run remains traceable. Execution, orchestration, replay, and eval saving remain Run/Harness capabilities shown around the Run and in Run Detail.
 
-Workspace Pro required behaviors:
+Workspace mode semantics are explicit:
+
+- `chat` is the default conversational mode.
+- `codex_plan` is the user-facing planning mode for markdown plan output.
+- `plan` is the explicit Plan-Act execution mode and should not be conflated with `codex_plan`.
+
+Workspace Pro reference behaviors:
 
 - Conversation state is a tree, not a flat array.
 - User edits on historical messages create new branches.
@@ -65,7 +69,7 @@ Workspace Pro required behaviors:
 
 Users manage the runtime layer behind Agents.
 
-Required surfaces:
+Reference surfaces:
 
 - Tool Registry
 - MCP Adapter state
@@ -79,7 +83,7 @@ Required surfaces:
 
 Users inspect and replay execution.
 
-Required surfaces:
+Reference surfaces:
 
 - Event Sourcing browser
 - Replay to sequence
@@ -92,7 +96,7 @@ Required surfaces:
 
 Users evaluate Agent behavior.
 
-Required surfaces:
+Reference surfaces:
 
 - Dataset management
 - Eval run execution
@@ -105,7 +109,7 @@ Required surfaces:
 
 Users operate platform infrastructure.
 
-Required surfaces:
+Reference surfaces:
 
 - WarmPool status and benchmark
 - Sandbox list and lifecycle
@@ -120,7 +124,7 @@ Open Agent Studio
 -> choose Agent and model
 -> open Agent Workspace
 -> enter goal in Chat Console
--> stream Plan-Act progress
+-> stream chat or codex_plan output
 -> create Agent Run with Plan DAG and artifact preview
 -> inspect execution readiness, policy, tools, approvals, metadata, and Subagent projections
 -> Event Store records every change
