@@ -20,8 +20,13 @@ jobs:
           test -f docs/ai/01-task-progress.md
           test -f docs/ai/task-progress.yaml
           test -f docs/human/10-task-progress.md
-          test -f docs/ai/stages/01-agent-graph-runtime.md
-          test -f docs/ai/stages/09-portfolio-demo-docs.md
+          test -f docs/ai/stages/01-agent-workspace-console.md
+          test -f docs/ai/stages/02-agent-studio-config.md
+          test -f docs/ai/stages/03-harness-tool-mcp.md
+          test -f docs/ai/stages/04-event-sourcing-replay-ui.md
+          test -f docs/ai/stages/05-eval-regression.md
+          test -f docs/ai/stages/06-warmpool-infra.md
+          test -f docs/ai/stages/07-private-deployable-harness-chain.md
 
       - name: Check docs avoid loose wording
         run: |

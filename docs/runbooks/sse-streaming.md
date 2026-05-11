@@ -18,7 +18,7 @@
   - 响应头 `Content-Encoding` 命中 `gzip` / `br` / `deflate`
   - 或 `Transfer-Encoding` 缺失 `chunked` 同时 `Content-Length` 非空
 
-出现诊断即意味着流可能被上游缓冲，**即便前端每个 `delta` 都 flush 也只能一次看到整块**；此时必须按下面的反代清单排查。
+出现诊断即意味着流存在上游缓冲迹象，**即便前端每个 `delta` 都 flush 也只能一次看到整块**；此时必须按下面的反代清单排查。
 
 ## 反向代理必须设置
 
@@ -80,7 +80,7 @@ metadata:
 | 气泡一次性出现全文 | 代理 buffering 未关 | 按上文 Nginx / Ingress 清单开 `proxy_buffering off` |
 | 响应头出现 `Content-Encoding: gzip` | 代理或后端主动压缩 | 在 SSE 路由上关闭 gzip；后端 FastAPI 默认不压缩 SSE，检查 Starlette middleware |
 | 响应头无 `Transfer-Encoding: chunked` 且 `Content-Length` 非空 | 响应被完整缓冲后发出 | 多为代理 `proxy_buffering on` 副作用；同上 |
-| 前端气泡出现琥珀色 "检测到可能的代理缓冲" | 诊断命中 | 打开浏览器 DevTools → Network 面板，勾选 `Preserve log`，选中 `/runs/chat/stream` 请求查看响应头 |
+| 前端气泡出现琥珀色代理缓冲诊断 | 诊断命中 | 打开浏览器 DevTools → Network 面板，勾选 `Preserve log`，选中 `/runs/chat/stream` 请求查看响应头 |
 | 超过 60 秒没有任何事件 | 代理 `proxy_read_timeout` 太短 | 调到 ≥ 3600s |
 
 ## 本地开发注意事项
