@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.model_gateway import ModelResponse
+from app.agents.model_gateway import ModelGatewayError, ModelResponse
 from app.db.models import (
     Agent,
     AgentAssignment,
@@ -360,6 +360,256 @@ def test_agent_plan_mode_creates_plan_without_execution(db_session: Session) -> 
         "MODEL_CALLED",
         "MODEL_RESPONSE_RECEIVED",
         "PLAN_GENERATED",
+    ]
+
+
+def test_agent_plan_mode_surfaces_model_gateway_failure_without_fallback(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class BrokenGateway:
+        def complete(self, request_payload):
+            raise ModelGatewayError("model unavailable")
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: BrokenGateway(),
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/plan",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "goal": "计划失败时应该显式报错",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "max_subagents": 5,
+            "enable_sandbox": True,
+            "enable_network": False,
+        },
+    )
+
+    assert response.status_code == 502
+    assert "Plan 模型调用失败" in response.json()["detail"]
+    task = db_session.execute(
+        select(Task).where(Task.goal == "计划失败时应该显式报错")
+    ).scalar_one()
+    assert task.status == "FAILED"
+    assert (
+        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == task.id))
+        .scalar_one_or_none()
+        is None
+    )
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id).order_by(AgentEvent.sequence)
+        ).scalars()
+    ]
+    assert event_types == [
+        "TASK_CREATED",
+        "PLAN_REQUESTED",
+        "MODEL_CALLED",
+        "MODEL_CALL_FAILED",
+        "TASK_FAILED",
+    ]
+
+
+def test_agent_run_create_surfaces_model_gateway_failure_without_fallback(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class BrokenGateway:
+        def complete(self, request_payload):
+            raise ModelGatewayError("model unavailable")
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: BrokenGateway(),
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Primary run planning should fail when the model gateway is down",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "max_subagents": 5,
+            "enable_sandbox": True,
+            "enable_network": False,
+        },
+    )
+
+    assert response.status_code == 502
+    assert "Plan 模型调用失败" in response.json()["detail"]
+    task = db_session.execute(
+        select(Task).where(
+            Task.goal == "Primary run planning should fail when the model gateway is down"
+        )
+    ).scalar_one()
+    assert task.status == "FAILED"
+    assert (
+        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == task.id))
+        .scalar_one_or_none()
+        is None
+    )
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id).order_by(AgentEvent.sequence)
+        ).scalars()
+    ]
+    assert event_types == [
+        "TASK_CREATED",
+        "PLAN_REQUESTED",
+        "MODEL_CALLED",
+        "MODEL_CALL_FAILED",
+        "TASK_FAILED",
+    ]
+
+
+def test_agent_run_create_uses_deterministic_plan_when_model_output_is_unparseable(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class InvalidGateway:
+        def complete(self, request_payload):
+            return ModelResponse(
+                content="not json at all",
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={"prompt_tokens": 9, "completion_tokens": 4},
+                raw_response={"mode": "test-model"},
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: InvalidGateway(),
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "计划输出不可解析时应该生成可审计计划",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "max_subagents": 5,
+            "enable_sandbox": True,
+            "enable_network": False,
+        },
+    )
+
+    assert response.status_code == 201
+    run_id = response.json()["run_id"]
+    task = db_session.execute(
+        select(Task).where(Task.goal == "计划输出不可解析时应该生成可审计计划")
+    ).scalar_one()
+    assert task.status == "PLANNED"
+    plan = (
+        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == task.id))
+        .scalars()
+        .one()
+    )
+    assert task.id == run_id
+    assert plan.plan_json["planner_source"] == "deterministic"
+    assert plan.plan_json["steps"]
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id).order_by(AgentEvent.sequence)
+        ).scalars()
+    ]
+    assert event_types == [
+        "TASK_CREATED",
+        "PLAN_REQUESTED",
+        "MODEL_CALLED",
+        "MODEL_RESPONSE_RECEIVED",
+        "PLAN_REJECTED",
+        "MODEL_CALLED",
+        "MODEL_RESPONSE_RECEIVED",
+        "PLAN_REJECTED",
+        "PLAN_GENERATED",
+    ]
+
+
+def test_agent_run_create_records_repair_failure_before_deterministic_plan(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class RepairFailureGateway:
+        calls = 0
+
+        def complete(self, request_payload):
+            self.calls += 1
+            if self.calls == 1:
+                return ModelResponse(
+                    content="not json at all",
+                    model_provider=request_payload.model_provider,
+                    model_name=request_payload.model_name,
+                    usage={"prompt_tokens": 9, "completion_tokens": 4},
+                    raw_response={"mode": "test-model"},
+                )
+            raise ModelGatewayError("repair unavailable")
+
+    gateway = RepairFailureGateway()
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: gateway,
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Repair failure should still leave auditable planning events",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "max_subagents": 5,
+            "enable_sandbox": True,
+            "enable_network": False,
+        },
+    )
+
+    assert response.status_code == 201
+    task = db_session.execute(
+        select(Task).where(
+            Task.goal == "Repair failure should still leave auditable planning events"
+        )
+    ).scalar_one()
+    plan = (
+        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == task.id))
+        .scalars()
+        .one()
+    )
+    assert task.status == "PLANNED"
+    assert plan.plan_json["planner_source"] == "deterministic"
+    events = list(
+        db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id).order_by(AgentEvent.sequence)
+        ).scalars()
+    )
+    assert [event.event_type for event in events] == [
+        "TASK_CREATED",
+        "PLAN_REQUESTED",
+        "MODEL_CALLED",
+        "MODEL_RESPONSE_RECEIVED",
+        "PLAN_REJECTED",
+        "MODEL_CALLED",
+        "MODEL_CALL_FAILED",
+        "PLAN_REJECTED",
+        "PLAN_GENERATED",
+    ]
+    plan_rejection_reasons = [
+        event.payload_json["reason"]
+        for event in events
+        if event.event_type == "PLAN_REJECTED"
+    ]
+    assert plan_rejection_reasons == [
+        "model_plan_schema_invalid",
+        "model_plan_repair_call_failed",
     ]
 
 

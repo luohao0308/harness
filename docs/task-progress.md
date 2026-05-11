@@ -17,9 +17,9 @@ The website remains present as a public information shell. Console execution foc
 
 ## Current Stage
 
-- Stage: `06-warmpool-infra`
+- Stage: `07-private-deployable-harness-chain`
 - Status: `completed`
-- Updated at: `2026-05-08`
+- Updated at: `2026-05-11`
 
 ## Completed In This Pass
 
@@ -28,7 +28,7 @@ The website remains present as a public information shell. Console execution foc
 - Added Agent Run product API entry through `POST /api/agents/{agent_id}/runs`.
 - Added Agent Run history and Workspace aggregate projection APIs.
 - Replaced old task creation console route with Run history semantics.
-- Rebuilt Agent Workspace as a three-column single Plan console: config, streamed Plan surface, runtime internals.
+- Rebuilt Agent Workspace as a chat-first console with config, streamed assistant output, and runtime internals.
 - Added MiniMax default model preset and verified settings/model gateway tests.
 - Fixed sandbox execution path by letting Executor acquire and release WarmPool-backed sandboxes for sandboxed steps.
 - Fixed test runtime with fake WarmPool and fake sandbox command path.
@@ -46,6 +46,11 @@ The website remains present as a public information shell. Console execution foc
 - Completed final regression.
 - Closed the Workspace Pro gap register items for `tool_call_result`, Continue semantics, artifact extraction, cost unavailable state, and branch sibling navigation.
 - Kept frontend test infrastructure explicitly deferred instead of inventing a fake `test` script.
+- Added Stage 07 canonical smoke script: `scripts/smoke-test-agent-run.py`.
+- Added Stage 07 stage doc: `docs/ai/stages/07-private-deployable-harness-chain.md`.
+- Made primary Agent Run planning resilient to runtime plan-parse failure so Stage 07 canonical smoke starts from `POST /api/agents/default/runs`.
+- Added Agent Run promotion path in compatibility start endpoint so chat-created run without plan can be promoted into full Harness execution.
+- Updated docker compose `api-server` runtime with Docker socket mount and `DOCKER_HOST`, enabling sandbox allocation in canonical smoke.
 
 ## Validation Record
 
@@ -72,14 +77,25 @@ python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
 Docker runtime verification -> MiniMax healthy/probe and context 400000
+python3 -m py_compile scripts/smoke-test-agent-run.py -> passed
+python3 scripts/smoke-test-agent-run.py -> passed (run_id=3a310efa-dcbd-4216-b78c-c49241e97245; primary /api/agents/default/runs succeeded without chat-stream fallback and completed execution)
+python3 scripts/smoke-test-docker.py -> passed
+python3 scripts/validate-docs.py -> passed
+docker compose -f deploy/docker-compose/docker-compose.yml config -> passed
+services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 139 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests scripts/smoke-test-agent-run.py -> passed
+cd apps/agent-console && npm run build -> passed
+git diff --check -> passed
 ```
 
 ## Not Completed Yet
 
-- Focused six-stage AI Harness Platform vertical slice is complete.
-- Workspace Pro product gaps are closed in this pass.
 - Frontend component/e2e test infrastructure remains explicitly deferred.
 
 ## Next Step
 
-Manual product smoke in the browser: open `/agents/default/workspace`, create an Agent Run through the single Plan surface, inspect Plan DAG, Event Stream, Subagents, Tool Calls, Approvals, Replay, Models, Tools, Evals, Sandboxes, and Run History.
+Keep primary Agent Run smoke in the regular release gate:
+
+```text
+python3 scripts/smoke-test-agent-run.py
+```
