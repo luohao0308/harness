@@ -1,7 +1,7 @@
 import json
 import time
 from collections.abc import Iterator
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -72,6 +72,27 @@ from app.tools.runner import ToolExecution, ToolRunner
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+
+
+# ---------------------------------------------------------------------------
+# v4 SSE response headers (Req 6.1 / 6.5).
+#
+# Every route that returns `text/event-stream` should attach these headers so
+# Nginx / other reverse proxies disable buffering and the browser keeps the
+# connection open while incremental deltas arrive.
+#
+# The `X-Accel-Buffering` hint tells Nginx to skip its own response buffer
+# (reiterated with `add_header X-Accel-Buffering no always;` in
+# `deploy/nginx/agent-harness.conf`).
+#
+# Do NOT enable `GZipMiddleware` on these routes — gzip re-chunks the stream
+# and breaks per-event delivery. See `app/main.py` for the guard-rail note.
+# ---------------------------------------------------------------------------
+_SSE_HEADERS: dict[str, str] = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
 
 
 @router.get(
@@ -286,7 +307,7 @@ def stream_agent_plan_run(
             },
         )
 
-    return StreamingResponse(iterator(), media_type="text/event-stream")
+    return StreamingResponse(iterator(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 @router.post(
@@ -315,7 +336,7 @@ def stream_agent_chat_run(
         user_messages = [node for node in request.messages if node.role == "user"]
         if user_messages:
             return user_messages[-1].content.strip()
-        return "Generate an auditable Agent Plan."
+        return "Start a normal assistant conversation."
 
     def estimated_input_tokens() -> int:
         pinned = {node.id for node in request.messages if node.id in set(request.pinned_node_ids)}
@@ -335,16 +356,21 @@ def stream_agent_chat_run(
         metadata: ToolMetadata,
         tool_call_id: str,
         status: str,
+        input_json: dict,
+        approval_id: str | None = None,
     ) -> dict:
-        return {
+        payload = {
             "tool_call_id": tool_call_id,
             "tool_name": mention.name,
             "source": mention.source or metadata.source,
             "status": status,
-            "input_json": mention.payload,
+            "input_json": input_json,
             "risk": metadata.category,
             "sandbox": "sandboxed" if metadata.requires_sandbox else "none",
         }
+        if approval_id is not None:
+            payload["approval_id"] = approval_id
+        return payload
 
     def result_payload(execution: ToolExecution, tool_call_id: str) -> dict:
         tool_call = execution.tool_call
@@ -363,22 +389,110 @@ def stream_agent_chat_run(
             payload["approval_id"] = approval_id
         return payload
 
+    def workspace_text_events(
+        *,
+        run: Task,
+        messages: list[ModelMessage],
+        started_at: float,
+        first_byte_at: float,
+        run_created_message: str,
+        done_message: str,
+    ) -> Iterator[str]:
+        run.status = "RUNNING"
+        run.updated_at = utc_now()
+        session.flush()
+        yield sse(
+            "run_created",
+            {
+                "run_id": run.id,
+                "status": run.status,
+                "step_count": 0,
+                "message": run_created_message,
+            },
+        )
+        content_accumulator = ""
+        usage: dict = {}
+        first_delta_at: float | None = None
+        stream_iter = None
+        try:
+            gateway = AuditedModelGateway(
+                session=session,
+                task_id=run.id,
+                agent_run_id=None,
+            )
+            stream_iter = gateway.stream(
+                ModelRequest(
+                    model_provider=run.model_provider,
+                    model_name=run.model_name,
+                    response_format="text",
+                    messages=messages,
+                )
+            )
+            for chunk in stream_iter:
+                if chunk.text:
+                    content_accumulator += chunk.text
+                    if first_delta_at is None:
+                        first_delta_at = time.monotonic()
+                    yield sse("delta", {"content": chunk.text})
+                if chunk.usage:
+                    usage.update(chunk.usage)
+
+            content = _require_normal_chat_content(content_accumulator)
+            run.status = "COMPLETED"
+            run.completed_at = utc_now()
+            run.updated_at = utc_now()
+            session.commit()
+            ttfb_source = first_delta_at if first_delta_at is not None else first_byte_at
+            yield sse(
+                "usage",
+                {
+                    "input_tokens": int(usage.get("prompt_tokens", 0) or estimated_input_tokens()),
+                    "output_tokens": int(
+                        usage.get("completion_tokens", 0) or max(1, len(content) // 4)
+                    ),
+                    "cost_usd": None,
+                    "cost_unavailable": True,
+                    "ttfb_ms": int((ttfb_source - started_at) * 1000),
+                    "duration_ms": int((time.monotonic() - started_at) * 1000),
+                    "model_call_id": _latest_model_call_id(run.id, session=session),
+                },
+            )
+            yield sse(
+                "done",
+                {
+                    "run_id": run.id,
+                    "active_branch_id": request.active_branch_id,
+                    "continue_from_node_id": request.continue_from_node_id,
+                    "status": run.status,
+                    "step_count": 0,
+                    "message": done_message,
+                },
+            )
+        except ModelGatewayError as exc:
+            run.status = "FAILED"
+            run.updated_at = utc_now()
+            session.commit()
+            yield sse("error", {"message": str(exc), "recoverable": True, "run_id": run.id})
+        except GeneratorExit:
+            if stream_iter is not None:
+                stream_iter.close()
+            run.status = "CANCELLED"
+            run.completed_at = utc_now()
+            run.updated_at = utc_now()
+            EventStore(session).append(
+                task_id=run.id,
+                event_type=EventType.TASK_CANCELLED,
+                payload_json={"task_id": run.id, "reason": "client_disconnected"},
+            )
+            session.commit()
+            raise
+
     def iterator() -> Iterator[str]:
         started_at = time.monotonic()
         first_byte_at = time.monotonic()
         goal = message_goal()
-        yield sse(
-            "think_delta",
-            {
-                "content": "已读取当前分支、Pinned 消息和上下文窗口，准备生成可审计计划。\n",
-                "active_leaf_id": request.active_leaf_id,
-                "active_branch_id": request.active_branch_id,
-                "pinned_node_ids": request.pinned_node_ids,
-                "context_window_turns": request.context_window_turns,
-            },
-        )
         try:
-            if request.run_id:
+            if request.run_id and request.mode == "plan":
                 existing_run = _owned_run(
                     run_id=request.run_id,
                     session=session,
@@ -390,19 +504,119 @@ def stream_agent_chat_run(
                     session=session,
                     message_prefix="已继续原 Run",
                 )
-            else:
-                payload = AgentPlanRequest(
-                    agent_id=agent_id,
-                    goal=goal,
-                    title=None,
-                    model_provider="default",
-                    model_name="default",
-                    max_runtime_seconds=1800,
-                    max_subagents=5,
-                    enable_sandbox=True,
-                    enable_network=False,
+            elif request.run_id:
+                existing_run = _owned_run(
+                    run_id=request.run_id,
+                    session=session,
+                    principal=principal,
                 )
-                planned = plan_with_agent(request=payload, session=session, principal=principal)
+                run = (
+                    existing_run
+                    if _latest_plan(run_id=existing_run.id, session=session) is None
+                    else _create_workspace_chat_run(
+                        agent_id=agent_id,
+                        goal=goal,
+                        session=session,
+                        principal=principal,
+                        mode="chat" if request.mode == "chat" else "markdown_plan",
+                    )
+                )
+                if request.mode == "markdown_plan":
+                    yield from workspace_text_events(
+                        run=run,
+                        messages=_workspace_markdown_plan_messages(
+                            agent_id=agent_id,
+                            goal=goal,
+                            request=request,
+                        ),
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                        run_created_message="Harness Agent plan run started.",
+                        done_message="Harness Agent plan response completed.",
+                    )
+                    return
+                yield from workspace_text_events(
+                    run=run,
+                    messages=_workspace_chat_messages(
+                        agent_id=agent_id,
+                        goal=goal,
+                        request=request,
+                    ),
+                    started_at=started_at,
+                    first_byte_at=first_byte_at,
+                    run_created_message="Chat run started.",
+                    done_message="Chat response completed.",
+                )
+                return
+            else:
+                if request.mode == "plan":
+                    payload = AgentPlanRequest(
+                        agent_id=agent_id,
+                        goal=goal,
+                        title=None,
+                        model_provider="default",
+                        model_name="default",
+                        max_runtime_seconds=1800,
+                        max_subagents=5,
+                        enable_sandbox=True,
+                        enable_network=False,
+                    )
+                    yield sse(
+                        "think_delta",
+                        {
+                            "content": (
+                                "已读取当前分支、Pinned 消息和上下文窗口，"
+                                "准备生成可审计计划。\n"
+                            ),
+                            "active_leaf_id": request.active_leaf_id,
+                            "active_branch_id": request.active_branch_id,
+                            "pinned_node_ids": request.pinned_node_ids,
+                            "context_window_turns": request.context_window_turns,
+                        },
+                    )
+                    planned = plan_with_agent(request=payload, session=session, principal=principal)
+                elif request.mode == "markdown_plan":
+                    run = _create_workspace_chat_run(
+                        agent_id=agent_id,
+                        goal=goal,
+                        session=session,
+                        principal=principal,
+                        mode="markdown_plan",
+                    )
+                    yield from workspace_text_events(
+                        run=run,
+                        messages=_workspace_markdown_plan_messages(
+                            agent_id=agent_id,
+                            goal=goal,
+                            request=request,
+                        ),
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                        run_created_message="Harness Agent plan run started.",
+                        done_message="Harness Agent plan response completed.",
+                    )
+                    return
+                else:
+                    run = _create_workspace_chat_run(
+                        agent_id=agent_id,
+                        goal=goal,
+                        session=session,
+                        principal=principal,
+                        mode="chat",
+                    )
+                    yield from workspace_text_events(
+                        run=run,
+                        messages=_workspace_chat_messages(
+                            agent_id=agent_id,
+                            goal=goal,
+                            request=request,
+                        ),
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                        run_created_message="Chat run started.",
+                        done_message="Chat response completed.",
+                    )
+                    return
         except HTTPException as exc:
             if request.run_id:
                 yield sse(
@@ -419,6 +633,15 @@ def stream_agent_chat_run(
         except Exception as exc:
             yield sse("error", {"message": str(exc), "recoverable": False})
             return
+        yield sse(
+            "run_created",
+            {
+                "run_id": planned.run_id,
+                "status": planned.task.status,
+                "step_count": len(planned.plan.steps),
+                "message": planned.message,
+            },
+        )
         registry = ToolRegistry.default()
         runner = ToolRunner(session=session, registry=registry)
         if request.tool_mentions:
@@ -451,6 +674,7 @@ def stream_agent_chat_run(
                         },
                     )
                     continue
+                input_json = _normalize_tool_mention_payload(mention.name, mention.payload, goal)
                 executable = (
                     metadata.risk_level == "low"
                     and metadata.idempotent
@@ -458,20 +682,39 @@ def stream_agent_chat_run(
                     and metadata.network_policy in {"none", "restricted"}
                 )
                 if not executable:
+                    execution = runner.request_approval(
+                        task_id=planned.run_id,
+                        agent_run_id=planned.run_id,
+                        tool_name=mention.name,
+                        input_json=input_json,
+                    )
+                    run = session.get(Task, planned.run_id)
+                    if run is not None:
+                        run.status = "WAITING_APPROVAL"
+                        run.updated_at = utc_now()
+                    session.commit()
+                    approval_id = execution.output.get("approval_id")
                     yield sse(
                         "tool_call_requested",
-                        requested_tool_payload(mention, metadata, tool_call_id, "pending_approval"),
+                        requested_tool_payload(
+                            mention,
+                            metadata,
+                            execution.tool_call.id,
+                            "pending_approval",
+                            input_json,
+                            approval_id if isinstance(approval_id, str) else None,
+                        ),
                     )
                     continue
                 yield sse(
                     "tool_call_requested",
-                    requested_tool_payload(mention, metadata, tool_call_id, "running"),
+                    requested_tool_payload(mention, metadata, tool_call_id, "running", input_json),
                 )
                 execution = runner.execute(
                     task_id=planned.run_id,
                     agent_run_id=planned.run_id,
                     tool_name=mention.name,
-                    input_json=_normalize_tool_mention_payload(mention.name, mention.payload, goal),
+                    input_json=input_json,
                     roles=principal.roles,
                 )
                 session.commit()
@@ -508,13 +751,17 @@ def stream_agent_chat_run(
                 "run_id": planned.run_id,
                 "active_branch_id": request.active_branch_id,
                 "continue_from_node_id": request.continue_from_node_id,
-                "status": planned.task.status,
+                "status": _run_status(
+                    planned.run_id,
+                    fallback=planned.task.status,
+                    session=session,
+                ),
                 "step_count": len(planned.plan.steps),
                 "message": planned.message,
             },
         )
 
-    return StreamingResponse(iterator(), media_type="text/event-stream")
+    return StreamingResponse(iterator(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 @router.post(
@@ -1083,6 +1330,123 @@ def _repair_plan_prompt(*, task: Task, invalid_content: str, session: Session) -
     return response.content
 
 
+def _create_workspace_chat_run(
+    *,
+    agent_id: str,
+    goal: str,
+    session: Session,
+    principal: Principal,
+    mode: Literal["chat", "markdown_plan"] = "chat",
+) -> Task:
+    task = Task(
+        organization_id=principal.organization_id,
+        created_by=principal.user_id,
+        title=_title_from_goal(goal),
+        goal=goal,
+        status="CREATED",
+        model_provider="default",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=0,
+        enable_sandbox=False,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    session.add(task)
+    session.flush()
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.TASK_CREATED,
+        payload_json={
+            "task_id": task.id,
+            "title": task.title,
+            "goal": task.goal,
+            "agent_id": agent_id,
+            "mode": mode,
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    session.flush()
+    return task
+
+
+def _workspace_chat_messages(
+    *,
+    agent_id: str,
+    goal: str,
+    request: AgentChatStreamRequest,
+) -> list[ModelMessage]:
+    messages = [
+        ModelMessage(
+            role="system",
+            content=(
+                "You are the normal conversational assistant in AI Harness Workspace Pro. "
+                "Answer the user's message directly and naturally. "
+                "Do not create an execution plan unless the user explicitly asks for planning, "
+                "tool use, code execution, or task decomposition. "
+                f"Current agent id: {agent_id}."
+            ),
+        )
+    ]
+    messages.extend(_workspace_context_messages(request))
+    if not messages or messages[-1].role != "user" or messages[-1].content.strip() != goal:
+        messages.append(ModelMessage(role="user", content=goal))
+    return messages
+
+
+def _workspace_markdown_plan_messages(
+    *,
+    agent_id: str,
+    goal: str,
+    request: AgentChatStreamRequest,
+) -> list[ModelMessage]:
+    messages = [
+        ModelMessage(
+            role="system",
+            content=(
+                "You are the Harness Agent planning assistant in AI Harness Workspace Pro. "
+                "Answer with concise markdown planning text only. "
+                "Include assumptions, next steps, and acceptance criteria when useful. "
+                "Do not execute tools or emit operational details. "
+                f"Current agent id: {agent_id}."
+            ),
+        )
+    ]
+    messages.extend(_workspace_context_messages(request))
+    if not messages or messages[-1].role != "user" or messages[-1].content.strip() != goal:
+        messages.append(ModelMessage(role="user", content=goal))
+    return messages
+
+
+def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMessage]:
+    pinned_ids = set(request.pinned_node_ids)
+    carried = [
+        node
+        for node in request.messages[-request.context_window_turns :]
+        if node.role in {"user", "assistant", "system"}
+    ]
+    pinned = [node for node in request.messages if node.id in pinned_ids and node not in carried]
+    messages: list[ModelMessage] = []
+    for node in [*pinned, *carried]:
+        role = node.role if node.role in {"user", "assistant", "system"} else "user"
+        content = node.content.strip()
+        if content:
+            messages.append(ModelMessage(role=role, content=content))
+    return messages
+
+
+def _require_normal_chat_content(content: str) -> str:
+    stripped = content.strip()
+    if stripped and stripped != "{}":
+        return stripped
+    raise ModelGatewayError(
+        "模型网关没有返回可展示的真实聊天内容；"
+        "请在模型设置中配置可用供应商/API Key 后再使用 Workspace Pro 聊天。"
+    )
+
+
 def _plan_response(plan: ExecutionPlan) -> TaskPlanResponse:
     steps = []
     for raw_step in plan.plan_json.get("steps", []):
@@ -1170,6 +1534,11 @@ def _latest_model_call_id(run_id: str, *, session: Session) -> str | None:
         .order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
     ).scalars().first()
     return model_call.id if model_call is not None else None
+
+
+def _run_status(run_id: str, *, fallback: str, session: Session) -> str:
+    run = session.get(Task, run_id)
+    return run.status if run is not None else fallback
 
 
 def _agent_plan_response_from_run(

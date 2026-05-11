@@ -172,6 +172,32 @@ class ToolRunner:
             output=output,
         )
 
+    def request_approval(
+        self,
+        *,
+        task_id: str,
+        tool_name: str,
+        input_json: dict,
+        agent_run_id: str | None = None,
+        reason: str | None = None,
+    ) -> ToolExecution:
+        metadata = self._metadata(tool_name)
+        decision = SandboxPolicyDecision(
+            allowed=False,
+            reason=reason or "workspace side-effect tool requires approval",
+            policy_id="workspace-tool-approval-required",
+            audit_level=metadata.audit_level,
+            requires_sandbox=metadata.requires_sandbox,
+        )
+        return self._request_approval(
+            task_id=task_id,
+            agent_run_id=agent_run_id,
+            metadata=metadata,
+            input_json=input_json,
+            decision=decision,
+            requires_sandbox=metadata.requires_sandbox,
+        )
+
     def _metadata(self, tool_name: str) -> ToolMetadata:
         metadata = self.registry.tools.get(tool_name)
         if metadata is None:
