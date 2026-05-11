@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -46,6 +47,26 @@ class ModelResponse(BaseModel):
     model_name: str
     usage: dict = Field(default_factory=dict)
     raw_response: dict = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Streaming chunk contract (v4 streaming uplift — bugfix: true token-by-token
+# streaming via upstream SSE APIs instead of single-block `complete`).
+#
+# Gateways expose an iterator of `ModelStreamChunk`:
+#   - `text`  — incremental delta to append to the assistant content.
+#   - `usage` — final token accounting (only set on the last chunk).
+#   - `done`  — terminal marker; guarantees no further text/usage chunks.
+#
+# Chunks are additive: downstream consumers accumulate `text` as it arrives
+# and commit the `usage` + `raw_response` once `done === True`.
+# ---------------------------------------------------------------------------
+@dataclass
+class ModelStreamChunk:
+    text: str = ""
+    usage: dict | None = None
+    raw_response: dict | None = None
+    done: bool = False
 
 
 class ModelGatewayError(RuntimeError):
@@ -279,6 +300,24 @@ class ModelGateway(Protocol):
     def complete(self, request: ModelRequest) -> ModelResponse:
         """Call an OpenAI-compatible gateway through the platform boundary."""
 
+    def stream(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
+        """Stream a completion chunk-by-chunk. Terminates with done=True."""
+
+
+def _fallback_stream(response: ModelResponse) -> Iterator[ModelStreamChunk]:
+    """
+    Adapt a non-streaming `ModelResponse` into a degenerate 2-chunk stream.
+    Used by gateways / providers that cannot do real incremental SSE so the
+    downstream consumer contract (one or more text chunks + terminal usage +
+    `done=True`) is honoured without special-casing in callers.
+    """
+    yield ModelStreamChunk(text=response.content)
+    yield ModelStreamChunk(
+        usage=dict(response.usage),
+        raw_response=dict(response.raw_response),
+        done=True,
+    )
+
 
 class MockModelGateway:
     def complete(self, request: ModelRequest) -> ModelResponse:
@@ -292,6 +331,9 @@ class MockModelGateway:
             usage={"prompt_tokens": 0, "completion_tokens": 0},
             raw_response={"mode": "mock"},
         )
+
+    def stream(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
+        yield from _fallback_stream(self.complete(request))
 
 
 class OpenAICompatibleModelGateway:
@@ -362,6 +404,95 @@ class OpenAICompatibleModelGateway:
         if not isinstance(content, str):
             raise ModelGatewayError("model response content is missing")
         return content
+
+    def stream(self, request_payload: ModelRequest) -> Iterator[ModelStreamChunk]:
+        """
+        OpenAI-compatible SSE stream (`/chat/completions` with `stream: true`).
+        Each upstream frame `data: {...}` carries `choices[0].delta.content`
+        for the token delta plus a terminal `[DONE]` sentinel. The final
+        `chunk` typically includes `usage` on providers that report it
+        post-stream (OpenAI 2024+, most compatible backends).
+        """
+        started_at = time.monotonic()
+        if self._uses_local_mock():
+            yield from _fallback_stream(self.complete(request_payload))
+            model_call_duration_seconds.observe(time.monotonic() - started_at)
+            return
+
+        payload = {
+            "model": request_payload.model_name,
+            "messages": [message.model_dump() for message in request_payload.messages],
+            "response_format": {"type": request_payload.response_format},
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "text/event-stream",
+        }
+        http_request = request.Request(
+            urljoin(self.base_url.rstrip("/") + "/", "chat/completions"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        text_total = ""
+        usage: dict = {}
+        raw_last: dict = {}
+        try:
+            with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if not line:
+                        continue
+                    if line.startswith(":"):
+                        # SSE comment / heartbeat
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "" or data == "[DONE]":
+                        continue
+                    try:
+                        frame = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    raw_last = frame
+                    choices = frame.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        piece = delta.get("content")
+                        if isinstance(piece, str) and piece:
+                            text_total += piece
+                            yield ModelStreamChunk(text=piece)
+                    frame_usage = frame.get("usage")
+                    if isinstance(frame_usage, dict):
+                        usage = frame_usage
+        except (OSError, error.HTTPError, json.JSONDecodeError) as exc:
+            model_call_errors_total.inc()
+            raise ModelGatewayError(str(exc)) from exc
+
+        if not text_total:
+            raise ModelGatewayError("model response content is missing")
+
+        normalized_usage = {
+            **usage,
+            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(
+                usage.get("completion_tokens") or max(1, len(text_total) // 4)
+            ),
+        }
+        model_calls_total.inc()
+        model_tokens_input_total.inc(int(normalized_usage.get("prompt_tokens", 0) or 0))
+        model_tokens_output_total.inc(int(normalized_usage.get("completion_tokens", 0) or 0))
+        model_call_duration_seconds.observe(time.monotonic() - started_at)
+        yield ModelStreamChunk(
+            usage=normalized_usage,
+            raw_response=raw_last or {"stream": "openai_compatible"},
+            done=True,
+        )
 
 
 class AnthropicCompatibleModelGateway:
@@ -471,6 +602,111 @@ class AnthropicCompatibleModelGateway:
         if not text_parts:
             raise ModelGatewayError("model response text content is missing")
         return "\n".join(text_parts)
+
+    def stream(self, request_payload: ModelRequest) -> Iterator[ModelStreamChunk]:
+        """
+        Anthropic-compatible SSE stream (`/v1/messages` with `stream: true`).
+        Upstream event taxonomy we actually consume:
+          - `message_start`       — usage baseline (prompt tokens)
+          - `content_block_delta` — `delta.text` is the token increment
+          - `message_delta`       — usage completion (output tokens)
+          - `message_stop`        — terminal sentinel
+        Everything else (`ping`, `content_block_start`, `content_block_stop`)
+        is ignored. Parsing is defensive: malformed frames fall through and
+        we rely on the total-text emptiness check for error surfacing.
+        """
+        started_at = time.monotonic()
+        if self._uses_local_mock():
+            yield from _fallback_stream(self.complete(request_payload))
+            model_call_duration_seconds.observe(time.monotonic() - started_at)
+            return
+
+        payload = self._payload(request_payload)
+        payload["stream"] = True
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "text/event-stream",
+            "anthropic-version": "2023-06-01",
+        }
+        http_request = request.Request(
+            urljoin(self.base_url.rstrip("/") + "/", "v1/messages"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        text_total = ""
+        usage: dict = {}
+        last_frame: dict = {}
+        current_event: str | None = None
+        try:
+            with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                    if line == "":
+                        current_event = None
+                        continue
+                    if line.startswith(":"):
+                        continue
+                    if line.startswith("event:"):
+                        current_event = line[6:].strip()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    try:
+                        frame = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    last_frame = frame
+                    ftype = (
+                        frame.get("type")
+                        if isinstance(frame.get("type"), str)
+                        else current_event
+                    )
+                    if ftype == "content_block_delta":
+                        delta = frame.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            piece = delta.get("text")
+                            if isinstance(piece, str) and piece:
+                                text_total += piece
+                                yield ModelStreamChunk(text=piece)
+                    elif ftype == "message_start":
+                        msg = frame.get("message") or {}
+                        msg_usage = msg.get("usage")
+                        if isinstance(msg_usage, dict):
+                            usage.update(msg_usage)
+                    elif ftype == "message_delta":
+                        msg_usage = frame.get("usage")
+                        if isinstance(msg_usage, dict):
+                            usage.update(msg_usage)
+                    elif ftype == "error":
+                        err = frame.get("error") or {}
+                        message = err.get("message") or str(frame)
+                        raise ModelGatewayError(message)
+                    # message_stop, content_block_start/stop, ping → ignore
+        except (OSError, error.HTTPError, json.JSONDecodeError) as exc:
+            model_call_errors_total.inc()
+            raise ModelGatewayError(str(exc)) from exc
+
+        if not text_total:
+            raise ModelGatewayError("model response text content is missing")
+
+        normalized = self._normalize_usage(usage)
+        if not normalized.get("completion_tokens"):
+            normalized["completion_tokens"] = max(1, len(text_total) // 4)
+        model_calls_total.inc()
+        model_tokens_input_total.inc(int(normalized.get("prompt_tokens", 0) or 0))
+        model_tokens_output_total.inc(int(normalized.get("completion_tokens", 0) or 0))
+        model_call_duration_seconds.observe(time.monotonic() - started_at)
+        yield ModelStreamChunk(
+            usage=normalized,
+            raw_response=last_frame or {"stream": "anthropic"},
+            done=True,
+        )
 
 
 class ModelSettingsResolver:
@@ -850,6 +1086,215 @@ class AuditedModelGateway:
                 for message in request_payload.messages
             ],
         }
+
+    # -----------------------------------------------------------------
+    # Streaming variant (v4 bugfix — true token-by-token SSE).
+    # -----------------------------------------------------------------
+    def stream(
+        self,
+        request_payload: ModelRequest,
+        *,
+        fallback_requests: list[ModelRequest] | None = None,
+    ) -> Iterator[ModelStreamChunk]:
+        """
+        Audited streaming counterpart to `complete`. Yields
+        `ModelStreamChunk` from the resolved gateway, writing the same
+        `ModelCall` row + `MODEL_CALLED` / `MODEL_RESPONSE_RECEIVED` /
+        `MODEL_CALL_FAILED` events as the blocking path. The `ModelCall`
+        status flips to `SUCCESS` only after the terminal `done=True`
+        chunk is observed. Fallback providers run sequentially with the
+        same event trace as `complete` uses.
+        """
+        fallbacks = fallback_requests or []
+        primary_error: str | None = None
+        try:
+            yield from self._attempt_stream(request_payload)
+            return
+        except ModelGatewayError as exc:
+            primary_error = str(exc)
+            if not fallbacks:
+                raise
+
+        last_error: ModelGatewayError | None = None
+        for fallback_index, fallback in enumerate(fallbacks, start=1):
+            model_fallback_total.labels(
+                primary_provider=request_payload.model_provider,
+                fallback_provider=fallback.model_provider,
+            ).inc()
+            self.event_store.append(
+                task_id=self.task_id,
+                agent_run_id=self.agent_run_id,
+                event_type=EventType.MODEL_FALLBACK_USED,
+                payload_json={
+                    "primary_model_provider": request_payload.model_provider,
+                    "primary_model_name": request_payload.model_name,
+                    "model_provider": fallback.model_provider,
+                    "model_name": fallback.model_name,
+                    "fallback_index": fallback_index,
+                    "fallback_count": len(fallbacks),
+                    "reason": primary_error,
+                },
+            )
+            try:
+                yield from self._attempt_stream(fallback)
+                return
+            except ModelGatewayError as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise ModelGatewayError("model gateway failed")
+
+    def _attempt_stream(
+        self,
+        request_payload: ModelRequest,
+    ) -> Iterator[ModelStreamChunk]:
+        request_payload, settings = ModelSettingsResolver(self.session).resolve(
+            task_id=self.task_id,
+            request_payload=request_payload,
+        )
+        limiter_key = (
+            f"{settings.organization_id or 'global'}:"
+            f"{request_payload.model_provider}:{request_payload.model_name}"
+        )
+        circuit_key = limiter_key
+        estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
+        gateway = self.gateway or self._gateway_from_settings(settings.provider)
+        started_at = time.monotonic()
+        model_call = ModelCall(
+            task_id=self.task_id,
+            agent_run_id=self.agent_run_id,
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            status="RUNNING",
+            prompt_tokens=0,
+            completion_tokens=0,
+            duration_ms=0,
+            request_json=self._safe_request_json(request_payload),
+            response_json={},
+            created_at=utc_now(),
+        )
+        self.session.add(model_call)
+        self.session.flush()
+        self.event_store.append(
+            task_id=self.task_id,
+            agent_run_id=self.agent_run_id,
+            event_type=EventType.MODEL_CALLED,
+            payload_json={
+                "model_call_id": model_call.id,
+                "model_provider": request_payload.model_provider,
+                "model_name": request_payload.model_name,
+                "prompt_message_count": len(request_payload.messages),
+                "streaming": True,
+            },
+        )
+        text_accumulator = ""
+        usage: dict = {}
+        raw_response: dict = {}
+        terminal_chunk: ModelStreamChunk | None = None
+        try:
+            ModelCircuitBreaker.check(key=circuit_key)
+            ModelRateLimiter.check(
+                key=limiter_key,
+                rpm=settings.rate_limit_rpm,
+                tpm=settings.rate_limit_tpm,
+                estimated_tokens=estimated_prompt_tokens,
+            )
+            for chunk in gateway.stream(request_payload):
+                if chunk.text:
+                    text_accumulator += chunk.text
+                    yield chunk
+                if chunk.usage:
+                    usage.update(chunk.usage)
+                if chunk.raw_response:
+                    raw_response = chunk.raw_response
+                if chunk.done:
+                    terminal_chunk = chunk
+                    break
+        except GeneratorExit:
+            model_call.status = "FAILED"
+            model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
+            model_call.error_message = "stream closed before completion"
+            self.event_store.append(
+                task_id=self.task_id,
+                agent_run_id=self.agent_run_id,
+                event_type=EventType.MODEL_CALL_FAILED,
+                payload_json={
+                    "model_call_id": model_call.id,
+                    "model_provider": request_payload.model_provider,
+                    "model_name": request_payload.model_name,
+                    "error": model_call.error_message,
+                    "streaming": True,
+                    "cancelled": True,
+                },
+            )
+            self.session.flush()
+            raise
+        except Exception as exc:
+            if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
+                ModelCircuitBreaker.record_failure(
+                    key=circuit_key,
+                    failure_threshold=int(
+                        settings.circuit_breaker.get("failure_threshold") or 3
+                    ),
+                    cooldown_seconds=int(
+                        settings.circuit_breaker.get("cooldown_seconds") or 60
+                    ),
+                )
+            model_call.status = "FAILED"
+            model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
+            model_call.error_message = str(exc)
+            self.event_store.append(
+                task_id=self.task_id,
+                agent_run_id=self.agent_run_id,
+                event_type=EventType.MODEL_CALL_FAILED,
+                payload_json={
+                    "model_call_id": model_call.id,
+                    "model_provider": request_payload.model_provider,
+                    "model_name": request_payload.model_name,
+                    "error": str(exc),
+                },
+            )
+            self.session.flush()
+            if isinstance(exc, ModelGatewayError):
+                raise
+            raise ModelGatewayError(str(exc)) from exc
+
+        ModelCircuitBreaker.record_success(key=circuit_key)
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(
+            usage.get("completion_tokens", 0) or max(1, len(text_accumulator) // 4)
+        )
+        model_call.status = "SUCCESS"
+        model_call.prompt_tokens = prompt_tokens
+        model_call.completion_tokens = completion_tokens
+        model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
+        model_call.response_json = {
+            "content_preview": text_accumulator[:2000],
+            "usage": {
+                **usage,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
+            "raw_response": raw_response,
+            "stream": True,
+        }
+        self.event_store.append(
+            task_id=self.task_id,
+            agent_run_id=self.agent_run_id,
+            event_type=EventType.MODEL_RESPONSE_RECEIVED,
+            payload_json={
+                "model_call_id": model_call.id,
+                "model_provider": request_payload.model_provider,
+                "model_name": request_payload.model_name,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "duration_ms": model_call.duration_ms,
+                "streaming": True,
+            },
+        )
+        self.session.flush()
+        if terminal_chunk is not None:
+            yield terminal_chunk
 
     def _estimate_prompt_tokens(self, request_payload: ModelRequest) -> int:
         content_length = sum(len(message.content) for message in request_payload.messages)

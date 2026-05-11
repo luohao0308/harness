@@ -13,6 +13,7 @@ from app.agents.model_gateway import (
     ModelRateLimiter,
     ModelRequest,
     ModelResponse,
+    ModelStreamChunk,
     OpenAICompatibleModelGateway,
 )
 from app.db.models import ModelCall, SystemSetting, Task, utc_now
@@ -33,6 +34,23 @@ class SequenceGateway:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class StreamingSequenceGateway:
+    def __init__(self, chunks: list[ModelStreamChunk]) -> None:
+        self.chunks = chunks
+        self.requests: list[ModelRequest] = []
+        self.closed = False
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        raise AssertionError("streaming test must not call complete")
+
+    def stream(self, request: ModelRequest):
+        self.requests.append(request)
+        try:
+            yield from self.chunks
+        finally:
+            self.closed = True
 
 
 def create_task(db_session: Session) -> Task:
@@ -137,6 +155,116 @@ def test_audited_model_gateway_records_failure_and_fallback(db_session: Session)
     assert "model_fallback_total" in metrics
     assert 'fallback_provider="openai-compatible"' in metrics
     assert 'primary_provider="openai-compatible"' in metrics
+
+
+def test_audited_model_gateway_writes_stream_success_events(db_session: Session) -> None:
+    ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    gateway = StreamingSequenceGateway(
+        [
+            ModelStreamChunk(text="hel"),
+            ModelStreamChunk(text="lo"),
+            ModelStreamChunk(
+                usage={"prompt_tokens": 4, "completion_tokens": 2},
+                raw_response={"id": "stream_1"},
+                done=True,
+            ),
+        ]
+    )
+
+    chunks = list(
+        AuditedModelGateway(
+            session=db_session,
+            task_id=task.id,
+            gateway=gateway,
+        ).stream(model_request())
+    )
+
+    assert [chunk.text for chunk in chunks if chunk.text] == ["hel", "lo"]
+    assert chunks[-1].done is True
+    model_call = db_session.execute(select(ModelCall)).scalar_one()
+    assert model_call.status == "SUCCESS"
+    assert model_call.prompt_tokens == 4
+    assert model_call.completion_tokens == 2
+    assert model_call.response_json["content_preview"] == "hello"
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    assert [event.event_type for event in events] == [
+        "MODEL_CALLED",
+        "MODEL_RESPONSE_RECEIVED",
+    ]
+    assert gateway.closed is True
+
+
+def test_audited_model_gateway_records_success_before_done_chunk_close(
+    db_session: Session,
+) -> None:
+    ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    gateway = StreamingSequenceGateway(
+        [
+            ModelStreamChunk(text="done-safe"),
+            ModelStreamChunk(
+                usage={"prompt_tokens": 2, "completion_tokens": 3},
+                raw_response={"id": "stream_done_safe"},
+                done=True,
+            ),
+        ]
+    )
+    stream = AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=gateway,
+    ).stream(model_request())
+
+    assert next(stream).text == "done-safe"
+    done = next(stream)
+    assert done.done is True
+    stream.close()
+
+    model_call = db_session.execute(select(ModelCall)).scalar_one()
+    assert model_call.status == "SUCCESS"
+    assert model_call.response_json["content_preview"] == "done-safe"
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    assert [event.event_type for event in events] == [
+        "MODEL_CALLED",
+        "MODEL_RESPONSE_RECEIVED",
+    ]
+    assert gateway.closed is True
+
+
+def test_audited_model_gateway_records_failed_event_when_stream_closes(
+    db_session: Session,
+) -> None:
+    ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    gateway = StreamingSequenceGateway(
+        [
+            ModelStreamChunk(text="partial"),
+            ModelStreamChunk(text=" never delivered"),
+        ]
+    )
+    stream = AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=gateway,
+    ).stream(model_request())
+
+    assert next(stream).text == "partial"
+    stream.close()
+
+    model_call = db_session.execute(select(ModelCall)).scalar_one()
+    assert model_call.status == "FAILED"
+    assert model_call.error_message == "stream closed before completion"
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    assert [event.event_type for event in events] == [
+        "MODEL_CALLED",
+        "MODEL_CALL_FAILED",
+    ]
+    assert events[-1].payload_json["cancelled"] is True
+    assert gateway.closed is True
 
 
 def test_model_fallback_summary_endpoint_aggregates_current_org(db_session: Session) -> None:

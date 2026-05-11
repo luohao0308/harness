@@ -154,6 +154,14 @@ class ToolMention(BaseModel):
 
 
 class AgentChatStreamRequest(BaseModel):
+    """Accept unknown extra fields (v4 additive `context_max_tokens`, etc.)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    mode: Literal["chat", "codex_plan", "plan"] = Field(
+        default="chat",
+        description="Workspace 输入模式",
+    )
     goal: str | None = Field(default=None, description="用户目标")
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
@@ -164,6 +172,13 @@ class AgentChatStreamRequest(BaseModel):
     continue_from_node_id: str | None = Field(default=None, description="继续生成的节点 ID")
     partial_assistant_content: str | None = Field(default=None, description="已生成的片段")
     tool_mentions: list[ToolMention] = Field(default_factory=list, description="结构化工具 mention")
+    # v4 additive: UI-side token budget hint. Optional; backend is free to
+    # ignore. See agent-workspace-chat-v4-refine/design.md §Req 5.5.
+    context_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="UI-side context window budget; currently ignored by the backend",
+    )
 
 
 class TaskArtifact(BaseModel):

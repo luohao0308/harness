@@ -52,6 +52,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# NOTE (v4 agent-workspace-chat-v4-refine, Req 6.3):
+# Do NOT enable GZipMiddleware (or any Content-Encoding middleware) on routes
+# matching "*/runs/chat/stream" or "*/runs/plan/stream". Compressing SSE
+# bodies breaks incremental delivery and will trigger the frontend's
+# `streaming_diagnostic: "possible_buffering"` fallback. If GZip is ever
+# required for other routes, skip SSE paths via a `scope["path"]` check.
 app.add_middleware(OpenTelemetryTraceMiddleware)
 
 app.include_router(health_router)

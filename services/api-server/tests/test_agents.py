@@ -5,7 +5,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.model_gateway import ModelGatewayError, ModelResponse
+from app.agents.model_gateway import ModelGatewayError, ModelResponse, ModelStreamChunk
+from app.agents.planner import DeterministicPlanner
 from app.db.models import (
     Agent,
     AgentAssignment,
@@ -90,6 +91,383 @@ def fake_run_command(
     )
 
 
+def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_complete(self, request_payload):
+        assert request_payload.response_format == "text"
+        return ModelResponse(
+            content="我是由测试模型返回的真实回答",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 12, "completion_tokens": 8},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "你是谁",
+            "messages": [
+                {
+                    "id": "user-normal-chat",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "你是谁",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-normal-chat",
+            "active_branch_id": "branch-chat",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    assert "think_delta" not in event_names
+    assert "artifact_created" not in event_names
+    assert "tool_call_requested" not in event_names
+    assert delta["content"] == "我是由测试模型返回的真实回答"
+    assert done["step_count"] == 0
+    assert done["status"] == "COMPLETED"
+    assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
+    run = db_session.get(Task, run_created["run_id"])
+    assert run is not None
+    assert run.status == "COMPLETED"
+
+
+def test_agent_workspace_pro_chat_stream_drains_terminal_model_chunk(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    drained = {"value": False}
+
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        assert request_payload.response_format == "text"
+        yield ModelStreamChunk(text="terminal drain check")
+        yield ModelStreamChunk(
+            usage={"prompt_tokens": 3, "completion_tokens": 5},
+            raw_response={"mode": "terminal-drain"},
+            done=True,
+        )
+        drained["value"] = True
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "verify terminal drain",
+            "messages": [
+                {
+                    "id": "user-terminal-drain",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "verify terminal drain",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-terminal-drain",
+            "active_branch_id": "branch-terminal-drain",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    done = next(payload for event, payload in events if event == "done")
+    run = db_session.get(Task, done["run_id"])
+    assert drained["value"] is True
+    assert run is not None
+    assert run.status == "COMPLETED"
+
+
+def test_agent_workspace_pro_chat_stream_rejects_empty_model_chat_response(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_complete(self, request_payload):
+        assert request_payload.response_format == "text"
+        return ModelResponse(
+            content="{}",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 1, "completion_tokens": 0},
+            raw_response={"mode": "mock"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "你是谁",
+            "messages": [
+                {
+                    "id": "user-empty-chat",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "你是谁",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-empty-chat",
+            "active_branch_id": "branch-empty",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    assert [payload for event, payload in events if event == "delta"] == []
+    error = next(payload for event, payload in events if event == "error")
+    run_created = next(payload for event, payload in events if event == "run_created")
+    assert error["recoverable"] is True
+    assert "模型网关没有返回可展示的真实聊天内容" in error["message"]
+    run = db_session.get(Task, run_created["run_id"])
+    assert run is not None
+    assert run.status == "FAILED"
+
+
+def test_agent_workspace_pro_chat_mode_does_not_auto_promote_plan_keywords(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_complete(self, request_payload):
+        assert request_payload.response_format == "text"
+        return ModelResponse(
+            content="普通聊天仍然返回模型文本",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 10, "completion_tokens": 9},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "帮我 plan 一下怎么执行这个工具任务",
+            "messages": [
+                {
+                    "id": "user-chat-keywords",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "帮我 plan 一下怎么执行这个工具任务",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-chat-keywords",
+            "active_branch_id": "branch-chat-keywords",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "read_file", "source": "builtin", "payload": {}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    assert delta["content"] == "普通聊天仍然返回模型文本"
+    assert done["step_count"] == 0
+    assert "think_delta" not in event_names
+    assert "artifact_created" not in event_names
+    assert "tool_call_requested" not in event_names
+    assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
+
+
+def test_agent_workspace_pro_codex_plan_streams_markdown_plan_without_plan_act(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "codex_plan",
+            "goal": "把当前项目的页面改成 ChatGPT 式聊天体验",
+            "messages": [
+                {
+                    "id": "user-codex-plan",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "把当前项目的页面改成 ChatGPT 式聊天体验",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-codex-plan",
+            "active_branch_id": "branch-codex-plan",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "run_shell", "source": "builtin", "payload": {}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    assert delta["content"].startswith("测试模型回复：")
+    assert done["step_count"] == 0
+    assert done["status"] == "COMPLETED"
+    assert "think_delta" not in event_names
+    assert "artifact_created" not in event_names
+    assert "tool_call_requested" not in event_names
+    assert "tool_call_result" not in event_names
+    run = db_session.get(Task, run_created["run_id"])
+    assert run is not None
+    assert run.status == "COMPLETED"
+    assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
+    assert db_session.execute(select(ToolCall)).scalar_one_or_none() is None
+
+
+def test_agent_workspace_pro_chat_stream_plan_mode_forces_plan_act(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "plan",
+            "goal": "你是谁",
+            "messages": [
+                {
+                    "id": "user-plan-mode",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "你是谁",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-plan-mode",
+            "active_branch_id": "branch-plan-mode",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    assert "think_delta" in event_names
+    assert "run_created" in event_names
+    assert "artifact_created" in event_names
+    assert "delta" in event_names
+    assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is not None
+
+
+def test_agent_workspace_pro_chat_mode_does_not_resume_plan_run(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    client = TestClient(app)
+    planned_response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "plan",
+            "goal": "Create a plan run",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-plan-run",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+    plan_run_id = next(
+        payload
+        for event, payload in parse_sse_events(planned_response.text)
+        if event == "run_created"
+    )["run_id"]
+
+    def fake_complete(self, request_payload):
+        assert request_payload.response_format == "text"
+        return ModelResponse(
+            content="chat mode created a normal model reply",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 9, "completion_tokens": 8},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    chat_response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "continue with a tool plan",
+            "run_id": plan_run_id,
+            "messages": [],
+            "active_leaf_id": "assistant-plan",
+            "active_branch_id": "branch-chat-run",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "read_file", "source": "builtin", "payload": {}}],
+        },
+    )
+
+    assert chat_response.status_code == 200
+    events = parse_sse_events(chat_response.text)
+    event_names = [event for event, _payload in events]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    assert run_created["run_id"] != plan_run_id
+    assert delta["content"] == "chat mode created a normal model reply"
+    assert done["step_count"] == 0
+    assert "think_delta" not in event_names
+    assert "artifact_created" not in event_names
+    assert "tool_call_requested" not in event_names
+    assert db_session.get(Task, plan_run_id).status == "PLANNED"
+
+
 def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Session) -> None:
     client = TestClient(app)
     response = client.post(
@@ -97,6 +475,7 @@ def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Sessi
         headers=AUTH_HEADERS,
         json={
             "goal": "Build a Workspace Pro regression plan",
+            "mode": "plan",
             "messages": [
                 {
                     "id": "user-1",
@@ -121,6 +500,7 @@ def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Sessi
     assert response.status_code == 200
     body = response.text
     assert "event: think_delta" in body
+    assert "event: run_created" in body
     assert "event: tool_call_requested" in body
     assert "event: tool_call_result" in body
     assert "event: artifact_created" in body
@@ -145,7 +525,19 @@ def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Sessi
 
 def test_agent_workspace_pro_chat_stream_continue_preserves_run_identity(
     db_session: Session,
+    monkeypatch,
 ) -> None:
+    def fake_complete(self, request_payload):
+        return ModelResponse(
+            content="continued model response",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 8, "completion_tokens": 6},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
     client = TestClient(app)
     created = client.post(
         "/api/agents/default/runs/chat/stream",
@@ -212,6 +604,57 @@ def test_agent_workspace_pro_chat_stream_continue_preserves_run_identity(
     assert done["continue_from_node_id"] == "assistant-paused"
 
 
+def test_agent_workspace_chat_run_can_be_promoted_to_full_harness_execution(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_complete(self, request_payload):
+        return ModelResponse(
+            content="chat response before promotion",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 8, "completion_tokens": 6},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "Create a chat run that later needs full Harness execution",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-promote",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert created.status_code == 200
+    run_id = next(
+        payload for event, payload in parse_sse_events(created.text) if event == "done"
+    )["run_id"]
+    assert db_session.get(Task, run_id).status == "COMPLETED"
+    assert (
+        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == run_id)).first()
+        is None
+    )
+
+    promoted = client.post(f"/api/tasks/{run_id}/start", headers=AUTH_HEADERS)
+
+    assert promoted.status_code == 202
+    assert promoted.json()["id"] == run_id
+    assert promoted.json()["status"] in {"COMPLETED", "WAITING_SUBAGENTS", "WAITING_APPROVAL"}
+    assert (
+        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == run_id)).first()
+        is not None
+    )
+
+
 def test_agent_workspace_pro_chat_stream_invalid_continue_is_recoverable(
     db_session: Session,
 ) -> None:
@@ -239,11 +682,13 @@ def test_agent_workspace_pro_chat_stream_invalid_continue_is_recoverable(
 def test_agent_workspace_pro_chat_stream_side_effect_tool_stays_pending(
     db_session: Session,
 ) -> None:
-    response = TestClient(app).post(
+    client = TestClient(app)
+    response = client.post(
         "/api/agents/default/runs/chat/stream",
         headers=AUTH_HEADERS,
         json={
             "goal": "Do not auto execute shell",
+            "mode": "plan",
             "messages": [],
             "active_leaf_id": "root",
             "pinned_node_ids": [],
@@ -256,15 +701,101 @@ def test_agent_workspace_pro_chat_stream_side_effect_tool_stays_pending(
 
     assert response.status_code == 200
     events = parse_sse_events(response.text)
+    run_created = next(payload for event, payload in events if event == "run_created")
     requested = next(payload for event, payload in events if event == "tool_call_requested")
     assert requested["status"] == "pending_approval"
+    assert requested["approval_id"]
     assert not [payload for event, payload in events if event == "tool_call_result"]
+    run_id = run_created["run_id"]
+    tool_call = db_session.execute(select(ToolCall).where(ToolCall.task_id == run_id)).scalar_one()
+    approval = db_session.execute(
+        select(ToolApproval).where(ToolApproval.task_id == run_id)
+    ).scalar_one()
+    run = db_session.get(Task, run_id)
+    assert requested["tool_call_id"] == tool_call.id
+    assert requested["approval_id"] == approval.id
+    assert approval.tool_call_id == tool_call.id
+    assert tool_call.status == "PENDING_APPROVAL"
+    assert run is not None
+    assert run.status == "WAITING_APPROVAL"
+
+    workspace = client.get(f"/api/agents/runs/{run_id}/workspace", headers=AUTH_HEADERS)
+    assert workspace.status_code == 200
+    assert workspace.json()["approvals"][0]["id"] == approval.id
 
 
 @pytest.fixture(autouse=True)
 def fake_sandbox_runtime(monkeypatch) -> None:
     monkeypatch.setattr("app.agents.executor.WarmPoolManager", FakeWarmPoolManager)
     monkeypatch.setattr("app.sandbox.docker_manager.DockerManager.run_command", fake_run_command)
+
+
+@pytest.fixture(autouse=True)
+def fake_workspace_plan_model(monkeypatch) -> None:
+    def fake_audited_stream(self, request_payload, *, fallback_requests=None):
+        response = self.complete(request_payload)
+        if response.content.strip() != "{}":
+            yield ModelStreamChunk(text=response.content)
+        yield ModelStreamChunk(
+            usage=response.usage,
+            raw_response=response.raw_response,
+            done=True,
+        )
+
+    class FakeGateway:
+        def complete(self, request_payload):
+            if request_payload.response_format == "text":
+                goal = next(
+                    (
+                        message.content.strip()
+                        for message in reversed(request_payload.messages)
+                        if message.role == "user" and message.content.strip()
+                    ),
+                    "Workspace chat",
+                )
+                return ModelResponse(
+                    content=f"测试模型回复：{goal}",
+                    model_provider=request_payload.model_provider,
+                    model_name=request_payload.model_name,
+                    usage={"prompt_tokens": 12, "completion_tokens": 8},
+                    raw_response={"mode": "test-chat"},
+                )
+
+            goal = next(
+                (
+                    message.content.strip()
+                    for message in reversed(request_payload.messages)
+                    if message.role == "user" and message.content.strip()
+                ),
+                "Workspace plan",
+            )
+            task = Task(
+                organization_id="dev-org",
+                created_by="dev-engineer",
+                title=goal[:48] or "Workspace Plan",
+                goal=goal,
+                status="RUNNING",
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                max_runtime_seconds=1800,
+                max_subagents=5,
+                enable_sandbox=True,
+                enable_network=False,
+            )
+            plan = DeterministicPlanner().create_plan(task)
+            return ModelResponse(
+                content=json.dumps(plan.model_dump(), ensure_ascii=False),
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={"prompt_tokens": 12, "completion_tokens": 8},
+                raw_response={"mode": "test-plan"},
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: FakeGateway(),
+    )
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_audited_stream)
 
 
 def test_list_agents_initializes_named_agent_registry(db_session: Session) -> None:
