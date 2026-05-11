@@ -1,5 +1,22 @@
 import { create } from "zustand";
 
+import type { ConversationErrorMeta } from "../features/agents/lib/sseErrors";
+import {
+  CONTEXT_MAX_TOKENS_DEFAULT,
+  clampContextMaxTokens,
+  saveContextMaxTokens,
+} from "../features/agents/lib/contextTokens";
+import {
+  CONVERSATIONS_SCHEMA_VERSION,
+  computeConversationTitle,
+  generateConversationId,
+  genesisConversation,
+  saveConversationsSnapshot,
+  saveHistoryPanelCollapsed,
+  sortConversationsByUpdatedAt,
+  type ConversationSummary,
+} from "../features/agents/lib/conversationHistory";
+
 export type ConversationRole = "user" | "assistant" | "system" | "tool";
 export type ConversationState = "draft" | "streaming" | "paused" | "done" | "error";
 
@@ -29,6 +46,10 @@ export type ConversationNode = {
     duration_ms?: number;
     model_call_id?: string | null;
     active_branch_id?: string | null;
+    workspace_mode?: "chat" | "codex_plan" | "plan";
+    error?: ConversationErrorMeta;
+    // v2 additive (Design §Data Models → ConversationNode)
+    streaming_diagnostic?: "possible_buffering";
   };
   tool_calls: Array<Record<string, unknown>>;
   artifacts: ConversationArtifact[];
@@ -42,6 +63,7 @@ type WorkspaceStream = {
 };
 
 type WorkspaceState = {
+  // --- v1 fields (unchanged) ---
   nodesById: Record<string, ConversationNode>;
   rootNodeId: string;
   activeLeafId: string;
@@ -50,6 +72,30 @@ type WorkspaceState = {
   activeStream: WorkspaceStream | null;
   draftFromNodeId: string | null;
   draft: string;
+  // --- v2 additive fields (Req 3.5, 12.1–12.6, 15.3) ---
+  dismissedPlanNodeIds: string[];
+  _agentScope: string | null;
+  // --- v3 additive fields (Req 4.*, 8.3) ---
+  /**
+   * Full list of conversations belonging to the currently-scoped agent.
+   * Always contains at least one entry — an empty list would have no
+   * `currentConversationId` target. Persisted via
+   * `saveConversationsSnapshot`.
+   */
+  conversations: ConversationSummary[];
+  /** Id of the active conversation; the runtime store fields mirror it. */
+  currentConversationId: string;
+  /** Left-side history panel collapsed state; persisted per-agent. */
+  historyPanelCollapsed: boolean;
+  // --- v4 additive fields (Req 5.*) ---
+  /**
+   * Model context window budget, tokens. Initial value is the v3-observable
+   * 8192 (NOT passed through `clampContextMaxTokens` so the slider shows
+   * the historical default); user-initiated updates via
+   * `setContextMaxTokens` go through the clamp.
+   */
+  contextMaxTokens: number;
+  // --- v1 actions (unchanged) ---
   reset: () => void;
   setDraft: (draft: string) => void;
   setContextWindowTurns: (turns: number) => void;
@@ -65,6 +111,24 @@ type WorkspaceState = {
   getBranchLeafId: (nodeId: string) => string | null;
   switchToBranch: (nodeId: string) => void;
   activePath: () => ConversationNode[];
+  // --- v2 additive actions ---
+  dismissPlanNode: (nodeId: string) => void;
+  clearDismissedPlanNodes: () => void;
+  setAgentScope: (agentId: string | null) => void;
+  // --- v3 additive actions ---
+  newConversation: () => string;
+  setCurrentConversation: (id: string) => void;
+  deleteConversation: (id: string) => void;
+  renameConversation: (id: string, title: string) => void;
+  setHistoryPanelCollapsed: (collapsed: boolean) => void;
+  hydrateFromConversations: (snapshot: {
+    conversations: ConversationSummary[];
+    currentConversationId: string;
+    historyPanelCollapsed?: boolean;
+  }) => void;
+  // --- v4 additive actions ---
+  /** Route the value through `clampContextMaxTokens` before writing. */
+  setContextMaxTokens: (value: number) => void;
 };
 
 const rootNode: ConversationNode = {
@@ -93,15 +157,66 @@ function createNode(input: Omit<ConversationNode, "id" | "children_ids" | "creat
   };
 }
 
+// The initial genesis conversation is created lazily to guarantee a fresh
+// `created_at` / `updated_at` pair and a fresh id per module instance.
+const initialGenesis = genesisConversation(new Date().toISOString());
+
+/**
+ * Internal reducer: given the current runtime state (nodesById / etc.) and
+ * the persisted `conversations` list, write the runtime state back to the
+ * current `ConversationSummary` (updating `updated_at` and deriving title
+ * from the first user message when the title is still the default). Pure
+ * function so it's easy to reason about and unit test.
+ */
+function mergeRuntimeIntoConversations(
+  state: Pick<
+    WorkspaceState,
+    | "conversations"
+    | "currentConversationId"
+    | "nodesById"
+    | "rootNodeId"
+    | "activeLeafId"
+    | "pinnedNodeIds"
+    | "dismissedPlanNodeIds"
+    | "draft"
+    | "contextWindowTurns"
+  >,
+  now: string,
+): ConversationSummary[] {
+  return state.conversations.map((c) =>
+    c.id === state.currentConversationId
+      ? {
+          ...c,
+          nodesById: state.nodesById,
+          rootNodeId: state.rootNodeId,
+          activeLeafId: state.activeLeafId,
+          pinnedNodeIds: state.pinnedNodeIds,
+          dismissedPlanNodeIds: state.dismissedPlanNodeIds,
+          draft: state.draft,
+          contextWindowTurns: state.contextWindowTurns,
+          updated_at: now,
+          title: computeConversationTitle(state.nodesById, c.title),
+        }
+      : c,
+  );
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  nodesById: { [rootNode.id]: rootNode },
-  rootNodeId: rootNode.id,
-  activeLeafId: rootNode.id,
+  nodesById: initialGenesis.nodesById,
+  rootNodeId: initialGenesis.rootNodeId,
+  activeLeafId: initialGenesis.activeLeafId,
   pinnedNodeIds: [],
   contextWindowTurns: 8,
   activeStream: null,
   draftFromNodeId: null,
-  draft: "用 Agent Harness 的方式分析这个项目，并生成可执行 Plan。",
+  draft: "",
+  dismissedPlanNodeIds: [],
+  _agentScope: null,
+  conversations: [initialGenesis],
+  currentConversationId: initialGenesis.id,
+  historyPanelCollapsed: false,
+  // v4 — see field doc for why we bypass `clampContextMaxTokens` here.
+  contextMaxTokens: CONTEXT_MAX_TOKENS_DEFAULT,
   reset: () =>
     set({
       nodesById: { [rootNode.id]: { ...rootNode, children_ids: [] } },
@@ -110,6 +225,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeStream: null,
       draftFromNodeId: null,
       draft: "",
+      dismissedPlanNodeIds: [],
     }),
   setDraft: (draft) => set({ draft }),
   setContextWindowTurns: (turns) => set({ contextWindowTurns: turns }),
@@ -216,4 +332,167 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     return path.reverse();
   },
+  dismissPlanNode: (nodeIdToDismiss) =>
+    set((state) =>
+      state.dismissedPlanNodeIds.includes(nodeIdToDismiss)
+        ? state
+        : { dismissedPlanNodeIds: [...state.dismissedPlanNodeIds, nodeIdToDismiss] },
+    ),
+  clearDismissedPlanNodes: () => set({ dismissedPlanNodeIds: [] }),
+  setAgentScope: (agentId) => set({ _agentScope: agentId }),
+  // ─── v3: conversation history actions ────────────────────────────────
+  newConversation: () => {
+    const now = new Date().toISOString();
+    const state = get();
+    // Flush current runtime into the outgoing conversation so switching
+    // away and back preserves its data (Property P16).
+    const merged = mergeRuntimeIntoConversations(state, now);
+    const fresh = genesisConversation(now, generateConversationId);
+    set({
+      conversations: [...merged, fresh],
+      currentConversationId: fresh.id,
+      nodesById: fresh.nodesById,
+      rootNodeId: fresh.rootNodeId,
+      activeLeafId: fresh.activeLeafId,
+      pinnedNodeIds: fresh.pinnedNodeIds,
+      dismissedPlanNodeIds: fresh.dismissedPlanNodeIds,
+      draft: fresh.draft,
+      contextWindowTurns: fresh.contextWindowTurns,
+      activeStream: null,
+      draftFromNodeId: null,
+    });
+    return fresh.id;
+  },
+  setCurrentConversation: (id) => {
+    const state = get();
+    if (id === state.currentConversationId) return;
+    const now = new Date().toISOString();
+    const merged = mergeRuntimeIntoConversations(state, now);
+    const target = merged.find((c) => c.id === id);
+    if (target === undefined) return;
+    set({
+      conversations: merged,
+      currentConversationId: target.id,
+      nodesById: target.nodesById,
+      rootNodeId: target.rootNodeId,
+      activeLeafId: target.activeLeafId,
+      pinnedNodeIds: target.pinnedNodeIds,
+      dismissedPlanNodeIds: target.dismissedPlanNodeIds,
+      draft: target.draft,
+      contextWindowTurns: target.contextWindowTurns,
+      activeStream: null,
+      draftFromNodeId: null,
+    });
+  },
+  deleteConversation: (id) => {
+    const state = get();
+    const remaining = state.conversations.filter((c) => c.id !== id);
+    const now = new Date().toISOString();
+    const isDeletingCurrent = state.currentConversationId === id;
+
+    if (!isDeletingCurrent) {
+      set({ conversations: remaining });
+      return;
+    }
+
+    if (remaining.length === 0) {
+      // Always keep at least one conversation (Req 4.6).
+      const fresh = genesisConversation(now, generateConversationId);
+      set({
+        conversations: [fresh],
+        currentConversationId: fresh.id,
+        nodesById: fresh.nodesById,
+        rootNodeId: fresh.rootNodeId,
+        activeLeafId: fresh.activeLeafId,
+        pinnedNodeIds: fresh.pinnedNodeIds,
+        dismissedPlanNodeIds: fresh.dismissedPlanNodeIds,
+        draft: fresh.draft,
+        contextWindowTurns: fresh.contextWindowTurns,
+        activeStream: null,
+        draftFromNodeId: null,
+      });
+      return;
+    }
+
+    const sorted = sortConversationsByUpdatedAt(remaining);
+    const next = sorted[0];
+    set({
+      conversations: remaining,
+      currentConversationId: next.id,
+      nodesById: next.nodesById,
+      rootNodeId: next.rootNodeId,
+      activeLeafId: next.activeLeafId,
+      pinnedNodeIds: next.pinnedNodeIds,
+      dismissedPlanNodeIds: next.dismissedPlanNodeIds,
+      draft: next.draft,
+      contextWindowTurns: next.contextWindowTurns,
+      activeStream: null,
+      draftFromNodeId: null,
+    });
+  },
+  renameConversation: (id, title) =>
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, title, updated_at: new Date().toISOString() } : c,
+      ),
+    })),
+  setHistoryPanelCollapsed: (collapsed) => set({ historyPanelCollapsed: collapsed }),
+  setContextMaxTokens: (value) =>
+    set({ contextMaxTokens: clampContextMaxTokens(value) }),
+  hydrateFromConversations: (snapshot) => {
+    if (snapshot.conversations.length === 0) return;
+    const target =
+      snapshot.conversations.find((c) => c.id === snapshot.currentConversationId) ??
+      snapshot.conversations[0];
+    set({
+      conversations: snapshot.conversations,
+      currentConversationId: target.id,
+      nodesById: target.nodesById,
+      rootNodeId: target.rootNodeId,
+      activeLeafId: target.activeLeafId,
+      pinnedNodeIds: target.pinnedNodeIds,
+      dismissedPlanNodeIds: target.dismissedPlanNodeIds,
+      draft: target.draft,
+      contextWindowTurns: target.contextWindowTurns,
+      historyPanelCollapsed:
+        snapshot.historyPanelCollapsed ?? get().historyPanelCollapsed,
+      activeStream: null,
+      draftFromNodeId: null,
+    });
+  },
 }));
+
+// ---------------------------------------------------------------------------
+// v3 persistence: 300 ms debounced `conversations` snapshot write-through.
+// ---------------------------------------------------------------------------
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastCollapsedWritten: boolean | null = null;
+let lastContextMaxTokensWritten: number | null = null;
+
+useWorkspaceStore.subscribe((state) => {
+  const scope = state._agentScope;
+  if (scope === null) return;
+
+  // Non-debounced: history panel collapsed state is a 1-byte toggle.
+  if (lastCollapsedWritten !== state.historyPanelCollapsed) {
+    lastCollapsedWritten = state.historyPanelCollapsed;
+    saveHistoryPanelCollapsed(scope, state.historyPanelCollapsed);
+  }
+
+  if (saveTimer !== null) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    const now = new Date().toISOString();
+    const merged = mergeRuntimeIntoConversations(state, now);
+    saveConversationsSnapshot(scope, {
+      version: CONVERSATIONS_SCHEMA_VERSION,
+      conversations: merged,
+      currentConversationId: state.currentConversationId,
+    });
+    if (lastContextMaxTokensWritten !== state.contextMaxTokens) {
+      lastContextMaxTokensWritten = state.contextMaxTokens;
+      saveContextMaxTokens(scope, state.contextMaxTokens);
+    }
+  }, 300);
+});

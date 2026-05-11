@@ -185,7 +185,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
               <Bell className="h-4 w-4" />
             </Button>
             <Button variant="primary" onClick={() => navigate("/agents/default/workspace")}>
-              <Plus className="h-3.5 w-3.5" /> {isChinese ? "打开 Plan" : "Open Plan"}
+              <Plus className="h-3.5 w-3.5" /> {isChinese ? "新对话" : "New chat"}
             </Button>
             <div className="ml-1 flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700">
               LH

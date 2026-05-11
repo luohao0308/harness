@@ -1,956 +1,390 @@
-import { FormEvent, type ReactNode, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Bot,
-  Boxes,
-  Braces,
-  Check,
-  Code2,
-  FileCode2,
-  GitBranch,
-  Layers3,
-  Pause,
-  Pencil,
-  Pin,
-  Play,
-  Send,
-  Shield,
-  Sparkles,
-  Wrench,
-  X,
-} from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+/**
+ * AgentWorkspacePage — thin route host for `/agents/:agentId/workspace` (v3).
+ *
+ * v3 responsibilities (on top of v2):
+ *   - Own the `<ConversationHistoryPanel>` left rail (Req 4).
+ *   - Drive conversation snapshot hydration:
+ *       1. Prefer v3 `harness.workspace.v3.<agentId>.conversations`.
+ *       2. Fall back to v2 `harness.workspace.v2.<agentId>` via
+ *          `legacyMigration` (then clear the v2 key).
+ *       3. Fall back to a single `genesisConversation`.
+ *   - Wire slash-command targets: `onOpenSearch`, `onOpenShortcut`,
+ *     `onRequestModelPicker` (via a monotonic seq counter).
+ *   - Keep v2 shortcut handling (Cmd+K / ? / Escape) untouched.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
-import { Badge, Dot, statusTone } from "../../../components/ui/badge";
-import { Button } from "../../../components/ui/button";
-import { Textarea } from "../../../components/ui/input";
 import { useI18n } from "../../../lib/i18n";
-import { cn, formatShortDate } from "../../../lib/utils";
 import {
-  approveToolApproval,
+  useWorkspaceStore,
+  type ConversationArtifact,
+} from "../../../stores/workspaceStore";
+import {
   getAgent,
   getAgentRunWorkspace,
   getModelSettings,
   getToolRegistry,
-  modifyToolApproval,
-  rejectToolApproval,
-  streamAgentChatRun,
-  type AgentChatStreamEvent,
-  type AgentRunWorkspace,
-  type ToolApproval,
-  type ToolCall,
-  type ToolMetadata,
+  type ModelSettings,
 } from "../../tasks/api";
+import { ChatSurface } from "../components/ChatSurface";
+import { ConversationHistoryPanel } from "../components/ConversationHistoryPanel";
+import { InspectorDrawer } from "../components/InspectorDrawer";
+import type { ModelOption } from "../components/ModelPicker";
+import { SearchOverlay } from "../components/SearchOverlay";
+import { ShortcutOverlay } from "../components/ShortcutOverlay";
+import { useChatStream } from "../hooks/useChatStream";
 import {
-  useWorkspaceStore,
-  type ConversationArtifact,
-  type ConversationNode,
-} from "../../../stores/workspaceStore";
-import { extractArtifactsFromNode } from "../workspaceArtifacts";
-import { formatUsageCost, mergeToolCallEvent, type WorkspaceStreamToolCall } from "../streamEvents";
+  downloadBlob,
+  exportJson,
+  exportMarkdown,
+} from "../lib/exporter";
+import { readContextMaxTokens } from "../lib/contextTokens";
+import {
+  generateConversationId,
+  genesisConversationLocalized,
+  legacyMigration,
+  readConversationsSnapshot,
+  readHistoryPanelCollapsed,
+  saveConversationsSnapshot,
+  CONVERSATIONS_SCHEMA_VERSION,
+} from "../lib/conversationHistory";
+import { clearSnapshot, loadSnapshot } from "../lib/localPersistence";
+import type { InspectorSection, WorkspaceMode } from "../lib/types";
+import {
+  buildActivePath,
+  deriveModelLabel,
+  summarizeUsage,
+} from "./agentWorkspaceDerive";
 
 export function AgentWorkspacePage() {
-  const { text } = useI18n();
+  const { text, isChinese } = useI18n();
   const { agentId = "default" } = useParams();
-  const queryClient = useQueryClient();
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [modifyApprovalId, setModifyApprovalId] = useState<string | null>(null);
-  const [modifiedInput, setModifiedInput] = useState("{}");
 
-  const draft = useWorkspaceStore((state) => state.draft);
-  const setDraft = useWorkspaceStore((state) => state.setDraft);
-  const pinnedNodeIds = useWorkspaceStore((state) => state.pinnedNodeIds);
-  const contextWindowTurns = useWorkspaceStore((state) => state.contextWindowTurns);
-  const setContextWindowTurns = useWorkspaceStore((state) => state.setContextWindowTurns);
-  const activeStream = useWorkspaceStore((state) => state.activeStream);
-  const activePath = useWorkspaceStore((state) => state.activePath());
-  const appendNode = useWorkspaceStore((state) => state.appendNode);
-  const appendContent = useWorkspaceStore((state) => state.appendContent);
-  const appendArtifact = useWorkspaceStore((state) => state.appendArtifact);
-  const updateNode = useWorkspaceStore((state) => state.updateNode);
-  const togglePinned = useWorkspaceStore((state) => state.togglePinned);
-  const startEdit = useWorkspaceStore((state) => state.startEdit);
-  const getSiblings = useWorkspaceStore((state) => state.getSiblings);
-  const switchToBranch = useWorkspaceStore((state) => state.switchToBranch);
-  const setActiveStream = useWorkspaceStore((state) => state.setActiveStream);
-  const draftFromNodeId = useWorkspaceStore((state) => state.draftFromNodeId);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
+  const [inspectorSection, setInspectorSection] = useState<InspectorSection | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutOpen, setShortcutOpen] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [modelPickerOpenSeq, setModelPickerOpenSeq] = useState(0);
 
   const agent = useQuery({ queryKey: ["agents", agentId], queryFn: () => getAgent(agentId) });
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
-  const tools = useQuery({ queryKey: ["tools", "registry"], queryFn: getToolRegistry });
+  const toolsQuery = useQuery({ queryKey: ["tools", "registry"], queryFn: getToolRegistry });
+
   const workspace = useQuery({
     queryKey: ["agent-run-workspace", activeRunId],
-    queryFn: () => getAgentRunWorkspace(activeRunId!),
-    enabled: Boolean(activeRunId),
-    refetchInterval: activeStream ? false : 5000,
-  });
-  const approve = useMutation({
-    mutationFn: (approvalId: string) =>
-      approveToolApproval(activeRunId!, approvalId, "Approved from Workspace Pro"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", activeRunId] }),
-  });
-  const reject = useMutation({
-    mutationFn: (approvalId: string) =>
-      rejectToolApproval(activeRunId!, approvalId, "Rejected from Workspace Pro"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", activeRunId] }),
-  });
-  const modify = useMutation({
-    mutationFn: ({ approvalId, input }: { approvalId: string; input: Record<string, unknown> }) =>
-      modifyToolApproval(activeRunId!, approvalId, input, "Modified from Workspace Pro"),
-    onSuccess: () => {
-      setModifyApprovalId(null);
-      queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", activeRunId] });
-    },
+    queryFn: () => getAgentRunWorkspace(activeRunId as string),
+    enabled: Boolean(activeRunId) && inspectorSection !== null,
   });
 
-  const modelLabel =
-    agent.data?.model_provider === "default" || !agent.data
-      ? `${settings.data?.default_provider ?? "default"} / ${settings.data?.default_model ?? "default"}`
-      : `${agent.data.model_provider} / ${agent.data.model_name}`;
-  const contextPreview = useMemo(
-    () => buildContextPreview(activePath, pinnedNodeIds, contextWindowTurns),
-    [activePath, pinnedNodeIds, contextWindowTurns],
+  const modelLabel = useMemo(
+    () => deriveModelLabel(agent.data, settings.data),
+    [agent.data, settings.data],
   );
-  const artifacts = useMemo(
-    () => collectArtifacts(activePath, workspace.data),
+  const modelLabelIsFallback = settings.isError || settings.data === undefined;
+
+  const providers = useMemo<ModelOption[]>(
+    () => deriveModelOptions(settings.data),
+    [settings.data],
+  );
+
+  const tools = useMemo(() => toolsQuery.data?.items ?? [], [toolsQuery.data]);
+  const stream = useChatStream({
+    agentId,
+    workspaceMode,
+    tools,
+    onRunCreated: setActiveRunId,
+  });
+
+  const nodesById = useWorkspaceStore((s) => s.nodesById);
+  const rootNodeId = useWorkspaceStore((s) => s.rootNodeId);
+  const activeLeafId = useWorkspaceStore((s) => s.activeLeafId);
+  const activePath = useMemo(
+    () => buildActivePath(nodesById, activeLeafId, rootNodeId),
+    [nodesById, activeLeafId, rootNodeId],
+  );
+
+  // v3 conversation store wiring
+  const conversations = useWorkspaceStore((s) => s.conversations);
+  const currentConversationId = useWorkspaceStore((s) => s.currentConversationId);
+  const historyPanelCollapsed = useWorkspaceStore((s) => s.historyPanelCollapsed);
+  const newConversation = useWorkspaceStore((s) => s.newConversation);
+  const setCurrentConversation = useWorkspaceStore((s) => s.setCurrentConversation);
+  const deleteConversation = useWorkspaceStore((s) => s.deleteConversation);
+  const setHistoryPanelCollapsed = useWorkspaceStore((s) => s.setHistoryPanelCollapsed);
+  const hydrateFromConversations = useWorkspaceStore((s) => s.hydrateFromConversations);
+
+  const inspectorArtifacts = useMemo<ConversationArtifact[]>(
+    () => activePath.flatMap((node) => node.artifacts).slice(-10),
+    [activePath],
+  );
+  const inspectorUsage = useMemo(
+    () => summarizeUsage(activePath, workspace.data),
     [activePath, workspace.data],
   );
-  const usage = useMemo(() => summarizeUsage(activePath, workspace.data), [activePath, workspace.data]);
-  const toolMentions = useMemo(
-    () => extractToolMentions(draft, tools.data?.items ?? []),
-    [draft, tools.data?.items],
+  const pendingApprovalCount =
+    workspace.data?.approvals.filter((approval) => approval.status === "PENDING").length ?? 0;
+
+  // ─── Agent scope + rehydration (v3 Req 4.10, Legacy migration) ─────────
+  useEffect(() => {
+    useWorkspaceStore.getState().setAgentScope(agentId);
+    const now = new Date().toISOString();
+    const locale = isChinese ? "zh-CN" : "en";
+    const collapsed = readHistoryPanelCollapsed(agentId);
+
+    const applyContextMaxTokens = (): void => {
+      const saved = readContextMaxTokens(agentId);
+      if (saved !== null) {
+        useWorkspaceStore.getState().setContextMaxTokens(saved);
+      }
+    };
+
+    const v3 = readConversationsSnapshot(agentId);
+    if (v3 !== null) {
+      hydrateFromConversations({
+        conversations: v3.conversations,
+        currentConversationId: v3.currentConversationId,
+        historyPanelCollapsed: collapsed ?? false,
+      });
+      applyContextMaxTokens();
+      return () => {
+        useWorkspaceStore.getState().setAgentScope(null);
+      };
+    }
+
+    const v2 = loadSnapshot(agentId);
+    if (v2 !== null) {
+      const migrated = legacyMigration(v2, now, generateConversationId);
+      hydrateFromConversations({
+        conversations: [migrated],
+        currentConversationId: migrated.id,
+        historyPanelCollapsed: collapsed ?? false,
+      });
+      saveConversationsSnapshot(agentId, {
+        version: CONVERSATIONS_SCHEMA_VERSION,
+        conversations: [migrated],
+        currentConversationId: migrated.id,
+      });
+      clearSnapshot(agentId);
+      applyContextMaxTokens();
+      return () => {
+        useWorkspaceStore.getState().setAgentScope(null);
+      };
+    }
+
+    const genesis = genesisConversationLocalized(now, locale, generateConversationId);
+    hydrateFromConversations({
+      conversations: [genesis],
+      currentConversationId: genesis.id,
+      historyPanelCollapsed: collapsed ?? false,
+    });
+    applyContextMaxTokens();
+    return () => {
+      useWorkspaceStore.getState().setAgentScope(null);
+    };
+    // We intentionally skip `isChinese` from deps: the locale only governs
+    // the initial genesis title; changing locale later should not rehydrate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, hydrateFromConversations]);
+
+  // ─── Seed the session model override from settings defaults ────────────
+  useEffect(() => {
+    if (settings.data === undefined) return;
+    setSelectedProviderId((prev) => prev ?? settings.data.default_provider);
+    setSelectedModelId((prev) => prev ?? settings.data.default_model);
+  }, [settings.data]);
+
+  // ─── Global keyboard shortcuts ─────────────────────────────────────────
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (event.key === "?") {
+        const target = event.target as HTMLElement | null;
+        const tag = target?.tagName?.toLowerCase();
+        const isEditable =
+          tag === "input" ||
+          tag === "textarea" ||
+          target?.isContentEditable === true;
+        if (isEditable) return;
+        event.preventDefault();
+        setShortcutOpen(true);
+        return;
+      }
+      if (event.key === "Escape") {
+        setSearchOpen(false);
+        setShortcutOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  // ─── Export / Clear callbacks ──────────────────────────────────────────
+  const handleExport = useCallback((format: "markdown" | "json") => {
+    const path = useWorkspaceStore.getState().activePath();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    if (format === "markdown") {
+      downloadBlob(exportMarkdown(path), `conversation-${timestamp}.md`, "text/markdown");
+    } else {
+      downloadBlob(exportJson(path), `conversation-${timestamp}.json`, "application/json");
+    }
+  }, []);
+
+  const handleClearConversation = useCallback(() => {
+    const message = text(
+      "确定清空当前会话？此操作不可撤销。",
+      "Clear the current conversation? This cannot be undone.",
+    );
+    if (!window.confirm(message)) return;
+    // v3: clearing only resets the current conversation's runtime fields;
+    // the conversations list itself is unchanged. Persistence subscribe
+    // will write the empty state back to the active conversation.
+    useWorkspaceStore.getState().reset();
+  }, [text]);
+
+  const handleModelChange = useCallback((providerId: string, modelId: string) => {
+    setSelectedProviderId(providerId);
+    setSelectedModelId(modelId);
+  }, []);
+
+  const handleJumpToNode = useCallback((nodeId: string) => {
+    useWorkspaceStore.getState().setActiveLeafId(nodeId);
+  }, []);
+
+  // v3 slash-command targets
+  const handleOpenSearch = useCallback(() => {
+    setSearchOpen(true);
+  }, []);
+
+  const handleOpenShortcut = useCallback(() => {
+    setShortcutOpen(true);
+  }, []);
+
+  const handleRequestModelPicker = useCallback(() => {
+    setModelPickerOpenSeq((seq) => seq + 1);
+  }, []);
+
+  // v3 conversation history handlers
+  const handleNewConversation = useCallback(() => {
+    newConversation();
+  }, [newConversation]);
+
+  const handleSelectConversation = useCallback(
+    (id: string) => {
+      setCurrentConversation(id);
+    },
+    [setCurrentConversation],
   );
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const content = draft.trim();
-    if (!content || activeStream) return;
-
-    const userNodeId = appendNode({
-      parent_id: null,
-      role: "user",
-      content,
-      state: "done",
-      metadata: {},
-      tool_calls: [],
-      artifacts: [],
-    });
-    const assistantNodeId = appendNode({
-      parent_id: userNodeId,
-      role: "assistant",
-      content: "",
-      state: "streaming",
-      metadata: {},
-      tool_calls: [],
-      artifacts: [],
-    });
-    setDraft("");
-    await runStream({ assistantNodeId, goal: content });
-  }
-
-  async function runStream({
-    assistantNodeId,
-    goal,
-    continueFromNodeId,
-    partialContent,
-  }: {
-    assistantNodeId: string;
-    goal: string;
-    continueFromNodeId?: string;
-    partialContent?: string;
-  }) {
-    const controller = new AbortController();
-    setActiveStream({ node_id: assistantNodeId, controller, started_at: performance.now() });
-    const startedAt = performance.now();
-    try {
-      await streamAgentChatRun(
-        agentId,
-        {
-          goal,
-          messages: serializeMessages(useWorkspaceStore.getState().activePath()),
-          active_leaf_id: useWorkspaceStore.getState().activeLeafId,
-          run_id: continueFromNodeId ? activeRunId : undefined,
-          active_branch_id: useWorkspaceStore.getState().activeLeafId,
-          pinned_node_ids: pinnedNodeIds,
-          context_window_turns: contextWindowTurns,
-          continue_from_node_id: continueFromNodeId,
-          partial_assistant_content: partialContent,
-          tool_mentions: toolMentions,
-        },
-        (streamEvent) => handleStreamEvent(assistantNodeId, streamEvent, startedAt),
-        controller.signal,
+  const handleDeleteConversation = useCallback(
+    (id: string) => {
+      const current = useWorkspaceStore.getState().conversations.find((c) => c.id === id);
+      const title = current?.title ?? "";
+      const message = text(
+        `确定删除对话"${title}"？此操作不可撤销。`,
+        `Delete conversation "${title}"? This cannot be undone.`,
       );
-    } catch (error) {
-      if (controller.signal.aborted) {
-        updateNode(assistantNodeId, { state: "paused" });
-      } else {
-        updateNode(assistantNodeId, {
-          state: "error",
-          content: error instanceof Error ? error.message : "stream failed",
-        });
-      }
-    } finally {
-      setActiveStream(null);
-    }
-  }
+      if (!window.confirm(message)) return;
+      deleteConversation(id);
+    },
+    [deleteConversation, text],
+  );
 
-  function handleStreamEvent(nodeId: string, event: AgentChatStreamEvent, startedAt: number) {
-    if (event.type === "think_delta") {
-      appendContent(nodeId, `<think>${event.content}</think>`);
-      return;
-    }
-    if (event.type === "delta") {
-      appendContent(nodeId, event.content);
-      return;
-    }
-    if (event.type === "tool_call_requested") {
-      const currentToolCalls = useWorkspaceStore.getState().nodesById[nodeId]?.tool_calls ?? [];
-      updateNode(nodeId, {
-        tool_calls: mergeToolCallEvent(currentToolCalls, event),
-      });
-      return;
-    }
-    if (event.type === "tool_call_result") {
-      const currentToolCalls = useWorkspaceStore.getState().nodesById[nodeId]?.tool_calls ?? [];
-      updateNode(nodeId, {
-        tool_calls: mergeToolCallEvent(currentToolCalls, event),
-      });
-      return;
-    }
-    if (event.type === "artifact_created") {
-      appendArtifact(nodeId, {
-        id: `${nodeId}-${event.name}`,
-        name: event.name,
-        artifact_type: event.artifact_type,
-        status: event.status,
-        content: event.content,
-        run_id: event.run_id,
-      });
-      return;
-    }
-    if (event.type === "usage") {
-      updateNode(nodeId, {
-        metadata: {
-          input_tokens: event.input_tokens,
-          output_tokens: event.output_tokens,
-          cost_usd: event.cost_usd,
-          cost_unavailable: event.cost_unavailable,
-          ttfb_ms: event.ttfb_ms,
-          duration_ms: event.duration_ms || Math.round(performance.now() - startedAt),
-          model_call_id: event.model_call_id,
-          active_branch_id: useWorkspaceStore.getState().activeLeafId,
-        },
-      });
-      return;
-    }
-    if (event.type === "done") {
-      setActiveRunId(event.run_id);
-      updateNode(nodeId, { state: "done", run_id: event.run_id });
-      queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", event.run_id] });
-      messagesEndRef.current?.scrollIntoView({ block: "end" });
-      return;
-    }
-    if (event.type === "error") {
-      updateNode(nodeId, { state: "error", content: event.message });
-    }
-  }
-
-  function pauseStream() {
-    if (!activeStream) return;
-    activeStream.controller.abort();
-    updateNode(activeStream.node_id, { state: "paused" });
-    setActiveStream(null);
-  }
-
-  function continueStream() {
-    const paused = [...activePath].reverse().find((node) => node.state === "paused");
-    const previousUser = [...activePath].reverse().find((node) => node.role === "user");
-    if (!paused || !previousUser || activeStream) return;
-    updateNode(paused.id, { state: "streaming" });
-    void runStream({
-      assistantNodeId: paused.id,
-      goal: previousUser.content,
-      continueFromNodeId: paused.id,
-      partialContent: paused.content,
-    });
-  }
-
-  function submitModifyApproval() {
-    if (!modifyApprovalId) return;
-    try {
-      const parsed = JSON.parse(modifiedInput) as Record<string, unknown>;
-      modify.mutate({ approvalId: modifyApprovalId, input: parsed });
-    } catch {
-      setModifiedInput('{"error":"invalid json"}');
-    }
-  }
+  const handleToggleHistoryCollapsed = useCallback(() => {
+    setHistoryPanelCollapsed(!historyPanelCollapsed);
+  }, [historyPanelCollapsed, setHistoryPanelCollapsed]);
 
   return (
-    <ConsoleShell title={text("Agent 工作台 Pro", "Agent Workspace Pro")}>
-      <div className="grid h-[calc(100vh-3.5rem)] grid-cols-[300px_minmax(520px,1fr)_420px] gap-3 bg-[#f4f6f8] p-3">
-        <Explorer
-          modelLabel={modelLabel}
-          tools={tools.data?.items ?? []}
-          pinnedNodes={activePath.filter((node) => pinnedNodeIds.includes(node.id))}
-          contextWindowTurns={contextWindowTurns}
-          contextPreview={contextPreview}
-          onContextWindowChange={setContextWindowTurns}
-          onInsertMention={(name) => setDraft(`${draft}${draft.endsWith(" ") ? "" : " "}@${name} `)}
+    <ConsoleShell title={text("Agent 工作台", "Agent Workspace")}>
+      <div className="relative flex h-[calc(100vh-3.5rem)] w-full min-h-0">
+        <ConversationHistoryPanel
+          collapsed={historyPanelCollapsed}
+          conversations={conversations}
+          currentConversationId={currentConversationId}
+          onNewConversation={handleNewConversation}
+          onSelectConversation={handleSelectConversation}
+          onDeleteConversation={handleDeleteConversation}
+          onToggleCollapsed={handleToggleHistoryCollapsed}
         />
-
-        <main className="min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <div className="flex h-full flex-col">
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-                  <Sparkles className="h-4 w-4 text-slate-500" />
-                  Workspace Pro
-                  <Badge tone="info">Plan-Act</Badge>
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  {activeRunId ? `Run ${activeRunId.slice(0, 8)}` : "树状对话 · 可暂停 · 可分支"}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {workspace.data?.run && <Badge tone={statusTone(workspace.data.run.status)}>{workspace.data.run.status}</Badge>}
-                {activeRunId && (
-                  <Link to={`/runs/${activeRunId}`}>
-                    <Button>
-                      <GitBranch className="h-3.5 w-3.5" />
-                      Run Detail
-                    </Button>
-                  </Link>
-                )}
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              <div className="mx-auto flex max-w-3xl flex-col gap-5">
-                {activePath.length === 0 && <WelcomeMessage />}
-                {activePath.map((node) => (
-                  <Message
-                    key={node.id}
-                    node={node}
-                    pinned={pinnedNodeIds.includes(node.id)}
-                    siblings={getSiblings(node.id)}
-                    onPin={() => togglePinned(node.id)}
-                    onEdit={() => startEdit(node.id)}
-                    onSwitchBranch={(nodeId) => switchToBranch(nodeId)}
-                  />
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
-
-            <form onSubmit={submit} className="shrink-0 border-t border-slate-100 bg-white p-4">
-              <div className="mx-auto max-w-3xl">
-                <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-600">
-                  <div className="flex items-center gap-2">
-                    <Dot tone={activeStream ? "running" : "info"} />
-                    {draftFromNodeId ? "编辑历史并创建新分支" : "Chat Console"}
-                    {toolMentions.length > 0 && <Badge tone="purple">{toolMentions.length} mentions</Badge>}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button type="button" disabled={!activeStream} onClick={pauseStream}>
-                      <Pause className="h-3.5 w-3.5" />
-                      暂停
-                    </Button>
-                    <Button type="button" disabled={Boolean(activeStream)} onClick={continueStream}>
-                      <Play className="h-3.5 w-3.5" />
-                      Continue
-                    </Button>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 focus-within:border-slate-400">
-                  <Textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                        event.currentTarget.form?.requestSubmit();
-                      }
-                    }}
-                    placeholder="输入目标，使用 @ 唤起工具，例如 @mcp_context_search 或 @read_file"
-                    className="min-h-24 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus:border-0 focus:ring-0"
-                  />
-                  {draft.includes("@") && (
-                    <MentionTray tools={tools.data?.items ?? []} onInsert={(name) => setDraft(`${draft}@${name} `)} />
-                  )}
-                  <div className="flex justify-end">
-                    <Button type="submit" variant="primary" className="h-9 px-4" disabled={Boolean(activeStream) || !draft.trim()}>
-                      <Send className="h-4 w-4" />
-                      发送
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </form>
-          </div>
-        </main>
-
-        <aside className="min-h-0 space-y-3 overflow-y-auto">
-          <MetricsPanel usage={usage} workspace={workspace.data} />
-          <ArtifactsPanel artifacts={artifacts} />
-          <ToolRuntimePanel
-            workspace={workspace.data}
-            modifyApprovalId={modifyApprovalId}
-            modifiedInput={modifiedInput}
-            onApprove={(id) => approve.mutate(id)}
-            onReject={(id) => reject.mutate(id)}
-            onStartModify={(approval) => {
-              setModifyApprovalId(approval.id);
-              setModifiedInput(JSON.stringify(approval.request_json.input_json ?? {}, null, 2));
-            }}
-            onModifiedInputChange={setModifiedInput}
-            onSubmitModify={submitModifyApproval}
-          />
-        </aside>
+        <ChatSurface
+          agentId={agentId}
+          agentName={agent.data?.name ?? agentId}
+          modelLabel={modelLabel}
+          modelLabelIsFallback={modelLabelIsFallback}
+          workspaceMode={workspaceMode}
+          onWorkspaceModeChange={setWorkspaceMode}
+          activeRunId={activeRunId}
+          runStatus={workspace.data?.run.status}
+          runCreatedAt={workspace.data?.run.created_at}
+          onOpenInspector={setInspectorSection}
+          stream={stream}
+          tools={tools}
+          providers={providers}
+          selectedProviderId={selectedProviderId}
+          selectedModelId={selectedModelId}
+          onModelChange={handleModelChange}
+          onExport={handleExport}
+          onClearConversation={handleClearConversation}
+          onOpenSearch={handleOpenSearch}
+          onOpenShortcut={handleOpenShortcut}
+          modelPickerOpenSeq={modelPickerOpenSeq}
+          onRequestModelPicker={handleRequestModelPicker}
+        />
+        <InspectorDrawer
+          section={inspectorSection}
+          activeRunId={activeRunId}
+          pendingApprovalCount={pendingApprovalCount}
+          usage={inspectorUsage}
+          artifacts={inspectorArtifacts}
+          onClose={() => setInspectorSection(null)}
+        />
       </div>
+      <SearchOverlay
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        nodesById={nodesById}
+        onJumpToNode={handleJumpToNode}
+      />
+      <ShortcutOverlay open={shortcutOpen} onClose={() => setShortcutOpen(false)} />
     </ConsoleShell>
   );
 }
 
-function Explorer({
-  modelLabel,
-  tools,
-  pinnedNodes,
-  contextWindowTurns,
-  contextPreview,
-  onContextWindowChange,
-  onInsertMention,
-}: {
-  modelLabel: string;
-  tools: ToolMetadata[];
-  pinnedNodes: ConversationNode[];
-  contextWindowTurns: number;
-  contextPreview: { messageCount: number; estimatedTokens: number };
-  onContextWindowChange: (turns: number) => void;
-  onInsertMention: (name: string) => void;
-}) {
-  return (
-    <aside className="min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-      <div className="border-b border-slate-100 p-4">
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 text-white">
-            <Bot className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-slate-950">Explorer</div>
-            <div className="mt-0.5 truncate text-[11px] text-slate-500">{modelLabel}</div>
-          </div>
-        </div>
-      </div>
-      <div className="space-y-4 p-3">
-        <PanelTitle icon={<Layers3 className="h-3.5 w-3.5" />} label="上下文" />
-        <label className="block rounded-md border border-slate-200 bg-slate-50 p-2">
-          <div className="mb-2 flex justify-between text-xs">
-            <span className="text-slate-500">最近 N 轮</span>
-            <span className="font-mono text-slate-900">{contextWindowTurns}</span>
-          </div>
-          <input
-            type="range"
-            min={2}
-            max={20}
-            value={contextWindowTurns}
-            onChange={(event) => onContextWindowChange(Number(event.target.value))}
-            className="w-full accent-slate-900"
-          />
-        </label>
-        <div className="grid grid-cols-2 gap-2">
-          <SmallMetric label="消息" value={contextPreview.messageCount} />
-          <SmallMetric label="估算 tokens" value={contextPreview.estimatedTokens} />
-        </div>
-
-        <PanelTitle icon={<Pin className="h-3.5 w-3.5" />} label="Pinned" />
-        {pinnedNodes.length ? (
-          pinnedNodes.map((node) => (
-            <div key={node.id} className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs text-slate-600">
-              {node.content.slice(0, 120)}
-            </div>
-          ))
-        ) : (
-          <EmptyState label="暂无置顶消息" />
-        )}
-
-        <PanelTitle icon={<Wrench className="h-3.5 w-3.5" />} label="Tool Tray" />
-        <div className="space-y-2">
-          {tools.slice(0, 10).map((tool) => (
-            <button
-              key={tool.name}
-              type="button"
-              onClick={() => onInsertMention(tool.name)}
-              className="flex w-full items-center justify-between rounded-md border border-slate-100 bg-white px-2 py-2 text-left text-xs hover:bg-slate-50"
-            >
-              <span className="truncate font-mono text-slate-700">@{tool.name}</span>
-              <Badge tone={tool.source === "mcp" ? "purple" : "neutral"}>{tool.source}</Badge>
-            </button>
-          ))}
-        </div>
-
-        <PanelTitle icon={<Boxes className="h-3.5 w-3.5" />} label="Files" />
-        <div className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs text-slate-500">
-          本地文件桥接通过 Tool Runtime 和 Sandbox 接入，当前不绕过策略直接读写。
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function Message({
-  node,
-  pinned,
-  siblings,
-  onPin,
-  onEdit,
-  onSwitchBranch,
-}: {
-  node: ConversationNode;
-  pinned: boolean;
-  siblings: ConversationNode[];
-  onPin: () => void;
-  onEdit: () => void;
-  onSwitchBranch: (nodeId: string) => void;
-}) {
-  const isUser = node.role === "user";
-  const thinkBlocks = extractThinkBlocks(node.content);
-  const visibleContent = node.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
-  return (
-    <div className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}>
-      {!isUser && (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white">
-          <Sparkles className="h-4 w-4" />
-        </div>
-      )}
-      <div className={cn("min-w-0 max-w-[82%]", isUser && "order-first")}>
-        <div
-          className={cn(
-            "whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6",
-            isUser
-              ? "bg-slate-950 text-white"
-              : node.state === "error"
-                ? "border border-red-200 bg-red-50 text-red-800"
-                : "border border-slate-200 bg-slate-50 text-slate-800",
-          )}
-        >
-          {thinkBlocks.map((block, index) => (
-            <details key={`${node.id}-think-${index}`} className="mb-2 rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-500">
-              <summary className="cursor-pointer font-medium text-slate-700">思考 / Plan trace</summary>
-              <div className="mt-2 whitespace-pre-wrap">{block}</div>
-            </details>
-          ))}
-          <span>{visibleContent || (node.state === "streaming" ? "正在生成..." : "")}</span>
-          <span className={cn("ml-1 inline-block h-3 w-1 rounded-sm bg-slate-400 align-middle", node.state === "streaming" ? "animate-pulse opacity-100" : "opacity-0")} />
-        </div>
-        {node.tool_calls.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {node.tool_calls.map((call, index) => (
-              <StreamToolCallCard
-                key={String((call as Record<string, unknown>).tool_call_id ?? (call as Record<string, unknown>).id ?? index)}
-                call={normalizeWorkspaceStreamToolCall(call)}
-              />
-            ))}
-          </div>
-        )}
-        <div className={cn("mt-1 flex flex-wrap items-center gap-2 text-[10px] text-slate-400", isUser && "justify-end")}>
-          <span>{formatShortDate(node.created_at)}</span>
-          {node.metadata.input_tokens !== undefined && <span>{node.metadata.input_tokens} in</span>}
-          {node.metadata.output_tokens !== undefined && <span>{node.metadata.output_tokens} out</span>}
-          {(node.metadata.cost_usd !== undefined || node.metadata.cost_unavailable) && (
-            <span>{formatUsageCost(node.metadata.cost_usd, node.metadata.cost_unavailable)}</span>
-          )}
-          {node.metadata.duration_ms !== undefined && <span>{node.metadata.duration_ms}ms</span>}
-          {siblings.length > 1 && (
-            <BranchSwitcher activeNodeId={node.id} siblings={siblings} onSwitchBranch={onSwitchBranch} />
-          )}
-          <button type="button" onClick={onPin} className={pinned ? "text-slate-900" : "hover:text-slate-700"}>
-            Pin
-          </button>
-          <button type="button" onClick={onEdit} className="hover:text-slate-700">
-            Edit & Resend
-          </button>
-        </div>
-      </div>
-      {isUser && (
-        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[11px] font-semibold text-slate-700">
-          U
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StreamToolCallCard({ call }: { call: WorkspaceStreamToolCall }) {
-  const hasOutput = call.output_json !== undefined || Boolean(call.output_summary);
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate font-mono text-slate-900">@{call.tool_name || "tool"}</div>
-          <div className="mt-0.5 truncate font-mono text-[10px] text-slate-400">{call.tool_call_id}</div>
-        </div>
-        <Badge tone={statusTone(call.status)}>{call.status}</Badge>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
-        {call.duration_ms != null && <span>{call.duration_ms}ms</span>}
-        {call.trace_id && <span>trace {call.trace_id}</span>}
-        {call.approval_id && <span>approval {call.approval_id}</span>}
-      </div>
-      {call.output_summary && <div className="mt-2 text-slate-700">{call.output_summary}</div>}
-      <details className="mt-2">
-        <summary className="cursor-pointer text-slate-500">
-          {hasOutput ? "Input / Output JSON" : "Input JSON"}
-        </summary>
-        <pre className="mt-1 max-h-40 overflow-auto rounded bg-slate-50 p-2 font-mono text-[10px] text-slate-600">
-          {JSON.stringify({ input: call.input_json, output: call.output_json ?? null }, null, 2)}
-        </pre>
-      </details>
-    </div>
-  );
-}
-
-function BranchSwitcher({
-  activeNodeId,
-  siblings,
-  onSwitchBranch,
-}: {
-  activeNodeId: string;
-  siblings: ConversationNode[];
-  onSwitchBranch: (nodeId: string) => void;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 py-0.5">
-      <GitBranch className="h-3 w-3" />
-      {siblings.map((sibling, index) => (
-        <button
-          key={sibling.id}
-          type="button"
-          onClick={() => onSwitchBranch(sibling.id)}
-          className={cn(
-            "rounded-full px-1.5 py-0.5 font-mono",
-            sibling.id === activeNodeId ? "bg-slate-900 text-white" : "text-slate-500 hover:text-slate-900",
-          )}
-          title={sibling.content.slice(0, 80) || sibling.id}
-        >
-          {index + 1}
-        </button>
-      ))}
-    </span>
-  );
-}
-
-function normalizeWorkspaceStreamToolCall(call: Record<string, unknown>): WorkspaceStreamToolCall {
-  return {
-    tool_call_id: String(call.tool_call_id ?? call.id ?? "tool"),
-    tool_name: String(call.tool_name ?? ""),
-    source: typeof call.source === "string" ? call.source : null,
-    input_json:
-      call.input_json && typeof call.input_json === "object" && !Array.isArray(call.input_json)
-        ? (call.input_json as Record<string, unknown>)
-        : {},
-    output_json:
-      call.output_json && typeof call.output_json === "object" && !Array.isArray(call.output_json)
-        ? (call.output_json as Record<string, unknown>)
-        : undefined,
-    output_summary: typeof call.output_summary === "string" ? call.output_summary : null,
-    status: String(call.status ?? "unknown"),
-    duration_ms: typeof call.duration_ms === "number" ? call.duration_ms : null,
-    trace_id: typeof call.trace_id === "string" ? call.trace_id : null,
-    approval_id: typeof call.approval_id === "string" ? call.approval_id : null,
-  };
-}
-
-function MetricsPanel({ usage, workspace }: { usage: UsageSummary; workspace?: AgentRunWorkspace }) {
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <Header icon={<Braces className="h-4 w-4" />} title="Metadata" aside={workspace?.run.status ?? "idle"} />
-      <div className="grid grid-cols-2 gap-2 p-3">
-        <SmallMetric label="Input" value={usage.inputTokens} />
-        <SmallMetric label="Output" value={usage.outputTokens} />
-        <SmallMetric label="Cost" value={usage.costUsd} />
-        <SmallMetric label="Duration" value={`${usage.durationMs}ms`} />
-        <SmallMetric label="Model Calls" value={workspace?.model_calls.length ?? 0} />
-        <SmallMetric label="Tool Calls" value={workspace?.tool_calls.length ?? 0} />
-      </div>
-    </section>
-  );
-}
-
-function ArtifactsPanel({ artifacts }: { artifacts: ConversationArtifact[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(artifacts[0]?.id ?? null);
-  const selected = artifacts.find((artifact) => artifact.id === selectedId) ?? artifacts[0];
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <Header icon={<FileCode2 className="h-4 w-4" />} title="Artifacts / Preview" aside={String(artifacts.length)} />
-      <div className="grid grid-cols-[130px_1fr] border-t border-slate-100">
-        <div className="max-h-80 overflow-auto border-r border-slate-100 p-2">
-          {artifacts.map((artifact) => (
-            <button
-              key={artifact.id}
-              type="button"
-              onClick={() => setSelectedId(artifact.id)}
-              className={cn(
-                "mb-1 flex w-full items-center gap-1 rounded px-2 py-1 text-left text-xs",
-                selected?.id === artifact.id ? "bg-slate-900 text-white" : "hover:bg-slate-50",
-              )}
-            >
-              <Code2 className="h-3 w-3" />
-              <span className="truncate">{artifact.name}</span>
-            </button>
-          ))}
-          {artifacts.length === 0 && <EmptyState label="暂无产物" />}
-        </div>
-        <div className="max-h-80 overflow-auto p-3">
-          {selected ? <ArtifactPreview artifact={selected} /> : <EmptyState label="代码、JSON 和 Diff 会在这里渲染" />}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ToolRuntimePanel({
-  workspace,
-  modifyApprovalId,
-  modifiedInput,
-  onApprove,
-  onReject,
-  onStartModify,
-  onModifiedInputChange,
-  onSubmitModify,
-}: {
-  workspace?: AgentRunWorkspace;
-  modifyApprovalId: string | null;
-  modifiedInput: string;
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
-  onStartModify: (approval: ToolApproval) => void;
-  onModifiedInputChange: (value: string) => void;
-  onSubmitModify: () => void;
-}) {
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <Header icon={<Shield className="h-4 w-4" />} title="Plan-Act Runtime" aside={`${workspace?.approvals.length ?? 0} approvals`} />
-      <div className="space-y-3 p-3">
-        {(workspace?.approvals ?? []).map((approval) => (
-          <div key={approval.id} className="rounded-md border border-amber-100 bg-amber-50 p-2 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <Badge tone={statusTone(approval.status)}>{approval.status}</Badge>
-              <span className="font-mono text-amber-900">{approval.risk_level}</span>
-            </div>
-            <div className="mt-2 text-amber-800">{approval.reason}</div>
-            <pre className="mt-2 max-h-24 overflow-auto rounded bg-white p-2 font-mono text-[10px] text-slate-600">
-              {JSON.stringify(approval.request_json.input_json ?? {}, null, 2)}
-            </pre>
-            {approval.status === "PENDING" && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                <Button onClick={() => onApprove(approval.id)}>
-                  <Check className="h-3.5 w-3.5" />
-                  Approve
-                </Button>
-                <Button onClick={() => onReject(approval.id)}>
-                  <X className="h-3.5 w-3.5" />
-                  Reject
-                </Button>
-                <Button onClick={() => onStartModify(approval)}>
-                  <Pencil className="h-3.5 w-3.5" />
-                  Modify
-                </Button>
-              </div>
-            )}
-            {modifyApprovalId === approval.id && (
-              <div className="mt-2 space-y-2">
-                <Textarea value={modifiedInput} onChange={(event) => onModifiedInputChange(event.target.value)} className="min-h-28 font-mono text-xs" />
-                <Button onClick={onSubmitModify}>提交修改并批准</Button>
-              </div>
-            )}
-          </div>
-        ))}
-        <div className="space-y-2">
-          {(workspace?.tool_calls ?? []).map((call) => <ToolCallCard key={call.id} call={call} />)}
-          {!workspace?.tool_calls.length && <EmptyState label="暂无工具调用" />}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ToolCallCard({ call }: { call: ToolCall }) {
-  return (
-    <div className="rounded-md border border-slate-100 bg-white p-2 text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-slate-800">{call.tool_name}</span>
-        <Badge tone={statusTone(call.status)}>{call.status}</Badge>
-      </div>
-      <div className="mt-1 text-slate-500">{call.duration_ms}ms · {call.risk_level}</div>
-      {call.output_summary && <div className="mt-1 text-slate-700">{call.output_summary}</div>}
-      <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate-400">
-        {call.trace_id && <span>trace {call.trace_id}</span>}
-        {call.sandbox_id && <span>sandbox {call.sandbox_id}</span>}
-      </div>
-      <details className="mt-2">
-        <summary className="cursor-pointer text-slate-500">JSON</summary>
-        <pre className="mt-1 max-h-32 overflow-auto rounded bg-slate-50 p-2 font-mono text-[10px] text-slate-600">
-          {JSON.stringify({ input: call.input_json, output: call.output_json }, null, 2)}
-        </pre>
-      </details>
-    </div>
-  );
-}
-
-function MentionTray({ tools, onInsert }: { tools: ToolMetadata[]; onInsert: (name: string) => void }) {
-  return (
-    <div className="mb-2 flex flex-wrap gap-1 px-2">
-      {tools.slice(0, 6).map((tool) => (
-        <button
-          key={tool.name}
-          type="button"
-          onClick={() => onInsert(tool.name)}
-          className="rounded border border-slate-200 bg-white px-2 py-1 font-mono text-xs text-slate-600 hover:bg-slate-50"
-        >
-          @{tool.name}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ArtifactPreview({ artifact }: { artifact: ConversationArtifact }) {
-  const content =
-    typeof artifact.content === "string"
-      ? artifact.content
-      : JSON.stringify(artifact.content, null, 2);
-  return (
-    <div>
-      <div className="mb-2 flex items-center justify-between text-xs">
-        <span className="font-mono text-slate-800">{artifact.name}</span>
-        <Badge tone="info">{artifact.artifact_type}</Badge>
-      </div>
-      <pre className="max-h-72 overflow-auto rounded-md border border-slate-100 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100">
-        {content}
-      </pre>
-    </div>
-  );
-}
-
-function WelcomeMessage() {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-      这是 Workspace Pro：支持树状分支、暂停/继续、Pin 上下文、Tool Tray、Artifacts 预览和运行元数据监控。
-    </div>
-  );
-}
-
-function Header({ icon, title, aside }: { icon: ReactNode; title: string; aside?: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
-      <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">{icon}{title}</div>
-      <span className="text-xs text-slate-500">{aside}</span>
-    </div>
-  );
-}
-
-function PanelTitle({ icon, label }: { icon: ReactNode; label: string }) {
-  return <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">{icon}{label}</div>;
-}
-
-function SmallMetric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
-      <div className="text-[10px] text-slate-500">{label}</div>
-      <div className="mt-1 truncate font-mono text-xs text-slate-900">{value}</div>
-    </div>
-  );
-}
-
-function EmptyState({ label }: { label: string }) {
-  return <div className="rounded-md border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400">{label}</div>;
-}
-
-function serializeMessages(nodes: ConversationNode[]) {
-  return nodes.map((node) => ({
-    id: node.id,
-    parent_id: node.parent_id,
-    children_ids: node.children_ids,
-    role: node.role,
-    content: node.content,
-    state: node.state,
-    run_id: node.run_id,
-    metadata: node.metadata,
-    tool_calls: node.tool_calls,
-    artifacts: node.artifacts,
-  }));
-}
-
-function buildContextPreview(nodes: ConversationNode[], pinnedNodeIds: string[], turns: number) {
-  const pinned = nodes.filter((node) => pinnedNodeIds.includes(node.id));
-  const recent = nodes.slice(-turns);
-  const unique = new Map([...pinned, ...recent].map((node) => [node.id, node]));
-  const contentLength = [...unique.values()].reduce((total, node) => total + node.content.length, 0);
-  return { messageCount: unique.size, estimatedTokens: Math.max(1, Math.round(contentLength / 4)) };
-}
-
-function collectArtifacts(nodes: ConversationNode[], workspace?: AgentRunWorkspace) {
-  const nodeArtifacts = nodes.flatMap((node) => node.artifacts);
-  const extractedArtifacts = nodes.flatMap((node) => extractArtifactsFromNode(node));
-  const planArtifact: ConversationArtifact[] = workspace?.plan
-    ? [
-        {
-          id: `${workspace.plan.id}-plan`,
-          name: "plan.json",
-          artifact_type: "json",
-          status: workspace.plan.status,
-          content: workspace.plan.plan_json,
-          run_id: workspace.run.id,
-        },
-      ]
-    : [];
-  return dedupeArtifacts([...nodeArtifacts, ...extractedArtifacts, ...planArtifact]);
-}
-
-function dedupeArtifacts(artifacts: ConversationArtifact[]) {
-  const byId = new Map<string, ConversationArtifact>();
-  artifacts.forEach((artifact) => byId.set(artifact.id, artifact));
-  return [...byId.values()];
-}
-
-type UsageSummary = {
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: string;
-  durationMs: number;
-};
-
-function summarizeUsage(nodes: ConversationNode[], workspace?: AgentRunWorkspace): UsageSummary {
-  const nodeInput = nodes.reduce((total, node) => total + Number(node.metadata.input_tokens ?? 0), 0);
-  const nodeOutput = nodes.reduce((total, node) => total + Number(node.metadata.output_tokens ?? 0), 0);
-  const modelInput = workspace?.model_calls.reduce((total, call) => total + call.prompt_tokens, 0) ?? 0;
-  const modelOutput = workspace?.model_calls.reduce((total, call) => total + call.completion_tokens, 0) ?? 0;
-  const firstKnownCost = nodes.find(
-    (node) => node.metadata.cost_usd !== undefined && !node.metadata.cost_unavailable,
-  )?.metadata.cost_usd;
-  const costUnavailable =
-    firstKnownCost == null || nodes.some((node) => node.metadata.cost_unavailable === true);
-  const durationMs = Math.max(
-    0,
-    ...nodes.map((node) => Number(node.metadata.duration_ms ?? 0)),
-    ...(workspace?.model_calls.map((call) => call.duration_ms) ?? []),
-  );
-  return {
-    inputTokens: Math.max(nodeInput, modelInput),
-    outputTokens: Math.max(nodeOutput, modelOutput),
-    costUsd: formatUsageCost(firstKnownCost, costUnavailable),
-    durationMs,
-  };
-}
-
-function extractToolMentions(content: string, tools: ToolMetadata[]) {
-  const names = new Set((content.match(/@([\w-]+)/g) ?? []).map((item) => item.slice(1)));
-  return tools
-    .filter((tool) => names.has(tool.name))
-    .map((tool) => ({ name: tool.name, source: tool.source, payload: { mention: `@${tool.name}` } }));
-}
-
-function extractThinkBlocks(content: string) {
-  return [...content.matchAll(/<think>([\s\S]*?)<\/think>/g)].map((match) => match[1].trim());
+/**
+ * Flatten `ModelSettings.providers` (typed as `Array<Record<string, unknown>>`
+ * on the API surface, but shaped like `ProviderConfig` at runtime) into the
+ * `ModelOption` list consumed by `ModelPicker`.
+ */
+function deriveModelOptions(settings: ModelSettings | undefined): ModelOption[] {
+  if (settings === undefined) return [];
+  const out: ModelOption[] = [];
+  for (const raw of settings.providers) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const record = raw as Record<string, unknown>;
+    const name = record.name;
+    if (typeof name !== "string" || name.length === 0) continue;
+    const labelRaw = record.label;
+    const modelRaw = record.model;
+    const providerLabel =
+      typeof labelRaw === "string" && labelRaw.length > 0 ? labelRaw : name;
+    const modelId =
+      typeof modelRaw === "string" && modelRaw.length > 0 ? modelRaw : "default";
+    out.push({
+      providerId: name,
+      providerLabel,
+      modelId,
+      modelLabel: modelId,
+    });
+  }
+  return out;
 }
