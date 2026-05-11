@@ -1566,7 +1566,7 @@ def _normalize_tool_mention_payload(tool_name: str, payload: dict, goal: str) ->
     if tool_name == "list_files" and "root" not in payload:
         return {**payload, "root": ".", "glob": str(payload.get("glob", "**/*"))}
     if tool_name == "read_file" and "path" not in payload:
-        return {**payload, "path": "README.md"}
+        return {**payload, "path": "pyproject.toml"}
     return payload
 
 
