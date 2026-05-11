@@ -40,6 +40,26 @@ describe("Property P24: tool mentions serialize structured payloads", () => {
     ]);
   });
 
+  it("does not extract embedded email or handle fragments as tools", () => {
+    const tools = [tool("bash"), tool("read_file"), tool("example")];
+
+    expect(
+      extractToolMentions(
+        "Email ops@bash.com or user@example, but do not run anything",
+        tools,
+      ),
+    ).toEqual([]);
+  });
+
+  it("extracts mentions delimited by common punctuation", () => {
+    const tools = [tool("bash"), tool("read_file"), tool("list-files")];
+
+    expect(extractToolMentions("Use (@bash), then @read_file.", tools)).toEqual([
+      { name: "bash", source: "builtin", payload: { mention: "@bash" } },
+      { name: "read_file", source: "builtin", payload: { mention: "@read_file" } },
+    ]);
+  });
+
   it("never emits a name outside the registry", () => {
     const tools = [tool("bash"), tool("read_file"), tool("list-files")];
     const registryNames = new Set(tools.map((item) => item.name));
