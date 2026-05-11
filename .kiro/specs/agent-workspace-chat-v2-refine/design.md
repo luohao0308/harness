@@ -1358,4 +1358,3 @@ apps/agent-console/src/
 - `fast-check` 是否已在 `apps/agent-console/node_modules` 中通过 vitest 间接可用？若否，P2/P3 等属性测试用手写 generator 替代；不构成新依赖（生成器代码本身是业务代码）。
 - `zustand/middleware` 的 `persist` 在 Zustand 5 中的 API 与当前实现是否完全一致？`onRehydrateStorage` 的回调签名在 v4→v5 之间略有差异；若有问题，切到 `localPersistence.ts` 手写方案（已按对称 API 设计）。
 - `useOutsideClick` 对 portal 内元素（overlay）的判断是否需要排除：实现时把 portal 容器 `ref` 一并传入比较。
-

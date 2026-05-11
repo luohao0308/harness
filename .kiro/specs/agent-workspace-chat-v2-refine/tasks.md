@@ -39,7 +39,7 @@
     - **Requirement / Property / Design**: Req 5.4, 13.8；**Property 7（复制纯度）的基础设施**；Design §New lib modules → `clipboard.ts`、§Error Handling → "Clipboard failure"。
     - **Acceptance**: `cd apps/agent-console && npm run lint && npm run build`
     - 导出 `copyText(text): Promise<boolean>`、`supportsCopy(): boolean`、`copyTextExecFallback(text): boolean`。`copyText` 先尝试 `navigator.clipboard.writeText`，失败回退 `copyTextExecFallback`（临时 `<textarea>` + `document.execCommand('copy')` + 移除 DOM）。任一成功返回 `true`；全部失败返回 `false`，绝不 throw（TOTAL）。`supportsCopy` 检测 `typeof navigator !== 'undefined' && (navigator.clipboard || document.execCommand)`。
-  
+
   - [x] 2.2 实现 `copyText.ts` 的 `stripThinkBlocks` 纯函数
     - **产出（修改）**: `apps/agent-console/src/features/agents/lib/copyText.ts`
     - **依赖**: 1.1
@@ -343,4 +343,3 @@ cd apps/agent-console && npm run test
 | e | 模式切换不清 draft                     | 在 Composer 输入 "test"，随后切换 Workspace mode（chat → codex_plan）。                                | textarea 内容仍然是 "test"；切回 chat 依然保留。                                                                  |
 | f | Cmd+K / ? 浮层                         | 聚焦在页面空白处按 `?`；在 Composer 外按 `Cmd+K`（mac）/ `Ctrl+K`（其他）。按 Esc 关闭。                | `?` 打开 Shortcut Overlay；`Cmd+K` 打开 Search Overlay 并自动 focus 输入框；Esc 关闭后 `nodesById` / `draft` 不受影响。 |
 | g | 刷新恢复（streaming → paused）         | 发一条触发流式的消息，在流中途（assistant `state === "streaming"`）刷新浏览器。                        | 刷新后历史对话完整，原 streaming 节点变为 `paused` 态（灰色占位 + Resume 按钮），`activeStream === null`。          |
-
