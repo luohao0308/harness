@@ -4,11 +4,11 @@
 
 ## Website
 
-| Figma Page | Route | Owner | Implementation | Required Modules |
+| Figma Page | Route | Owner | Implementation | Reference Surfaces |
 |---|---|---|---|---|
-| Home | `/` | web-site | Next.js | Hero, Model + Harness, Core Modules, Console Preview |
-| Product | `/product` | web-site | Next.js | Planner, Executor, Subagent, Sandbox, Event Store |
-| Architecture | `/architecture` | web-site | Next.js | Architecture diagram, Event Timeline, data flow |
+| Home | `/` | web-site | Next.js | Hero, model + harness story, core modules, console preview |
+| Product | `/product` | web-site | Next.js | Planner, executor, subagent, sandbox, event store |
+| Architecture | `/architecture` | web-site | Next.js | Architecture diagram, event timeline, data flow |
 | Solutions | `/solutions` | web-site | Next.js | Enterprise scenarios, private deployment |
 | Security | `/security` | web-site | Next.js | Sandbox policy, audit, secret boundary |
 | Deployment | `/deployment` | web-site | Next.js | Docker Compose, systemd, Nginx, observability |
@@ -17,17 +17,17 @@
 
 ## Console
 
-| Figma Page | Route | Owner | Implementation | Required Modules |
+| Figma Page | Route | Owner | Implementation | Reference Surfaces |
 |---|---|---|---|---|
-| Agent Workspace Pro | `/agents/:agentId/workspace` | agent-console | React | ConversationTree, ContextExplorer, ToolTray, ToolCallingCard, ArtifactPreview |
+| Agent Workspace Pro | `/agents/:agentId/workspace` | agent-console | React | Conversation flow, context controls, tools, artifacts, runtime observations |
 | Run History | `/runs` | agent-console | React | Run table, status badges, filters |
-| Run Detail | `/runs/:runId` | agent-console | React | ExecutionPlanPanel, EventTimeline, TaskResultPanel |
+| Run Detail | `/runs/:runId` | agent-console | React | Execution plan, event timeline, task result |
 | Event Timeline | `/runs/:runId/events` | agent-console | React | SSE stream, event payload, replay position |
-| Subagent Panel | `/runs/:runId/subagents` | agent-console | React | SubagentPanel, assignment state, result summary |
-| Sandbox Panel | `/sandboxes` | agent-console | React | SandboxPanel, Docker Sandbox, WarmPool, resource usage |
-| Observability | `/observability` | agent-console | React | ResourceUsageChart, model calls, task throughput |
-| Model Settings | `/settings/models` | agent-console | React | ModelCallPanel, gateway status, limits |
-| Policy Settings | `/settings/policies` | agent-console | React | PolicyBadge, risk levels, approval rules |
+| Subagent Panel | `/runs/:runId/subagents` | agent-console | React | Subagent state, assignment summary, result summary |
+| Sandbox Panel | `/sandboxes` | agent-console | React | Sandbox state, warm pool, resource usage |
+| Observability | `/observability` | agent-console | React | Resource usage, model calls, task throughput |
+| Model Settings | `/settings/models` | agent-console | React | Model call state, gateway status, limits |
+| Policy Settings | `/settings/policies` | agent-console | React | Policy levels, risk levels, approval rules |
 
 ## Console Language
 
@@ -76,8 +76,8 @@
 
 ## Delivery Constraints
 
-- Figma is the design source of truth.
-- Website implementation must use Next.js.
-- Console implementation must use React + Vite.
+- Figma is the current visual reference.
+- Website implementation currently uses Next.js.
+- Console implementation currently uses React + Vite.
 - Gemini/H5 output is reference material only.
-- Run Detail, Event Timeline, Subagent, Sandbox, and WarmPool must remain explicit user-facing concepts.
+- Run Detail, Event Timeline, Subagent, Sandbox, and WarmPool remain explicit user-facing concepts, but component decomposition may vary if the same behavior is preserved.

@@ -1,6 +1,8 @@
 # Figma Production Brief
 
-本文件是阶段 02 的 Figma 设计事实源说明。Figma 文件、设计 token、页面结构、组件状态和前端交付物必须对齐本文件。前端实现不得把 Gemini/H5 产物直接作为生产代码；Gemini/H5 产物只进入视觉参考层和文案参考层，生产官网由 Next.js 重建，生产控制台由 React + Vite 重建。
+> Status note: this brief is a design reference, not a hard layout freeze. Console page descriptions below may evolve with the active product spec; they should not force the Agent Workspace back to any one fixed layout.
+
+本文件是阶段 02 的 Figma 设计参考说明。Figma 文件、设计 token、页面结构、组件状态和前端交付物应以本文件为当前基线，但前端实现可在不改变核心视觉意图和信息层级的前提下调整结构。前端实现不得把 Gemini/H5 产物直接作为生产代码；Gemini/H5 产物只进入视觉参考层和文案参考层，生产官网由 Next.js 重建，生产控制台由 React + Vite 重建。
 
 ## 文件结构
 
@@ -100,14 +102,14 @@ Contact
 
 ## Console Layout
 
-控制台使用 React + Vite + TypeScript + Tailwind CSS、本地 UI primitives、lucide-react 和 ECharts。历史设计中出现的 shadcn/ui 名称只代表设计系统目标，不是当前实现依赖。布局必须是密集企业工具界面，不使用营销型大 Hero。
+控制台使用 React + Vite + TypeScript + Tailwind CSS、本地 UI primitives、lucide-react 和 ECharts。历史设计中出现的 shadcn/ui 名称只代表设计系统目标，不是当前实现依赖。默认方向是密集企业工具界面，不使用营销型大 Hero，但具体分栏、宽度和承载方式可随产品形态调整。
 
 全局布局：
 
-- 左侧导航宽度 248px。
+- 左侧导航使用紧凑企业控制台导航；具体宽度按当前页面信息密度和响应式需要确定。
 - 顶栏包含环境、模型网关状态、当前用户、告警入口。
 - 顶栏包含中文/English 语言切换，默认中文。
-- 主内容最大宽度 1440px。
+- 主内容宽度按页面类型确定；数据密集页面优先保证扫描效率，聊天类页面优先保证阅读和输入舒适度。
 - 数据密集页面使用表格、筛选、分段控制、状态 badge、详情抽屉。
 - 图表使用 ECharts，事件流使用 SSE 展示实时追加。
 - 页面文案、按钮、表头、空状态、加载状态、状态说明默认使用中文。
@@ -131,7 +133,7 @@ Contact
 
 | Figma Page | Route | Required Content |
 |---|---|---|
-| Agent Workspace Pro | `/agents/:agentId/workspace` | 三栏 Plan-Act surface、Conversation Tree、Tool Tray、Artifacts、Approvals |
+| Agent Workspace Pro | `/agents/:agentId/workspace` | Chat-first workspace surface with conversation flow, planning affordance, context, artifacts, and approvals reachable without freezing a fixed layout |
 | Run History | `/runs` | Agent Run 表格、状态筛选、模型筛选、最近事件摘要 |
 | Run Detail | `/runs/:runId` | 状态、Execution Plan、Event Timeline、Executor 输出、结果产物 |
 | Event Timeline | `/runs/:runId/events` | 事件流、事件类型、payload 摘要、重放定位 |
@@ -183,7 +185,7 @@ warning
 
 ## Delivery Rules
 
-- Figma 是设计事实源，前端实现必须对齐 Figma。
+- Figma 是当前设计参考；前端实现应对齐其视觉意图与信息层级，若与活跃产品规格冲突，则以活跃产品规格为准。
 - `docs/design/design-tokens.json` 是 token 交付契约。
 - `docs/design/page-inventory.md` 是页面交付清单。
 - 官网生产实现使用 Next.js；控制台生产实现使用 React + Vite。

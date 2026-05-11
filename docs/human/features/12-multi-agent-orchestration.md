@@ -20,7 +20,7 @@ Multi-agent Orchestration
 | 能力 | 入口 | 用户结果 |
 |---|---|---|
 | 查看 Agent 列表 | `/agents` | 看到 Researcher、Coder、Reviewer、Operator 等具名 Agent |
-| 选择入口 Agent | `/agents/:agentId/workspace` | 以某个 Agent 开始 Workspace Pro Plan-Act 运行 |
+| 选择入口 Agent | `/agents/:agentId/workspace` | 以某个 Agent 开始 Workspace 运行 |
 | 自动路由 | `/agents/:agentId/workspace` 与 Run 编排动作 | Router 选择参与 Agent |
 | 手动选择协作 Agent | `/agents/:agentId/workspace` 的 Harness/Run 操作 | 用户指定或确认参与 Agent |
 | 查看编排图 | `/runs/:runId` | 展示 handoff、parallel fan-out、reduce 的拓扑 |
@@ -44,7 +44,7 @@ GET  /api/observability/summary
 | 页面 | 数据来源 | 交互 |
 |---|---|---|
 | `/agents` | Agent Registry API | Agent 列表、默认模型、工具权限、状态 |
-| `/agents/:agentId/workspace` | Workspace Pro stream 与 Agent Run API | 单一 Plan-Act surface 创建 Run，并从 Run/Harness 操作进入编排 |
+| `/agents/:agentId/workspace` | Workspace Pro stream 与 Agent Run API | workspace surface 创建 Run，并从 Run/Harness 操作进入编排 |
 | `/runs/:runId` | Assignment、Handoff、Events API | 编排拓扑、事件、产物和错误 |
 | `/observability` | Observability Summary API | Assignment 状态分布和队列状态 |
 

@@ -36,7 +36,7 @@ The public website is retained as a public shell. Console and backend implementa
 - Added `/api/agents/runs/{run_id}/workspace` aggregate projection.
 - Reworked console routing from Task creation to Run history and Agent Workspace.
 - Added new Run History and Run Detail pages.
-- Reworked Agent Workspace into a three-column control console.
+- Reworked Agent Workspace into a chat-first control console.
 - Preserved MiniMax Anthropic-compatible model support.
 - Unified MiniMax context window metadata at `400000` tokens.
 - Added MiniMax built-in preset normalization for legacy persisted settings.

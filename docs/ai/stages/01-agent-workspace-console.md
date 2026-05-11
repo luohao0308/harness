@@ -1,8 +1,10 @@
-# Stage 1: Agent Workspace Three-Column Console
+# Stage 1: Agent Workspace Console
+
+> This stage captures one delivery snapshot. It describes a valid implementation shape, not the only acceptable console structure.
 
 ## Goal
 
-Build the core Agent Workspace Pro route as the primary usage surface for AI Harness Platform by upgrading the existing `/agents/:agentId/workspace` route.
+Build the core Agent Workspace Pro route as the primary usage surface for AI Harness Platform by upgrading the existing `/agents/:agentId/workspace` route into a chat-first workspace with clear access to planning and runtime observations.
 
 ## Input
 
@@ -13,7 +15,7 @@ Build the core Agent Workspace Pro route as the primary usage surface for AI Har
 ## Output
 
 - An Agent Run is created through Agent semantics.
-- Console shows streamed Plan-Act response, conversation tree branch, Artifacts preview, Plan DAG, Event Stream, Subagents, Tool Cards, Approvals, and Model Calls.
+- Console shows streamed assistant responses, conversation branch state, artifacts preview, plan data, event stream, subagents, tool cards, approvals, and model calls.
 - Old task creation route is absent from primary navigation.
 
 ## Modules
@@ -51,9 +53,9 @@ Build the core Agent Workspace Pro route as the primary usage surface for AI Har
 
 ## Frontend Display
 
-- Left column: Explorer with model, Tool Tray, MCP tools, context slider, pinned messages, file bridge state.
-- Center column: Chat Console with active conversation branch, streamed Plan-Act output, Pause, Continue, Edit and Resend, and structured `@` mentions.
-- Right column: Artifacts Preview, metadata, Plan DAG, Event Stream, Subagents, Tool Cards, Approvals, Model Calls.
+- The workspace may use left, center, right, drawer, or tabbed groupings as long as the chat experience stays primary.
+- Context, tools, and model state remain easy to reach.
+- Artifacts, metadata, plan data, event stream, subagents, tool cards, approvals, and model calls remain visible without forcing the user out of the chat flow.
 - `/tasks/new` is deleted.
 - `/tasks` redirects to `/runs` during compatibility migration.
 
@@ -66,7 +68,7 @@ Build the core Agent Workspace Pro route as the primary usage surface for AI Har
 ## Acceptance
 
 - User creates or continues an Agent Run from Workspace Pro.
-- Same screen shows streamed Plan-Act output, Conversation Tree state, Artifacts, and Harness internals.
+- Same screen or coordinated views show streamed assistant output, conversation state, artifacts, and Harness internals.
 - Historical message edits create a branch and do not overwrite existing nodes.
 - Pause keeps partial content; Continue resumes from the paused node.
 - Pinned messages remain in request payloads.

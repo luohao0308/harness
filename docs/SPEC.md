@@ -12,16 +12,18 @@ A model provides reasoning and generation. Harness provides model configuration,
 
 The public website remains in the repository as a public information shell. The product console is the implementation center.
 
+This is a living reference, not a frozen component contract. Equivalent decompositions are acceptable when they preserve visible behavior, traceability, and audit coverage.
+
 ## Product Pillars
 
 | Pillar | Product Surface | Required Capability |
 |---|---|---|
-| Agent Studio | `/agents`, `/settings/models` | Build Agents from model, prompt, tools, MCP, RAG settings, templates, versions |
-| Agent Workspace | `/agents/:agentId/workspace` | Use an Agent through Workspace Pro: conversation tree, Plan-Act stream, context controls, Tool Cards, Artifacts, Plan DAG, Event Stream, Subagents, Tool Calls, Model Calls |
-| Harness Management | `/tools`, `/sandboxes` | Register tools, connect MCP, enforce permissions, sandbox actions, DAG and trigger controls |
-| Observability | `/observability`, `/runs/:runId` | Event browser, replay, cost, latency, success rate, alerts, audit exports |
-| Eval & Testing | `/evals` | Dataset, eval run, regression gate, A/B comparison, human review queue |
-| Infra | `/sandboxes`, `/settings/models` | WarmPool, multi-tenant isolation, API Gateway surface, version and rollout state |
+| Agent Studio | `/agents`, `/settings/models` | Reference surface for building Agents from model, prompt, tools, MCP, RAG settings, templates, versions |
+| Agent Workspace | `/agents/:agentId/workspace` | Reference surface for using an Agent through a chat-first workspace: conversation, planning, context controls, tools, artifacts, run state, and audit views |
+| Harness Management | `/tools`, `/sandboxes` | Reference surface for registering tools, connecting MCP, enforcing permissions, sandbox actions, DAG and trigger controls |
+| Observability | `/observability`, `/runs/:runId` | Reference surface for event browser, replay, cost, latency, success rate, alerts, audit exports |
+| Eval & Testing | `/evals` | Reference surface for dataset, eval run, regression gate, A/B comparison, human review queue |
+| Infra | `/sandboxes`, `/settings/models` | Reference surface for WarmPool, multi-tenant isolation, API Gateway surface, version and rollout state |
 
 ## Product Concepts
 
@@ -43,12 +45,22 @@ The public website remains in the repository as a public information shell. The 
 
 The database table named `tasks` remains an internal compatibility detail during migration. Product copy, console navigation, new API entry points, and specs use `Agent Run`.
 
+## Workspace Mode Semantics
+
+Workspace stream modes are intentionally separate:
+
+- `chat` is the default conversational mode and returns displayable model text.
+- `markdown_plan` returns markdown planning text for the user to review. It does not create an `ExecutionPlan`, tool call, approval, or artifact event by itself.
+- `plan` is the explicit Plan-Act path. It can create a Plan DAG, runtime artifacts, tool-call audit records, and approval state.
+
+Future UI layouts can rename buttons, regroup panels, or move runtime details into drawers, but they should preserve this semantic split.
+
 ## Active Console Routes
 
 | Route | Role |
 |---|---|
 | `/agents` | Agent Studio registry and entry |
-| `/agents/:agentId/workspace` | Agent Workspace Pro IDE-style console |
+| `/agents/:agentId/workspace` | Agent Workspace Pro workspace |
 | `/runs` | Agent Run audit history |
 | `/runs/:runId` | Run detail with Plan, Trace, Replay, Tool Calls, Model Calls, Approvals |
 | `/settings/models` | Model configuration with built-in MiniMax preset |
@@ -70,12 +82,14 @@ Console state comes from APIs. Static fake metrics, fake models, fake tool statu
 - Editing a historical user message creates a new branch and keeps the previous branch intact.
 - The active path, pinned nodes, and context window determine request context.
 - Streaming output supports pause and continue through client-side abort control.
-- Plan and thought text render as collapsible trace blocks.
+- `markdown_plan` planning text renders as normal assistant content; explicit `plan` traces and thought-like text render as collapsible trace blocks when returned.
 - Side-effect tools enter the Tool Approval path before execution.
 - Tool Cards show tool name, risk, sandbox requirement, input JSON, output JSON, latency, status, and trace.
 - Artifacts render in the right preview surface and never bypass Tool Policy or Sandbox.
 - Per-message metadata shows input tokens, output tokens, cost, first-byte latency, and total duration when returned by the API.
 
+These rules describe the current behavioral contract, not a frozen component map. Equivalent layouts, component names, and request assembly helpers are acceptable if they preserve the same user-visible behavior and audit guarantees.
+
 ## Current Implementation Focus
 
-This pass implements only the focused AI Harness Platform plan. Old task-management UX, marketing-like console pages, static dashboard cards, and unrelated historical stages leave the active execution path. Website code stays present.
+The current implementation focus is the active AI Harness Platform path. Old task-management UX, marketing-like console pages, static dashboard cards, and unrelated historical stages are treated as non-primary references unless a later plan explicitly revives them. Website code stays present.

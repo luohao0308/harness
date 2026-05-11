@@ -141,7 +141,7 @@ python -m pytest tests/warmpool
 Targets:
 
 ```text
-Workspace Pro route renders three-column layout
+Workspace Pro route renders chat-first workspace layout
 Conversation tree creates branch on edit and resend
 Pause changes assistant node to paused and Continue preserves partial content
 Pinned messages and context window affect stream payloads
