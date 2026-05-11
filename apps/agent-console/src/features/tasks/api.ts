@@ -167,6 +167,7 @@ export type ToolMention = {
 };
 
 export type AgentChatStreamPayload = {
+  mode?: "chat" | "markdown_plan" | "plan";
   goal?: string | null;
   messages: AgentChatStreamMessage[];
   active_leaf_id?: string | null;
@@ -177,11 +178,24 @@ export type AgentChatStreamPayload = {
   continue_from_node_id?: string | null;
   partial_assistant_content?: string | null;
   tool_mentions?: ToolMention[];
+  /**
+   * v4 additive UI-side token budget hint. Backend ignores this field
+   * today (Pydantic `extra="ignore"`); it is surfaced so future
+   * context-trimming logic can see the user's slider value.
+   */
+  context_max_tokens?: number;
 };
 
 export type AgentChatStreamEvent =
   | { type: "delta"; content: string }
   | { type: "think_delta"; content: string }
+  | {
+      type: "run_created";
+      run_id: string;
+      status: string;
+      step_count: number;
+      message: string;
+    }
   | {
       type: "tool_call_requested";
       tool_call_id: string;
@@ -1392,7 +1406,7 @@ function parseSseFrame(frame: string): AgentPlanStreamEvent | null {
   return null;
 }
 
-function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
+export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
   if (!frame.trim()) return null;
   const eventLine = frame.split("\n").find((line) => line.startsWith("event:"));
   const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
@@ -1402,6 +1416,15 @@ function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
   if (eventType === "delta") return { type: "delta", content: String(payload.content ?? "") };
   if (eventType === "think_delta") {
     return { type: "think_delta", content: String(payload.content ?? "") };
+  }
+  if (eventType === "run_created") {
+    return {
+      type: "run_created",
+      run_id: String(payload.run_id),
+      status: String(payload.status),
+      step_count: Number(payload.step_count ?? 0),
+      message: String(payload.message ?? ""),
+    };
   }
   if (eventType === "tool_call_requested") {
     return {

@@ -27,3 +27,25 @@ textarea {
 .mono-tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/*
+ * v4 Req 7.2 — streaming caret blink keyframes.
+ * Respects `prefers-reduced-motion: reduce` so the caret stays static for
+ * motion-sensitive users (Req 7.2.3 / Req 8.5).
+ */
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.animate-streaming-caret {
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-streaming-caret {
+    animation: none !important;
+    visibility: visible !important;
+  }
+}
