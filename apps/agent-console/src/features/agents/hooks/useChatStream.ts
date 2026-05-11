@@ -64,7 +64,7 @@ const NON_SSE_PREVIEW_BYTES = 256;
 export type UseChatStreamArgs = {
   agentId: string;
   workspaceMode: WorkspaceMode;
-  /** Invoked exactly once per run, with the `run_id` from `run_created`/`done`. */
+  /** Invoked exactly once per run, with the `run_id` from `run_created`. */
   onRunCreated?: (runId: string) => void;
   /** Current registry entries used to serialize `@tool` mentions. */
   tools?: readonly ToolMetadata[];
@@ -229,7 +229,6 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
           }
           case "done": {
             flush.drain();
-            onRunCreated?.(event.run_id);
             store.updateNode(assistantNodeId, { state: "done", run_id: event.run_id });
             return;
           }
