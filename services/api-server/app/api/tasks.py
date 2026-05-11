@@ -169,7 +169,15 @@ def get_task(task_id: str, session: DbSession, principal: Principal) -> Task:
 def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     task = get_owned_task(task_id, session, principal.organization_id)
     if task.status not in {"CREATED", "FAILED"}:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法启动")
+        plan_exists = session.execute(
+            select(ExecutionPlan.id)
+            .where(ExecutionPlan.task_id == task.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        # Workspace chat/codex_plan can produce a COMPLETED run without a plan DAG.
+        # Allow one-way promotion into full Harness execution on the same run identity.
+        if not (task.status == "COMPLETED" and plan_exists is None):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法启动")
 
     started = Executor(session).start_task(task)
     if started.status == "RUNNING":

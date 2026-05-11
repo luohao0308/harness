@@ -1,6 +1,6 @@
-current_stage: 06-warmpool-infra
+current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-08T14:57:13Z
+last_updated_at: 2026-05-11T16:44:58Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -93,6 +93,27 @@ stages:
       - Final backend tests, Ruff, frontend build, docs validation, and Docker smoke pass.
       - git diff --check passes.
       - Full backend regression is now 123 passed.
+  - id: 07-private-deployable-harness-chain
+    document: docs/ai/stages/07-private-deployable-harness-chain.md
+    status: completed
+    demo: Canonical Agent Run smoke prints correlated run/task/replay/tool/sandbox/subagent/eval/observability evidence.
+    verification_result: passed
+    verification_commands:
+      - python3 -m py_compile scripts/smoke-test-agent-run.py
+      - python3 scripts/smoke-test-agent-run.py
+      - python3 scripts/smoke-test-docker.py
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests scripts/smoke-test-agent-run.py
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - docker compose -f deploy/docker-compose/docker-compose.yml config
+      - git diff --check
+    acceptance_notes:
+      - Added scripts/smoke-test-agent-run.py as Stage 07 canonical smoke entry.
+      - Canonical smoke exits 0 and prints evidence keys: run_id/task_id/trace_id/event/replay/tool/sandbox/subagent/eval/warm_pool.
+      - Latest canonical smoke evidence run_id is 3a310efa-dcbd-4216-b78c-c49241e97245.
+      - Primary run-create endpoint now handles invalid model plan output through repair/deterministic planning and canonical smoke uses POST /api/agents/default/runs directly.
+      - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 stage_completion_rule:
   - run_backend_tests

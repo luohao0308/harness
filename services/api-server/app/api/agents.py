@@ -574,7 +574,27 @@ def plan_with_agent(
             "prompt_version": PLANNER_PROMPT_VERSION,
         },
     )
-    planner_response_content = _complete_plan_prompt(task=task, session=session)
+    try:
+        planner_response_content = _complete_plan_prompt(task=task, session=session)
+    except ModelGatewayError as exc:
+        task.status = "FAILED"
+        task.updated_at = utc_now()
+        event_store.append(
+            task_id=task.id,
+            event_type=EventType.TASK_FAILED,
+            payload_json={
+                "task_id": task.id,
+                "goal": task.goal,
+                "agent_id": request.agent_id,
+                "mode": "plan",
+                "reason": str(exc),
+            },
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Plan 模型调用失败：{exc}",
+        ) from exc
     planner = DeterministicPlanner()
     plan = planner.parse_model_plan(
         planner_response_content,
@@ -582,7 +602,50 @@ def plan_with_agent(
         planner_attempts=1,
     )
     if plan is None:
-        plan = planner.create_plan(task)
+        event_store.append(
+            task_id=task.id,
+            event_type=EventType.PLAN_REJECTED,
+            payload_json={
+                "reason": "model_plan_schema_invalid",
+                "attempt": 1,
+                "content_preview": planner_response_content[:500],
+                "prompt_version": PLANNER_PROMPT_VERSION,
+            },
+        )
+        repaired_content = _repair_plan_prompt(
+            task=task,
+            invalid_content=planner_response_content,
+            session=session,
+        )
+        if repaired_content is not None:
+            plan = planner.parse_model_plan(
+                repaired_content,
+                planner_source="llm_repaired",
+                planner_attempts=2,
+            )
+            if plan is None:
+                event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.PLAN_REJECTED,
+                    payload_json={
+                        "reason": "model_plan_repair_schema_invalid",
+                        "attempt": 2,
+                        "content_preview": repaired_content[:500],
+                        "prompt_version": PLANNER_PROMPT_VERSION,
+                    },
+                )
+        else:
+            event_store.append(
+                task_id=task.id,
+                event_type=EventType.PLAN_REJECTED,
+                payload_json={
+                    "reason": "model_plan_repair_call_failed",
+                    "attempt": 2,
+                    "prompt_version": PLANNER_PROMPT_VERSION,
+                },
+            )
+        if plan is None:
+            plan = planner.create_plan(task)
     try:
         plan = ExecutionPlanSchema.model_validate(plan)
     except ValidationError as exc:
@@ -968,29 +1031,55 @@ def get_agent(agent_id: str, session: DbSession, principal: Principal) -> Agent:
 
 
 def _complete_plan_prompt(*, task: Task, session: Session) -> str:
+    response = AuditedModelGateway(session=session, task_id=task.id).complete(
+        ModelRequest(
+            model_provider=task.model_provider,
+            model_name=task.model_name,
+            messages=[
+                ModelMessage(role="system", content=PLANNER_SYSTEM_PROMPT),
+                ModelMessage(
+                    role="user",
+                    content=(
+                        f"Agent Plan mode only. Do not execute tools.\n\n"
+                        f"Task title:\n{task.title}\n\n"
+                        f"Task goal:\n{task.goal}\n\n"
+                        f"Max subagents: {task.max_subagents}\n"
+                        f"Sandbox enabled: {task.enable_sandbox}\n"
+                        f"Network enabled: {task.enable_network}"
+                    ),
+                ),
+            ],
+        )
+    )
+    return response.content
+
+
+def _repair_plan_prompt(*, task: Task, invalid_content: str, session: Session) -> str | None:
     try:
         response = AuditedModelGateway(session=session, task_id=task.id).complete(
             ModelRequest(
                 model_provider=task.model_provider,
                 model_name=task.model_name,
                 messages=[
-                    ModelMessage(role="system", content=PLANNER_SYSTEM_PROMPT),
+                    ModelMessage(
+                        role="system",
+                        content=(
+                            f"{PLANNER_SYSTEM_PROMPT}\nRepair the previous Planner output. "
+                            "Return one valid JSON object that matches the required schema."
+                        ),
+                    ),
                     ModelMessage(
                         role="user",
                         content=(
-                            f"Agent Plan mode only. Do not execute tools.\n\n"
-                            f"Task title:\n{task.title}\n\n"
-                            f"Task goal:\n{task.goal}\n\n"
-                            f"Max subagents: {task.max_subagents}\n"
-                            f"Sandbox enabled: {task.enable_sandbox}\n"
-                            f"Network enabled: {task.enable_network}"
+                            "Task goal:\n"
+                            f"{task.goal}\n\nInvalid Planner output:\n{invalid_content}"
                         ),
                     ),
                 ],
             )
         )
     except ModelGatewayError:
-        return "{}"
+        return None
     return response.content
 
 
