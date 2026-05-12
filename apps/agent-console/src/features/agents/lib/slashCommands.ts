@@ -48,8 +48,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "plan",
     aliases: [],
     needsArgs: false,
-    zh: "切换到 Plan-Act Run 模式",
-    en: "Switch to Plan-Act Run mode",
+    zh: "切换到 Plan (markdown) 模式",
+    en: "Switch to Plan (markdown) mode",
     trigger: "/plan",
   },
   {

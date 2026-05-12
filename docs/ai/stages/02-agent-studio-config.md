@@ -15,7 +15,7 @@ Make Agent Studio the build surface for Model plus Harness configuration.
 
 - `/agents` becomes the Agent Studio entry.
 - `/settings/models` persists model configuration.
-- MiniMax is available as the default built-in preset.
+- DeepSeek Flash is available as the default built-in preset, with DeepSeek Pro as a built-in alternative.
 - Agent Workspace reads selected configuration.
 
 ## Modules
@@ -31,7 +31,7 @@ Make Agent Studio the build surface for Model plus Harness configuration.
 - Keep `GET /api/agents`.
 - Keep `GET /api/agents/{agent_id}`.
 - Keep `GET /api/settings/models` and `PUT /api/settings/models`.
-- Ensure MiniMax provider fields include endpoint, model name, protocol, API key env, and context metadata.
+- Ensure DeepSeek provider fields include endpoint, model name, protocol, API key env, and context metadata.
 
 ## Event Types
 
@@ -42,18 +42,18 @@ Make Agent Studio the build surface for Model plus Harness configuration.
 ## Frontend Display
 
 - Agent cards show model, role, tools, routing tags, and workspace entry.
-- Model settings show MiniMax preset and custom provider fields.
+- Model settings show DeepSeek presets and custom provider fields.
 - Unsupported templates and RAG controls render disabled until API-backed.
 
 ## Tests
 
-- Backend settings tests cover MiniMax defaults and save path.
-- Model gateway tests cover Anthropic-compatible MiniMax payload.
+- Backend settings tests cover DeepSeek defaults and save path.
+- Model gateway tests cover OpenAI-compatible DeepSeek health probing plus generic Anthropic-compatible payloads.
 - Frontend build validates Model Settings and Agent Studio components.
 
 ## Acceptance
 
-- MiniMax preset is present by default.
+- DeepSeek Flash preset is present by default.
 - User saves model settings successfully.
 - Agent Workspace shows the configured model state.
 
@@ -67,7 +67,7 @@ Make Agent Studio the build surface for Model plus Harness configuration.
 
 ```text
 Open /settings/models
--> inspect MiniMax preset
+-> inspect DeepSeek presets
 -> save settings
 -> open /agents
 -> enter Workspace

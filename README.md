@@ -55,9 +55,9 @@ Completed in the current focused pass:
 - Workspace aggregate API: `GET /api/agents/runs/{run_id}/workspace`
 - Agent Workspace three-column single Plan console
 - Run History and Run Detail pages
-- MiniMax default model preset and Anthropic-compatible gateway path
-- MiniMax context metadata set to 400000 tokens
-- MiniMax built-in preset normalization migrates old persisted 204800-token settings to 400000 tokens
+- DeepSeek Flash and Pro default model presets through the OpenAI-compatible gateway path
+- DeepSeek context metadata set to 1000000 tokens
+- DeepSeek built-in preset normalization migrates legacy built-in provider settings to DeepSeek defaults
 - Agent Studio configuration surfaces for Model, Tools/MCP, Prompt, RAG, Templates, and Orchestration
 - Tool Runtime page surfaces Registry, Policy, Sandbox, MCP, and disabled Trigger state
 - Run Detail replay-to-sequence UI with state summary, diagnosis, and failure point
@@ -93,7 +93,7 @@ cd apps/agent-console && npm run build -> passed
 python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
-Docker runtime verification -> MiniMax healthy/probe and context 400000
+Docker runtime verification -> DeepSeek healthy/probe and context 1000000
 ```
 
 ## Spec Documents

@@ -1,11 +1,11 @@
 /**
- * InspectorMenu — dropdown that merges the v2 `Metadata / Artifacts /
- * Runtime` header buttons into a single entry point (v3 / Req 6.2).
+ * InspectorMenu — dropdown that merges the v2 Inspector header buttons into
+ * a single entry point (v3 / Req 6.2).
  */
 
 import type { JSX } from "react";
 import { useRef, useState } from "react";
-import { Boxes, Braces, ChevronDown, PanelRight, Wrench } from "lucide-react";
+import { Boxes, ChevronDown, PanelRight, Wrench } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
@@ -24,7 +24,6 @@ export function InspectorMenu({ onOpenInspector }: InspectorMenuProps): JSX.Elem
   useOutsideClick(containerRef, () => setOpen(false), open);
 
   const rootLabel = text("Inspector", "Inspector");
-  const metadataLabel = text("Metadata", "Metadata");
   const artifactsLabel = text("Artifacts", "Artifacts");
   const runtimeLabel = text("Runtime", "Runtime");
 
@@ -55,15 +54,6 @@ export function InspectorMenu({ onOpenInspector }: InspectorMenuProps): JSX.Elem
           aria-label={rootLabel}
           className="absolute right-0 top-full z-30 mt-1 w-[180px] rounded-2xl border border-slate-200 bg-white p-1 shadow-lg"
         >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => handleSelect("metadata")}
-            className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-          >
-            <Braces aria-hidden="true" className="h-3.5 w-3.5" />
-            <span>{metadataLabel}</span>
-          </button>
           <button
             type="button"
             role="menuitem"

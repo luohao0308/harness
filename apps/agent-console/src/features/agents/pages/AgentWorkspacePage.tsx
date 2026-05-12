@@ -72,6 +72,8 @@ export function AgentWorkspacePage() {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [modelPickerOpenSeq, setModelPickerOpenSeq] = useState(0);
+  const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false);
+  const [historyNarrow, setHistoryNarrow] = useState(false);
 
   const agent = useQuery({ queryKey: ["agents", agentId], queryFn: () => getAgent(agentId) });
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
@@ -83,9 +85,16 @@ export function AgentWorkspacePage() {
     enabled: Boolean(activeRunId) && inspectorSection !== null,
   });
 
-  const modelLabel = useMemo(
+  const defaultModelLabel = useMemo(
     () => deriveModelLabel(agent.data, settings.data),
     [agent.data, settings.data],
+  );
+  const selectedModelLabel = useMemo(
+    () =>
+      selectedProviderId !== null && selectedModelId !== null
+        ? `${selectedProviderId} / ${selectedModelId}`
+        : defaultModelLabel,
+    [defaultModelLabel, selectedModelId, selectedProviderId],
   );
   const modelLabelIsFallback = settings.isError || settings.data === undefined;
 
@@ -98,6 +107,8 @@ export function AgentWorkspacePage() {
   const stream = useChatStream({
     agentId,
     workspaceMode,
+    selectedProviderId,
+    selectedModelId,
     tools,
     onRunCreated: setActiveRunId,
   });
@@ -229,6 +240,17 @@ export function AgentWorkspacePage() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px)");
+    const apply = (): void => {
+      setHistoryNarrow(query.matches);
+      if (!query.matches) setHistoryOverlayOpen(false);
+    };
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+
   // ─── Export / Clear callbacks ──────────────────────────────────────────
   const handleExport = useCallback((format: "markdown" | "json") => {
     const path = useWorkspaceStore.getState().activePath();
@@ -277,13 +299,15 @@ export function AgentWorkspacePage() {
   // v3 conversation history handlers
   const handleNewConversation = useCallback(() => {
     newConversation();
-  }, [newConversation]);
+    if (historyNarrow) setHistoryOverlayOpen(false);
+  }, [historyNarrow, newConversation]);
 
   const handleSelectConversation = useCallback(
     (id: string) => {
       setCurrentConversation(id);
+      if (historyNarrow) setHistoryOverlayOpen(false);
     },
-    [setCurrentConversation],
+    [historyNarrow, setCurrentConversation],
   );
 
   const handleDeleteConversation = useCallback(
@@ -301,14 +325,22 @@ export function AgentWorkspacePage() {
   );
 
   const handleToggleHistoryCollapsed = useCallback(() => {
+    if (historyNarrow) {
+      setHistoryOverlayOpen((open) => !open);
+      return;
+    }
     setHistoryPanelCollapsed(!historyPanelCollapsed);
-  }, [historyPanelCollapsed, setHistoryPanelCollapsed]);
+  }, [historyNarrow, historyPanelCollapsed, setHistoryPanelCollapsed]);
+
+  const historyCollapsed = historyNarrow
+    ? !historyOverlayOpen
+    : historyPanelCollapsed;
 
   return (
     <ConsoleShell title={text("Agent 工作台", "Agent Workspace")}>
-      <div className="relative flex h-[calc(100vh-3.5rem)] w-full min-h-0">
+      <div className="relative flex h-full min-h-[calc(100vh-3.5rem)] w-full min-w-0 bg-white">
         <ConversationHistoryPanel
-          collapsed={historyPanelCollapsed}
+          collapsed={historyCollapsed}
           conversations={conversations}
           currentConversationId={currentConversationId}
           onNewConversation={handleNewConversation}
@@ -319,13 +351,15 @@ export function AgentWorkspacePage() {
         <ChatSurface
           agentId={agentId}
           agentName={agent.data?.name ?? agentId}
-          modelLabel={modelLabel}
+          modelLabel={selectedModelLabel}
           modelLabelIsFallback={modelLabelIsFallback}
           workspaceMode={workspaceMode}
           onWorkspaceModeChange={setWorkspaceMode}
           activeRunId={activeRunId}
           runStatus={workspace.data?.run.status}
           runCreatedAt={workspace.data?.run.created_at}
+          pendingApprovalCount={pendingApprovalCount}
+          metadataUsage={inspectorUsage}
           onOpenInspector={setInspectorSection}
           stream={stream}
           tools={tools}
@@ -344,7 +378,6 @@ export function AgentWorkspacePage() {
           section={inspectorSection}
           activeRunId={activeRunId}
           pendingApprovalCount={pendingApprovalCount}
-          usage={inspectorUsage}
           artifacts={inspectorArtifacts}
           onClose={() => setInspectorSection(null)}
         />

@@ -8,8 +8,8 @@
  *     only LINKS back to `/runs/:runId` anchors, `/observability`, `/evals`.
  *   - Req 9.3, 9.5: dialog role with aria-modal, aria-labelledby, Esc close,
  *     focus returns to the trigger button that opened the drawer.
- *   - Design §Inspector Drawer: three sections (metadata, artifacts,
- *     runtime) each rendered when `section` matches; runtime shows a
+ *   - Design §Inspector Drawer: artifacts and runtime sections render when
+ *     `section` matches; runtime shows a
  *     pending-approval banner plus a LinkGroup.
  *
  * Intentionally: no Approve / Reject / Modify controls, no Plan DAG canvas,
@@ -21,7 +21,7 @@
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Braces, ExternalLink, FileCode2, Shield, X } from "lucide-react";
+import { ExternalLink, FileCode2, Shield, X } from "lucide-react";
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -46,8 +46,6 @@ export type InspectorDrawerProps = {
   activeRunId: string | null;
   /** Number of approvals whose status is PENDING. Drives the runtime banner. */
   pendingApprovalCount: number;
-  /** Aggregated metadata for the six-tile grid. */
-  usage: UsageSummary;
   /** Parent is expected to have already capped this to the most recent 10. */
   artifacts: ConversationArtifact[];
   /** Callback to close the drawer (triggered by backdrop, close button, Esc). */
@@ -58,7 +56,6 @@ export function InspectorDrawer({
   section,
   activeRunId,
   pendingApprovalCount,
-  usage,
   artifacts,
   onClose,
 }: InspectorDrawerProps): JSX.Element | null {
@@ -92,11 +89,9 @@ export function InspectorDrawer({
   if (section === null) return null;
 
   const title =
-    section === "metadata"
-      ? text("元数据", "Metadata")
-      : section === "artifacts"
-        ? text("产物 / 预览", "Artifacts / Preview")
-        : text("运行时链接", "Runtime links");
+    section === "artifacts"
+      ? text("产物 / 预览", "Artifacts / Preview")
+      : text("运行时链接", "Runtime links");
 
   return (
     <>
@@ -135,7 +130,6 @@ export function InspectorDrawer({
         </div>
 
         <div className="space-y-4 p-4">
-          {section === "metadata" && <MetadataSection usage={usage} />}
           {section === "artifacts" && <ArtifactsSection artifacts={artifacts} />}
           {section === "runtime" && (
             <RuntimeSection
@@ -146,36 +140,6 @@ export function InspectorDrawer({
         </div>
       </aside>
     </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Metadata section — six tile grid.
-// ---------------------------------------------------------------------------
-
-function MetadataSection({ usage }: { usage: UsageSummary }): JSX.Element {
-  const { text } = useI18n();
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <SectionHeader icon={<Braces className="h-4 w-4" />} title={text("元数据", "Metadata")} />
-      <div className="grid grid-cols-2 gap-2 p-3">
-        <SmallMetric label={text("输入", "Input")} value={usage.inputTokens} />
-        <SmallMetric label={text("输出", "Output")} value={usage.outputTokens} />
-        <SmallMetric label={text("花费", "Cost")} value={usage.costUsd} />
-        <SmallMetric label={text("耗时", "Duration")} value={`${usage.durationMs}ms`} />
-        <SmallMetric label={text("模型调用", "Model Calls")} value={usage.modelCalls} />
-        <SmallMetric label={text("工具调用", "Tool Calls")} value={usage.toolCalls} />
-      </div>
-    </section>
-  );
-}
-
-function SmallMetric({ label, value }: { label: string; value: string | number }): JSX.Element {
-  return (
-    <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
-      <div className="text-[10px] text-slate-500">{label}</div>
-      <div className="mt-1 truncate font-mono text-xs text-slate-900">{value}</div>
-    </div>
   );
 }
 

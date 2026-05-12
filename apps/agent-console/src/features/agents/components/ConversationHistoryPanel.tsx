@@ -58,14 +58,14 @@ export function ConversationHistoryPanel({
     return (
       <aside
         aria-label={text("历史对话", "Conversation history")}
-        className="flex w-10 shrink-0 flex-col items-center gap-2 border-r border-slate-200 bg-white py-2"
+        className="flex w-12 shrink-0 flex-col items-center gap-2 border-r border-slate-200 bg-[#f7f7f8] py-3"
       >
         <button
           type="button"
           onClick={onToggleCollapsed}
           aria-label={toggleLabel}
           title={toggleLabel}
-          className="rounded-full p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
         >
           <ChevronRight aria-hidden="true" className="h-4 w-4" />
         </button>
@@ -74,7 +74,7 @@ export function ConversationHistoryPanel({
           onClick={onNewConversation}
           aria-label={text("新建对话", "New conversation")}
           title={text("新建对话", "New conversation")}
-          className="rounded-full p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
         >
           <MessageSquarePlus aria-hidden="true" className="h-4 w-4" />
         </button>
@@ -85,10 +85,10 @@ export function ConversationHistoryPanel({
   return (
     <aside
       aria-label={text("历史对话", "Conversation history")}
-      className="flex w-[260px] shrink-0 flex-col border-r border-slate-200 bg-white"
+      className="flex w-[280px] shrink-0 flex-col border-r border-slate-200 bg-[#f7f7f8] max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:shadow-2xl"
     >
-      <header className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <header className="flex items-center justify-between gap-2 px-2 py-3">
+        <span className="px-2 text-sm font-semibold text-slate-900">
           {text("历史对话", "History")}
         </span>
         <div className="flex items-center gap-1">
@@ -97,17 +97,17 @@ export function ConversationHistoryPanel({
             onClick={onNewConversation}
             aria-label={text("新建对话", "New conversation")}
             title={text("新建对话", "New conversation")}
-            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            className="inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-slate-800 transition-colors hover:bg-slate-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
-            <MessageSquarePlus aria-hidden="true" className="h-3 w-3" />
-            <span>{text("新建", "New")}</span>
+            <MessageSquarePlus aria-hidden="true" className="h-4 w-4" />
+            <span>{text("新聊天", "New chat")}</span>
           </button>
           <button
             type="button"
             onClick={onToggleCollapsed}
             aria-label={toggleLabel}
             title={toggleLabel}
-            className="rounded-full p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <ChevronLeft aria-hidden="true" className="h-4 w-4" />
           </button>
@@ -119,7 +119,11 @@ export function ConversationHistoryPanel({
           {text("暂无历史对话", "No conversations yet")}
         </p>
       ) : (
-        <ul className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+          <div className="px-2 pb-2 pt-4 text-xs font-semibold text-slate-700">
+            {text("最近", "Recent")}
+          </div>
+          <ul className="flex flex-col gap-0.5">
           {sorted.map((c) => {
             const active = c.id === currentConversationId;
             const updatedMs = Date.parse(c.updated_at);
@@ -133,22 +137,20 @@ export function ConversationHistoryPanel({
               <li key={c.id}>
                 <div
                   className={cn(
-                    "group flex items-center gap-1 rounded-xl transition-colors",
+                    "group flex items-center gap-1 rounded-lg transition-colors",
                     active
-                      ? "bg-slate-100 ring-1 ring-slate-300"
-                      : "hover:bg-slate-50",
+                      ? "bg-slate-200/80"
+                      : "hover:bg-slate-200/60",
                   )}
                 >
                   <button
                     type="button"
                     onClick={() => onSelectConversation(c.id)}
                     aria-current={active ? "page" : undefined}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl px-2 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                    title={updatedLabel}
+                    className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                   >
-                    <span className="truncate text-xs text-slate-800">{title}</span>
-                    <span className="shrink-0 text-[10px] text-slate-400">
-                      {updatedLabel}
-                    </span>
+                    <span className="truncate text-sm text-slate-800">{title}</span>
                   </button>
                   <button
                     type="button"
@@ -158,7 +160,7 @@ export function ConversationHistoryPanel({
                     }}
                     aria-label={text("删除对话", "Delete conversation")}
                     title={text("删除对话", "Delete conversation")}
-                    className="rounded-full p-1 text-slate-400 opacity-0 transition-opacity hover:text-red-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 group-hover:opacity-100"
+                    className="mr-1 rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-white/70 hover:text-red-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 group-hover:opacity-100"
                   >
                     <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                   </button>
@@ -166,7 +168,8 @@ export function ConversationHistoryPanel({
               </li>
             );
           })}
-        </ul>
+          </ul>
+        </div>
       )}
     </aside>
   );

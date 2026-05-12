@@ -151,6 +151,78 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
     assert run.status == "COMPLETED"
 
 
+def test_agent_workspace_chat_stream_uses_selected_model_and_attachment_context(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    captured_messages = []
+
+    def fake_complete(self, request_payload):
+        assert request_payload.model_provider == "deepseek-flash"
+        assert request_payload.model_name == "deepseek-v4-flash"
+        captured_messages.extend(request_payload.messages)
+        return ModelResponse(
+            content="收到上下文",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 10, "completion_tokens": 4},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "继续",
+            "model_provider": "deepseek-flash",
+            "model_name": "deepseek-v4-flash",
+            "messages": [],
+            "active_leaf_id": None,
+            "active_branch_id": "branch-chat",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "attachment_names": ["reference.png"],
+            "attachments": [
+                {
+                    "name": "卡密导出_20260510.txt",
+                    "mime_type": "text/plain",
+                    "size_bytes": 18,
+                    "content_status": "ready",
+                    "content_text": "卡号: 真实卡号\n密码: 真实密码",
+                    "truncated": False,
+                },
+                {
+                    "name": "reference.png",
+                    "mime_type": "image/png",
+                    "size_bytes": 512,
+                    "content_status": "unsupported",
+                    "content_text": None,
+                    "truncated": False,
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    run_created = next(payload for event, payload in events if event == "run_created")
+    run = db_session.get(Task, run_created["run_id"])
+    assert run is not None
+    assert run.model_provider == "deepseek-flash"
+    assert run.model_name == "deepseek-v4-flash"
+    assert any(
+        message.role == "system"
+        and "卡密导出_20260510.txt" in message.content
+        and "卡号: 真实卡号" in message.content
+        and "do not infer or fabricate" in message.content
+        and "reference.png" in message.content
+        for message in captured_messages
+    )
+
+
 def test_agent_workspace_pro_chat_stream_drains_terminal_model_chunk(
     db_session: Session,
     monkeypatch,

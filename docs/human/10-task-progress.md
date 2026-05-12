@@ -19,7 +19,7 @@
 | 阶段 | 名称 | 状态 | 文档 | Demo 闭环 | 验证结果 |
 |---|---|---|---|---|---|
 | 01 | Agent Workspace 控制台 | completed | `docs/ai/stages/01-agent-workspace-console.md` | Agent Workspace -> Agent Run -> Plan DAG -> Event Stream -> Tool/Model Calls | passed |
-| 02 | Agent Studio 配置闭环 | completed | `docs/ai/stages/02-agent-studio-config.md` | Studio -> Model settings -> MiniMax preset -> Workspace config | passed |
+| 02 | Agent Studio 配置闭环 | completed | `docs/ai/stages/02-agent-studio-config.md` | Studio -> Model settings -> DeepSeek presets -> Workspace config | passed |
 | 03 | Harness 管理与 Tool/MCP | completed | `docs/ai/stages/03-harness-tool-mcp.md` | Tool Registry -> Policy -> Sandbox -> Trace | passed |
 | 04 | Event Sourcing + Replay UI | completed | `docs/ai/stages/04-event-sourcing-replay-ui.md` | Run -> Events -> Replay sequence -> State reconstruction | passed |
 | 05 | Eval + Regression | completed | `docs/ai/stages/05-eval-regression.md` | Run -> Eval Case -> Dataset Eval -> Metrics | passed |
@@ -34,11 +34,11 @@
 - 新增 Agent Run 创建和 Workspace 聚合 API。
 - 新建 `/runs` 和 `/runs/:runId` 页面。
 - 重写 `/agents/:agentId/workspace` 为 Agent Workspace Pro 控制台。
-- MiniMax 作为默认模型配置路径保留并通过测试。
+- DeepSeek 作为默认模型配置路径保留并通过测试。
 - Executor 接入 WarmPool-backed sandbox acquire/release。
 - Agent Studio 增加 Model、Tools/MCP、Prompt、RAG、Templates、Orchestration 六个能力入口。
-- MiniMax 默认上下文窗口元数据统一为 400000 tokens。
-- MiniMax 内置预置增加规范化，旧数据库中的 204800 tokens 设置会按 400000 tokens 读出。
+- DeepSeek 默认上下文窗口元数据统一为 1000000 tokens。
+- DeepSeek 内置预置增加规范化，旧数据库中的历史内置供应商设置会按 DeepSeek 默认值读出。
 - `/tools` 增加 Registry、Policy、Sandbox、MCP、Trigger 禁用态五个 Harness 管理区块。
 - Tool/MCP/approval/agent 编排相关测试通过。
 - Run Detail 增加指定 sequence Replay 输入，展示 state summary、diagnosis 和 failure point。
@@ -76,7 +76,7 @@ cd apps/agent-console && npm run build -> passed
 python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
-Docker runtime verification -> MiniMax healthy/probe and context 400000
+Docker runtime verification -> DeepSeek healthy/probe and context 1000000
 ```
 
 ## 未完成项

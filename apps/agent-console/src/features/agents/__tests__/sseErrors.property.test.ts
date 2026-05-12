@@ -140,7 +140,7 @@ describe("Property 6: SSE error classification", () => {
  * v4 regression — `formatErrorMessage` must map the new `rate_limited`
  * kind to a user-readable 429 hint instead of the generic "backend
  * internal error" copy. Matches the upstream `yield sse("error", ...)`
- * path that fires when MiniMax / other providers return HTTP 429.
+ * path that fires when DeepSeek / other providers return HTTP 429.
  */
 describe("v4 rate_limited error copy", () => {
   it("produces the localized rate-limit title when kind === 'rate_limited'", async () => {

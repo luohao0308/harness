@@ -30,7 +30,7 @@ describe("useChatStream run lifecycle callbacks", () => {
 
   it("invokes onRunCreated once for a stream that emits run_created and done", async () => {
     const onRunCreated = vi.fn();
-    const fetchImpl = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       streamResponse(
         [
           sseFrame("run_created", {
@@ -49,21 +49,32 @@ describe("useChatStream run lifecycle callbacks", () => {
           }),
         ].join(""),
       ),
-    ) as typeof fetch;
+    );
 
     const { result } = renderHook(() =>
       useChatStream({
         agentId: "default",
         workspaceMode: "chat",
+        selectedProviderId: "deepseek-flash",
+        selectedModelId: "deepseek-v4-flash",
         onRunCreated,
-        fetchImpl,
+        fetchImpl: fetchMock as unknown as typeof fetch,
       }),
     );
 
     await act(async () => {
-      await result.current.start({ goal: "hello", mode: "chat" });
+      await result.current.start({
+        goal: "hello",
+        mode: "chat",
+        attachmentNames: ["reference.png"],
+      });
     });
 
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.model_provider).toBe("deepseek-flash");
+    expect(payload.model_name).toBe("deepseek-v4-flash");
+    expect(payload.attachment_names).toEqual(["reference.png"]);
     expect(onRunCreated).toHaveBeenCalledTimes(1);
     expect(onRunCreated).toHaveBeenCalledWith("run-once");
   });

@@ -27,11 +27,12 @@
  */
 
 import { useEffect, useRef, type JSX, type RefObject } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Download, Trash2 } from "lucide-react";
 
 import type { ConversationNode } from "../../../stores/workspaceStore";
 import type { ToolMetadata } from "../../tasks/api";
 import { useI18n } from "../../../lib/i18n";
+import { ContextUsageBar } from "./ContextUsageBar";
 import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
 import { ContextPopoverContent } from "./ContextPopover";
 import { PinPopoverContent } from "./PinPopover";
@@ -65,6 +66,13 @@ export type ComposerOptionsPopoverProps = {
   modelLabelFallback: string;
   /** v3 monotonic trigger for popping the inner ModelPicker dropdown. */
   modelPickerOpenSeq?: number;
+
+  /** Session actions */
+  usageRatio: number;
+  usageLimit: number;
+  usageCurrent: number;
+  onExport: (format: "markdown" | "json") => void;
+  onClearConversation: () => void;
 };
 
 const FOCUSABLE_SELECTOR =
@@ -97,6 +105,11 @@ export function ComposerOptionsPopover({
   onModelChange,
   modelLabelFallback,
   modelPickerOpenSeq,
+  usageRatio,
+  usageLimit,
+  usageCurrent,
+  onExport,
+  onClearConversation,
 }: ComposerOptionsPopoverProps): JSX.Element | null {
   const { text } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -181,6 +194,16 @@ export function ComposerOptionsPopover({
     onClose();
   };
 
+  const handleExport = (format: "markdown" | "json"): void => {
+    onExport(format);
+    onClose();
+  };
+
+  const handleClear = (): void => {
+    onClearConversation();
+    onClose();
+  };
+
   const titleId = "composer-options-title";
 
   return (
@@ -252,6 +275,41 @@ export function ComposerOptionsPopover({
           modelLabelFallback={modelLabelFallback}
           openRequestSeq={modelPickerOpenSeq}
         />
+      </section>
+
+      <section className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          {text("会话", "Session")}
+        </h3>
+        <div className="rounded-lg border border-slate-100 bg-slate-50/70 p-2">
+          <ContextUsageBar ratio={usageRatio} current={usageCurrent} limit={usageLimit} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => handleExport("markdown")}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          >
+            <Download aria-hidden="true" className="h-3.5 w-3.5" />
+            Markdown
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("json")}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          >
+            <Download aria-hidden="true" className="h-3.5 w-3.5" />
+            JSON
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={handleClear}
+          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-100 bg-white px-2 py-2 text-xs text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+        >
+          <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+          {text("清空对话", "Clear conversation")}
+        </button>
       </section>
     </div>
   );

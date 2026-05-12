@@ -1,55 +1,53 @@
 /**
- * ChatSurface — the three-row Workspace chat viewport (v3).
+ * ChatSurface — chat-first Workspace viewport.
  *
- * Layout (Req 1 unchanged / Req 3, Req 6 v3 updates):
- *   ┌──────────────────────────────────────┐
- *   │  sticky top-0  TopMetaBar (v3 紧凑版) │  agent / model / mode? / streaming / Stop / Inspector↓ / Run Detail
- *   ├──────────────────────────────────────┤
- *   │  flex-1 min-h-0 ChatMessageList      │  scroll + auto-follow + jump button
- *   ├──────────────────────────────────────┤
- *   │  sticky bottom-0                      │
- *   │    PlanApprovalPanel? (gate)         │
- *   │    MetadataStrip (v3 迁移到此)       │  Req 3: not in header anymore
- *   │    ComposerToolbar                   │  popovers / usage / export / clear
- *   │    ChatComposer (isEditLocked)       │  autogrow + slash menu
- *   └──────────────────────────────────────┘
- *
- * v3 deltas vs v2:
- *   - MetadataStrip moved out of TopMetaBar into the footer (Req 3).
- *   - Three Inspector header buttons collapsed into `<InspectorMenu>` (Req 6.2).
- *   - `<ChatModeBanner>` removed from JSX (Req 6.3).
- *   - Workspace_Mode badge hidden in `chat` mode (Req 6.4).
- *   - Slash-command dispatcher wires composer `/` actions to store / page.
+ * The page keeps a lightweight Harness shell above the conversation, leaves
+ * the middle region to messages or the welcome state, and makes the composer
+ * the primary persistent control. Secondary controls live in the composer
+ * options popover so they remain reachable without crowding the conversation.
  */
 
-import { useCallback, useMemo, useRef, useState, type JSX } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { GitBranch, Sparkles, Square } from "lucide-react";
+import {
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type JSX,
+} from "react";
+import {
+  Blocks,
+  ChevronRight,
+  ListChecks,
+  Paperclip,
+  X,
+} from "lucide-react";
 
-import { Badge } from "../../../components/ui/badge";
-import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
 import {
   useWorkspaceStore,
   type ConversationNode,
 } from "../../../stores/workspaceStore";
-import type { ToolMetadata } from "../../tasks/api";
+import type { AgentAttachmentPayload, ToolMetadata } from "../../tasks/api";
 import type { ChatStreamController } from "../hooks/useChatStream";
 import { canResume as canResumeQuery } from "../lib/activePathQueries";
 import { copyText } from "../lib/clipboard";
 import { stripThinkBlocks } from "../lib/copyText";
-import { computeContextUsage } from "../lib/contextUsage";
 import { planApprovalGate } from "../lib/planApprovalGate";
 import type { SlashCommand } from "../lib/slashCommands";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
-import { ChatComposer } from "./ChatComposer";
+import {
+  ChatComposer,
+  type ComposerAttachment,
+} from "./ChatComposer";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
-import { ComposerOptionsPopover } from "./ComposerOptionsPopover";
-import { ComposerToolbar } from "./ComposerToolbar";
-import { InspectorMenu } from "./InspectorMenu";
-import { MetadataStrip } from "./MetadataStrip";
+import type { UsageSummary } from "./InspectorDrawer";
 import type { ModelOption } from "./ModelPicker";
 import { PlanApprovalPanel } from "./PlanApprovalPanel";
+import { WorkspaceShellBar } from "./WorkspaceShellBar";
+
+const MAX_ATTACHMENT_TEXT_BYTES = 120_000;
 
 export type ChatSurfaceProps = {
   agentId: string;
@@ -61,6 +59,8 @@ export type ChatSurfaceProps = {
   activeRunId: string | null;
   runStatus?: string;
   runCreatedAt?: string;
+  pendingApprovalCount: number;
+  metadataUsage: UsageSummary;
   onOpenInspector: (section: InspectorSection) => void;
   stream: ChatStreamController;
 
@@ -85,12 +85,12 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     agentId,
     agentName,
     modelLabel,
-    modelLabelIsFallback,
     workspaceMode,
     onWorkspaceModeChange,
     activeRunId,
     runStatus,
     runCreatedAt,
+    metadataUsage,
     onOpenInspector,
     stream,
     tools,
@@ -98,28 +98,19 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     selectedProviderId,
     selectedModelId,
     onModelChange,
-    onExport,
+    onRequestModelPicker,
     onClearConversation,
     onOpenSearch,
     onOpenShortcut,
-    modelPickerOpenSeq,
-    onRequestModelPicker,
   } = props;
 
   const { text } = useI18n();
-  const navigate = useNavigate();
-
   const draft = useWorkspaceStore((state) => state.draft);
   const setDraft = useWorkspaceStore((state) => state.setDraft);
   const nodesById = useWorkspaceStore((state) => state.nodesById);
   const rootNodeId = useWorkspaceStore((state) => state.rootNodeId);
   const activeLeafId = useWorkspaceStore((state) => state.activeLeafId);
-  const pinnedNodeIds = useWorkspaceStore((state) => state.pinnedNodeIds);
   const togglePinned = useWorkspaceStore((state) => state.togglePinned);
-  const contextWindowTurns = useWorkspaceStore((state) => state.contextWindowTurns);
-  const setContextWindowTurns = useWorkspaceStore((state) => state.setContextWindowTurns);
-  const contextMaxTokens = useWorkspaceStore((state) => state.contextMaxTokens);
-  const setContextMaxTokens = useWorkspaceStore((state) => state.setContextMaxTokens);
   const dismissedPlanNodeIds = useWorkspaceStore((state) => state.dismissedPlanNodeIds);
   const dismissPlanNode = useWorkspaceStore((state) => state.dismissPlanNode);
   const activeStream = useWorkspaceStore((state) => state.activeStream);
@@ -129,22 +120,9 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [nodesById, activeLeafId, rootNodeId],
   );
 
-  const pinnedNodes = useMemo<ConversationNode[]>(
-    () =>
-      pinnedNodeIds
-        .map((id) => nodesById[id])
-        .filter((node): node is ConversationNode => Boolean(node)),
-    [pinnedNodeIds, nodesById],
-  );
-
   const tail = activePath.length > 0 ? activePath[activePath.length - 1] : null;
   const canResume = canResumeQuery(activePath);
   const placeholder = composerPlaceholder(workspaceMode, text);
-
-  const usage = useMemo(
-    () => computeContextUsage(activePath, contextWindowTurns, contextMaxTokens),
-    [activePath, contextWindowTurns, contextMaxTokens],
-  );
 
   const planGate = useMemo(
     () =>
@@ -158,10 +136,43 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [planSubmitting, setPlanSubmitting] = useState(false);
-  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | null>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const chatListRef = useRef<ChatMessageListHandle | null>(null);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(
+    () => () => {
+      for (const attachment of attachmentsRef.current) {
+        revokeAttachmentPreview(attachment);
+      }
+    },
+    [],
+  );
+
+  const attachmentNames = useMemo(
+    () => attachments.map((attachment) => attachment.name),
+    [attachments],
+  );
+  const attachmentPayloads = useMemo<AgentAttachmentPayload[]>(
+    () =>
+      attachments.map((attachment) => ({
+        name: attachment.name,
+        mime_type: attachment.mimeType,
+        size_bytes: attachment.sizeBytes,
+        content_text: attachment.contentText,
+        content_status: attachment.contentStatus,
+        truncated: attachment.truncated,
+      })),
+    [attachments],
+  );
 
   // ─── Composer callbacks ────────────────────────────────────────────────
   const handleSubmit = useCallback((): void => {
@@ -178,8 +189,17 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     }
 
     chatListRef.current?.notifyUserSubmit();
-    void stream.start({ goal, mode: workspaceMode });
-  }, [draft, stream, workspaceMode, text]);
+    void stream.start({
+      goal,
+      mode: workspaceMode,
+      attachmentNames,
+      attachments: attachmentPayloads,
+    });
+    setAttachments((current) => {
+      for (const attachment of current) revokeAttachmentPreview(attachment);
+      return [];
+    });
+  }, [attachmentNames, attachmentPayloads, draft, stream, workspaceMode, text]);
 
   const handlePause = useCallback((): void => {
     stream.pause();
@@ -204,6 +224,44 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     },
     [setDraft],
   );
+
+  const handleAddFiles = useCallback((): void => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFilesSelected = useCallback(
+    (event: ChangeEvent<HTMLInputElement>): void => {
+      const selected = Array.from(event.currentTarget.files ?? []);
+      if (selected.length === 0) return;
+      void (async () => {
+        const prepared = await Promise.all(selected.map(toComposerAttachment));
+        setAttachments((current) => {
+          const next = [...current];
+          const existingKeys = new Set(current.map(attachmentKey));
+          for (const attachment of prepared) {
+            const key = attachmentKey(attachment);
+            if (existingKeys.has(key) || next.length >= 12) {
+              revokeAttachmentPreview(attachment);
+              continue;
+            }
+            next.push(attachment);
+            existingKeys.add(key);
+          }
+          return next;
+        });
+      })();
+      event.currentTarget.value = "";
+    },
+    [],
+  );
+
+  const handleRemoveAttachment = useCallback((id: string): void => {
+    setAttachments((current) => {
+      const target = current.find((attachment) => attachment.id === id);
+      if (target !== undefined) revokeAttachmentPreview(target);
+      return current.filter((attachment) => attachment.id !== id);
+    });
+  }, []);
 
   const handleMessageListInspector = useCallback(
     (section: InspectorSection): void => {
@@ -349,11 +407,12 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [setDraft],
   );
 
-  const handleOpenRunDetail = useCallback(
-    (runId: string): void => {
-      navigate(`/runs/${runId}`);
+  const handleShellToolMention = useCallback(
+    (toolName: string): void => {
+      handleInsertMention(toolName);
+      setBottomPanel(null);
     },
-    [navigate],
+    [handleInsertMention],
   );
 
   // ─── Slash command dispatcher (v3 / Req 5) ─────────────────────────────
@@ -361,7 +420,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     (cmd: SlashCommand, args: string): void => {
       switch (cmd.name) {
         case "plan":
-          onWorkspaceModeChange("plan");
+          onWorkspaceModeChange("markdown_plan");
           setDraft("");
           return;
         case "Harness Agent":
@@ -382,6 +441,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           setDraft("");
           return;
         case "model":
+          setBottomPanel("model");
           onRequestModelPicker();
           setDraft("");
           return;
@@ -427,11 +487,13 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   );
 
   return (
-    <div className="flex h-full w-full min-h-0 flex-col bg-[#f3f5f7]">
-      <TopMetaBar
+    <div className="flex h-full w-full min-w-0 flex-col bg-white">
+      <WorkspaceShellBar
+        agentId={agentId}
         agentName={agentName}
         isStreaming={stream.isStreaming}
         activeRunId={activeRunId}
+        runStatus={runStatus}
         onOpenInspector={onOpenInspector}
         onStop={handlePause}
       />
@@ -456,8 +518,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         isStreaming={stream.isStreaming}
       />
 
-      <footer className="sticky bottom-0 z-10 border-t border-slate-200 bg-white/80 px-4 py-3 backdrop-blur">
-        <div className="mx-auto flex w-full flex-col gap-2">
+      <footer className="sticky bottom-0 z-10 bg-gradient-to-t from-white via-white/95 to-white/0 px-3 pb-5 pt-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
           {planGate.visible && planGate.planNode && (
             <PlanApprovalPanel
               planNode={planGate.planNode}
@@ -470,61 +532,72 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               onClose={handleDiscardPlan}
             />
           )}
-
-          {/* v3: MetadataStrip lives here (Req 3). */}
-          <div className="mx-auto w-full max-w-[56rem] px-3 sm:px-4 lg:px-6 xl:px-12 text-[11px] text-slate-400">
-            <MetadataStrip
-              tail={tail}
-              activeRunId={activeRunId}
-              onOpenRunDetail={handleOpenRunDetail}
-            />
-          </div>
-
-          <ComposerToolbar
-            optionsOpen={optionsOpen}
-            onOptionsToggle={() => setOptionsOpen((prev) => !prev)}
-            optionsTriggerRef={optionsTriggerRef}
-            usageRatio={usage.ratio}
-            usageLimit={usage.limit}
-            usageCurrent={usage.current}
-            onExport={onExport}
-            onClearConversation={onClearConversation}
-          />
           <div className="relative">
-            <ComposerOptionsPopover
-              open={optionsOpen}
-              onClose={() => setOptionsOpen(false)}
-              anchorRef={optionsTriggerRef}
-              contextWindowTurns={contextWindowTurns}
-              onContextWindowTurnsChange={setContextWindowTurns}
-              contextMaxTokens={contextMaxTokens}
-              onContextMaxTokensChange={setContextMaxTokens}
-              pinnedNodes={pinnedNodes}
-              onUnpin={togglePinned}
-              tools={tools}
-              onInsertMention={handleInsertMention}
-              providers={providers}
-              selectedProviderId={selectedProviderId}
-              selectedModelId={selectedModelId}
-              onModelChange={onModelChange}
-              modelLabelFallback={modelLabel}
-              modelPickerOpenSeq={modelPickerOpenSeq}
+            <BottomToolsPopover
+              open={bottomPanel !== null}
+              onClose={() => setBottomPanel(null)}
+              title={
+                bottomPanel === "model"
+                  ? text("切换模型", "Switch model")
+                  : text("工具", "Tools")
+              }
+              text={text}
+            >
+              {bottomPanel === "model" ? (
+                <BottomModelPanel
+                  providers={providers}
+                  selectedProviderId={selectedProviderId}
+                  selectedModelId={selectedModelId}
+                  onModelChange={(providerId, modelId) => {
+                    onModelChange(providerId, modelId);
+                    setBottomPanel(null);
+                  }}
+                  modelLabelFallback={modelLabel}
+                  text={text}
+                />
+              ) : (
+                <ShellToolsPanel
+                  workspaceMode={workspaceMode}
+                  onWorkspaceModeChange={onWorkspaceModeChange}
+                  attachmentNames={attachmentNames}
+                  onAddFiles={handleAddFiles}
+                  tools={tools}
+                  onInsertMention={handleShellToolMention}
+                  text={text}
+                />
+              )}
+            </BottomToolsPopover>
+            <ChatComposer
+              ref={composerRef}
+              draft={draft}
+              onDraftChange={setDraft}
+              onSubmit={handleSubmit}
+              onPause={handlePause}
+              onResume={handleResume}
+              isStreaming={stream.isStreaming}
+              canResume={canResume}
+              mode={workspaceMode}
+              onChangeMode={onWorkspaceModeChange}
+              placeholder={placeholder}
+              optionsOpen={bottomPanel !== null}
+              onOptionsToggle={() =>
+                setBottomPanel((current) => (current === "tools" ? null : "tools"))
+              }
+              optionsTriggerRef={optionsTriggerRef}
+              metadata={<ComposerMetadataRow usage={metadataUsage} text={text} />}
+              attachments={attachments}
+              onRemoveAttachment={handleRemoveAttachment}
+              isEditLocked={editingNodeId !== null}
+              onSlashDispatch={handleSlashDispatch}
             />
           </div>
-          <ChatComposer
-            ref={composerRef}
-            draft={draft}
-            onDraftChange={setDraft}
-            onSubmit={handleSubmit}
-            onPause={handlePause}
-            onResume={handleResume}
-            isStreaming={stream.isStreaming}
-            canResume={canResume}
-            mode={workspaceMode}
-            onChangeMode={onWorkspaceModeChange}
-            placeholder={placeholder}
-            isEditLocked={editingNodeId !== null}
-            onSlashDispatch={handleSlashDispatch}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            aria-label={text("添加照片和文件", "Add photos and files")}
+            className="hidden"
+            onChange={handleFilesSelected}
           />
         </div>
         <p className="sr-only" aria-live="polite">
@@ -538,84 +611,369 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Top meta bar (sticky header) — v4 精简版 (Req 3)
+// Bottom tools panel helpers
 // ---------------------------------------------------------------------------
 
-type TopMetaBarProps = {
-  agentName: string;
-  isStreaming: boolean;
-  activeRunId: string | null;
-  onOpenInspector: (section: InspectorSection) => void;
-  onStop: () => void;
+type ToolsPanelProps = {
+  tools: ToolMetadata[];
+  onInsertMention: (toolName: string) => void;
+  text: (zh: string, en: string) => string;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceModeChange: (mode: WorkspaceMode) => void;
+  attachmentNames: string[];
+  onAddFiles: () => void;
 };
 
-function TopMetaBar({
-  agentName,
-  isStreaming,
-  activeRunId,
-  onOpenInspector,
-  onStop,
-}: TopMetaBarProps): JSX.Element {
-  const { text } = useI18n();
-
-  const runDetailLabel = text("Run 详情", "Run Detail");
-  const streamingLabel = text("Streaming", "Streaming");
+function BottomToolsPopover({
+  open,
+  onClose,
+  title,
+  text,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  text: (zh: string, en: string) => string;
+  children: JSX.Element;
+}): JSX.Element | null {
+  if (!open) return null;
 
   return (
-    <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-2 text-sm">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="truncate font-semibold text-slate-900">{agentName}</span>
+    <div
+      role="dialog"
+      aria-modal="false"
+      aria-label={title}
+      className="absolute bottom-[76px] left-4 z-30 w-[min(270px,calc(100vw-2rem))] rounded-xl border border-slate-200 bg-white p-2 shadow-lg"
+    >
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <div className="text-[13px] font-semibold text-slate-900">{title}</div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={text("关闭", "Close")}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        >
+          <X aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
       </div>
+      {children}
+    </div>
+  );
+}
 
-      <div className="flex flex-wrap items-center gap-2">
-        {isStreaming && (
-          <Badge tone="warning" className="shrink-0">
-            <Sparkles aria-hidden="true" className="h-3 w-3" />
-            {streamingLabel}
-          </Badge>
-        )}
+function ShellToolsPanel({
+  workspaceMode,
+  onWorkspaceModeChange,
+  attachmentNames,
+  onAddFiles,
+  tools,
+  onInsertMention,
+  text,
+}: ToolsPanelProps): JSX.Element {
+  const [pluginsOpen, setPluginsOpen] = useState(false);
 
-        {isStreaming && (
-          <Button
+  return (
+    <div className="flex flex-col text-[13px] text-slate-800">
+      <ToolActionRow
+        icon={<Paperclip aria-hidden="true" className="h-4 w-4" />}
+        label={
+          attachmentNames.length > 0
+            ? text(
+                `添加照片和文件 (${attachmentNames.length})`,
+                `Add photos and files (${attachmentNames.length})`,
+              )
+            : text("添加照片和文件", "Add photos and files")
+        }
+        onClick={onAddFiles}
+      />
+      <ToolToggleRow
+        icon={<ListChecks aria-hidden="true" className="h-3.5 w-3.5" />}
+        label={text("计划模式", "Plan mode")}
+        checked={workspaceMode === "markdown_plan"}
+        onChange={(checked) => onWorkspaceModeChange(checked ? "markdown_plan" : "chat")}
+      />
+      <ToolActionRow
+        icon={<Blocks aria-hidden="true" className="h-4 w-4" />}
+        label={text("插件", "Plugins")}
+        trailing={
+          <ChevronRight
+            aria-hidden="true"
+            className={[
+              "h-4 w-4 text-slate-400 transition-transform",
+              pluginsOpen ? "rotate-90" : "",
+            ].join(" ")}
+          />
+        }
+        onClick={() => setPluginsOpen((open) => !open)}
+      />
+      {pluginsOpen && (
+        <div className="ml-5 mt-1 max-h-24 overflow-y-auto border-l border-slate-200 pl-2">
+          {tools.length === 0 ? (
+            <p className="px-2 py-1.5 text-xs text-slate-500">
+              {text("暂无可用插件", "No plugins available")}
+            </p>
+          ) : (
+            tools.map((tool) => (
+              <button
+                key={`${tool.source ?? "tool"}:${tool.name}`}
+                type="button"
+                onClick={() => onInsertMention(tool.name)}
+                className="block w-full truncate rounded-md px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              >
+                @{tool.name}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BottomModelPanel({
+  providers,
+  selectedProviderId,
+  selectedModelId,
+  onModelChange,
+  modelLabelFallback,
+  text,
+}: {
+  providers: ModelOption[];
+  selectedProviderId: string | null;
+  selectedModelId: string | null;
+  onModelChange: (providerId: string, modelId: string) => void;
+  modelLabelFallback: string;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  if (providers.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+        {text("模型设置不可用", "Model settings unavailable")} · {modelLabelFallback}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex max-h-44 flex-col gap-1 overflow-y-auto">
+      {providers.map((option) => {
+        const selected =
+          option.providerId === selectedProviderId && option.modelId === selectedModelId;
+        return (
+          <button
+            key={`${option.providerId}:${option.modelId}`}
             type="button"
-            variant="secondary"
-            onClick={onStop}
-            aria-label={text("停止生成", "Stop generation")}
-            title={text("停止生成", "Stop generation")}
+            onClick={() => onModelChange(option.providerId, option.modelId)}
+            aria-pressed={selected}
+            className={[
+              "flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+              selected
+                ? "bg-slate-100 font-medium text-slate-900"
+                : "text-slate-700 hover:bg-slate-50",
+            ].join(" ")}
           >
-            <Square aria-hidden="true" className="h-3.5 w-3.5" />
-            {text("停止", "Stop")}
-          </Button>
-        )}
+            <span className="min-w-0">
+              <span className="block truncate">{option.providerLabel}</span>
+              <span className="block truncate text-slate-500">{option.modelLabel}</span>
+            </span>
+            {selected && (
+              <span className="shrink-0 rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] font-normal text-white">
+                {text("当前", "Current")}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-        <InspectorMenu onOpenInspector={onOpenInspector} />
+function ToolActionRow({
+  icon,
+  label,
+  trailing = null,
+  onClick,
+}: {
+  icon: JSX.Element;
+  label: string;
+  trailing?: JSX.Element | null;
+  onClick: () => void;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-8 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    >
+      <span className="text-slate-500">{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {trailing}
+    </button>
+  );
+}
 
-        {activeRunId ? (
-          <Link to={`/runs/${activeRunId}`} aria-label={runDetailLabel}>
-            <Button variant="primary" aria-label={runDetailLabel}>
-              <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
-              {runDetailLabel}
-            </Button>
-          </Link>
-        ) : (
-          <Button
-            variant="secondary"
-            disabled
-            aria-label={runDetailLabel}
-            title={runDetailLabel}
-          >
-            <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
-            {runDetailLabel}
-          </Button>
-        )}
-      </div>
-    </header>
+function ToolToggleRow({
+  icon,
+  label,
+  checked,
+  onChange,
+}: {
+  icon: JSX.Element;
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}): JSX.Element {
+  return (
+    <div className="flex h-8 items-center gap-2 rounded-md px-2 transition-colors hover:bg-slate-50">
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-slate-500">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        onClick={() => onChange(!checked)}
+        className={[
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+          checked ? "bg-slate-900" : "bg-slate-200",
+        ].join(" ")}
+      >
+        <span
+          className={[
+            "h-4 w-4 rounded-full bg-white shadow transition-transform",
+            checked ? "translate-x-[18px]" : "translate-x-[2px]",
+          ].join(" ")}
+        />
+      </button>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
+
+function ComposerMetadataRow({
+  usage,
+  text,
+}: {
+  usage: UsageSummary;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const items = [
+    [text("输入", "In"), formatMetricNumber(usage.inputTokens)],
+    [text("输出", "Out"), formatMetricNumber(usage.outputTokens)],
+    [text("花费", "Cost"), usage.costUsd],
+    [text("耗时", "Time"), formatDuration(usage.durationMs)],
+    [text("模型", "Models"), formatMetricNumber(usage.modelCalls)],
+    [text("工具", "Tools"), formatMetricNumber(usage.toolCalls)],
+  ];
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-slate-500"
+      aria-label={text("运行元数据", "Run metadata")}
+    >
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex min-w-0 items-baseline gap-1">
+          <span>{label}</span>
+          <span className="font-mono text-slate-700">{value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+async function toComposerAttachment(file: File): Promise<ComposerAttachment> {
+  const isImage = file.type.startsWith("image/");
+  const content = await readAttachmentText(file);
+  return {
+    id: makeAttachmentId(file),
+    name: file.name,
+    mimeType: file.type,
+    previewUrl: isImage ? URL.createObjectURL(file) : null,
+    sizeBytes: file.size,
+    kind: isImage ? "image" : "file",
+    contentText: content.contentText,
+    contentStatus: content.contentStatus,
+    truncated: content.truncated,
+  };
+}
+
+async function readAttachmentText(
+  file: File,
+): Promise<Pick<ComposerAttachment, "contentText" | "contentStatus" | "truncated">> {
+  if (!isReadableTextFile(file)) {
+    return { contentText: null, contentStatus: "unsupported", truncated: false };
+  }
+  try {
+    const truncated = file.size > MAX_ATTACHMENT_TEXT_BYTES;
+    const text = await readBlobText(file.slice(0, MAX_ATTACHMENT_TEXT_BYTES));
+    return { contentText: text, contentStatus: "ready", truncated };
+  } catch {
+    return { contentText: null, contentStatus: "error", truncated: false };
+  }
+}
+
+function readBlobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === "function") return blob.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    });
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsText(blob);
+  });
+}
+
+function isReadableTextFile(file: File): boolean {
+  if (file.type.startsWith("text/")) return true;
+  const mime = file.type.toLowerCase();
+  if (
+    [
+      "application/json",
+      "application/xml",
+      "application/yaml",
+      "application/x-yaml",
+      "application/javascript",
+      "application/typescript",
+    ].includes(mime)
+  ) {
+    return true;
+  }
+  return /\.(txt|md|markdown|csv|tsv|json|jsonl|yaml|yml|xml|log|ini|env|py|js|ts|tsx|jsx|css|html)$/i.test(
+    file.name,
+  );
+}
+
+function revokeAttachmentPreview(attachment: ComposerAttachment): void {
+  if (attachment.previewUrl !== null) URL.revokeObjectURL(attachment.previewUrl);
+}
+
+function attachmentKey(attachment: ComposerAttachment): string {
+  return `${attachment.name}:${attachment.sizeBytes}:${attachment.mimeType}`;
+}
+
+function makeAttachmentId(file: File): string {
+  const random =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2);
+  return `${file.name}:${file.size}:${file.lastModified}:${random}`;
+}
+
+function formatMetricNumber(value: number): string {
+  return new Intl.NumberFormat("en", { notation: "compact" }).format(value);
+}
+
+function formatDuration(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return "0ms";
+  if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
 
 function composerPlaceholder(
   mode: WorkspaceMode,

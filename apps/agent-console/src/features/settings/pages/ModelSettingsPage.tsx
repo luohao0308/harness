@@ -41,20 +41,31 @@ type ProviderConfig = {
   [key: string]: unknown;
 };
 
+const deepSeekPresetBase: Omit<ProviderConfig, "name" | "label" | "model"> = {
+  api_format: "openai",
+  base_url: "https://api.deepseek.com",
+  api_key: "",
+  api_key_env: "DEEPSEEK_API_KEY",
+  model_context_window_tokens: 1000000,
+  max_output_tokens: 384000,
+  rate_limit_rpm: 300,
+  rate_limit_tpm: 1000000,
+  timeout_seconds: 60,
+  health_timeout_seconds: 5,
+};
+
 const providerPresets: ProviderConfig[] = [
   {
-    name: "minimax",
-    label: "MiniMax Anthropic Compatible",
-    model: "MiniMax-M2.7-highspeed",
-    api_format: "anthropic",
-    base_url: "https://api.minimaxi.com/anthropic",
-    api_key: "",
-    api_key_env: "MINIMAX_API_KEY",
-    model_context_window_tokens: 400000,
-    rate_limit_rpm: 300,
-    rate_limit_tpm: 400000,
-    timeout_seconds: 60,
-    health_timeout_seconds: 5,
+    ...deepSeekPresetBase,
+    name: "deepseek-flash",
+    label: "DeepSeek Flash",
+    model: "deepseek-v4-flash",
+  },
+  {
+    ...deepSeekPresetBase,
+    name: "deepseek-pro",
+    label: "DeepSeek Pro",
+    model: "deepseek-v4-pro",
   },
   {
     name: "openai-compatible",
@@ -64,18 +75,6 @@ const providerPresets: ProviderConfig[] = [
     base_url: "https://api.openai.com/v1",
     api_key: "",
     rate_limit_rpm: 600,
-    rate_limit_tpm: 120000,
-    timeout_seconds: 30,
-    health_timeout_seconds: 5,
-  },
-  {
-    name: "deepseek",
-    label: "DeepSeek",
-    model: "deepseek-chat",
-    api_format: "openai",
-    base_url: "https://api.deepseek.com/v1",
-    api_key: "",
-    rate_limit_rpm: 300,
     rate_limit_tpm: 120000,
     timeout_seconds: 30,
     health_timeout_seconds: 5,
@@ -366,7 +365,7 @@ export function ModelSettingsPage() {
                 <Field label={text("API Key 环境变量", "API Key Env")}>
                   <Input
                     value={String(draftProvider.api_key_env ?? "")}
-                    placeholder="MINIMAX_API_KEY"
+                    placeholder="DEEPSEEK_API_KEY"
                     onChange={(event) => setDraftProvider({ ...draftProvider, api_key_env: event.target.value })}
                   />
                 </Field>

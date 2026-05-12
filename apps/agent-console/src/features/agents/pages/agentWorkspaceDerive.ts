@@ -53,9 +53,9 @@ export function deriveModelLabel(
 }
 
 /**
- * Summarise token / cost / duration for the `Inspector_Drawer.Metadata`
- * six-tile grid. `modelCalls` and `toolCalls` come from the lazy workspace
- * query; they are 0 until the inspector opens (Req 10.5).
+ * Summarise token / cost / duration for the compact composer metadata row.
+ * `modelCalls` and `toolCalls` come from the lazy workspace query; they are 0
+ * until run workspace data is loaded (Req 10.5).
  */
 export function summarizeUsage(
   path: ConversationNode[],

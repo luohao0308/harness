@@ -1,4 +1,7 @@
 import json
+from io import BytesIO
+from types import SimpleNamespace
+from urllib import error
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -15,6 +18,7 @@ from app.agents.model_gateway import (
     ModelResponse,
     ModelStreamChunk,
     OpenAICompatibleModelGateway,
+    provider_api_key,
 )
 from app.db.models import ModelCall, SystemSetting, Task, utc_now
 from app.events.event_store import EventStore
@@ -344,8 +348,55 @@ def test_openai_compatible_gateway_normalizes_chat_completion(monkeypatch) -> No
     assert captured["authorization"] == "Bearer secret-key"
     assert captured["timeout"] == 7
     assert b'"model": "default"' in captured["body"]
+    assert b'"response_format": {"type": "json_object"}' in captured["body"]
     assert response.content == '{"summary":"ok"}'
     assert response.usage == {"prompt_tokens": 2, "completion_tokens": 4}
+
+
+def test_openai_compatible_gateway_reports_upstream_http_body(monkeypatch) -> None:
+    def fake_urlopen(http_request, timeout):
+        raise error.HTTPError(
+            url=http_request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=BytesIO(b'{"error":{"message":"model unavailable"}}'),
+        )
+
+    monkeypatch.setattr("app.agents.model_gateway.request.urlopen", fake_urlopen)
+
+    gateway = OpenAICompatibleModelGateway(
+        base_url="https://models.example.test/v1",
+        api_key="secret-key",
+    )
+
+    try:
+        gateway.complete(model_request("deepseek-v4-pro"))
+    except ModelGatewayError as exc:
+        assert "HTTP 400" in str(exc)
+        assert "model unavailable" in str(exc)
+    else:
+        raise AssertionError("expected ModelGatewayError")
+
+
+def test_provider_api_key_reads_deepseek_key_from_settings_when_env_is_not_exported(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "app.agents.model_gateway.get_settings",
+        lambda: SimpleNamespace(deepseek_api_key="settings-deepseek-key"),
+    )
+
+    assert (
+        provider_api_key(
+            {
+                "api_key": "replace-me",
+                "api_key_env": "DEEPSEEK_API_KEY",
+            }
+        )
+        == "settings-deepseek-key"
+    )
 
 
 def test_anthropic_compatible_gateway_normalizes_messages(monkeypatch) -> None:
@@ -374,15 +425,15 @@ def test_anthropic_compatible_gateway_normalizes_messages(monkeypatch) -> None:
     monkeypatch.setattr("app.agents.model_gateway.request.urlopen", fake_urlopen)
 
     gateway = AnthropicCompatibleModelGateway(
-        base_url="https://api.minimaxi.com/anthropic",
+        base_url="https://anthropic-compatible.example.test",
         api_key="secret-key",
         timeout_seconds=9,
         max_tokens=2048,
     )
     response = gateway.complete(
         ModelRequest(
-            model_provider="minimax",
-            model_name="MiniMax-M2.7-highspeed",
+            model_provider="anthropic-compatible",
+            model_name="local Agent CLI-compatible",
             messages=[
                 ModelMessage(role="system", content="You are concise."),
                 ModelMessage(role="user", content="plan this task"),
@@ -390,11 +441,11 @@ def test_anthropic_compatible_gateway_normalizes_messages(monkeypatch) -> None:
         )
     )
 
-    assert captured["url"] == "https://api.minimaxi.com/anthropic/v1/messages"
+    assert captured["url"] == "https://anthropic-compatible.example.test/v1/messages"
     assert captured["authorization"] == "Bearer secret-key"
     assert captured["timeout"] == 9
     body = json.loads(captured["body"].decode("utf-8"))
-    assert body["model"] == "MiniMax-M2.7-highspeed"
+    assert body["model"] == "local Agent CLI-compatible"
     assert body["max_tokens"] == 2048
     assert body["messages"] == [{"role": "user", "content": "plan this task"}]
     assert "You are concise." in body["system"]

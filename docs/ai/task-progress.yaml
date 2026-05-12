@@ -24,7 +24,7 @@ stages:
   - id: 02-agent-studio-config
     document: docs/ai/stages/02-agent-studio-config.md
     status: completed
-    demo: Agent Studio and Model Settings persist MiniMax-backed configuration.
+    demo: Agent Studio and Model Settings persist DeepSeek-backed configuration.
     verification_result: passed
     verification_commands:
       - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_settings.py services/api-server/tests/test_model_gateway.py
@@ -34,9 +34,9 @@ stages:
     acceptance_notes:
       - Agent Studio displays Model, Tools/MCP, Prompt, RAG, Templates, and Orchestration surfaces.
       - RAG and Templates render as disabled API-pending entries.
-      - MiniMax default context metadata is 400000 tokens.
-      - Legacy persisted MiniMax 204800-token settings are normalized to 400000 tokens.
-      - Docker runtime reports MiniMax healthy/probe with context 400000.
+      - DeepSeek default context metadata is 1000000 tokens.
+      - Legacy persisted built-in provider settings are normalized to DeepSeek defaults.
+      - Docker runtime reports DeepSeek healthy/probe with context 1000000.
   - id: 03-harness-tool-mcp
     document: docs/ai/stages/03-harness-tool-mcp.md
     status: completed
