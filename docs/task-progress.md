@@ -51,6 +51,8 @@ The website remains present as a public information shell. Console execution foc
 - Made primary Agent Run planning resilient to runtime plan-parse failure so Stage 07 canonical smoke starts from `POST /api/agents/default/runs`.
 - Added Agent Run promotion path in compatibility start endpoint so chat-created run without plan can be promoted into full Harness execution.
 - Updated docker compose `api-server` runtime with Docker socket mount and `DOCKER_HOST`, enabling sandbox allocation in canonical smoke.
+- Added browser-level Workspace smoke coverage with Playwright for the demo-critical `Model + Harness = Agent` shell.
+- Locked Workspace/small-screen console chrome into a compact layout so the chat surface and composer remain usable at 390px.
 
 ## Validation Record
 
@@ -86,11 +88,18 @@ services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 139 
 services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests scripts/smoke-test-agent-run.py -> passed
 cd apps/agent-console && npm run build -> passed
 git diff --check -> passed
+cd apps/agent-console && npm run e2e:install -> passed
+cd apps/agent-console && npm run e2e:smoke -> 2 passed
+cd apps/agent-console && npm test -- WorkspaceShellBar.render.test.tsx ChatSurface.shell.test.tsx -> 11 passed
+cd apps/agent-console && npm test -> 96 passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+cd services/api-server && .venv/bin/python -m pytest tests/test_cors.py -> 2 passed
 ```
 
 ## Not Completed Yet
 
-- Frontend component/e2e test infrastructure remains explicitly deferred.
+- Broader browser e2e coverage for non-Workspace routes remains deferred.
 
 ## Next Step
 
