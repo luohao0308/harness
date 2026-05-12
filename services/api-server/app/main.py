@@ -21,6 +21,8 @@ from app.core.tracing import OpenTelemetryTraceMiddleware
 configure_json_logging()
 settings = get_settings()
 
+DEV_CONSOLE_PORTS = range(5173, 5180)
+
 
 def build_cors_origins() -> list[str]:
     configured_origins = {
@@ -37,6 +39,12 @@ def build_cors_origins() -> list[str]:
             continue
         netloc = parsed.netloc.replace(parsed.hostname or "", alias, 1)
         origins.add(urlunsplit((parsed.scheme, netloc, "", "", "")))
+
+    if settings.app_env == "development":
+        for host in ("localhost", "127.0.0.1"):
+            for port in DEV_CONSOLE_PORTS:
+                origins.add(f"http://{host}:{port}")
+
     return sorted(origins)
 
 app = FastAPI(

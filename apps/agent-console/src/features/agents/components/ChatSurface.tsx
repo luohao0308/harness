@@ -15,13 +15,13 @@ import {
   useState,
   type ChangeEvent,
   type JSX,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
-  Blocks,
   ChevronRight,
   ListChecks,
   Paperclip,
-  X,
+  PlugZap,
 } from "lucide-react";
 
 import { useI18n } from "../../../lib/i18n";
@@ -31,6 +31,7 @@ import {
 } from "../../../stores/workspaceStore";
 import type { AgentAttachmentPayload, ToolMetadata } from "../../tasks/api";
 import type { ChatStreamController } from "../hooks/useChatStream";
+import { useOutsideClick } from "../hooks/useOutsideClick";
 import { canResume as canResumeQuery } from "../lib/activePathQueries";
 import { copyText } from "../lib/clipboard";
 import { stripThinkBlocks } from "../lib/copyText";
@@ -85,6 +86,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     agentId,
     agentName,
     modelLabel,
+    modelLabelIsFallback,
     workspaceMode,
     onWorkspaceModeChange,
     activeRunId,
@@ -98,7 +100,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     selectedProviderId,
     selectedModelId,
     onModelChange,
-    onRequestModelPicker,
     onClearConversation,
     onOpenSearch,
     onOpenShortcut,
@@ -442,7 +443,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           return;
         case "model":
           setBottomPanel("model");
-          onRequestModelPicker();
           setDraft("");
           return;
         case "tool":
@@ -478,7 +478,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       onClearConversation,
       onOpenSearch,
       onOpenShortcut,
-      onRequestModelPicker,
       onWorkspaceModeChange,
       setDraft,
       tail,
@@ -491,9 +490,17 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       <WorkspaceShellBar
         agentId={agentId}
         agentName={agentName}
+        modelLabel={modelLabel}
+        modelLabelIsFallback={modelLabelIsFallback}
+        tools={tools}
+        providers={providers}
+        selectedProviderId={selectedProviderId}
+        selectedModelId={selectedModelId}
         isStreaming={stream.isStreaming}
         activeRunId={activeRunId}
         runStatus={runStatus}
+        onModelChange={onModelChange}
+        onInsertToolMention={handleShellToolMention}
         onOpenInspector={onOpenInspector}
         onStop={handlePause}
       />
@@ -539,9 +546,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               title={
                 bottomPanel === "model"
                   ? text("切换模型", "Switch model")
-                  : text("工具", "Tools")
+                  : text("输入设置", "Composer settings")
               }
-              text={text}
             >
               {bottomPanel === "model" ? (
                 <BottomModelPanel
@@ -556,7 +562,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                   text={text}
                 />
               ) : (
-                <ShellToolsPanel
+                <ComposerSettingsPanel
                   workspaceMode={workspaceMode}
                   onWorkspaceModeChange={onWorkspaceModeChange}
                   attachmentNames={attachmentNames}
@@ -628,41 +634,32 @@ function BottomToolsPopover({
   open,
   onClose,
   title,
-  text,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
-  text: (zh: string, en: string) => string;
   children: JSX.Element;
 }): JSX.Element | null {
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  useOutsideClick(popoverRef, onClose, open);
+
   if (!open) return null;
 
   return (
     <div
+      ref={popoverRef}
       role="dialog"
       aria-modal="false"
       aria-label={title}
-      className="absolute bottom-[76px] left-4 z-30 w-[min(270px,calc(100vw-2rem))] rounded-xl border border-slate-200 bg-white p-2 shadow-lg"
+      className="absolute bottom-[68px] left-4 z-30 w-[min(220px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg"
     >
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <div className="text-[13px] font-semibold text-slate-900">{title}</div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={text("关闭", "Close")}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-        >
-          <X aria-hidden="true" className="h-3.5 w-3.5" />
-        </button>
-      </div>
       {children}
     </div>
   );
 }
 
-function ShellToolsPanel({
+function ComposerSettingsPanel({
   workspaceMode,
   onWorkspaceModeChange,
   attachmentNames,
@@ -672,11 +669,12 @@ function ShellToolsPanel({
   text,
 }: ToolsPanelProps): JSX.Element {
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  const mcpTools = tools.filter(isMcpTool);
 
   return (
-    <div className="flex flex-col text-[13px] text-slate-800">
+    <div className="flex flex-col text-xs text-slate-800">
       <ToolActionRow
-        icon={<Paperclip aria-hidden="true" className="h-4 w-4" />}
+        icon={<Paperclip aria-hidden="true" className="h-3.5 w-3.5" />}
         label={
           attachmentNames.length > 0
             ? text(
@@ -694,8 +692,8 @@ function ShellToolsPanel({
         onChange={(checked) => onWorkspaceModeChange(checked ? "markdown_plan" : "chat")}
       />
       <ToolActionRow
-        icon={<Blocks aria-hidden="true" className="h-4 w-4" />}
-        label={text("插件", "Plugins")}
+        icon={<PlugZap aria-hidden="true" className="h-3.5 w-3.5" />}
+        label={text("插件 / MCP", "Plugins / MCP")}
         trailing={
           <ChevronRight
             aria-hidden="true"
@@ -708,20 +706,23 @@ function ShellToolsPanel({
         onClick={() => setPluginsOpen((open) => !open)}
       />
       {pluginsOpen && (
-        <div className="ml-5 mt-1 max-h-24 overflow-y-auto border-l border-slate-200 pl-2">
-          {tools.length === 0 ? (
+        <div className="ml-5 mt-0.5 max-h-24 overflow-y-auto border-l border-slate-200 pl-1.5">
+          {mcpTools.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-slate-500">
-              {text("暂无可用插件", "No plugins available")}
+              {text("暂无 MCP 功能", "No MCP capabilities")}
             </p>
           ) : (
-            tools.map((tool) => (
+            mcpTools.map((tool) => (
               <button
                 key={`${tool.source ?? "tool"}:${tool.name}`}
                 type="button"
                 onClick={() => onInsertMention(tool.name)}
-                className="block w-full truncate rounded-md px-2 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                className="block w-full rounded-md px-1.5 py-1 text-left text-[11px] text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               >
-                @{tool.name}
+                <span className="block truncate font-mono">@{tool.name}</span>
+                <span className="block truncate text-[11px] text-slate-500">
+                  {formatMcpCapability(tool)}
+                </span>
               </button>
             ))
           )}
@@ -746,28 +747,74 @@ function BottomModelPanel({
   modelLabelFallback: string;
   text: (zh: string, en: string) => string;
 }): JSX.Element {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const selectedIndex = providers.findIndex(
+    (option) =>
+      option.providerId === selectedProviderId && option.modelId === selectedModelId,
+  );
+
+  useEffect(() => {
+    if (providers.length === 0) return;
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    window.requestAnimationFrame(() => listRef.current?.focus());
+  }, [providers.length, selectedIndex]);
+
   if (providers.length === 0) {
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-1.5 text-xs text-amber-800">
         {text("模型设置不可用", "Model settings unavailable")} · {modelLabelFallback}
       </div>
     );
   }
 
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        setActiveIndex((index) => (index + 1) % providers.length);
+        return;
+      case "ArrowUp":
+        event.preventDefault();
+        setActiveIndex((index) => (index - 1 + providers.length) % providers.length);
+        return;
+      case "Enter": {
+        event.preventDefault();
+        const next = providers[activeIndex];
+        if (next === undefined) return;
+        onModelChange(next.providerId, next.modelId);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
   return (
-    <div className="flex max-h-44 flex-col gap-1 overflow-y-auto">
-      {providers.map((option) => {
+    <div
+      ref={listRef}
+      role="listbox"
+      tabIndex={-1}
+      aria-label={text("切换模型", "Switch model")}
+      onKeyDown={handleKeyDown}
+      className="flex max-h-36 flex-col gap-0.5 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    >
+      {providers.map((option, index) => {
         const selected =
           option.providerId === selectedProviderId && option.modelId === selectedModelId;
+        const active = index === activeIndex;
         return (
           <button
             key={`${option.providerId}:${option.modelId}`}
             type="button"
+            role="option"
+            aria-selected={selected}
             onClick={() => onModelChange(option.providerId, option.modelId)}
+            onMouseEnter={() => setActiveIndex(index)}
             aria-pressed={selected}
             className={[
-              "flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
-              selected
+              "flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+              selected || active
                 ? "bg-slate-100 font-medium text-slate-900"
                 : "text-slate-700 hover:bg-slate-50",
             ].join(" ")}
@@ -777,7 +824,7 @@ function BottomModelPanel({
               <span className="block truncate text-slate-500">{option.modelLabel}</span>
             </span>
             {selected && (
-              <span className="shrink-0 rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] font-normal text-white">
+              <span className="shrink-0 rounded-full bg-slate-900 px-1 py-0.5 text-[10px] font-normal text-white">
                 {text("当前", "Current")}
               </span>
             )}
@@ -786,6 +833,19 @@ function BottomModelPanel({
       })}
     </div>
   );
+}
+
+function isMcpTool(tool: ToolMetadata): boolean {
+  return tool.source === "mcp" || tool.mcp_server !== null || tool.mcp_method !== null;
+}
+
+function formatMcpCapability(tool: ToolMetadata): string {
+  if (tool.mcp_server !== null && tool.mcp_method !== null) {
+    return `${tool.mcp_server}.${tool.mcp_method}`;
+  }
+  if (tool.mcp_server !== null) return tool.mcp_server;
+  if (tool.mcp_method !== null) return tool.mcp_method;
+  return tool.description || tool.category;
 }
 
 function ToolActionRow({
@@ -803,7 +863,7 @@ function ToolActionRow({
     <button
       type="button"
       onClick={onClick}
-      className="flex h-8 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      className="flex h-7 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
     >
       <span className="text-slate-500">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -824,7 +884,7 @@ function ToolToggleRow({
   onChange: (checked: boolean) => void;
 }): JSX.Element {
   return (
-    <div className="flex h-8 items-center gap-2 rounded-md px-2 transition-colors hover:bg-slate-50">
+    <div className="flex h-7 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-slate-50">
       <span className="flex h-4 w-4 shrink-0 items-center justify-center text-slate-500">
         {icon}
       </span>
@@ -836,14 +896,14 @@ function ToolToggleRow({
         aria-label={label}
         onClick={() => onChange(!checked)}
         className={[
-          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+          "relative inline-flex h-5 w-8 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
           checked ? "bg-slate-900" : "bg-slate-200",
         ].join(" ")}
       >
         <span
           className={[
             "h-4 w-4 rounded-full bg-white shadow transition-transform",
-            checked ? "translate-x-[18px]" : "translate-x-[2px]",
+            checked ? "translate-x-[14px]" : "translate-x-[2px]",
           ].join(" ")}
         />
       </button>

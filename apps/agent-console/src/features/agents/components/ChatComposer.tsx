@@ -332,8 +332,8 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                     onClick={onOptionsToggle}
                     aria-haspopup="dialog"
                     aria-expanded={optionsOpen}
-                    aria-label={text("打开工具", "Open tools")}
-                    title={text("工具", "Tools")}
+                    aria-label={text("打开输入设置", "Open composer settings")}
+                    title={text("输入设置", "Composer settings")}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                   >
                     <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
