@@ -22,6 +22,19 @@ npm run build      # tsc --noEmit && vite build
 npm run test -- --run   # full vitest suite (P1–P24)
 ```
 
+## Browser Smoke / 浏览器级验证
+
+The Workspace demo shell has a Playwright smoke that runs the real Vite app in Chromium with deterministic API fixtures.
+
+```bash
+cd apps/agent-console
+npm run e2e:install     # install Chromium once
+npm run e2e:smoke       # http://127.0.0.1:5177/agents/default/workspace
+npm run e2e:smoke:headed
+```
+
+The smoke covers the header Model picker, top Tools panel, composer settings, Plugins/MCP, `/model`, Plan mode, backend connection error display, and 390px viewport overflow.
+
 ## Streaming smoke / 流式验证
 
 v4 为 `/agents/:agentId/workspace` 的聊天流加了一条专用的 SSE 响应头管线（FastAPI + Nginx + `useChatStream`）。下面的清单用于在每次部署或回归后确认「模型是真·逐 token 流式返回」。
