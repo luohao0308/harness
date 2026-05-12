@@ -44,6 +44,21 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const isChinese = locale === "zh-CN";
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
+  const [isNarrowShell, setIsNarrowShell] = useState(false);
+  const sidebarForceCollapsed = isWorkspaceRoute || isNarrowShell;
+  const effectiveSidebarCollapsed = sidebarCollapsed || sidebarForceCollapsed;
+  const canToggleSidebar = !sidebarForceCollapsed;
+  const sidebarToggleLabel = canToggleSidebar
+    ? effectiveSidebarCollapsed
+      ? isChinese
+        ? "展开侧边栏"
+        : "Expand sidebar"
+      : isChinese
+        ? "折叠侧边栏"
+        : "Collapse sidebar"
+    : isChinese
+      ? "侧边栏已收起"
+      : "Sidebar collapsed";
 
   useEffect(() => {
     if (isWorkspaceRoute) {
@@ -51,24 +66,37 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
     }
   }, [isWorkspaceRoute]);
 
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(max-width: 767px)");
+    const apply = (): void => setIsNarrowShell(query.matches);
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+
   return (
-    <div className="flex min-h-screen bg-page text-slate-800" lang={isChinese ? "zh-CN" : "en-US"} translate="no">
+    <div
+      className="flex min-h-screen bg-page text-slate-800"
+      lang={isChinese ? "zh-CN" : "en-US"}
+      translate="no"
+    >
       <aside
         className={cn(
           "flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
-          sidebarCollapsed ? "w-[64px]" : "w-[248px]",
+          effectiveSidebarCollapsed ? "w-[64px]" : "w-[248px]",
         )}
       >
         <div
           className={cn(
             "flex h-14 items-center border-b border-slate-200",
-            sidebarCollapsed ? "justify-center px-2" : "gap-2 px-4",
+            effectiveSidebarCollapsed ? "justify-center px-2" : "gap-2 px-4",
           )}
         >
           <div
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-900 transition-opacity",
-              sidebarCollapsed && "pointer-events-none absolute opacity-0",
+              effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
             )}
           >
             <div className="h-3 w-3 border border-b-0 border-r-0 border-white" />
@@ -76,7 +104,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
           <div
             className={cn(
               "min-w-0 transition-opacity",
-              sidebarCollapsed && "pointer-events-none absolute opacity-0",
+              effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
             )}
           >
             <div className="text-sm font-semibold tracking-tight text-slate-900">Harness</div>
@@ -84,13 +112,21 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
           </div>
           <Button
             variant="ghost"
-            className={cn("ml-auto h-7 w-7 px-0", sidebarCollapsed && "ml-0")}
-            onClick={() => setSidebarCollapsed((value) => !value)}
-            aria-label={sidebarCollapsed ? (isChinese ? "展开侧边栏" : "Expand sidebar") : (isChinese ? "折叠侧边栏" : "Collapse sidebar")}
-            title={sidebarCollapsed ? (isChinese ? "展开侧边栏" : "Expand sidebar") : (isChinese ? "折叠侧边栏" : "Collapse sidebar")}
+            className={cn(
+              "ml-auto h-7 w-7 px-0",
+              effectiveSidebarCollapsed && "ml-0",
+              !canToggleSidebar && "cursor-default text-slate-400 hover:bg-transparent",
+            )}
+            onClick={() => {
+              if (!canToggleSidebar) return;
+              setSidebarCollapsed((value) => !value);
+            }}
+            aria-disabled={!canToggleSidebar}
+            aria-label={sidebarToggleLabel}
+            title={sidebarToggleLabel}
           >
-            <PanelLeftOpen className={cn("h-4 w-4", !sidebarCollapsed && "hidden")} />
-            <PanelLeftClose className={cn("h-4 w-4", sidebarCollapsed && "hidden")} />
+            <PanelLeftOpen className={cn("h-4 w-4", !effectiveSidebarCollapsed && "hidden")} />
+            <PanelLeftClose className={cn("h-4 w-4", effectiveSidebarCollapsed && "hidden")} />
           </Button>
         </div>
         <nav className="flex-1 p-2">
@@ -104,7 +140,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 className={({ isActive }) =>
                   cn(
                     "mb-0.5 flex h-8 items-center rounded-md text-[13px]",
-                    sidebarCollapsed ? "justify-center px-0" : "gap-2 px-2.5",
+                    effectiveSidebarCollapsed ? "justify-center px-0" : "gap-2 px-2.5",
                     isActive
                       ? "bg-slate-100 text-slate-900"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
@@ -115,7 +151,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 <span
                   className={cn(
                     "flex-1 truncate transition-opacity",
-                    sidebarCollapsed && "pointer-events-none absolute opacity-0",
+                    effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
                   )}
                 >
                   {isChinese ? item.label : item.en}
@@ -127,7 +163,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
         <div
           className={cn(
             "border-t border-slate-200 text-[11px] text-slate-500",
-            sidebarCollapsed ? "p-2" : "p-3",
+            effectiveSidebarCollapsed ? "p-2" : "p-3",
           )}
         >
           <div className="mb-1 flex items-center gap-2">
@@ -135,7 +171,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <span
               className={cn(
                 "transition-opacity",
-                sidebarCollapsed && "pointer-events-none absolute opacity-0",
+                effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
               )}
             >
               {isChinese ? "系统运行正常" : "All systems operational"}
@@ -144,7 +180,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
           <div
             className={cn(
               "font-mono transition-opacity",
-              sidebarCollapsed && "pointer-events-none absolute opacity-0",
+              effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
             )}
           >
             api 0.1.0 · console 0.1.0
@@ -153,13 +189,13 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-5">
-          <div className="flex items-center gap-2 text-[13px] text-slate-500">
+        <header className="flex h-14 min-w-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:gap-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2 text-[13px] text-slate-500">
             <span>{isChinese ? "控制台" : "Console"}</span>
             <span className="text-slate-300">/</span>
-            <span className="text-slate-900">{title}</span>
+            <span className="truncate text-slate-900">{title}</span>
           </div>
-          <div className="ml-6 flex h-8 w-72 items-center gap-2 rounded-md border border-slate-200 bg-slate-50/70 px-2.5">
+          <div className="ml-6 hidden h-8 w-72 items-center gap-2 rounded-md border border-slate-200 bg-slate-50/70 px-2.5 lg:flex">
             <Search className="h-3.5 w-3.5 text-slate-400" />
             <input
               aria-label={isChinese ? "搜索" : "Search"}
@@ -168,8 +204,8 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             />
             <span className="font-mono text-[10px] text-slate-400">⌘K</span>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Button className="gap-1.5">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <Button className="hidden gap-1.5 md:inline-flex">
               {isChinese ? "环境" : "env"}: {isChinese ? environmentLabel(environment) : environment}{" "}
               <ChevronDown className="h-3 w-3" />
             </Button>
@@ -183,10 +219,14 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <Button variant="ghost" className="w-8 px-0" aria-label={isChinese ? "告警" : "Alerts"}>
               <Bell className="h-4 w-4" />
             </Button>
-            <Button variant="primary" onClick={() => navigate("/agents/default/workspace")}>
+            <Button
+              variant="primary"
+              className="hidden sm:inline-flex"
+              onClick={() => navigate("/agents/default/workspace")}
+            >
               <Plus className="h-3.5 w-3.5" /> {isChinese ? "新对话" : "New chat"}
             </Button>
-            <div className="ml-1 flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700">
+            <div className="ml-1 hidden h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700 sm:flex">
               LH
             </div>
           </div>
