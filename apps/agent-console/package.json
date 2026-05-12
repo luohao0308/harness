@@ -10,7 +10,10 @@
     "build:docker": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e:install": "playwright install chromium",
+    "e2e:smoke": "playwright test --project=chromium",
+    "e2e:smoke:headed": "playwright test --project=chromium --headed"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -29,6 +32,7 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

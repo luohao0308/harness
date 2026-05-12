@@ -32,6 +32,8 @@ build/
 .turbo/
 storybook-static/
 *.tsbuildinfo
+test-results/
+playwright-report/
 
 .env
 .env.*
