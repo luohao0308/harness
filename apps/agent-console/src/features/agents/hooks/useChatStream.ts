@@ -25,6 +25,7 @@
 import { useCallback, useRef } from "react";
 
 import type {
+  AgentAttachmentPayload,
   AgentChatStreamEvent,
   AgentChatStreamMessage,
   AgentChatStreamPayload,
@@ -64,6 +65,8 @@ const NON_SSE_PREVIEW_BYTES = 256;
 export type UseChatStreamArgs = {
   agentId: string;
   workspaceMode: WorkspaceMode;
+  selectedProviderId?: string | null;
+  selectedModelId?: string | null;
   /** Invoked exactly once per run, with the `run_id` from `run_created`. */
   onRunCreated?: (runId: string) => void;
   /** Current registry entries used to serialize `@tool` mentions. */
@@ -74,7 +77,7 @@ export type UseChatStreamArgs = {
 
 export type ChatStreamController = {
   isStreaming: boolean;
-  start(input: { goal: string; mode: WorkspaceMode }): Promise<void>;
+  start(input: StreamStartInput): Promise<void>;
   pause(): void;
   resume(pausedNodeId: string): Promise<void>;
   retry(errorNodeId: string): Promise<void>;
@@ -108,10 +111,27 @@ type BuildPayloadInput = {
   runId?: string;
   continueFromNodeId?: string;
   partialContent?: string;
+  attachmentNames?: string[];
+  attachments?: AgentAttachmentPayload[];
+};
+
+type StreamStartInput = {
+  goal: string;
+  mode: WorkspaceMode;
+  attachmentNames?: string[];
+  attachments?: AgentAttachmentPayload[];
 };
 
 export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
-  const { agentId, workspaceMode, onRunCreated, tools = [], fetchImpl } = args;
+  const {
+    agentId,
+    workspaceMode,
+    selectedProviderId = null,
+    selectedModelId = null,
+    onRunCreated,
+    tools = [],
+    fetchImpl,
+  } = args;
 
   // The `isStreaming` derivation subscribes to the store so that consuming
   // components re-render (and disable their send button) whenever a stream
@@ -313,6 +333,8 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       return {
         mode: input.mode,
         goal: input.goal,
+        model_provider: selectedProviderId,
+        model_name: selectedModelId,
         messages: serializeMessages(activePath),
         active_leaf_id: store.activeLeafId,
         run_id: input.runId,
@@ -322,15 +344,17 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         continue_from_node_id: input.continueFromNodeId,
         partial_assistant_content: input.partialContent,
         tool_mentions: extractToolMentions(input.goal, tools),
+        attachment_names: input.attachmentNames ?? [],
+        attachments: input.attachments ?? [],
         // v4 additive: UI-side context budget hint (Req 5.5).
         context_max_tokens: store.contextMaxTokens,
       };
     },
-    [tools],
+    [selectedModelId, selectedProviderId, tools],
   );
 
   const start = useCallback(
-    async (input: { goal: string; mode: WorkspaceMode }): Promise<void> => {
+    async (input: StreamStartInput): Promise<void> => {
       const goal = input.goal.trim();
       // Req 2.4 / 2.5 — empty drafts and in-flight streams are no-ops.
       if (goal.length === 0 || controllerRef.current !== null) return;
@@ -358,7 +382,12 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       await driveStream({
         assistantNodeId,
         abort,
-        payload: buildPayload({ mode: input.mode, goal }),
+        payload: buildPayload({
+          mode: input.mode,
+          goal,
+          attachmentNames: input.attachmentNames,
+          attachments: input.attachments,
+        }),
       });
     },
     [buildPayload, driveStream],

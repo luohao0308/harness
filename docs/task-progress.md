@@ -29,12 +29,12 @@ The website remains present as a public information shell. Console execution foc
 - Added Agent Run history and Workspace aggregate projection APIs.
 - Replaced old task creation console route with Run history semantics.
 - Rebuilt Agent Workspace as a chat-first console with config, streamed assistant output, and runtime internals.
-- Added MiniMax default model preset and verified settings/model gateway tests.
+- Added DeepSeek default model presets and verified settings/model gateway tests.
 - Fixed sandbox execution path by letting Executor acquire and release WarmPool-backed sandboxes for sandboxed steps.
 - Fixed test runtime with fake WarmPool and fake sandbox command path.
 - Upgraded `/agents` from registry copy to Agent Studio with Model, Tools/MCP, Prompt, RAG, Templates, and Orchestration surfaces.
-- Unified MiniMax context window metadata at `400000` tokens.
-- Added MiniMax preset normalization so legacy persisted `204800` settings read back as `400000`.
+- Unified DeepSeek context window metadata at `1000000` tokens.
+- Added DeepSeek preset normalization so legacy persisted built-in provider settings read back as DeepSeek defaults.
 - Upgraded `/tools` into a Harness management surface for Registry, Policy, Sandbox, MCP, and disabled Trigger state.
 - Added Run Detail replay-to-sequence UI with state summary, diagnosis, and failure point.
 - Fixed Observability links to concrete Run event and Subagent routes.
@@ -76,7 +76,7 @@ cd apps/agent-console && npm run build -> passed
 python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
-Docker runtime verification -> MiniMax healthy/probe and context 400000
+Docker runtime verification -> DeepSeek healthy/probe and context 1000000
 python3 -m py_compile scripts/smoke-test-agent-run.py -> passed
 python3 scripts/smoke-test-agent-run.py -> passed (run_id=3a310efa-dcbd-4216-b78c-c49241e97245; primary /api/agents/default/runs succeeded without chat-stream fallback and completed execution)
 python3 scripts/smoke-test-docker.py -> passed

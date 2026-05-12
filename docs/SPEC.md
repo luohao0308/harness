@@ -63,7 +63,7 @@ Future UI layouts can rename buttons, regroup panels, or move runtime details in
 | `/agents/:agentId/workspace` | Agent Workspace Pro workspace |
 | `/runs` | Agent Run audit history |
 | `/runs/:runId` | Run detail with Plan, Trace, Replay, Tool Calls, Model Calls, Approvals |
-| `/settings/models` | Model configuration with built-in MiniMax preset |
+| `/settings/models` | Model configuration with built-in DeepSeek presets |
 | `/tools` | Tool and MCP registry |
 | `/observability` | Event, metric, latency, cost, service health |
 | `/evals` | Eval datasets, runs, regression results |

@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.agents.model_gateway import ModelHealthChecker, normalize_model_settings
+from app.agents.model_gateway import (
+    DEFAULT_MODEL_SETTINGS as GATEWAY_DEFAULT_MODEL_SETTINGS,
+)
+from app.agents.model_gateway import (
+    ModelHealthChecker,
+    normalize_model_settings,
+)
 from app.api.schemas import (
     CountItem,
     ModelFallbackEventItem,
@@ -24,44 +30,7 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 MODEL_SETTINGS_KEY = "settings.models"
 POLICY_SETTINGS_KEY = "settings.policies"
 
-DEFAULT_MODEL_SETTINGS = ModelSettingsResponse(
-    default_provider="minimax",
-    default_model="MiniMax-M2.7-highspeed",
-    providers=[
-        {
-            "name": "minimax",
-            "label": "MiniMax Anthropic Compatible",
-            "status": "healthy",
-            "api_format": "anthropic",
-            "model": "MiniMax-M2.7-highspeed",
-            "base_url": "https://api.minimaxi.com/anthropic",
-            "api_key": "replace-me",
-            "api_key_env": "MINIMAX_API_KEY",
-            "model_context_window_tokens": 400000,
-            "rate_limit_rpm": 300,
-            "rate_limit_tpm": 400000,
-            "timeout_seconds": 60,
-            "health_timeout_seconds": 5,
-            "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
-        },
-        {
-            "name": "openai-compatible",
-            "status": "healthy",
-            "rate_limit_rpm": 600,
-            "rate_limit_tpm": 120000,
-            "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
-        },
-    ],
-    rate_limits={"rpm": 600, "tpm": 120000},
-    health={
-        "status": "healthy",
-        "updated_at": None,
-        "mode": "mock",
-        "latency_ms": 0,
-        "error_message": None,
-    },
-    circuit_breaker={"failure_threshold": 3, "cooldown_seconds": 60},
-)
+DEFAULT_MODEL_SETTINGS = ModelSettingsResponse(**GATEWAY_DEFAULT_MODEL_SETTINGS)
 
 DEFAULT_POLICY_SETTINGS = PolicySettingsResponse(
     risk_levels=[

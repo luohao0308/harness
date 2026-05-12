@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+os.environ["DEEPSEEK_API_KEY"] = ""
 
 from app.agents.model_gateway import ModelCircuitBreaker, ModelRateLimiter  # noqa: E402
 from app.db.models import Base  # noqa: E402

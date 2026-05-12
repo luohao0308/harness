@@ -258,7 +258,7 @@ export const ChatMessageList = forwardRef<
           ref={containerRef}
           className="absolute inset-0 overflow-y-auto"
         >
-          <div className="mx-auto flex w-full max-w-[80ch] lg:max-w-[56rem] flex-col gap-5 px-3 sm:px-4 lg:px-6 xl:px-12 py-8">
+          <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-5 px-4 py-8 sm:px-6">
             <ChatWelcomeState
               agentName={props.agentName}
               modelLabel={props.modelLabel}
@@ -287,7 +287,7 @@ export const ChatMessageList = forwardRef<
         ref={containerRef}
         className="absolute inset-0 overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-[80ch] lg:max-w-[56rem] flex-col gap-5 px-3 sm:px-4 lg:px-6 xl:px-12 py-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
           {groups.map((group, groupIdx) => (
             <section
               key={`group-${groupIdx}`}

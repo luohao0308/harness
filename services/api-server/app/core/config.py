@@ -19,6 +19,7 @@ class Settings(BaseSettings):
         alias="MODEL_GATEWAY_BASE_URL",
     )
     model_gateway_api_key: str = Field(default="replace-me", alias="MODEL_GATEWAY_API_KEY")
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     docker_host: str = Field(default="unix:///var/run/docker.sock", alias="DOCKER_HOST")
     prometheus_base_url: AnyHttpUrl = Field(
         default="http://localhost:9091",
@@ -45,7 +46,11 @@ class Settings(BaseSettings):
         alias="OBSERVABILITY_EXPORT_DIR",
     )
 
-    model_config = SettingsConfigDict(case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=(".env", "services/api-server/.env"),
+        extra="ignore",
+    )
 
 
 @lru_cache

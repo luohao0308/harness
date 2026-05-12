@@ -4,10 +4,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type JSX,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type RefObject,
 } from "react";
 
-import { Pause, Play, Send } from "lucide-react";
+import { FileText, Pause, Play, Send, SlidersHorizontal, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
@@ -36,6 +39,12 @@ export type ChatComposerProps = {
   mode: WorkspaceMode;
   onChangeMode: (m: WorkspaceMode) => void;
   placeholder: string;
+  optionsOpen?: boolean;
+  onOptionsToggle?: () => void;
+  optionsTriggerRef?: RefObject<HTMLButtonElement | null>;
+  metadata?: ReactNode;
+  attachments?: ComposerAttachment[];
+  onRemoveAttachment?: (id: string) => void;
   /**
    * When `true`, the composer disables Enter-to-submit so that another surface
    * (e.g. `MessageEditForm`) owns Enter semantics while the user is editing a
@@ -50,6 +59,18 @@ export type ChatComposerProps = {
    * menu but no-ops on confirm.
    */
   onSlashDispatch?: (command: SlashCommand, args: string) => void;
+};
+
+export type ComposerAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  previewUrl: string | null;
+  sizeBytes: number;
+  kind: "image" | "file";
+  contentText: string | null;
+  contentStatus: "ready" | "unsupported" | "error";
+  truncated: boolean;
 };
 
 /**
@@ -104,6 +125,12 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       isStreaming,
       canResume,
       placeholder,
+      optionsOpen = false,
+      onOptionsToggle,
+      optionsTriggerRef,
+      metadata = null,
+      attachments = [],
+      onRemoveAttachment,
       isEditLocked = false,
       onSlashDispatch,
     },
@@ -257,8 +284,8 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
 
     return (
       <div className="w-full">
-        <div className="mx-auto w-full max-w-[56rem] px-3 sm:px-4 lg:px-6 xl:px-12">
-          <div className="relative rounded-3xl border border-slate-200 bg-white p-3 shadow-sm focus-within:border-slate-400">
+        <div className="mx-auto w-full max-w-3xl px-3 sm:px-4 lg:px-6">
+          <div className="relative rounded-[28px] border border-slate-200 bg-white p-3 shadow-[0_14px_40px_rgba(15,23,42,0.10)] focus-within:border-slate-300">
             <SlashCommandMenu
               open={slashOpen}
               candidates={candidates}
@@ -266,6 +293,21 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
               onHover={handleMenuHover}
               onSelect={handleMenuSelect}
             />
+            {metadata !== null && <div className="px-3 pb-2">{metadata}</div>}
+            {attachments.length > 0 && (
+              <div
+                className="mb-2 flex gap-2 overflow-x-auto px-3 pb-1"
+                aria-label={text("已选择的附件", "Selected attachments")}
+              >
+                {attachments.map((attachment) => (
+                  <AttachmentPreview
+                    key={attachment.id}
+                    attachment={attachment}
+                    onRemove={onRemoveAttachment}
+                  />
+                ))}
+              </div>
+            )}
             <textarea
               ref={assignTextareaRef}
               value={draft}
@@ -278,19 +320,25 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                 maxHeight: `${MAX_COMPOSER_HEIGHT}px`,
                 lineHeight: "20px",
               }}
-              className="w-full resize-none overflow-hidden border-0 bg-transparent px-2 py-0.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:outline-none"
+              className="w-full resize-none overflow-hidden border-0 bg-transparent px-3 py-1 text-[15px] text-slate-800 outline-none placeholder:text-slate-400 focus:outline-none"
               autoFocus
             />
-            <div className="mt-1 flex items-center justify-between gap-3 px-2">
-              <span className="text-[10px] text-slate-400">
-                {text(
-                  "Enter 发送 · Shift+Enter 换行 · 输入 / 查看命令",
-                  "Enter to send · Shift+Enter for newline · type / for commands",
-                )}
-              </span>
-            </div>
             <div className="mt-2 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
+                {onOptionsToggle !== undefined && (
+                  <button
+                    ref={optionsTriggerRef}
+                    type="button"
+                    onClick={onOptionsToggle}
+                    aria-haspopup="dialog"
+                    aria-expanded={optionsOpen}
+                    aria-label={text("打开工具", "Open tools")}
+                    title={text("工具", "Tools")}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                  >
+                    <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+                  </button>
+                )}
                 {isStreaming ? (
                   <Button
                     type="button"
@@ -317,7 +365,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
               <Button
                 type="button"
                 variant="primary"
-                className="h-10 px-4"
+                className="h-10 w-10 rounded-full px-0"
                 onClick={() => {
                   if (sendDisabled) return;
                   onSubmit();
@@ -326,9 +374,10 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                 }}
                 disabled={sendDisabled}
                 aria-label={text("发送", "Send")}
+                title={text("发送", "Send")}
               >
                 <Send className="h-4 w-4" />
-                {text("Enter 发送", "Enter to send")}
+                <span className="sr-only">{text("发送", "Send")}</span>
               </Button>
             </div>
           </div>
@@ -337,3 +386,73 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     );
   },
 );
+
+function AttachmentPreview({
+  attachment,
+  onRemove,
+}: {
+  attachment: ComposerAttachment;
+  onRemove?: (id: string) => void;
+}): JSX.Element {
+  const { text } = useI18n();
+  const sizeLabel = formatAttachmentSize(attachment.sizeBytes);
+  const statusLabel = attachmentStatusLabel(attachment, text);
+  const removeLabel = text(
+    `移除 ${attachment.name}`,
+    `Remove ${attachment.name}`,
+  );
+
+  return (
+    <div className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+      {attachment.kind === "image" && attachment.previewUrl !== null ? (
+        <img
+          src={attachment.previewUrl}
+          alt={attachment.name}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 px-1 text-slate-500">
+          <FileText aria-hidden="true" className="h-4 w-4" />
+          <span className="max-w-full truncate text-[9px] leading-3 text-slate-600">
+            {attachment.name}
+          </span>
+          <span className="text-[8px] leading-3 text-slate-400">{sizeLabel}</span>
+        </div>
+      )}
+      <span
+        className="absolute bottom-1 left-1 max-w-[48px] truncate rounded-full bg-white/90 px-1 text-[8px] leading-3 text-slate-500 shadow-sm"
+        title={statusLabel}
+      >
+        {statusLabel}
+      </span>
+      {onRemove !== undefined && (
+        <button
+          type="button"
+          onClick={() => onRemove(attachment.id)}
+          aria-label={removeLabel}
+          title={removeLabel}
+          className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/75 text-white opacity-100 transition-colors hover:bg-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+        >
+          <X aria-hidden="true" className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function formatAttachmentSize(sizeBytes: number): string {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "0 KB";
+  if (sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentStatusLabel(
+  attachment: ComposerAttachment,
+  text: (zh: string, en: string) => string,
+): string {
+  if (attachment.contentStatus === "ready") {
+    return attachment.truncated ? text("已截取", "Clipped") : text("已读取", "Read");
+  }
+  if (attachment.contentStatus === "error") return text("读取失败", "Failed");
+  return text("仅文件", "File only");
+}

@@ -519,6 +519,8 @@ def stream_agent_chat_run(
                         session=session,
                         principal=principal,
                         mode="chat" if request.mode == "chat" else "codex_plan",
+                        model_provider=request.model_provider,
+                        model_name=request.model_name,
                     )
                 )
                 if request.mode == "codex_plan":
@@ -554,8 +556,8 @@ def stream_agent_chat_run(
                         agent_id=agent_id,
                         goal=goal,
                         title=None,
-                        model_provider="default",
-                        model_name="default",
+                        model_provider=request.model_provider or "default",
+                        model_name=request.model_name or "default",
                         max_runtime_seconds=1800,
                         max_subagents=5,
                         enable_sandbox=True,
@@ -582,6 +584,8 @@ def stream_agent_chat_run(
                         session=session,
                         principal=principal,
                         mode="codex_plan",
+                        model_provider=request.model_provider,
+                        model_name=request.model_name,
                     )
                     yield from workspace_text_events(
                         run=run,
@@ -603,6 +607,8 @@ def stream_agent_chat_run(
                         session=session,
                         principal=principal,
                         mode="chat",
+                        model_provider=request.model_provider,
+                        model_name=request.model_name,
                     )
                     yield from workspace_text_events(
                         run=run,
@@ -1337,6 +1343,8 @@ def _create_workspace_chat_run(
     session: Session,
     principal: Principal,
     mode: Literal["chat", "codex_plan"] = "chat",
+    model_provider: str | None = None,
+    model_name: str | None = None,
 ) -> Task:
     task = Task(
         organization_id=principal.organization_id,
@@ -1344,8 +1352,8 @@ def _create_workspace_chat_run(
         title=_title_from_goal(goal),
         goal=goal,
         status="CREATED",
-        model_provider="default",
-        model_name="default",
+        model_provider=model_provider or "default",
+        model_name=model_name or "default",
         max_runtime_seconds=1800,
         max_subagents=0,
         enable_sandbox=False,
@@ -1386,6 +1394,9 @@ def _workspace_chat_messages(
                 "Answer the user's message directly and naturally. "
                 "Do not create an execution plan unless the user explicitly asks for planning, "
                 "tool use, code execution, or task decomposition. "
+                "When attachments are present, use only the attachment content explicitly provided "
+                "in the conversation context. If an attachment is marked unreadable or content is "
+                "not provided, say you cannot inspect its contents instead of guessing. "
                 f"Current agent id: {agent_id}."
             ),
         )
@@ -1410,6 +1421,9 @@ def _workspace_codex_plan_messages(
                 "Answer with concise markdown planning text only. "
                 "Include assumptions, next steps, and acceptance criteria when useful. "
                 "Do not execute tools or emit operational details. "
+                "When attachments are present, use only the attachment content explicitly provided "
+                "in the conversation context. If an attachment is marked unreadable or content is "
+                "not provided, say you cannot inspect its contents instead of guessing. "
                 f"Current agent id: {agent_id}."
             ),
         )
@@ -1429,12 +1443,64 @@ def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMe
     ]
     pinned = [node for node in request.messages if node.id in pinned_ids and node not in carried]
     messages: list[ModelMessage] = []
+    attachment_context = _workspace_attachment_context(request)
+    if attachment_context:
+        messages.append(
+            ModelMessage(
+                role="system",
+                content=attachment_context,
+            )
+        )
     for node in [*pinned, *carried]:
         role = node.role if node.role in {"user", "assistant", "system"} else "user"
         content = node.content.strip()
         if content:
             messages.append(ModelMessage(role=role, content=content))
     return messages
+
+
+def _workspace_attachment_context(request: AgentChatStreamRequest) -> str:
+    attachments = request.attachments[:12]
+    if not attachments:
+        attachment_names = [
+            name.strip()[:160] for name in request.attachment_names[:12] if name.strip()
+        ]
+        if not attachment_names:
+            return ""
+        return (
+            "User selected attachments, but their contents were not provided to the model. "
+            "Do not infer or fabricate their contents. File names: "
+            + ", ".join(attachment_names)
+        )
+
+    blocks = [
+        "User selected attachments. Use only the explicit content below. "
+        "For any file marked unavailable, do not infer or fabricate its contents."
+    ]
+    for index, attachment in enumerate(attachments, start=1):
+        name = attachment.name.strip()[:160] or f"attachment-{index}"
+        mime_type = attachment.mime_type.strip()[:80] or "unknown"
+        status = attachment.content_status
+        size = attachment.size_bytes
+        if status == "ready" and attachment.content_text:
+            content = attachment.content_text[:120_000]
+            truncated_note = (
+                " (truncated)"
+                if attachment.truncated or len(attachment.content_text) > 120_000
+                else ""
+            )
+            blocks.append(
+                f"\n<attachment index=\"{index}\" name=\"{name}\" mime=\"{mime_type}\" "
+                f"size_bytes=\"{size}\" status=\"readable{truncated_note}\">\n"
+                f"{content}\n</attachment>"
+            )
+        else:
+            reason = "read failed" if status == "error" else "content unavailable to this model"
+            blocks.append(
+                f"\n<attachment index=\"{index}\" name=\"{name}\" mime=\"{mime_type}\" "
+                f"size_bytes=\"{size}\" status=\"unreadable\" reason=\"{reason}\" />"
+            )
+    return "\n".join(blocks)
 
 
 def _require_normal_chat_content(content: str) -> str:

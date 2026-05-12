@@ -74,31 +74,52 @@ class ModelGatewayError(RuntimeError):
 
 
 MODEL_SETTINGS_KEY = "settings.models"
+LEGACY_BUILTIN_PROVIDER_NAMES = {"minimax", "deepseek"}
+LEGACY_BUILTIN_MODEL_NAMES = {
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "MiniMax-M2.7-highspeed",
+}
+DEEPSEEK_CONTEXT_WINDOW_TOKENS = 1_000_000
+DEEPSEEK_MAX_OUTPUT_TOKENS = 384_000
+DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+DEEPSEEK_FLASH_PROVIDER = {
+    "name": "deepseek-flash",
+    "label": "DeepSeek Flash",
+    "status": "healthy",
+    "api_format": "openai",
+    "model": "deepseek-v4-flash",
+    "base_url": DEEPSEEK_BASE_URL,
+    "api_key": "replace-me",
+    "api_key_env": DEEPSEEK_API_KEY_ENV,
+    "model_context_window_tokens": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+    "max_output_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
+    "rate_limit_rpm": 300,
+    "rate_limit_tpm": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+    "timeout_seconds": 60,
+    "health_timeout_seconds": 20,
+    "circuit_breaker": {
+        "failure_threshold": 3,
+        "cooldown_seconds": 60,
+    },
+}
+
+DEEPSEEK_PRO_PROVIDER = {
+    **deepcopy(DEEPSEEK_FLASH_PROVIDER),
+    "name": "deepseek-pro",
+    "label": "DeepSeek Pro",
+    "model": "deepseek-v4-pro",
+}
 
 
 DEFAULT_MODEL_SETTINGS = {
-    "default_provider": "minimax",
-    "default_model": "MiniMax-M2.7-highspeed",
+    "default_provider": "deepseek-flash",
+    "default_model": "deepseek-v4-flash",
     "providers": [
-        {
-            "name": "minimax",
-            "label": "MiniMax Anthropic Compatible",
-            "status": "healthy",
-            "api_format": "anthropic",
-            "model": "MiniMax-M2.7-highspeed",
-            "base_url": "https://api.minimaxi.com/anthropic",
-            "api_key": "replace-me",
-            "api_key_env": "MINIMAX_API_KEY",
-            "model_context_window_tokens": 400000,
-            "rate_limit_rpm": 300,
-            "rate_limit_tpm": 400000,
-            "timeout_seconds": 60,
-            "health_timeout_seconds": 5,
-            "circuit_breaker": {
-                "failure_threshold": 3,
-                "cooldown_seconds": 60,
-            },
-        },
+        DEEPSEEK_FLASH_PROVIDER,
+        DEEPSEEK_PRO_PROVIDER,
         {
             "name": "openai-compatible",
             "status": "healthy",
@@ -136,21 +157,30 @@ def normalize_model_settings(settings: dict | None) -> dict:
     normalized.setdefault("rate_limits", defaults["rate_limits"])
     normalized.setdefault("health", defaults["health"])
     normalized.setdefault("circuit_breaker", defaults["circuit_breaker"])
+    if normalized.get("default_provider") in LEGACY_BUILTIN_PROVIDER_NAMES:
+        normalized["default_provider"] = defaults["default_provider"]
+    if normalized.get("default_model") in LEGACY_BUILTIN_MODEL_NAMES:
+        normalized["default_model"] = defaults["default_model"]
 
     providers = normalized["providers"]
     if not isinstance(providers, list):
         providers = []
         normalized["providers"] = providers
-    minimax_default = next(
+    providers[:] = [
         provider
-        for provider in defaults["providers"]
-        if provider.get("name") == "minimax"
-    )
-    _upsert_minimax_provider(providers=providers, default_provider=minimax_default)
+        for provider in providers
+        if not (
+            isinstance(provider, dict)
+            and provider.get("name") in LEGACY_BUILTIN_PROVIDER_NAMES
+        )
+    ]
+    for provider in defaults["providers"]:
+        if provider.get("name") in {"deepseek-flash", "deepseek-pro"}:
+            _upsert_builtin_deepseek_provider(providers=providers, default_provider=provider)
     return normalized
 
 
-def _upsert_minimax_provider(*, providers: list, default_provider: dict) -> None:
+def _upsert_builtin_deepseek_provider(*, providers: list, default_provider: dict) -> None:
     forced_keys = {
         "label",
         "api_format",
@@ -158,16 +188,18 @@ def _upsert_minimax_provider(*, providers: list, default_provider: dict) -> None
         "base_url",
         "api_key_env",
         "model_context_window_tokens",
+        "max_output_tokens",
         "rate_limit_tpm",
+        "health_timeout_seconds",
     }
     for index, provider in enumerate(providers):
-        if isinstance(provider, dict) and provider.get("name") == "minimax":
+        if isinstance(provider, dict) and provider.get("name") == default_provider["name"]:
             merged = {**deepcopy(default_provider), **deepcopy(provider)}
             for key in forced_keys:
                 merged[key] = deepcopy(default_provider[key])
             providers[index] = merged
             return
-    providers.insert(0, deepcopy(default_provider))
+    providers.append(deepcopy(default_provider))
 
 
 @dataclass(frozen=True)
@@ -356,11 +388,7 @@ class OpenAICompatibleModelGateway:
             model_call_duration_seconds.observe(time.monotonic() - started_at)
             return response
 
-        payload = {
-            "model": request_payload.model_name,
-            "messages": [message.model_dump() for message in request_payload.messages],
-            "response_format": {"type": request_payload.response_format},
-        }
+        payload = self._payload(request_payload)
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -374,7 +402,10 @@ class OpenAICompatibleModelGateway:
         try:
             with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
                 raw = json.loads(response.read().decode("utf-8"))
-        except (OSError, error.HTTPError, json.JSONDecodeError) as exc:
+        except error.HTTPError as exc:
+            model_call_errors_total.inc()
+            raise ModelGatewayError(self._format_http_error(exc)) from exc
+        except (OSError, json.JSONDecodeError) as exc:
             model_call_errors_total.inc()
             raise ModelGatewayError(str(exc)) from exc
 
@@ -419,13 +450,7 @@ class OpenAICompatibleModelGateway:
             model_call_duration_seconds.observe(time.monotonic() - started_at)
             return
 
-        payload = {
-            "model": request_payload.model_name,
-            "messages": [message.model_dump() for message in request_payload.messages],
-            "response_format": {"type": request_payload.response_format},
-            "stream": True,
-            "stream_options": {"include_usage": True},
-        }
+        payload = self._payload(request_payload, stream=True)
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -470,7 +495,10 @@ class OpenAICompatibleModelGateway:
                     frame_usage = frame.get("usage")
                     if isinstance(frame_usage, dict):
                         usage = frame_usage
-        except (OSError, error.HTTPError, json.JSONDecodeError) as exc:
+        except error.HTTPError as exc:
+            model_call_errors_total.inc()
+            raise ModelGatewayError(self._format_http_error(exc)) from exc
+        except (OSError, json.JSONDecodeError) as exc:
             model_call_errors_total.inc()
             raise ModelGatewayError(str(exc)) from exc
 
@@ -493,6 +521,39 @@ class OpenAICompatibleModelGateway:
             raw_response=raw_last or {"stream": "openai_compatible"},
             done=True,
         )
+
+    def _payload(self, request_payload: ModelRequest, *, stream: bool = False) -> dict:
+        payload: dict = {
+            "model": request_payload.model_name,
+            "messages": [message.model_dump() for message in request_payload.messages],
+        }
+        response_format = self._response_format_payload(request_payload.response_format)
+        if response_format is not None:
+            payload["response_format"] = response_format
+        if stream:
+            payload["stream"] = True
+            payload["stream_options"] = {"include_usage": True}
+        return payload
+
+    def _response_format_payload(self, response_format: str) -> dict | None:
+        normalized = response_format.strip().lower()
+        if normalized in {"", "text"}:
+            return None
+        if normalized in {"json", "json_object"}:
+            return {"type": "json_object"}
+        return {"type": normalized}
+
+    def _format_http_error(self, exc: error.HTTPError) -> str:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except OSError:
+            body = ""
+        detail = body.strip()
+        if len(detail) > 500:
+            detail = f"{detail[:500]}..."
+        if detail:
+            return f"upstream model gateway returned HTTP {exc.code}: {detail}"
+        return f"upstream model gateway returned HTTP {exc.code}: {exc.reason}"
 
 
 class AnthropicCompatibleModelGateway:
@@ -812,6 +873,7 @@ class ModelHealthChecker:
                         ModelRequest(
                             model_provider=provider_name,
                             model_name=model_name,
+                            response_format="text",
                             messages=[
                                 ModelMessage(
                                     role="user",
@@ -1311,8 +1373,21 @@ def provider_api_key(provider: dict) -> str | None:
         return api_key
     api_key_env = provider.get("api_key_env")
     if isinstance(api_key_env, str) and api_key_env:
-        return os.environ.get(api_key_env) or api_key
+        env_value = os.environ.get(api_key_env)
+        if env_value:
+            return env_value
+        settings_value = _settings_api_key_for_env(api_key_env)
+        if settings_value:
+            return settings_value
+        return api_key
     return api_key if isinstance(api_key, str) else None
+
+
+def _settings_api_key_for_env(api_key_env: str) -> str | None:
+    settings = get_settings()
+    if api_key_env == DEEPSEEK_API_KEY_ENV:
+        return settings.deepseek_api_key or None
+    return None
 
 
 def model_gateway_for_provider(

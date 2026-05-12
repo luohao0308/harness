@@ -42,8 +42,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const locale = useConsoleStore((state) => state.locale);
   const setLocale = useConsoleStore((state) => state.setLocale);
   const isChinese = locale === "zh-CN";
-  const isWorkspaceRoute =
-    location.pathname.includes("/workspace") || location.pathname.includes("/chat");
+  const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
 
   useEffect(() => {

@@ -67,7 +67,7 @@ services:
       OTEL_COLLECTOR_HTTP_URL: http://otel-collector:13133
       TEMPO_BASE_URL: http://tempo:3200
       OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
@@ -85,7 +85,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   agent-runtime-image:
     image: agent-runtime:latest
@@ -107,7 +107,7 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   agent-assignment-worker:
     image: agent-harness-api-server:latest
@@ -123,7 +123,7 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   subagent-recovery:
     image: agent-harness-api-server:latest
@@ -140,7 +140,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       SUBAGENT_RECOVERY_METRICS_PORT: 9102
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     expose:
       - "9102"
 
@@ -158,7 +158,7 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       DOCKER_HOST: unix:///var/run/docker.sock
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-workspaces:/var/lib/agent-harness/workspaces
@@ -177,7 +177,7 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       DOCKER_HOST: unix:///var/run/docker.sock
-      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-workspaces:/var/lib/agent-harness/workspaces

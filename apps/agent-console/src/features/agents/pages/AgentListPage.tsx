@@ -59,7 +59,7 @@ export function AgentListPage() {
             icon={<Brain className="h-4 w-4" />}
             title={text("Model", "Model")}
             status={text("API 已接入", "API-backed")}
-            description={text("MiniMax 默认预置，自定义模型通过模型设置保存。", "MiniMax preset and custom providers are saved in Model Settings.")}
+            description={text("DeepSeek 默认预置，自定义模型通过模型设置保存。", "DeepSeek presets and custom providers are saved in Model Settings.")}
             to="/settings/models"
           />
           <StudioCapability

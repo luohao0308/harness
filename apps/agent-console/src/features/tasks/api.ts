@@ -166,9 +166,20 @@ export type ToolMention = {
   payload: Record<string, unknown>;
 };
 
+export type AgentAttachmentPayload = {
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  content_text?: string | null;
+  content_status: "ready" | "unsupported" | "error";
+  truncated?: boolean;
+};
+
 export type AgentChatStreamPayload = {
   mode?: "chat" | "codex_plan" | "plan";
   goal?: string | null;
+  model_provider?: string | null;
+  model_name?: string | null;
   messages: AgentChatStreamMessage[];
   active_leaf_id?: string | null;
   run_id?: string | null;
@@ -178,6 +189,8 @@ export type AgentChatStreamPayload = {
   continue_from_node_id?: string | null;
   partial_assistant_content?: string | null;
   tool_mentions?: ToolMention[];
+  attachment_names?: string[];
+  attachments?: AgentAttachmentPayload[];
   /**
    * v4 additive UI-side token budget hint. Backend ignores this field
    * today (Pydantic `extra="ignore"`); it is surfaced so future

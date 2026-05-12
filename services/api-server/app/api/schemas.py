@@ -153,6 +153,18 @@ class ToolMention(BaseModel):
     payload: dict = Field(default_factory=dict, description="结构化 mention 载荷")
 
 
+class AttachmentPayload(BaseModel):
+    name: str = Field(description="附件文件名")
+    mime_type: str = Field(default="", description="附件 MIME 类型")
+    size_bytes: int = Field(default=0, ge=0, description="附件大小")
+    content_text: str | None = Field(default=None, description="可读文本内容")
+    content_status: Literal["ready", "unsupported", "error"] = Field(
+        default="unsupported",
+        description="前端读取内容状态",
+    )
+    truncated: bool = Field(default=False, description="内容是否被前端截断")
+
+
 class AgentChatStreamRequest(BaseModel):
     """Accept unknown extra fields (v4 additive `context_max_tokens`, etc.)."""
 
@@ -163,6 +175,8 @@ class AgentChatStreamRequest(BaseModel):
         description="Workspace 输入模式",
     )
     goal: str | None = Field(default=None, description="用户目标")
+    model_provider: str | None = Field(default=None, description="本次请求选择的模型供应商")
+    model_name: str | None = Field(default=None, description="本次请求选择的模型名称")
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
     run_id: str | None = Field(default=None, description="继续生成时绑定的原始 Agent Run ID")
@@ -172,6 +186,11 @@ class AgentChatStreamRequest(BaseModel):
     continue_from_node_id: str | None = Field(default=None, description="继续生成的节点 ID")
     partial_assistant_content: str | None = Field(default=None, description="已生成的片段")
     tool_mentions: list[ToolMention] = Field(default_factory=list, description="结构化工具 mention")
+    attachment_names: list[str] = Field(default_factory=list, description="前端选择的附件文件名")
+    attachments: list[AttachmentPayload] = Field(
+        default_factory=list,
+        description="前端读取后的附件内容摘要",
+    )
     # v4 additive: UI-side token budget hint. Optional; backend is free to
     # ignore. See agent-workspace-chat-v4-refine/design.md §Req 5.5.
     context_max_tokens: int | None = Field(

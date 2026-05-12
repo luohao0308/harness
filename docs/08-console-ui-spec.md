@@ -13,7 +13,7 @@ This document is a current reference, not a frozen component contract. Equivalen
 | `/agents/:agentId/workspace` | Agent Workspace Pro | Active |
 | `/runs` | Agent Run history | Active |
 | `/runs/:runId` | Agent Run detail | Active |
-| `/settings/models` | Model settings with MiniMax preset | Active |
+| `/settings/models` | Model settings with DeepSeek presets | Active |
 | `/tools` | Tool and MCP registry | Active |
 | `/observability` | Event, latency, cost, health | Active |
 | `/evals` | Eval Harness | Active |
@@ -105,7 +105,7 @@ type ConversationNode = {
 Shows Explorer state:
 
 - Active model provider and model name
-- MiniMax built-in preset state
+- DeepSeek built-in preset state
 - Tool Tray from API registry
 - MCP-shaped tools with source labels
 - Context window slider

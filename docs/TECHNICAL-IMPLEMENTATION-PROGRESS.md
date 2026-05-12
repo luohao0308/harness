@@ -37,9 +37,9 @@ The public website is retained as a public shell. Console and backend implementa
 - Reworked console routing from Task creation to Run history and Agent Workspace.
 - Added new Run History and Run Detail pages.
 - Reworked Agent Workspace into a chat-first control console.
-- Preserved MiniMax Anthropic-compatible model support.
-- Unified MiniMax context window metadata at `400000` tokens.
-- Added MiniMax built-in preset normalization for legacy persisted settings.
+- Preserved DeepSeek OpenAI-compatible model support.
+- Unified DeepSeek context window metadata at `1000000` tokens.
+- Added DeepSeek built-in preset normalization for legacy persisted built-in provider settings.
 - Upgraded Agent Studio with configuration surfaces for Model, Tools/MCP, Prompt, RAG, Templates, and Orchestration.
 - Upgraded Tool Runtime page with Registry, Policy, Sandbox, MCP, and disabled Trigger surfaces.
 - Added replay-to-sequence UI to Run Detail and fixed Observability Run deep links.
@@ -78,7 +78,7 @@ cd apps/agent-console && npm run build -> passed
 python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
-Docker runtime verification -> MiniMax healthy/probe and context 400000
+Docker runtime verification -> DeepSeek healthy/probe and context 1000000
 ```
 
 ## Open Items

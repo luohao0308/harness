@@ -25,7 +25,7 @@ Users create and configure Agents.
 Reference surfaces:
 
 - Model selection and provider configuration
-- Built-in MiniMax model preset
+- Built-in DeepSeek Flash and Pro model presets
 - System Prompt management
 - Tool and MCP connection selection
 - Sandbox and permission profile selection
@@ -137,7 +137,7 @@ Open Agent Studio
 
 - `Agent Run` is the user-facing execution object.
 - `Task` appears only as internal database compatibility language.
-- MiniMax is the default built-in model preset.
+- DeepSeek Flash is the default built-in model preset, with DeepSeek Pro available as a built-in switch target.
 - Console data comes from backend APIs.
 - Unsupported future modules render disabled entries with backend-backed readiness state.
 - Website remains as public information shell and does not define console product behavior.
