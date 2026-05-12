@@ -36,7 +36,7 @@ export function buildActivePath(
 }
 
 /**
- * Format the "<provider> / <model>" label shown in the TopMetaBar.
+ * Format the model label shown in compact Workspace chips.
  * Falls back to the global model-settings defaults when the agent was
  * defined with the sentinel `model_provider === "default"` (Req 8.5).
  */
@@ -45,11 +45,10 @@ export function deriveModelLabel(
   settings: ModelSettings | undefined,
 ): string {
   if (agent && agent.model_provider !== "default") {
-    return `${agent.model_provider} / ${agent.model_name}`;
+    return agent.model_name;
   }
-  const provider = settings?.default_provider ?? agent?.model_provider ?? "default";
   const model = settings?.default_model ?? agent?.model_name ?? "default";
-  return `${provider} / ${model}`;
+  return model;
 }
 
 /**

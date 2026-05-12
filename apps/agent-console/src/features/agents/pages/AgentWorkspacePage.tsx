@@ -89,19 +89,25 @@ export function AgentWorkspacePage() {
     () => deriveModelLabel(agent.data, settings.data),
     [agent.data, settings.data],
   );
-  const selectedModelLabel = useMemo(
-    () =>
-      selectedProviderId !== null && selectedModelId !== null
-        ? `${selectedProviderId} / ${selectedModelId}`
-        : defaultModelLabel,
-    [defaultModelLabel, selectedModelId, selectedProviderId],
-  );
-  const modelLabelIsFallback = settings.isError || settings.data === undefined;
-
   const providers = useMemo<ModelOption[]>(
     () => deriveModelOptions(settings.data),
     [settings.data],
   );
+  const selectedModelLabel = useMemo(
+    () => {
+      if (selectedProviderId === null || selectedModelId === null) {
+        return defaultModelLabel;
+      }
+      const selected = providers.find(
+        (option) =>
+          option.providerId === selectedProviderId &&
+          option.modelId === selectedModelId,
+      );
+      return selected?.modelLabel ?? selectedModelId;
+    },
+    [defaultModelLabel, providers, selectedModelId, selectedProviderId],
+  );
+  const modelLabelIsFallback = settings.isError || settings.data === undefined;
 
   const tools = useMemo(() => toolsQuery.data?.items ?? [], [toolsQuery.data]);
   const stream = useChatStream({

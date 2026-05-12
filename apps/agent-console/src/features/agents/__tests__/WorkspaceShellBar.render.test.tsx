@@ -1,9 +1,61 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { useConsoleStore } from "../../../stores/consoleStore";
 import { WorkspaceShellBar } from "../components/WorkspaceShellBar";
+import type { ModelOption } from "../components/ModelPicker";
+import type { ToolMetadata } from "../../tasks/api";
+
+const providers: ModelOption[] = [
+  {
+    providerId: "deepseek-flash",
+    providerLabel: "DeepSeek Flash",
+    modelId: "deepseek-v4-flash",
+    modelLabel: "deepseek-v4-flash",
+  },
+  {
+    providerId: "deepseek-pro",
+    providerLabel: "DeepSeek Pro",
+    modelId: "deepseek-v4-pro",
+    modelLabel: "deepseek-v4-pro",
+  },
+];
+
+const tools: ToolMetadata[] = [
+  {
+    name: "read_file",
+    description: "Read a file",
+    category: "filesystem",
+    source: "builtin",
+    risk_level: "low",
+    requires_sandbox: false,
+    network_policy: "none",
+    timeout_seconds: 30,
+    allowed_roles: ["engineer"],
+    audit_level: "standard",
+    idempotent: true,
+    input_schema: {},
+    mcp_server: null,
+    mcp_method: null,
+  },
+  {
+    name: "github_search",
+    description: "Search GitHub",
+    category: "mcp",
+    source: "mcp",
+    risk_level: "low",
+    requires_sandbox: false,
+    network_policy: "restricted",
+    timeout_seconds: 30,
+    allowed_roles: ["engineer"],
+    audit_level: "standard",
+    idempotent: true,
+    input_schema: {},
+    mcp_server: "github",
+    mcp_method: "search",
+  },
+];
 
 function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]> = {}) {
   const props: Parameters<typeof WorkspaceShellBar>[0] = {
@@ -11,7 +63,15 @@ function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]>
     agentName: "Default Agent",
     activeRunId: null,
     runStatus: undefined,
+    modelLabel: "deepseek-v4-flash",
+    modelLabelIsFallback: false,
+    tools,
+    providers,
+    selectedProviderId: "deepseek-flash",
+    selectedModelId: "deepseek-v4-flash",
     isStreaming: false,
+    onModelChange: vi.fn(),
+    onInsertToolMention: vi.fn(),
     onOpenInspector: vi.fn(),
     onStop: vi.fn(),
     ...overrides,
@@ -37,6 +97,16 @@ describe("WorkspaceShellBar", () => {
     );
     expect(screen.getByText("Default Agent")).toBeInTheDocument();
     expect(screen.getByText(/Model \+ Harness = Agent/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Current model: deepseek-v4-flash",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Tools/MCP: 2 available",
+      }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Model:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Context:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Tools:/ })).not.toBeInTheDocument();
@@ -56,5 +126,35 @@ describe("WorkspaceShellBar", () => {
       "/runs/run-123",
     );
     expect(screen.getByText("WAITING_APPROVAL")).toBeInTheDocument();
+  });
+
+  it("opens header model picker and tools capabilities from lightweight proof chips", () => {
+    useConsoleStore.getState().setLocale("en-US");
+    const props = renderShell();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Current model: deepseek-v4-flash",
+      }),
+    );
+    expect(screen.getByRole("listbox", { name: "Switch model" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("listbox", { name: "Switch model" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.keyDown(screen.getByRole("listbox", { name: "Switch model" }), {
+      key: "Enter",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Tools/MCP: 2 available",
+      }),
+    );
+    expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+    expect(screen.queryByText("Tool capabilities")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plugins / MCP")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /@read_file/ }));
+
+    expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
+    expect(props.onInsertToolMention).toHaveBeenCalledWith("read_file");
   });
 });

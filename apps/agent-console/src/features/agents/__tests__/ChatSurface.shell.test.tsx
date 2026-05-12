@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type JSX } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -43,6 +43,22 @@ const tools: ToolMetadata[] = [
     mcp_server: null,
     mcp_method: null,
   },
+  {
+    name: "github_search",
+    description: "Search GitHub issues",
+    category: "mcp",
+    source: "mcp",
+    risk_level: "low",
+    requires_sandbox: false,
+    network_policy: "restricted",
+    timeout_seconds: 30,
+    allowed_roles: ["engineer"],
+    audit_level: "standard",
+    idempotent: true,
+    input_schema: {},
+    mcp_server: "github",
+    mcp_method: "search",
+  },
 ];
 
 function streamController(): ChatStreamController {
@@ -62,7 +78,7 @@ function renderSurface(
   const baseProps: Parameters<typeof ChatSurface>[0] = {
     agentId: "default",
     agentName: "Default Agent",
-    modelLabel: "deepseek-flash / deepseek-v4-flash",
+    modelLabel: "deepseek-v4-flash",
     modelLabelIsFallback: false,
     workspaceMode: "chat",
     onWorkspaceModeChange: vi.fn(),
@@ -109,7 +125,7 @@ function renderSurface(
     const [selectedModelId, setSelectedModelId] = useState(baseProps.selectedModelId);
     const modelLabel =
       selectedProviderId !== null && selectedModelId !== null
-        ? `${selectedProviderId} / ${selectedModelId}`
+        ? selectedModelId
         : baseProps.modelLabel;
 
     return (
@@ -162,7 +178,7 @@ describe("ChatSurface Workspace shell integration", () => {
     });
   });
 
-  it("opens the compact tools panel from the composer button, not the top shell", async () => {
+  it("opens icon-only composer settings with plugins but without tool capabilities", async () => {
     const user = userEvent.setup();
     renderSurface();
 
@@ -170,14 +186,47 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.queryByRole("button", { name: /^Context:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Tools:/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Open tools" }));
-    const toolsPanel = screen.getByRole("dialog", { name: "Tools" });
-    expect(toolsPanel).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
+    const settingsPanel = screen.getByRole("dialog", { name: "Composer settings" });
+    expect(settingsPanel).toBeInTheDocument();
+    expect(settingsPanel).not.toHaveTextContent("Composer settings");
     expect(screen.queryByRole("dialog", { name: "Options" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add photos and files" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Include IDE context" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Plan mode" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Plugins" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plugins / MCP" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /@read_file/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the header model picker and top tools panel from shell chips", async () => {
+    const user = userEvent.setup();
+    const props = renderSurface();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Current model: deepseek-v4-flash",
+      }),
+    );
+    expect(screen.getByRole("listbox", { name: "Switch model" })).toBeInTheDocument();
+
+    const headerModelList = screen.getByRole("listbox", { name: "Switch model" });
+    fireEvent.keyDown(headerModelList, { key: "ArrowDown" });
+    fireEvent.keyDown(headerModelList, { key: "Enter" });
+    expect(props.onRequestModelPicker).not.toHaveBeenCalled();
+    expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
+    expect(screen.queryByRole("listbox", { name: "Switch model" })).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Tools/MCP: 2 available",
+      }),
+    );
+    expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+    expect(screen.queryByText("Tool capabilities")).not.toBeInTheDocument();
+    expect(screen.queryByText("Plugins / MCP")).not.toBeInTheDocument();
+    expect(screen.queryByText("github.search")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /@read_file/ }));
+    expect(screen.getByPlaceholderText("Chat with the agent")).toHaveValue("@read_file ");
   });
 
   it("opens the native file picker from the compact tools panel", async () => {
@@ -187,7 +236,7 @@ describe("ChatSurface Workspace shell integration", () => {
       .mockImplementation(() => undefined);
     renderSurface();
 
-    await user.click(screen.getByRole("button", { name: "Open tools" }));
+    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
     await user.click(screen.getByRole("button", { name: "Add photos and files" }));
 
     expect(inputClick).toHaveBeenCalledTimes(1);
@@ -257,15 +306,24 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.getByRole("menuitem", { name: "Runtime" })).toBeInTheDocument();
   });
 
-  it("expands plugins inside the compact tools panel and inserts a mention", async () => {
+  it("keeps tools in the top panel and MCP plugins in composer settings", async () => {
     const user = userEvent.setup();
     renderSurface();
 
-    await user.click(screen.getByRole("button", { name: "Open tools" }));
-    await user.click(screen.getByRole("button", { name: "Plugins" }));
-    await user.click(screen.getByRole("button", { name: "@read_file" }));
+    await user.click(screen.getByRole("button", { name: "Tools/MCP: 2 available" }));
+    await user.click(screen.getByRole("button", { name: /@read_file/ }));
 
     expect(screen.getByPlaceholderText("Chat with the agent")).toHaveValue("@read_file ");
+
+    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
+    await user.click(screen.getByRole("button", { name: "Plugins / MCP" }));
+    expect(screen.getByText("github.search")).toBeInTheDocument();
+    const githubButtons = screen.getAllByRole("button", { name: /@github_search/ });
+    await user.click(githubButtons[githubButtons.length - 1]);
+
+    expect(screen.getByPlaceholderText("Chat with the agent")).toHaveValue(
+      "@read_file @github_search ",
+    );
   });
 
   it("uses markdown planning mode from the compact plan switch", async () => {
@@ -273,7 +331,7 @@ describe("ChatSurface Workspace shell integration", () => {
     const stream = streamController();
     const props = renderSurface({ stream });
 
-    await user.click(screen.getByRole("button", { name: "Open tools" }));
+    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
     const planSwitch = screen.getByRole("switch", { name: "Plan mode" });
     expect(planSwitch).toHaveClass("inline-flex", "shrink-0");
     await user.click(planSwitch);
@@ -302,9 +360,9 @@ describe("ChatSurface Workspace shell integration", () => {
     await user.keyboard("{Enter}");
 
     expect(screen.getByRole("dialog", { name: "Switch model" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /DeepSeek Pro/ }));
+    await user.click(screen.getByRole("option", { name: /DeepSeek Pro/ }));
 
-    expect(props.onRequestModelPicker).toHaveBeenCalledTimes(1);
+    expect(props.onRequestModelPicker).not.toHaveBeenCalled();
     expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
     expect(screen.queryByRole("dialog", { name: "Switch model" })).not.toBeInTheDocument();
   });
