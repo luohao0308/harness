@@ -20,7 +20,9 @@ describe("ConsoleShell", () => {
     expect(screen.getByText("Workspace child")).toBeInTheDocument();
     expect(screen.getByText("Console")).toBeInTheDocument();
     expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
-    expect(screen.getByLabelText("Expand sidebar")).toBeInTheDocument();
+    const sidebarToggle = screen.getByLabelText("Sidebar collapsed");
+    expect(sidebarToggle).toBeInTheDocument();
+    expect(sidebarToggle).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByLabelText("Search")).toBeInTheDocument();
   });
 });
