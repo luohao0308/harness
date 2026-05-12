@@ -115,6 +115,26 @@ stages:
       - Primary run-create endpoint now handles invalid model plan output through repair/deterministic planning and canonical smoke uses POST /api/agents/default/runs directly.
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
+post_stage_hardening:
+  - id: workspace-browser-e2e-smoke
+    date: 2026-05-13
+    status: completed
+    demo: Playwright smoke validates the Agent Workspace demo shell in Chromium at desktop and 390px widths.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm run e2e:install
+      - cd apps/agent-console && npm run e2e:smoke
+      - cd apps/agent-console && npm test -- WorkspaceShellBar.render.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm test
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_cors.py
+      - git diff --check
+    acceptance_notes:
+      - Browser smoke covers header Model picker, top Tools panel, composer settings, Plugins/MCP, slash /model, Plan mode, backend connection error display, and 390px overflow.
+      - Workspace and narrow console chrome stay compact so chat space remains primary.
+      - Non-Workspace browser e2e coverage remains deferred.
+
 stage_completion_rule:
   - run_backend_tests
   - run_frontend_build
