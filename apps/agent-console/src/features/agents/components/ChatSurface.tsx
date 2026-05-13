@@ -366,14 +366,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         role: "assistant",
         content: "",
         state: "streaming",
-        metadata: { workspace_mode: "plan" },
+        metadata: { workspace_mode: "chat" },
         tool_calls: [],
         artifacts: [],
       });
       await stream.driveBranch({
         assistantNodeId: newAssistantId,
         goal: planNode.content,
-        mode: "plan",
+        mode: "chat",
       });
     } finally {
       setPlanSubmitting(false);
