@@ -112,7 +112,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             </div>
           </Card>
 
-          <Card>
+          <Card id="plan">
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <GitBranch className="h-4 w-4" />
@@ -152,7 +152,9 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             </div>
           </Card>
 
-          <ToolCallsTable toolCalls={data?.tool_calls ?? []} />
+          <div id="tool-runtime">
+            <ToolCallsTable toolCalls={data?.tool_calls ?? []} />
+          </div>
         </section>
 
         <aside className="col-span-4 space-y-4">
@@ -164,11 +166,13 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             onSequenceChange={setReplaySequence}
             onReplay={() => replay.mutate()}
           />
+          <div id="approvals">
           <ApprovalsPanel
             approvals={data?.approvals ?? []}
             onApprove={(id) => approve.mutate(id)}
             onReject={(id) => reject.mutate(id)}
           />
+          </div>
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -190,7 +194,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 : (data?.events ?? []).map((event) => <EventRow key={event.id} event={event} />)}
             </div>
           </Card>
-          <Card>
+          <Card id="model-calls">
             <CardHeader>
               <div className="text-sm font-semibold text-slate-900">Model Calls</div>
               <span className="text-xs text-slate-500">{data?.model_calls.length ?? 0}</span>
