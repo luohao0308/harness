@@ -35,6 +35,10 @@ export function buildActivePath(
   return path.reverse();
 }
 
+export function isNodeVisibleInPath(path: readonly ConversationNode[], nodeId: string): boolean {
+  return path.some((node) => node.id === nodeId);
+}
+
 /**
  * Format the model label shown in compact Workspace chips.
  * Falls back to the global model-settings defaults when the agent was

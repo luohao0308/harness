@@ -436,6 +436,7 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
             TaskPlanStepState(
                 step_key=step_key,
                 description=str(raw_step.get("description", "")),
+                depends_on=_string_list(raw_step.get("depends_on")),
                 execution_mode=str(raw_step.get("execution_mode", "")),
                 requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
                 can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),

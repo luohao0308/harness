@@ -1,5 +1,8 @@
+import hashlib
 import json
+import re
 import time
+import unicodedata
 from collections.abc import Iterator
 from typing import Annotated, Literal
 
@@ -47,6 +50,8 @@ from app.api.schemas import (
     TaskResponse,
     ToolApprovalResponse,
     ToolCallResponse,
+    WorkspaceContextCompressionRequest,
+    WorkspaceContextCompressionResponse,
 )
 from app.db.models import (
     Agent,
@@ -72,6 +77,11 @@ from app.tools.runner import ToolExecution, ToolRunner
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+
+SUMMARY_SCHEMA_VERSION = "workspace-context-summary-v1"
+COMPRESSION_PROMPT_VERSION = "workspace-context-compression-v1"
+CJK_TOKEN_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+ASCII_WORD_RE = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
 
 
 # ---------------------------------------------------------------------------
@@ -339,16 +349,31 @@ def stream_agent_chat_run(
         return "Start a normal assistant conversation."
 
     def estimated_input_tokens() -> int:
-        pinned = {node.id for node in request.messages if node.id in set(request.pinned_node_ids)}
+        pinned = {
+            node.id for node in request.messages if node.id in set(request.pinned_node_ids)
+        }
+        coverage_ids = (
+            set(request.compressed_context.coverage_node_ids)
+            if request.compressed_context is not None
+            else set()
+        )
         carried = [
             node
             for node in request.messages[-request.context_window_turns :]
             if node.role in {"user", "assistant", "system"}
+            and (node.id in pinned or node.id not in coverage_ids)
         ]
         pinned_nodes = [
             node for node in request.messages if node.id in pinned and node not in carried
         ]
-        content_length = sum(len(node.content) for node in [*pinned_nodes, *carried])
+        summary_length = (
+            len(request.compressed_context.summary)
+            if request.compressed_context is not None
+            else 0
+        )
+        content_length = summary_length + sum(
+            len(node.content) for node in [*pinned_nodes, *carried]
+        )
         return max(1, content_length // 4)
 
     def requested_tool_payload(
@@ -768,6 +793,193 @@ def stream_agent_chat_run(
         )
 
     return StreamingResponse(iterator(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+@router.post(
+    "/{agent_id}/context/compress",
+    response_model=WorkspaceContextCompressionResponse,
+    summary="压缩 Workspace 对话上下文",
+)
+def compress_agent_workspace_context(
+    agent_id: str,
+    request: WorkspaceContextCompressionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> WorkspaceContextCompressionResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+
+    now = utc_now()
+    provider = _normalize_model_id(request.model_provider or "default")
+    model = _normalize_model_id(request.model_name or "default")
+    prior_provider = _normalize_model_id(request.compressor_provider or provider)
+    prior_model = _normalize_model_id(request.compressor_model or model)
+    pinned_ids = set(request.pinned_node_ids)
+    eligible = [
+        node
+        for node in request.messages
+        if node.role in {"user", "assistant", "system"}
+        and node.id not in pinned_ids
+        and node.content.strip()
+    ]
+    coverage_node_ids = [node.id for node in eligible]
+    coverage_path_hash = _workspace_context_path_hash(eligible)
+    estimated_original_tokens = _estimate_nodes_tokens(eligible)
+    estimated_uncovered_tokens = _estimate_nodes_tokens(
+        [
+            node
+            for node in request.messages
+            if node.role in {"user", "assistant", "system"}
+            and node.id not in set(coverage_node_ids)
+            and node.content.strip()
+        ]
+    )
+
+    validation_status: Literal["ok", "missing_raw_nodes", "hash_mismatch"] = "ok"
+    if request.prior_coverage_node_ids:
+        raw_ids = {node.id for node in request.messages}
+        if any(node_id not in raw_ids for node_id in request.prior_coverage_node_ids):
+            validation_status = "missing_raw_nodes"
+        elif (
+            request.prior_coverage_path_hash
+            and request.prior_coverage_path_hash != coverage_path_hash
+        ):
+            validation_status = "hash_mismatch"
+        elif request.summary_schema_version != SUMMARY_SCHEMA_VERSION:
+            validation_status = "hash_mismatch"
+        elif request.compression_prompt_version != COMPRESSION_PROMPT_VERSION:
+            validation_status = "hash_mismatch"
+        elif prior_provider != provider or prior_model != model:
+            validation_status = "hash_mismatch"
+
+    if (
+        validation_status == "ok"
+        and request.existing_summary
+        and request.prior_coverage_node_ids == coverage_node_ids
+        and request.prior_coverage_path_hash == coverage_path_hash
+    ):
+        summary = request.existing_summary.strip()
+        return WorkspaceContextCompressionResponse(
+            status="ok",
+            cache_status="accepted",
+            summary=summary,
+            coverage_node_ids=coverage_node_ids,
+            coverage_path_hash=coverage_path_hash,
+            last_covered_node_id=coverage_node_ids[-1] if coverage_node_ids else None,
+            summary_schema_version=SUMMARY_SCHEMA_VERSION,
+            compression_prompt_version=COMPRESSION_PROMPT_VERSION,
+            compressor_provider=provider,
+            compressor_model=model,
+            estimated_original_tokens=estimated_original_tokens,
+            estimated_summary_tokens=max(1, len(summary) // 4) if summary else 0,
+            estimated_uncovered_tokens=estimated_uncovered_tokens,
+            created_at=now,
+            updated_at=now,
+            error=None,
+        )
+
+    if not eligible:
+        return WorkspaceContextCompressionResponse(
+            status="missing_raw_nodes",
+            cache_status="error",
+            summary="",
+            coverage_node_ids=[],
+            coverage_path_hash="",
+            last_covered_node_id=None,
+            summary_schema_version=SUMMARY_SCHEMA_VERSION,
+            compression_prompt_version=COMPRESSION_PROMPT_VERSION,
+            compressor_provider=provider,
+            compressor_model=model,
+            estimated_original_tokens=0,
+            estimated_summary_tokens=0,
+            estimated_uncovered_tokens=estimated_uncovered_tokens,
+            created_at=now,
+            updated_at=now,
+            error="no eligible raw messages supplied for compression",
+        )
+
+    prompt = _workspace_compression_prompt(eligible)
+    audit_task = _create_workspace_chat_run(
+        agent_id=agent_id,
+        goal="Compress workspace conversation context",
+        session=session,
+        principal=principal,
+        mode="context_compression",
+        model_provider=request.model_provider,
+        model_name=request.model_name,
+    )
+    audit_task.status = "RUNNING"
+    try:
+        response = AuditedModelGateway(session=session, task_id=audit_task.id).complete(
+            ModelRequest(
+                model_provider=request.model_provider or "default",
+                model_name=request.model_name or "default",
+                response_format="text",
+                messages=[
+                    ModelMessage(
+                        role="system",
+                        content=(
+                            "Summarize prior chat context for future assistant turns. "
+                            "Preserve user goals, decisions, constraints, open questions, "
+                            "named files, and important facts. Do not mention attachment "
+                            "contents unless they appear in the supplied messages."
+                        ),
+                    ),
+                    ModelMessage(role="user", content=prompt),
+                ],
+            )
+        )
+    except ModelGatewayError as exc:
+        audit_task.status = "FAILED"
+        audit_task.updated_at = utc_now()
+        session.commit()
+        return WorkspaceContextCompressionResponse(
+            status="provider_error",
+            cache_status="error",
+            summary="",
+            coverage_node_ids=coverage_node_ids,
+            coverage_path_hash=coverage_path_hash,
+            last_covered_node_id=coverage_node_ids[-1] if coverage_node_ids else None,
+            summary_schema_version=SUMMARY_SCHEMA_VERSION,
+            compression_prompt_version=COMPRESSION_PROMPT_VERSION,
+            compressor_provider=provider,
+            compressor_model=model,
+            estimated_original_tokens=estimated_original_tokens,
+            estimated_summary_tokens=0,
+            estimated_uncovered_tokens=estimated_uncovered_tokens,
+            created_at=now,
+            updated_at=utc_now(),
+            error=str(exc),
+        )
+
+    summary = response.content.strip()
+    audit_task.status = "COMPLETED"
+    audit_task.completed_at = utc_now()
+    audit_task.updated_at = audit_task.completed_at
+    session.commit()
+
+    status: Literal["ok", "stale", "missing_raw_nodes", "hash_mismatch", "provider_error"]
+    status = validation_status
+    cache_status: Literal["accepted", "recomputed", "stale_rejected", "error"]
+    cache_status = "recomputed" if validation_status == "ok" else "stale_rejected"
+    return WorkspaceContextCompressionResponse(
+        status=status,
+        cache_status=cache_status,
+        summary=summary,
+        coverage_node_ids=coverage_node_ids,
+        coverage_path_hash=coverage_path_hash,
+        last_covered_node_id=coverage_node_ids[-1] if coverage_node_ids else None,
+        summary_schema_version=SUMMARY_SCHEMA_VERSION,
+        compression_prompt_version=COMPRESSION_PROMPT_VERSION,
+        compressor_provider=_normalize_model_id(response.model_provider or provider),
+        compressor_model=_normalize_model_id(response.model_name or model),
+        estimated_original_tokens=estimated_original_tokens,
+        estimated_summary_tokens=max(1, len(summary) // 4) if summary else 0,
+        estimated_uncovered_tokens=estimated_uncovered_tokens,
+        created_at=now,
+        updated_at=utc_now(),
+        error=None,
+    )
 
 
 @router.post(
@@ -1342,7 +1554,7 @@ def _create_workspace_chat_run(
     goal: str,
     session: Session,
     principal: Principal,
-    mode: Literal["chat", "markdown_plan"] = "chat",
+    mode: Literal["chat", "markdown_plan", "context_compression"] = "chat",
     model_provider: str | None = None,
     model_name: str | None = None,
 ) -> Task:
@@ -1436,12 +1648,23 @@ def _workspace_markdown_plan_messages(
 
 def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMessage]:
     pinned_ids = set(request.pinned_node_ids)
+    coverage_ids = (
+        set(request.compressed_context.coverage_node_ids)
+        if request.compressed_context is not None
+        else set()
+    )
     carried = [
         node
         for node in request.messages[-request.context_window_turns :]
         if node.role in {"user", "assistant", "system"}
+        and node.id not in pinned_ids
+        and node.id not in coverage_ids
     ]
-    pinned = [node for node in request.messages if node.id in pinned_ids and node not in carried]
+    pinned = [
+        node
+        for node in request.messages
+        if node.id in pinned_ids and node.role in {"user", "assistant", "system"}
+    ]
     messages: list[ModelMessage] = []
     attachment_context = _workspace_attachment_context(request)
     if attachment_context:
@@ -1451,12 +1674,97 @@ def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMe
                 content=attachment_context,
             )
         )
+    if request.compressed_context is not None:
+        summary = request.compressed_context.summary.strip()
+        if summary:
+            messages.append(
+                ModelMessage(
+                    role="system",
+                    content=(
+                        "Compressed prior workspace context. Treat this as a lossy "
+                        "summary of older unpinned messages; pinned raw messages and "
+                        "newer raw messages below take precedence.\n\n"
+                        f"{summary}"
+                    ),
+                )
+            )
     for node in [*pinned, *carried]:
         role = node.role if node.role in {"user", "assistant", "system"} else "user"
         content = node.content.strip()
         if content:
             messages.append(ModelMessage(role=role, content=content))
     return messages
+
+
+def _normalize_model_id(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _normalize_context_content(content: str) -> str:
+    return unicodedata.normalize("NFC", content.replace("\r\n", "\n").replace("\r", "\n"))
+
+
+def _workspace_context_hash_payload(nodes: list) -> list[dict]:
+    payload = []
+    for node in nodes:
+        payload.append(
+            {
+                "id": node.id,
+                "parent_id": node.parent_id,
+                "role": node.role,
+                "content": _normalize_context_content(node.content),
+                "state": node.state,
+                "created_at": node.created_at,
+            }
+        )
+    return payload
+
+
+def _workspace_context_path_hash(nodes: list) -> str:
+    raw = json.dumps(
+        _workspace_context_hash_payload(nodes),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _estimate_nodes_tokens(nodes: list) -> int:
+    return sum(_estimate_text_tokens(node.content) for node in nodes)
+
+
+def _estimate_text_tokens(content: str) -> int:
+    if not content:
+        return 0
+    cjk_count = len(CJK_TOKEN_RE.findall(content))
+    without_cjk = CJK_TOKEN_RE.sub(" ", content)
+    ascii_word_chars = sum(len(match.group(0)) for match in ASCII_WORD_RE.finditer(without_cjk))
+    visible_non_space = sum(1 for char in without_cjk if not char.isspace())
+    symbol_chars = max(0, visible_non_space - ascii_word_chars)
+    return int((cjk_count + ascii_word_chars / 4 + symbol_chars / 2) + 0.999999)
+
+
+def _workspace_compression_prompt(nodes: list) -> str:
+    blocks = [
+        "Compress these active-path workspace messages for future prompt context.",
+        (
+            "Preserve user goals, decisions, constraints, named files, "
+            "unresolved questions, and important facts."
+        ),
+        "Do not include attachment body text unless it appears directly in these messages.",
+        "Return only the summary text.",
+    ]
+    for node in nodes:
+        content = _normalize_context_content(node.content).strip()
+        if not content:
+            continue
+        blocks.append(
+            f"\n<message id=\"{node.id}\" role=\"{node.role}\" state=\"{node.state}\">\n"
+            f"{content}\n"
+            "</message>"
+        )
+    return "\n".join(blocks)
 
 
 def _workspace_attachment_context(request: AgentChatStreamRequest) -> str:
@@ -1521,6 +1829,7 @@ def _plan_response(plan: ExecutionPlan) -> TaskPlanResponse:
             TaskPlanStepState(
                 step_key=step_key,
                 description=str(raw_step.get("description", "")),
+                depends_on=_string_list(raw_step.get("depends_on")),
                 execution_mode=str(raw_step.get("execution_mode", "")),
                 requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
                 can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),

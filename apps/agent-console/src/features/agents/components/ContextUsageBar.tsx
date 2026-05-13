@@ -1,22 +1,10 @@
 /**
- * ContextUsageBar — 60×6px usage indicator rendered in `ComposerToolbar`
- * (Req 13.4, 13.5, 14.1, 14.2).
+ * ContextUsageBar — compact usage indicator showing context size in KB.
  *
- * Pure presentational, stateless component:
- *   - Shows `current/limit` tokens on the left (compact `k` formatting for
- *     values ≥ 1000).
- *   - Renders a 60px wide, 6px tall bar whose fill width is `ratio` clamped
- *     to `[0, 1]`.
- *   - Below 80% the fill uses `bg-slate-400`.
- *   - From 80% upward it switches to `bg-amber-500` (amber state).
- *   - From 95% upward it switches to `bg-red-500` (critical state).
- *   - All copy flows through `useI18n().text(zh, en)` (Req 14.2). Icon-only
- *     visuals carry `aria-hidden="true"` and the container owns an
- *     `aria-label` describing the widget.
- *
- * No hooks beyond `useI18n`; does not read the workspace store. The caller
- * (`ComposerToolbar`) passes freshly computed `{ ratio, current, limit }`
- * from `contextUsage.ts` on every render.
+ * Displays current/limit with a progress bar:
+ *   - Below 80%: slate fill
+ *   - 80%–95%: amber fill + warning text
+ *   - 95%+: red fill + critical text
  */
 
 import type { JSX } from "react";
@@ -29,14 +17,14 @@ import { cn } from "../../../lib/utils";
 export type ContextUsageBarProps = {
   /** Clamped to [0, 1] internally. */
   ratio: number;
-  /** Current token count across the included context window turns. */
+  /** Current context size in KB. */
   current: number;
-  /** Model context window limit. */
+  /** Context window limit in KB. */
   limit: number;
 };
 
-function formatK(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+function formatKB(kb: number): string {
+  return kb >= 1024 ? `${(kb / 1024).toFixed(1)}MB` : `${kb}KB`;
 }
 
 export function ContextUsageBar({ ratio, current, limit }: ContextUsageBarProps): JSX.Element {
@@ -57,7 +45,7 @@ export function ContextUsageBar({ ratio, current, limit }: ContextUsageBarProps)
       data-amber={(isAmber && !isCritical) || undefined}
     >
       <span>
-        {formatK(current)}/{formatK(limit)}
+        {formatKB(current)}/{formatKB(limit)}
       </span>
       <div className="h-1.5 w-[60px] overflow-hidden rounded-full bg-slate-200">
         <div
@@ -70,7 +58,7 @@ export function ContextUsageBar({ ratio, current, limit }: ContextUsageBarProps)
           <AlertTriangle aria-hidden="true" className="h-3 w-3" />
           {isCritical
             ? text("上下文即将溢出", "Context critical")
-            : text("可能需要裁剪上下文", "Context near limit")}
+            : text("接近上下文上限", "Context near limit")}
         </span>
       )}
     </div>

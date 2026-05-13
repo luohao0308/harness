@@ -41,7 +41,7 @@ import {
   type JSX,
 } from "react";
 
-import type { ConversationNode } from "../../../stores/workspaceStore";
+import { useWorkspaceStore, type ConversationNode } from "../../../stores/workspaceStore";
 import {
   AUTO_FOLLOW_BREAK_THRESHOLD_PX,
   SNAP_TOLERANCE_PX,
@@ -52,6 +52,7 @@ import {
 } from "../lib/autoScrollFollow";
 import { groupByRole } from "../lib/groupByRole";
 import type { InspectorSection } from "../lib/types";
+import { BranchSwitcher } from "./BranchSwitcher";
 import { ChatErrorBubble } from "./ChatErrorBubble";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ChatRunSummary } from "./ChatRunSummary";
@@ -88,6 +89,7 @@ export type ChatMessageListProps = {
   pinnedNodeIds?: string[];
   onTogglePin?: (nodeId: string) => void;
   onBranch?: (nodeId: string) => void;
+  jumpTarget?: { nodeId: string; seq: number } | null;
 };
 
 export type ChatMessageListHandle = {
@@ -105,8 +107,11 @@ export const ChatMessageList = forwardRef<
     autoFollow: true,
     showJumpButton: false,
   });
+  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
   const followStateRef = useRef<AutoFollowState>(followState);
   followStateRef.current = followState;
+  const nodesById = useWorkspaceStore((state) => state.nodesById);
+  const switchToBranch = useWorkspaceStore((state) => state.switchToBranch);
 
   const previousContentSum = useRef<number>(0);
   const currentContentSum = contentSum(props.activePath);
@@ -243,6 +248,25 @@ export const ChatMessageList = forwardRef<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentContentSum, props.activePath.length]);
 
+  useEffect(() => {
+    const target = props.jumpTarget;
+    const container = containerRef.current;
+    if (!target || container === null) return;
+    const element = container.querySelector<HTMLElement>(
+      `[data-conversation-node-id="${escapeCssIdent(target.nodeId)}"]`,
+    );
+    if (!element) return;
+
+    followStateRef.current = { autoFollow: false, showJumpButton: true };
+    setFollowState({ autoFollow: false, showJumpButton: true });
+    element.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightedNodeId(target.nodeId);
+    const timeout = window.setTimeout(() => {
+      setHighlightedNodeId((current) => (current === target.nodeId ? null : current));
+    }, 1800);
+    return () => window.clearTimeout(timeout);
+  }, [props.jumpTarget?.nodeId, props.jumpTarget?.seq]);
+
   const handleJump = (): void => {
     dispatchEvent({ type: "jump_to_latest_click" }, { scrollBehavior: "smooth" });
   };
@@ -316,23 +340,57 @@ export const ChatMessageList = forwardRef<
                   (node.state === "done" ||
                     node.state === "error" ||
                     node.state === "paused");
+                const branchSiblings = getAssistantBranchSiblings(node, nodesById);
+                const branchIndex = branchSiblings.findIndex(
+                  (sibling) => sibling.id === node.id,
+                );
                 return (
-                  <ChatMessageBubble
+                  <div
                     key={node.id}
-                    node={node}
-                    onOpenInspector={props.onOpenInspector}
-                    editingNodeId={props.editingNodeId}
-                    onStartEdit={props.onStartEdit}
-                    onCancelEdit={props.onCancelEdit}
-                    onSaveEdit={props.onSaveEdit}
-                    canRegenerate={canRegenerate}
-                    isStreaming={props.isStreaming}
-                    onCopy={props.onCopy}
-                    onRegenerate={props.onRegenerate}
-                    isPinned={props.pinnedNodeIds?.includes(node.id) ?? false}
-                    onTogglePin={props.onTogglePin}
-                    onBranch={node.role === "assistant" && props.onBranch ? () => props.onBranch!(node.id) : undefined}
-                  />
+                    data-conversation-node-id={node.id}
+                    className={[
+                      "flex flex-col gap-1 rounded-xl transition-shadow duration-300",
+                      highlightedNodeId === node.id
+                        ? "shadow-[0_0_0_3px_rgba(37,99,235,0.22)]"
+                        : "",
+                    ].join(" ")}
+                  >
+                    <ChatMessageBubble
+                      node={node}
+                      onOpenInspector={props.onOpenInspector}
+                      editingNodeId={props.editingNodeId}
+                      onStartEdit={props.onStartEdit}
+                      onCancelEdit={props.onCancelEdit}
+                      onSaveEdit={props.onSaveEdit}
+                      canRegenerate={canRegenerate}
+                      isStreaming={props.isStreaming}
+                      onCopy={props.onCopy}
+                      onRegenerate={props.onRegenerate}
+                      isPinned={props.pinnedNodeIds?.includes(node.id) ?? false}
+                      onTogglePin={props.onTogglePin}
+                      onBranch={
+                        node.role === "assistant" && props.onBranch
+                          ? () => props.onBranch!(node.id)
+                          : undefined
+                      }
+                    />
+                    {branchSiblings.length > 1 && branchIndex >= 0 && (
+                      <div className="ml-11 flex justify-start">
+                        <BranchSwitcher
+                          currentIndex={branchIndex + 1}
+                          totalBranches={branchSiblings.length}
+                          onPrevious={() => {
+                            const previous = branchSiblings[branchIndex - 1];
+                            if (previous) switchToBranch(previous.id);
+                          }}
+                          onNext={() => {
+                            const next = branchSiblings[branchIndex + 1];
+                            if (next) switchToBranch(next.id);
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </section>
@@ -364,4 +422,26 @@ function findLastAssistant(nodes: ConversationNode[]): ConversationNode | null {
     if (candidate.role === "assistant") return candidate;
   }
   return null;
+}
+
+function getAssistantBranchSiblings(
+  node: ConversationNode,
+  nodesById: Record<string, ConversationNode>,
+): ConversationNode[] {
+  if (node.role !== "assistant" || !node.parent_id) return [];
+  const parent = nodesById[node.parent_id];
+  if (!parent) return [];
+  return parent.children_ids
+    .map((id) => nodesById[id])
+    .filter(
+      (candidate): candidate is ConversationNode =>
+        Boolean(candidate) && candidate.role === "assistant",
+    );
+}
+
+function escapeCssIdent(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

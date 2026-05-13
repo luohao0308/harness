@@ -223,6 +223,161 @@ def test_agent_workspace_chat_stream_uses_selected_model_and_attachment_context(
     )
 
 
+def test_agent_workspace_context_compression_endpoint_excludes_pinned_and_hashes(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    captured_messages = []
+
+    def fake_complete(self, request_payload):
+        captured_messages.extend(request_payload.messages)
+        return ModelResponse(
+            content="用户要修复上下文压缩；保留 pinned raw。",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 40, "completion_tokens": 8},
+            raw_response={"mode": "compression-test"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agents/default/context/compress",
+        headers=AUTH_HEADERS,
+        json={
+            "model_provider": " DeepSeek ",
+            "model_name": " Chat ",
+            "messages": [
+                {
+                    "id": "old-user",
+                    "parent_id": None,
+                    "children_ids": ["pinned"],
+                    "role": "user",
+                    "content": "请修复上下文压缩",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-14T00:00:00Z",
+                },
+                {
+                    "id": "pinned",
+                    "parent_id": "old-user",
+                    "children_ids": [],
+                    "role": "assistant",
+                    "content": "这条必须 raw 注入",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-14T00:00:01Z",
+                },
+            ],
+            "pinned_node_ids": ["pinned"],
+            "summary_schema_version": "workspace-context-summary-v1",
+            "compression_prompt_version": "workspace-context-compression-v1",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["cache_status"] == "recomputed"
+    assert payload["coverage_node_ids"] == ["old-user"]
+    assert len(payload["coverage_path_hash"]) == 64
+    assert payload["compressor_provider"] == "deepseek"
+    assert payload["compressor_model"] == "chat"
+    prompt = captured_messages[-1].content
+    assert "请修复上下文压缩" in prompt
+    assert "这条必须 raw 注入" not in prompt
+
+
+def test_agent_workspace_chat_prompt_orders_compressed_pinned_recent(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    captured_messages = []
+
+    def fake_complete(self, request_payload):
+        captured_messages.extend(request_payload.messages)
+        return ModelResponse(
+            content="ok",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 12, "completion_tokens": 1},
+            raw_response={"mode": "prompt-order-test"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "current goal",
+            "messages": [
+                {
+                    "id": "covered",
+                    "parent_id": None,
+                    "children_ids": ["pinned"],
+                    "role": "user",
+                    "content": "covered raw should not repeat",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-14T00:00:00Z",
+                },
+                {
+                    "id": "pinned",
+                    "parent_id": "covered",
+                    "children_ids": ["recent"],
+                    "role": "assistant",
+                    "content": "pinned raw wins",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-14T00:00:01Z",
+                },
+                {
+                    "id": "recent",
+                    "parent_id": "pinned",
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "recent uncovered",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-14T00:00:02Z",
+                },
+            ],
+            "pinned_node_ids": ["pinned"],
+            "context_window_turns": 8,
+            "compressed_context": {
+                "summary": "compressed older context",
+                "coverage_node_ids": ["covered", "pinned"],
+                "coverage_path_hash": "abc",
+                "summary_schema_version": "workspace-context-summary-v1",
+                "compression_prompt_version": "workspace-context-compression-v1",
+                "compressor_provider": "default",
+                "compressor_model": "default",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    contents = [message.content for message in captured_messages]
+    summary_index = contents.index(next(c for c in contents if "Compressed prior" in c))
+    assert summary_index < contents.index("pinned raw wins")
+    assert contents.index("pinned raw wins") < contents.index("recent uncovered")
+    assert contents[-1] == "current goal"
+    assert "covered raw should not repeat" not in contents
+
+
 def test_agent_workspace_pro_chat_stream_drains_terminal_model_chunk(
     db_session: Session,
     monkeypatch,

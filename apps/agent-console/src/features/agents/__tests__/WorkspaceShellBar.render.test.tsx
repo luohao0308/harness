@@ -63,8 +63,6 @@ function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]>
     agentName: "Default Agent",
     activeRunId: null,
     runStatus: undefined,
-    modelLabel: "deepseek-v4-flash",
-    modelLabelIsFallback: false,
     tools,
     providers,
     selectedProviderId: "deepseek-flash",
@@ -98,10 +96,10 @@ describe("WorkspaceShellBar", () => {
     expect(screen.getByText("Default Agent")).toBeInTheDocument();
     expect(screen.getByText(/Model \+ Harness = Agent/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", {
+      screen.queryByRole("button", {
         name: "Current model: deepseek-v4-flash",
       }),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: "Tools/MCP: 2 available",
@@ -128,22 +126,10 @@ describe("WorkspaceShellBar", () => {
     expect(screen.getByText("WAITING_APPROVAL")).toBeInTheDocument();
   });
 
-  it("opens header model picker and tools capabilities from lightweight proof chips", () => {
+  it("opens tools capabilities from the lightweight proof chip", () => {
     useConsoleStore.getState().setLocale("en-US");
     const props = renderShell();
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Current model: deepseek-v4-flash",
-      }),
-    );
-    expect(screen.getByRole("listbox", { name: "Switch model" })).toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole("listbox", { name: "Switch model" }), {
-      key: "ArrowDown",
-    });
-    fireEvent.keyDown(screen.getByRole("listbox", { name: "Switch model" }), {
-      key: "Enter",
-    });
     fireEvent.click(
       screen.getByRole("button", {
         name: "Tools/MCP: 2 available",
@@ -154,7 +140,7 @@ describe("WorkspaceShellBar", () => {
     expect(screen.queryByText("Plugins / MCP")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /@read_file/ }));
 
-    expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
+    expect(props.onModelChange).not.toHaveBeenCalled();
     expect(props.onInsertToolMention).toHaveBeenCalledWith("read_file");
   });
 });

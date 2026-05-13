@@ -95,15 +95,18 @@ test.describe("Agent Workspace browser smoke", () => {
     await expect(composer(page)).toBeVisible();
     await expect(page.getByLabel("No run yet")).toBeVisible();
 
-    await page.getByRole("button", { name: "Current model: deepseek-v4-flash" }).click();
-    const headerModelList = page.getByRole("listbox", { name: "Switch model" });
-    await expect(headerModelList).toBeVisible();
-    await headerModelList.press("ArrowDown");
-    await headerModelList.press("Enter");
     await expect(
-      page.getByRole("button", { name: "Current model: deepseek-v4-pro" }),
+      page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "deepseek-v4-flash" }).click();
+    const composerModelList = page.getByRole("listbox", { name: "Switch model" });
+    await expect(composerModelList).toBeVisible();
+    await composerModelList.press("ArrowDown");
+    await composerModelList.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "deepseek-v4-pro" }),
     ).toBeVisible();
-    await expect(headerModelList).toBeHidden();
+    await expect(composerModelList).toBeHidden();
 
     await page.getByRole("button", { name: "Tools/MCP: 2 available" }).click();
     const toolsDialog = page.getByRole("dialog", { name: "Tools" });
@@ -141,7 +144,8 @@ test.describe("Agent Workspace browser smoke", () => {
     await bottomModelDialog.getByRole("option", { name: /deepseek-v4-flash/ }).click();
     await expect(
       page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "deepseek-v4-flash" })).toBeVisible();
 
     await openComposerSettings(page);
     await page.getByRole("switch", { name: "Plan mode" }).click();
@@ -161,13 +165,14 @@ test.describe("Agent Workspace browser smoke", () => {
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "deepseek-v4-flash" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Tools/MCP: 2 available" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Open composer settings" })).toBeVisible();
 
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
-    await page.getByRole("button", { name: "Current model: deepseek-v4-flash" }).click();
+    await page.getByRole("button", { name: "deepseek-v4-flash" }).click();
     await expect(page.getByRole("listbox", { name: "Switch model" })).toBeVisible();
     await expect(
       locatorInsideViewport(page, page.getByRole("listbox", { name: "Switch model" })),

@@ -2,10 +2,14 @@ import { create } from "zustand";
 
 import type { ConversationErrorMeta } from "../features/agents/lib/sseErrors";
 import {
+  AUTO_COMPRESSION_RATIO_DEFAULT,
   CONTEXT_MAX_TOKENS_DEFAULT,
+  clampAutoCompressionRatio,
   clampContextMaxTokens,
+  saveAutoCompressionRatio,
   saveContextMaxTokens,
 } from "../features/agents/lib/contextTokens";
+import type { ContextCompressionSummary } from "../features/agents/lib/contextCompression";
 import {
   CONVERSATIONS_SCHEMA_VERSION,
   computeConversationTitle,
@@ -95,6 +99,8 @@ type WorkspaceState = {
    * `setContextMaxTokens` go through the clamp.
    */
   contextMaxTokens: number;
+  autoCompressionRatio: number;
+  contextCompressions: Record<string, ContextCompressionSummary>;
   // --- v5 additive fields (Run state persistence across navigation) ---
   /** Active Run id; survives route navigation so returning to Workspace shows the last Run. */
   activeRunId: string | null;
@@ -132,6 +138,9 @@ type WorkspaceState = {
   // --- v4 additive actions ---
   /** Route the value through `clampContextMaxTokens` before writing. */
   setContextMaxTokens: (value: number) => void;
+  setAutoCompressionRatio: (value: number) => void;
+  setContextCompression: (branchKey: string, summary: ContextCompressionSummary) => void;
+  clearContextCompression: (branchKey: string) => void;
   // --- v5 additive actions ---
   setActiveRunId: (runId: string | null) => void;
 };
@@ -185,6 +194,7 @@ function mergeRuntimeIntoConversations(
     | "dismissedPlanNodeIds"
     | "draft"
     | "contextWindowTurns"
+    | "contextCompressions"
   >,
   now: string,
 ): ConversationSummary[] {
@@ -199,6 +209,7 @@ function mergeRuntimeIntoConversations(
           dismissedPlanNodeIds: state.dismissedPlanNodeIds,
           draft: state.draft,
           contextWindowTurns: state.contextWindowTurns,
+          contextCompressions: state.contextCompressions,
           updated_at: now,
           title: computeConversationTitle(state.nodesById, c.title),
         }
@@ -222,6 +233,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   historyPanelCollapsed: false,
   // v4 — see field doc for why we bypass `clampContextMaxTokens` here.
   contextMaxTokens: CONTEXT_MAX_TOKENS_DEFAULT,
+  autoCompressionRatio: AUTO_COMPRESSION_RATIO_DEFAULT,
+  contextCompressions: initialGenesis.contextCompressions,
   // v5 — persists across navigation
   activeRunId: null,
   reset: () =>
@@ -233,6 +246,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       draftFromNodeId: null,
       draft: "",
       dismissedPlanNodeIds: [],
+      contextMaxTokens: CONTEXT_MAX_TOKENS_DEFAULT,
+      autoCompressionRatio: AUTO_COMPRESSION_RATIO_DEFAULT,
+      contextCompressions: {},
     }),
   setDraft: (draft) => set({ draft }),
   setContextWindowTurns: (turns) => set({ contextWindowTurns: turns }),
@@ -365,6 +381,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       dismissedPlanNodeIds: fresh.dismissedPlanNodeIds,
       draft: fresh.draft,
       contextWindowTurns: fresh.contextWindowTurns,
+      contextCompressions: fresh.contextCompressions,
       activeStream: null,
       draftFromNodeId: null,
     });
@@ -387,6 +404,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       dismissedPlanNodeIds: target.dismissedPlanNodeIds,
       draft: target.draft,
       contextWindowTurns: target.contextWindowTurns,
+      contextCompressions: target.contextCompressions,
       activeStream: null,
       draftFromNodeId: null,
     });
@@ -415,6 +433,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         dismissedPlanNodeIds: fresh.dismissedPlanNodeIds,
         draft: fresh.draft,
         contextWindowTurns: fresh.contextWindowTurns,
+        contextCompressions: fresh.contextCompressions,
         activeStream: null,
         draftFromNodeId: null,
       });
@@ -433,6 +452,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       dismissedPlanNodeIds: next.dismissedPlanNodeIds,
       draft: next.draft,
       contextWindowTurns: next.contextWindowTurns,
+      contextCompressions: next.contextCompressions,
       activeStream: null,
       draftFromNodeId: null,
     });
@@ -446,6 +466,21 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setHistoryPanelCollapsed: (collapsed) => set({ historyPanelCollapsed: collapsed }),
   setContextMaxTokens: (value) =>
     set({ contextMaxTokens: clampContextMaxTokens(value) }),
+  setAutoCompressionRatio: (value) =>
+    set({ autoCompressionRatio: clampAutoCompressionRatio(value) }),
+  setContextCompression: (branchKey, summary) =>
+    set((state) => ({
+      contextCompressions: {
+        ...state.contextCompressions,
+        [branchKey]: summary,
+      },
+    })),
+  clearContextCompression: (branchKey) =>
+    set((state) => {
+      const next = { ...state.contextCompressions };
+      delete next[branchKey];
+      return { contextCompressions: next };
+    }),
   setActiveRunId: (runId) => set({ activeRunId: runId }),
   hydrateFromConversations: (snapshot) => {
     if (snapshot.conversations.length === 0) return;
@@ -462,6 +497,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       dismissedPlanNodeIds: target.dismissedPlanNodeIds,
       draft: target.draft,
       contextWindowTurns: target.contextWindowTurns,
+      contextCompressions: target.contextCompressions ?? {},
       historyPanelCollapsed:
         snapshot.historyPanelCollapsed ?? get().historyPanelCollapsed,
       activeStream: null,
@@ -477,6 +513,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastCollapsedWritten: boolean | null = null;
 let lastContextMaxTokensWritten: number | null = null;
+let lastAutoCompressionRatioWritten: number | null = null;
 
 useWorkspaceStore.subscribe((state) => {
   const scope = state._agentScope;
@@ -501,6 +538,10 @@ useWorkspaceStore.subscribe((state) => {
     if (lastContextMaxTokensWritten !== state.contextMaxTokens) {
       lastContextMaxTokensWritten = state.contextMaxTokens;
       saveContextMaxTokens(scope, state.contextMaxTokens);
+    }
+    if (lastAutoCompressionRatioWritten !== state.autoCompressionRatio) {
+      lastAutoCompressionRatioWritten = state.autoCompressionRatio;
+      saveAutoCompressionRatio(scope, state.autoCompressionRatio);
     }
   }, 300);
 });

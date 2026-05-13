@@ -19,6 +19,7 @@ function conversation(id: string, title: string, updatedAt: string): Conversatio
     dismissedPlanNodeIds: [],
     draft: "",
     contextWindowTurns: 6,
+    contextCompressions: {},
   };
 }
 

@@ -158,6 +158,7 @@ export type AgentChatStreamMessage = {
   metadata: Record<string, unknown>;
   tool_calls: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;
+  created_at?: string | null;
 };
 
 export type ToolMention = {
@@ -197,6 +198,50 @@ export type AgentChatStreamPayload = {
    * context-trimming logic can see the user's slider value.
    */
   context_max_tokens?: number;
+  compressed_context?: AgentCompressedContext | null;
+};
+
+export type AgentCompressedContext = {
+  summary: string;
+  coverage_node_ids: string[];
+  coverage_path_hash: string;
+  summary_schema_version: string;
+  compression_prompt_version: string;
+  compressor_provider: string;
+  compressor_model: string;
+};
+
+export type WorkspaceContextCompressionPayload = {
+  model_provider?: string | null;
+  model_name?: string | null;
+  messages: AgentChatStreamMessage[];
+  pinned_node_ids: string[];
+  existing_summary?: string | null;
+  prior_coverage_node_ids?: string[];
+  prior_coverage_path_hash?: string | null;
+  summary_schema_version: string;
+  compression_prompt_version: string;
+  compressor_provider?: string | null;
+  compressor_model?: string | null;
+};
+
+export type WorkspaceContextCompressionResponse = {
+  status: "ok" | "stale" | "missing_raw_nodes" | "hash_mismatch" | "provider_error";
+  cache_status: "accepted" | "recomputed" | "stale_rejected" | "error";
+  summary: string;
+  coverage_node_ids: string[];
+  coverage_path_hash: string;
+  last_covered_node_id: string | null;
+  summary_schema_version: string;
+  compression_prompt_version: string;
+  compressor_provider: string;
+  compressor_model: string;
+  estimated_original_tokens: number;
+  estimated_summary_tokens: number;
+  estimated_uncovered_tokens: number;
+  created_at: string;
+  updated_at: string;
+  error?: string | null;
 };
 
 export type AgentChatStreamEvent =
@@ -702,6 +747,7 @@ export type TaskResult = {
 export type TaskPlanStep = {
   step_key: string;
   description: string;
+  depends_on: string[];
   execution_mode: string;
   requires_sandbox: boolean;
   can_spawn_subagent: boolean;
@@ -1018,6 +1064,19 @@ export async function listAgents() {
 
 export async function getAgent(agentId: string) {
   return request<AgentDefinition>(`/api/agents/${agentId}`);
+}
+
+export async function compressAgentWorkspaceContext(
+  agentId: string,
+  payload: WorkspaceContextCompressionPayload,
+) {
+  return request<WorkspaceContextCompressionResponse>(
+    `/api/agents/${agentId}/context/compress`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function createAgentRun(agentId: string, payload: AgentRunCreatePayload) {

@@ -36,6 +36,13 @@ import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { ConversationArtifact, ConversationNode } from "../../../stores/workspaceStore";
 import { mergeToolCallEvent } from "../streamEvents";
 import { mergeErrorMeta, planInitialNodes } from "../lib/chatEventReducer";
+import {
+  COMPRESSION_PROMPT_VERSION,
+  SUMMARY_SCHEMA_VERSION,
+  contextCompressionBranchKey,
+  selectBestCompressionSummary,
+  uncoveredContextPath,
+} from "../lib/contextCompression";
 import { truncateForContext } from "../lib/contextTruncation";
 import { extractToolMentions } from "../lib/toolMentions";
 import {
@@ -333,10 +340,27 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
     (input: BuildPayloadInput): AgentChatStreamPayload => {
       const store = useWorkspaceStore.getState();
       const activePath = store.activePath();
-
-      // Apply context truncation before serializing (Phase 4 / Req 14.3).
-      const { messages: truncatedMessages } = truncateForContext(
+      const branchKey = contextCompressionBranchKey(
+        store.currentConversationId,
+        store.activeLeafId,
+      );
+      const summary = selectBestCompressionSummary({
+        summaries: store.contextCompressions,
+        branchKey,
         activePath,
+        pinnedNodeIds: store.pinnedNodeIds,
+        providerId: selectedProviderId,
+        modelId: selectedModelId,
+      });
+      const promptPath = uncoveredContextPath({
+        activePath,
+        pinnedNodeIds: store.pinnedNodeIds,
+        summary,
+      });
+
+      // Apply fallback truncation after summary + pinned + uncovered assembly.
+      const { messages: truncatedMessages } = truncateForContext(
+        promptPath,
         store.pinnedNodeIds,
         store.contextMaxTokens,
       );
@@ -359,6 +383,18 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         attachments: input.attachments ?? [],
         // v4 additive: UI-side context budget hint (Req 5.5).
         context_max_tokens: store.contextMaxTokens,
+        compressed_context:
+          summary === null
+            ? null
+            : {
+                summary: summary.summary,
+                coverage_node_ids: summary.coverageNodeIds,
+                coverage_path_hash: summary.coveragePathHash,
+                summary_schema_version: SUMMARY_SCHEMA_VERSION,
+                compression_prompt_version: COMPRESSION_PROMPT_VERSION,
+                compressor_provider: summary.compressorProvider,
+                compressor_model: summary.compressorModel,
+              },
       };
     },
     [selectedModelId, selectedProviderId, tools],
@@ -751,5 +787,6 @@ function serializeMessages(nodes: ConversationNode[]): AgentChatStreamMessage[] 
     metadata: { ...node.metadata },
     tool_calls: node.tool_calls,
     artifacts: node.artifacts.map((artifact) => ({ ...artifact })),
+    created_at: node.created_at,
   }));
 }

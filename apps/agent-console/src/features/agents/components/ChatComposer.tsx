@@ -43,6 +43,8 @@ export type ChatComposerProps = {
   onOptionsToggle?: () => void;
   optionsTriggerRef?: RefObject<HTMLButtonElement | null>;
   metadata?: ReactNode;
+  /** Rendered in the bottom action row, immediately beside the Send button. */
+  bottomCenter?: ReactNode;
   attachments?: ComposerAttachment[];
   onRemoveAttachment?: (id: string) => void;
   /**
@@ -129,6 +131,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       onOptionsToggle,
       optionsTriggerRef,
       metadata = null,
+      bottomCenter = null,
       attachments = [],
       onRemoveAttachment,
       isEditLocked = false,
@@ -285,7 +288,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     return (
       <div className="w-full">
         <div className="mx-auto w-full max-w-3xl px-3 sm:px-4 lg:px-6">
-          <div className="relative rounded-[28px] border border-slate-200 bg-white p-3 shadow-[0_14px_40px_rgba(15,23,42,0.10)] focus-within:border-slate-300">
+          <div className="relative rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-slate-300">
             <SlashCommandMenu
               open={slashOpen}
               candidates={candidates}
@@ -293,10 +296,10 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
               onHover={handleMenuHover}
               onSelect={handleMenuSelect}
             />
-            {metadata !== null && <div className="px-3 pb-2">{metadata}</div>}
+            {metadata !== null && <div className="px-3 pb-1.5">{metadata}</div>}
             {attachments.length > 0 && (
               <div
-                className="mb-2 flex gap-2 overflow-x-auto px-3 pb-1"
+                className="mb-1.5 flex gap-2 overflow-x-auto px-3 pb-1"
                 aria-label={text("已选择的附件", "Selected attachments")}
               >
                 {attachments.map((attachment) => (
@@ -320,10 +323,10 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                 maxHeight: `${MAX_COMPOSER_HEIGHT}px`,
                 lineHeight: "20px",
               }}
-              className="w-full resize-none overflow-hidden border-0 bg-transparent px-3 py-1 text-[15px] text-slate-800 outline-none placeholder:text-slate-400 focus:outline-none"
+              className="w-full resize-none overflow-hidden border-0 bg-transparent px-3 py-0.5 text-[15px] text-slate-800 outline-none placeholder:text-slate-400 focus:outline-none"
               autoFocus
             />
-            <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="mt-1.5 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 {onOptionsToggle !== undefined && (
                   <button
@@ -334,9 +337,9 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                     aria-expanded={optionsOpen}
                     aria-label={text("打开输入设置", "Open composer settings")}
                     title={text("输入设置", "Composer settings")}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
                   >
-                    <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+                    <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
                   </button>
                 )}
                 {isStreaming ? (
@@ -362,23 +365,26 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                   </Button>
                 ) : null}
               </div>
-              <Button
-                type="button"
-                variant="primary"
-                className="h-10 w-10 rounded-full px-0"
-                onClick={() => {
-                  if (sendDisabled) return;
-                  onSubmit();
-                  onDraftChange("");
-                  textareaRef.current?.focus();
-                }}
-                disabled={sendDisabled}
-                aria-label={text("发送", "Send")}
-                title={text("发送", "Send")}
-              >
-                <Send className="h-4 w-4" />
-                <span className="sr-only">{text("发送", "Send")}</span>
-              </Button>
+              <div className="flex min-w-0 items-center gap-2">
+                {bottomCenter}
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="h-9 w-9 rounded-full px-0"
+                  onClick={() => {
+                    if (sendDisabled) return;
+                    onSubmit();
+                    onDraftChange("");
+                    textareaRef.current?.focus();
+                  }}
+                  disabled={sendDisabled}
+                  aria-label={text("发送", "Send")}
+                  title={text("发送", "Send")}
+                >
+                  <Send className="h-4 w-4" />
+                  <span className="sr-only">{text("发送", "Send")}</span>
+                </Button>
+              </div>
             </div>
           </div>
         </div>

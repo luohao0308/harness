@@ -22,6 +22,8 @@ import {
   ListChecks,
   Paperclip,
   PlugZap,
+  RefreshCw,
+  Trash2,
 } from "lucide-react";
 
 import { useI18n } from "../../../lib/i18n";
@@ -29,12 +31,30 @@ import {
   useWorkspaceStore,
   type ConversationNode,
 } from "../../../stores/workspaceStore";
-import type { AgentAttachmentPayload, ToolMetadata } from "../../tasks/api";
+import {
+  compressAgentWorkspaceContext,
+  type AgentAttachmentPayload,
+  type ToolMetadata,
+  type WorkspaceContextCompressionResponse,
+} from "../../tasks/api";
 import type { ChatStreamController } from "../hooks/useChatStream";
 import { useOutsideClick } from "../hooks/useOutsideClick";
 import { canResume as canResumeQuery } from "../lib/activePathQueries";
 import { copyText } from "../lib/clipboard";
 import { stripThinkBlocks } from "../lib/copyText";
+import {
+  COMPRESSION_PROMPT_VERSION,
+  SUMMARY_SCHEMA_VERSION,
+  contextCompressionBranchKey,
+  isCompressionSummaryUsable,
+  normalizeModelId,
+  selectBestCompressionSummary,
+  serializeContextNode,
+  uncoveredContextPath,
+  type ContextCompressionSummary,
+} from "../lib/contextCompression";
+import { AUTO_COMPRESSION_RATIO_DEFAULT } from "../lib/contextTokens";
+import { estimateTextTokens } from "../lib/contextTruncation";
 import { planApprovalGate } from "../lib/planApprovalGate";
 import type { SlashCommand } from "../lib/slashCommands";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
@@ -46,7 +66,7 @@ import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import type { UsageSummary } from "./InspectorDrawer";
 import type { ModelOption } from "./ModelPicker";
 import { PlanApprovalPanel } from "./PlanApprovalPanel";
-import { ContextUsageBar } from "./ContextUsageBar";
+import { ContextRing } from "./ContextRing";
 import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
@@ -81,6 +101,8 @@ export type ChatSurfaceProps = {
   /** Monotonic counter; incrementing it pops the ModelPicker dropdown. */
   modelPickerOpenSeq: number;
   onRequestModelPicker: () => void;
+  /** Search jump target; `seq` increments even when the same node is selected twice. */
+  jumpTarget?: { nodeId: string; seq: number } | null;
 };
 
 export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
@@ -88,7 +110,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     agentId,
     agentName,
     modelLabel,
-    modelLabelIsFallback,
     workspaceMode,
     onWorkspaceModeChange,
     activeRunId,
@@ -117,6 +138,12 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const pinnedNodeIds = useWorkspaceStore((state) => state.pinnedNodeIds);
   const contextMaxTokens = useWorkspaceStore((state) => state.contextMaxTokens);
   const setContextMaxTokens = useWorkspaceStore((state) => state.setContextMaxTokens);
+  const autoCompressionRatio = useWorkspaceStore((state) => state.autoCompressionRatio);
+  const setAutoCompressionRatio = useWorkspaceStore((state) => state.setAutoCompressionRatio);
+  const contextCompressions = useWorkspaceStore((state) => state.contextCompressions);
+  const setContextCompression = useWorkspaceStore((state) => state.setContextCompression);
+  const clearContextCompression = useWorkspaceStore((state) => state.clearContextCompression);
+  const currentConversationId = useWorkspaceStore((state) => state.currentConversationId);
   const dismissedPlanNodeIds = useWorkspaceStore((state) => state.dismissedPlanNodeIds);
   const dismissPlanNode = useWorkspaceStore((state) => state.dismissPlanNode);
   const activeStream = useWorkspaceStore((state) => state.activeStream);
@@ -126,11 +153,79 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [nodesById, activeLeafId, rootNodeId],
   );
 
-  // Context usage computation for ContextUsageBar
-  const contextUsageCurrent = useMemo(
-    () => activePath.reduce((sum, node) => sum + Math.ceil(node.content.length / 4), 0),
-    [activePath],
+  // Raw context usage is the full visible history. Effective usage mirrors the
+  // next prompt after semantic compression: summary + pinned/uncovered raw
+  // messages + draft.
+  const rawContextUsageCurrent = useMemo(
+    () =>
+      activePath.reduce((sum, node) => {
+        const metered =
+          (node.metadata.input_tokens ?? 0) + (node.metadata.output_tokens ?? 0);
+        return sum + Math.max(metered, estimateTextTokens(node.content));
+      }, estimateTextTokens(draft)),
+    [activePath, draft],
   );
+  const compressionBranchKey = useMemo(
+    () => contextCompressionBranchKey(currentConversationId, activeLeafId),
+    [activeLeafId, currentConversationId],
+  );
+  const activeCompression = useMemo(
+    () =>
+      selectBestCompressionSummary({
+        summaries: contextCompressions,
+        branchKey: compressionBranchKey,
+        activePath,
+        pinnedNodeIds,
+        providerId: selectedProviderId,
+        modelId: selectedModelId,
+      }) ?? contextCompressions[compressionBranchKey] ?? null,
+    [
+      activePath,
+      compressionBranchKey,
+      contextCompressions,
+      pinnedNodeIds,
+      selectedModelId,
+      selectedProviderId,
+    ],
+  );
+  const contextUsageCurrent = useMemo(() => {
+    if (
+      !isCompressionSummaryUsable({
+        summary: activeCompression,
+        branchKey: compressionBranchKey,
+        activePath,
+        pinnedNodeIds,
+        providerId: selectedProviderId,
+        modelId: selectedModelId,
+      })
+    ) {
+      return rawContextUsageCurrent;
+    }
+    const uncovered = uncoveredContextPath({
+      activePath,
+      pinnedNodeIds,
+      summary: activeCompression,
+    });
+    const uncoveredTokens = uncovered.reduce((sum, node) => {
+      const metered =
+        (node.metadata.input_tokens ?? 0) + (node.metadata.output_tokens ?? 0);
+      return sum + Math.max(metered, estimateTextTokens(node.content));
+    }, 0);
+    const summaryTokens = Math.max(
+      activeCompression?.estimatedSummaryTokens ?? 0,
+      estimateTextTokens(activeCompression?.summary ?? ""),
+    );
+    return summaryTokens + uncoveredTokens + estimateTextTokens(draft);
+  }, [
+    activeCompression,
+    activePath,
+    compressionBranchKey,
+    draft,
+    pinnedNodeIds,
+    rawContextUsageCurrent,
+    selectedModelId,
+    selectedProviderId,
+  ]);
   const contextUsageRatio = contextMaxTokens > 0 ? contextUsageCurrent / contextMaxTokens : 0;
 
   const tail = activePath.length > 0 ? activePath[activePath.length - 1] : null;
@@ -156,6 +251,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const chatListRef = useRef<ChatMessageListHandle | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
+  const compressionInFlightRef = useRef<string | null>(null);
+  const backgroundCompressionKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -187,8 +284,176 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [attachments],
   );
 
+  const commitCompressionResponse = useCallback(
+    (
+      branchKey: string,
+      response: WorkspaceContextCompressionResponse,
+    ): ContextCompressionSummary => {
+      const summary: ContextCompressionSummary = {
+        branchKey,
+        summary: response.summary,
+        coverageNodeIds: response.coverage_node_ids,
+        coveragePathHash: response.coverage_path_hash,
+        lastCoveredNodeId: response.last_covered_node_id,
+        summarySchemaVersion: response.summary_schema_version,
+        compressionPromptVersion: response.compression_prompt_version,
+        compressorProvider: response.compressor_provider,
+        compressorModel: response.compressor_model,
+        estimatedOriginalTokens: response.estimated_original_tokens,
+        estimatedSummaryTokens: response.estimated_summary_tokens,
+        estimatedUncoveredTokens: response.estimated_uncovered_tokens,
+        status: response.status === "provider_error" ? "error" : "ready",
+        cacheStatus: response.cache_status,
+        error: response.error ?? null,
+        createdAt: response.created_at,
+        updatedAt: response.updated_at,
+      };
+      setContextCompression(branchKey, summary);
+      return summary;
+    },
+    [setContextCompression],
+  );
+
+  const compressCurrentContext = useCallback(
+    async (reason: "manual" | "background" | "pre_send"): Promise<ContextCompressionSummary | null> => {
+      const store = useWorkspaceStore.getState();
+      const path = store.activePath();
+      const branchKey = contextCompressionBranchKey(
+        store.currentConversationId,
+        store.activeLeafId,
+      );
+      if (compressionInFlightRef.current !== null) return null;
+      const eligible = path.filter(
+        (node) =>
+          (node.role === "user" || node.role === "assistant" || node.role === "system") &&
+          !store.pinnedNodeIds.includes(node.id) &&
+          node.content.trim().length > 0,
+      );
+      if (eligible.length === 0) return null;
+
+      const existing =
+        reason === "manual" ? null : store.contextCompressions[branchKey] ?? null;
+      compressionInFlightRef.current = branchKey;
+      setContextCompression(branchKey, {
+        ...(existing ?? {
+          branchKey,
+          summary: "",
+          coverageNodeIds: [],
+          coveragePathHash: "",
+          lastCoveredNodeId: null,
+          summarySchemaVersion: SUMMARY_SCHEMA_VERSION,
+          compressionPromptVersion: COMPRESSION_PROMPT_VERSION,
+          compressorProvider: normalizeModelId(selectedProviderId),
+          compressorModel: normalizeModelId(selectedModelId),
+          estimatedOriginalTokens: 0,
+          estimatedSummaryTokens: 0,
+          estimatedUncoveredTokens: 0,
+          cacheStatus: undefined,
+          error: null,
+          createdAt: new Date().toISOString(),
+        }),
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+      });
+
+      try {
+        const response = await compressAgentWorkspaceContext(agentId, {
+          model_provider: selectedProviderId,
+          model_name: selectedModelId,
+          messages: path.map(serializeContextNode),
+          pinned_node_ids: store.pinnedNodeIds,
+          existing_summary: existing?.summary ?? null,
+          prior_coverage_node_ids: existing?.coverageNodeIds ?? [],
+          prior_coverage_path_hash: existing?.coveragePathHash ?? null,
+          summary_schema_version: SUMMARY_SCHEMA_VERSION,
+          compression_prompt_version: COMPRESSION_PROMPT_VERSION,
+          compressor_provider: existing?.compressorProvider ?? selectedProviderId,
+          compressor_model: existing?.compressorModel ?? selectedModelId,
+        });
+        return commitCompressionResponse(branchKey, response);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const now = new Date().toISOString();
+        setContextCompression(branchKey, {
+          ...(existing ?? {
+            branchKey,
+            summary: "",
+            coverageNodeIds: [],
+            coveragePathHash: "",
+            lastCoveredNodeId: null,
+            summarySchemaVersion: SUMMARY_SCHEMA_VERSION,
+            compressionPromptVersion: COMPRESSION_PROMPT_VERSION,
+            compressorProvider: normalizeModelId(selectedProviderId),
+            compressorModel: normalizeModelId(selectedModelId),
+            estimatedOriginalTokens: 0,
+            estimatedSummaryTokens: 0,
+            estimatedUncoveredTokens: 0,
+            createdAt: now,
+          }),
+          status: "error",
+          cacheStatus: "error",
+          error: message,
+          updatedAt: now,
+        });
+        return null;
+      } finally {
+        if (compressionInFlightRef.current === branchKey) {
+          compressionInFlightRef.current = null;
+        }
+      }
+    },
+    [
+      agentId,
+      commitCompressionResponse,
+      selectedModelId,
+      selectedProviderId,
+      setContextCompression,
+    ],
+  );
+
+  const handleCompressContext = useCallback((): void => {
+    if (stream.isStreaming) return;
+    setBottomPanel(null);
+    void compressCurrentContext("manual");
+  }, [compressCurrentContext, stream.isStreaming]);
+
+  useEffect(() => {
+    if (stream.isStreaming) return;
+    if (contextUsageRatio < autoCompressionRatio) return;
+    const last = activePath[activePath.length - 1];
+    if (!last || last.role !== "assistant" || last.state !== "done") return;
+    const key = `${compressionBranchKey}:${last.id}:${Math.round(contextUsageCurrent)}`;
+    if (backgroundCompressionKeyRef.current === key) return;
+    const usable = isCompressionSummaryUsable({
+      summary: activeCompression,
+      branchKey: compressionBranchKey,
+      activePath,
+      pinnedNodeIds,
+      providerId: selectedProviderId,
+      modelId: selectedModelId,
+    });
+    if (usable) return;
+    backgroundCompressionKeyRef.current = key;
+    const timer = window.setTimeout(() => {
+      void compressCurrentContext("background");
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeCompression,
+    activePath,
+    autoCompressionRatio,
+    compressionBranchKey,
+    compressCurrentContext,
+    contextUsageCurrent,
+    contextUsageRatio,
+    pinnedNodeIds,
+    selectedModelId,
+    selectedProviderId,
+    stream.isStreaming,
+  ]);
+
   // ─── Composer callbacks ────────────────────────────────────────────────
-  const handleSubmit = useCallback((): void => {
+  const handleSubmit = useCallback(async (): Promise<void> => {
     const goal = draft.trim();
     if (goal.length === 0) return;
     if (stream.isStreaming) return;
@@ -199,6 +464,20 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         "Create a Plan-Act Run? This triggers an executable run.",
       );
       if (!window.confirm(message)) return;
+    }
+
+    if (contextUsageRatio >= autoCompressionRatio) {
+      const usable = isCompressionSummaryUsable({
+        summary: activeCompression,
+        branchKey: compressionBranchKey,
+        activePath,
+        pinnedNodeIds,
+        providerId: selectedProviderId,
+        modelId: selectedModelId,
+      });
+      if (!usable) {
+        await compressCurrentContext("pre_send");
+      }
     }
 
     chatListRef.current?.notifyUserSubmit();
@@ -212,7 +491,23 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       for (const attachment of current) revokeAttachmentPreview(attachment);
       return [];
     });
-  }, [attachmentNames, attachmentPayloads, draft, stream, workspaceMode, text]);
+  }, [
+    activeCompression,
+    activePath,
+    attachmentNames,
+    attachmentPayloads,
+    autoCompressionRatio,
+    compressionBranchKey,
+    compressCurrentContext,
+    contextUsageRatio,
+    draft,
+    pinnedNodeIds,
+    selectedModelId,
+    selectedProviderId,
+    stream,
+    workspaceMode,
+    text,
+  ]);
 
   const handlePause = useCallback((): void => {
     stream.pause();
@@ -373,42 +668,57 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       const storeState = useWorkspaceStore.getState();
       const target = storeState.nodesById[nodeId];
       if (!target || target.role !== "assistant") return;
-      // Fork: move activeLeafId to the user node that is the parent of this
-      // assistant. When the user types and sends, appendNode will create a
-      // new child of that user node — forming a sibling branch to the
-      // existing assistant response.
-      const parentId = target.parent_id;
-      if (!parentId) return;
-      const parent = storeState.nodesById[parentId];
-      if (!parent) return;
-      // Set the active leaf to the user node (the fork point).
-      // We use the store's raw set to avoid getBranchLeafId which would
-      // follow children back to the existing leaf.
-      useWorkspaceStore.setState({ activeLeafId: parentId, draftFromNodeId: null });
-      setDraft("");
+
+      const userNodeId = target.parent_id;
+      if (!userNodeId) return;
+      const userNode = storeState.nodesById[userNodeId];
+      if (!userNode || userNode.role !== "user") return;
+
+      const mode = target.metadata.workspace_mode ?? workspaceMode;
+      const newAssistantId = storeState.appendNode({
+        parent_id: userNodeId,
+        role: "assistant",
+        content: "",
+        state: "streaming",
+        metadata: { workspace_mode: mode },
+        tool_calls: [],
+        artifacts: [],
+      });
+
+      void stream.driveBranch({
+        assistantNodeId: newAssistantId,
+        goal: userNode.content,
+        mode,
+      });
     },
-    [setDraft],
+    [stream, workspaceMode],
   );
 
   // ─── Plan approval callbacks (Req 3) ───────────────────────────────────
   const handleApprovePlan = useCallback(async (): Promise<void> => {
     if (!planGate.visible || !planGate.planNode) return;
     const planNode = planGate.planNode;
+    const storeState = useWorkspaceStore.getState();
+    const sourceUser = planNode.parent_id ? storeState.nodesById[planNode.parent_id] : null;
+    const goal =
+      sourceUser?.role === "user" && sourceUser.content.trim().length > 0
+        ? sourceUser.content
+        : planNode.content;
     setPlanSubmitting(true);
     try {
-      const newAssistantId = useWorkspaceStore.getState().appendNode({
+      const newAssistantId = storeState.appendNode({
         parent_id: planNode.id,
         role: "assistant",
         content: "",
         state: "streaming",
-        metadata: { workspace_mode: "chat" },
+        metadata: { workspace_mode: "plan" },
         tool_calls: [],
         artifacts: [],
       });
       await stream.driveBranch({
         assistantNodeId: newAssistantId,
-        goal: planNode.content,
-        mode: "chat",
+        goal,
+        mode: "plan",
       });
     } finally {
       setPlanSubmitting(false);
@@ -525,8 +835,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       <WorkspaceShellBar
         agentId={agentId}
         agentName={agentName}
-        modelLabel={modelLabel}
-        modelLabelIsFallback={modelLabelIsFallback}
         tools={tools}
         providers={providers}
         selectedProviderId={selectedProviderId}
@@ -538,6 +846,16 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         onInsertToolMention={handleShellToolMention}
         onOpenInspector={onOpenInspector}
         onStop={handlePause}
+        summaryManager={
+          <ContextSummaryManager
+            summary={activeCompression}
+            onRecompress={() => {
+              void compressCurrentContext("manual");
+            }}
+            onClear={() => clearContextCompression(compressionBranchKey)}
+            text={text}
+          />
+        }
       />
 
       <ChatMessageList
@@ -561,6 +879,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         pinnedNodeIds={pinnedNodeIds}
         onTogglePin={togglePinned}
         onBranch={handleBranch}
+        jumpTarget={props.jumpTarget ?? null}
       />
 
       <footer className="sticky bottom-0 z-10 bg-gradient-to-t from-white via-white/95 to-white/0 px-3 pb-5 pt-6">
@@ -581,6 +900,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             <BottomToolsPopover
               open={bottomPanel !== null}
               onClose={() => setBottomPanel(null)}
+              align={bottomPanel === "model" ? "right" : "left"}
               title={
                 bottomPanel === "model"
                   ? text("切换模型", "Switch model")
@@ -610,6 +930,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                   text={text}
                   contextMaxTokens={contextMaxTokens}
                   onContextMaxTokensChange={setContextMaxTokens}
+                  autoCompressionRatio={autoCompressionRatio}
+                  onAutoCompressionRatioChange={setAutoCompressionRatio}
                 />
               )}
             </BottomToolsPopover>
@@ -630,10 +952,26 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                 setBottomPanel((current) => (current === "tools" ? null : "tools"))
               }
               optionsTriggerRef={optionsTriggerRef}
-              metadata={
-                <div className="flex items-center gap-3">
-                  <ContextUsageBar ratio={contextUsageRatio} current={contextUsageCurrent} limit={contextMaxTokens} />
-                  <ComposerMetadataRow usage={metadataUsage} text={text} />
+              metadata={<ComposerMetadataRow usage={metadataUsage} text={text} />}
+              bottomCenter={
+                <div className="flex items-center gap-2">
+                  <ContextRing
+                    ratio={contextUsageRatio}
+                    currentTokens={contextUsageCurrent}
+                    rawTokens={rawContextUsageCurrent}
+                    limitTokens={contextMaxTokens}
+                    onCompress={handleCompressContext}
+                    disabled={stream.isStreaming}
+                    status={activeCompression?.status ?? "idle"}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setBottomPanel((current) => (current === "model" ? null : "model"))}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 transition-colors"
+                  >
+                    {modelLabel}
+                    <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </button>
                 </div>
               }
               attachments={attachments}
@@ -665,6 +1003,107 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 // Bottom tools panel helpers
 // ---------------------------------------------------------------------------
 
+function ContextSummaryManager({
+  summary,
+  onRecompress,
+  onClear,
+  text,
+}: {
+  summary: ContextCompressionSummary | null;
+  onRecompress: () => void;
+  onClear: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element | null {
+  if (summary === null) return null;
+  const isPending = summary.status === "pending";
+  const label =
+    summary.status === "error"
+      ? text("摘要失败", "Summary failed")
+      : isPending
+        ? text("摘要中", "Summarizing")
+        : text(
+            `${summary.coverageNodeIds.length} 条已摘要`,
+            `${summary.coverageNodeIds.length} summarized`,
+          );
+  const preview = summary.error || summary.summary || text("正在生成摘要", "Creating summary");
+  return (
+    <div
+      className="group relative inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
+      aria-label={text("上下文摘要", "Context summary")}
+    >
+      <span className="max-w-[8rem] truncate">{label}</span>
+      <button
+        type="button"
+        onClick={onRecompress}
+        disabled={isPending}
+        aria-label={text("重新压缩上下文", "Recompress context")}
+        title={text("重新压缩上下文", "Recompress context")}
+        className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+      >
+        <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={onClear}
+        disabled={isPending}
+        aria-label={text("清除上下文摘要", "Clear context summary")}
+        title={text("清除上下文摘要", "Clear context summary")}
+        className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+      >
+        <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
+      <div className="pointer-events-none absolute right-0 top-full z-40 mt-1.5 hidden w-64 rounded-md border border-slate-200 bg-white p-2 text-left text-[11px] leading-4 text-slate-600 shadow-lg group-hover:block group-focus-within:block">
+        <div className="mb-1 font-medium text-slate-900">
+          {text("上下文摘要", "Context summary")}
+        </div>
+        <div className="line-clamp-5 whitespace-pre-wrap">{preview}</div>
+        <div className="mt-1 font-mono text-[10px] text-slate-500">
+          {formatTokenCount(summary.estimatedOriginalTokens)} →{" "}
+          {formatTokenCount(summary.estimatedSummaryTokens)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AutoCompressionRatioControl({
+  value,
+  onChange,
+  text,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const pct = Math.round(value * 100);
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-[11px] font-medium text-slate-700">
+          {text("自动压缩阈值", "Auto compression threshold")}
+        </label>
+        <span className="font-mono text-[11px] text-slate-600">{pct}%</span>
+      </div>
+      <input
+        type="range"
+        min={0.5}
+        max={0.95}
+        step={0.05}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        aria-label={text("自动压缩阈值", "Auto compression threshold")}
+        className="h-1 accent-slate-900"
+      />
+      <p className="text-[10px] leading-4 text-slate-500">
+        {text(
+          `达到 ${pct}% 后自动压缩，默认 ${Math.round(AUTO_COMPRESSION_RATIO_DEFAULT * 100)}%`,
+          `Compress automatically at ${pct}%, default ${Math.round(AUTO_COMPRESSION_RATIO_DEFAULT * 100)}%`,
+        )}
+      </p>
+    </div>
+  );
+}
+
 type ToolsPanelProps = {
   tools: ToolMetadata[];
   onInsertMention: (toolName: string) => void;
@@ -675,16 +1114,20 @@ type ToolsPanelProps = {
   onAddFiles: () => void;
   contextMaxTokens?: number;
   onContextMaxTokensChange?: (value: number) => void;
+  autoCompressionRatio?: number;
+  onAutoCompressionRatioChange?: (value: number) => void;
 };
 
 function BottomToolsPopover({
   open,
   onClose,
+  align,
   title,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  align: "left" | "right";
   title: string;
   children: JSX.Element;
 }): JSX.Element | null {
@@ -699,7 +1142,10 @@ function BottomToolsPopover({
       role="dialog"
       aria-modal="false"
       aria-label={title}
-      className="absolute bottom-[68px] left-4 z-30 w-[min(220px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg"
+      className={[
+        "absolute bottom-[58px] z-30 w-[min(220px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg",
+        align === "right" ? "right-4" : "left-4",
+      ].join(" ")}
     >
       {children}
     </div>
@@ -716,6 +1162,8 @@ function ComposerSettingsPanel({
   text,
   contextMaxTokens,
   onContextMaxTokensChange,
+  autoCompressionRatio,
+  onAutoCompressionRatioChange,
 }: ToolsPanelProps): JSX.Element {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const mcpTools = tools.filter(isMcpTool);
@@ -723,8 +1171,15 @@ function ComposerSettingsPanel({
   return (
     <div className="flex flex-col text-xs text-slate-800">
       {contextMaxTokens !== undefined && onContextMaxTokensChange && (
-        <div className="border-b border-slate-100 px-2 py-2">
+        <div className="border-b border-slate-100 px-2 py-1.5">
           <ContextMaxTokensSlider value={contextMaxTokens} onChange={onContextMaxTokensChange} />
+          {autoCompressionRatio !== undefined && onAutoCompressionRatioChange && (
+            <AutoCompressionRatioControl
+              value={autoCompressionRatio}
+              onChange={onAutoCompressionRatioChange}
+              text={text}
+            />
+          )}
         </div>
       )}
       <ToolActionRow
@@ -1081,6 +1536,13 @@ function makeAttachmentId(file: File): string {
 
 function formatMetricNumber(value: number): string {
   return new Intl.NumberFormat("en", { notation: "compact" }).format(value);
+}
+
+function formatTokenCount(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value >= 1_000_000) return `${Number.parseFloat((value / 1_000_000).toFixed(1))}m`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(Math.round(value));
 }
 
 function formatDuration(durationMs: number): string {
