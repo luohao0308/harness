@@ -31,7 +31,7 @@
  */
 
 import type { JSX } from "react";
-import { Bot, FileCode2, Wrench } from "lucide-react";
+import { Bot, FileCode2, Pin, Wrench } from "lucide-react";
 
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { useI18n } from "../../../lib/i18n";
@@ -74,6 +74,12 @@ export type ChatMessageBubbleProps = {
   onCopy: (nodeId: string) => Promise<boolean>;
   /** Parent calls `stream.driveBranch(...)` to re-run the previous user turn. */
   onRegenerate: (nodeId: string) => void;
+
+  // --- Phase 4 additive: pin toggle (Req 15.1, 15.2) ---
+  /** Whether this node is currently pinned. */
+  isPinned?: boolean;
+  /** Called when the user clicks the pin/unpin button. */
+  onTogglePin?: (nodeId: string) => void;
 };
 
 export function ChatMessageBubble({
@@ -87,6 +93,8 @@ export function ChatMessageBubble({
   isStreaming,
   onCopy,
   onRegenerate,
+  isPinned = false,
+  onTogglePin,
 }: ChatMessageBubbleProps): JSX.Element {
   const { text, isChinese } = useI18n();
   const isUser = node.role === "user";
@@ -101,6 +109,7 @@ export function ChatMessageBubble({
     isUser
       ? "bg-white border border-slate-200 text-slate-900"
       : "bg-slate-50 text-slate-800 border border-slate-200",
+    isPinned && "ring-2 ring-amber-300",
   );
 
   const statusAttrs = isNodeStreaming
@@ -181,7 +190,21 @@ export function ChatMessageBubble({
         {!isEditing && <MetadataLine node={node} aligned={isUser ? "end" : "start"} />}
 
         {!isEditing && (node.role === "user" || node.role === "assistant") && (
-          <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+          <div className={cn("flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
+            {onTogglePin && (
+              <button
+                type="button"
+                onClick={() => onTogglePin(node.id)}
+                aria-label={isPinned ? text("取消固定", "Unpin message") : text("固定消息", "Pin message")}
+                className={cn(
+                  "h-7 w-7 inline-flex items-center justify-center rounded-md text-slate-400 hover:text-amber-600 hover:bg-slate-100 transition-colors",
+                  "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
+                  isPinned && "opacity-100 text-amber-500",
+                )}
+              >
+                <Pin aria-hidden="true" className={cn("h-3.5 w-3.5", isPinned && "fill-current")} />
+              </button>
+            )}
             <MessageActions
               role={node.role}
               canRegenerate={canRegenerate}

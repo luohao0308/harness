@@ -36,6 +36,7 @@ import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { ConversationArtifact, ConversationNode } from "../../../stores/workspaceStore";
 import { mergeToolCallEvent } from "../streamEvents";
 import { mergeErrorMeta, planInitialNodes } from "../lib/chatEventReducer";
+import { truncateForContext } from "../lib/contextTruncation";
 import { extractToolMentions } from "../lib/toolMentions";
 import {
   SseError,
@@ -323,17 +324,29 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
    * Build the payload for the chat stream endpoint. Mirrors the shape used by
    * the legacy `AgentWorkspacePage` implementation so the backend contract is
    * unchanged (Req 10.3).
+   *
+   * v4.1 additive: applies `truncateForContext` before serializing messages
+   * so the API payload stays within the configured token budget. The store
+   * data is never mutated — truncation is payload-only.
    */
   const buildPayload = useCallback(
     (input: BuildPayloadInput): AgentChatStreamPayload => {
       const store = useWorkspaceStore.getState();
       const activePath = store.activePath();
+
+      // Apply context truncation before serializing (Phase 4 / Req 14.3).
+      const { messages: truncatedMessages } = truncateForContext(
+        activePath,
+        store.pinnedNodeIds,
+        store.contextMaxTokens,
+      );
+
       return {
         mode: input.mode,
         goal: input.goal,
         model_provider: selectedProviderId,
         model_name: selectedModelId,
-        messages: serializeMessages(activePath),
+        messages: serializeMessages(truncatedMessages),
         active_leaf_id: store.activeLeafId,
         run_id: input.runId,
         active_branch_id: store.activeLeafId,
