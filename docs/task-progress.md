@@ -101,7 +101,54 @@ cd services/api-server && .venv/bin/python -m pytest tests/test_cors.py -> 2 pas
 
 - Full-infra validation profile (Tempo + Loki) not yet exercised in this environment.
 - Sandbox tool execution fails (Docker socket issue in local dev — 500 on `/api/tasks/:id/tools/execute`).
-- Non-Workspace/non-RunDetail browser e2e for Eval, Observability, Tools, Sandboxes, Agent Studio pages.
+
+## Completed: Multi-Step Harness Execution (Phase 1-5)
+
+Date: 2026-05-13
+
+Full implementation of multi-step DAG execution, eval regression, browser e2e coverage, and workspace context management.
+
+### Phase 1: Multi-Step DAG Execution (Backend)
+- DAG Scheduler: validate (cycles, refs, depth≤20, fan-out≤10), resolve (Kahn's topo sort, max_parallel=3)
+- Executor: DAG-driven execution, step output passing (64KB), failure propagation (STEP_SKIPPED)
+- Planner: depends_on field, linear chain for deterministic, DAG validation in quality report
+- Model-driven tool selection with MODEL_CALL purpose=tool_parameter_generation
+- Timeouts: tool 60s, subagent 300s, heartbeat 30s
+- 42 new backend tests
+
+### Phase 2: Eval Regression Flow (Backend + Frontend)
+- baseline_run_id on EvalDataset + Alembic migration
+- PATCH /api/evals/datasets/{id}/baseline, GET /api/evals/runs/{id}/regression
+- Regression delta: 10pp threshold, newly failing/passing cases
+- Eval UI: datasets, cases, runs, regression display, Set as Baseline
+- "Save as Eval Case" on Run Detail page
+- 10 new backend tests
+
+### Phase 3: Browser E2E Tests
+- eval-page.smoke: datasets, cases, regression delta
+- observability.smoke: service health, summary metrics
+- tools-page.smoke: registry, MCP, policy
+- sandboxes-page.smoke: WarmPool, instances, tenant isolation
+- agent-studio.smoke: 6 surfaces, model info, disabled states
+- 15 new e2e tests
+
+### Phase 4: Workspace Context Management (Frontend)
+- contextTruncation.ts: truncateForContext() with content.length/4 estimation
+- ContextUsageBar: amber 80%, red 95%
+- useChatStream: integrated truncation into buildPayload (payload-only)
+- Pin toggle UI (📌) on messages
+- Branch from here action on assistant messages
+- BranchSwitcher: N/M with left/right arrows
+- 22 new unit tests
+
+### Verification
+```text
+services/api-server/.venv/bin/python -m pytest services/api-server/tests -> 200 passed
+cd apps/agent-console && npm test -> 118 passed (24 test files)
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+cd apps/agent-console && npx playwright test --project=chromium e2e/ -> 28 passed
+```
 
 ## Completed: Complete Harness Validation Flow
 

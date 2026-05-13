@@ -386,6 +386,12 @@ async function routeRunDetailApis(page: Page): Promise<void> {
       return;
     }
 
+    // Eval datasets (fetched by "Save as Eval Case" button)
+    if (path === "/api/evals/datasets" && method === "GET") {
+      await fulfillJson(route, { items: [] });
+      return;
+    }
+
     // Fail-closed: return 404 for any unhandled API route
     await route.fulfill({
       status: 404,
