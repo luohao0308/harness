@@ -84,6 +84,10 @@ export type ChatMessageListProps = {
   onCopy: (nodeId: string) => Promise<boolean>;
   onRegenerate: (nodeId: string) => void;
   isStreaming: boolean;
+  // v5 additions (Phase 4: pin + branch)
+  pinnedNodeIds?: string[];
+  onTogglePin?: (nodeId: string) => void;
+  onBranch?: (nodeId: string) => void;
 };
 
 export type ChatMessageListHandle = {
@@ -325,6 +329,9 @@ export const ChatMessageList = forwardRef<
                     isStreaming={props.isStreaming}
                     onCopy={props.onCopy}
                     onRegenerate={props.onRegenerate}
+                    isPinned={props.pinnedNodeIds?.includes(node.id) ?? false}
+                    onTogglePin={props.onTogglePin}
+                    onBranch={node.role === "assistant" && props.onBranch ? () => props.onBranch!(node.id) : undefined}
                   />
                 );
               })}

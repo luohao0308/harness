@@ -112,6 +112,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const rootNodeId = useWorkspaceStore((state) => state.rootNodeId);
   const activeLeafId = useWorkspaceStore((state) => state.activeLeafId);
   const togglePinned = useWorkspaceStore((state) => state.togglePinned);
+  const pinnedNodeIds = useWorkspaceStore((state) => state.pinnedNodeIds);
   const dismissedPlanNodeIds = useWorkspaceStore((state) => state.dismissedPlanNodeIds);
   const dismissPlanNode = useWorkspaceStore((state) => state.dismissPlanNode);
   const activeStream = useWorkspaceStore((state) => state.activeStream);
@@ -355,6 +356,30 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [stream, workspaceMode],
   );
 
+  // ─── Branch callback (Phase 4 / Req 16) ────────────────────────────────
+  const handleBranch = useCallback(
+    (nodeId: string) => {
+      const storeState = useWorkspaceStore.getState();
+      const target = storeState.nodesById[nodeId];
+      if (!target || target.role !== "assistant") return;
+      // Create a sibling fork: new user node from the same parent as the target
+      const parentId = target.parent_id;
+      if (!parentId) return;
+      storeState.appendNode({
+        parent_id: parentId,
+        role: "user",
+        content: "",
+        state: "done",
+        metadata: {},
+        tool_calls: [],
+        artifacts: [],
+      });
+      // Focus the composer for the new branch
+      setDraft("");
+    },
+    [setDraft],
+  );
+
   // ─── Plan approval callbacks (Req 3) ───────────────────────────────────
   const handleApprovePlan = useCallback(async (): Promise<void> => {
     if (!planGate.visible || !planGate.planNode) return;
@@ -523,6 +548,9 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         onCopy={handleCopy}
         onRegenerate={handleRegenerate}
         isStreaming={stream.isStreaming}
+        pinnedNodeIds={pinnedNodeIds}
+        onTogglePin={togglePinned}
+        onBranch={handleBranch}
       />
 
       <footer className="sticky bottom-0 z-10 bg-gradient-to-t from-white via-white/95 to-white/0 px-3 pb-5 pt-6">

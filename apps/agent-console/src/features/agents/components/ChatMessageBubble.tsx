@@ -80,6 +80,9 @@ export type ChatMessageBubbleProps = {
   isPinned?: boolean;
   /** Called when the user clicks the pin/unpin button. */
   onTogglePin?: (nodeId: string) => void;
+  // --- Phase 4 additive: branch (Req 16.1, 16.2) ---
+  /** Called when the user clicks "Branch" on an assistant message. */
+  onBranch?: () => void;
 };
 
 export function ChatMessageBubble({
@@ -95,6 +98,7 @@ export function ChatMessageBubble({
   onRegenerate,
   isPinned = false,
   onTogglePin,
+  onBranch,
 }: ChatMessageBubbleProps): JSX.Element {
   const { text, isChinese } = useI18n();
   const isUser = node.role === "user";
@@ -213,6 +217,7 @@ export function ChatMessageBubble({
               onCopy={() => onCopy(node.id)}
               onEdit={() => onStartEdit(node.id)}
               onRegenerate={() => onRegenerate(node.id)}
+              onBranch={onBranch}
             />
           </div>
         )}
