@@ -9,12 +9,14 @@ class PlanStep(BaseModel):
     execution_mode: Literal["sync", "async"]
     requires_sandbox: bool
     can_spawn_subagent: bool
+    depends_on: list[str] = Field(default_factory=list)
     expected_events: list[str] = Field(default_factory=lambda: ["STEP_STARTED", "STEP_COMPLETED"])
     tool_hints: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     risk_level: Literal["low", "medium", "high", "critical"] = "low"
     artifact_expectations: list[str] = Field(default_factory=list)
     quality_notes: list[str] = Field(default_factory=list)
+    timeout_seconds: int = Field(default=60)
 
 
 class ExecutionPlan(BaseModel):
@@ -32,7 +34,9 @@ class ExecutionPlan(BaseModel):
 
 class StepResult(BaseModel):
     step_key: str
-    status: Literal["STEP_COMPLETED", "STEP_FAILED"]
+    status: Literal["STEP_COMPLETED", "STEP_FAILED", "STEP_SKIPPED"]
     summary: str
+    output: str = Field(default="")
     tool_calls: list[dict] = Field(default_factory=list)
+    duration_ms: int = Field(default=0)
     next_action: Literal["continue", "stop", "spawn_subagent", "await_approval"] = "continue"
