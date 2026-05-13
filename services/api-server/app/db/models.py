@@ -346,6 +346,9 @@ class EvalDataset(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="ACTIVE", index=True)
+    baseline_run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("eval_runs.id"), nullable=True
+    )
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

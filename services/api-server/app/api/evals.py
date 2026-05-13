@@ -16,6 +16,8 @@ from app.api.schemas import (
     EvalRunCreateRequest,
     EvalRunPage,
     EvalRunResponse,
+    RegressionDelta,
+    SetBaselineRequest,
 )
 from app.db.models import (
     AdminAuditEvent,
@@ -158,6 +160,28 @@ def create_eval_case_from_run(
 ) -> EvalCase:
     dataset = _get_dataset(dataset_id, session, principal.organization_id)
     task = _get_task(task_id, session, principal.organization_id)
+    if task.status not in ("COMPLETED", "FAILED"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="只能从 COMPLETED 或 FAILED 状态的 Run 保存 Eval Case",
+        )
+    tool_calls = _tool_calls(session, task.id)
+    model_calls = _model_calls(session, task.id)
+    assignments = _assignments(session, task.id)
+    execution_trace = {
+        "tool_calls": [
+            {
+                "tool_name": tc.tool_name,
+                "status": tc.status,
+                "risk_level": tc.risk_level,
+                "duration_ms": tc.duration_ms,
+            }
+            for tc in tool_calls
+        ],
+        "model_call_count": len(model_calls),
+        "assignment_count": len(assignments),
+        "step_count": len(assignments),
+    }
     eval_case = EvalCase(
         dataset_id=dataset.id,
         source_task_id=task.id,
@@ -169,7 +193,10 @@ def create_eval_case_from_run(
             "model_name": task.model_name,
             "status": task.status,
         },
-        expected_json=request.expected_json or {"status": task.status},
+        expected_json={
+            **(request.expected_json or {"status": task.status}),
+            "execution_trace": execution_trace,
+        },
         tags_json=request.tags_json,
         created_at=utc_now(),
     )
@@ -350,6 +377,129 @@ def get_eval_run(eval_run_id: str, session: DbSession, principal: Principal) -> 
     return _eval_run_response(eval_run, results)
 
 
+@router.patch(
+    "/datasets/{dataset_id}/baseline",
+    response_model=EvalDatasetResponse,
+    summary="设置基线 Eval Run",
+    description="将指定 Eval Run 设为 Dataset 的基线，用于回归对比。",
+)
+def set_baseline(
+    dataset_id: str,
+    request: SetBaselineRequest,
+    session: DbSession,
+    principal: Principal,
+) -> EvalDatasetResponse:
+    dataset = _get_dataset(dataset_id, session, principal.organization_id)
+    eval_run = session.execute(
+        select(EvalRun).where(
+            EvalRun.id == request.eval_run_id,
+            EvalRun.organization_id == principal.organization_id,
+        )
+    ).scalar_one_or_none()
+    if eval_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eval Run 未找到")
+    if eval_run.dataset_id != dataset.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Eval Run 不属于该 Dataset",
+        )
+    dataset.baseline_run_id = eval_run.id
+    dataset.updated_at = utc_now()
+    _audit(
+        session,
+        principal=principal,
+        event_type=EventType.EVAL_RUN_COMPLETED,
+        resource_type="eval_dataset",
+        resource_id=dataset.id,
+        action="set_baseline",
+        payload={"dataset_id": dataset.id, "baseline_run_id": eval_run.id},
+    )
+    session.commit()
+    session.refresh(dataset)
+    case_count = _case_counts(session, [dataset.id]).get(dataset.id, 0)
+    return _dataset_response(dataset, case_count=case_count)
+
+
+@router.get(
+    "/runs/{eval_run_id}/regression",
+    response_model=RegressionDelta | None,
+    summary="查询回归 Delta",
+    description="对比当前 Eval Run 与基线 Run 的指标差异，返回回归信息。",
+)
+def get_regression_delta(
+    eval_run_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> RegressionDelta | None:
+    eval_run = session.execute(
+        select(EvalRun).where(
+            EvalRun.id == eval_run_id,
+            EvalRun.organization_id == principal.organization_id,
+        )
+    ).scalar_one_or_none()
+    if eval_run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eval Run 未找到")
+    dataset = session.get(EvalDataset, eval_run.dataset_id)
+    if dataset is None or dataset.baseline_run_id is None:
+        return None
+    if dataset.baseline_run_id == eval_run.id:
+        return None
+    baseline_run = session.get(EvalRun, dataset.baseline_run_id)
+    if baseline_run is None:
+        return None
+    baseline_results = list(
+        session.execute(
+            select(EvalResult).where(EvalResult.eval_run_id == baseline_run.id)
+        ).scalars()
+    )
+    current_results = list(
+        session.execute(
+            select(EvalResult).where(EvalResult.eval_run_id == eval_run.id)
+        ).scalars()
+    )
+    baseline_metrics = _aggregate_metrics(baseline_results)
+    current_metrics = _aggregate_metrics(current_results)
+    baseline_case_status = {r.eval_case_id: r.status for r in baseline_results}
+    current_case_status = {r.eval_case_id: r.status for r in current_results}
+    newly_failing = [
+        case_id
+        for case_id, cur_status in current_case_status.items()
+        if cur_status == "FAILED" and baseline_case_status.get(case_id) == "PASSED"
+    ]
+    newly_passing = [
+        case_id
+        for case_id, cur_status in current_case_status.items()
+        if cur_status == "PASSED" and baseline_case_status.get(case_id) == "FAILED"
+    ]
+    task_success_rate_delta = round(
+        current_metrics.get("task_success_rate", 0) - baseline_metrics.get("task_success_rate", 0),
+        4,
+    )
+    tool_selection_accuracy_delta = round(
+        current_metrics.get("tool_selection_accuracy", 0)
+        - baseline_metrics.get("tool_selection_accuracy", 0),
+        4,
+    )
+    avg_latency_ms_delta = int(
+        current_metrics.get("avg_latency_ms", 0) - baseline_metrics.get("avg_latency_ms", 0)
+    )
+    passed_cases = sum(1 for r in current_results if r.status == "PASSED")
+    failed_cases = sum(1 for r in current_results if r.status == "FAILED")
+    return RegressionDelta(
+        baseline_run_id=baseline_run.id,
+        current_run_id=eval_run.id,
+        task_success_rate_delta=task_success_rate_delta,
+        tool_selection_accuracy_delta=tool_selection_accuracy_delta,
+        avg_latency_ms_delta=avg_latency_ms_delta,
+        newly_failing_case_ids=newly_failing,
+        newly_passing_case_ids=newly_passing,
+        is_regression=task_success_rate_delta < -0.10,
+        total_cases=len(current_results),
+        passed_cases=passed_cases,
+        failed_cases=failed_cases,
+    )
+
+
 def _get_dataset(dataset_id: str, session: Session, organization_id: str) -> EvalDataset:
     dataset = session.execute(
         select(EvalDataset).where(
@@ -378,6 +528,7 @@ def _dataset_response(dataset: EvalDataset, *, case_count: int) -> EvalDatasetRe
         name=dataset.name,
         description=dataset.description,
         status=dataset.status,
+        baseline_run_id=dataset.baseline_run_id,
         created_by=dataset.created_by,
         created_at=dataset.created_at,
         updated_at=dataset.updated_at,

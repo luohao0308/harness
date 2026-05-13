@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
+import { Bot, Check, FlaskConical, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -13,8 +13,10 @@ import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
   approveToolApproval,
+  createEvalCaseFromRun,
   executeAgentRun,
   getAgentRunWorkspace,
+  listEvalDatasets,
   orchestrateAgentRun,
   rejectToolApproval,
   replayTask,
@@ -30,12 +32,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const queryClient = useQueryClient();
   const [replaySequence, setReplaySequence] = useState("");
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+  const [saveEvalSuccess, setSaveEvalSuccess] = useState(false);
   const workspace = useQuery({
     queryKey: ["agent-run-workspace", runId],
     queryFn: () => getAgentRunWorkspace(runId!),
     enabled: Boolean(runId),
     refetchInterval: 5000,
   });
+  const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
@@ -55,6 +59,20 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const reject = useMutation({
     mutationFn: (approvalId: string) => rejectToolApproval(runId!, approvalId, "Rejected from Agent Run Detail"),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
+  });
+  const saveEvalCase = useMutation({
+    mutationFn: () => {
+      const datasetId = datasetsQuery.data?.items[0]?.id;
+      if (!datasetId || !runId) throw new Error("No dataset or run");
+      return createEvalCaseFromRun(datasetId, runId, {
+        expected_json: { status: run?.status ?? "COMPLETED" },
+        tags_json: ["saved-from-run"],
+      });
+    },
+    onSuccess: () => {
+      setSaveEvalSuccess(true);
+      queryClient.invalidateQueries({ queryKey: ["eval-cases"] });
+    },
   });
   const data = workspace.data;
   const run = data?.run;
@@ -103,6 +121,17 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 <GitBranch className="h-3.5 w-3.5" />
                 {text("编排多 Agent", "Orchestrate Agents")}
               </Button>
+              {run && (run.status === "COMPLETED" || run.status === "FAILED") && (
+                <Button
+                  disabled={saveEvalCase.isPending || saveEvalSuccess || !datasetsQuery.data?.items.length}
+                  onClick={() => saveEvalCase.mutate()}
+                >
+                  <FlaskConical className="h-3.5 w-3.5" />
+                  {saveEvalSuccess
+                    ? text("已保存", "Saved")
+                    : text("保存为 Eval Case", "Save as Eval Case")}
+                </Button>
+              )}
               <Link to="/agents/default/workspace">
                 <Button>
                   <Bot className="h-3.5 w-3.5" />
