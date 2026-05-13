@@ -174,6 +174,32 @@ post_stage_hardening:
       - Hydration on re-mount skips overwriting store when in-memory assistant content is newer than localStorage snapshot.
       - Navigation resilience e2e test added covering link-click-away and browser-back flow.
       - Total mocked browser tests now 13.
+  - run_backend_tests
+  - run_frontend_build
+  - run_docs_validation
+  - update_docs_ai_task_progress_yaml
+  - update_docs_task_progress_md
+  - record_acceptance_result
+
+  - id: l3-live-browser-validation
+    date: 2026-05-13
+    status: completed
+    demo: L3 live browser validation passes against real backend — Run Detail canonical run continuity and live Workspace user journey both verified.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && HARNESS_E2E_RUN_ID=<run_id> HARNESS_E2E_LIVE_WORKSPACE=1 npx playwright test --project=chromium e2e/live-harness.spec.ts
+      - cd apps/agent-console && npm run e2e:smoke
+      - cd apps/agent-console && npm run lint
+      - git diff --check
+    acceptance_notes:
+      - L3A Run Detail shows canonical run with full Harness evidence (summary, Plan DAG, Events, Tools, Model Calls, Replay).
+      - L3A Replay works for the canonical run.
+      - L3A /runs/:runId/events shows event evidence.
+      - L3A /runs/:runId/subagents shows subagent evidence.
+      - L3B Live Workspace user journey submits a goal and perceives a created Run with assistant output.
+      - Fixed strict-mode selector violations in live-harness.spec.ts.
+      - Total live browser tests: 5 (4 L3A + 1 L3B).
+      - Total mocked browser tests: 13.
 
 stage_completion_rule:
   - run_backend_tests

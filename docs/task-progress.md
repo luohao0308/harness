@@ -99,9 +99,9 @@ cd services/api-server && .venv/bin/python -m pytest tests/test_cors.py -> 2 pas
 
 ## Not Completed Yet
 
-- L3 live browser validation requires running backend with HARNESS_E2E_RUN_ID (blocked by local environment without full backend services).
-- L3B live Workspace user journey requires model credentials for deterministic live stream.
 - Full-infra validation profile (Tempo + Loki) not yet exercised in this environment.
+- Sandbox tool execution fails (Docker socket issue in local dev — 500 on `/api/tasks/:id/tools/execute`).
+- Non-Workspace/non-RunDetail browser e2e for Eval, Observability, Tools, Sandboxes, Agent Studio pages.
 
 ## Completed: Complete Harness Validation Flow
 
@@ -156,6 +156,31 @@ git diff --check -> passed
 ```
 
 Total mocked browser tests: 13.
+
+## Completed: L3 Live Browser Validation
+
+Date: 2026-05-13
+
+L3 live browser validation passes against real backend (API on 127.0.0.1:8000 + frontend on 127.0.0.1:5177).
+
+Results:
+- **L3A** Canonical Run browser continuity — 4 tests pass:
+  - Run Detail shows canonical run with full Harness evidence
+  - Replay works for the canonical run
+  - `/runs/:runId/events` shows event evidence
+  - `/runs/:runId/subagents` shows subagent evidence
+- **L3B** Live Workspace user journey — 1 test passes:
+  - Submit a goal through Workspace and perceive a created Run with assistant output
+
+Verification:
+```text
+HARNESS_E2E_RUN_ID=<run_id> HARNESS_E2E_LIVE_WORKSPACE=1 npx playwright test --project=chromium e2e/live-harness.spec.ts -> 5 passed
+cd apps/agent-console && npm run e2e:smoke -> 13 passed
+cd apps/agent-console && npm run lint -> passed
+git diff --check -> passed
+```
+
+Total live browser tests: 5. Total mocked browser tests: 13.
 
 ## Next Step
 
