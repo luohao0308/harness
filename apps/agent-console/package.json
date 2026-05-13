@@ -12,8 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:install": "playwright install chromium",
-    "e2e:smoke": "playwright test --project=chromium",
-    "e2e:smoke:headed": "playwright test --project=chromium --headed"
+    "e2e:smoke": "playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts e2e/agent-workspace-success.smoke.spec.ts e2e/run-detail.smoke.spec.ts",
+    "e2e:smoke:headed": "playwright test --project=chromium --headed e2e/agent-workspace.smoke.spec.ts e2e/agent-workspace-success.smoke.spec.ts e2e/run-detail.smoke.spec.ts",
+    "e2e:live": "playwright test --project=chromium e2e/live-harness.spec.ts"
   },
   "engines": {
     "node": ">=20.0.0"

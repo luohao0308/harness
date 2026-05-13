@@ -66,7 +66,8 @@ export function AgentWorkspacePage() {
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
   const [inspectorSection, setInspectorSection] = useState<InspectorSection | null>(null);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const activeRunId = useWorkspaceStore((s) => s.activeRunId);
+  const setActiveRunId = useWorkspaceStore((s) => s.setActiveRunId);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
@@ -162,7 +163,42 @@ export function AgentWorkspacePage() {
       }
     };
 
-    const v3 = readConversationsSnapshot(agentId);
+    // v5: Skip hydration when the in-memory store already has content that
+    // is newer than what localStorage holds. This happens when the user
+    // navigates away mid-stream and comes back — the SSE stream continues
+    // writing to the global zustand store in the background, but the
+    // debounced localStorage save may not have fired yet. Hydrating from
+    // the stale localStorage snapshot would overwrite the stream's output.
+    const currentState = useWorkspaceStore.getState();
+    const hasStreamingNode = Object.values(currentState.nodesById).some(
+      (node) => node.state === "streaming",
+    );
+    // Check if any assistant node has content that would be lost by hydration
+    const storeAssistantContent = Object.values(currentState.nodesById)
+      .filter((node) => node.role === "assistant")
+      .reduce((total, node) => total + node.content.length, 0);
+    const v3Snapshot = readConversationsSnapshot(agentId);
+    const snapshotConv = v3Snapshot
+      ? (v3Snapshot.conversations.find((c) => c.id === v3Snapshot.currentConversationId) ??
+          v3Snapshot.conversations[0])
+      : null;
+    const snapshotAssistantContent = snapshotConv
+      ? Object.values(snapshotConv.nodesById)
+          .filter((node: any) => node.role === "assistant")
+          .reduce((total: number, node: any) => total + (node.content?.length ?? 0), 0)
+      : 0;
+    if (
+      currentState.activeStream !== null ||
+      hasStreamingNode ||
+      storeAssistantContent > snapshotAssistantContent
+    ) {
+      applyContextMaxTokens();
+      return () => {
+        useWorkspaceStore.getState().setAgentScope(null);
+      };
+    }
+
+    const v3 = v3Snapshot;
     if (v3 !== null) {
       hydrateFromConversations({
         conversations: v3.conversations,

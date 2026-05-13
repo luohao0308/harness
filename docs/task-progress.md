@@ -99,7 +99,63 @@ cd services/api-server && .venv/bin/python -m pytest tests/test_cors.py -> 2 pas
 
 ## Not Completed Yet
 
-- Broader browser e2e coverage for non-Workspace routes remains deferred.
+- L3 live browser validation requires running backend with HARNESS_E2E_RUN_ID (blocked by local environment without full backend services).
+- L3B live Workspace user journey requires model credentials for deterministic live stream.
+- Full-infra validation profile (Tempo + Loki) not yet exercised in this environment.
+
+## Completed: Complete Harness Validation Flow
+
+Date: 2026-05-13
+
+Layers implemented:
+- **L0** Static/Unit/Build/Docs gates — all pass (96 unit tests, lint, build, docs validation, whitespace).
+- **L2** Mocked browser product-perception tests — 12 tests pass:
+  - Workspace shell failure path (2 existing tests preserved)
+  - Workspace success-flow: run_created → delta → tool_call → artifact → usage → done
+  - Run Detail: summary, Plan DAG, Tool Calls, Guardrails, Event Stream, Subagents, Model Calls, Replay
+  - Inspector deep-link anchors (#plan, #model-calls, #tool-runtime, #approvals)
+- **L3** Live browser validation spec created (separate from mocked smoke):
+  - L3A: Canonical Run browser continuity (uses HARNESS_E2E_RUN_ID from backend smoke)
+  - L3B: Live Workspace user journey (uses HARNESS_E2E_LIVE_WORKSPACE flag)
+- **L4** UI deep-link and state coherence:
+  - Added id attributes to RunDetailPage sections for Inspector hash anchors
+  - Workspace Run status behavior: lazy projection (intentional, tested)
+- **L5** Evidence capture:
+  - Report directory: `.omx/reports/complete-harness-validation-flow/`
+  - Orchestration script: `scripts/validate-harness-flow.sh`
+
+Verification commands:
+```text
+cd apps/agent-console && npm run e2e:smoke -> 12 passed
+cd apps/agent-console && npm test -> 96 passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+```
+
+## Completed: Workspace Navigation Resilience
+
+Date: 2026-05-13
+
+Bug fix: Stream content and Run state now survive client-side navigation away from Workspace mid-stream.
+
+Changes:
+- **activeRunId** lifted from component `useState` to zustand global store — Run state persists across route navigation.
+- **SSE delta writes** bypass `useStreamFlush` and write directly to zustand store — content survives component unmount.
+- **Hydration guard** on re-mount skips overwriting store when in-memory assistant content is newer than localStorage snapshot.
+- **Navigation resilience e2e test** added covering link-click-away and browser-back flow.
+
+Verification:
+```text
+cd apps/agent-console && npx playwright test --project=chromium e2e/nav-resilience.spec.ts -> 1 passed
+cd apps/agent-console && npm run e2e:smoke -> 12 passed
+cd apps/agent-console && npm test -> 96 passed
+cd apps/agent-console && npm run lint -> passed
+git diff --check -> passed
+```
+
+Total mocked browser tests: 13.
 
 ## Next Step
 
@@ -107,4 +163,9 @@ Keep primary Agent Run smoke in the regular release gate:
 
 ```text
 python3 scripts/smoke-test-agent-run.py
+```
+
+For full validation (when backend is available):
+```text
+./scripts/validate-harness-flow.sh --full-infra
 ```

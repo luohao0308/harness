@@ -95,6 +95,9 @@ type WorkspaceState = {
    * `setContextMaxTokens` go through the clamp.
    */
   contextMaxTokens: number;
+  // --- v5 additive fields (Run state persistence across navigation) ---
+  /** Active Run id; survives route navigation so returning to Workspace shows the last Run. */
+  activeRunId: string | null;
   // --- v1 actions (unchanged) ---
   reset: () => void;
   setDraft: (draft: string) => void;
@@ -129,6 +132,8 @@ type WorkspaceState = {
   // --- v4 additive actions ---
   /** Route the value through `clampContextMaxTokens` before writing. */
   setContextMaxTokens: (value: number) => void;
+  // --- v5 additive actions ---
+  setActiveRunId: (runId: string | null) => void;
 };
 
 const rootNode: ConversationNode = {
@@ -217,6 +222,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   historyPanelCollapsed: false,
   // v4 — see field doc for why we bypass `clampContextMaxTokens` here.
   contextMaxTokens: CONTEXT_MAX_TOKENS_DEFAULT,
+  // v5 — persists across navigation
+  activeRunId: null,
   reset: () =>
     set({
       nodesById: { [rootNode.id]: { ...rootNode, children_ids: [] } },
@@ -439,6 +446,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setHistoryPanelCollapsed: (collapsed) => set({ historyPanelCollapsed: collapsed }),
   setContextMaxTokens: (value) =>
     set({ contextMaxTokens: clampContextMaxTokens(value) }),
+  setActiveRunId: (runId) => set({ activeRunId: runId }),
   hydrateFromConversations: (snapshot) => {
     if (snapshot.conversations.length === 0) return;
     const target =

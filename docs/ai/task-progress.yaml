@@ -135,6 +135,46 @@ post_stage_hardening:
       - Workspace and narrow console chrome stay compact so chat space remains primary.
       - Non-Workspace browser e2e coverage remains deferred.
 
+  - id: complete-harness-validation-flow
+    date: 2026-05-13
+    status: completed
+    demo: Layered validation flow proves Model + Harness = Agent through L0-L5 gates with mocked browser tests for Workspace success path, Run Detail product proof, and Inspector deep-link anchors.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm run e2e:smoke
+      - cd apps/agent-console && npm test
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - L2 Workspace success-flow mocked e2e covers run_created, delta, tool_call_requested, tool_call_result, artifact_created, usage, done SSE events.
+      - L2 Run Detail mocked e2e covers summary, Plan DAG, Tool Calls, Guardrails, Event Stream, Subagents, Model Calls, Replay, and deep-link anchors.
+      - L4 Inspector deep-link anchors (#plan, #model-calls, #tool-runtime, #approvals) added to RunDetailPage and verified by browser tests.
+      - L3 live browser validation spec created (requires running backend + HARNESS_E2E_RUN_ID).
+      - L5 evidence report structure and validation orchestration script created.
+      - e2e:live npm script added for live validation separate from fast mocked smoke.
+      - Total mocked browser tests now 12 (2 original + 2 Workspace success + 8 Run Detail).
+
+  - id: workspace-navigation-resilience
+    date: 2026-05-13
+    status: completed
+    demo: Stream content and Run state survive client-side navigation away from Workspace mid-stream and back.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm run e2e:smoke
+      - cd apps/agent-console && npx playwright test --project=chromium e2e/nav-resilience.spec.ts
+      - cd apps/agent-console && npm test
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - git diff --check
+    acceptance_notes:
+      - activeRunId lifted from component useState to zustand global store so Run state persists across route navigation.
+      - SSE delta writes bypass useStreamFlush and write directly to zustand store, surviving component unmount.
+      - Hydration on re-mount skips overwriting store when in-memory assistant content is newer than localStorage snapshot.
+      - Navigation resilience e2e test added covering link-click-away and browser-back flow.
+      - Total mocked browser tests now 13.
+
 stage_completion_rule:
   - run_backend_tests
   - run_frontend_build

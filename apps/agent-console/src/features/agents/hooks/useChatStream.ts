@@ -192,19 +192,17 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
           }
           case "delta": {
             if (firstDeltaAt === null) firstDeltaAt = performance.now();
-            flush.commit(() => {
-              useWorkspaceStore.getState().appendContent(assistantNodeId, event.content);
-            });
+            // Write directly to store to survive component unmount during navigation.
+            // The store's appendContent is global and does not depend on React lifecycle.
+            useWorkspaceStore.getState().appendContent(assistantNodeId, event.content);
             clearWatchdog();
             return;
           }
           case "think_delta": {
             if (firstDeltaAt === null) firstDeltaAt = performance.now();
-            flush.commit(() => {
-              useWorkspaceStore
-                .getState()
-                .appendContent(assistantNodeId, `<think>${event.content}</think>`);
-            });
+            useWorkspaceStore
+              .getState()
+              .appendContent(assistantNodeId, `<think>${event.content}</think>`);
             clearWatchdog();
             return;
           }
