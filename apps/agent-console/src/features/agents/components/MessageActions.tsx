@@ -1,6 +1,7 @@
 /**
  * MessageActions — hover/focus action row attached to every user / assistant
- * bubble (Req 4.1, 4.8, 5.1, 5.3, 5.4, 5.6, 10.1, 10.4, 10.5, 14.2, 14.3).
+ * bubble (Req 4.1, 4.8, 5.1, 5.3, 5.4, 5.6, 10.1, 10.4, 10.5, 14.2, 14.3,
+ * 16.1, 16.2).
  *
  * Buttons exposed:
  *   - Copy      — rendered for both `user` and `assistant`. On success the
@@ -12,6 +13,8 @@
  *                 (Req 4.1, 4.8).
  *   - Regenerate— only for `role === "assistant" && canRegenerate &&
  *                 !isStreaming` (Req 10.1, 10.4).
+ *   - Branch    — only for `role === "assistant" && !isStreaming` when
+ *                 `onBranch` is provided (Req 16.1, 16.2).
  *
  * Visibility is driven by the parent bubble (`group`) + this row's
  * `opacity-0 group-hover:opacity-100 focus-within:opacity-100` classes, so
@@ -30,7 +33,7 @@
 
 import { useEffect, useRef, useState, type JSX } from "react";
 
-import { Check, Copy, Pencil, RotateCw } from "lucide-react";
+import { Check, Copy, GitBranch, Pencil, RotateCw } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
@@ -53,6 +56,8 @@ export type MessageActionsProps = {
   onEdit: () => void;
   /** Only called when `canRegenerate === true`. */
   onRegenerate: () => void;
+  /** Called when the user clicks "Branch" on an assistant message (Req 16.1). */
+  onBranch?: () => void;
 };
 
 // Shared sizing override: the Button primitive defaults to h-8/px-3, which
@@ -60,7 +65,7 @@ export type MessageActionsProps = {
 const SMALL_BUTTON = "h-7 gap-1 px-2 text-[11px]";
 
 export function MessageActions(props: MessageActionsProps): JSX.Element {
-  const { role, canRegenerate, isStreaming, isEditing, onCopy, onEdit, onRegenerate } = props;
+  const { role, canRegenerate, isStreaming, isEditing, onCopy, onEdit, onRegenerate, onBranch } = props;
   const { text } = useI18n();
 
   const [justCopied, setJustCopied] = useState(false);
@@ -99,6 +104,7 @@ export function MessageActions(props: MessageActionsProps): JSX.Element {
 
   const showEdit = role === "user" && !isStreaming && !isEditing;
   const showRegenerate = role === "assistant" && canRegenerate && !isStreaming;
+  const showBranch = role === "assistant" && !isStreaming && Boolean(onBranch);
 
   const copyLabel = justCopied ? text("已复制", "Copied") : text("复制", "Copy");
 
@@ -147,6 +153,19 @@ export function MessageActions(props: MessageActionsProps): JSX.Element {
         >
           <RotateCw aria-hidden="true" className="h-3.5 w-3.5" />
           <span>{text("重新生成", "Regenerate")}</span>
+        </Button>
+      )}
+
+      {showBranch && (
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onBranch}
+          aria-label={text("分支", "Branch")}
+          className={SMALL_BUTTON}
+        >
+          <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
+          <span>{text("分支", "Branch")}</span>
         </Button>
       )}
     </div>
