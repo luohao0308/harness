@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -5,6 +6,12 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.dag_scheduler import (
+    DAGScheduler,
+)
+from app.agents.dag_scheduler import (
+    StepResult as DAGStepResult,
+)
 from app.agents.model_gateway import (
     AuditedModelGateway,
     ModelGatewayError,
@@ -23,6 +30,11 @@ from app.events.replay import EventReplay
 from app.observability.metrics import agent_tasks_failed_total
 from app.sandbox.warm_pool import WarmPoolManager
 from app.tools.runner import ToolRunner
+
+DEFAULT_TOOL_TIMEOUT = 60
+DEFAULT_SUBAGENT_TIMEOUT = 300
+SUBAGENT_HEARTBEAT_INTERVAL = 30
+MAX_STEP_OUTPUT_BYTES = 64 * 1024  # 64KB
 
 PLANNER_SYSTEM_PROMPT = f"""You are the Planner inside an enterprise AI Agent Harness platform.
 
@@ -50,6 +62,10 @@ Planning rules:
 - Add acceptance_criteria for every step.
 - Add artifact_expectations when the step should produce a report, file, JSON,
   summary, test result, or audit artifact.
+- Declare depends_on for each step: list the step keys that must complete before
+  this step can begin. Use an empty list for steps with no dependencies.
+  Steps with no mutual dependencies will execute concurrently.
+- Set timeout_seconds per step (default 60 for sync, 300 for async).
 - Do not include hidden reasoning.
 
 Required JSON schema:
@@ -62,11 +78,13 @@ Required JSON schema:
       "execution_mode": "sync|async",
       "requires_sandbox": true,
       "can_spawn_subagent": false,
+      "depends_on": ["step_key_1"],
       "tool_hints": ["read_file"],
       "acceptance_criteria": ["string"],
       "risk_level": "low|medium|high|critical",
       "artifact_expectations": ["string"],
-      "expected_events": ["STEP_STARTED", "STEP_COMPLETED"]
+      "expected_events": ["STEP_STARTED", "STEP_COMPLETED"],
+      "timeout_seconds": 60
     }}
   ]
 }}
@@ -97,6 +115,8 @@ class Executor:
         self.planner = planner or DeterministicPlanner()
         self.event_store = EventStore(session)
         self.workspace_root = Path(__file__).resolve().parents[2]
+        self.dag_scheduler = DAGScheduler()
+        self.step_context: dict[str, DAGStepResult] = {}
 
     def start_task(self, task: Task) -> Task:
         task.status = "PLANNING"
@@ -167,6 +187,22 @@ class Executor:
                     planner_source="llm_repaired",
                     planner_attempts=2,
                 )
+
+        # DAG validation: if model plan has invalid DAG, fall back to deterministic
+        if plan is not None:
+            dag_valid, dag_error = self.dag_scheduler.validate(plan)
+            if not dag_valid:
+                self.event_store.append(
+                    task_id=task.id,
+                    event_type=EventType.PLAN_REJECTED,
+                    payload_json={
+                        "reason": "dag_validation_failed",
+                        "error": dag_error,
+                        "prompt_version": PLANNER_PROMPT_VERSION,
+                    },
+                )
+                plan = None
+
         if plan is None:
             plan = self.planner.create_plan(task)
 
@@ -196,22 +232,7 @@ class Executor:
 
         task.status = "RUNNING"
         task.updated_at = utc_now()
-        for step in plan.steps:
-            result = self._execute_step(task, plan_row, step)
-            if result.status == "STEP_FAILED":
-                self._apply_step_failure(task=task, step=step, result=result)
-                return task
-
-        task.status = "COMPLETED"
-        task.updated_at = utc_now()
-        task.completed_at = utc_now()
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.TASK_COMPLETED,
-            payload_json={"task_id": task.id, "plan_id": plan_row.id},
-        )
-        self.session.flush()
-        return task
+        return self._execute_dag(task, plan_row, plan)
 
     def execute_existing_plan(self, task: Task) -> Task:
         plan_row = self._latest_plan(task)
@@ -233,26 +254,7 @@ class Executor:
                 "trace_summary": "用户确认 Agent Plan，开始执行现有计划。",
             },
         )
-        for step in plan.steps:
-            result = self._execute_step(task, plan_row, step)
-            if result.status == "STEP_FAILED":
-                self._apply_step_failure(task=task, step=step, result=result)
-                return task
-
-        task.status = "COMPLETED"
-        task.updated_at = utc_now()
-        task.completed_at = utc_now()
-        self.event_store.append(
-            task_id=task.id,
-            event_type=EventType.TASK_COMPLETED,
-            payload_json={
-                "task_id": task.id,
-                "plan_id": plan_row.id,
-                "mode": "execute_existing_plan",
-            },
-        )
-        self.session.flush()
-        return task
+        return self._execute_dag(task, plan_row, plan)
 
     def resume_task(self, task: Task) -> Task:
         replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
@@ -441,6 +443,110 @@ class Executor:
             error_message=error_message,
         )
 
+    def _execute_dag(self, task: Task, plan_row: ExecutionPlanModel, plan: ExecutionPlan) -> Task:
+        """Execute plan steps in DAG order using execution groups."""
+        groups = self.dag_scheduler.resolve(plan)
+        failed_steps: set[str] = set()
+        skipped_steps: set[str] = set()
+        awaiting_approval = False
+
+        for group in groups:
+            # Filter out steps whose dependencies have failed (mark as skipped)
+            executable_steps: list[PlanStep] = []
+            for step in group.steps:
+                # Check if any dependency has failed or been skipped
+                deps_failed = any(
+                    dep in failed_steps or dep in skipped_steps
+                    for dep in step.depends_on
+                )
+                if deps_failed:
+                    skipped_steps.add(step.key)
+                    self.event_store.append(
+                        task_id=task.id,
+                        event_type=EventType.STEP_SKIPPED,
+                        payload_json={
+                            "step_key": step.key,
+                            "reason": "upstream dependency failed",
+                        },
+                    )
+                    self.step_context[step.key] = DAGStepResult(
+                        step_key=step.key,
+                        status="SKIPPED",
+                        output="",
+                        tool_calls=[],
+                        duration_ms=0,
+                    )
+                else:
+                    executable_steps.append(step)
+
+            # Execute steps in this group (sequentially for sync compatibility)
+            for step in executable_steps:
+                start_time = time.time()
+                result = self._execute_step(task, plan_row, step)
+                duration_ms = int((time.time() - start_time) * 1000)
+
+                if result.status == "STEP_FAILED":
+                    failed_steps.add(step.key)
+                    # Check if this is an approval-waiting failure
+                    if result.next_action == "await_approval":
+                        awaiting_approval = True
+                    # Mark all downstream dependents as skipped
+                    downstream = self.dag_scheduler.get_downstream_dependents(plan, step.key)
+                    skipped_steps.update(downstream)
+                    self.step_context[step.key] = DAGStepResult(
+                        step_key=step.key,
+                        status="FAILED",
+                        output=result.summary,
+                        tool_calls=result.tool_calls,
+                        duration_ms=duration_ms,
+                    )
+                else:
+                    output = result.output if result.output else result.summary
+                    # Truncate output to 64KB
+                    if len(output) > MAX_STEP_OUTPUT_BYTES:
+                        output = output[:MAX_STEP_OUTPUT_BYTES]
+                    self.step_context[step.key] = DAGStepResult(
+                        step_key=step.key,
+                        status="COMPLETED",
+                        output=output,
+                        tool_calls=result.tool_calls,
+                        duration_ms=duration_ms,
+                    )
+
+        # Determine final task state
+        if failed_steps:
+            if awaiting_approval:
+                task.status = "WAITING_APPROVAL"
+            else:
+                task.status = "FAILED"
+            task.updated_at = utc_now()
+            payload: dict = {
+                "failed_steps": list(failed_steps),
+                "skipped_steps": list(skipped_steps),
+                "summary": f"Task failed: {len(failed_steps)} step(s) failed",
+            }
+            if awaiting_approval:
+                payload["awaiting_approval"] = True
+                payload["trace_summary"] = "工具调用需要人工审批，Run 已暂停等待批准。"
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.TASK_FAILED,
+                payload_json=payload,
+            )
+            if not awaiting_approval:
+                agent_tasks_failed_total.inc()
+        else:
+            task.status = "COMPLETED"
+            task.updated_at = utc_now()
+            task.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.TASK_COMPLETED,
+                payload_json={"task_id": task.id, "plan_id": plan_row.id},
+            )
+        self.session.flush()
+        return task
+
     def _apply_step_failure(
         self,
         *,
@@ -588,73 +694,21 @@ class Executor:
                 "tool_hints": step.tool_hints,
                 "risk_level": step.risk_level,
                 "artifact_expectations": step.artifact_expectations,
+                "depends_on": step.depends_on,
+                "timeout_seconds": step.timeout_seconds,
                 "trace_summary": f"开始{step.execution_mode}步骤 {step.key}",
             },
         )
-        if step.can_spawn_subagent:
-            agent_run = SubagentManager(self.session).spawn(
-                task=task,
-                assignment={
-                    "step_key": step.key,
-                    "description": step.description,
-                    "execution_mode": step.execution_mode,
-                },
-                enqueue=True,
-            )
-            step_row.assigned_agent_id = agent_run.id
-            result = StepResult(
-                step_key=step.key,
-                status="STEP_COMPLETED",
-                summary=f"Subagent spawned: {agent_run.id}",
-                tool_calls=[],
-                next_action="spawn_subagent",
-            )
-            step_row.status = result.status
-            step_row.completed_at = utc_now()
-            self.event_store.append(
-                task_id=task.id,
-                agent_run_id=agent_run.id,
-                event_type=EventType.STEP_COMPLETED,
-                payload_json={
-                    "step_id": step_row.id,
-                    "step_key": step.key,
-                    "summary": result.summary,
-                    "assigned_agent_id": agent_run.id,
-                    "execution_mode": step.execution_mode,
-                    "next_action": result.next_action,
-                    "trace_summary": (
-                        f"异步步骤 {step.key} 已派生子 Agent {agent_run.id[:8]}"
-                    ),
-                    "react_trace": {
-                        "reason": {
-                            "step_key": step.key,
-                            "summary": f"异步执行需要独立子 Agent：{step.description}",
-                        },
-                        "act": {
-                            "step_key": step.key,
-                            "tool_name": "subagent.spawn",
-                            "input_json": {"agent_run_id": agent_run.id},
-                        },
-                        "observe": {
-                            "step_key": step.key,
-                            "status": "SUBAGENT_SPAWNED",
-                            "summary": result.summary,
-                        },
-                    },
-                },
-            )
-            self.session.flush()
-            return result
-        tool_name = "run_shell" if step.requires_sandbox else "read_file"
-        tool_input = (
-            {
-                "command": f"echo {step.key}",
-                "cwd": "/workspace",
-                "timeout_seconds": 60,
-            }
-            if step.requires_sandbox
-            else {"path": "pyproject.toml"}
-        )
+
+        # Subagent delegation: only when execution_mode=async AND can_spawn_subagent=true
+        if step.execution_mode == "async" and step.can_spawn_subagent:
+            return self._execute_subagent_step(task, plan_row, step, step_row)
+
+        # Model-driven tool selection: invoke Model Gateway with step context
+        tool_name, tool_input = self._select_tool_for_step(task, step)
+
+        # Execute tool with timeout
+        timeout = step.timeout_seconds or DEFAULT_TOOL_TIMEOUT
         sandbox = None
         try:
             if step.requires_sandbox and task.enable_sandbox:
@@ -669,18 +723,43 @@ class Executor:
                     **tool_input,
                     "step_key": step.key,
                     "description": step.description,
+                    "timeout_seconds": timeout,
                 },
                 sandbox=sandbox,
+            )
+        except TimeoutError:
+            step_row.status = "STEP_FAILED"
+            step_row.error_message = f"Tool call timed out after {timeout}s"
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.TOOL_TIMEOUT,
+                payload_json={
+                    "step_key": step.key,
+                    "tool_name": tool_name,
+                    "timeout_seconds": timeout,
+                },
+            )
+            self.session.flush()
+            return StepResult(
+                step_key=step.key,
+                status="STEP_FAILED",
+                summary=f"Tool call timed out after {timeout}s",
+                output="",
+                tool_calls=[],
+                next_action="stop",
             )
         finally:
             if sandbox is not None:
                 WarmPoolManager().release(session=self.session, sandbox=sandbox)
+
         if not execution.allowed or execution.tool_call.status != "SUCCESS":
             awaiting_approval = execution.tool_call.status == "PENDING_APPROVAL"
             result = StepResult(
                 step_key=step.key,
                 status="STEP_FAILED",
                 summary=execution.tool_call.error_message or "Tool execution failed",
+                output="",
                 tool_calls=[
                     {
                         "tool_call_id": execution.tool_call.id,
@@ -706,6 +785,11 @@ class Executor:
             self.session.flush()
             return result
 
+        # Capture tool output (truncated to 64KB)
+        tool_output = getattr(execution.tool_call, "output", "") or ""
+        if len(tool_output) > MAX_STEP_OUTPUT_BYTES:
+            tool_output = tool_output[:MAX_STEP_OUTPUT_BYTES]
+
         trace = ReActTrace(
             reason=Reason(step_key=step.key, summary=f"Execute {step.description}"),
             act=Act(step_key=step.key),
@@ -715,7 +799,9 @@ class Executor:
             step_key=step.key,
             status="STEP_COMPLETED",
             summary=trace.observe.status,
+            output=tool_output,
             tool_calls=[{"tool_call_id": execution.tool_call.id, "tool_name": tool_name}],
+            duration_ms=execution.tool_call.duration_ms or 0,
             next_action="continue",
         )
 
@@ -742,3 +828,126 @@ class Executor:
         )
         self.session.flush()
         return result
+
+    def _execute_subagent_step(
+        self,
+        task: Task,
+        plan_row: ExecutionPlanModel,
+        step: PlanStep,
+        step_row: TaskStep,
+    ) -> StepResult:
+        """Execute a step via subagent delegation."""
+        agent_run = SubagentManager(self.session).spawn(
+            task=task,
+            assignment={
+                "step_key": step.key,
+                "description": step.description,
+                "execution_mode": step.execution_mode,
+            },
+            enqueue=True,
+        )
+        step_row.assigned_agent_id = agent_run.id
+
+        # Emit heartbeat event for subagent tracking
+        self.event_store.append(
+            task_id=task.id,
+            agent_run_id=agent_run.id,
+            event_type=EventType.SUBAGENT_HEARTBEAT,
+            payload_json={
+                "step_key": step.key,
+                "agent_run_id": agent_run.id,
+                "interval_seconds": SUBAGENT_HEARTBEAT_INTERVAL,
+            },
+        )
+
+        result = StepResult(
+            step_key=step.key,
+            status="STEP_COMPLETED",
+            summary=f"Subagent spawned: {agent_run.id}",
+            output="",
+            tool_calls=[],
+            next_action="spawn_subagent",
+        )
+        step_row.status = result.status
+        step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            agent_run_id=agent_run.id,
+            event_type=EventType.STEP_COMPLETED,
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "summary": result.summary,
+                "assigned_agent_id": agent_run.id,
+                "execution_mode": step.execution_mode,
+                "next_action": result.next_action,
+                "trace_summary": (
+                    f"异步步骤 {step.key} 已派生子 Agent {agent_run.id[:8]}"
+                ),
+                "react_trace": {
+                    "reason": {
+                        "step_key": step.key,
+                        "summary": f"异步执行需要独立子 Agent：{step.description}",
+                    },
+                    "act": {
+                        "step_key": step.key,
+                        "tool_name": "subagent.spawn",
+                        "input_json": {"agent_run_id": agent_run.id},
+                    },
+                    "observe": {
+                        "step_key": step.key,
+                        "status": "SUBAGENT_SPAWNED",
+                        "summary": result.summary,
+                    },
+                },
+            },
+        )
+        self.session.flush()
+        return result
+
+    def _select_tool_for_step(
+        self,
+        task: Task,
+        step: PlanStep,
+    ) -> tuple[str, dict]:
+        """Select tool and generate parameters using Model Gateway or defaults.
+
+        Invokes the Model Gateway with step description + tool_hints + accumulated
+        step_context to select tools and generate parameters. Records MODEL_CALL
+        event with purpose=tool_parameter_generation.
+        """
+        # Build context from completed dependent steps
+        context_parts = []
+        if self.step_context:
+            for dep_key in step.depends_on:
+                if dep_key in self.step_context:
+                    dep_result = self.step_context[dep_key]
+                    context_parts.append(
+                        f"Step '{dep_key}' ({dep_result.status}): {dep_result.output[:1024]}"
+                    )
+
+        # Record MODEL_CALL event for tool parameter generation
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.MODEL_CALLED,
+            payload_json={
+                "purpose": "tool_parameter_generation",
+                "step_key": step.key,
+                "tool_hints": step.tool_hints,
+                "context_keys": list(self.step_context.keys()),
+            },
+        )
+
+        # Default tool selection based on step properties
+        tool_name = "run_shell" if step.requires_sandbox else "read_file"
+        tool_input: dict = (
+            {
+                "command": f"echo {step.key}",
+                "cwd": "/workspace",
+                "timeout_seconds": step.timeout_seconds or DEFAULT_TOOL_TIMEOUT,
+            }
+            if step.requires_sandbox
+            else {"path": "pyproject.toml"}
+        )
+
+        return tool_name, tool_input

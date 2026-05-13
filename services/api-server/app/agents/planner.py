@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents.dag_scheduler import DAGScheduler
 from app.agents.schemas import ExecutionPlan, PlanStep
 from app.db.models import Task
 from app.tools.registry import ToolRegistry
@@ -60,6 +61,7 @@ class DeterministicPlanner:
                 execution_mode="sync",
                 requires_sandbox=False,
                 can_spawn_subagent=False,
+                depends_on=[],
                 tool_hints=["list_files", "read_file"],
                 acceptance_criteria=["识别项目结构和关键入口文件。"],
                 risk_level="low",
@@ -74,6 +76,7 @@ class DeterministicPlanner:
                     execution_mode="async",
                     requires_sandbox=False,
                     can_spawn_subagent=True,
+                    depends_on=[steps[-1].key],
                     tool_hints=["read_file", "list_files"],
                     acceptance_criteria=["子 Agent 返回可供父任务汇总的调研结果。"],
                     risk_level="medium",
@@ -87,6 +90,7 @@ class DeterministicPlanner:
                 execution_mode="sync",
                 requires_sandbox=False,
                 can_spawn_subagent=False,
+                depends_on=[steps[-1].key],
                 tool_hints=["read_file"],
                 acceptance_criteria=["输出任务结果摘要和后续动作。"],
                 risk_level="low",
@@ -177,6 +181,14 @@ class DeterministicPlanner:
                 can_spawn_subagent=can_spawn_subagent,
                 tool_hints=tool_hints,
             )
+            # Normalize depends_on: keep only valid references to known step keys
+            raw_depends_on = raw_step.get("depends_on", [])
+            if not isinstance(raw_depends_on, list):
+                raw_depends_on = []
+            depends_on = [
+                str(dep) for dep in raw_depends_on
+                if isinstance(dep, str) and dep in seen_keys and dep != key
+            ]
             normalized_steps.append(
                 {
                     "key": key,
@@ -184,6 +196,7 @@ class DeterministicPlanner:
                     "execution_mode": execution_mode,
                     "requires_sandbox": bool(raw_step.get("requires_sandbox", False)),
                     "can_spawn_subagent": can_spawn_subagent,
+                    "depends_on": depends_on,
                     "expected_events": raw_step.get(
                         "expected_events",
                         ["STEP_STARTED", "STEP_COMPLETED"],
@@ -199,6 +212,7 @@ class DeterministicPlanner:
                         default=[],
                     ),
                     "quality_notes": quality_notes,
+                    "timeout_seconds": int(raw_step.get("timeout_seconds", 60)),
                 }
             )
         return {
@@ -227,6 +241,12 @@ class DeterministicPlanner:
             if step.execution_mode == "async" and not step.artifact_expectations
         ]
         duplicate_keys = step_count != len({step.key for step in steps})
+
+        # DAG validation
+        dag_valid, dag_error = DAGScheduler().validate(plan)
+        if not dag_valid:
+            warnings.append(f"DAG validation failed: {dag_error}")
+
         if step_count < 3:
             warnings.append("计划步骤少于 3 个，复杂任务拆解粒度可能不足。")
         if step_count > 8:
@@ -252,6 +272,7 @@ class DeterministicPlanner:
             "async_steps_have_artifacts": not missing_artifacts,
             "high_risk_requires_sandbox": not high_risk_without_sandbox,
             "unique_step_keys": not duplicate_keys,
+            "dag_valid": dag_valid,
         }
         score = 100
         score -= 12 * sum(1 for passed in gates.values() if not passed)
