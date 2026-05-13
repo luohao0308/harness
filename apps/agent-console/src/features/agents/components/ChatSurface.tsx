@@ -46,6 +46,8 @@ import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import type { UsageSummary } from "./InspectorDrawer";
 import type { ModelOption } from "./ModelPicker";
 import { PlanApprovalPanel } from "./PlanApprovalPanel";
+import { ContextUsageBar } from "./ContextUsageBar";
+import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
 const MAX_ATTACHMENT_TEXT_BYTES = 120_000;
@@ -113,6 +115,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const activeLeafId = useWorkspaceStore((state) => state.activeLeafId);
   const togglePinned = useWorkspaceStore((state) => state.togglePinned);
   const pinnedNodeIds = useWorkspaceStore((state) => state.pinnedNodeIds);
+  const contextMaxTokens = useWorkspaceStore((state) => state.contextMaxTokens);
+  const setContextMaxTokens = useWorkspaceStore((state) => state.setContextMaxTokens);
   const dismissedPlanNodeIds = useWorkspaceStore((state) => state.dismissedPlanNodeIds);
   const dismissPlanNode = useWorkspaceStore((state) => state.dismissPlanNode);
   const activeStream = useWorkspaceStore((state) => state.activeStream);
@@ -121,6 +125,13 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     () => buildActivePath(nodesById, activeLeafId, rootNodeId),
     [nodesById, activeLeafId, rootNodeId],
   );
+
+  // Context usage computation for ContextUsageBar
+  const contextUsageCurrent = useMemo(
+    () => activePath.reduce((sum, node) => sum + Math.ceil(node.content.length / 4), 0),
+    [activePath],
+  );
+  const contextUsageRatio = contextMaxTokens > 0 ? contextUsageCurrent / contextMaxTokens : 0;
 
   const tail = activePath.length > 0 ? activePath[activePath.length - 1] : null;
   const canResume = canResumeQuery(activePath);
@@ -597,6 +608,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                   tools={tools}
                   onInsertMention={handleShellToolMention}
                   text={text}
+                  contextMaxTokens={contextMaxTokens}
+                  onContextMaxTokensChange={setContextMaxTokens}
                 />
               )}
             </BottomToolsPopover>
@@ -617,7 +630,12 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                 setBottomPanel((current) => (current === "tools" ? null : "tools"))
               }
               optionsTriggerRef={optionsTriggerRef}
-              metadata={<ComposerMetadataRow usage={metadataUsage} text={text} />}
+              metadata={
+                <div className="flex items-center gap-3">
+                  <ContextUsageBar ratio={contextUsageRatio} current={contextUsageCurrent} limit={contextMaxTokens} />
+                  <ComposerMetadataRow usage={metadataUsage} text={text} />
+                </div>
+              }
               attachments={attachments}
               onRemoveAttachment={handleRemoveAttachment}
               isEditLocked={editingNodeId !== null}
@@ -655,6 +673,8 @@ type ToolsPanelProps = {
   onWorkspaceModeChange: (mode: WorkspaceMode) => void;
   attachmentNames: string[];
   onAddFiles: () => void;
+  contextMaxTokens?: number;
+  onContextMaxTokensChange?: (value: number) => void;
 };
 
 function BottomToolsPopover({
@@ -694,12 +714,19 @@ function ComposerSettingsPanel({
   tools,
   onInsertMention,
   text,
+  contextMaxTokens,
+  onContextMaxTokensChange,
 }: ToolsPanelProps): JSX.Element {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const mcpTools = tools.filter(isMcpTool);
 
   return (
     <div className="flex flex-col text-xs text-slate-800">
+      {contextMaxTokens !== undefined && onContextMaxTokensChange && (
+        <div className="border-b border-slate-100 px-2 py-2">
+          <ContextMaxTokensSlider value={contextMaxTokens} onChange={onContextMaxTokensChange} />
+        </div>
+      )}
       <ToolActionRow
         icon={<Paperclip aria-hidden="true" className="h-3.5 w-3.5" />}
         label={
