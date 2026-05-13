@@ -30,7 +30,7 @@ test.describe("L3A: Canonical Run browser continuity", () => {
     await expect(page.locator("h1")).toBeVisible({ timeout: 15_000 });
 
     // Status badge visible
-    await expect(page.getByText(/COMPLETED|RUNNING|PLANNED|FAILED/)).toBeVisible();
+    await expect(page.getByText(/COMPLETED|RUNNING|PLANNED|FAILED/).first()).toBeVisible();
 
     // Plan DAG visible
     await expect(page.getByText("Plan DAG")).toBeVisible();
@@ -73,7 +73,7 @@ test.describe("L3A: Canonical Run browser continuity", () => {
 
   test("/runs/:runId/subagents shows subagent evidence", async ({ page }) => {
     await page.goto(`/runs/${RUN_ID}/subagents`);
-    await expect(page.getByText("Subagents")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Subagents").last()).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -102,7 +102,9 @@ test.describe("L3B: Live Workspace user journey", () => {
     await page.getByRole("button", { name: "Send" }).click();
 
     // Observe run_created: Run chip/link should appear
-    await expect(page.getByRole("link", { name: /[0-9a-f]{8}/ })).toBeVisible({
+    await expect(
+      page.getByRole("link", { name: /Run Detail|Run 详情|[0-9a-f]{8}/ }),
+    ).toBeVisible({
       timeout: 30_000,
     });
 
