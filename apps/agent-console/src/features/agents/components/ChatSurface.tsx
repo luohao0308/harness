@@ -362,19 +362,18 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       const storeState = useWorkspaceStore.getState();
       const target = storeState.nodesById[nodeId];
       if (!target || target.role !== "assistant") return;
-      // Create a sibling fork: new user node from the same parent as the target
+      // Fork: move activeLeafId to the user node that is the parent of this
+      // assistant. When the user types and sends, appendNode will create a
+      // new child of that user node — forming a sibling branch to the
+      // existing assistant response.
       const parentId = target.parent_id;
       if (!parentId) return;
-      storeState.appendNode({
-        parent_id: parentId,
-        role: "user",
-        content: "",
-        state: "done",
-        metadata: {},
-        tool_calls: [],
-        artifacts: [],
-      });
-      // Focus the composer for the new branch
+      const parent = storeState.nodesById[parentId];
+      if (!parent) return;
+      // Set the active leaf to the user node (the fork point).
+      // We use the store's raw set to avoid getBranchLeafId which would
+      // follow children back to the existing leaf.
+      useWorkspaceStore.setState({ activeLeafId: parentId, draftFromNodeId: null });
       setDraft("");
     },
     [setDraft],
