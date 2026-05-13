@@ -938,6 +938,7 @@ export type EvalDataset = {
   name: string;
   description: string;
   status: string;
+  baseline_run_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -1387,6 +1388,31 @@ export async function listEvalRuns() {
 
 export async function getEvalRun(evalRunId: string) {
   return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
+}
+
+export type RegressionDelta = {
+  baseline_run_id: string;
+  current_run_id: string;
+  task_success_rate_delta: number;
+  tool_selection_accuracy_delta: number;
+  avg_latency_ms_delta: number;
+  newly_failing_case_ids: string[];
+  newly_passing_case_ids: string[];
+  is_regression: boolean;
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+};
+
+export async function setEvalBaseline(datasetId: string, evalRunId: string) {
+  return request<EvalDataset>(`/api/evals/datasets/${datasetId}/baseline`, {
+    method: "PATCH",
+    body: JSON.stringify({ eval_run_id: evalRunId }),
+  });
+}
+
+export async function getEvalRunRegression(evalRunId: string) {
+  return request<RegressionDelta | null>(`/api/evals/runs/${evalRunId}/regression`);
 }
 
 export function taskEventStreamUrl(taskId: string) {

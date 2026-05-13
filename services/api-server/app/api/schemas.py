@@ -1133,6 +1133,7 @@ class EvalDatasetResponse(BaseModel):
     name: str = Field(description="Dataset 名称")
     description: str = Field(description="Dataset 说明")
     status: str = Field(description="Dataset 状态")
+    baseline_run_id: str | None = Field(default=None, description="基线 Eval Run ID")
     created_by: str | None = Field(default=None, description="创建者")
     created_at: datetime = Field(description="创建时间")
     updated_at: datetime = Field(description="更新时间")
@@ -1213,6 +1214,24 @@ class EvalRunResponse(BaseModel):
 class EvalRunPage(BaseModel):
     items: list[EvalRunResponse] = Field(description="Eval Run 列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class SetBaselineRequest(BaseModel):
+    eval_run_id: str = Field(description="要设为基线的 Eval Run ID")
+
+
+class RegressionDelta(BaseModel):
+    baseline_run_id: str = Field(description="基线 Eval Run ID")
+    current_run_id: str = Field(description="当前 Eval Run ID")
+    task_success_rate_delta: float = Field(description="任务成功率变化（绝对百分点）")
+    tool_selection_accuracy_delta: float = Field(description="工具选择准确率变化")
+    avg_latency_ms_delta: int = Field(description="平均延迟变化（毫秒）")
+    newly_failing_case_ids: list[str] = Field(description="新增失败 Case ID")
+    newly_passing_case_ids: list[str] = Field(description="新增通过 Case ID")
+    is_regression: bool = Field(description="是否回归（task_success_rate 下降 > 10pp）")
+    total_cases: int = Field(description="总 Case 数")
+    passed_cases: int = Field(description="通过 Case 数")
+    failed_cases: int = Field(description="失败 Case 数")
 
 
 class ModelSettingsResponse(BaseModel):
