@@ -42,7 +42,7 @@ import {
   exportJson,
   exportMarkdown,
 } from "../lib/exporter";
-import { readContextMaxTokens } from "../lib/contextTokens";
+import { readAutoCompressionRatio, readContextMaxTokens } from "../lib/contextTokens";
 import {
   generateConversationId,
   genesisConversationLocalized,
@@ -57,6 +57,7 @@ import type { InspectorSection, WorkspaceMode } from "../lib/types";
 import {
   buildActivePath,
   deriveModelLabel,
+  isNodeVisibleInPath,
   summarizeUsage,
 } from "./agentWorkspaceDerive";
 
@@ -75,6 +76,7 @@ export function AgentWorkspacePage() {
   const [modelPickerOpenSeq, setModelPickerOpenSeq] = useState(0);
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false);
   const [historyNarrow, setHistoryNarrow] = useState(false);
+  const [jumpTarget, setJumpTarget] = useState<{ nodeId: string; seq: number } | null>(null);
 
   const agent = useQuery({ queryKey: ["agents", agentId], queryFn: () => getAgent(agentId) });
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
@@ -160,6 +162,10 @@ export function AgentWorkspacePage() {
       const saved = readContextMaxTokens(agentId);
       if (saved !== null) {
         useWorkspaceStore.getState().setContextMaxTokens(saved);
+      }
+      const savedRatio = readAutoCompressionRatio(agentId);
+      if (savedRatio !== null) {
+        useWorkspaceStore.getState().setAutoCompressionRatio(savedRatio);
       }
     };
 
@@ -322,7 +328,15 @@ export function AgentWorkspacePage() {
   }, []);
 
   const handleJumpToNode = useCallback((nodeId: string) => {
-    useWorkspaceStore.getState().setActiveLeafId(nodeId);
+    const store = useWorkspaceStore.getState();
+    const visible = isNodeVisibleInPath(store.activePath(), nodeId);
+    if (!visible) {
+      store.setActiveLeafId(nodeId);
+    }
+    setJumpTarget((current) => ({
+      nodeId,
+      seq: (current?.seq ?? 0) + 1,
+    }));
   }, []);
 
   // v3 slash-command targets
@@ -415,6 +429,7 @@ export function AgentWorkspacePage() {
           onOpenShortcut={handleOpenShortcut}
           modelPickerOpenSeq={modelPickerOpenSeq}
           onRequestModelPicker={handleRequestModelPicker}
+          jumpTarget={jumpTarget}
         />
         <InspectorDrawer
           section={inspectorSection}

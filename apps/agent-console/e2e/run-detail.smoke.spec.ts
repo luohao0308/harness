@@ -55,6 +55,7 @@ const workspaceFixture = {
       {
         step_key: "read-readme",
         description: "Read the project README for context",
+        depends_on: [],
         execution_mode: "sync",
         requires_sandbox: false,
         can_spawn_subagent: false,
@@ -73,6 +74,7 @@ const workspaceFixture = {
       {
         step_key: "sandbox-exec",
         description: "Execute validation in sandbox",
+        depends_on: ["read-readme"],
         execution_mode: "async",
         requires_sandbox: true,
         can_spawn_subagent: true,
@@ -250,7 +252,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("2 steps")).toBeVisible();
 
     // Step 1
-    await expect(page.getByText("read-readme")).toBeVisible();
+    await expect(page.getByText("1. read-readme")).toBeVisible();
     await expect(page.getByText("Read the project README for context")).toBeVisible();
     await expect(page.locator("#plan").getByText("read_file")).toBeVisible();
 
@@ -259,6 +261,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.locator("#plan").getByText("Sandbox", { exact: true })).toBeVisible();
     await expect(page.locator("#plan").getByText("Subagent", { exact: true })).toBeVisible();
     await expect(page.locator("#plan").getByText("async")).toBeVisible();
+    await expect(page.locator("#plan").getByText("depends_on: read-readme")).toBeVisible();
   });
 
   test("Tool Calls, Guardrails, Event Stream, and Model Calls are visible", async ({
@@ -306,6 +309,17 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(
       page.getByText("No failures detected. Run completed with full evidence."),
     ).toBeVisible();
+  });
+
+  test("completed runs can be saved as Eval Case after choosing a dataset", async ({
+    page,
+  }) => {
+    await page.goto(`/runs/${STABLE_RUN_ID}`);
+
+    await page.getByLabel(/Select Dataset|选择 Dataset/).selectOption("dataset-smoke");
+    await page.getByRole("button", { name: /Save as Eval Case|保存为 Eval Case/ }).click();
+
+    await expect(page.getByRole("button", { name: /Saved|已保存/ })).toBeVisible();
   });
 
   test("/runs/:runId/events shows event-focused evidence", async ({ page }) => {
@@ -388,7 +402,39 @@ async function routeRunDetailApis(page: Page): Promise<void> {
 
     // Eval datasets (fetched by "Save as Eval Case" button)
     if (path === "/api/evals/datasets" && method === "GET") {
-      await fulfillJson(route, { items: [] });
+      await fulfillJson(route, {
+        items: [
+          {
+            id: "dataset-smoke",
+            organization_id: null,
+            name: "Smoke Dataset",
+            description: "Run Detail smoke dataset",
+            status: "active",
+            baseline_run_id: null,
+            created_by: "e2e",
+            created_at: now,
+            updated_at: now,
+            case_count: 0,
+          },
+        ],
+        next_cursor: null,
+      });
+      return;
+    }
+
+    if (
+      path === `/api/evals/datasets/dataset-smoke/cases/from-run/${STABLE_TASK_ID}` &&
+      method === "POST"
+    ) {
+      await fulfillJson(route, {
+        id: "case-smoke",
+        dataset_id: "dataset-smoke",
+        source_task_id: STABLE_TASK_ID,
+        input_json: {},
+        expected_json: { status: "COMPLETED" },
+        tags_json: ["saved-from-run"],
+        created_at: now,
+      });
       return;
     }
 

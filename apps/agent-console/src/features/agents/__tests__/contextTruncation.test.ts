@@ -9,13 +9,13 @@
  *   - No truncation when within limit
  *   - Pinned overflow detected when pinned alone exceed budget
  *   - excludedCount correctly reported
- *   - Token estimation uses content.length / 4
+ *   - Token estimation handles English and CJK-heavy text without severe undercounting
  */
 
 import { describe, expect, it } from "vitest";
 
 import type { ConversationNode } from "../../../stores/workspaceStore";
-import { estimateTokens, truncateForContext } from "../lib/contextTruncation";
+import { estimateTextTokens, estimateTokens, truncateForContext } from "../lib/contextTruncation";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,9 +49,17 @@ function contentForTokens(tokenCount: number): string {
 // ---------------------------------------------------------------------------
 
 describe("estimateTokens", () => {
-  it("uses content.length / 4 (ceiling)", () => {
-    const node = makeNode({ id: "a", content: "hello world!" }); // 12 chars → ceil(12/4) = 3
-    expect(estimateTokens(node)).toBe(3);
+  it("uses four ASCII word characters per token for English token estimation", () => {
+    const node = makeNode({ id: "a", content: "x".repeat(2048) }); // 2048 chars -> ceil(2048/4) = 512 tokens
+    expect(estimateTokens(node)).toBe(512);
+  });
+
+  it("counts CJK-heavy content close to one token per visible character", () => {
+    expect(estimateTextTokens("这是一个上下文窗口用量测试")).toBe(13);
+  });
+
+  it("estimates mixed Chinese and English content without falling back to total length / 4", () => {
+    expect(estimateTextTokens("刚刚 selectedModelLabel is not defined")).toBe(10);
   });
 
   it("returns 0 for empty content", () => {
@@ -60,7 +68,7 @@ describe("estimateTokens", () => {
   });
 
   it("rounds up for non-divisible lengths", () => {
-    const node = makeNode({ id: "a", content: "ab" }); // 2 chars → ceil(2/4) = 1
+    const node = makeNode({ id: "a", content: "ab" }); // 2 chars -> ceil(2/4) = 1 token
     expect(estimateTokens(node)).toBe(1);
   });
 });
@@ -271,7 +279,7 @@ describe("truncateForContext", () => {
     });
   });
 
-  describe("token estimation uses content.length / 4", () => {
+  describe("ASCII token estimation keeps the four-character heuristic", () => {
     it("a 400-char message estimates to 100 tokens", () => {
       const node = makeNode({ id: "1", role: "user", content: "a".repeat(400) });
       expect(estimateTokens(node)).toBe(100);

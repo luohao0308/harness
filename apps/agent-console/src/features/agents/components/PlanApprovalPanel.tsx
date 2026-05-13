@@ -7,7 +7,7 @@
  * never inspects the store or decides whether to mount itself. The parent
  * wires the four callbacks:
  *
- *   - `onApprove`  → `stream.driveBranch({ mode: "plan", goal: planNode.content, ... })`
+ *   - `onApprove`  → parent creates a Plan-Act run from the original user goal
  *   - `onEdit`     → seed the composer draft with `planNode.content` and focus it
  *   - `onDiscard`  → `store.dismissPlanNode(planNode.id)`
  *   - `onClose`    → same as discard today; kept separate for future semantic drift
@@ -35,7 +35,7 @@ export type PlanApprovalPanelProps = {
   planNode: ConversationNode;
   /** True while an approve-triggered `stream.driveBranch` is running. */
   isSubmitting: boolean;
-  /** "批准并执行" → parent calls `stream.driveBranch({ mode: "plan", ... })`. */
+  /** "批准并执行" → parent creates a Plan-Act run from the original user goal. */
   onApprove: () => void;
   /** "修改规划" → parent seeds the composer draft and focuses the textarea. */
   onEdit: () => void;

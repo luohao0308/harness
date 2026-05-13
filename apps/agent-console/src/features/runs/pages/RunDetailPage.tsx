@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Check, FlaskConical, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
@@ -13,6 +13,7 @@ import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
   approveToolApproval,
+  createEvalDataset,
   createEvalCaseFromRun,
   executeAgentRun,
   getAgentRunWorkspace,
@@ -26,6 +27,8 @@ import {
   type ToolCall,
 } from "../../tasks/api";
 
+const DEFAULT_EVAL_DATASET_ID = "__create_default_eval_dataset__";
+
 export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const { text } = useI18n();
   const { runId } = useParams();
@@ -33,6 +36,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const [replaySequence, setReplaySequence] = useState("");
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
   const [saveEvalSuccess, setSaveEvalSuccess] = useState(false);
+  const [selectedEvalDatasetId, setSelectedEvalDatasetId] = useState("");
   const workspace = useQuery({
     queryKey: ["agent-run-workspace", runId],
     queryFn: () => getAgentRunWorkspace(runId!),
@@ -61,8 +65,15 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
   });
   const saveEvalCase = useMutation({
-    mutationFn: () => {
-      const datasetId = datasetsQuery.data?.items[0]?.id;
+    mutationFn: async () => {
+      let datasetId = selectedEvalDatasetId;
+      if (!datasetId || datasetId === DEFAULT_EVAL_DATASET_ID) {
+        const dataset = await createEvalDataset({
+          name: "Saved Runs",
+          description: "Run Detail cases saved from completed or failed agent runs.",
+        });
+        datasetId = dataset.id;
+      }
       if (!datasetId || !runId) throw new Error("No dataset or run");
       return createEvalCaseFromRun(datasetId, runId, {
         expected_json: { status: run?.status ?? "COMPLETED" },
@@ -71,6 +82,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     },
     onSuccess: () => {
       setSaveEvalSuccess(true);
+      queryClient.invalidateQueries({ queryKey: ["eval-datasets"] });
       queryClient.invalidateQueries({ queryKey: ["eval-cases"] });
     },
   });
@@ -80,6 +92,22 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     () => Math.max(0, ...(data?.events ?? []).map((event) => event.sequence)),
     [data?.events],
   );
+
+  useEffect(() => {
+    if (selectedEvalDatasetId || !datasetsQuery.data?.items.length) return;
+    setSelectedEvalDatasetId(datasetsQuery.data.items[0].id);
+  }, [datasetsQuery.data?.items, selectedEvalDatasetId]);
+  const evalDatasetOptions =
+    datasetsQuery.data?.items.length
+      ? datasetsQuery.data.items
+      : [
+          {
+            id: DEFAULT_EVAL_DATASET_ID,
+            name: text("新建默认 Dataset", "Create default Dataset"),
+          },
+        ];
+  const selectedEvalDatasetValue =
+    selectedEvalDatasetId || (!datasetsQuery.data?.items.length ? DEFAULT_EVAL_DATASET_ID : "");
 
   return (
     <ConsoleShell title={text("Agent Run", "Agent Run")}>
@@ -122,15 +150,37 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 {text("编排多 Agent", "Orchestrate Agents")}
               </Button>
               {run && (run.status === "COMPLETED" || run.status === "FAILED") && (
-                <Button
-                  disabled={saveEvalCase.isPending || saveEvalSuccess || !datasetsQuery.data?.items.length}
-                  onClick={() => saveEvalCase.mutate()}
-                >
-                  <FlaskConical className="h-3.5 w-3.5" />
-                  {saveEvalSuccess
-                    ? text("已保存", "Saved")
-                    : text("保存为 Eval Case", "Save as Eval Case")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <select
+                    aria-label={text("选择 Dataset", "Select Dataset")}
+                    value={selectedEvalDatasetValue}
+                    onChange={(event) => {
+                      setSelectedEvalDatasetId(event.target.value);
+                      setSaveEvalSuccess(false);
+                    }}
+                    disabled={saveEvalCase.isPending || datasetsQuery.isLoading}
+                    className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
+                  >
+                    {evalDatasetOptions.map((dataset) => (
+                      <option key={dataset.id} value={dataset.id}>
+                        {dataset.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    disabled={
+                      saveEvalCase.isPending ||
+                      saveEvalSuccess ||
+                      datasetsQuery.isLoading
+                    }
+                    onClick={() => saveEvalCase.mutate()}
+                  >
+                    <FlaskConical className="h-3.5 w-3.5" />
+                    {saveEvalSuccess
+                      ? text("已保存", "Saved")
+                      : text("保存为 Eval Case", "Save as Eval Case")}
+                  </Button>
+                </div>
               )}
               <Link to="/agents/default/workspace">
                 <Button>
@@ -152,7 +202,9 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               </span>
             </CardHeader>
             <div className="grid gap-2 p-3">
-              {(data?.plan?.steps ?? []).map((step, index) => (
+              {(data?.plan?.steps ?? []).map((step, index) => {
+                const dependsOn = step.depends_on ?? [];
+                return (
                 <div key={step.step_key} className="rounded-md border border-slate-100 bg-white p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -167,12 +219,18 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <Badge tone={step.execution_mode === "async" ? "purple" : "neutral"}>{step.execution_mode}</Badge>
                     {step.requires_sandbox && <Badge tone="warning">Sandbox</Badge>}
                     {step.can_spawn_subagent && <Badge tone="purple">Subagent</Badge>}
+                    {dependsOn.length > 0 ? (
+                      <Badge tone="info">depends_on: {dependsOn.join(", ")}</Badge>
+                    ) : (
+                      <Badge tone="neutral">depends_on: none</Badge>
+                    )}
                     {step.tool_hints.map((tool) => (
                       <Badge key={tool} tone="info">{tool}</Badge>
                     ))}
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {!workspace.isLoading && !data?.plan && (
                 <div className="py-8 text-center text-sm text-slate-500">
                   {text("这个 Run 还没有生成 Plan。", "This Run does not have a Plan yet.")}

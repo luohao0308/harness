@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 
 import {
+  CONTEXT_MAX_TOKENS_DEFAULT,
   CONTEXT_MAX_TOKENS_MAX,
   CONTEXT_MAX_TOKENS_MIN,
   CONTEXT_MAX_TOKENS_STEP,
@@ -80,5 +81,10 @@ describe("Property P23: Context max tokens clamp idempotent", () => {
       CONTEXT_MAX_TOKENS_MAX,
     );
     expect(clampContextMaxTokens(1_000_000_000)).toBe(CONTEXT_MAX_TOKENS_MAX);
+  });
+
+  it("uses 258k as the default context budget", () => {
+    expect(CONTEXT_MAX_TOKENS_DEFAULT).toBe(258_000);
+    expect(clampContextMaxTokens(undefined)).toBe(258_000);
   });
 });

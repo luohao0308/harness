@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type JSX } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -166,6 +166,7 @@ function renderSurface(
 
 describe("ChatSurface Workspace shell integration", () => {
   beforeEach(() => {
+    vi.unstubAllGlobals();
     useConsoleStore.getState().setLocale("en-US");
     useWorkspaceStore.getState().reset();
     Object.defineProperty(URL, "createObjectURL", {
@@ -198,23 +199,23 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.queryByRole("button", { name: /@read_file/ })).not.toBeInTheDocument();
   });
 
-  it("opens the header model picker and top tools panel from shell chips", async () => {
+  it("keeps the model picker beside send and top tools panel in the shell", async () => {
     const user = userEvent.setup();
-    const props = renderSurface();
+    renderSurface();
 
-    await user.click(
-      screen.getByRole("button", {
+    expect(
+      screen.queryByRole("button", {
         name: "Current model: deepseek-v4-flash",
       }),
-    );
-    expect(screen.getByRole("listbox", { name: "Switch model" })).toBeInTheDocument();
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "deepseek-v4-flash",
+      }),
+    ).toBeInTheDocument();
 
-    const headerModelList = screen.getByRole("listbox", { name: "Switch model" });
-    fireEvent.keyDown(headerModelList, { key: "ArrowDown" });
-    fireEvent.keyDown(headerModelList, { key: "Enter" });
-    expect(props.onRequestModelPicker).not.toHaveBeenCalled();
-    expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
-    expect(screen.queryByRole("listbox", { name: "Switch model" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "deepseek-v4-flash" }));
+    expect(screen.getByRole("listbox", { name: "Switch model" })).toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", {
@@ -365,6 +366,236 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(props.onRequestModelPicker).not.toHaveBeenCalled();
     expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
     expect(screen.queryByRole("dialog", { name: "Switch model" })).not.toBeInTheDocument();
+  });
+
+  it("dispatches slash commands when menu items are clicked with the mouse", async () => {
+    const user = userEvent.setup();
+    const props = renderSurface();
+
+    await user.type(screen.getByPlaceholderText("Chat with the agent"), "/");
+    await user.click(screen.getByRole("option", { name: /\/search/ }));
+
+    expect(props.onOpenSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it("approves a markdown plan by creating a Plan-Act run from the original goal", async () => {
+    const user = userEvent.setup();
+    const store = useWorkspaceStore.getState();
+    const userNodeId = store.appendNode({
+      parent_id: store.rootNodeId,
+      role: "user",
+      content: "build run observability",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    store.appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "1. Inspect\n2. Implement\n3. Verify",
+      state: "done",
+      metadata: { workspace_mode: "codex_plan" },
+      tool_calls: [],
+      artifacts: [],
+    });
+    const stream = streamController();
+    renderSurface({ stream });
+
+    await user.click(screen.getByRole("button", { name: "Approve & run" }));
+
+    await waitFor(() => expect(stream.driveBranch).toHaveBeenCalledTimes(1));
+    expect(stream.driveBranch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "build run observability",
+        mode: "plan",
+      }),
+    );
+  });
+
+  it("creates a sibling assistant branch and switches between branches", async () => {
+    const user = userEvent.setup();
+    const store = useWorkspaceStore.getState();
+    const userNodeId = store.appendNode({
+      parent_id: store.rootNodeId,
+      role: "user",
+      content: "explain branches",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    const firstAssistantId = useWorkspaceStore.getState().appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "first answer",
+      state: "done",
+      metadata: { workspace_mode: "chat" },
+      tool_calls: [],
+      artifacts: [],
+    });
+    const stream = streamController();
+    renderSurface({ stream });
+
+    expect(screen.getByText("first answer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Branch" }));
+
+    await waitFor(() => expect(stream.driveBranch).toHaveBeenCalledTimes(1));
+    const siblings = useWorkspaceStore
+      .getState()
+      .getSiblings(firstAssistantId)
+      .filter((node) => node.role === "assistant");
+    expect(siblings).toHaveLength(2);
+    expect(stream.driveBranch).toHaveBeenCalledWith({
+      assistantNodeId: siblings[1].id,
+      goal: "explain branches",
+      mode: "chat",
+    });
+    expect(screen.getByText("2/2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Previous branch" }));
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Next branch" }));
+    expect(screen.getByText("2/2")).toBeInTheDocument();
+  });
+
+  it("compresses context from the usage ring without mutating the token budget", async () => {
+    const user = userEvent.setup();
+    let compressedNodeId = "";
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          cache_status: "recomputed",
+          summary: "compressed summary",
+          coverage_node_ids: [compressedNodeId],
+          coverage_path_hash: "a".repeat(64),
+          last_covered_node_id: compressedNodeId,
+          summary_schema_version: "workspace-context-summary-v1",
+          compression_prompt_version: "workspace-context-compression-v1",
+          compressor_provider: "deepseek-flash",
+          compressor_model: "deepseek-v4-flash",
+          estimated_original_tokens: 20,
+          estimated_summary_tokens: 4,
+          estimated_uncovered_tokens: 0,
+          created_at: "2026-05-14T00:00:00Z",
+          updated_at: "2026-05-14T00:00:00Z",
+          error: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceStore.getState().setContextMaxTokens(1_000_000);
+    compressedNodeId = useWorkspaceStore.getState().appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "node that should be compressed",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    renderSurface();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Context window: 1% used, 7 estimated prompt tokens of 1m/,
+      }),
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(useWorkspaceStore.getState().contextMaxTokens).toBe(1_000_000);
+    expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
+      summary: "compressed summary",
+      status: "ready",
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: /Context window: 1% used, 5 estimated prompt tokens of 1m/,
+        }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("keeps a compression result for its original branch after the active branch changes", async () => {
+    const user = userEvent.setup();
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const compressedNodeId = useWorkspaceStore.getState().appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "node that should survive a branch switch",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    renderSurface();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Context window: .*Click to compress context/,
+      }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
+      status: "pending",
+    });
+
+    act(() => {
+      useWorkspaceStore.getState().appendNode({
+        parent_id: "root",
+        role: "user",
+        content: "new active branch",
+        state: "done",
+        metadata: {},
+        tool_calls: [],
+        artifacts: [],
+      });
+    });
+    resolveFetch(
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          cache_status: "recomputed",
+          summary: "compressed after branch switch",
+          coverage_node_ids: [compressedNodeId],
+          coverage_path_hash: "b".repeat(64),
+          last_covered_node_id: compressedNodeId,
+          summary_schema_version: "workspace-context-summary-v1",
+          compression_prompt_version: "workspace-context-compression-v1",
+          compressor_provider: "deepseek-flash",
+          compressor_model: "deepseek-v4-flash",
+          estimated_original_tokens: 12,
+          estimated_summary_tokens: 4,
+          estimated_uncovered_tokens: 0,
+          created_at: "2026-05-14T00:00:00Z",
+          updated_at: "2026-05-14T00:00:00Z",
+          error: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(
+        Object.values(useWorkspaceStore.getState().contextCompressions).some(
+          (summary) =>
+            summary.summary === "compressed after branch switch" &&
+            summary.status === "ready",
+        ),
+      ).toBe(true),
+    );
   });
 
 });

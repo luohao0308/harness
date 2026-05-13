@@ -49,6 +49,7 @@ function summaryArb(): fc.Arbitrary<ConversationSummary> {
         dismissedPlanNodeIds: [],
         draft: "",
         contextWindowTurns: 8,
+        contextCompressions: {},
       };
     });
 }

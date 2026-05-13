@@ -1,10 +1,9 @@
-import type { JSX, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import type { JSX, ReactNode } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
   Bot,
-  Brain,
   GitBranch,
   MessageSquareText,
   Sparkles,
@@ -15,7 +14,6 @@ import {
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
-import { cn } from "../../../lib/utils";
 import type { ToolMetadata } from "../../tasks/api";
 import { useOutsideClick } from "../hooks/useOutsideClick";
 import type { InspectorSection } from "../lib/types";
@@ -27,8 +25,6 @@ export type WorkspaceShellBarProps = {
   agentName: string;
   activeRunId: string | null;
   runStatus?: string;
-  modelLabel: string;
-  modelLabelIsFallback: boolean;
   tools: ToolMetadata[];
   providers: ModelOption[];
   selectedProviderId: string | null;
@@ -38,6 +34,7 @@ export type WorkspaceShellBarProps = {
   onInsertToolMention: (toolName: string) => void;
   onOpenInspector: (section: InspectorSection) => void;
   onStop: () => void;
+  summaryManager?: ReactNode;
 };
 
 export function WorkspaceShellBar({
@@ -45,86 +42,26 @@ export function WorkspaceShellBar({
   agentName,
   activeRunId,
   runStatus,
-  modelLabel,
-  modelLabelIsFallback,
   tools,
-  providers,
-  selectedProviderId,
-  selectedModelId,
   isStreaming,
-  onModelChange,
   onInsertToolMention,
   onOpenInspector,
   onStop,
+  summaryManager = null,
 }: WorkspaceShellBarProps): JSX.Element {
   const { text } = useI18n();
-  const [modelOpen, setModelOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [activeModelIndex, setActiveModelIndex] = useState(0);
-  const modelPickerRef = useRef<HTMLDivElement | null>(null);
-  const modelListRef = useRef<HTMLDivElement | null>(null);
   const toolsPickerRef = useRef<HTMLDivElement | null>(null);
   const runLabel = activeRunId
     ? text("Run 详情", "Run Detail")
     : text("Run 未创建", "No run yet");
-  const modelChipLabel = modelLabelIsFallback
-    ? text(
-        `当前模型: ${modelLabel} (fallback)`,
-        `Current model: ${modelLabel} (fallback)`,
-      )
-    : text(`当前模型: ${modelLabel}`, `Current model: ${modelLabel}`);
   const toolsChipLabel = text(
     `Tools/MCP: ${tools.length} 个可用`,
     `Tools/MCP: ${tools.length} available`,
   );
   const toolsPreviewLabel = formatToolsPreview(tools, text);
-  const selectedModelIndex = useMemo(
-    () =>
-      providers.findIndex(
-        (option) =>
-          option.providerId === selectedProviderId &&
-          option.modelId === selectedModelId,
-      ),
-    [providers, selectedModelId, selectedProviderId],
-  );
-  const modelDisabled = providers.length === 0;
 
-  useOutsideClick(modelPickerRef, () => setModelOpen(false), modelOpen);
   useOutsideClick(toolsPickerRef, () => setToolsOpen(false), toolsOpen);
-
-  useEffect(() => {
-    if (!modelOpen) return;
-    setActiveModelIndex(selectedModelIndex >= 0 ? selectedModelIndex : 0);
-    window.requestAnimationFrame(() => modelListRef.current?.focus());
-  }, [modelOpen, selectedModelIndex]);
-
-  function handleModelKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (providers.length === 0) return;
-    switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault();
-        setActiveModelIndex((index) => (index + 1) % providers.length);
-        return;
-      case "ArrowUp":
-        event.preventDefault();
-        setActiveModelIndex((index) => (index - 1 + providers.length) % providers.length);
-        return;
-      case "Enter": {
-        event.preventDefault();
-        const next = providers[activeModelIndex];
-        if (next === undefined) return;
-        onModelChange(next.providerId, next.modelId);
-        setModelOpen(false);
-        return;
-      }
-      case "Escape":
-        event.preventDefault();
-        setModelOpen(false);
-        return;
-      default:
-        return;
-    }
-  }
 
   return (
     <header className="relative z-30 shrink-0 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur sm:px-4">
@@ -152,75 +89,7 @@ export function WorkspaceShellBar({
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-          <div ref={modelPickerRef} className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                if (modelDisabled) return;
-                setModelOpen((open) => !open);
-              }}
-              disabled={modelDisabled}
-              aria-label={modelChipLabel}
-              aria-haspopup="listbox"
-              aria-expanded={modelOpen}
-              title={modelChipLabel}
-              className={cn(
-                "inline-flex h-8 max-w-[10rem] items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 sm:max-w-[14rem]",
-                modelDisabled && "cursor-not-allowed text-slate-400 hover:bg-white",
-              )}
-            >
-              <Brain aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-              <span className="min-w-0 truncate">{modelLabel}</span>
-            </button>
-
-            {modelOpen && !modelDisabled && (
-              <div
-                ref={modelListRef}
-                role="listbox"
-                tabIndex={-1}
-                aria-label={text("切换模型", "Switch model")}
-                onKeyDown={handleModelKeyDown}
-                className="absolute right-0 top-full z-40 mt-1.5 w-[220px] rounded-lg border border-slate-200 bg-white p-1 shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-              >
-                {providers.map((model, index) => {
-                  const selected =
-                    model.providerId === selectedProviderId &&
-                    model.modelId === selectedModelId;
-                  const active = index === activeModelIndex;
-                  return (
-                    <button
-                      key={`${model.providerId}:${model.modelId}`}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onMouseEnter={() => setActiveModelIndex(index)}
-                      onClick={() => {
-                        onModelChange(model.providerId, model.modelId);
-                        setModelOpen(false);
-                      }}
-                      className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-xs transition-colors",
-                        active ? "bg-slate-100" : "hover:bg-slate-50",
-                        selected ? "font-medium text-slate-900" : "text-slate-700",
-                      )}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate">{model.modelLabel}</span>
-                        <span className="block truncate text-[11px] font-normal text-slate-500">
-                          {model.providerLabel}
-                        </span>
-                      </span>
-                      {selected && (
-                        <span className="shrink-0 rounded-full bg-slate-900 px-1 py-0.5 text-[10px] font-normal text-white">
-                          {text("当前", "Current")}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          {summaryManager}
 
           <div ref={toolsPickerRef} className="relative">
             <button
@@ -241,7 +110,7 @@ export function WorkspaceShellBar({
                 role="dialog"
                 aria-modal="false"
                 aria-label={text("工具", "Tools")}
-                className="absolute right-0 top-full z-40 mt-1.5 w-[min(240px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg"
+                className="absolute left-0 top-full z-40 mt-1.5 w-[min(240px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg sm:left-auto sm:right-0"
               >
                 <div className="max-h-44 overflow-y-auto">
                   {tools.length === 0 ? (

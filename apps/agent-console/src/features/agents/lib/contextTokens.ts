@@ -2,22 +2,24 @@
  * Context max tokens primitives (v4 / Req 5, Property P23).
  *
  * Pure helpers + localStorage IO wrappers that keep the UI-side token
- * budget clamped into `[CONTEXT_MAX_TOKENS_MIN, CONTEXT_MAX_TOKENS_MAX]`
+ * token budget clamped into `[CONTEXT_MAX_TOKENS_MIN, CONTEXT_MAX_TOKENS_MAX]`
  * on the `CONTEXT_MAX_TOKENS_STEP` grid. No DOM imports here; DOM-side
  * writes are best-effort via `window.localStorage`.
  */
 
-export const CONTEXT_MAX_TOKENS_MIN = 2000;
-export const CONTEXT_MAX_TOKENS_MAX = 200_000;
-export const CONTEXT_MAX_TOKENS_STEP = 1000;
+export const CONTEXT_MAX_TOKENS_MIN = 16_000;
+export const CONTEXT_MAX_TOKENS_MAX = 1_000_000;
+export const CONTEXT_MAX_TOKENS_STEP = 1_000;
 
 /**
- * Initial UI value shown to users. This is intentionally NOT rounded to
- * `CONTEXT_MAX_TOKENS_STEP` — v3 displayed 8192 and we preserve that
- * observability until the user touches the slider. `clampContextMaxTokens`
- * only kicks in when the user-supplied value is written back (Req 5.1).
+ * Default context window size in tokens. 258k mirrors the compact context
+ * usage affordance expected in the workspace.
  */
-export const CONTEXT_MAX_TOKENS_DEFAULT = 8192;
+export const CONTEXT_MAX_TOKENS_DEFAULT = 258_000;
+export const AUTO_COMPRESSION_RATIO_DEFAULT = 0.8;
+export const AUTO_COMPRESSION_RATIO_MIN = 0.5;
+export const AUTO_COMPRESSION_RATIO_MAX = 0.95;
+export const AUTO_COMPRESSION_RATIO_STEP = 0.05;
 
 /**
  * Clamp `value` into `[MIN, MAX]` and round it to the nearest
@@ -25,7 +27,7 @@ export const CONTEXT_MAX_TOKENS_DEFAULT = 8192;
  *
  * Non-numeric / NaN / ±Infinity inputs collapse to
  * `CONTEXT_MAX_TOKENS_DEFAULT`, which itself is then rounded to the
- * nearest step (→ 8000) so the idempotence property holds.
+ * nearest step so the idempotence property holds.
  *
  * Invariants (verified by Property P23):
  *   - `CONTEXT_MAX_TOKENS_MIN ≤ r ≤ CONTEXT_MAX_TOKENS_MAX`
@@ -60,6 +62,20 @@ export function computeUsageRatio(current: number, limit: number): number {
   return Math.max(0, Math.min(1, current / limit));
 }
 
+export function clampAutoCompressionRatio(value: unknown): number {
+  const raw =
+    typeof value === "number" && Number.isFinite(value)
+      ? value
+      : AUTO_COMPRESSION_RATIO_DEFAULT;
+  const bounded = Math.min(
+    Math.max(raw, AUTO_COMPRESSION_RATIO_MIN),
+    AUTO_COMPRESSION_RATIO_MAX,
+  );
+  const rounded =
+    Math.round(bounded / AUTO_COMPRESSION_RATIO_STEP) * AUTO_COMPRESSION_RATIO_STEP;
+  return Number(Math.min(Math.max(rounded, AUTO_COMPRESSION_RATIO_MIN), AUTO_COMPRESSION_RATIO_MAX).toFixed(2));
+}
+
 // ---------------------------------------------------------------------------
 // localStorage persistence
 // ---------------------------------------------------------------------------
@@ -70,7 +86,11 @@ export function computeUsageRatio(current: number, limit: number): number {
  * migration is needed.
  */
 export function contextMaxTokensStorageKey(agentId: string): string {
-  return `harness.workspace.v4.${agentId}.contextMaxTokens`;
+  return `harness.workspace.v5.${agentId}.contextMaxTokens`;
+}
+
+export function autoCompressionRatioStorageKey(agentId: string): string {
+  return `harness.workspace.v5.${agentId}.autoCompressionRatio`;
 }
 
 /**
@@ -101,7 +121,10 @@ export function readContextMaxTokens(agentId: string): number | null {
   if (raw === null) return null;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return null;
-  return clampContextMaxTokens(parsed);
+  // v4.1 compatibility: previous builds persisted this value in KB on a
+  // 16..1024 scale. Treat those values as legacy KB and migrate to tokens.
+  const normalized = parsed <= 1024 ? parsed * 1000 : parsed;
+  return clampContextMaxTokens(normalized);
 }
 
 /**
@@ -122,6 +145,36 @@ export function saveContextMaxTokens(agentId: string, value: number): boolean {
     skipWrites = true;
     // eslint-disable-next-line no-console
     console.warn("[workspace] contextMaxTokens persistence disabled", err);
+    return false;
+  }
+}
+
+export function readAutoCompressionRatio(agentId: string): number | null {
+  if (!hasLocalStorage()) return null;
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(autoCompressionRatioStorageKey(agentId));
+  } catch {
+    return null;
+  }
+  if (raw === null) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return clampAutoCompressionRatio(parsed);
+}
+
+export function saveAutoCompressionRatio(agentId: string, value: number): boolean {
+  if (skipWrites) return false;
+  if (!hasLocalStorage()) return false;
+  try {
+    window.localStorage.setItem(
+      autoCompressionRatioStorageKey(agentId),
+      String(clampAutoCompressionRatio(value)),
+    );
+    return true;
+  } catch (err) {
+    skipWrites = true;
+    console.warn("[workspace] autoCompressionRatio persistence disabled", err);
     return false;
   }
 }

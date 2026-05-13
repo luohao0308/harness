@@ -11,7 +11,9 @@
  *   3. Most recent user/assistant pair — always included.
  *   4. Remaining messages — removed from oldest end until within budget.
  *
- * Token estimation: `content.length / 4` (rough char-to-token ratio).
+ * Token estimation is intentionally conservative for mixed-language chat:
+ * CJK glyphs count close to one token each, ASCII words use the common
+ * four-chars-per-token approximation, and punctuation/symbols sit between.
  *
  * Edge case: if pinned messages alone exceed the budget, all pinned messages
  * are still included and `pinnedOverflow` is set to `true` so the UI can
@@ -29,11 +31,26 @@ export interface TruncationResult {
   pinnedOverflow: boolean;
 }
 
+const CJK_RE = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/g;
+const ASCII_WORD_RE = /[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*/g;
+
 /**
- * Estimate token count for a single node using `content.length / 4`.
+ * Estimate size for a single node using a mixed-language token heuristic.
  */
 export function estimateTokens(node: ConversationNode): number {
-  return Math.ceil(node.content.length / 4);
+  return estimateTextTokens(node.content);
+}
+
+export function estimateTextTokens(content: string): number {
+  if (content.length === 0) return 0;
+  const cjkMatches = content.match(CJK_RE) ?? [];
+  const cjkCount = cjkMatches.length;
+  const withoutCjk = content.replace(CJK_RE, " ");
+  const wordMatches = withoutCjk.match(ASCII_WORD_RE) ?? [];
+  const asciiWordChars = wordMatches.reduce((sum, word) => sum + word.length, 0);
+  const visibleNonSpace = withoutCjk.replace(/\s/g, "").length;
+  const symbolChars = Math.max(0, visibleNonSpace - asciiWordChars);
+  return Math.ceil(cjkCount + asciiWordChars / 4 + symbolChars / 2);
 }
 
 /**

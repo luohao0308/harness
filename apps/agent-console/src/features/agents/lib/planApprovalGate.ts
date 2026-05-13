@@ -49,9 +49,11 @@ export function planApprovalGate(
     return HIDDEN;
   }
 
-  // Precondition 5: workspace_mode ∈ {plan, codex_plan}.
+  // Precondition 5: only markdown planning output asks for approval.
+  // A `plan` node is already a Plan-Act run result; showing the panel there
+  // would create an approve -> plan -> approve loop.
   const mode = tail.metadata?.workspace_mode;
-  if (mode !== "plan" && mode !== "codex_plan") {
+  if (mode !== "codex_plan") {
     return HIDDEN;
   }
 

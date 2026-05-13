@@ -25,6 +25,7 @@
  */
 
 import type { ConversationNode } from "../../../stores/workspaceStore";
+import type { ContextCompressionSummary } from "./contextCompression";
 import type { PersistedSnapshot } from "./localPersistence";
 
 export const CONVERSATIONS_SCHEMA_VERSION = 2 as const;
@@ -48,6 +49,7 @@ export type ConversationSummary = {
   dismissedPlanNodeIds: string[];
   draft: string;
   contextWindowTurns: number;
+  contextCompressions: Record<string, ContextCompressionSummary>;
 };
 
 export type ConversationsSnapshot = {
@@ -147,6 +149,7 @@ export function genesisConversation(
     dismissedPlanNodeIds: [],
     draft: "",
     contextWindowTurns: 8,
+    contextCompressions: {},
   };
 }
 
@@ -191,6 +194,7 @@ export function legacyMigration(
     dismissedPlanNodeIds: [...v2.dismissedPlanNodeIds],
     draft: v2.draft,
     contextWindowTurns: v2.contextWindowTurns,
+    contextCompressions: {},
   };
 }
 
@@ -313,6 +317,7 @@ function coerceConversationSummary(value: unknown): ConversationSummary | null {
     dismissedPlanNodeIds?: unknown;
     draft?: unknown;
     contextWindowTurns?: unknown;
+    contextCompressions?: unknown;
   };
   if (typeof c.id !== "string" || c.id.length === 0) return null;
   if (typeof c.title !== "string") return null;
@@ -337,11 +342,20 @@ function coerceConversationSummary(value: unknown): ConversationSummary | null {
     dismissedPlanNodeIds: c.dismissedPlanNodeIds,
     draft: c.draft,
     contextWindowTurns: c.contextWindowTurns,
+    contextCompressions: isCompressionRecord(c.contextCompressions)
+      ? c.contextCompressions
+      : {},
   };
 }
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
+function isCompressionRecord(
+  value: unknown,
+): value is Record<string, ContextCompressionSummary> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ---------------------------------------------------------------------------

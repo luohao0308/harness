@@ -13,7 +13,7 @@
  *   - Bilingual `aria-label` on the root.
  */
 
-import type { JSX } from "react";
+import { useRef, type JSX } from "react";
 
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
@@ -35,6 +35,7 @@ export function SlashCommandMenu({
   onSelect,
 }: SlashCommandMenuProps): JSX.Element | null {
   const { text } = useI18n();
+  const pointerSelectedRef = useRef<string | null>(null);
   if (open === false) return null;
 
   const safeIndex = candidates.length === 0 ? 0 : Math.max(0, Math.min(activeIndex, candidates.length - 1));
@@ -60,10 +61,20 @@ export function SlashCommandMenu({
                   role="option"
                   aria-selected={active}
                   onMouseEnter={() => onHover(i)}
-                  // Use onMouseDown so the click fires before the textarea
-                  // loses focus and `parseSlashCommand` re-classifies.
-                  onMouseDown={(event) => {
+                  // Use pointer-down so mouse/touch selection fires before
+                  // the textarea loses focus; click remains as keyboard and
+                  // browser fallback.
+                  onPointerDown={(event) => {
                     event.preventDefault();
+                    pointerSelectedRef.current = cmd.name;
+                    onSelect(cmd);
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (pointerSelectedRef.current === cmd.name) {
+                      pointerSelectedRef.current = null;
+                      return;
+                    }
                     onSelect(cmd);
                   }}
                   className={cn(

@@ -145,6 +145,7 @@ class ConversationNode(BaseModel):
     metadata: dict = Field(default_factory=dict, description="消息元数据")
     tool_calls: list[dict] = Field(default_factory=list, description="工具调用摘要")
     artifacts: list[dict] = Field(default_factory=list, description="产物摘要")
+    created_at: str | None = Field(default=None, description="前端对话节点创建时间")
 
 
 class ToolMention(BaseModel):
@@ -163,6 +164,16 @@ class AttachmentPayload(BaseModel):
         description="前端读取内容状态",
     )
     truncated: bool = Field(default=False, description="内容是否被前端截断")
+
+
+class CompressedContext(BaseModel):
+    summary: str = Field(default="", description="压缩后的上下文摘要")
+    coverage_node_ids: list[str] = Field(default_factory=list, description="摘要覆盖的节点 ID")
+    coverage_path_hash: str = Field(default="", description="覆盖路径哈希")
+    summary_schema_version: str = Field(default="", description="摘要结构版本")
+    compression_prompt_version: str = Field(default="", description="压缩提示词版本")
+    compressor_provider: str = Field(default="", description="压缩模型供应商")
+    compressor_model: str = Field(default="", description="压缩模型名称")
 
 
 class AgentChatStreamRequest(BaseModel):
@@ -198,6 +209,75 @@ class AgentChatStreamRequest(BaseModel):
         ge=1,
         description="UI-side context window budget; currently ignored by the backend",
     )
+    compressed_context: CompressedContext | None = Field(
+        default=None,
+        description="语义压缩后的上下文摘要，服务端按固定顺序注入 prompt",
+    )
+
+
+class WorkspaceContextCompressionRequest(BaseModel):
+    model_provider: str | None = Field(default=None, description="本次压缩选择的模型供应商")
+    model_name: str | None = Field(default=None, description="本次压缩选择的模型名称")
+    messages: list[ConversationNode] = Field(
+        default_factory=list,
+        description="完整 active path 原始消息",
+    )
+    pinned_node_ids: list[str] = Field(
+        default_factory=list,
+        description="固定节点，压缩时排除并 raw 注入",
+    )
+    existing_summary: str | None = Field(
+        default=None,
+        description="客户端已有摘要，仅作为不可信 cache hint",
+    )
+    prior_coverage_node_ids: list[str] = Field(
+        default_factory=list,
+        description="客户端已有摘要覆盖节点",
+    )
+    prior_coverage_path_hash: str | None = Field(
+        default=None,
+        description="客户端已有摘要覆盖路径哈希",
+    )
+    summary_schema_version: str = Field(
+        default="workspace-context-summary-v1",
+        description="摘要结构版本",
+    )
+    compression_prompt_version: str = Field(
+        default="workspace-context-compression-v1",
+        description="压缩提示词版本",
+    )
+    compressor_provider: str | None = Field(default=None, description="已有摘要使用的模型供应商")
+    compressor_model: str | None = Field(default=None, description="已有摘要使用的模型名称")
+
+
+class WorkspaceContextCompressionResponse(BaseModel):
+    status: Literal[
+        "ok",
+        "stale",
+        "missing_raw_nodes",
+        "hash_mismatch",
+        "provider_error",
+    ] = Field(description="压缩状态")
+    cache_status: Literal[
+        "accepted",
+        "recomputed",
+        "stale_rejected",
+        "error",
+    ] = Field(description="已有摘要 cache 处理状态")
+    summary: str = Field(default="", description="压缩摘要")
+    coverage_node_ids: list[str] = Field(default_factory=list, description="摘要覆盖节点 ID")
+    coverage_path_hash: str = Field(default="", description="覆盖路径哈希")
+    last_covered_node_id: str | None = Field(default=None, description="最后覆盖节点 ID")
+    summary_schema_version: str = Field(description="摘要结构版本")
+    compression_prompt_version: str = Field(description="压缩提示词版本")
+    compressor_provider: str = Field(description="实际压缩模型供应商")
+    compressor_model: str = Field(description="实际压缩模型名称")
+    estimated_original_tokens: int = Field(default=0, description="原始覆盖内容估算 token")
+    estimated_summary_tokens: int = Field(default=0, description="摘要估算 token")
+    estimated_uncovered_tokens: int = Field(default=0, description="未覆盖内容估算 token")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+    error: str | None = Field(default=None, description="错误信息")
 
 
 class TaskArtifact(BaseModel):
@@ -296,6 +376,7 @@ class StepResumeResponse(BaseModel):
 class TaskPlanStepState(BaseModel):
     step_key: str = Field(description="步骤键")
     description: str = Field(description="步骤说明")
+    depends_on: list[str] = Field(default_factory=list, description="依赖步骤键")
     execution_mode: str = Field(description="执行模式")
     requires_sandbox: bool = Field(description="是否需要沙箱")
     can_spawn_subagent: bool = Field(description="是否可派生子 Agent")
