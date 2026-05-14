@@ -7,11 +7,12 @@
 ```text
 当前产品：AI Harness Platform
 核心公式：Model + Harness = Agent
-当前阶段：06-warmpool-infra
+当前阶段：07-private-deployable-harness-chain
 当前状态：completed
 执行模式：Spec-first development + stage-gated implementation + vertical slice demo
 官网策略：保留为 public shell，不作为控制台核心
 关键模块：Agent Studio / Agent Workspace / Harness Management / Observability / Eval Harness / Infra
+最近后续完成：release-gate + handoff hygiene
 ```
 
 ## 阶段进度
@@ -24,6 +25,7 @@
 | 04 | Event Sourcing + Replay UI | completed | `docs/ai/stages/04-event-sourcing-replay-ui.md` | Run -> Events -> Replay sequence -> State reconstruction | passed |
 | 05 | Eval + Regression | completed | `docs/ai/stages/05-eval-regression.md` | Run -> Eval Case -> Dataset Eval -> Metrics | passed |
 | 06 | WarmPool + Infra 展示 | completed | `docs/ai/stages/06-warmpool-infra.md` | WarmPool -> Benchmark -> Sandbox lifecycle -> Infra status | passed |
+| 07 | Private Deployable Harness Chain | completed | `docs/ai/stages/07-private-deployable-harness-chain.md` | Private deployment -> Agent Run -> Planner/Executor -> Tool/MCP -> Sandbox/Subagent -> Eval/Observability evidence | passed |
 
 ## 本轮完成记录
 
@@ -50,7 +52,9 @@
 - 旧 `/api/tasks/*` OpenAPI 文案已降级为 deprecated Agent Run 兼容层。
 - 最终全量回归通过。
 - 本轮还关闭了 Workspace Pro gap register 里的产品缺口：`tool_call_result`、Continue 语义、Artifact 抽取、成本不可用态、分支 sibling 导航都已实现并验证。
-- 前端测试基础设施继续显式延期，没有伪造 `test` 脚本。
+- Stage 07 已作为完整 Harness 链证明关闭；后续工作不重开 Stage 07，只做 release gate、handoff、浏览器验证入口和证据链治理。
+- 前端测试基础设施已经具备 `npm test`、quick browser smoke、release browser smoke 和 live browser validation 等入口。
+- 本轮 release-gate + handoff hygiene 将现有非 Workspace browser smoke 纳入 `e2e:smoke:release`，保留 `e2e:smoke` 作为 Workspace/Run Detail quick loop。
 
 ## 验证记录
 
@@ -81,9 +85,8 @@ Docker runtime verification -> DeepSeek healthy/probe and context 1000000
 
 ## 未完成项
 
-- 本轮 AI Harness Platform 六阶段聚焦重构的 vertical slice 已完成。
-- Workspace Pro 产品缺口已在本轮闭环。
-- 前端 component/e2e 测试基础设施保持显式延期。
+- Full-infra validation profile（Tempo + Loki）不是本轮 release-gate hygiene 的必需项，仍作为环境具备时的完整验证入口。
+- 后续新增产品功能前，应先以 `e2e:smoke:release`、`e2e:live` 和 `scripts/validate-harness-flow.sh` 判断验证层级是否足够。
 
 ## 阶段完成定义
 
