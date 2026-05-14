@@ -31,6 +31,8 @@ Read these first:
 7. Latest relevant `.omx/context/*.md`
 8. [[workspace-demo-ready-constraints]] if the next work touches Agent Workspace
 9. [[local-dev-backend-port-cors]] if the frontend cannot reach the backend
+10. [[agent-workspace-execution-evidence-architecture]] if the work touches Workspace context, Plan-Act, branching, Run Detail, or Eval Case capture
+11. [[local-dev-eval-dataset-migration]] if Run Detail cannot list or save Eval Datasets
 
 ## Current State
 
@@ -42,13 +44,13 @@ Evidence from `docs/ai/task-progress.yaml`:
 - `formula`: `Model + Harness = Agent`
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
-- Non-Workspace browser e2e coverage remains deferred.
+- Release-gate handoff hygiene is the latest completed post-stage lane: quick smoke stays narrow, and existing route smoke specs are wired into `e2e:smoke:release`.
 
 Evidence from `docs/task-progress.md`:
 
 - Stage 07 canonical Agent Run smoke is part of the regular release gate.
 - Workspace browser smoke and compact chrome hardening were added after Stage 07.
-- Broader browser e2e coverage for non-Workspace routes remains the explicit not-completed item.
+- Broader browser smoke now has an explicit release-gate entrypoint through `cd apps/agent-console && npm run e2e:smoke:release`.
 
 ## Existing Handoff Solution
 
@@ -71,6 +73,7 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 Recent pushed commits on `main`:
 
 ```text
+e78f52a Preserve agent workspace execution evidence
 3fff603 Record Workspace browser hardening progress
 ced5be0 Document Workspace browser smoke flow
 a3903d2 Cover Workspace demo controls in browser smoke
@@ -80,16 +83,20 @@ a3903d2 Cover Workspace demo controls in browser smoke
 
 Captured in wiki:
 
+- [[session-2026-05-14-workspace-execution-evidence]]
+- [[agent-workspace-execution-evidence-architecture]]
+- [[local-dev-eval-dataset-migration]]
 - [[session-2026-05-13-workspace-browser-smoke]]
 
 ## Next Known Work
 
-The clearest remaining work is broader browser e2e coverage outside the Workspace route. Current Playwright smoke intentionally focuses on `/agents/default/workspace`.
+The Workspace route now has broader execution-evidence coverage, including Run Detail smoke. The latest completed lane is release-gate + handoff hygiene: validation commands, progress docs, README, and this wiki now agree without adding product scope.
 
 Potential next slices:
 
-- Non-Workspace browser e2e for Run Detail, Eval, Observability, Tools, Sandboxes, or Agent Studio.
-- Handoff hygiene: align top-level `README.md` and `docs/human/10-task-progress.md` if they lag behind `docs/ai/task-progress.yaml`.
+- Keep `e2e:smoke` as the quick Workspace/Run Detail loop and `e2e:smoke:release` as the mocked browser release gate.
+- Use `scripts/validate-harness-flow.sh` for the layered validation path; L2 should run the release smoke gate.
+- Handoff hygiene: keep `apps/agent-console/README.md`, `docs/human/10-task-progress.md`, `docs/task-progress.md`, and `docs/ai/task-progress.yaml` aligned.
 - Keep `omx_wiki/` aligned with accepted deep-interview decisions, progress docs, and repeated local-development lessons.
 
 ## Stop Rules For Future Agents
@@ -107,3 +114,6 @@ Do not treat legacy `/api/tasks/*` as the primary product proof. Agent Run is th
 - [[wiki-capture-candidates]]
 - [[local-dev-backend-port-cors]]
 - [[session-2026-05-13-workspace-browser-smoke]]
+- [[agent-workspace-execution-evidence-architecture]]
+- [[local-dev-eval-dataset-migration]]
+- [[session-2026-05-14-workspace-execution-evidence]]
