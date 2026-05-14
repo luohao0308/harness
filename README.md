@@ -46,7 +46,8 @@ The repository keeps the public website as a public information shell. The imple
 Current stage: 07-private-deployable-harness-chain
 Current status: completed
 Website policy: retained as public shell
-Latest post-stage completion: release-gate + handoff hygiene
+Latest post-stage completion: private deployment experience
+Active next lane: pending fresh planning
 ```
 
 Completed in the current focused pass:
@@ -70,6 +71,7 @@ Completed in the current focused pass:
 - Legacy `/api/tasks/*` OpenAPI copy downgraded to deprecated Agent Run compatibility
 - Stage 07 closed the private deployable Harness-chain proof.
 - Browser validation now distinguishes quick smoke, mocked release smoke, and live backend validation.
+- Private deployment experience is complete: Docker Compose is the canonical low-context handoff path for a Docker-literate internal tester.
 
 Validation completed:
 
@@ -97,6 +99,10 @@ python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
 Docker runtime verification -> DeepSeek healthy/probe and context 1000000
+docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml up -d --build with override ports -> passed
+python3 scripts/smoke-test-docker.py with HARNESS_* override URLs -> passed
+python3 scripts/smoke-test-agent-run.py with HARNESS_API_BASE_URL=http://127.0.0.1:18000 -> passed
+docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml down -> passed
 ```
 
 ## Spec Documents
@@ -119,6 +125,22 @@ Docker runtime verification -> DeepSeek healthy/probe and context 1000000
 - [AI Task Progress](./docs/ai/01-task-progress.md)
 - [Machine Task Progress](./docs/ai/task-progress.yaml)
 - [Human Task Progress](./docs/human/10-task-progress.md)
+
+## Private Deployment Handoff
+
+Use the canonical Docker Compose handoff path in [Deployment Runbook](./docs/runbooks/deployment.md).
+
+Expected first-pass proof:
+
+```text
+docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config
+docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml up -d --build
+python3 scripts/smoke-test-docker.py
+python3 scripts/smoke-test-agent-run.py
+docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml down
+```
+
+If startup is blocked, record the failing service, command, log pointer, recovery note, and unproven acceptance criteria.
 
 ## Active Stage Specs
 

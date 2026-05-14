@@ -12,7 +12,8 @@
 执行模式：Spec-first development + stage-gated implementation + vertical slice demo
 官网策略：保留为 public shell，不作为控制台核心
 关键模块：Agent Studio / Agent Workspace / Harness Management / Observability / Eval Harness / Infra
-最近后续完成：release-gate + handoff hygiene
+最近后续完成：private deployment experience
+当前后续主线：待下一轮规划确认
 ```
 
 ## 阶段进度
@@ -55,6 +56,7 @@
 - Stage 07 已作为完整 Harness 链证明关闭；后续工作不重开 Stage 07，只做 release gate、handoff、浏览器验证入口和证据链治理。
 - 前端测试基础设施已经具备 `npm test`、quick browser smoke、release browser smoke 和 live browser validation 等入口。
 - 本轮 release-gate + handoff hygiene 将现有非 Workspace browser smoke 纳入 `e2e:smoke:release`，保留 `e2e:smoke` 作为 Workspace/Run Detail quick loop。
+- 本轮 Private Deployment Experience 将 Docker Compose 私有部署整理为 canonical handoff path，并通过 override 端口完成 compose 全链路、Docker smoke、Agent Run smoke 和 cleanup 验收。
 
 ## 验证记录
 
@@ -81,12 +83,17 @@ python3 scripts/validate-docs.py -> passed
 python3 scripts/smoke-test-docker.py -> passed
 git diff --check -> passed
 Docker runtime verification -> DeepSeek healthy/probe and context 1000000
+docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml up -d --build with override ports -> passed
+python3 scripts/smoke-test-docker.py with HARNESS_* override URLs -> passed
+python3 scripts/smoke-test-agent-run.py with HARNESS_API_BASE_URL=http://127.0.0.1:18000 -> passed
+docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml down -> passed
 ```
 
 ## 未完成项
 
 - Full-infra validation profile（Tempo + Loki）不是本轮 release-gate hygiene 的必需项，仍作为环境具备时的完整验证入口。
 - 后续新增产品功能前，应先以 `e2e:smoke:release`、`e2e:live` 和 `scripts/validate-harness-flow.sh` 判断验证层级是否足够。
+- Private Deployment Experience 已完成。默认端口 `8000`、`5173` 仍可能被本地开发进程占用；运行 compose handoff 时可继续使用 runbook 中的 host-port override 方式，不需要杀掉无关本地服务。
 
 ## 阶段完成定义
 

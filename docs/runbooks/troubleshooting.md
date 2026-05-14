@@ -2,6 +2,123 @@
 
 本文件定义常见故障定位流程。
 
+## Private Docker Compose Handoff Triage
+
+第一版私有部署体验只做轻量诊断。优先使用既有 smoke 输出和本 runbook，不新增 installer、doctor framework、Kubernetes/cloud topology 或完整运维平台。
+
+When full verification cannot complete, record:
+
+```text
+blocker:
+failing service:
+command:
+log pointer:
+recovery note:
+unproven acceptance criteria:
+```
+
+### Docker unavailable
+
+Check:
+
+```bash
+docker version
+docker compose version
+docker ps
+```
+
+Action:
+
+```text
+start Docker Desktop or Docker Engine
+verify /var/run/docker.sock exists when sandbox services need it
+rerun docker compose config before starting services
+```
+
+### Port conflict
+
+Check:
+
+```bash
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+lsof -nP -iTCP:5173 -sTCP:LISTEN
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+lsof -nP -iTCP:9091 -sTCP:LISTEN
+lsof -nP -iTCP:3001 -sTCP:LISTEN
+```
+
+Action:
+
+```text
+stop the conflicting local service, or change the compose env port override before build
+when overriding API/Console ports, also update PUBLIC_API_BASE_URL / PUBLIC_CONSOLE_BASE_URL and HARNESS_* smoke env vars
+record any changed port in the handoff evidence
+```
+
+### Compose config failure
+
+Check:
+
+```bash
+docker compose --env-file deploy/docker-compose/.env -f deploy/docker-compose/docker-compose.yml config
+```
+
+Action:
+
+```text
+fix env syntax or missing variables before running application smoke
+do not claim deployment readiness while compose config fails
+```
+
+### API health failure
+
+Check:
+
+```bash
+docker compose --env-file deploy/docker-compose/.env -f deploy/docker-compose/docker-compose.yml ps
+docker compose --env-file deploy/docker-compose/.env -f deploy/docker-compose/docker-compose.yml logs --tail=100 api-server
+curl --noproxy '*' http://127.0.0.1:8000/health
+```
+
+Action:
+
+```text
+inspect db-migrate, postgres, redis, and api-server service status first
+verify DATABASE_URL and REDIS_URL use compose service names inside compose
+```
+
+### Console API base URL mismatch
+
+Check:
+
+```bash
+curl --noproxy '*' http://127.0.0.1:5173
+grep -n "VITE_API_BASE_URL" deploy/docker-compose/docker-compose.yml apps/agent-console/.env.example
+```
+
+Action:
+
+```text
+compose console builds should target http://127.0.0.1:8000
+if the Console loads but cannot reach API, fix build args/env docs before runtime code
+```
+
+### Model key vs mock fallback
+
+Check:
+
+```bash
+grep -n "DEEPSEEK_API_KEY\\|MODEL_GATEWAY_BASE_URL" deploy/docker-compose/.env.example .env.example services/api-server/.env.example
+```
+
+Action:
+
+```text
+empty DEEPSEEK_API_KEY is acceptable for local mock-model fallback validation
+real provider validation requires a deployment-local secret, never a committed key
+```
+
 ## API 5xx
 
 Check:

@@ -19,6 +19,123 @@ Agent Studio
 -> Observability / Replay / Eval
 ```
 
+## Architecture Direction
+
+The active project direction is not a generic chat UI. The product target is:
+
+```text
+Model + Harness = Agent
+```
+
+The Harness proves and productizes the full execution chain: Agent configuration, Workspace goal intake, Agent Run, planning, execution, tools/MCP, sandbox isolation, subagents, event audit, replay, eval, observability, and private deployment.
+
+```mermaid
+flowchart TD
+  A["AI Harness Platform"] --> B["Product Target: Model + Harness = Agent"]
+
+  B --> C["Agent Console"]
+  B --> D["FastAPI Backend"]
+  B --> E["Harness Runtime"]
+  B --> F["Private Deployment"]
+
+  C --> C1["Agent Workspace"]
+  C --> C2["Agent Studio"]
+  C --> C3["Run Detail"]
+  C --> C4["Eval / Observability / Tools / Sandboxes"]
+
+  D --> D1["Agent Run API"]
+  D --> D2["Model Gateway"]
+  D --> D3["Event Store"]
+  D --> D4["Eval Dataset / Regression"]
+  D --> D5["Settings / Config"]
+
+  E --> E1["Planner"]
+  E --> E2["Executor"]
+  E --> E3["Tool / MCP Calls"]
+  E --> E4["Sandbox / WarmPool"]
+  E --> E5["Subagents"]
+  E --> E6["Replay / Diagnosis"]
+
+  F --> F1["Docker Compose"]
+  F --> F2["Env Examples"]
+  F --> F3["Runbooks"]
+  F --> F4["Smoke / Validation Scripts"]
+  F --> F5["Lightweight Diagnostics"]
+
+  C1 --> D1
+  C2 --> D5
+  D1 --> E1
+  E1 --> E2
+  E2 --> E3
+  E2 --> E4
+  E2 --> E5
+  E3 --> D3
+  E4 --> D3
+  E5 --> D3
+  D3 --> C3
+  C3 --> E6
+  C3 --> D4
+  D4 --> C4
+  D3 --> C4
+
+  F1 --> D
+  F1 --> C
+  F4 --> D1
+  F4 --> C3
+```
+
+## Stage And Productization Flow
+
+Stage 07 is closed historical context. It proved the private-deployable Harness chain. Current post-stage work should harden, package, and make that chain easier to operate without reopening Stage 07 as active product scope.
+
+```mermaid
+flowchart LR
+  S1["Stage 01-06<br/>Core Platform Surfaces"] --> S7["Stage 07<br/>Private Deployable Harness Chain"]
+  S7 --> H1["Post-stage Hardening<br/>Workspace Browser Smoke"]
+  H1 --> H2["Complete Harness Validation Flow"]
+  H2 --> H3["Navigation Resilience"]
+  H3 --> H4["L3 Live Browser Validation"]
+  H4 --> H5["Release Gate + Handoff Hygiene"]
+  H5 --> H6["Private Deployment Experience"]
+
+  S7 -. "closed historical context" .-> Guard["Do not reopen Stage 07"]
+  H6 --> Goal["Docker Compose full chain starts<br/>Agent Run smoke passes"]
+```
+
+## Private Deployment Experience Lane
+
+This completed productization lane is a private deployment handoff package for a Docker-literate internal tester who does not already know this repository. The first-pass acceptance signal is concrete: Docker Compose starts the full chain and the Agent Run smoke passes.
+
+```mermaid
+flowchart TD
+  P["Private Deployment Experience"] --> U["Target User:<br/>Docker-literate non-core engineer"]
+
+  P --> Pack["Product-like Handoff Package"]
+  Pack --> Env[".env.example alignment"]
+  Pack --> Compose["Docker Compose startup path"]
+  Pack --> Runbook["Private deploy runbook"]
+  Pack --> Validate["Validation scripts"]
+  Pack --> Diagnose["Lightweight diagnostics"]
+
+  Validate --> V1["docker compose config"]
+  Validate --> V2["API health"]
+  Validate --> V3["Agent Run smoke"]
+  Validate --> V4["Frontend/docs checks"]
+
+  Diagnose --> D1["Docker unavailable"]
+  Diagnose --> D2["Port conflicts"]
+  Diagnose --> D3["DB connectivity"]
+  Diagnose --> D4["Console API base URL"]
+  Diagnose --> D5["Model key / mock fallback"]
+
+  P --> NonGoals["Non-goals"]
+  NonGoals --> NG1["No Kubernetes"]
+  NonGoals --> NG2["No full RBAC/security model"]
+  NonGoals --> NG3["No installer framework"]
+  NonGoals --> NG4["No cloud deployment matrix"]
+  NonGoals --> NG5["No full ops platform"]
+```
+
 ## Services
 
 | Service | Boundary |
