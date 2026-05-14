@@ -78,10 +78,10 @@ echo ""
 # ---------------------------------------------------------------------------
 # L2: Mocked Browser Product Perception
 # ---------------------------------------------------------------------------
-echo "--- L2: Mocked Browser Tests ---"
+echo "--- L2: Mocked Browser Release Gate ---"
 
-echo "[L2] Running e2e:smoke..."
-(cd apps/agent-console && npm run e2e:smoke) > "$REPORT_DIR/l2-mocked-browser.txt" 2>&1 || { echo "FAIL: e2e:smoke"; FAILED=1; }
+echo "[L2] Running e2e:smoke:release..."
+(cd apps/agent-console && npm run e2e:smoke:release) > "$REPORT_DIR/l2-mocked-browser.txt" 2>&1 || { echo "FAIL: e2e:smoke:release"; FAILED=1; }
 
 echo ""
 
