@@ -28,6 +28,7 @@ import type {
   ObservabilityExportItem,
 } from "../../tasks/api";
 import {
+  API_BASE_URL,
   downloadObservabilityExport,
   getObservabilityServicesHealth,
   getObservabilitySummary,
@@ -236,7 +237,7 @@ export function ObservabilityPage() {
             </div>
             <a
               className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900"
-              href="http://127.0.0.1:8000/metrics"
+              href={`${API_BASE_URL}/metrics`}
             >
               {text("Prometheus 指标", "Prometheus metrics")} /metrics <ExternalLink className="h-3 w-3" />
             </a>
