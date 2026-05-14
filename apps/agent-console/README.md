@@ -22,18 +22,19 @@ npm run build      # tsc --noEmit && vite build
 npm run test -- --run   # full vitest suite (P1–P24)
 ```
 
-## Browser Smoke / 浏览器级验证
+## Browser Validation / 浏览器级验证
 
-The Workspace demo shell has a Playwright smoke that runs the real Vite app in Chromium with deterministic API fixtures.
+The console has three browser validation levels. Quick smoke is for fast Workspace and Run Detail feedback. Release smoke is the mocked browser gate used by the Harness validation flow. Live validation stays separate because it requires a running backend and a real Run id.
 
 ```bash
 cd apps/agent-console
-npm run e2e:install     # install Chromium once
-npm run e2e:smoke       # http://127.0.0.1:5177/agents/default/workspace
-npm run e2e:smoke:headed
+npm run e2e:install              # install Chromium once
+npm run e2e:smoke                # quick Workspace + Run Detail smoke
+npm run e2e:smoke:release        # mocked browser release gate
+npm run e2e:live                 # live backend validation
 ```
 
-The smoke covers the header Model picker, top Tools panel, composer settings, Plugins/MCP, `/model`, Plan mode, backend connection error display, and 390px viewport overflow.
+Quick smoke covers Workspace shell behavior, Workspace success perception, and Run Detail proof. Release smoke adds Agent Studio, Eval, Observability, Tools, Sandboxes, and navigation resilience. Live validation uses `HARNESS_E2E_RUN_ID` and remains outside mocked smoke.
 
 ## Streaming smoke / 流式验证
 
