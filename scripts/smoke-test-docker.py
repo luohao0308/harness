@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -10,14 +12,15 @@ from urllib import error, request
 from urllib.parse import urlencode
 
 
-API_BASE_URL = "http://127.0.0.1:8000"
-CONSOLE_BASE_URL = "http://127.0.0.1:5173"
-WEBSITE_BASE_URL = "http://127.0.0.1:3000"
-NGINX_BASE_URL = "http://127.0.0.1:8080"
-PROMETHEUS_BASE_URL = "http://127.0.0.1:9091"
-GRAFANA_BASE_URL = "http://127.0.0.1:3001"
-LOKI_BASE_URL = "http://127.0.0.1:3100"
-TEMPO_BASE_URL = "http://127.0.0.1:3200"
+API_BASE_URL = os.environ.get("HARNESS_API_BASE_URL", "http://127.0.0.1:8000")
+DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+CONSOLE_BASE_URL = os.environ.get("HARNESS_CONSOLE_BASE_URL", "http://127.0.0.1:5173")
+WEBSITE_BASE_URL = os.environ.get("HARNESS_WEBSITE_BASE_URL", "http://127.0.0.1:3000")
+NGINX_BASE_URL = os.environ.get("HARNESS_NGINX_BASE_URL", "http://127.0.0.1:8080")
+PROMETHEUS_BASE_URL = os.environ.get("HARNESS_PROMETHEUS_BASE_URL", "http://127.0.0.1:9091")
+GRAFANA_BASE_URL = os.environ.get("HARNESS_GRAFANA_BASE_URL", "http://127.0.0.1:3001")
+LOKI_BASE_URL = os.environ.get("HARNESS_LOKI_BASE_URL", "http://127.0.0.1:3100")
+TEMPO_BASE_URL = os.environ.get("HARNESS_TEMPO_BASE_URL", "http://127.0.0.1:3200")
 AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
 OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
 
@@ -55,6 +58,23 @@ class SmokeClient:
 
     def post_json(self, path: str, payload: dict | None = None, *, auth: bool = True) -> dict:
         return self.request_json("POST", path, payload=payload or {}, auth=auth)
+
+    def post_text(self, path: str, payload: dict | None = None, *, auth: bool = True) -> str:
+        headers = {"Content-Type": "application/json"}
+        if auth:
+            headers.update(AUTH_HEADERS)
+        http_request = request.Request(
+            API_BASE_URL + path,
+            data=json.dumps(payload or {}).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with request.urlopen(http_request, timeout=30) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise AssertionError(f"POST {path} -> {exc.code}: {body}") from exc
 
     def request_json(
         self,
@@ -105,19 +125,112 @@ def assert_true(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def eventually(client: SmokeClient, name: str, func, *, attempts: int = 12, delay_seconds: int = 5) -> Any:
+    started_at = time.monotonic()
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            value = func()
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            client.results.append(CheckResult(name=name, ok=True, detail=f"{duration_ms}ms"))
+            return value
+        except Exception as exc:
+            last_error = exc
+            if attempt == attempts:
+                break
+            time.sleep(delay_seconds)
+    assert last_error is not None
+    client.results.append(CheckResult(name=name, ok=False, detail=str(last_error)))
+    raise last_error
+
+
+def assert_console_points_to_api(client: SmokeClient) -> None:
+    html = client.get_text_url(CONSOLE_BASE_URL)
+    assert_true("root" in html, "console html missing root")
+    scripts = re.findall(r'<script[^>]+src="([^"]+\.js)"', html)
+    assert_true(bool(scripts), "console html missing bundled script")
+    bundle_text = ""
+    for script_src in scripts:
+        script_url = script_src if script_src.startswith("http") else CONSOLE_BASE_URL + script_src
+        bundle_text += client.get_text_url(script_url)
+    assert_true(
+        API_BASE_URL in bundle_text,
+        f"console bundle does not reference expected API base URL {API_BASE_URL}",
+    )
+    if API_BASE_URL != DEFAULT_API_BASE_URL:
+        assert_true(
+            DEFAULT_API_BASE_URL not in bundle_text,
+            f"console bundle still references stale default API base URL {DEFAULT_API_BASE_URL}",
+        )
+
+
+def parse_sse_events(text: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for frame in text.strip().split("\n\n"):
+        event_name = "message"
+        data_lines: list[str] = []
+        for line in frame.splitlines():
+            if line.startswith("event:"):
+                event_name = line.removeprefix("event:").strip()
+            elif line.startswith("data:"):
+                data_lines.append(line.removeprefix("data:").strip())
+        if data_lines:
+            events.append((event_name, json.loads("\n".join(data_lines))))
+    return events
+
+
+def assert_workspace_chat_stream(client: SmokeClient) -> None:
+    user_node_id = f"docker-smoke-user-{int(time.time())}"
+    stream_text = client.post_text(
+        "/api/agents/default/runs/chat/stream",
+        {
+            "mode": "chat",
+            "goal": "验证 Docker 私有部署环境的 Workspace Pro 聊天可用性",
+            "messages": [
+                {
+                    "id": user_node_id,
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "验证 Docker 私有部署环境的 Workspace Pro 聊天可用性",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": user_node_id,
+            "active_branch_id": "docker-smoke-chat",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+    events = parse_sse_events(stream_text)
+    errors = [payload for event, payload in events if event == "error"]
+    assert_true(not errors, f"workspace chat stream returned error: {errors[0] if errors else ''}")
+    deltas = [
+        str(payload.get("content") or "").strip()
+        for event, payload in events
+        if event == "delta"
+    ]
+    visible_text = "".join(deltas).strip()
+    assert_true(bool(visible_text and visible_text != "{}"), "workspace chat stream has no visible text")
+
+
 def main() -> int:
     client = SmokeClient()
     try:
         health = client.check("API health", lambda: client.get_json("/health", auth=False))
         assert_true(health["status"] == "ok", "API health status is not ok")
 
-        client.check("Console index", lambda: assert_true("root" in client.get_text_url(CONSOLE_BASE_URL), "console html missing root"))
+        client.check("Console API base URL", lambda: assert_console_points_to_api(client))
         client.check("Website index", lambda: assert_true("html" in client.get_text_url(WEBSITE_BASE_URL).lower(), "website html missing html"))
         client.check("Nginx health", lambda: assert_true("ok" in client.get_text_url(NGINX_BASE_URL + "/health"), "nginx health missing ok"))
         client.check("Prometheus health", lambda: assert_true("Healthy" in client.get_text_url(PROMETHEUS_BASE_URL + "/-/healthy"), "prometheus unhealthy"))
         client.check("Grafana health", lambda: assert_true("database" in client.get_text_url(GRAFANA_BASE_URL + "/api/health"), "grafana health missing database"))
-        client.check("Loki ready", lambda: assert_true("ready" in client.get_text_url(LOKI_BASE_URL + "/ready").lower(), "loki not ready"))
-        client.check("Tempo ready", lambda: assert_true("ready" in client.get_text_url(TEMPO_BASE_URL + "/ready").lower(), "tempo not ready"))
+        eventually(client, "Loki ready", lambda: assert_true("ready" in client.get_text_url(LOKI_BASE_URL + "/ready").lower(), "loki not ready"))
+        eventually(client, "Tempo ready", lambda: assert_true("ready" in client.get_text_url(TEMPO_BASE_URL + "/ready").lower(), "tempo not ready"))
+        client.check("Workspace chat stream", lambda: assert_workspace_chat_stream(client))
 
         openapi = client.check("OpenAPI", lambda: client.get_json("/openapi.json", auth=False))
         assert_true("/api/tasks" in openapi["paths"], "OpenAPI missing /api/tasks")

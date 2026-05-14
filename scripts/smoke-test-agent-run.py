@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from typing import Any
 from urllib import error, request
 
 
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = os.environ.get("HARNESS_API_BASE_URL", "http://127.0.0.1:8000")
 AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
