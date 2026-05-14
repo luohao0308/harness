@@ -15,26 +15,26 @@ services:
     build:
       context: ../../apps/web-site
       args:
-        NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
-        NEXT_PUBLIC_CONSOLE_BASE_URL: http://127.0.0.1:5173
+        NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
+        NEXT_PUBLIC_CONSOLE_BASE_URL: ${PUBLIC_CONSOLE_BASE_URL:-http://127.0.0.1:5173}
     depends_on:
       api-server:
         condition: service_started
     ports:
-      - "3000:3000"
+      - "${WEBSITE_HTTP_PORT:-3000}:3000"
 
   agent-console:
     image: agent-harness-console:latest
     build:
       context: ../../apps/agent-console
       args:
-        VITE_API_BASE_URL: http://127.0.0.1:8000
+        VITE_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
         VITE_DEV_BEARER_TOKEN: dev-engineer-token
     depends_on:
       api-server:
         condition: service_started
     ports:
-      - "5173:80"
+      - "${CONSOLE_HTTP_PORT:-5173}:80"
 
   api-server:
     image: agent-harness-api-server:latest
@@ -52,11 +52,13 @@ services:
         condition: service_started
     environment:
       APP_ENV: production
-      APP_BASE_URL: http://127.0.0.1:3000
-      CONSOLE_BASE_URL: http://127.0.0.1:5173
-      API_BASE_URL: http://127.0.0.1:8000
+      APP_BASE_URL: ${PUBLIC_WEBSITE_BASE_URL:-http://127.0.0.1:3000}
+      CONSOLE_BASE_URL: ${PUBLIC_CONSOLE_BASE_URL:-http://127.0.0.1:5173}
+      API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DOCKER_HOST: unix:///var/run/docker.sock
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       PROMETHEUS_BASE_URL: http://prometheus:9090
@@ -69,7 +71,7 @@ services:
       OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "${API_HTTP_PORT:-8000}:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - observability-exports:/var/lib/agent-harness/exports
@@ -107,6 +109,8 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   agent-assignment-worker:
@@ -123,6 +127,8 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   subagent-recovery:
@@ -140,6 +146,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       SUBAGENT_RECOVERY_METRICS_PORT: 9102
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     expose:
       - "9102"
@@ -158,6 +166,8 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       DOCKER_HOST: unix:///var/run/docker.sock
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -177,6 +187,8 @@ services:
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
       DOCKER_HOST: unix:///var/run/docker.sock
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -220,7 +232,7 @@ services:
   grafana:
     image: grafana/grafana:11.3.0
     ports:
-      - "3001:3000"
+      - "${GRAFANA_HTTP_PORT:-3001}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -235,7 +247,7 @@ services:
     image: grafana/loki:3.2.1
     command: -config.file=/etc/loki/loki.yml
     ports:
-      - "3100:3100"
+      - "${LOKI_HTTP_PORT:-3100}:3100"
     volumes:
       - ../monitoring/loki.yml:/etc/loki/loki.yml:ro
       - loki-data:/loki
@@ -256,9 +268,9 @@ services:
     command:
       - --config=/etc/otel-collector.yml
     ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "13133:13133"
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "${OTEL_HEALTH_PORT:-13133}:13133"
     volumes:
       - ../monitoring/otel-collector.yml:/etc/otel-collector.yml:ro
 
@@ -267,7 +279,7 @@ services:
     command:
       - -config.file=/etc/tempo.yml
     ports:
-      - "3200:3200"
+      - "${TEMPO_HTTP_PORT:-3200}:3200"
     volumes:
       - ../monitoring/tempo.yml:/etc/tempo.yml:ro
 
