@@ -33,6 +33,7 @@ Read these first:
 9. [[local-dev-backend-port-cors]] if the frontend cannot reach the backend
 10. [[agent-workspace-execution-evidence-architecture]] if the work touches Workspace context, Plan-Act, branching, Run Detail, or Eval Case capture
 11. [[local-dev-eval-dataset-migration]] if Run Detail cannot list or save Eval Datasets
+12. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
 
 ## Current State
 
@@ -44,13 +45,14 @@ Evidence from `docs/ai/task-progress.yaml`:
 - `formula`: `Model + Harness = Agent`
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
-- Release-gate handoff hygiene is the latest completed post-stage lane: quick smoke stays narrow, and existing route smoke specs are wired into `e2e:smoke:release`.
+- Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
 
 Evidence from `docs/task-progress.md`:
 
 - Stage 07 canonical Agent Run smoke is part of the regular release gate.
 - Workspace browser smoke and compact chrome hardening were added after Stage 07.
 - Broader browser smoke now has an explicit release-gate entrypoint through `cd apps/agent-console && npm run e2e:smoke:release`.
+- Private deployment handoff now has a canonical Docker Compose path in `docs/runbooks/deployment.md`; static checks, compose config, compose startup, Docker smoke, Agent Run smoke, and compose cleanup have passed using intentional host-port overrides.
 
 ## Existing Handoff Solution
 
@@ -90,14 +92,13 @@ Captured in wiki:
 
 ## Next Known Work
 
-The Workspace route now has broader execution-evidence coverage, including Run Detail smoke. The latest completed lane is release-gate + handoff hygiene: validation commands, progress docs, README, and this wiki now agree without adding product scope.
+The latest completed lane is Private Deployment Experience. The next product lane should be chosen from fresh planning rather than by reopening Stage 07.
 
-Potential next slices:
+Useful follow-up slices:
 
-- Keep `e2e:smoke` as the quick Workspace/Run Detail loop and `e2e:smoke:release` as the mocked browser release gate.
-- Use `scripts/validate-harness-flow.sh` for the layered validation path; L2 should run the release smoke gate.
-- Handoff hygiene: keep `apps/agent-console/README.md`, `docs/human/10-task-progress.md`, `docs/task-progress.md`, and `docs/ai/task-progress.yaml` aligned.
-- Keep `omx_wiki/` aligned with accepted deep-interview decisions, progress docs, and repeated local-development lessons.
+- Keep using host-port overrides when default local development ports are occupied.
+- Preserve the Private Deployment report at `.omx/reports/private-deployment-experience/report-20260514T074949Z.md` as the runtime evidence pointer.
+- If deployment handoff expands later, keep it bounded to documented private handoff improvements unless a new plan explicitly authorizes installer, Kubernetes, cloud matrix, or full operations work.
 
 ## Stop Rules For Future Agents
 

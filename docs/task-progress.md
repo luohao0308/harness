@@ -252,17 +252,31 @@ git diff --check -> passed
 targeted stale-reference audit -> passed with explainable historical/quick-smoke matches only
 ```
 
-## Next Step
+## Completed: Private Deployment Experience
 
-Use the release-gate smoke for mocked browser validation:
+Date: 2026-05-14
 
-```text
-cd apps/agent-console && npm run e2e:smoke:release
-```
-
-Keep primary Agent Run smoke and live validation in the full validation path:
+Private deployment experience is now recorded as a completed post-stage lane. The target was a Docker Compose handoff package for a Docker-literate internal tester, with this acceptance signal:
 
 ```text
-python3 scripts/smoke-test-agent-run.py
-./scripts/validate-harness-flow.sh --full-infra
+Docker Compose full-chain startup
+-> Console reaches expected API base URL
+-> scripts/smoke-test-docker.py passes
+-> scripts/smoke-test-agent-run.py passes
+-> docker compose down cleanup recorded
 ```
+
+Execution evidence:
+
+```text
+python3 -m py_compile scripts/smoke-test-docker.py scripts/smoke-test-agent-run.py -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config -> passed
+docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml up -d --build with override ports -> passed
+python3 scripts/smoke-test-docker.py with HARNESS_* override URLs -> passed
+python3 scripts/smoke-test-agent-run.py with HARNESS_API_BASE_URL=http://127.0.0.1:18000 -> passed
+docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml down -> passed
+```
+
+The local default ports `127.0.0.1:8000` and `127.0.0.1:5173` were already occupied, so the runtime proof intentionally used host-port overrides instead of killing unrelated local services. During smoke verification, Promtail was fixed to preserve Loki `app` and `service` labels when Docker Compose runs with a custom project name such as `harness-private-test`.

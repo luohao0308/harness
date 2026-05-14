@@ -221,6 +221,31 @@ post_stage_hardening:
       - README, human progress, task progress, and wiki handoff distinguish quick, release, and live validation.
       - Stage 07 remains closed historical context; this entry is post-stage release-gate hygiene.
 
+  - id: private-deployment-experience
+    date: 2026-05-14
+    status: completed
+    demo: Canonical Docker Compose private handoff path for a Docker-literate internal tester.
+    verification_result: passed
+    verification_commands:
+      - python3 -m py_compile scripts/smoke-test-docker.py scripts/smoke-test-agent-run.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config
+      - API_HTTP_PORT=18000 CONSOLE_HTTP_PORT=15173 WEBSITE_HTTP_PORT=13000 NGINX_HTTP_PORT=18080 PROMETHEUS_PORT=19091 GRAFANA_HTTP_PORT=13001 LOKI_HTTP_PORT=13100 TEMPO_HTTP_PORT=13200 OTEL_GRPC_PORT=14317 OTEL_HTTP_PORT=14318 OTEL_HEALTH_PORT=13133 PUBLIC_API_BASE_URL=http://127.0.0.1:18000 PUBLIC_CONSOLE_BASE_URL=http://127.0.0.1:15173 PUBLIC_WEBSITE_BASE_URL=http://127.0.0.1:13000 docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml up -d --build
+      - HARNESS_API_BASE_URL=http://127.0.0.1:18000 HARNESS_CONSOLE_BASE_URL=http://127.0.0.1:15173 HARNESS_WEBSITE_BASE_URL=http://127.0.0.1:13000 HARNESS_NGINX_BASE_URL=http://127.0.0.1:18080 HARNESS_PROMETHEUS_BASE_URL=http://127.0.0.1:19091 HARNESS_GRAFANA_BASE_URL=http://127.0.0.1:13001 HARNESS_LOKI_BASE_URL=http://127.0.0.1:13100 HARNESS_TEMPO_BASE_URL=http://127.0.0.1:13200 python3 scripts/smoke-test-docker.py
+      - HARNESS_API_BASE_URL=http://127.0.0.1:18000 python3 scripts/smoke-test-agent-run.py
+      - docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml down
+    acceptance_notes:
+      - Deployment runbook now treats Docker Compose as the canonical private handoff path and demotes systemd/Nginx server install paths.
+      - Troubleshooting runbook now records lightweight private-compose diagnostics and the required blocker evidence shape.
+      - Env examples clarify host-local versus compose-private defaults and mock-model fallback expectations.
+      - smoke-test-docker.py now verifies the Console bundle points at the expected API base URL.
+      - Docker Compose full-chain startup passed with host-port overrides because local processes were already listening on 8000 and 5173.
+      - Promtail now keeps known Harness compose service names instead of assuming the compose project is named docker-compose; Loki labels are preserved for custom project names such as harness-private-test.
+      - scripts/smoke-test-docker.py passed against the compose stack and proved API, Console API base URL, Website, Nginx, Prometheus, Grafana, Loki, Tempo, OpenAPI, task, tool, model, subagent, metrics, trace, and log paths.
+      - scripts/smoke-test-agent-run.py passed against the compose API and proved the canonical Agent Run path, sandbox/tool/subagent/eval/observability correlation.
+      - docker compose down cleanup completed for the harness-private-test stack.
+
 stage_completion_rule:
   - run_backend_tests
   - run_frontend_build
