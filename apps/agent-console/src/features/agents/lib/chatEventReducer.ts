@@ -215,7 +215,15 @@ export function applyChatEvents(
         break;
       }
       case "done": {
-        snap = { ...snap, state: "done", run_id: event.run_id };
+        snap = {
+          ...snap,
+          state: "done",
+          run_id: event.run_id,
+          metadata: {
+            ...snap.metadata,
+            knowledge_grounding: event.knowledge_grounding,
+          },
+        };
         break;
       }
       case "error": {

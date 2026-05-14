@@ -23,17 +23,19 @@ The public website remains a public information shell. The implementation center
 Read these first:
 
 1. [[deep-interview-private-harness-chain]]
-2. `.omx/specs/deep-interview-project-positioning-orchestration.md`
-3. `.omx/plans/prd-private-deployable-harness-chain.md`
-4. `.omx/plans/test-spec-private-deployable-harness-chain.md`
-5. `docs/ai/task-progress.yaml`
-6. `docs/task-progress.md`
-7. Latest relevant `.omx/context/*.md`
-8. [[workspace-demo-ready-constraints]] if the next work touches Agent Workspace
-9. [[local-dev-backend-port-cors]] if the frontend cannot reach the backend
-10. [[agent-workspace-execution-evidence-architecture]] if the work touches Workspace context, Plan-Act, branching, Run Detail, or Eval Case capture
-11. [[local-dev-eval-dataset-migration]] if Run Detail cannot list or save Eval Datasets
-12. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
+2. [[agent-knowledge-harness-roadmap]]
+3. `.omx/specs/deep-interview-agent-knowledge-harness-memory-rag.md`
+4. `.omx/specs/deep-interview-project-positioning-orchestration.md`
+5. `.omx/plans/prd-private-deployable-harness-chain.md`
+6. `.omx/plans/test-spec-private-deployable-harness-chain.md`
+7. `docs/ai/task-progress.yaml`
+8. `docs/task-progress.md`
+9. Latest relevant `.omx/context/*.md`
+10. [[workspace-demo-ready-constraints]] if the next work touches Agent Workspace
+11. [[local-dev-backend-port-cors]] if the frontend cannot reach the backend
+12. [[agent-workspace-execution-evidence-architecture]] if the work touches Workspace context, Plan-Act, branching, Run Detail, or Eval Case capture
+13. [[local-dev-eval-dataset-migration]] if Run Detail cannot list or save Eval Datasets
+14. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
 
 ## Current State
 
@@ -93,13 +95,18 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed lane is Private Deployment Experience. The next product lane should be chosen from fresh planning rather than by reopening Stage 07.
+The latest completed lane is Private Deployment Experience. The next product direction selected through `$deep-interview` is **Agent Knowledge Harness**.
+
+The first thin slice should be Memory/RAG grounding: user-provided knowledge or documents are indexed, Workspace questions retrieve and cite sources, weak local evidence is surfaced explicitly, and Run Detail/Eval/observability show retrieval/citation evidence. Web research should stay disabled until a real policy-gated provider is configured; mock web research must not be presented as real evidence.
+
+Future engineers must preserve the broader follow-up goals from [[agent-knowledge-harness-roadmap]]: MCP creation and management, skill creation and management, short-term memory, long-term memory, token/context optimization, and hallucination reduction. These are follow-up product targets, not discarded scope.
 
 Useful follow-up slices:
 
 - Keep using host-port overrides when default local development ports are occupied.
 - Preserve the Private Deployment report at `.omx/reports/private-deployment-experience/report-20260514T074949Z.md` as the runtime evidence pointer.
 - If deployment handoff expands later, keep it bounded to documented private handoff improvements unless a new plan explicitly authorizes installer, Kubernetes, cloud matrix, or full operations work.
+- For Agent Knowledge Harness, start from `.omx/specs/deep-interview-agent-knowledge-harness-memory-rag.md` and plan with `$ralplan` before implementation because schema, retrieval, web research, prompt behavior, UI evidence, and Eval criteria need architecture/test-shape review.
 
 ## Stop Rules For Future Agents
 
@@ -112,6 +119,7 @@ Do not treat legacy `/api/tasks/*` as the primary product proof. Agent Run is th
 ## Related Pages
 
 - [[deep-interview-private-harness-chain]]
+- [[agent-knowledge-harness-roadmap]]
 - [[workspace-demo-ready-constraints]]
 - [[wiki-capture-candidates]]
 - [[local-dev-backend-port-cors]]

@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -336,6 +337,232 @@ class ToolApproval(Base):
     decision_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KnowledgeSource(Base):
+    __tablename__ = "knowledge_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "agent_id",
+            "idempotency_key",
+            name="knowledge_sources_scope_idempotency_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False, default="text")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="ACTIVE", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class KnowledgeDocument(Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_sources.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    mime_type: Mapped[str] = mapped_column(Text, nullable=False, default="text/markdown")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="INDEXED", index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    supersedes_document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_documents.id"),
+        nullable=True,
+    )
+    ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "chunk_index",
+            "chunk_version",
+            name="knowledge_chunks_document_chunk_version_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_documents.id"),
+        nullable=False,
+        index=True,
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_sources.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    source_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    document_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    chunk_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    text_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="ACTIVE", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class KnowledgeEmbedding(Base):
+    __tablename__ = "knowledge_embeddings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    chunk_id: Mapped[str] = mapped_column(
+        ForeignKey("knowledge_chunks.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding_vector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="READY", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RetrievalSession(Base):
+    __tablename__ = "retrieval_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(String(64), nullable=False, default="local")
+    local_status: Mapped[str] = mapped_column(String(64), nullable=False, default="insufficient")
+    vector_capability: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="unavailable",
+    )
+    strategy: Mapped[str] = mapped_column(String(64), nullable=False, default="lexical")
+    min_hits: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    min_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.62)
+    max_local_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
+    max_web_results: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class WebResearchSource(Base):
+    __tablename__ = "web_research_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    retrieval_session_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="READY", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RetrievalHit(Base):
+    __tablename__ = "retrieval_hits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    retrieval_session_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    chunk_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_chunks.id"),
+        nullable=True,
+        index=True,
+    )
+    web_source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("web_research_sources.id"),
+        nullable=True,
+        index=True,
+    )
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    source_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("knowledge_documents.id"),
+        nullable=True,
+        index=True,
+    )
+    document_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class CitationRecord(Base):
+    __tablename__ = "citation_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    retrieval_session_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    retrieval_hit_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_hits.id"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citation_key: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_id: Mapped[str | None] = mapped_column(ForeignKey("knowledge_chunks.id"), nullable=True)
+    web_source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("web_research_sources.id"),
+        nullable=True,
+    )
+    claim_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quoted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class EvalDataset(Base):

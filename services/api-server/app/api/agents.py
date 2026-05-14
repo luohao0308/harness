@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.executor import PLANNER_SYSTEM_PROMPT, Executor
@@ -42,7 +42,15 @@ from app.api.schemas import (
     AgentSessionPage,
     AgentSessionResponse,
     EventResponse,
+    KnowledgeCitationResponse,
+    KnowledgeDocumentResponse,
+    KnowledgeGroundingResponse,
+    KnowledgeRetrievalHitResponse,
+    KnowledgeSourceCreateRequest,
+    KnowledgeSourcePage,
+    KnowledgeSourceResponse,
     ModelCallResponse,
+    RetrievalSessionResponse,
     SubagentResponse,
     TaskPage,
     TaskPlanResponse,
@@ -50,6 +58,7 @@ from app.api.schemas import (
     TaskResponse,
     ToolApprovalResponse,
     ToolCallResponse,
+    WebResearchSourceResponse,
     WorkspaceContextCompressionRequest,
     WorkspaceContextCompressionResponse,
 )
@@ -61,16 +70,30 @@ from app.db.models import (
     AgentMessage,
     AgentRun,
     AgentSession,
+    CitationRecord,
     ExecutionPlan,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeEmbedding,
+    KnowledgeSource,
     ModelCall,
+    RetrievalHit,
+    RetrievalSession,
     Task,
     ToolApproval,
     ToolCall,
+    WebResearchSource,
     utc_now,
 )
 from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.knowledge import (
+    KnowledgeGroundingResult,
+    ground_query,
+    ingest_knowledge_source,
+    list_knowledge_sources,
+)
 from app.security.auth import Principal, require_role
 from app.tools.registry import ToolMetadata, ToolRegistry
 from app.tools.runner import ToolExecution, ToolRunner
@@ -177,6 +200,79 @@ def create_agent_session(
     session.commit()
     session.refresh(agent_session)
     return agent_session
+
+
+@router.get(
+    "/{agent_id}/knowledge/sources",
+    response_model=KnowledgeSourcePage,
+    summary="查询 Agent 知识源",
+)
+def list_agent_knowledge_sources(
+    agent_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourcePage:
+    require_role(principal, {"admin", "engineer", "operator"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    sources = list_knowledge_sources(
+        session,
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+    )
+    return KnowledgeSourcePage(
+        items=[_knowledge_source_response(session, source) for source in sources]
+    )
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="创建 Agent 知识源并索引文档",
+)
+def create_agent_knowledge_source(
+    agent_id: str,
+    request: KnowledgeSourceCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source_was_new = _knowledge_source_exists(
+        session=session,
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+        name=request.name,
+        idempotency_key=request.idempotency_key,
+    ) is False
+    source, document, chunks, embeddings = ingest_knowledge_source(
+        session,
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+        name=request.name,
+        description=request.description,
+        source_type=request.source_type,
+        title=request.title,
+        content=request.content,
+        uri=request.uri,
+        mime_type=request.mime_type,
+        created_by=principal.user_id,
+        idempotency_key=request.idempotency_key,
+    )
+    _record_knowledge_ingestion_events(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source=source,
+        document=document,
+        chunks=chunks,
+        embeddings=embeddings,
+        idempotency_key=request.idempotency_key,
+        source_was_new=source_was_new,
+    )
+    session.commit()
+    session.refresh(source)
+    return _knowledge_source_response(session, source)
 
 
 @router.get(
@@ -418,11 +514,42 @@ def stream_agent_chat_run(
         *,
         run: Task,
         messages: list[ModelMessage],
+        query_goal: str,
         started_at: float,
         first_byte_at: float,
         run_created_message: str,
         done_message: str,
+        enable_knowledge_grounding: bool = False,
     ) -> Iterator[str]:
+        grounding: KnowledgeGroundingResult | None = None
+        if enable_knowledge_grounding:
+            query = query_goal.strip() or next(
+                (
+                    message.content.strip()
+                    for message in reversed(messages)
+                    if message.role == "user"
+                ),
+                "",
+            )
+            if query:
+                grounding = ground_query(
+                    session,
+                    organization_id=principal.organization_id,
+                    agent_id=agent_id,
+                    run_id=run.id,
+                    query=query,
+                )
+                if messages and messages[0].role == "system":
+                    messages = [
+                        messages[0],
+                        ModelMessage(role="system", content=grounding.evidence_summary),
+                        *messages[1:],
+                    ]
+                else:
+                    messages = [
+                        ModelMessage(role="system", content=grounding.evidence_summary),
+                        *messages,
+                    ]
         run.status = "RUNNING"
         run.updated_at = utc_now()
         session.flush()
@@ -458,11 +585,30 @@ def stream_agent_chat_run(
                     content_accumulator += chunk.text
                     if first_delta_at is None:
                         first_delta_at = time.monotonic()
-                    yield sse("delta", {"content": chunk.text})
+                    if not enable_knowledge_grounding:
+                        yield sse("delta", {"content": chunk.text})
                 if chunk.usage:
                     usage.update(chunk.usage)
 
             content = _require_normal_chat_content(content_accumulator)
+            normalized_content = _normalize_grounding_citations(
+                content=content,
+                grounding=grounding,
+            )
+            if normalized_content != content:
+                content = normalized_content
+                content_accumulator = content
+            citation_suffix = _missing_grounding_citation_suffix(
+                content=content,
+                grounding=grounding,
+            )
+            if citation_suffix:
+                content += citation_suffix
+                content_accumulator = content
+            if enable_knowledge_grounding:
+                if first_delta_at is None:
+                    first_delta_at = time.monotonic()
+                yield sse("delta", {"content": content})
             run.status = "COMPLETED"
             run.completed_at = utc_now()
             run.updated_at = utc_now()
@@ -491,6 +637,7 @@ def stream_agent_chat_run(
                     "status": run.status,
                     "step_count": 0,
                     "message": done_message,
+                    "knowledge_grounding": grounding.evidence_message if grounding else None,
                 },
             )
         except ModelGatewayError as exc:
@@ -556,10 +703,12 @@ def stream_agent_chat_run(
                             goal=goal,
                             request=request,
                         ),
+                        query_goal=goal,
                         started_at=started_at,
                         first_byte_at=first_byte_at,
                         run_created_message="Codex plan run started.",
                         done_message="Codex plan response completed.",
+                        enable_knowledge_grounding=False,
                     )
                     return
                 yield from workspace_text_events(
@@ -569,10 +718,12 @@ def stream_agent_chat_run(
                         goal=goal,
                         request=request,
                     ),
+                    query_goal=goal,
                     started_at=started_at,
                     first_byte_at=first_byte_at,
                     run_created_message="Chat run started.",
                     done_message="Chat response completed.",
+                    enable_knowledge_grounding=True,
                 )
                 return
             else:
@@ -619,10 +770,12 @@ def stream_agent_chat_run(
                             goal=goal,
                             request=request,
                         ),
+                        query_goal=goal,
                         started_at=started_at,
                         first_byte_at=first_byte_at,
                         run_created_message="Codex plan run started.",
                         done_message="Codex plan response completed.",
+                        enable_knowledge_grounding=False,
                     )
                     return
                 else:
@@ -642,10 +795,12 @@ def stream_agent_chat_run(
                             goal=goal,
                             request=request,
                         ),
+                        query_goal=goal,
                         started_at=started_at,
                         first_byte_at=first_byte_at,
                         run_created_message="Chat run started.",
                         done_message="Chat response completed.",
+                        enable_knowledge_grounding=True,
                     )
                     return
         except HTTPException as exc:
@@ -1294,6 +1449,7 @@ def get_agent_run_workspace(
         run=run,
         plan=_plan_response(plan) if plan is not None else None,
         events=[EventResponse.model_validate(event) for event in events],
+        knowledge_grounding=_knowledge_grounding_response(session, run=run),
         subagents=[SubagentResponse.model_validate(subagent) for subagent in subagents],
         tool_calls=[
             _tool_call_response(call, trace_id=trace_ids.get(("tool", call.id)))
@@ -1932,6 +2088,236 @@ def _agent_plan_response_from_run(
         task=run,
         plan=_plan_response(plan),
         message=f"{message_prefix} {run.id}，当前未执行新的规划。",
+    )
+
+
+def _knowledge_source_exists(
+    *,
+    session: Session,
+    organization_id: str | None,
+    agent_id: str,
+    name: str,
+    idempotency_key: str | None,
+) -> bool:
+    statement = select(KnowledgeSource).where(
+        KnowledgeSource.organization_id == organization_id,
+        KnowledgeSource.agent_id == agent_id,
+    )
+    if idempotency_key:
+        statement = statement.where(KnowledgeSource.idempotency_key == idempotency_key)
+    else:
+        statement = statement.where(KnowledgeSource.name == name)
+    return session.execute(statement.limit(1)).scalar_one_or_none() is not None
+
+
+def _record_knowledge_ingestion_events(
+    *,
+    session: Session,
+    principal: Principal,
+    agent_id: str,
+    source: KnowledgeSource,
+    document: KnowledgeDocument,
+    chunks: list[KnowledgeChunk],
+    embeddings: list[KnowledgeEmbedding],
+    idempotency_key: str | None,
+    source_was_new: bool,
+) -> None:
+    now = utc_now()
+    audit_task = Task(
+        organization_id=principal.organization_id,
+        created_by=principal.user_id,
+        title=f"Knowledge ingestion: {source.name}",
+        goal=f"Index knowledge document {document.title}",
+        status="COMPLETED",
+        model_provider="system",
+        model_name="knowledge-harness",
+        max_runtime_seconds=0,
+        max_subagents=0,
+        enable_sandbox=False,
+        enable_network=False,
+        created_at=now,
+        updated_at=now,
+        completed_at=now,
+    )
+    session.add(audit_task)
+    session.flush()
+    event_store = EventStore(session)
+    base_payload = {
+        "schema_version": "knowledge-grounding-v1",
+        "org_id": principal.organization_id,
+        "agent_id": agent_id,
+        "run_id": audit_task.id,
+        "correlation_id": audit_task.id,
+        "causation_id": audit_task.id,
+        "idempotency_key": idempotency_key,
+        "source_id": source.id,
+        "document_id": document.id,
+    }
+    if source_was_new:
+        event_store.append(
+            task_id=audit_task.id,
+            event_type=EventType.KNOWLEDGE_SOURCE_CREATED,
+            payload_json={
+                **base_payload,
+                "source_type": source.source_type,
+                "source_version": source.version,
+            },
+            actor_type="user",
+            actor_id=principal.user_id,
+        )
+    event_store.append(
+        task_id=audit_task.id,
+        event_type=EventType.KNOWLEDGE_DOCUMENT_INDEXED,
+        payload_json={
+            **base_payload,
+            "document_version": document.version,
+            "chunk_ids": [chunk.id for chunk in chunks],
+            "chunk_count": len(chunks),
+            "embedding_ids": [embedding.id for embedding in embeddings],
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+
+
+def _missing_grounding_citation_suffix(
+    *,
+    content: str,
+    grounding: KnowledgeGroundingResult | None,
+) -> str:
+    if grounding is None or not grounding.citations:
+        return ""
+    missing_keys = [
+        citation.citation_key
+        for citation in grounding.citations
+        if citation.citation_key not in content
+    ]
+    if not missing_keys:
+        return ""
+    return "\n\nSources: " + ", ".join(missing_keys)
+
+
+def _normalize_grounding_citations(
+    *,
+    content: str,
+    grounding: KnowledgeGroundingResult | None,
+) -> str:
+    if grounding is None:
+        return content
+    valid_keys = {citation.citation_key for citation in grounding.citations}
+    invalid_keys: set[str] = set()
+
+    def replace_invalid(match: re.Match[str]) -> str:
+        citation_key = match.group(0)
+        if citation_key in valid_keys:
+            return citation_key
+        invalid_keys.add(citation_key)
+        return "[unsupported-citation]"
+
+    normalized = re.sub(r"\[(?:web-)?\d+\]", replace_invalid, content)
+    if not invalid_keys:
+        return content
+    return (
+        f"{normalized}\n\nUnsupported citations removed: "
+        f"{len(invalid_keys)}"
+    )
+
+
+def _knowledge_source_response(
+    session: Session,
+    source: KnowledgeSource,
+) -> KnowledgeSourceResponse:
+    documents = list(
+        session.execute(
+            select(KnowledgeDocument)
+            .where(KnowledgeDocument.source_id == source.id)
+            .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
+        ).scalars()
+    )
+    latest_document_ids = [document.id for document in documents[:5]]
+    chunk_counts = dict(
+        session.execute(
+            select(KnowledgeChunk.document_id, func.count(KnowledgeChunk.id))
+            .where(
+                KnowledgeChunk.document_id.in_(latest_document_ids),
+                KnowledgeChunk.status == "ACTIVE",
+            )
+            .group_by(KnowledgeChunk.document_id)
+        ).all()
+    ) if latest_document_ids else {}
+    latest_documents = [
+        KnowledgeDocumentResponse.model_validate(document).model_copy(
+            update={"chunk_count": int(chunk_counts.get(document.id, 0))}
+        )
+        for document in documents[:5]
+    ]
+    return KnowledgeSourceResponse(
+        id=source.id,
+        organization_id=source.organization_id,
+        agent_id=source.agent_id,
+        name=source.name,
+        description=source.description,
+        source_type=source.source_type,
+        status=source.status,
+        version=source.version,
+        settings_json=source.settings_json if isinstance(source.settings_json, dict) else {},
+        metadata_json=source.metadata_json if isinstance(source.metadata_json, dict) else {},
+        idempotency_key=source.idempotency_key,
+        created_by=source.created_by,
+        created_at=source.created_at,
+        updated_at=source.updated_at,
+        latest_documents=latest_documents,
+    )
+
+
+def _knowledge_grounding_response(
+    session: Session,
+    *,
+    run: Task,
+) -> KnowledgeGroundingResponse | None:
+    retrieval_session = session.execute(
+        select(RetrievalSession)
+        .where(RetrievalSession.run_id == run.id)
+        .order_by(RetrievalSession.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if retrieval_session is None:
+        return None
+    hits = list(
+        session.execute(
+            select(RetrievalHit)
+            .where(RetrievalHit.retrieval_session_id == retrieval_session.id)
+            .order_by(RetrievalHit.rank.asc(), RetrievalHit.id.asc())
+        ).scalars()
+    )
+    citations = list(
+        session.execute(
+            select(CitationRecord)
+            .where(CitationRecord.retrieval_session_id == retrieval_session.id)
+            .order_by(CitationRecord.created_at.asc(), CitationRecord.id.asc())
+        ).scalars()
+    )
+    web_sources = list(
+        session.execute(
+            select(WebResearchSource)
+            .where(WebResearchSource.retrieval_session_id == retrieval_session.id)
+            .order_by(WebResearchSource.fetched_at.asc(), WebResearchSource.id.asc())
+        ).scalars()
+    )
+    evidence_summary = "Local knowledge grounded the answer."
+    if retrieval_session.local_status != "sufficient":
+        evidence_summary = (
+            "Local knowledge is insufficient; no web research provider is configured."
+        )
+    return KnowledgeGroundingResponse(
+        retrieval_session=RetrievalSessionResponse.model_validate(retrieval_session),
+        retrieval_hits=[KnowledgeRetrievalHitResponse.model_validate(hit) for hit in hits],
+        citations=[KnowledgeCitationResponse.model_validate(citation) for citation in citations],
+        web_sources=[WebResearchSourceResponse.model_validate(source) for source in web_sources],
+        vector_capability=retrieval_session.vector_capability,
+        local_status=retrieval_session.local_status,
+        grounded=bool(citations),
+        evidence_summary=evidence_summary,
     )
 
 

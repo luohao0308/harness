@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, FlaskConical, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
+import { Bot, Check, Database, FlaskConical, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -88,6 +88,15 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   });
   const data = workspace.data;
   const run = data?.run;
+  const grounding = data?.knowledge_grounding;
+  const hitsById = useMemo(
+    () => new Map((grounding?.retrieval_hits ?? []).map((hit) => [hit.id, hit])),
+    [grounding?.retrieval_hits],
+  );
+  const webSourcesById = useMemo(
+    () => new Map((grounding?.web_sources ?? []).map((source) => [source.id, source])),
+    [grounding?.web_sources],
+  );
   const latestSequence = useMemo(
     () => Math.max(0, ...(data?.events ?? []).map((event) => event.sequence)),
     [data?.events],
@@ -190,6 +199,86 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               </Link>
             </div>
           </Card>
+
+          {grounding && (
+            <Card id="knowledge-grounding">
+              <CardHeader>
+                <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Database className="h-4 w-4" />
+                  Knowledge Grounding
+                </div>
+                <Badge tone={grounding.local_status === "sufficient" ? "success" : "warning"}>
+                  {grounding.local_status}
+                </Badge>
+              </CardHeader>
+              <div className="space-y-3 p-3 text-sm">
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <Metric label="Vector" value={grounding.vector_capability} />
+                  <Metric label="Hits" value={String(grounding.retrieval_hits.length)} />
+                  <Metric label="Grounded" value={grounding.grounded ? "yes" : "no"} />
+                </div>
+                <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
+                {grounding.retrieval_hits.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-slate-700">Retrieval Hits</div>
+                    {grounding.retrieval_hits.map((hit) => (
+                      <div key={hit.id} className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-[11px] text-slate-500">
+                            {hit.source_kind} #{hit.rank} score={hit.score.toFixed(3)}
+                          </span>
+                          <span className="text-slate-500">{hit.chunk_id ?? hit.web_source_id}</span>
+                        </div>
+                        <div className="mt-1 text-slate-700">{hit.snippet}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {grounding.citations.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-slate-700">Citations</div>
+                    <div className="space-y-2">
+                      {grounding.citations.map((citation) => (
+                        <div key={citation.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge tone="info">{citation.citation_key}</Badge>
+                            <span className="font-mono text-[11px] text-slate-500">
+                              {citation.source_kind}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-slate-600">
+                            hit: {citation.retrieval_hit_id}
+                          </div>
+                          <div className="mt-1 text-slate-500">
+                            {citation.web_source_id
+                              ? webSourcesById.get(citation.web_source_id)?.title ??
+                                citation.web_source_id
+                              : hitsById.get(citation.retrieval_hit_id)?.snippet ?? citation.chunk_id}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {grounding.web_sources.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-slate-700">Web Fallback</div>
+                    {grounding.web_sources.map((source) => (
+                      <div key={source.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
+                        <div className="font-mono text-[11px] text-slate-500">{source.url}</div>
+                        <div className="mt-1 font-medium text-slate-700">{source.title}</div>
+                        <div className="mt-1 text-slate-600">{source.snippet}</div>
+                        <div className="mt-1 text-slate-500">
+                          {source.status}
+                          {source.error_message ? ` · ${source.error_message}` : ""}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
 
           <Card id="plan">
             <CardHeader>

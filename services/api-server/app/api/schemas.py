@@ -543,6 +543,181 @@ class EventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class KnowledgeSourceCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120, description="知识源名称")
+    description: str = Field(default="", max_length=1_000, description="知识源说明")
+    source_type: Literal["text", "markdown", "document"] = Field(
+        default="text",
+        description="知识源类型",
+    )
+    title: str = Field(min_length=1, max_length=200, description="文档标题")
+    content: str = Field(min_length=1, max_length=120_000, description="文档内容")
+    uri: str | None = Field(default=None, max_length=2_000, description="来源 URI")
+    mime_type: str = Field(
+        default="text/markdown",
+        min_length=1,
+        max_length=120,
+        description="文档 MIME type",
+    )
+    idempotency_key: str | None = Field(default=None, max_length=200, description="幂等键")
+
+
+class KnowledgeChunkResponse(BaseModel):
+    id: str = Field(description="Chunk ID")
+    document_id: str = Field(description="文档 ID")
+    source_id: str = Field(description="知识源 ID")
+    source_version: int = Field(description="知识源版本")
+    document_version: int = Field(description="文档版本")
+    chunk_version: int = Field(description="Chunk 版本")
+    chunk_index: int = Field(description="Chunk 索引")
+    text: str = Field(description="Chunk 文本")
+    text_sha256: str = Field(description="Chunk 哈希")
+    start_offset: int = Field(description="起始偏移")
+    end_offset: int = Field(description="结束偏移")
+    status: str = Field(description="状态")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    id: str = Field(description="文档 ID")
+    source_id: str = Field(description="知识源 ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    title: str = Field(description="标题")
+    uri: str | None = Field(default=None, description="来源 URI")
+    content_sha256: str = Field(description="内容哈希")
+    mime_type: str = Field(description="MIME type")
+    status: str = Field(description="状态")
+    version: int = Field(description="版本")
+    supersedes_document_id: str | None = Field(default=None, description="前一版本 ID")
+    ingestion_error: str | None = Field(default=None, description="导入错误")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    idempotency_key: str | None = Field(default=None, description="幂等键")
+    created_by: str | None = Field(default=None, description="创建者")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+    indexed_at: datetime | None = Field(default=None, description="索引时间")
+    chunk_count: int = Field(default=0, description="Chunk 数量")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeSourceResponse(BaseModel):
+    id: str = Field(description="知识源 ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    name: str = Field(description="知识源名称")
+    description: str = Field(description="知识源说明")
+    source_type: str = Field(description="知识源类型")
+    status: str = Field(description="状态")
+    version: int = Field(description="版本")
+    settings_json: dict = Field(default_factory=dict, description="设置")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    idempotency_key: str | None = Field(default=None, description="幂等键")
+    created_by: str | None = Field(default=None, description="创建者")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+    latest_documents: list[KnowledgeDocumentResponse] = Field(
+        default_factory=list,
+        description="最新文档",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeSourcePage(BaseModel):
+    items: list[KnowledgeSourceResponse] = Field(description="知识源列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class KnowledgeRetrievalHitResponse(BaseModel):
+    id: str = Field(description="Hit ID")
+    chunk_id: str | None = Field(default=None, description="Chunk ID")
+    web_source_id: str | None = Field(default=None, description="Web source ID")
+    rank: int = Field(description="排名")
+    score: float = Field(description="分数")
+    source_kind: str = Field(description="来源类型")
+    document_id: str | None = Field(default=None, description="文档 ID")
+    document_version: int | None = Field(default=None, description="文档版本")
+    snippet: str = Field(description="片段")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeCitationResponse(BaseModel):
+    id: str = Field(description="Citation ID")
+    retrieval_hit_id: str = Field(description="Retrieval hit ID")
+    citation_key: str = Field(description="引用键")
+    source_kind: str = Field(description="来源类型")
+    chunk_id: str | None = Field(default=None, description="Chunk ID")
+    web_source_id: str | None = Field(default=None, description="Web source ID")
+    claim_text: str | None = Field(default=None, description="主张文本")
+    quoted_text: str | None = Field(default=None, description="引用文本")
+    confidence: float = Field(description="置信度")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WebResearchSourceResponse(BaseModel):
+    id: str = Field(description="Web source ID")
+    url: str = Field(description="URL")
+    title: str = Field(description="标题")
+    content_sha256: str = Field(description="内容哈希")
+    snippet: str = Field(description="摘要")
+    status: str = Field(description="状态")
+    error_message: str | None = Field(default=None, description="错误信息")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    fetched_at: datetime = Field(description="抓取时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RetrievalSessionResponse(BaseModel):
+    id: str = Field(description="Retrieval session ID")
+    query: str = Field(description="查询")
+    mode: str = Field(description="模式")
+    local_status: str = Field(description="本地状态")
+    vector_capability: str = Field(description="向量能力")
+    strategy: str = Field(description="检索策略")
+    min_hits: int = Field(description="最少命中数")
+    min_score: float = Field(description="最小分数")
+    max_local_chunks: int = Field(description="最多本地 chunk")
+    max_web_results: int = Field(description="最多 web 结果")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgeGroundingResponse(BaseModel):
+    retrieval_session: RetrievalSessionResponse | None = Field(
+        default=None,
+        description="检索会话",
+    )
+    retrieval_hits: list[KnowledgeRetrievalHitResponse] = Field(
+        default_factory=list,
+        description="命中",
+    )
+    citations: list[KnowledgeCitationResponse] = Field(
+        default_factory=list,
+        description="引用",
+    )
+    web_sources: list[WebResearchSourceResponse] = Field(
+        default_factory=list,
+        description="Web 来源",
+    )
+    vector_capability: str = Field(description="向量能力")
+    local_status: str = Field(description="本地证据状态")
+    grounded: bool = Field(description="是否已 grounding")
+    evidence_summary: str = Field(description="证据摘要")
+
+
 class EventPage(BaseModel):
     items: list[EventResponse] = Field(description="事件列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
@@ -1155,6 +1330,10 @@ class AgentRunWorkspaceResponse(BaseModel):
     run: TaskResponse = Field(description="Agent Run 基础信息")
     plan: TaskPlanResponse | None = Field(default=None, description="最新 Plan DAG")
     events: list[EventResponse] = Field(default_factory=list, description="Event Sourcing 事件流")
+    knowledge_grounding: KnowledgeGroundingResponse | None = Field(
+        default=None,
+        description="Knowledge / RAG grounding evidence",
+    )
     subagents: list[SubagentResponse] = Field(default_factory=list, description="Subagent 状态")
     tool_calls: list[ToolCallResponse] = Field(default_factory=list, description="工具调用日志")
     model_calls: list[ModelCallResponse] = Field(default_factory=list, description="模型调用日志")

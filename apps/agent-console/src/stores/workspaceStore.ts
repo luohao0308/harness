@@ -51,6 +51,7 @@ export type ConversationNode = {
     model_call_id?: string | null;
     active_branch_id?: string | null;
     workspace_mode?: "chat" | "codex_plan" | "plan";
+    knowledge_grounding?: string | null;
     error?: ConversationErrorMeta;
     // v2 additive (Design §Data Models → ConversationNode)
     streaming_diagnostic?: "possible_buffering";

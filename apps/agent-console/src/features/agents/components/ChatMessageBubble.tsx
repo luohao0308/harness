@@ -191,6 +191,12 @@ export function ChatMessageBubble({
           />
         )}
 
+        {!isEditing && node.role === "assistant" && node.metadata.knowledge_grounding && (
+          <div className="mt-1 flex justify-start">
+            <Badge tone="info">{node.metadata.knowledge_grounding}</Badge>
+          </div>
+        )}
+
         {!isEditing && <MetadataLine node={node} aligned={isUser ? "end" : "start"} />}
 
         {!isEditing && (node.role === "user" || node.role === "assistant") && (
