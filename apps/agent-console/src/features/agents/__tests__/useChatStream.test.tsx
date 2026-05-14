@@ -46,6 +46,7 @@ describe("useChatStream run lifecycle callbacks", () => {
             status: "COMPLETED",
             step_count: 0,
             message: "done",
+            knowledge_grounding: "Local knowledge grounded the answer.",
           }),
         ].join(""),
       ),
@@ -77,5 +78,11 @@ describe("useChatStream run lifecycle callbacks", () => {
     expect(payload.attachment_names).toEqual(["reference.png"]);
     expect(onRunCreated).toHaveBeenCalledTimes(1);
     expect(onRunCreated).toHaveBeenCalledWith("run-once");
+    const assistantNode = Object.values(useWorkspaceStore.getState().nodesById).find(
+      (node) => node.role === "assistant",
+    );
+    expect(assistantNode?.metadata.knowledge_grounding).toBe(
+      "Local knowledge grounded the answer.",
+    );
   });
 });

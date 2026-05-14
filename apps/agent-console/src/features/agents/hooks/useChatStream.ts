@@ -255,7 +255,14 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
           }
           case "done": {
             flush.drain();
-            store.updateNode(assistantNodeId, { state: "done", run_id: event.run_id });
+            store.updateNode(assistantNodeId, {
+              state: "done",
+              run_id: event.run_id,
+              metadata: {
+                ...current.metadata,
+                knowledge_grounding: event.knowledge_grounding,
+              },
+            });
             return;
           }
           case "error": {

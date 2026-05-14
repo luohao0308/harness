@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Brain,
@@ -18,12 +18,51 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { Input } from "../../../components/ui/input";
 import { useI18n } from "../../../lib/i18n";
-import { listAgents, type AgentDefinition } from "../../tasks/api";
+import {
+  createAgentKnowledgeSource,
+  listAgentKnowledgeSources,
+  listAgents,
+  type AgentDefinition,
+} from "../../tasks/api";
 
 export function AgentListPage() {
   const { text } = useI18n();
+  const queryClient = useQueryClient();
   const agents = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const [selectedAgentId, setSelectedAgentId] = useState("default");
+  const knowledge = useQuery({
+    queryKey: ["agent-knowledge", selectedAgentId],
+    queryFn: () => listAgentKnowledgeSources(selectedAgentId),
+  });
+  const [knowledgeName, setKnowledgeName] = useState("Default Knowledge");
+  const [knowledgeTitle, setKnowledgeTitle] = useState("Team Handbook");
+  const [knowledgeContent, setKnowledgeContent] = useState(
+    "# Team Handbook\n\nUse concise, cited answers.\n",
+  );
+  const createKnowledge = useMutation({
+    mutationFn: () =>
+      createAgentKnowledgeSource(selectedAgentId, {
+        name: knowledgeName,
+        title: knowledgeTitle,
+        content: knowledgeContent,
+        source_type: "markdown",
+        mime_type: "text/markdown",
+    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["agent-knowledge", selectedAgentId] });
+    },
+  });
+
+  useEffect(() => {
+    if (
+      agents.data?.items.length &&
+      !agents.data.items.some((agent) => agent.id === selectedAgentId)
+    ) {
+      setSelectedAgentId(agents.data.items[0].id);
+    }
+  }, [agents.data?.items, selectedAgentId]);
 
   return (
     <ConsoleShell title={text("Agent Studio", "Agent Studio")}>
@@ -54,6 +93,32 @@ export function AgentListPage() {
           </div>
         </section>
 
+        <section className="grid grid-cols-12 gap-4">
+          <Card className="col-span-12">
+            <CardHeader>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Bot className="h-4 w-4" />
+                {text("知识作用域", "Knowledge Scope")}
+              </div>
+              <Badge tone="success">{selectedAgentId}</Badge>
+            </CardHeader>
+            <div className="p-3">
+              <select
+                className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700"
+                value={selectedAgentId}
+                onChange={(event) => setSelectedAgentId(event.target.value)}
+              >
+                {(agents.data?.items ?? []).map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name} · {agent.id}
+                  </option>
+                ))}
+                {!agents.data?.items.length && <option value="default">default</option>}
+              </select>
+            </div>
+          </Card>
+        </section>
+
         <section className="grid grid-cols-6 gap-3">
           <StudioCapability
             icon={<Brain className="h-4 w-4" />}
@@ -78,9 +143,8 @@ export function AgentListPage() {
           <StudioCapability
             icon={<Database className="h-4 w-4" />}
             title="RAG"
-            status={text("未启用", "Disabled")}
-            description={text("知识库入口保留禁用态，不展示伪造数据。", "Knowledge entry remains disabled and shows no fake data.")}
-            disabled
+            status={text("API 已接入", "API-backed")}
+            description={text("知识源可创建并回看持久化文档与索引状态。", "Knowledge sources can be created and revisited as persisted documents and index state.")}
           />
           <StudioCapability
             icon={<Package className="h-4 w-4" />}
@@ -95,6 +159,70 @@ export function AgentListPage() {
             status={text("API 已接入", "API-backed")}
             description={text("Workspace 只暴露 Plan；执行、编排和审批作为 Run 详情与 Harness 观测能力呈现。", "Workspace exposes Plan only; execution, orchestration, and approval appear as Run detail and Harness observability.")}
           />
+        </section>
+
+        <section className="grid grid-cols-12 gap-4">
+          <Card className="col-span-4">
+            <CardHeader>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Database className="h-4 w-4" />
+                Knowledge Harness
+              </div>
+              <Badge tone="success">{knowledge.data?.items.length ?? 0} items</Badge>
+            </CardHeader>
+            <div className="space-y-3 p-3">
+              <div className="grid gap-2">
+                <Input value={knowledgeName} onChange={(e) => setKnowledgeName(e.target.value)} placeholder="Knowledge source name" />
+                <Input value={knowledgeTitle} onChange={(e) => setKnowledgeTitle(e.target.value)} placeholder="Document title" />
+                <textarea
+                  className="min-h-28 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                  value={knowledgeContent}
+                  onChange={(e) => setKnowledgeContent(e.target.value)}
+                />
+                <Button onClick={() => createKnowledge.mutate()} disabled={createKnowledge.isPending}>
+                  {createKnowledge.isPending ? text("索引中...", "Indexing...") : text("添加知识", "Add Knowledge")}
+                </Button>
+              </div>
+            </div>
+          </Card>
+          <Card className="col-span-8">
+            <CardHeader>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Database className="h-4 w-4" />
+                Knowledge Sources
+              </div>
+              <span className="text-xs text-slate-500">{knowledge.data?.items.length ?? 0}</span>
+            </CardHeader>
+            <div className="space-y-2 p-3">
+              {(knowledge.data?.items ?? []).map((source) => (
+                <div key={source.id} className="rounded-md border border-slate-100 bg-white p-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium text-slate-900">{source.name}</div>
+                    <Badge tone={source.status === "ACTIVE" ? "success" : "warning"}>{source.status}</Badge>
+                  </div>
+                  <div className="mt-1 text-slate-500">{source.description || source.source_type}</div>
+                  <div className="mt-2 space-y-1">
+                    {(source.latest_documents ?? []).map((document) => (
+                      <div key={document.id} className="rounded border border-slate-100 bg-slate-50 p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-slate-800">{document.title}</span>
+                          <span className="font-mono text-[11px] text-slate-500">v{document.version}</span>
+                        </div>
+                        <div className="mt-1 text-slate-500">
+                          {document.chunk_count} chunks · {document.status}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {!knowledge.isLoading && (knowledge.data?.items.length ?? 0) === 0 && (
+                <div className="py-6 text-center text-sm text-slate-500">
+                  {text("暂无知识源。", "No knowledge sources yet.")}
+                </div>
+              )}
+            </div>
+          </Card>
         </section>
 
         {agents.isLoading && (

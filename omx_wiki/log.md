@@ -33,3 +33,10 @@
 ## 2026-05-14
 
 - Updated [[project-handoff-current-state]] for the Private Deployment Experience handoff: Docker Compose is now the canonical private delivery path, host-port overrides are documented, smoke coverage includes Workspace chat streaming, and pushed commits through `72591dc` are recorded.
+## [2026-05-14T12:43:59.625Z] query
+- **Pages:** none
+- **Summary:** Query "Agent Knowledge Harness Memory RAG Grounding Loop plan roadmap" → 0 results (of 0 total)
+
+## [2026-05-14T12:46:01.296Z] query
+- **Pages:** none
+- **Summary:** Query "Agent Knowledge Harness v1 execution precision RAG pgvector lexical fallback event envelope retrieval citations UI persisted events" → 0 results (of 0 total)

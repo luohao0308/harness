@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session
 from app.agents.model_gateway import (
     AnthropicCompatibleModelGateway,
     AuditedModelGateway,
+    MockModelGateway,
     ModelCircuitBreaker,
     ModelGatewayError,
     ModelMessage,
-    MockModelGateway,
     ModelRateLimiter,
     ModelRequest,
     ModelResponse,

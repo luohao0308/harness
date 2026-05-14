@@ -302,6 +302,7 @@ export type AgentChatStreamEvent =
       status: string;
       step_count: number;
       message: string;
+      knowledge_grounding?: string | null;
     }
   | { type: "error"; message: string; recoverable?: boolean };
 
@@ -789,10 +790,133 @@ export type AgentPlanResult = {
   message: string;
 };
 
+export type KnowledgeDocument = {
+  id: string;
+  source_id: string;
+  organization_id: string | null;
+  agent_id: string | null;
+  title: string;
+  uri: string | null;
+  content_sha256: string;
+  mime_type: string;
+  status: string;
+  version: number;
+  supersedes_document_id: string | null;
+  ingestion_error: string | null;
+  metadata_json: Record<string, unknown>;
+  idempotency_key: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  indexed_at: string | null;
+  chunk_count: number;
+};
+
+export type KnowledgeSource = {
+  id: string;
+  organization_id: string | null;
+  agent_id: string | null;
+  name: string;
+  description: string;
+  source_type: string;
+  status: string;
+  version: number;
+  settings_json: Record<string, unknown>;
+  metadata_json: Record<string, unknown>;
+  idempotency_key: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  latest_documents: KnowledgeDocument[];
+};
+
+export type KnowledgeSourceCreatePayload = {
+  name: string;
+  description?: string;
+  source_type?: "text" | "markdown" | "document";
+  title: string;
+  content: string;
+  uri?: string | null;
+  mime_type?: string;
+  idempotency_key?: string | null;
+};
+
+export type KnowledgeSourcePage = {
+  items: KnowledgeSource[];
+  next_cursor: string | null;
+};
+
+export type KnowledgeRetrievalHit = {
+  id: string;
+  chunk_id: string | null;
+  web_source_id: string | null;
+  rank: number;
+  score: number;
+  source_kind: string;
+  document_id: string | null;
+  document_version: number | null;
+  snippet: string;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type KnowledgeCitation = {
+  id: string;
+  retrieval_hit_id: string;
+  citation_key: string;
+  source_kind: string;
+  chunk_id: string | null;
+  web_source_id: string | null;
+  claim_text: string | null;
+  quoted_text: string | null;
+  confidence: number;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type WebResearchSource = {
+  id: string;
+  url: string;
+  title: string;
+  content_sha256: string;
+  snippet: string;
+  status: string;
+  error_message: string | null;
+  metadata_json: Record<string, unknown>;
+  fetched_at: string;
+};
+
+export type RetrievalSession = {
+  id: string;
+  query: string;
+  mode: string;
+  local_status: string;
+  vector_capability: string;
+  strategy: string;
+  min_hits: number;
+  min_score: number;
+  max_local_chunks: number;
+  max_web_results: number;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type KnowledgeGrounding = {
+  retrieval_session: RetrievalSession | null;
+  retrieval_hits: KnowledgeRetrievalHit[];
+  citations: KnowledgeCitation[];
+  web_sources: WebResearchSource[];
+  vector_capability: string;
+  local_status: string;
+  grounded: boolean;
+  evidence_summary: string;
+};
+
 export type AgentRunWorkspace = {
   run: Task;
   plan: TaskPlan | null;
   events: AgentEvent[];
+  knowledge_grounding: KnowledgeGrounding | null;
   subagents: Subagent[];
   tool_calls: ToolCall[];
   model_calls: ModelCall[];
@@ -1064,6 +1188,20 @@ export async function listAgents() {
 
 export async function getAgent(agentId: string) {
   return request<AgentDefinition>(`/api/agents/${agentId}`);
+}
+
+export async function listAgentKnowledgeSources(agentId: string) {
+  return request<KnowledgeSourcePage>(`/api/agents/${agentId}/knowledge/sources`);
+}
+
+export async function createAgentKnowledgeSource(
+  agentId: string,
+  payload: KnowledgeSourceCreatePayload,
+) {
+  return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function compressAgentWorkspaceContext(
@@ -1584,6 +1722,8 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
       status: String(payload.status),
       step_count: Number(payload.step_count ?? 0),
       message: String(payload.message ?? ""),
+      knowledge_grounding:
+        typeof payload.knowledge_grounding === "string" ? payload.knowledge_grounding : null,
     };
   }
   if (eventType === "error") {

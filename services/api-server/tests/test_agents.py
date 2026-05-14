@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from app.db.models import (
     Agent,
     AgentAssignment,
     AgentEvent,
+    CitationRecord,
     ExecutionPlan,
     SandboxInstance,
     SystemSetting,
@@ -139,16 +141,86 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
     run_created = next(payload for event, payload in events if event == "run_created")
     delta = next(payload for event, payload in events if event == "delta")
     done = next(payload for event, payload in events if event == "done")
+    full_answer = "".join(
+        payload["content"] for event, payload in events if event == "delta"
+    )
     assert "think_delta" not in event_names
     assert "artifact_created" not in event_names
     assert "tool_call_requested" not in event_names
-    assert delta["content"] == "我是由测试模型返回的真实回答"
+    assert delta["content"].startswith("我是由测试模型返回的真实回答")
+    assert "Sources:" not in full_answer
     assert done["step_count"] == 0
     assert done["status"] == "COMPLETED"
+    assert done["knowledge_grounding"] == (
+        "Local knowledge is insufficient; no web research provider is configured."
+    )
     assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
     run = db_session.get(Task, run_created["run_id"])
     assert run is not None
     assert run.status == "COMPLETED"
+
+
+def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_complete(self, request_payload):
+        assert request_payload.response_format == "text"
+        return ModelResponse(
+            content="模型给出一个未绑定引用 [999]",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 12, "completion_tokens": 8},
+            raw_response={"mode": "test-model"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "不存在的事实",
+            "messages": [
+                {
+                    "id": "user-invalid-citation",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "不存在的事实",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-invalid-citation",
+            "active_branch_id": "branch-chat",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    run_created = next(payload for event, payload in events if event == "run_created")
+    full_answer = "".join(
+        payload["content"] for event, payload in events if event == "delta"
+    )
+    persisted_keys = set(
+        db_session.execute(
+            select(CitationRecord.citation_key).where(
+                CitationRecord.run_id == run_created["run_id"],
+            )
+        ).scalars()
+    )
+    emitted_keys = set(re.findall(r"\[(?:web-)?\d+\]", full_answer))
+
+    assert "[999]" not in full_answer
+    assert "[unsupported-citation]" in full_answer
+    assert not emitted_keys
+    assert emitted_keys <= persisted_keys
 
 
 def test_agent_workspace_chat_stream_uses_selected_model_and_attachment_context(
@@ -531,7 +603,7 @@ def test_agent_workspace_pro_chat_mode_does_not_auto_promote_plan_keywords(
     event_names = [event for event, _payload in events]
     delta = next(payload for event, payload in events if event == "delta")
     done = next(payload for event, payload in events if event == "done")
-    assert delta["content"] == "普通聊天仍然返回模型文本"
+    assert delta["content"].startswith("普通聊天仍然返回模型文本")
     assert done["step_count"] == 0
     assert "think_delta" not in event_names
     assert "artifact_created" not in event_names
@@ -687,7 +759,7 @@ def test_agent_workspace_pro_chat_mode_does_not_resume_plan_run(
     delta = next(payload for event, payload in events if event == "delta")
     done = next(payload for event, payload in events if event == "done")
     assert run_created["run_id"] != plan_run_id
-    assert delta["content"] == "chat mode created a normal model reply"
+    assert delta["content"].startswith("chat mode created a normal model reply")
     assert done["step_count"] == 0
     assert "think_delta" not in event_names
     assert "artifact_created" not in event_names

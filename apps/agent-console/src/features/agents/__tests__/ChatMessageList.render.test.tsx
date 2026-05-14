@@ -168,4 +168,26 @@ describe("ChatMessageList render regression (React error #310)", () => {
     container.remove();
     errorSpy.mockRestore();
   });
+
+  it("renders assistant knowledge grounding metadata as a visible indicator", async () => {
+    const userNode = makeNode({ id: "u1", role: "user", content: "what is the fact?" });
+    const assistantNode = makeNode({
+      id: "a1",
+      role: "assistant",
+      content: "Grounded answer [1]",
+      metadata: { knowledge_grounding: "Local knowledge grounded the answer." },
+    });
+
+    await act(async () => {
+      root.render(<ChatMessageList {...buildProps([userNode, assistantNode])} />);
+    });
+
+    expect(container.textContent ?? "").toContain("Local knowledge grounded the answer.");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
 });
