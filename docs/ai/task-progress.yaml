@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-11T16:44:58Z
+last_updated_at: 2026-05-14T05:02:00Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -133,7 +133,7 @@ post_stage_hardening:
     acceptance_notes:
       - Browser smoke covers header Model picker, top Tools panel, composer settings, Plugins/MCP, slash /model, Plan mode, backend connection error display, and 390px overflow.
       - Workspace and narrow console chrome stay compact so chat space remains primary.
-      - Non-Workspace browser e2e coverage remains deferred.
+      - Broader non-Workspace browser smoke specs were added later and are wired into the release gate by release-gate-handoff hygiene.
 
   - id: complete-harness-validation-flow
     date: 2026-05-13
@@ -200,6 +200,26 @@ post_stage_hardening:
       - Fixed strict-mode selector violations in live-harness.spec.ts.
       - Total live browser tests: 5 (4 L3A + 1 L3B).
       - Total mocked browser tests: 13.
+
+  - id: release-gate-handoff-hygiene
+    date: 2026-05-14
+    status: completed
+    demo: Release-gate browser smoke and handoff docs distinguish quick smoke, release smoke, and live validation.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm run e2e:smoke
+      - cd apps/agent-console && npm run e2e:smoke:release
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - rg "e2e:smoke|Non-Workspace browser e2e|Stage 06|06-warmpool" docs omx_wiki apps/agent-console/README.md
+    acceptance_notes:
+      - Added e2e:smoke:release as the mocked browser release gate across Workspace, Run Detail, Agent Studio, Eval, Observability, Tools, Sandboxes, and navigation resilience.
+      - Kept e2e:smoke as the quick Workspace and Run Detail smoke loop.
+      - scripts/validate-harness-flow.sh L2 now invokes the release smoke gate.
+      - README, human progress, task progress, and wiki handoff distinguish quick, release, and live validation.
+      - Stage 07 remains closed historical context; this entry is post-stage release-gate hygiene.
 
 stage_completion_rule:
   - run_backend_tests

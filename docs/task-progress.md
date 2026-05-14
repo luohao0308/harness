@@ -19,7 +19,7 @@ The website remains present as a public information shell. Console execution foc
 
 - Stage: `07-private-deployable-harness-chain`
 - Status: `completed`
-- Updated at: `2026-05-11`
+- Updated at: `2026-05-14`
 
 ## Completed In This Pass
 
@@ -229,15 +229,40 @@ git diff --check -> passed
 
 Total live browser tests: 5. Total mocked browser tests: 13.
 
+## Completed: Release-Gate And Handoff Hygiene
+
+Date: 2026-05-14
+
+This post-stage hygiene pass keeps the quick browser smoke fast while adding an explicit mocked browser release gate:
+
+- `npm run e2e:smoke` remains the quick Workspace + Run Detail loop.
+- `npm run e2e:smoke:release` covers Workspace, Workspace success, Run Detail, Agent Studio, Eval, Observability, Tools, Sandboxes, and navigation resilience.
+- `scripts/validate-harness-flow.sh` L2 now runs the release smoke gate.
+- `apps/agent-console/README.md`, `docs/human/10-task-progress.md`, `docs/ai/task-progress.yaml`, and `omx_wiki/project-handoff-current-state.md` distinguish quick smoke, release smoke, and live validation.
+- Stage 07 remains closed historical context; this work does not reopen it.
+
+Verification:
+```text
+cd apps/agent-console && npm run e2e:smoke -> passed
+cd apps/agent-console && npm run e2e:smoke:release -> passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+targeted stale-reference audit -> passed with explainable historical/quick-smoke matches only
+```
+
 ## Next Step
 
-Keep primary Agent Run smoke in the regular release gate:
+Use the release-gate smoke for mocked browser validation:
+
+```text
+cd apps/agent-console && npm run e2e:smoke:release
+```
+
+Keep primary Agent Run smoke and live validation in the full validation path:
 
 ```text
 python3 scripts/smoke-test-agent-run.py
-```
-
-For full validation (when backend is available):
-```text
 ./scripts/validate-harness-flow.sh --full-infra
 ```

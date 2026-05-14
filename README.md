@@ -43,9 +43,10 @@ The repository keeps the public website as a public information shell. The imple
 ## Current Implementation State
 
 ```text
-Current stage: 06-warmpool-infra
+Current stage: 07-private-deployable-harness-chain
 Current status: completed
 Website policy: retained as public shell
+Latest post-stage completion: release-gate + handoff hygiene
 ```
 
 Completed in the current focused pass:
@@ -67,6 +68,8 @@ Completed in the current focused pass:
 - Sandboxes Infra display for tenant isolation, WarmPool, API Gateway, and version rollout
 - OpenAPI JSON/YAML regenerated for docs and website public assets
 - Legacy `/api/tasks/*` OpenAPI copy downgraded to deprecated Agent Run compatibility
+- Stage 07 closed the private deployable Harness-chain proof.
+- Browser validation now distinguishes quick smoke, mocked release smoke, and live backend validation.
 
 Validation completed:
 
