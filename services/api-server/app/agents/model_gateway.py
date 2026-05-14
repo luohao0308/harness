@@ -354,18 +354,39 @@ def _fallback_stream(response: ModelResponse) -> Iterator[ModelStreamChunk]:
 class MockModelGateway:
     def complete(self, request: ModelRequest) -> ModelResponse:
         model_calls_total.inc()
-        model_tokens_input_total.inc(0)
-        model_tokens_output_total.inc(0)
+        content = _mock_model_content(request)
+        model_tokens_input_total.inc(sum(len(message.content) for message in request.messages) // 4)
+        model_tokens_output_total.inc(max(1, len(content) // 4))
         return ModelResponse(
-            content="{}",
+            content=content,
             model_provider=request.model_provider,
             model_name=request.model_name,
-            usage={"prompt_tokens": 0, "completion_tokens": 0},
+            usage={
+                "prompt_tokens": sum(len(message.content) for message in request.messages) // 4,
+                "completion_tokens": max(1, len(content) // 4),
+            },
             raw_response={"mode": "mock"},
         )
 
     def stream(self, request: ModelRequest) -> Iterator[ModelStreamChunk]:
         yield from _fallback_stream(self.complete(request))
+
+
+def _mock_model_content(request: ModelRequest) -> str:
+    if request.response_format == "text":
+        goal = next(
+            (
+                message.content.strip()
+                for message in reversed(request.messages)
+                if message.role == "user" and message.content.strip()
+            ),
+            "Workspace chat",
+        )
+        return (
+            "这是本地 mock 模型回复，用于 Docker 私有交付环境的无 API Key 验证。"
+            f"我已收到你的请求：{goal}"
+        )
+    return "{}"
 
 
 class OpenAICompatibleModelGateway:

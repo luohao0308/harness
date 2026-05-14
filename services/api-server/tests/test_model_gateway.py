@@ -13,6 +13,7 @@ from app.agents.model_gateway import (
     ModelCircuitBreaker,
     ModelGatewayError,
     ModelMessage,
+    MockModelGateway,
     ModelRateLimiter,
     ModelRequest,
     ModelResponse,
@@ -84,6 +85,27 @@ def model_request(model_name: str = "default") -> ModelRequest:
         model_name=model_name,
         messages=[ModelMessage(role="user", content="plan this task")],
     )
+
+
+def test_mock_model_gateway_returns_visible_text_for_chat() -> None:
+    response = MockModelGateway().complete(
+        ModelRequest(
+            model_provider="openai-compatible",
+            model_name="default",
+            response_format="text",
+            messages=[ModelMessage(role="user", content="验证 Workspace Pro 聊天")],
+        )
+    )
+
+    assert response.content
+    assert response.content != "{}"
+    assert "验证 Workspace Pro 聊天" in response.content
+
+
+def test_mock_model_gateway_keeps_json_placeholder_for_structured_calls() -> None:
+    response = MockModelGateway().complete(model_request())
+
+    assert response.content == "{}"
 
 
 def test_audited_model_gateway_writes_success_events(db_session: Session) -> None:
