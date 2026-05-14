@@ -15,11 +15,16 @@ Persistent project knowledge for the AI Harness Platform.
 - [[wiki-capture-candidates]] - What historical project knowledge is worth capturing in wiki.
 - [[local-dev-backend-port-cors]] - Local backend startup and `8000`/CORS diagnosis.
 - [[session-2026-05-13-workspace-browser-smoke]] - Workspace browser smoke, compact chrome hardening, local API port diagnosis, and push record.
+- [[agent-workspace-execution-evidence-architecture]] - Context compression, Plan-Act, branching/search, Run Detail, and Eval Case architecture.
+- [[local-dev-eval-dataset-migration]] - Local Eval Dataset migration trap and recovery for `baseline_run_id`.
+- [[session-2026-05-14-workspace-execution-evidence]] - Session log for commit `e78f52a` and validation evidence.
 
 ## Categories
 
+- `architecture`
 - `decision`
 - `debugging`
+- `environment`
 - `reference`
 - `session-log`
 - `convention`
@@ -33,6 +38,13 @@ Persistent project knowledge for the AI Harness Platform.
 - `browser-smoke`
 - `playwright`
 - `agent-console`
+- `context-compression`
+- `plan-act`
+- `branching`
+- `run-detail`
+- `eval-case`
 - `local-dev`
+- `postgres`
+- `alembic`
 - `cors`
 - `git`

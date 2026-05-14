@@ -89,12 +89,13 @@ Already captured or now covered:
 - Workspace demo-ready phase: `Model + Harness = Agent` must be visible without sacrificing chat space.
 - Browser smoke hardening: Playwright coverage for Workspace desktop and 390px behavior.
 - Local backend failure: wrong service on `8000` causing CORS and `Failed to fetch`.
+- Workspace execution evidence architecture: context compression, Plan-Act approval semantics, branch/search behavior, Run Detail evidence, and Eval Case capture.
+- Local Eval Dataset migration trap: `eval_datasets.baseline_run_id` missing until `alembic upgrade head`.
 
 Still worth capturing later if those threads become active again:
 
-- DeepSeek model replacement and composer/Inspector fixes.
-- Tools / Plan mode / slash command alignment.
-- Workspace integrated Harness UI decisions.
+- DeepSeek model replacement and remaining provider policy decisions.
+- Workspace integrated Harness UI decisions beyond the current execution-evidence pass.
 - Streaming/SSE hardening decisions and Nginx no-buffering behavior.
 - Local native Postgres/service startup notes.
 
@@ -102,3 +103,5 @@ Still worth capturing later if those threads become active again:
 
 - [[project-handoff-current-state]]
 - [[deep-interview-private-harness-chain]]
+- [[agent-workspace-execution-evidence-architecture]]
+- [[local-dev-eval-dataset-migration]]
