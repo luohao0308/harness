@@ -75,16 +75,17 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 Recent pushed commits on `main`:
 
 ```text
-e78f52a Preserve agent workspace execution evidence
-3fff603 Record Workspace browser hardening progress
-ced5be0 Document Workspace browser smoke flow
-a3903d2 Cover Workspace demo controls in browser smoke
-7eaeab3 Add Workspace browser smoke tooling
-9e8172f Keep Workspace chrome compact
+72591dc Document private deployment handoff
+8a7abbb Catch private deployment wiring in smoke tests
+d877233 Route console observability through configured API
+11b1ddc Expose private deployment runtime URLs
+0238b4a Keep local mock chat visible
+0980192 Add release gate handoff visual report
 ```
 
 Captured in wiki:
 
+- [[project-handoff-current-state]]
 - [[session-2026-05-14-workspace-execution-evidence]]
 - [[agent-workspace-execution-evidence-architecture]]
 - [[local-dev-eval-dataset-migration]]

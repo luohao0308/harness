@@ -29,3 +29,7 @@
 ## [2026-05-14T05:46:45.734Z] query
 - **Pages:** none
 - **Summary:** Query "release smoke quick smoke live validation handoff completion Stage 07" → 0 results (of 0 total)
+
+## 2026-05-14
+
+- Updated [[project-handoff-current-state]] for the Private Deployment Experience handoff: Docker Compose is now the canonical private delivery path, host-port overrides are documented, smoke coverage includes Workspace chat streaming, and pushed commits through `72591dc` are recorded.
