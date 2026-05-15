@@ -112,14 +112,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       : [
           {
             id: DEFAULT_EVAL_DATASET_ID,
-            name: text("新建默认 Dataset", "Create default Dataset"),
+            name: text("新建默认数据集", "Create default Dataset"),
           },
         ];
   const selectedEvalDatasetValue =
     selectedEvalDatasetId || (!datasetsQuery.data?.items.length ? DEFAULT_EVAL_DATASET_ID : "");
 
   return (
-    <ConsoleShell title={text("Agent Run", "Agent Run")}>
+    <ConsoleShell title={text("智能体运行", "Agent Run")}>
       <div className="grid grid-cols-12 gap-4 p-4">
         <section className="col-span-8 space-y-4">
           <Card className="p-4">
@@ -127,12 +127,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               <div>
                 <div className="flex items-center gap-2">
                   <Link to="/runs" className="text-xs text-slate-500 hover:text-slate-900">
-                    {text("Run 历史", "Run History")}
+                    {text("运行历史", "Run History")}
                   </Link>
                   <span className="text-slate-300">/</span>
                   <span className="font-mono text-xs text-slate-500">{run?.id.slice(0, 8) ?? "..."}</span>
                 </div>
-                <h1 className="mt-2 text-xl font-semibold text-slate-950">{run?.title ?? text("加载 Run...", "Loading Run...")}</h1>
+                <h1 className="mt-2 text-xl font-semibold text-slate-950">{run?.title ?? text("加载运行...", "Loading Run...")}</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{run?.goal}</p>
               </div>
               {run && <Badge tone={statusTone(run.status)}>{run.status}</Badge>}
@@ -140,8 +140,8 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             {run && (
               <div className="mt-4 grid grid-cols-4 gap-2 text-xs">
                 <Metric label={text("模型", "Model")} value={`${run.model_provider}/${run.model_name}`} />
-                <Metric label="Subagents" value={String(run.max_subagents)} />
-                <Metric label="Sandbox" value={run.enable_sandbox ? "ON" : "OFF"} />
+                <Metric label="子代理" value={String(run.max_subagents)} />
+                <Metric label="沙箱" value={run.enable_sandbox ? "开启" : "关闭"} />
                 <Metric label={text("更新", "Updated")} value={formatShortDate(run.updated_at)} />
               </div>
             )}
@@ -152,16 +152,16 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 onClick={() => execute.mutate()}
               >
                 <Play className="h-3.5 w-3.5" />
-                {text("执行 Plan", "Execute Plan")}
+                {text("执行计划", "Execute Plan")}
               </Button>
               <Button disabled={!run || orchestrate.isPending} onClick={() => orchestrate.mutate()}>
                 <GitBranch className="h-3.5 w-3.5" />
-                {text("编排多 Agent", "Orchestrate Agents")}
+                {text("编排多智能体", "Orchestrate Agents")}
               </Button>
               {run && (run.status === "COMPLETED" || run.status === "FAILED") && (
                 <div className="flex items-center gap-2">
                   <select
-                    aria-label={text("选择 Dataset", "Select Dataset")}
+                    aria-label={text("选择数据集", "Select Dataset")}
                     value={selectedEvalDatasetValue}
                     onChange={(event) => {
                       setSelectedEvalDatasetId(event.target.value);
@@ -187,14 +187,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <FlaskConical className="h-3.5 w-3.5" />
                     {saveEvalSuccess
                       ? text("已保存", "Saved")
-                      : text("保存为 Eval Case", "Save as Eval Case")}
+                      : text("保存为评测用例", "Save as Eval Case")}
                   </Button>
                 </div>
               )}
               <Link to="/agents/default/workspace">
                 <Button>
                   <Bot className="h-3.5 w-3.5" />
-                  {text("回到 Workspace", "Back to Workspace")}
+                  {text("回到工作台", "Back to Workspace")}
                 </Button>
               </Link>
             </div>
@@ -205,7 +205,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               <CardHeader>
                 <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                   <Database className="h-4 w-4" />
-                  Knowledge Grounding
+                  知识依据
                 </div>
                 <Badge tone={grounding.local_status === "sufficient" ? "success" : "warning"}>
                   {grounding.local_status}
@@ -213,14 +213,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               </CardHeader>
               <div className="space-y-3 p-3 text-sm">
                 <div className="grid grid-cols-3 gap-2 text-xs">
-                  <Metric label="Vector" value={grounding.vector_capability} />
-                  <Metric label="Hits" value={String(grounding.retrieval_hits.length)} />
-                  <Metric label="Grounded" value={grounding.grounded ? "yes" : "no"} />
+                  <Metric label="向量" value={grounding.vector_capability} />
+                  <Metric label="命中" value={String(grounding.retrieval_hits.length)} />
+                  <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
                 </div>
                 <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
                 {grounding.retrieval_hits.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-slate-700">Retrieval Hits</div>
+                    <div className="text-xs font-medium text-slate-700">检索命中</div>
                     {grounding.retrieval_hits.map((hit) => (
                       <div key={hit.id} className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
                         <div className="flex items-center justify-between gap-2">
@@ -236,7 +236,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 )}
                 {grounding.citations.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-slate-700">Citations</div>
+                    <div className="text-xs font-medium text-slate-700">引用</div>
                     <div className="space-y-2">
                       {grounding.citations.map((citation) => (
                         <div key={citation.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
@@ -247,7 +247,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                             </span>
                           </div>
                           <div className="mt-1 text-slate-600">
-                            hit: {citation.retrieval_hit_id}
+                            命中: {citation.retrieval_hit_id}
                           </div>
                           <div className="mt-1 text-slate-500">
                             {citation.web_source_id
@@ -262,7 +262,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 )}
                 {grounding.web_sources.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-slate-700">Web Fallback</div>
+                    <div className="text-xs font-medium text-slate-700">网页补充</div>
                     {grounding.web_sources.map((source) => (
                       <div key={source.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
                         <div className="font-mono text-[11px] text-slate-500">{source.url}</div>
@@ -284,10 +284,10 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <GitBranch className="h-4 w-4" />
-                Plan DAG
+                计划 DAG
               </div>
               <span className="text-xs text-slate-500">
-                {data?.plan ? `${data.plan.steps.length} steps` : text("暂无 Plan", "No Plan")}
+                {data?.plan ? `${data.plan.steps.length} 个步骤` : text("暂无计划", "No Plan")}
               </span>
             </CardHeader>
             <div className="grid gap-2 p-3">
@@ -306,12 +306,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <Badge tone={step.execution_mode === "async" ? "purple" : "neutral"}>{step.execution_mode}</Badge>
-                    {step.requires_sandbox && <Badge tone="warning">Sandbox</Badge>}
-                    {step.can_spawn_subagent && <Badge tone="purple">Subagent</Badge>}
+                    {step.requires_sandbox && <Badge tone="warning">沙箱</Badge>}
+                    {step.can_spawn_subagent && <Badge tone="purple">子代理</Badge>}
                     {dependsOn.length > 0 ? (
-                      <Badge tone="info">depends_on: {dependsOn.join(", ")}</Badge>
+                      <Badge tone="info">依赖: {dependsOn.join(", ")}</Badge>
                     ) : (
-                      <Badge tone="neutral">depends_on: none</Badge>
+                      <Badge tone="neutral">依赖: 无</Badge>
                     )}
                     {step.tool_hints.map((tool) => (
                       <Badge key={tool} tone="info">{tool}</Badge>
@@ -322,7 +322,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               })}
               {!workspace.isLoading && !data?.plan && (
                 <div className="py-8 text-center text-sm text-slate-500">
-                  {text("这个 Run 还没有生成 Plan。", "This Run does not have a Plan yet.")}
+                  {text("这个运行还没有生成计划。", "This Run does not have a Plan yet.")}
                 </div>
               )}
             </div>
@@ -353,7 +353,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Shield className="h-4 w-4" />
-                {focus === "subagents" ? "Subagents" : "Event Stream"}
+                {focus === "subagents" ? "子代理" : "事件流"}
               </div>
             </CardHeader>
             <div className="max-h-[520px] space-y-2 overflow-auto p-3">
@@ -372,7 +372,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
           </Card>
           <Card id="model-calls">
             <CardHeader>
-              <div className="text-sm font-semibold text-slate-900">Model Calls</div>
+              <div className="text-sm font-semibold text-slate-900">模型调用</div>
               <span className="text-xs text-slate-500">{data?.model_calls.length ?? 0}</span>
             </CardHeader>
             <div className="space-y-2 p-3">
@@ -383,7 +383,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <Badge tone={statusTone(call.status)}>{call.status}</Badge>
                   </div>
                   <div className="mt-1 text-slate-500">
-                    {call.prompt_tokens + call.completion_tokens} tokens · {call.duration_ms}ms
+                    {call.prompt_tokens + call.completion_tokens} 标记 · {call.duration_ms}ms
                   </div>
                 </div>
               ))}
@@ -416,16 +416,16 @@ function ReplayPanel({
       <CardHeader>
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
           <RotateCcw className="h-4 w-4" />
-          Replay
+          重放
         </div>
-        <span className="font-mono text-xs text-slate-500">latest #{latestSequence}</span>
+        <span className="font-mono text-xs text-slate-500">最新 #{latestSequence}</span>
       </CardHeader>
       <div className="space-y-3 p-3">
         <div className="grid grid-cols-[1fr_auto] gap-2">
           <Input
-            aria-label={text("Replay sequence", "Replay sequence")}
+            aria-label={text("重放序号", "Replay sequence")}
             className="h-8 font-mono text-xs"
-            placeholder={text("输入 sequence，留空重放最新", "Sequence, blank for latest")}
+            placeholder={text("输入序号，留空重放最新", "Sequence, blank for latest")}
             value={replaySequence}
             onChange={(event) => onSequenceChange(event.target.value)}
           />
@@ -439,7 +439,7 @@ function ReplayPanel({
             <div className="flex items-center justify-between">
               <span className="font-mono text-slate-900">#{replayResult.sequence}</span>
               <Badge tone={replayResult.requires_manual_review ? "warning" : "success"}>
-                {replayResult.requires_manual_review ? "manual_review" : "replayed"}
+                {replayResult.requires_manual_review ? "需要人工复核" : "已重放"}
               </Badge>
             </div>
             <div className="leading-5 text-slate-600">{replayResult.state_summary}</div>
@@ -470,7 +470,7 @@ function ApprovalsPanel({
       <CardHeader>
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Shield className="h-4 w-4" />
-          Guardrails
+          护栏
         </div>
         <span className="text-xs text-slate-500">{approvals.length}</span>
       </CardHeader>
@@ -486,17 +486,17 @@ function ApprovalsPanel({
               <div className="mt-2 flex gap-1">
                 <Button onClick={() => onApprove(approval.id)}>
                   <Check className="h-3.5 w-3.5" />
-                  Approve
+                  批准
                 </Button>
                 <Button onClick={() => onReject(approval.id)}>
                   <X className="h-3.5 w-3.5" />
-                  Reject
+                  拒绝
                 </Button>
               </div>
             )}
           </div>
         ))}
-        {approvals.length === 0 && <div className="text-xs text-slate-500">No approval requests.</div>}
+        {approvals.length === 0 && <div className="text-xs text-slate-500">暂无审批请求。</div>}
       </div>
     </Card>
   );
@@ -508,18 +508,18 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
       <CardHeader>
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Wrench className="h-4 w-4" />
-          Tool Calls
+          工具调用
         </div>
         <span className="text-xs text-slate-500">{toolCalls.length}</span>
       </CardHeader>
       <Table>
         <thead className="bg-slate-50 text-slate-500">
           <tr>
-            <Th>Tool</Th>
-            <Th>Status</Th>
-            <Th>Risk</Th>
-            <Th>Latency</Th>
-            <Th>Output</Th>
+            <Th>工具</Th>
+            <Th>状态</Th>
+            <Th>风险</Th>
+            <Th>延迟</Th>
+            <Th>输出</Th>
           </tr>
         </thead>
         <tbody>

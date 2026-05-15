@@ -239,7 +239,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.locator("section").first().getByText("3", { exact: true })).toBeVisible();
 
     // Sandbox
-    await expect(page.getByText("ON", { exact: true })).toBeVisible();
+    await expect(page.getByText("开启", { exact: true })).toBeVisible();
   });
 
   test("Plan DAG shows steps with execution mode, tool hints, sandbox, and subagent evidence", async ({
@@ -248,20 +248,21 @@ test.describe("Run Detail mocked product proof", () => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
     // Plan DAG section
-    await expect(page.getByText("Plan DAG")).toBeVisible();
-    await expect(page.getByText("2 steps")).toBeVisible();
+    await expect(page.getByText("计划 DAG")).toBeVisible();
+    await expect(page.getByText("2 个步骤")).toBeVisible();
 
     // Step 1
     await expect(page.getByText("1. read-readme")).toBeVisible();
     await expect(page.getByText("Read the project README for context")).toBeVisible();
     await expect(page.locator("#plan").getByText("read_file")).toBeVisible();
+    await expect(page.locator("#plan").getByText("依赖: 无")).toBeVisible();
 
     // Step 2 with sandbox and subagent badges
     await expect(page.getByText("sandbox-exec")).toBeVisible();
-    await expect(page.locator("#plan").getByText("Sandbox", { exact: true })).toBeVisible();
-    await expect(page.locator("#plan").getByText("Subagent", { exact: true })).toBeVisible();
+    await expect(page.locator("#plan").getByText("沙箱", { exact: true })).toBeVisible();
+    await expect(page.locator("#plan").getByText("子代理", { exact: true })).toBeVisible();
     await expect(page.locator("#plan").getByText("async")).toBeVisible();
-    await expect(page.locator("#plan").getByText("depends_on: read-readme")).toBeVisible();
+    await expect(page.locator("#plan").getByText("依赖: read-readme")).toBeVisible();
   });
 
   test("Tool Calls, Guardrails, Event Stream, and Model Calls are visible", async ({
@@ -270,22 +271,22 @@ test.describe("Run Detail mocked product proof", () => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
     // Tool Calls table
-    await expect(page.getByText("Tool Calls")).toBeVisible();
+    await expect(page.getByText("工具调用")).toBeVisible();
     await expect(page.getByText("read_file").first()).toBeVisible();
     await expect(page.getByText("35ms")).toBeVisible();
 
     // Guardrails (Approvals)
-    await expect(page.getByText("Guardrails")).toBeVisible();
+    await expect(page.getByText("护栏")).toBeVisible();
     await expect(page.getByText("Low-risk file read")).toBeVisible();
 
     // Event Stream
-    await expect(page.getByText("Event Stream")).toBeVisible();
+    await expect(page.getByText("事件流")).toBeVisible();
     await expect(page.getByText("PLAN_CREATED")).toBeVisible();
     await expect(page.getByText("STEP_COMPLETED")).toBeVisible();
 
     // Model Calls
-    await expect(page.getByText("Model Calls")).toBeVisible();
-    await expect(page.getByText("300 tokens")).toBeVisible(); // 200 + 100
+    await expect(page.getByText("模型调用")).toBeVisible();
+    await expect(page.getByText("300 标记")).toBeVisible(); // 200 + 100
     await expect(page.getByText("850ms")).toBeVisible();
   });
 
@@ -295,14 +296,14 @@ test.describe("Run Detail mocked product proof", () => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
     // Replay panel
-    await expect(page.getByText("Replay")).toBeVisible();
-    await expect(page.getByText("latest #3")).toBeVisible();
+    await expect(page.getByText("重放").first()).toBeVisible();
+    await expect(page.getByText("最新 #3")).toBeVisible();
 
     // Click replay
-    await page.getByRole("button", { name: /Replay|重放/ }).click();
+    await page.getByRole("button", { name: "重放" }).click();
 
     // Replay result
-    await expect(page.getByText("replayed")).toBeVisible();
+    await expect(page.getByText("已重放")).toBeVisible();
     await expect(
       page.getByText("All steps completed successfully. Harness chain validated."),
     ).toBeVisible();
@@ -316,8 +317,8 @@ test.describe("Run Detail mocked product proof", () => {
   }) => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
-    await page.getByLabel(/Select Dataset|选择 Dataset/).selectOption("dataset-smoke");
-    await page.getByRole("button", { name: /Save as Eval Case|保存为 Eval Case/ }).click();
+    await page.getByLabel("选择数据集").selectOption("dataset-smoke");
+    await page.getByRole("button", { name: "保存为评测用例" }).click();
 
     await expect(page.getByRole("button", { name: /Saved|已保存/ })).toBeVisible();
   });
@@ -325,7 +326,7 @@ test.describe("Run Detail mocked product proof", () => {
   test("/runs/:runId/events shows event-focused evidence", async ({ page }) => {
     await page.goto(`/runs/${STABLE_RUN_ID}/events`);
 
-    await expect(page.getByText("Event Stream")).toBeVisible();
+    await expect(page.getByText("事件流")).toBeVisible();
     await expect(page.getByText("PLAN_CREATED")).toBeVisible();
     await expect(page.getByText("STEP_COMPLETED")).toBeVisible();
     await expect(page.getByText("TOOL_CALL")).toBeVisible();
@@ -334,7 +335,7 @@ test.describe("Run Detail mocked product proof", () => {
   test("/runs/:runId/subagents shows subagent-focused evidence", async ({ page }) => {
     await page.goto(`/runs/${STABLE_RUN_ID}/subagents`);
 
-    await expect(page.getByText("Subagents").last()).toBeVisible();
+    await expect(page.getByText("子代理").last()).toBeVisible();
     await expect(page.getByText("sub-001".slice(0, 8))).toBeVisible();
     await expect(page.getByText("validator")).toBeVisible();
     await expect(page.getByText("COMPLETED").first()).toBeVisible();

@@ -64,7 +64,7 @@ export function ModelCallPanel({
         <Input
           aria-label={text("Trace ID", "Trace ID")}
           className="h-8 text-xs"
-          placeholder="Trace ID"
+          placeholder={text("Trace ID（追踪标识）", "Trace ID")}
           value={toolCallFilters.trace_id ?? ""}
           onChange={(event) => updateFilter("trace_id", event.target.value)}
         />
@@ -94,7 +94,7 @@ export function ModelCallPanel({
               <Td>{call.duration_ms}ms</Td>
               <Td className="text-slate-500">
                 <div>
-                  {text("Token", "Tokens")} {call.prompt_tokens + call.completion_tokens}
+                  {text("标记", "Tokens")} {call.prompt_tokens + call.completion_tokens}
                 </div>
                 <div className="mt-0.5 max-w-[240px] truncate text-[10px] text-slate-400">
                   {modelCallDetail(call)}
@@ -159,6 +159,6 @@ function modelCallDetail(call: ModelCall) {
   const contentPreview = call.response_json.content_preview;
   if (typeof contentPreview === "string" && contentPreview.length > 0) return contentPreview;
   const estimatedTokens = call.request_json.estimated_prompt_tokens;
-  if (typeof estimatedTokens === "number") return `estimated_prompt_tokens=${estimatedTokens}`;
+  if (typeof estimatedTokens === "number") return `预计提示标记=${estimatedTokens}`;
   return "无模型响应详情";
 }

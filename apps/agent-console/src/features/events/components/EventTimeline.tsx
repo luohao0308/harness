@@ -99,7 +99,7 @@ function GitBranchLabel({ agentRunId }: { agentRunId: string | null }) {
   const { text } = useI18n();
   return (
     <span className="font-mono text-slate-600">
-      {agentRunId ? agentRunId.slice(0, 8) : text("等待子 Agent", "Waiting for subagent")}
+      {agentRunId ? agentRunId.slice(0, 8) : text("等待子代理", "Waiting for subagent")}
     </span>
   );
 }
