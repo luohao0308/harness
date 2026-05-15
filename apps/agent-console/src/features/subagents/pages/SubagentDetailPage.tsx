@@ -50,7 +50,7 @@ function subagentTitle(context: Record<string, unknown>) {
     stringValue(context.label) ??
     stringValue(context.goal) ??
     stringValue(context.description) ??
-    "子 Agent 执行详情"
+    "子代理执行详情"
   );
 }
 
@@ -110,21 +110,21 @@ export function SubagentDetailPage() {
 
   if (!subagent) {
     return (
-      <ConsoleShell title={text("子 Agent / 详情", "Subagent / Detail")}>
+      <ConsoleShell title={text("子代理 / 详情", "Subagent / Detail")}>
         <div className="p-6 text-sm text-slate-500">
           {subagentQuery.isError
-            ? text("子 Agent 加载失败，请检查 ID 或权限。", "Failed to load subagent. Check the ID or permission.")
-            : text("子 Agent 加载中...", "Loading subagent...")}
+            ? text("子代理加载失败，请检查 ID 或权限。", "Failed to load subagent. Check the ID or permission.")
+            : text("子代理加载中...", "Loading subagent...")}
         </div>
       </ConsoleShell>
     );
   }
 
   return (
-    <ConsoleShell title={`${text("子 Agent", "Subagent")} / ${subagent.id.slice(0, 8)}`}>
+    <ConsoleShell title={`${text("子代理", "Subagent")} / ${subagent.id.slice(0, 8)}`}>
       <div className="border-b border-slate-200 bg-white px-6 py-5">
         <div className="mb-2 flex items-center gap-2 text-xs text-slate-500">
-          <Link to="/subagents">{text("子 Agent", "Subagents")}</Link>
+          <Link to="/subagents">{text("子代理", "Subagents")}</Link>
           <ChevronRight className="h-3 w-3" />
           <span className="font-mono">{subagent.id.slice(0, 8)}</span>
         </div>
@@ -161,7 +161,7 @@ export function SubagentDetailPage() {
           <div className="flex items-center gap-2">
             <Button>
               <Link to={`/runs//subagents`}>
-                <ListChecks className="h-3.5 w-3.5" /> {text("任务子 Agent", "Task Subagents")}
+                <ListChecks className="h-3.5 w-3.5" /> {text("任务子代理", "Task Subagents")}
               </Link>
             </Button>
             <Button
@@ -169,7 +169,7 @@ export function SubagentDetailPage() {
               onClick={() => cancelMutation.mutate()}
               variant="danger"
             >
-              <Ban className="h-3.5 w-3.5" /> {text("取消子 Agent", "Cancel Subagent")}
+              <Ban className="h-3.5 w-3.5" /> {text("取消子代理", "Cancel Subagent")}
             </Button>
           </div>
         </div>
@@ -238,7 +238,7 @@ export function SubagentDetailPage() {
             <div className="border-b border-slate-100 p-3 text-xs text-slate-600">
               {taskResult?.summary ??
                 stringValue(result.summary) ??
-                text("子 Agent 尚未写入结果摘要。", "The subagent has not written a result summary yet.")}
+                text("子代理尚未写入结果摘要。", "The subagent has not written a result summary yet.")}
             </div>
             <Table>
               <thead className="bg-slate-50/40 text-slate-500">

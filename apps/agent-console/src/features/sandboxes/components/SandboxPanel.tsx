@@ -28,7 +28,7 @@ export function SandboxPanel({ enabled = false }: { enabled?: boolean }) {
           <span className="text-red-600">{text("默认关闭", "Off by default")}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-500">WarmPool</span>
+          <span className="text-slate-500">WarmPool 预热池</span>
           <span className="font-mono text-slate-800">{text("目标 50ms", "target 50ms")}</span>
         </div>
       </div>

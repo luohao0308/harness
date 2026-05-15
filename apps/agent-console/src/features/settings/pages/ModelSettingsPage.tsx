@@ -248,7 +248,7 @@ export function ModelSettingsPage() {
               )} 秒`}
             />
             <Metric
-              label="Fallback"
+              label={text("Fallback 切换", "Fallback")}
               value={String(fallbacks.data?.fallback_total ?? "...")}
             />
           </div>
@@ -261,7 +261,7 @@ export function ModelSettingsPage() {
                   {text("模型切换", "Model Switch")}
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {text("像 cc switch 一样添加预置或自定义模型，并设为 Agent 默认模型", "Add presets or custom models and switch the Agent default model.")}
+                  {text("像 cc switch 一样添加预置或自定义模型，并设为智能体默认模型", "Add presets or custom models and switch the Agent default model.")}
                 </div>
               </div>
               <span className="text-[11px] text-slate-500">
@@ -369,7 +369,7 @@ export function ModelSettingsPage() {
                     onChange={(event) => setDraftProvider({ ...draftProvider, api_key_env: event.target.value })}
                   />
                 </Field>
-                <Field label={text("模型上下文 tokens", "Model context tokens")}>
+                <Field label={text("模型上下文标记", "Model context tokens")}>
                   <Input
                     type="number"
                     value={Number(draftProvider.model_context_window_tokens ?? 0)}
@@ -430,7 +430,7 @@ export function ModelSettingsPage() {
               <GitBranch className="h-4 w-4" /> {text("Fallback 策略观测", "Fallback Observability")}
             </div>
             <span className="text-xs text-slate-500">
-              {text("展示主模型失败、fallback 供应商分布和最近切换事件", "Shows primary failures, fallback provider distribution, and recent switch events")}
+              {text("Fallback 是主模型失败后的后备切换；这里展示供应商分布和最近切换事件", "Shows primary failures, fallback provider distribution, and recent switch events")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-3 gap-3 p-3 text-xs">
@@ -453,9 +453,9 @@ export function ModelSettingsPage() {
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <Th>{text("主模型", "Primary")}</Th>
-                <Th>Fallback</Th>
+                <Th>{text("Fallback 后备模型", "Fallback")}</Th>
                 <Th>{text("原因", "Reason")}</Th>
-                <Th>Trace</Th>
+                <Th>{text("Trace 追踪", "Trace")}</Th>
                 <Th>{text("时间", "Time")}</Th>
               </tr>
             </thead>
