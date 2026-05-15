@@ -8,13 +8,13 @@ import { useI18n } from "../../../lib/i18n";
 import type { EvalRun, RegressionDelta } from "../../tasks/api";
 
 const metricLabels: Record<string, string> = {
-  task_success_rate: "Task Success",
-  tool_selection_accuracy: "Tool Accuracy",
-  policy_violation_rate: "Policy Violation",
-  avg_latency_ms: "Avg Latency",
-  avg_cost_usd: "Avg Cost",
-  retry_rate: "Retry Rate",
-  human_escalation_rate: "Human Escalation",
+  task_success_rate: "任务成功率",
+  tool_selection_accuracy: "工具选择准确率",
+  policy_violation_rate: "策略违规率",
+  avg_latency_ms: "平均延迟",
+  avg_cost_usd: "平均成本",
+  retry_rate: "重试率",
+  human_escalation_rate: "人工升级率",
 };
 
 interface EvalRunResultsProps {
@@ -41,7 +41,7 @@ export function EvalRunResults({
       <CardHeader>
         <div className="flex items-center gap-2">
           <div className="text-sm font-semibold text-slate-900">
-            {text("最近 Eval Run", "Latest Eval Run")}
+            {text("最近评测运行", "Latest Eval Run")}
           </div>
           {latestRun && <Badge>{latestRun.status}</Badge>}
         </div>
@@ -66,17 +66,17 @@ export function EvalRunResults({
           </div>
           <div className="grid grid-cols-3 gap-2">
             <DeltaMetric
-              label="Task Success"
+              label="任务成功率"
               delta={regressionDelta.task_success_rate_delta}
               isPercentage
             />
             <DeltaMetric
-              label="Tool Accuracy"
+              label="工具准确率"
               delta={regressionDelta.tool_selection_accuracy_delta}
               isPercentage
             />
             <DeltaMetric
-              label="Avg Latency"
+              label="平均延迟"
               delta={regressionDelta.avg_latency_ms_delta}
               suffix="ms"
               invertColor
@@ -105,13 +105,13 @@ export function EvalRunResults({
           {regressionDelta.newly_failing_case_ids.length > 0 && (
             <div className="mt-2 text-xs text-red-600">
               {text("新增失败", "Newly failing")}: {regressionDelta.newly_failing_case_ids.length}{" "}
-              cases
+              个用例
             </div>
           )}
           {regressionDelta.newly_passing_case_ids.length > 0 && (
             <div className="mt-1 text-xs text-green-600">
               {text("新增通过", "Newly passing")}: {regressionDelta.newly_passing_case_ids.length}{" "}
-              cases
+              个用例
             </div>
           )}
         </div>
@@ -145,11 +145,11 @@ export function EvalRunResults({
       <Table>
         <thead className="bg-slate-50 text-slate-500">
           <tr>
-            <Th>Result</Th>
-            <Th>Status</Th>
-            <Th>Task</Th>
-            <Th>Score</Th>
-            <Th>Trace Grader</Th>
+            <Th>{text("结果", "Result")}</Th>
+            <Th>{text("状态", "Status")}</Th>
+            <Th>{text("任务", "Task")}</Th>
+            <Th>{text("分数", "Score")}</Th>
+            <Th>{text("Trace 评分器", "Trace Grader")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -160,13 +160,13 @@ export function EvalRunResults({
                 <Badge>{result.status}</Badge>
               </Td>
               <Td className="font-mono text-slate-600">
-                {result.task_id?.slice(0, 8) ?? "manual"}
+                {result.task_id?.slice(0, 8) ?? "手动录入"}
               </Td>
               <Td className="font-mono text-slate-900">
                 {result.scores_json.task_success ?? 0}
               </Td>
               <Td className="text-slate-600">
-                {String(result.grader_trace_json.grader ?? "unknown")}
+                {String(result.grader_trace_json.grader ?? "未知评分器")}
               </Td>
             </tr>
           ))}

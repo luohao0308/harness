@@ -27,8 +27,8 @@ export function EvalHarnessPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
-  const [datasetName, setDatasetName] = useState("Regression Dataset");
-  const [datasetDescription, setDatasetDescription] = useState("Saved Agent Run traces");
+  const [datasetName, setDatasetName] = useState("回归数据集");
+  const [datasetDescription, setDatasetDescription] = useState("保存的智能体运行轨迹");
   const [sourceRunId, setSourceRunId] = useState("");
   const [expectedStatus, setExpectedStatus] = useState("COMPLETED");
   const [agentId, setAgentId] = useState("default");
@@ -102,7 +102,7 @@ export function EvalHarnessPage() {
   }
 
   return (
-    <ConsoleShell title={text("Eval Harness", "Eval Harness")}>
+    <ConsoleShell title={text("评测 Harness", "Eval Harness")}>
       <div className="mx-auto grid max-w-[1500px] grid-cols-[320px_minmax(0,1fr)_360px] gap-4 p-6">
         <section className="space-y-4">
           <Card>
@@ -120,7 +120,7 @@ export function EvalHarnessPage() {
               />
               <Button type="submit" variant="primary" className="w-full gap-1.5">
                 <Plus className="h-3.5 w-3.5" />
-                {text("创建 Dataset", "Create Dataset")}
+                {text("创建数据集", "Create Dataset")}
               </Button>
             </form>
             <div className="border-t border-slate-100 p-2">
@@ -136,11 +136,11 @@ export function EvalHarnessPage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-medium">{dataset.name}</span>
-                    <span className="font-mono text-[10px]">{dataset.case_count} cases</span>
+                    <span className="font-mono text-[10px]">{dataset.case_count} 个用例</span>
                   </div>
                   <div className="mt-1 flex items-center gap-1.5">
                     {dataset.baseline_run_id && (
-                      <Badge tone="success">baseline</Badge>
+                      <Badge tone="success">基线</Badge>
                     )}
                     <span className="truncate text-[11px] text-slate-500">
                       {dataset.description || dataset.id}
@@ -150,7 +150,7 @@ export function EvalHarnessPage() {
               ))}
               {!datasetsQuery.isLoading && datasets.length === 0 && (
                 <div className="px-2 py-8 text-center text-xs text-slate-500">
-                  {text("还没有 Dataset", "No datasets yet")}
+                  {text("还没有数据集", "No datasets yet")}
                 </div>
               )}
             </div>
@@ -159,14 +159,14 @@ export function EvalHarnessPage() {
           <Card>
             <CardHeader>
               <div className="text-sm font-semibold text-slate-900">
-                {text("从 Run 保存 Case", "Save Case From Run")}
+                {text("从运行保存用例", "Save Case From Run")}
               </div>
             </CardHeader>
             <form className="space-y-3 p-3" onSubmit={handleSaveCase}>
               <Input
                 value={sourceRunId}
                 onChange={(event) => setSourceRunId(event.target.value)}
-                placeholder={text("Run ID", "Run ID")}
+                placeholder={text("运行 ID", "Run ID")}
               />
               <Input
                 value={expectedStatus}
@@ -175,7 +175,7 @@ export function EvalHarnessPage() {
               />
               <Button type="submit" disabled={!canSaveCase} className="w-full gap-1.5">
                 <Save className="h-3.5 w-3.5" />
-                {text("保存为 Eval Case", "Save Eval Case")}
+                {text("保存为评测用例", "Save Eval Case")}
               </Button>
             </form>
           </Card>
@@ -207,14 +207,14 @@ export function EvalHarnessPage() {
                 {text("回归门禁", "Regression Gate")}
               </div>
               <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
-                {latestRun?.status === "COMPLETED" ? "API-backed" : "waiting"}
+                {latestRun?.status === "COMPLETED" ? "API 已接入" : "等待中"}
               </Badge>
             </CardHeader>
             <div className="space-y-2 p-3 text-xs">
               <EvalReadiness
                 icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                label={text("Trace Grader", "Trace Grader")}
-                status={latestRun ? "active" : "waiting"}
+                label={text("轨迹评分器", "Trace Grader")}
+                status={latestRun ? "已启用" : "等待中"}
               />
               <EvalReadiness
                 icon={<GitCompare className="h-3.5 w-3.5" />}
@@ -244,9 +244,9 @@ export function EvalHarnessPage() {
                     <Badge>{run.status}</Badge>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                    <span>cases: {run.metrics_json.case_total ?? 0}</span>
-                    <span>pass: {run.metrics_json.passed_total ?? 0}</span>
-                    <span>agent: {run.agent_id ?? "default"}</span>
+                    <span>用例: {run.metrics_json.case_total ?? 0}</span>
+                    <span>通过: {run.metrics_json.passed_total ?? 0}</span>
+                    <span>智能体: {run.agent_id ?? "default"}</span>
                     <span>{formatShortDate(run.created_at)}</span>
                   </div>
                 </div>

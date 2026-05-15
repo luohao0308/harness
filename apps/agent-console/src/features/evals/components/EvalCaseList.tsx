@@ -33,11 +33,11 @@ export function EvalCaseList({
       <CardHeader>
         <div>
           <div className="text-sm font-semibold text-slate-900">
-            {text("Case 队列", "Case Queue")}
+            {text("用例队列", "Case Queue")}
           </div>
           <div className="text-[11px] text-slate-500">
             {text(
-              "每个 Case 都来自真实 Run 或显式输入",
+              "每个用例都来自真实运行或显式输入",
               "Every case is backed by a run or explicit input",
             )}
           </div>
@@ -62,11 +62,11 @@ export function EvalCaseList({
       <Table>
         <thead className="bg-slate-50 text-slate-500">
           <tr>
-            <Th>Case</Th>
-            <Th>Source Run</Th>
-            <Th>Expected</Th>
-            <Th>Tags</Th>
-            <Th>Created</Th>
+            <Th>用例</Th>
+            <Th>来源运行</Th>
+            <Th>期望</Th>
+            <Th>标签</Th>
+            <Th>创建时间</Th>
           </tr>
         </thead>
         <tbody>
@@ -82,11 +82,11 @@ export function EvalCaseList({
                     {item.source_task_id.slice(0, 8)}
                   </a>
                 ) : (
-                  "manual"
+                  "手动录入"
                 )}
               </Td>
               <Td className="font-mono text-slate-600">
-                <Badge>{String(item.expected_json.status ?? "custom")}</Badge>
+                <Badge>{String(item.expected_json.status ?? "自定义")}</Badge>
               </Td>
               <Td>{item.tags_json.join(", ")}</Td>
               <Td className="font-mono text-slate-500">{formatShortDate(item.created_at)}</Td>
@@ -96,7 +96,7 @@ export function EvalCaseList({
             <tr>
               <Td colSpan={5} className="py-12 text-center text-slate-500">
                 {text(
-                  "选择 Dataset 后保存 Run 作为评测用例",
+                  "选择数据集后保存运行作为评测用例",
                   "Select a dataset and save a run as a case",
                 )}
               </Td>
