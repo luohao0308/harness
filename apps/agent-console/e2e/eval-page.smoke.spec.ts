@@ -48,9 +48,9 @@ const casesFixture = {
     {
       id: "case-002",
       dataset_id: "ds-001",
-      source_task_id: "run-source-task-002",
+      source_task_id: null,
       input_json: { goal: "Test tool selection" },
-      expected_json: { status: "COMPLETED" },
+      expected_json: {},
       tags_json: ["tool-accuracy"],
       created_at: "2026-05-13T10:45:00.000Z",
     },
@@ -83,9 +83,9 @@ const evalRunsFixture = {
         {
           id: "result-002",
           status: "FAILED",
-          task_id: "run-source-task-002",
+          task_id: null,
           scores_json: { task_success: 0 },
-          grader_trace_json: { grader: "trace-v1" },
+          grader_trace_json: {},
         },
       ],
       created_at: "2026-05-13T12:00:00.000Z",
@@ -120,32 +120,37 @@ test.describe("Eval Harness page mocked smoke tests", () => {
     await expect(page.getByText("Edge Cases")).toBeVisible();
 
     // Case counts visible
-    await expect(page.getByText("12 cases")).toBeVisible();
-    await expect(page.getByText("5 cases")).toBeVisible();
+    await expect(page.getByText("12 个用例")).toBeVisible();
+    await expect(page.getByText("5 个用例")).toBeVisible();
 
     // Baseline badge visible for first dataset
-    await expect(page.getByText("baseline")).toBeVisible();
+    await expect(page.getByText("基线", { exact: true })).toBeVisible();
   });
 
   test("Case list shows source run links", async ({ page }) => {
     await page.goto("/evals");
 
-    // Wait for cases to load — the EvalCaseList header uses "Case 队列"
-    await expect(page.getByText("Case 队列")).toBeVisible();
+    // Wait for cases to load
+    await expect(page.getByText("用例队列")).toBeVisible();
 
     // Source run links visible (truncated IDs — source_task_id.slice(0, 8))
     await expect(page.getByText("run-sour").first()).toBeVisible();
+    await expect(page.getByText("手动录入").first()).toBeVisible();
+    await expect(page.getByText("自定义").first()).toBeVisible();
   });
 
   test("Eval Run results display with regression delta", async ({ page }) => {
     await page.goto("/evals");
 
-    // Latest Eval Run section — Chinese: "最近 Eval Run"
-    await expect(page.getByText("Eval Run").first()).toBeVisible();
+    // Latest eval run section
+    await expect(page.getByText("最近评测运行").first()).toBeVisible();
     await expect(page.getByText("COMPLETED").first()).toBeVisible();
 
     // Regression delta section — Chinese: "回归对比"
     await expect(page.getByText("回归对比")).toBeVisible();
+    await expect(page.getByText("回归门禁")).toBeVisible();
+    await expect(page.getByText("API 已接入").first()).toBeVisible();
+    await expect(page.getByText("已启用").first()).toBeVisible();
 
     // Regression warning with data-regression attribute
     const regressionEl = page.locator("[data-regression='true']");
@@ -153,6 +158,8 @@ test.describe("Eval Harness page mocked smoke tests", () => {
 
     // Newly failing cases count — Chinese: "新增失败"
     await expect(page.getByText("新增失败")).toBeVisible();
+    await expect(page.getByText("手动录入").first()).toBeVisible();
+    await expect(page.getByText("未知评分器")).toBeVisible();
   });
 });
 

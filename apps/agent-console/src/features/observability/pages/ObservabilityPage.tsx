@@ -255,9 +255,9 @@ export function ObservabilityPage() {
 
         <div className="grid grid-cols-3 gap-4">
           <DistributionCard title={text("任务状态", "Task Status")} items={data?.tasks_by_status ?? []} />
-          <DistributionCard title={text("子 Agent 状态", "Subagent Status")} items={data?.subagents_by_status ?? []} />
+          <DistributionCard title={text("子代理状态", "Subagent Status")} items={data?.subagents_by_status ?? []} />
           <DistributionCard
-            title={text("Agent Assignment 状态", "Agent Assignment Status")}
+            title={text("智能体分配状态", "Agent Assignment Status")}
             items={data?.agent_assignments_by_status ?? []}
           />
           <DistributionCard title={text("模型调用状态", "Model Call Status")} items={data?.model_calls_by_status ?? []} />
@@ -266,14 +266,14 @@ export function ObservabilityPage() {
 
         <div className="grid grid-cols-2 gap-4">
           <QueuePanel
-            title={text("子 Agent 队列", "Subagent Queue")}
+            title={text("子代理队列", "Subagent Queue")}
             subtitle={text("异步长任务派生状态", "Async long-running work state")}
             queue={data?.subagent_queue}
             showTimeout
           />
           <QueuePanel
-            title={text("Agent Assignment 队列", "Agent Assignment Queue")}
-            subtitle={text("多 Agent 编排 worker 状态", "Multi-agent orchestration worker state")}
+            title={text("智能体分配队列", "Agent Assignment Queue")}
+            subtitle={text("多智能体编排 worker 状态；Agent Assignment 是后端分配对象名。", "Multi-agent orchestration worker state")}
             queue={data?.assignment_queue}
           />
         </div>
@@ -282,7 +282,7 @@ export function ObservabilityPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Box className="h-4 w-4" /> WarmPool
+                <Box className="h-4 w-4" /> {text("WarmPool 预热池", "WarmPool")}
               </div>
               <span className="text-xs text-slate-500">
                 {enabledLabel(Boolean(data?.warm_pool.enabled))}
@@ -321,7 +321,7 @@ export function ObservabilityPage() {
             </div>
             <span className="text-xs text-slate-500">
               {exportStatus ||
-                text("导出日志、Trace、Grafana dashboard 和服务健康快照", "Export logs, traces, dashboards, and health snapshots")}
+                text("导出日志、Trace 链路、Grafana 看板和服务健康快照", "Export logs, traces, dashboards, and health snapshots")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-4 gap-3 p-3">
@@ -364,7 +364,7 @@ export function ObservabilityPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <RotateCcw className="h-4 w-4" /> {text("子 Agent 恢复运营", "Subagent Recovery Operations")}
+              <RotateCcw className="h-4 w-4" /> {text("子代理恢复运营", "Subagent Recovery Operations")}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-500">
@@ -387,8 +387,8 @@ export function ObservabilityPage() {
           <div className="grid grid-cols-6 gap-3 border-b border-slate-100 p-3 text-xs">
             <Metric label={text("恢复批次", "Batches")} value={formatNumber(recovery.data?.batch_total)} />
             <Metric label={text("涉及任务", "Tasks")} value={formatNumber(recovery.data?.task_total)} />
-            <Metric label={text("扫描子 Agent", "Scanned")} value={formatNumber(recovery.data?.scanned_total)} />
-            <Metric label={text("恢复子 Agent", "Recovered")} value={formatNumber(recovery.data?.recovered_total)} />
+            <Metric label={text("扫描子代理", "Scanned")} value={formatNumber(recovery.data?.scanned_total)} />
+            <Metric label={text("恢复子代理", "Recovered")} value={formatNumber(recovery.data?.recovered_total)} />
             <Metric label={text("恢复锁跳过", "Lock Skips")} value={formatNumber(recovery.data?.lock_skipped_total)} />
             <Metric
               label={text("动作类型", "Actions")}
@@ -459,7 +459,7 @@ export function ObservabilityPage() {
                       <Td className="text-slate-500">
                         <div className="font-mono text-[11px]">{item.latest_batch_id.slice(0, 13)}</div>
                         <div className="mt-0.5 text-[10px]">
-                          Replay {item.latest_replay_sequence} · {formatShortDate(item.latest_completed_at)}
+                          {text("重放", "Replay")} {item.latest_replay_sequence} · {formatShortDate(item.latest_completed_at)}
                         </div>
                       </Td>
                     </tr>
@@ -526,7 +526,9 @@ export function ObservabilityPage() {
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Activity className="h-4 w-4" /> {text("观测服务健康", "Observability Service Health")}
               </div>
-              <span className="text-xs text-slate-500">Prometheus / Grafana / Loki / OTel / Tempo</span>
+              <span className="text-xs text-slate-500">
+                {text("Prometheus、Grafana、Loki、OTel、Tempo 服务探活", "Prometheus / Grafana / Loki / OTel / Tempo")}
+              </span>
             </CardHeader>
             <Table>
               <thead className="bg-slate-50 text-slate-500">
@@ -577,9 +579,9 @@ export function ObservabilityPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Gauge className="h-4 w-4" /> Grafana Dashboard
+                <Gauge className="h-4 w-4" /> {text("Grafana 看板", "Grafana Dashboard")}
               </div>
-              <span className="text-xs text-slate-500">{text("后端代理返回 dashboard 深链", "Backend proxy returns dashboard deep links")}</span>
+              <span className="text-xs text-slate-500">{text("后端代理返回 dashboard 深链，dashboard 是 Grafana 看板链接。", "Backend proxy returns dashboard deep links")}</span>
             </CardHeader>
             <div className="space-y-2 p-3">
               {(dashboards.data?.items ?? []).map((dashboard) => (
@@ -601,7 +603,7 @@ export function ObservabilityPage() {
                         `Grafana 访问受限：${dashboards.error.message}`,
                         `Grafana access limited: ${dashboards.error.message}`,
                       )
-                    : text("暂无 Grafana dashboard", "No Grafana dashboards")}
+                    : text("暂无 Grafana 看板", "No Grafana dashboards")}
               </div>
             )}
           </div>
@@ -614,7 +616,7 @@ export function ObservabilityPage() {
               <Logs className="h-4 w-4" /> {text("日志与 Trace 深链查询", "Logs & Trace Deep Search")}
             </div>
             <span className="text-xs text-slate-500">
-              {text("按任务、Trace、服务和事件筛选；Trace ID 可直接联动右侧链路。", "Filter by task, trace, service, and event; trace IDs can drive the chain view.")}
+              {text("按任务、Trace、服务和事件筛选；Trace ID 可直接联动右侧链路。Trace 是跨服务追踪标识。", "Filter by task, trace, service, and event; trace IDs can drive the chain view.")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 p-3">
@@ -630,7 +632,7 @@ export function ObservabilityPage() {
             <Input
               aria-label={text("Trace ID", "Trace ID")}
               className="h-8 text-xs"
-              placeholder="Trace ID"
+              placeholder={text("Trace ID（追踪标识）", "Trace ID")}
               value={draftLogFilters.trace_id}
               onChange={(event) =>
                 setDraftLogFilters((filters) => ({ ...filters, trace_id: event.target.value }))
@@ -740,7 +742,7 @@ export function ObservabilityPage() {
                 <tr>
                   <Th>{text("事件", "Event")}</Th>
                   <Th>{text("任务", "Task")}</Th>
-                  <Th>Trace</Th>
+                  <Th>{text("Trace 追踪", "Trace")}</Th>
                   <Th>{text("级别", "Level")}</Th>
                 </tr>
               </thead>
@@ -791,7 +793,7 @@ export function ObservabilityPage() {
                 <GitBranch className="h-4 w-4" /> {text("Trace 链路", "Trace Chain")}
               </div>
               <span className="font-mono text-xs text-slate-500">
-                {activeTraceId ? activeTraceId.slice(0, 16) : text("等待 trace", "Waiting for trace")}
+              {activeTraceId ? activeTraceId.slice(0, 16) : text("等待 Trace", "Waiting for trace")}
               </span>
             </CardHeader>
             <div className="space-y-2 p-3">
@@ -840,7 +842,7 @@ export function ObservabilityPage() {
               ))}
               {!trace.isLoading && (trace.data?.spans.length ?? 0) === 0 && (
                 <div className="py-8 text-center text-xs text-slate-500">
-                  {text("暂无 Trace span", "No trace spans")}
+                  {text("暂无 Trace span；span 是一次链路片段", "No trace spans")}
                 </div>
               )}
             </div>
