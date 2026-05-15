@@ -133,11 +133,13 @@ test.describe("Sandboxes page mocked smoke tests", () => {
     // Tenant Isolation tile — Chinese: "多租户隔离"
     await expect(page.getByText("多租户隔离")).toBeVisible();
 
-    // Status shows API-backed (because organization_id is present)
-    await expect(page.getByText("API-backed").first()).toBeVisible();
+    // Status shows Chinese API-backed state (because organization_id is present)
+    await expect(page.getByText("API 已接入").first()).toBeVisible();
 
     // Description mentions organization_id scoping
     await expect(page.getByText("organization_id")).toBeVisible();
+    await expect(page.getByText("API 网关")).toBeVisible();
+    await expect(page.getByText("WarmPool 基准测试")).toBeVisible();
   });
 });
 

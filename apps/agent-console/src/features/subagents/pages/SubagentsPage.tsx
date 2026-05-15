@@ -22,7 +22,7 @@ function contextSummary(context: Record<string, unknown>) {
   if (typeof label === "string" && label.length > 0) return label;
   if (typeof goal === "string" && goal.length > 0) return goal;
   if (typeof description === "string" && description.length > 0) return description;
-  return "子 Agent 上下文";
+  return "子代理上下文";
 }
 
 function resultContextSummary(context: Record<string, unknown>) {
@@ -89,16 +89,16 @@ export function SubagentsPage() {
   };
 
   return (
-    <ConsoleShell title={text("子 Agent", "Subagents")}>
+    <ConsoleShell title={text("子代理", "Subagents")}>
       <div className="mx-auto max-w-[1440px] p-6">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-900">
-              <GitBranch className="h-4 w-4" /> {text("子 Agent 批量运营", "Subagent Operations")}
+              <GitBranch className="h-4 w-4" /> {text("子代理批量运营", "Subagent Operations")}
             </div>
             <div className="mt-1 text-xs text-slate-500">
               {text(
-                "按组织查看全部异步子 Agent，筛选状态并快速跳转到任务、详情和恢复视图。",
+                "按组织查看全部异步子代理，筛选状态并快速跳转到任务、详情和恢复视图。",
                 "Inspect all async subagents across the organization, filter by status, and jump to tasks, details, and recovery views.",
               )}
             </div>
@@ -141,11 +141,11 @@ export function SubagentsPage() {
           <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
             <div>
               <div className="text-xs font-semibold text-slate-900">
-                {text("组织子 Agent 列表", "Organization Subagent List")}
+                {text("组织子代理列表", "Organization Subagent List")}
               </div>
               <div className="mt-0.5 text-[11px] text-slate-500">
                 {text(
-                  "展示最近 200 个子 Agent，技术状态保留原值并显示中文说明。",
+                  "展示最近 200 个子代理，技术状态保留原值并显示中文说明。",
                   "Shows the latest 200 subagents with original technical status values and localized labels.",
                 )}
               </div>
@@ -153,14 +153,14 @@ export function SubagentsPage() {
             <span className="text-xs text-slate-500">
               {subagentsQuery.isLoading
                 ? text("加载中...", "Loading...")
-                : text(`${subagents.length} 个子 Agent`, `${subagents.length} subagents`)}
+                : text(`${subagents.length} 个子代理`, `${subagents.length} subagents`)}
             </span>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
             <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
               <CheckSquare className="h-3.5 w-3.5" />
               {text(
-                `已选择 ${selectedIds.length} 个可取消子 Agent`,
+                `已选择 ${selectedIds.length} 个可取消子代理`,
                 `${selectedIds.length} cancellable subagents selected`,
               )}
             </div>
@@ -187,7 +187,7 @@ export function SubagentsPage() {
                     type="checkbox"
                   />
                 </Th>
-                <Th>{text("子 Agent", "Subagent")}</Th>
+                <Th>{text("子代理", "Subagent")}</Th>
                 <Th>{text("任务", "Task")}</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("来源步骤", "Source Step")}</Th>
@@ -201,7 +201,7 @@ export function SubagentsPage() {
                 <tr key={subagent.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                   <Td>
                     <input
-                      aria-label={text("选择子 Agent", "Select subagent")}
+                      aria-label={text("选择子代理", "Select subagent")}
                       checked={selectedSet.has(subagent.id)}
                       disabled={!["PENDING", "RUNNING"].includes(subagent.status)}
                       onChange={() => toggleSelected(subagent.id)}
@@ -250,7 +250,7 @@ export function SubagentsPage() {
                 <tr>
                   <Td colSpan={8} className="py-12 text-center text-slate-500">
                     {text(
-                      "暂无符合筛选条件的子 Agent。",
+                      "暂无符合筛选条件的子代理。",
                       "No subagents match the selected filters.",
                     )}
                   </Td>

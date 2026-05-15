@@ -38,9 +38,9 @@ export function ToolRegistryPage() {
         <section className="grid grid-cols-5 gap-3">
           <HarnessTile
             icon={<PlugZap className="h-4 w-4" />}
-            title="Tool Registry"
+            title={text("工具注册表", "Tool Registry")}
             status={text("API 已接入", "API-backed")}
-            description={text("工具元数据、来源、schema、风险和角色权限来自后端注册表。", "Metadata, source, schema, risk, and role access come from the backend registry.")}
+            description={text("也就是 Tool Registry；工具元数据、来源、Schema、风险和角色权限来自后端注册表。", "Metadata, source, schema, risk, and role access come from the backend registry.")}
           />
           <HarnessTile
             icon={<ShieldAlert className="h-4 w-4" />}
@@ -52,13 +52,13 @@ export function ToolRegistryPage() {
             icon={<ShieldCheck className="h-4 w-4" />}
             title={text("沙箱", "Sandbox")}
             status={`${sandboxCount} ${text("需要隔离", "isolated")}`}
-            description={text("Shell、测试、写文件、Git 和网络动作通过 Docker Sandbox 执行。", "Shell, tests, writes, Git, and network actions run through Docker Sandbox.")}
+            description={text("Shell、测试、写文件、Git 和网络动作通过 Docker 沙箱执行。", "Shell, tests, writes, Git, and network actions run through Docker Sandbox.")}
           />
           <HarnessTile
             icon={<GitBranch className="h-4 w-4" />}
             title="MCP"
             status={`${mcpCount} ${text("已注册", "registered")}`}
-            description={text("MCP-shaped 工具复用同一 ToolRunner、Policy、ToolCall 和 Event path。", "MCP-shaped tools reuse the same ToolRunner, Policy, ToolCall, and Event path.")}
+            description={text("MCP 形态工具复用同一工具执行器（ToolRunner）、策略（Policy）、工具调用审计（ToolCall）和事件路径（Event path）。", "MCP-shaped tools reuse the same ToolRunner, Policy, ToolCall, and Event path.")}
           />
           <HarnessTile
             icon={<Workflow className="h-4 w-4" />}
@@ -74,11 +74,11 @@ export function ToolRegistryPage() {
             <div>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <PlugZap className="h-4 w-4" />
-                {text("统一 Tool Registry", "Unified Tool Registry")}
+                {text("统一工具注册表", "Unified Tool Registry")}
               </div>
               <div className="mt-1 text-xs text-slate-500">
                 {text(
-                  "内置工具和 MCP-shaped 工具共用权限、策略、ToolCall 审计和 trace。",
+                  "内置工具和 MCP 形态工具共用权限、策略、工具调用审计（ToolCall）和 Trace 链路。",
                   "Built-in and MCP-shaped tools share permissions, policy, ToolCall audit, and trace.",
                 )}
               </div>
@@ -104,7 +104,7 @@ export function ToolRegistryPage() {
                 <Th>{text("权限", "Permissions")}</Th>
                 <Th>{text("审计", "Audit")}</Th>
                 <Th>{text("MCP", "MCP")}</Th>
-                <Th>{text("Schema", "Schema")}</Th>
+                <Th>{text("结构 Schema", "Schema")}</Th>
               </tr>
             </thead>
             <tbody>
@@ -142,8 +142,8 @@ export function ToolRegistryPage() {
                     </div>
                     <div className="mt-1 text-[11px] text-slate-500">
                       {adminOnlyCount > 0 && tool.allowed_roles.includes("admin")
-                        ? text("Admin only", "Admin only")
-                        : text("Role scoped", "Role scoped")}
+                        ? text("仅管理员", "Admin only")
+                        : text("按角色限定", "Role scoped")}
                     </div>
                   </Td>
                   <Td className="font-mono text-[11px] text-slate-600">

@@ -89,8 +89,8 @@ export function SandboxesPage() {
           <InfraTile
             icon={<ShieldCheck className="h-4 w-4" />}
             title={text("多租户隔离", "Tenant Isolation")}
-            status={quota.data?.organization_id ? "API-backed" : "loading"}
-            description={text("沙箱、Run、Eval 与观测查询按 organization_id 聚合和隔离。", "Sandbox, Run, Eval, and observability queries are scoped by organization_id.")}
+            status={quota.data?.organization_id ? "API 已接入" : "加载中"}
+            description={text("沙箱、运行、评测与观测查询按 organization_id 聚合和隔离。", "Sandbox, Run, Eval, and observability queries are scoped by organization_id.")}
           />
           <InfraTile
             icon={<Box className="h-4 w-4" />}
@@ -100,9 +100,9 @@ export function SandboxesPage() {
           />
           <InfraTile
             icon={<Globe2 className="h-4 w-4" />}
-            title="API Gateway"
+            title="API 网关"
             status={text("未启用", "Disabled")}
-            description={text("对外发布 Agent 能力的入口保留禁用态，等待 API 支撑。", "External Agent publishing entry remains disabled until API-backed.")}
+            description={text("对外发布智能体能力的入口保留禁用态，等待 API 支撑。", "External Agent publishing entry remains disabled until API-backed.")}
             disabled
           />
           <InfraTile
@@ -134,7 +134,7 @@ export function SandboxesPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Gauge className="h-4 w-4" /> WarmPool Benchmark
+              <Gauge className="h-4 w-4" /> WarmPool 基准测试
             </div>
             <div className="flex items-center gap-2">
               {latestBenchmark && (
@@ -146,16 +146,16 @@ export function SandboxesPage() {
                 className="h-8 gap-1.5"
               >
                 <Play className="h-3.5 w-3.5" />
-                {text("运行 Benchmark", "Run Benchmark")}
+                {text("运行基准测试", "Run Benchmark")}
               </Button>
             </div>
           </CardHeader>
           <div className="grid grid-cols-5 gap-3 p-3 text-xs">
-            <Metric label="warm avg" value={formatMs(latestBenchmark?.warm_avg_ms)} />
-            <Metric label="warm p95" value={formatMs(latestBenchmark?.warm_p95_ms)} />
-            <Metric label="cold avg" value={formatMs(latestBenchmark?.cold_avg_ms)} />
-            <Metric label="hit rate" value={latestBenchmark ? `${latestBenchmark.hit_rate}%` : "..."} />
-            <Metric label="iterations" value={String(latestBenchmark?.iteration_count ?? "...")} />
+            <Metric label="预热平均" value={formatMs(latestBenchmark?.warm_avg_ms)} />
+            <Metric label="预热 p95" value={formatMs(latestBenchmark?.warm_p95_ms)} />
+            <Metric label="冷启动平均" value={formatMs(latestBenchmark?.cold_avg_ms)} />
+            <Metric label="命中率" value={latestBenchmark ? `${latestBenchmark.hit_rate}%` : "..."} />
+            <Metric label="迭代次数" value={String(latestBenchmark?.iteration_count ?? "...")} />
           </div>
         </Card>
         <Card className="overflow-hidden">
@@ -175,7 +175,7 @@ export function SandboxesPage() {
                 <Th>{text("CPU", "CPU")}</Th>
                 <Th>{text("内存", "Memory")}</Th>
                 <Th>{text("网络", "Network")}</Th>
-                <Th>WarmPool</Th>
+                <Th>{text("WarmPool 预热池", "WarmPool")}</Th>
                 <Th>{text("生命周期", "Lifetime")}</Th>
                 <Th>{text("创建时间", "Created")}</Th>
               </tr>

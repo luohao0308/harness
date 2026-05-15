@@ -60,7 +60,7 @@ export function SubagentPanel({
     <Card>
       <CardHeader>
         <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
-          <GitBranch className="h-3 w-3" /> {text("子 Agent", "Subagents")}
+          <GitBranch className="h-3 w-3" /> {text("子代理", "Subagents")}
         </div>
         <div className="flex items-center gap-1">
           <span className="font-mono text-[10px] text-slate-400">
@@ -88,7 +88,7 @@ export function SubagentPanel({
             <span>{recoveryBatch.trigger === "auto" ? text("自动巡检", "Auto scan") : text("手动触发", "Manual trigger")}</span>
             <span>{text(`扫描 ${recoveryBatch.scanned_count}`, `Scanned ${recoveryBatch.scanned_count}`)}</span>
             <span>{text(`恢复 ${recoveryBatch.recovered_count}`, `Recovered ${recoveryBatch.recovered_count}`)}</span>
-            <span>Replay {recoveryBatch.replay_sequence}</span>
+            <span>重放 {recoveryBatch.replay_sequence}</span>
             <span>{text(`卡住阈值 ${recoveryBatch.stale_after_seconds}s`, `Stale threshold ${recoveryBatch.stale_after_seconds}s`)}</span>
             <span>{formatShortDate(recoveryBatch.completed_at)}</span>
           </div>
@@ -106,7 +106,7 @@ export function SubagentPanel({
             </div>
           )}
           {recoveryBatch.recovered.length === 0 && (
-            <div className="mt-1 text-slate-400">{text("本批次没有需要恢复的子 Agent。", "No subagents needed recovery in this batch.")}</div>
+            <div className="mt-1 text-slate-400">{text("本批次没有需要恢复的子代理。", "No subagents needed recovery in this batch.")}</div>
           )}
         </div>
       )}
@@ -130,11 +130,11 @@ export function SubagentPanel({
         </div>
       )}
       <div className="space-y-1.5 p-2">
-        {loading && <div className="px-2 py-4 text-xs text-slate-500">{text("子 Agent 加载中...", "Loading subagents...")}</div>}
+        {loading && <div className="px-2 py-4 text-xs text-slate-500">{text("子代理加载中...", "Loading subagents...")}</div>}
         {!loading && subagents.length === 0 && (
           <div className="px-2 py-4 text-xs text-slate-500">
             {text(
-              "当前任务尚未派生子 Agent。长耗时任务会在这里显示并发状态。",
+              "当前任务尚未派生子代理。长耗时任务会在这里显示并发状态。",
               "This task has not spawned subagents yet. Long-running tasks show concurrency state here.",
             )}
           </div>
