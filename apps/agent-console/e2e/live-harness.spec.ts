@@ -33,47 +33,47 @@ test.describe("L3A: Canonical Run browser continuity", () => {
     await expect(page.getByText(/COMPLETED|RUNNING|PLANNED|FAILED/).first()).toBeVisible();
 
     // Plan DAG visible
-    await expect(page.getByText("Plan DAG")).toBeVisible();
+    await expect(page.getByText("计划 DAG")).toBeVisible();
 
     // Event Stream visible
-    await expect(page.getByText("Event Stream")).toBeVisible();
+    await expect(page.getByText("事件流")).toBeVisible();
 
     // Tool Calls visible
-    await expect(page.getByText("Tool Calls")).toBeVisible();
+    await expect(page.getByText("工具调用")).toBeVisible();
 
     // Model Calls visible
-    await expect(page.getByText("Model Calls")).toBeVisible();
+    await expect(page.getByText("模型调用")).toBeVisible();
 
     // Replay panel visible
-    await expect(page.getByText("Replay")).toBeVisible();
+    await expect(page.getByText("重放")).toBeVisible();
   });
 
   test("Replay works for the canonical run", async ({ page }) => {
     test.skip(!RUN_ID, "HARNESS_E2E_RUN_ID not set");
 
     await page.goto(`/runs/${RUN_ID}`);
-    await expect(page.getByText("Replay")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("重放")).toBeVisible({ timeout: 15_000 });
 
     if (REPLAY_SEQUENCE) {
-      await page.getByLabel(/Replay sequence/).fill(String(REPLAY_SEQUENCE));
+      await page.getByLabel("重放序号").fill(String(REPLAY_SEQUENCE));
     }
 
-    await page.getByRole("button", { name: /Replay|重放/ }).click();
+    await page.getByRole("button", { name: "重放" }).click();
 
     // Replay result should appear
-    await expect(page.getByText(/replayed|manual_review/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/已重放|需要人工复核/)).toBeVisible({ timeout: 10_000 });
   });
 
   test("/runs/:runId/events shows event evidence", async ({ page }) => {
     await page.goto(`/runs/${RUN_ID}/events`);
-    await expect(page.getByText("Event Stream")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("事件流")).toBeVisible({ timeout: 15_000 });
     // At least one event should be visible
     await expect(page.locator("[class*='border-slate-100']").first()).toBeVisible();
   });
 
   test("/runs/:runId/subagents shows subagent evidence", async ({ page }) => {
     await page.goto(`/runs/${RUN_ID}/subagents`);
-    await expect(page.getByText("Subagents").last()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("子代理").last()).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -88,22 +88,18 @@ test.describe("L3B: Live Workspace user journey", () => {
   }) => {
     await page.goto("/agents/default/workspace");
 
-    // Switch to English
-    const langBtn = page.getByRole("button", { name: "语言" });
-    if (await langBtn.isVisible()) {
-      await langBtn.click();
-    }
+    await expect(page.getByRole("button", { name: /Language|语言/ })).toHaveCount(0);
 
-    const composer = page.getByPlaceholder(/Chat with the agent/);
+    const composer = page.getByPlaceholder(/直接与智能体对话/);
     await expect(composer).toBeVisible({ timeout: 10_000 });
 
     // Submit a deterministic validation goal
     await composer.fill("List the files in the current directory");
-    await page.getByRole("button", { name: "Send" }).click();
+    await page.locator('button[aria-label="发送"]').click();
 
     // Observe run_created: Run chip/link should appear
     await expect(
-      page.getByRole("link", { name: /Run Detail|Run 详情|[0-9a-f]{8}/ }),
+      page.getByRole("link", { name: /运行详情|[0-9a-f]{8}/ }),
     ).toBeVisible({
       timeout: 30_000,
     });

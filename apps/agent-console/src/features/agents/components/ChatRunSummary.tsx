@@ -37,12 +37,12 @@ export function ChatRunSummary({
   const { text, locale } = useI18n();
   const shortHash = runId.slice(0, 8);
   const createdLabel = formatLocalisedTimestamp(runCreatedAt, locale);
-  const linkLabel = text("查看 Run 详情", "Open run detail");
+  const linkLabel = text("查看运行详情", "Open run detail");
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-sm">
       <GitBranch aria-hidden="true" className="h-3.5 w-3.5 text-slate-500" />
-      <span className="font-mono text-slate-800">Run {shortHash}</span>
+      <span className="font-mono text-slate-800">运行 {shortHash}</span>
       {runStatus && <Badge tone={statusTone(runStatus)}>{runStatus}</Badge>}
       {createdLabel && <span className="text-slate-500">{createdLabel}</span>}
       <div className="ml-auto">

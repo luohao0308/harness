@@ -47,7 +47,7 @@ describe("ConversationHistoryPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(screen.getByRole("button", { name: "新建对话" }));
     expect(onNewConversation).toHaveBeenCalledTimes(1);
 
     const active = screen.getByRole("button", { name: "Second workspace pass" });
@@ -56,10 +56,10 @@ describe("ConversationHistoryPanel", () => {
     await user.click(screen.getByRole("button", { name: "First workspace pass" }));
     expect(onSelectConversation).toHaveBeenCalledWith("one");
 
-    await user.click(screen.getAllByRole("button", { name: "Delete conversation" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "删除对话" })[0]);
     expect(onDeleteConversation).toHaveBeenCalledWith("two");
 
-    await user.click(screen.getByRole("button", { name: "Collapse history" }));
+    await user.click(screen.getByRole("button", { name: "收起历史对话" }));
     expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
   });
 });

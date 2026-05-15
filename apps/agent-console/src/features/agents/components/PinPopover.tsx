@@ -72,7 +72,7 @@ export function PinPopoverContent({
   if (pinnedNodes.length === 0) {
     return (
       <div className="text-xs text-slate-400">
-        {text("暂无 Pin", "No pinned messages")}
+        {text("暂无固定消息", "No pinned messages")}
       </div>
     );
   }
@@ -134,7 +134,7 @@ export function PinPopover({ pinnedNodes, onUnpin }: PinPopoverProps): JSX.Eleme
       >
         <Pin aria-hidden="true" className="h-3.5 w-3.5" />
         <span>
-          {text("Pin", "Pin")} · {pinnedNodes.length}
+          {text("固定", "Pin")} · {pinnedNodes.length}
         </span>
       </Button>
       {open && (

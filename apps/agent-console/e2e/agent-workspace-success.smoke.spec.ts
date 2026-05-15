@@ -187,22 +187,20 @@ test.describe("Workspace success-flow browser smoke", () => {
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/agents/default/workspace");
-    // Switch to English for stable selectors
-    await page.getByRole("button", { name: "语言" }).click();
-    await expect(page.getByRole("button", { name: "Language" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Language|语言/ })).toHaveCount(0);
 
     // Verify initial idle state
-    await expect(page.getByLabel("No run yet")).toBeVisible();
+    await expect(page.getByLabel("运行未创建")).toBeVisible();
 
     // Type and send a message
-    const composer = page.getByPlaceholder("Chat with the agent");
+    const composer = page.getByPlaceholder("直接与智能体对话");
     await composer.fill("Read the README and summarize it");
-    await page.getByRole("button", { name: "Send" }).click();
+    await sendButton(page).click();
 
     // After run_created: Run chip should show the run link
-    // The shell bar shows a Link with aria-label "Run Detail" when activeRunId is set
+    // The shell bar shows a Link with aria-label "运行详情" when activeRunId is set
     await expect(
-      page.getByRole("link", { name: /Run Detail|Run 详情/ }),
+      runDetailLink(page),
     ).toBeVisible({ timeout: 10_000 });
 
     // After delta frames: assistant content should appear
@@ -222,7 +220,7 @@ test.describe("Workspace success-flow browser smoke", () => {
     await expect(composer).toBeEnabled();
 
     // Inspector runtime section should be available for the created Run
-    const inspectorBtn = page.getByRole("button", { name: /Runtime|运行时/ });
+    const inspectorBtn = page.getByRole("button", { name: "运行时" });
     if (await inspectorBtn.isVisible()) {
       await inspectorBtn.click();
       await expect(page.getByText(STABLE_RUN_ID.slice(0, 8))).toBeVisible();
@@ -239,16 +237,15 @@ test.describe("Workspace success-flow browser smoke", () => {
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/agents/default/workspace");
-    await page.getByRole("button", { name: "语言" }).click();
-    await expect(page.getByRole("button", { name: "Language" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Language|语言/ })).toHaveCount(0);
 
-    const composer = page.getByPlaceholder("Chat with the agent");
+    const composer = page.getByPlaceholder("直接与智能体对话");
     await composer.fill("test message");
-    await page.getByRole("button", { name: "Send" }).click();
+    await sendButton(page).click();
 
     // Wait for stream to complete
     await expect(
-      page.getByRole("link", { name: /Run Detail|Run 详情/ }),
+      runDetailLink(page),
     ).toBeVisible({ timeout: 10_000 });
 
     // Allow time for any post-stream fetches
@@ -337,6 +334,14 @@ async function fulfillSseStream(route: Route): Promise<void> {
     },
     body,
   });
+}
+
+function sendButton(page: Page) {
+  return page.locator('button[aria-label="发送"]');
+}
+
+function runDetailLink(page: Page) {
+  return page.locator('a[aria-label="运行详情"]');
 }
 
 async function fulfillJson(route: Route, payload: unknown): Promise<void> {

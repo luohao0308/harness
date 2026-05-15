@@ -460,7 +460,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 
     if (workspaceMode === "plan") {
       const message = text(
-        "确认创建 Plan-Act Run？此操作会触发可执行的 Run。",
+        "确认创建 Plan-Act 运行？此操作会触发可执行运行。",
         "Create a Plan-Act Run? This triggers an executable run.",
       );
       if (!window.confirm(message)) return;
@@ -1557,7 +1557,7 @@ function composerPlaceholder(
 ): string {
   switch (mode) {
     case "chat":
-      return text("直接与 Agent 对话", "Chat with the agent");
+      return text("直接与智能体对话", "Chat with the agent");
     case "markdown_plan":
       return text(
         "描述目标，返回 markdown 规划",
@@ -1565,7 +1565,7 @@ function composerPlaceholder(
       );
     case "plan":
       return text(
-        "描述目标,创建 Plan-Act Run",
+        "描述目标，创建 Plan-Act 运行",
         "Describe a goal; creates a Plan-Act Run",
       );
     default: {

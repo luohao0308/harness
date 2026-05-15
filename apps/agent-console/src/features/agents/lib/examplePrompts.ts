@@ -31,17 +31,17 @@ export const EXAMPLE_PROMPTS: readonly ExamplePrompt[] = [
   },
   {
     id: "create-plan-run",
-    zh: "帮我创建一个 Plan-Act Run，用来分析 services/api-server 最近的错误日志。",
+    zh: "帮我创建一个 Plan-Act 运行，用来分析 services/api-server 最近的错误日志。",
     en: "Create a Plan-Act Run to analyze the latest error logs in services/api-server.",
   },
   {
     id: "save-eval-case",
-    zh: "把当前这段对话保存成 Eval Case，打上 regression 标签并放到默认 rubric 下。",
+    zh: "把当前这段对话保存成评测用例，打上 regression 标签并放到默认 rubric 下。",
     en: "Save this conversation as an Eval Case with the regression tag under the default rubric.",
   },
   {
     id: "view-failed-trace",
-    zh: "打开 observability，定位最近一条失败的 trace，并简要说明失败原因。",
+    zh: "打开观测，定位最近一条失败的 Trace，并简要说明失败原因。",
     en: "Open observability, locate the latest failed trace, and summarize what went wrong.",
   },
 ] as const;

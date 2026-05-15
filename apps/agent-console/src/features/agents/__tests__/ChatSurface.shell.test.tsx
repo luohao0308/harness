@@ -187,15 +187,15 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.queryByRole("button", { name: /^Context:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Tools:/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
-    const settingsPanel = screen.getByRole("dialog", { name: "Composer settings" });
+    await user.click(screen.getByRole("button", { name: "打开输入设置" }));
+    const settingsPanel = screen.getByRole("dialog", { name: "输入设置" });
     expect(settingsPanel).toBeInTheDocument();
-    expect(settingsPanel).not.toHaveTextContent("Composer settings");
+    expect(settingsPanel).not.toHaveTextContent("输入设置");
     expect(screen.queryByRole("dialog", { name: "Options" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add photos and files" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加照片和文件" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Include IDE context" })).not.toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Plan mode" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Plugins / MCP" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "计划模式" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "插件 / MCP" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /@read_file/ })).not.toBeInTheDocument();
   });
 
@@ -215,19 +215,19 @@ describe("ChatSurface Workspace shell integration", () => {
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "deepseek-v4-flash" }));
-    expect(screen.getByRole("listbox", { name: "Switch model" })).toBeInTheDocument();
+    expect(screen.getByRole("listbox", { name: "切换模型" })).toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", {
-        name: "Tools/MCP: 2 available",
+        name: "工具/MCP: 2 个可用",
       }),
     );
-    expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "工具" })).toBeInTheDocument();
     expect(screen.queryByText("Tool capabilities")).not.toBeInTheDocument();
-    expect(screen.queryByText("Plugins / MCP")).not.toBeInTheDocument();
+    expect(screen.queryByText("插件 / MCP")).not.toBeInTheDocument();
     expect(screen.queryByText("github.search")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /@read_file/ }));
-    expect(screen.getByPlaceholderText("Chat with the agent")).toHaveValue("@read_file ");
+    expect(screen.getByPlaceholderText("直接与智能体对话")).toHaveValue("@read_file ");
   });
 
   it("opens the native file picker from the compact tools panel", async () => {
@@ -237,8 +237,8 @@ describe("ChatSurface Workspace shell integration", () => {
       .mockImplementation(() => undefined);
     renderSurface();
 
-    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
-    await user.click(screen.getByRole("button", { name: "Add photos and files" }));
+    await user.click(screen.getByRole("button", { name: "打开输入设置" }));
+    await user.click(screen.getByRole("button", { name: "添加照片和文件" }));
 
     expect(inputClick).toHaveBeenCalledTimes(1);
     inputClick.mockRestore();
@@ -252,12 +252,12 @@ describe("ChatSurface Workspace shell integration", () => {
     const image = new File(["image-bytes"], "diagram.png", { type: "image/png" });
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
 
-    await user.upload(screen.getByLabelText("Add photos and files"), [image, file]);
+    await user.upload(screen.getByLabelText("添加照片和文件"), [image, file]);
 
     expect(screen.getByAltText("diagram.png")).toHaveAttribute("src", "blob:preview");
     expect(screen.getByText("notes.txt")).toBeInTheDocument();
 
-    await user.type(screen.getByPlaceholderText("Chat with the agent"), "read it");
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "read it");
     await user.keyboard("{Enter}");
 
     await waitFor(() => expect(stream.start).toHaveBeenCalled());
@@ -295,34 +295,34 @@ describe("ChatSurface Workspace shell integration", () => {
       },
     });
 
-    const metadata = screen.getByLabelText("Run metadata");
-    expect(metadata).toHaveTextContent("In");
+    const metadata = screen.getByLabelText("运行元数据");
+    expect(metadata).toHaveTextContent("输入");
     expect(metadata).toHaveTextContent("1.2K");
     expect(metadata).toHaveTextContent("$0.12");
     expect(metadata).toHaveTextContent("1.5s");
 
-    await user.click(screen.getByRole("button", { name: "Inspector" }));
+    await user.click(screen.getByRole("button", { name: "检查器" }));
     expect(screen.queryByRole("menuitem", { name: "Metadata" })).not.toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Artifacts" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Runtime" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "产物" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "运行时" })).toBeInTheDocument();
   });
 
   it("keeps tools in the top panel and MCP plugins in composer settings", async () => {
     const user = userEvent.setup();
     renderSurface();
 
-    await user.click(screen.getByRole("button", { name: "Tools/MCP: 2 available" }));
+    await user.click(screen.getByRole("button", { name: "工具/MCP: 2 个可用" }));
     await user.click(screen.getByRole("button", { name: /@read_file/ }));
 
-    expect(screen.getByPlaceholderText("Chat with the agent")).toHaveValue("@read_file ");
+    expect(screen.getByPlaceholderText("直接与智能体对话")).toHaveValue("@read_file ");
 
-    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
-    await user.click(screen.getByRole("button", { name: "Plugins / MCP" }));
+    await user.click(screen.getByRole("button", { name: "打开输入设置" }));
+    await user.click(screen.getByRole("button", { name: "插件 / MCP" }));
     expect(screen.getByText("github.search")).toBeInTheDocument();
     const githubButtons = screen.getAllByRole("button", { name: /@github_search/ });
     await user.click(githubButtons[githubButtons.length - 1]);
 
-    expect(screen.getByPlaceholderText("Chat with the agent")).toHaveValue(
+    expect(screen.getByPlaceholderText("直接与智能体对话")).toHaveValue(
       "@read_file @github_search ",
     );
   });
@@ -332,14 +332,14 @@ describe("ChatSurface Workspace shell integration", () => {
     const stream = streamController();
     const props = renderSurface({ stream });
 
-    await user.click(screen.getByRole("button", { name: "Open composer settings" }));
-    const planSwitch = screen.getByRole("switch", { name: "Plan mode" });
+    await user.click(screen.getByRole("button", { name: "打开输入设置" }));
+    const planSwitch = screen.getByRole("switch", { name: "计划模式" });
     expect(planSwitch).toHaveClass("inline-flex", "shrink-0");
     await user.click(planSwitch);
     expect(props.onWorkspaceModeChange).toHaveBeenCalledWith("markdown_plan");
 
     await user.type(
-      screen.getByPlaceholderText("Describe a goal; returns a markdown plan"),
+      screen.getByPlaceholderText("描述目标，返回 markdown 规划"),
       "make a plan",
     );
     await user.keyboard("{Enter}");
@@ -357,22 +357,22 @@ describe("ChatSurface Workspace shell integration", () => {
     const user = userEvent.setup();
     const props = renderSurface();
 
-    await user.type(screen.getByPlaceholderText("Chat with the agent"), "/model ");
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "/model ");
     await user.keyboard("{Enter}");
 
-    expect(screen.getByRole("dialog", { name: "Switch model" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "切换模型" })).toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: /DeepSeek Pro/ }));
 
     expect(props.onRequestModelPicker).not.toHaveBeenCalled();
     expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
-    expect(screen.queryByRole("dialog", { name: "Switch model" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "切换模型" })).not.toBeInTheDocument();
   });
 
   it("dispatches slash commands when menu items are clicked with the mouse", async () => {
     const user = userEvent.setup();
     const props = renderSurface();
 
-    await user.type(screen.getByPlaceholderText("Chat with the agent"), "/");
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "/");
     await user.click(screen.getByRole("option", { name: /\/search/ }));
 
     expect(props.onOpenSearch).toHaveBeenCalledTimes(1);
@@ -402,7 +402,7 @@ describe("ChatSurface Workspace shell integration", () => {
     const stream = streamController();
     renderSurface({ stream });
 
-    await user.click(screen.getByRole("button", { name: "Approve & run" }));
+    await user.click(screen.getByRole("button", { name: "批准并执行" }));
 
     await waitFor(() => expect(stream.driveBranch).toHaveBeenCalledTimes(1));
     expect(stream.driveBranch).toHaveBeenCalledWith(
@@ -439,7 +439,7 @@ describe("ChatSurface Workspace shell integration", () => {
 
     expect(screen.getByText("first answer")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Branch" }));
+    await user.click(screen.getByRole("button", { name: "分支" }));
 
     await waitFor(() => expect(stream.driveBranch).toHaveBeenCalledTimes(1));
     const siblings = useWorkspaceStore
@@ -454,10 +454,10 @@ describe("ChatSurface Workspace shell integration", () => {
     });
     expect(screen.getByText("2/2")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Previous branch" }));
+    await user.click(screen.getByRole("button", { name: "上一个分支" }));
     expect(screen.getByText("1/2")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Next branch" }));
+    await user.click(screen.getByRole("button", { name: "下一个分支" }));
     expect(screen.getByText("2/2")).toBeInTheDocument();
   });
 
@@ -502,7 +502,7 @@ describe("ChatSurface Workspace shell integration", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: /Context window: 1% used, 7 estimated prompt tokens of 1m/,
+        name: /背景信息窗口：1% 已用，预计发送 7 标记，共 1m/,
       }),
     );
 
@@ -515,7 +515,7 @@ describe("ChatSurface Workspace shell integration", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("button", {
-          name: /Context window: 1% used, 5 estimated prompt tokens of 1m/,
+          name: /背景信息窗口：1% 已用，预计发送 5 标记，共 1m/,
         }),
       ).toBeInTheDocument(),
     );
@@ -544,7 +544,7 @@ describe("ChatSurface Workspace shell integration", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: /Context window: .*Click to compress context/,
+        name: /背景信息窗口：.*点击压缩上下文/,
       }),
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));

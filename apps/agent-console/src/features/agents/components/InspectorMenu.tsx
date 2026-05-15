@@ -23,9 +23,9 @@ export function InspectorMenu({ onOpenInspector }: InspectorMenuProps): JSX.Elem
   const containerRef = useRef<HTMLDivElement>(null);
   useOutsideClick(containerRef, () => setOpen(false), open);
 
-  const rootLabel = text("Inspector", "Inspector");
-  const artifactsLabel = text("Artifacts", "Artifacts");
-  const runtimeLabel = text("Runtime", "Runtime");
+  const rootLabel = text("检查器", "Inspector");
+  const artifactsLabel = text("产物", "Artifacts");
+  const runtimeLabel = text("运行时", "Runtime");
 
   const handleSelect = (section: InspectorSection): void => {
     onOpenInspector(section);

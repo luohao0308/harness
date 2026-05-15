@@ -62,7 +62,7 @@ import {
 } from "./agentWorkspaceDerive";
 
 export function AgentWorkspacePage() {
-  const { text, isChinese } = useI18n();
+  const { text } = useI18n();
   const { agentId = "default" } = useParams();
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
@@ -155,7 +155,7 @@ export function AgentWorkspacePage() {
   useEffect(() => {
     useWorkspaceStore.getState().setAgentScope(agentId);
     const now = new Date().toISOString();
-    const locale = isChinese ? "zh-CN" : "en";
+    const locale = "zh-CN";
     const collapsed = readHistoryPanelCollapsed(agentId);
 
     const applyContextMaxTokens = (): void => {
@@ -247,8 +247,7 @@ export function AgentWorkspacePage() {
     return () => {
       useWorkspaceStore.getState().setAgentScope(null);
     };
-    // We intentionally skip `isChinese` from deps: the locale only governs
-    // the initial genesis title; changing locale later should not rehydrate.
+    // Locale is fixed Chinese; changing old locale state must not rehydrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, hydrateFromConversations]);
 
@@ -393,7 +392,7 @@ export function AgentWorkspacePage() {
     : historyPanelCollapsed;
 
   return (
-    <ConsoleShell title={text("Agent 工作台", "Agent Workspace")}>
+    <ConsoleShell title={text("智能体工作台", "Agent Workspace")}>
       <div className="relative flex h-full min-h-[calc(100vh-3.5rem)] w-full min-w-0 bg-white">
         <ConversationHistoryPanel
           collapsed={historyCollapsed}

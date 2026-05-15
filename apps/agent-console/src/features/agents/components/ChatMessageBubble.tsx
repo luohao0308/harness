@@ -156,7 +156,7 @@ export function ChatMessageBubble({
                     className="rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-500"
                   >
                     <summary className="cursor-pointer font-medium text-slate-700">
-                      {text("思考过程 / Thinking", "Thinking trace")}
+                      {text("思考过程", "Thinking trace")}
                     </summary>
                     <div className="mt-2 whitespace-pre-wrap">{block}</div>
                   </details>
@@ -165,7 +165,7 @@ export function ChatMessageBubble({
             )}
             {showPlaceholder ? (
               <span className="italic text-slate-500">
-                {text("正在生成 · Thinking...", "Generating · Thinking...")}
+                {text("正在生成...", "Generating · Thinking...")}
               </span>
             ) : (
               <div>{renderMarkdown(visibleContent)}</div>
@@ -403,8 +403,8 @@ function MetadataLine({
         aligned === "end" ? "justify-end" : "justify-start",
       )}
     >
-      {typeof input_tokens === "number" && <span>{input_tokens} in</span>}
-      {typeof output_tokens === "number" && <span>{output_tokens} out</span>}
+      {typeof input_tokens === "number" && <span>{input_tokens} 输入</span>}
+      {typeof output_tokens === "number" && <span>{output_tokens} 输出</span>}
       {typeof cost_usd === "string" && cost_usd.length > 0 && <span>${cost_usd}</span>}
       {typeof duration_ms === "number" && <span>{duration_ms}ms</span>}
     </div>

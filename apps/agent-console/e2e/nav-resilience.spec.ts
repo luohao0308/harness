@@ -96,23 +96,20 @@ test.describe("Navigation resilience", () => {
     await routeApis(page);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/agents/default/workspace");
-
-    // Switch to English
-    await page.getByRole("button", { name: "语言" }).click();
-    await expect(page.getByRole("button", { name: "Language" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Language|语言/ })).toHaveCount(0);
 
     // Send a message
-    const composer = page.getByPlaceholder("Chat with the agent");
+    const composer = page.getByPlaceholder("直接与智能体对话");
     await composer.fill("test navigation resilience");
-    await page.getByRole("button", { name: "Send" }).click();
+    await page.locator('button[aria-label="发送"]').click();
 
     // Wait for run_created (Run Detail link appears)
     await expect(
-      page.getByRole("link", { name: /Run Detail|Run 详情/ }),
+      page.locator('a[aria-label="运行详情"]'),
     ).toBeVisible({ timeout: 10_000 });
 
     // Click the Run Detail link (client-side navigation via React Router)
-    await page.getByRole("link", { name: /Run Detail|Run 详情/ }).click();
+    await page.locator('a[aria-label="运行详情"]').click();
 
     // Verify we navigated to Run Detail
     await page.waitForURL(`**/runs/${STABLE_RUN_ID}`);

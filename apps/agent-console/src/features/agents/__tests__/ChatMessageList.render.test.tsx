@@ -190,4 +190,34 @@ describe("ChatMessageList render regression (React error #310)", () => {
     container.remove();
     errorSpy.mockRestore();
   });
+
+  it("renders token metadata with Chinese labels", async () => {
+    const assistantNode = makeNode({
+      id: "a1",
+      role: "assistant",
+      content: "Token accounting",
+      metadata: {
+        input_tokens: 12,
+        output_tokens: 34,
+        cost_usd: "0.01",
+        duration_ms: 56,
+      },
+    });
+
+    await act(async () => {
+      root.render(<ChatMessageList {...buildProps([assistantNode])} />);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("12 输入");
+    expect(text).toContain("34 输出");
+    expect(text).not.toContain("12 in");
+    expect(text).not.toContain("34 out");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
 });
