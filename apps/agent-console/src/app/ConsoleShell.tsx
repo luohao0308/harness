@@ -24,24 +24,21 @@ import { environmentLabel } from "../lib/labels";
 import { cn } from "../lib/utils";
 
 const navItems = [
-  { to: "/agents", label: "Agent", en: "Agents", icon: Bot },
-  { to: "/runs", label: "Run 历史", en: "Runs", icon: ListChecks },
-  { to: "/subagents", label: "子 Agent", en: "Subagents", icon: Bot },
-  { to: "/sandboxes", label: "沙箱", en: "Sandboxes", icon: Box },
-  { to: "/tools", label: "工具", en: "Tools", icon: PlugZap },
-  { to: "/observability", label: "观测", en: "Observability", icon: Activity },
-  { to: "/evals", label: "评测", en: "Evals", icon: FlaskConical },
-  { to: "/settings/policies", label: "策略", en: "Policies", icon: ShieldCheck },
-  { to: "/settings/models", label: "模型", en: "Models", icon: Brain },
+  { to: "/agents", label: "智能体", icon: Bot },
+  { to: "/runs", label: "运行历史", icon: ListChecks },
+  { to: "/subagents", label: "子代理", icon: Bot },
+  { to: "/sandboxes", label: "沙箱", icon: Box },
+  { to: "/tools", label: "工具", icon: PlugZap },
+  { to: "/observability", label: "观测", icon: Activity },
+  { to: "/evals", label: "评测", icon: FlaskConical },
+  { to: "/settings/policies", label: "策略", icon: ShieldCheck },
+  { to: "/settings/models", label: "模型", icon: Brain },
 ];
 
 export function ConsoleShell({ children, title }: { children: ReactNode; title: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const environment = useConsoleStore((state) => state.environment);
-  const locale = useConsoleStore((state) => state.locale);
-  const setLocale = useConsoleStore((state) => state.setLocale);
-  const isChinese = locale === "zh-CN";
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
   const [isNarrowShell, setIsNarrowShell] = useState(false);
@@ -50,15 +47,9 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const canToggleSidebar = !sidebarForceCollapsed;
   const sidebarToggleLabel = canToggleSidebar
     ? effectiveSidebarCollapsed
-      ? isChinese
-        ? "展开侧边栏"
-        : "Expand sidebar"
-      : isChinese
-        ? "折叠侧边栏"
-        : "Collapse sidebar"
-    : isChinese
-      ? "侧边栏已收起"
-      : "Sidebar collapsed";
+      ? "展开侧边栏"
+      : "折叠侧边栏"
+    : "侧边栏已收起";
 
   useEffect(() => {
     if (isWorkspaceRoute) {
@@ -78,7 +69,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   return (
     <div
       className="flex min-h-screen bg-page text-slate-800"
-      lang={isChinese ? "zh-CN" : "en-US"}
+      lang="zh-CN"
       translate="no"
     >
       <aside
@@ -136,7 +127,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
               <NavLink
                 key={item.to}
                 to={item.to}
-                title={isChinese ? item.label : item.en}
+                title={item.label}
                 className={({ isActive }) =>
                   cn(
                     "mb-0.5 flex h-8 items-center rounded-md text-[13px]",
@@ -154,7 +145,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                     effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
                   )}
                 >
-                  {isChinese ? item.label : item.en}
+                  {item.label}
                 </span>
               </NavLink>
             );
@@ -174,7 +165,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
               )}
             >
-              {isChinese ? "系统运行正常" : "All systems operational"}
+              系统运行正常
             </span>
           </div>
           <div
@@ -191,32 +182,25 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 min-w-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:gap-3 sm:px-5">
           <div className="flex min-w-0 items-center gap-2 text-[13px] text-slate-500">
-            <span>{isChinese ? "控制台" : "Console"}</span>
+            <span>控制台</span>
             <span className="text-slate-300">/</span>
             <span className="truncate text-slate-900">{title}</span>
           </div>
           <div className="ml-6 hidden h-8 w-72 items-center gap-2 rounded-md border border-slate-200 bg-slate-50/70 px-2.5 lg:flex">
             <Search className="h-3.5 w-3.5 text-slate-400" />
             <input
-              aria-label={isChinese ? "搜索" : "Search"}
-              placeholder={isChinese ? "搜索 Run、Agent、事件..." : "Search runs, agents, events..."}
+              aria-label="搜索"
+              placeholder="搜索运行、智能体、事件..."
               className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-slate-400"
             />
             <span className="font-mono text-[10px] text-slate-400">⌘K</span>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <Button className="hidden gap-1.5 md:inline-flex">
-              {isChinese ? "环境" : "env"}: {isChinese ? environmentLabel(environment) : environment}{" "}
+              环境: {environmentLabel(environment)}{" "}
               <ChevronDown className="h-3 w-3" />
             </Button>
-            <Button
-              variant="ghost"
-              onClick={() => setLocale(isChinese ? "en-US" : "zh-CN")}
-              aria-label={isChinese ? "语言" : "Language"}
-            >
-              {isChinese ? "中文" : "English"}
-            </Button>
-            <Button variant="ghost" className="w-8 px-0" aria-label={isChinese ? "告警" : "Alerts"}>
+            <Button variant="ghost" className="w-8 px-0" aria-label="告警">
               <Bell className="h-4 w-4" />
             </Button>
             <Button
@@ -224,7 +208,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
               className="hidden sm:inline-flex"
               onClick={() => navigate("/agents/default/workspace")}
             >
-              <Plus className="h-3.5 w-3.5" /> {isChinese ? "新对话" : "New chat"}
+              <Plus className="h-3.5 w-3.5" /> 新对话
             </Button>
             <div className="ml-1 hidden h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700 sm:flex">
               LH

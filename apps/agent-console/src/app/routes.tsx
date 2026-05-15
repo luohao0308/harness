@@ -50,14 +50,14 @@ function ConsoleRouteError() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-slate-900">
       <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-5 shadow-panel">
         <div className="text-base font-semibold">控制台出现异常</div>
-        <div className="mt-1 text-xs text-slate-400">Console route error</div>
+        <div className="mt-1 text-xs text-slate-400">控制台路由错误</div>
         <p className="mt-3 rounded-md bg-slate-50 p-3 text-sm text-slate-600">{message}</p>
         <div className="mt-4 flex gap-2">
           <a
             href="/agents/default/workspace"
             className="inline-flex h-8 items-center rounded-md bg-slate-900 px-3 text-xs font-medium text-white"
           >
-            返回 Agent 工作台
+            返回智能体工作台
           </a>
           <button
             type="button"
