@@ -21,7 +21,7 @@ export function RunHistoryPage() {
   const failed = summary.data?.failed_task_total ?? 0;
 
   return (
-    <ConsoleShell title={text("Agent Run 历史", "Agent Runs")}>
+    <ConsoleShell title={text("智能体运行历史", "Agent Runs")}>
       <div className="space-y-4 p-4">
         <section className="grid grid-cols-12 gap-4">
           <Card className="col-span-8 p-4">
@@ -29,11 +29,11 @@ export function RunHistoryPage() {
               <div>
                 <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
                   <GitBranch className="h-4 w-4" />
-                  {text("Agent Run 审计历史", "Agent Run Audit History")}
+                  {text("智能体运行审计历史", "Agent Run Audit History")}
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
                   {text(
-                    "这里只展示 Agent Workspace 产生的运行记录。底层 tasks 表保留为兼容存储，产品语义统一为 Agent Run。",
+                    "这里只展示智能体工作台产生的运行记录。底层 tasks 表保留为兼容存储，产品语义统一为智能体运行。",
                     "This page shows runs produced by Agent Workspace. The tasks table remains only as compatibility storage; product language is Agent Run.",
                   )}
                 </p>
@@ -41,7 +41,7 @@ export function RunHistoryPage() {
               <Link to="/agents/default/workspace">
                 <Button variant="primary">
                   <Bot className="h-3.5 w-3.5" />
-                  {text("打开 Agent Workspace", "Open Agent Workspace")}
+                  {text("打开智能体工作台", "Open Agent Workspace")}
                 </Button>
               </Link>
             </div>
@@ -53,18 +53,18 @@ export function RunHistoryPage() {
         <Card className="overflow-hidden">
           <CardHeader>
             <div className="text-sm font-semibold text-slate-900">
-              {text("Run 列表", "Run List")}
+              {text("运行列表", "Run List")}
             </div>
             <div className="text-xs text-slate-500">
               {runs.isLoading
                 ? text("加载中...", "Loading...")
-                : text(`${items.length} 个 Run`, `${items.length} runs`)}
+                : text(`${items.length} 个运行`, `${items.length} runs`)}
             </div>
           </CardHeader>
           <Table>
             <thead className="bg-slate-50 text-slate-500">
               <tr>
-                <Th>Run</Th>
+                <Th>运行</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("模型", "Model")}</Th>
                 <Th>{text("Harness", "Harness")}</Th>
@@ -80,7 +80,7 @@ export function RunHistoryPage() {
                 <tr>
                   <Td colSpan={6} className="py-12 text-center text-slate-500">
                     {text(
-                      "暂无 Agent Run。请从 Agent Workspace 输入目标并生成 Plan。",
+                      "暂无智能体运行。请从智能体工作台输入目标并生成计划。",
                       "No Agent Runs yet. Start from Agent Workspace and generate a Plan.",
                     )}
                   </Td>
@@ -114,9 +114,9 @@ function RunRow({ run }: { run: Task }) {
       </Td>
       <Td>
         <div className="flex flex-wrap gap-1">
-          {run.enable_sandbox && <Badge tone="warning">Sandbox</Badge>}
-          {run.enable_network && <Badge tone="info">Network</Badge>}
-          <Badge tone="purple">Subagents {run.max_subagents}</Badge>
+          {run.enable_sandbox && <Badge tone="warning">沙箱</Badge>}
+          {run.enable_network && <Badge tone="info">网络</Badge>}
+          <Badge tone="purple">子代理{run.max_subagents}</Badge>
         </div>
       </Td>
       <Td className="font-mono text-slate-500">{formatShortDate(run.updated_at)}</Td>

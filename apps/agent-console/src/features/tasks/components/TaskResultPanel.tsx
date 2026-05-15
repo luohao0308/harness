@@ -44,12 +44,12 @@ export function TaskResultPanel({ task, result }: { task: Task; result?: TaskRes
       {result?.subagent_results && result.subagent_results.length > 0 && (
         <div className="border-b border-slate-100 p-3">
           <div className="mb-2 flex items-center gap-1 text-xs font-semibold text-slate-900">
-            <Bot className="h-3.5 w-3.5" /> {text("异步子 Agent 结果", "Async Subagent Results")}
+            <Bot className="h-3.5 w-3.5" /> {text("异步子代理结果", "Async Subagent Results")}
           </div>
           <Table>
             <thead className="bg-slate-50/40 text-slate-500">
               <tr>
-                <Th>{text("子 Agent", "Subagent")}</Th>
+                <Th>{text("子代理", "Subagent")}</Th>
                 <Th>{text("来源步骤", "Source Step")}</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("摘要", "Summary")}</Th>
