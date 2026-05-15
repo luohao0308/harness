@@ -11,5 +11,5 @@ export const useConsoleStore = create<ConsoleState>((set) => ({
   environment: "production",
   locale: "zh-CN",
   setEnvironment: (environment) => set({ environment }),
-  setLocale: (locale) => set({ locale }),
+  setLocale: () => set({ locale: "zh-CN" }),
 }));

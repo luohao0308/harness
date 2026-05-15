@@ -11,18 +11,19 @@ describe("ConsoleShell", () => {
 
     render(
       <MemoryRouter initialEntries={["/agents/default/workspace"]}>
-        <ConsoleShell title="Agent Workspace">
-          <div>Workspace child</div>
+        <ConsoleShell title="智能体工作台">
+          <div>工作台内容</div>
         </ConsoleShell>
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Workspace child")).toBeInTheDocument();
-    expect(screen.getByText("Console")).toBeInTheDocument();
-    expect(screen.getByText("Agent Workspace")).toBeInTheDocument();
-    const sidebarToggle = screen.getByLabelText("Sidebar collapsed");
+    expect(screen.getByText("工作台内容")).toBeInTheDocument();
+    expect(screen.getByText("控制台")).toBeInTheDocument();
+    expect(screen.getByText("智能体工作台")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Language|语言/ })).not.toBeInTheDocument();
+    const sidebarToggle = screen.getByLabelText("侧边栏已收起");
     expect(sidebarToggle).toBeInTheDocument();
     expect(sidebarToggle).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByLabelText("Search")).toBeInTheDocument();
+    expect(screen.getByLabelText("搜索")).toBeInTheDocument();
   });
 });
