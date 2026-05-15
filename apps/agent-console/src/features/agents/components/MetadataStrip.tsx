@@ -96,7 +96,7 @@ export function MetadataStrip({
       </span>
       <span aria-hidden="true">·</span>
       <span>
-        {text("Run", "Run")}{" "}
+        {text("运行", "Run")}{" "}
         {activeRunId !== null && activeRunId.length > 0 ? (
           <button
             type="button"

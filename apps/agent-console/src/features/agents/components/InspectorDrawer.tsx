@@ -114,7 +114,7 @@ export function InspectorDrawer({
             </div>
             <div className="mt-0.5 text-[11px] text-slate-500">
               {text(
-                "按需展开的运行观察面板，详细操作请前往 Run 详情。",
+                "按需展开的运行观察面板，详细操作请前往运行详情。",
                 "On-demand inspector. Detailed actions live in Run Detail.",
               )}
             </div>
@@ -236,7 +236,7 @@ function RuntimeSection({
       <SectionHeader
         icon={<Shield className="h-4 w-4" />}
         title={text("运行时", "Runtime")}
-        aside={activeRunId ? `run ${activeRunId.slice(0, 8)}` : text("未创建", "idle")}
+        aside={activeRunId ? `运行 ${activeRunId.slice(0, 8)}` : text("未创建", "idle")}
       />
       <div className="space-y-3 p-3">
         {pendingApprovalCount > 0 && (
@@ -245,7 +245,7 @@ function RuntimeSection({
             className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800"
           >
             {text(
-              `有 ${pendingApprovalCount} 个待审批操作，请前往 Run 详情处理。`,
+              `有 ${pendingApprovalCount} 个待审批操作，请前往运行详情处理。`,
               `${pendingApprovalCount} approvals pending; please handle them in Run Detail.`,
             )}
           </div>
@@ -254,7 +254,7 @@ function RuntimeSection({
         {activeRunId === null ? (
           <EmptyState
             label={text(
-              "Run 尚未创建，提交消息后可查看运行时。",
+              "运行尚未创建，提交消息后可查看运行时。",
               "Run not created yet. Submit a message to populate runtime links.",
             )}
           />
@@ -279,7 +279,7 @@ function LinkGroup({ runId }: { runId: string }): JSX.Element {
     {
       to: `/runs/${runId}#approvals`,
       label: text("审批", "Approvals"),
-      hint: text("在 Run 详情内处理审批", "Handle approvals inside Run Detail"),
+      hint: text("在运行详情内处理审批", "Handle approvals inside Run Detail"),
     },
     {
       to: `/runs/${runId}#plan`,
@@ -299,7 +299,7 @@ function LinkGroup({ runId }: { runId: string }): JSX.Element {
     {
       to: "/observability",
       label: text("可观测性", "Observability"),
-      hint: text("跨 Run 的追踪与指标", "Cross-run traces and metrics"),
+      hint: text("跨运行的追踪与指标", "Cross-run traces and metrics"),
     },
     {
       to: "/evals",

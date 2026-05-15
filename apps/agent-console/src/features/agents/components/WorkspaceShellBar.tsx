@@ -53,10 +53,10 @@ export function WorkspaceShellBar({
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsPickerRef = useRef<HTMLDivElement | null>(null);
   const runLabel = activeRunId
-    ? text("Run 详情", "Run Detail")
-    : text("Run 未创建", "No run yet");
+    ? text("运行详情", "Run Detail")
+    : text("运行未创建", "No run yet");
   const toolsChipLabel = text(
-    `Tools/MCP: ${tools.length} 个可用`,
+    `工具/MCP: ${tools.length} 个可用`,
     `Tools/MCP: ${tools.length} available`,
   );
   const toolsPreviewLabel = formatToolsPreview(tools, text);
@@ -70,8 +70,8 @@ export function WorkspaceShellBar({
           <Link
             to="/agents"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-            aria-label={text("返回 Agent Studio", "Back to Agent Studio")}
-            title={text("返回 Agent Studio", "Back to Agent Studio")}
+            aria-label={text("返回智能体列表", "Back to Agent Studio")}
+            title={text("返回智能体列表", "Back to Agent Studio")}
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
           </Link>
@@ -81,7 +81,7 @@ export function WorkspaceShellBar({
               <span className="truncate">{agentName}</span>
             </span>
             <div className="hidden text-[11px] leading-4 text-slate-500 sm:block">
-              {text("Model + Harness = Agent", "Model + Harness = Agent")}
+              {text("模型 + Harness = 智能体", "Model + Harness = Agent")}
               <span className="mx-1 text-slate-300">·</span>
               {text("工作台", "Workspace")} · {agentId}
             </div>
@@ -169,7 +169,7 @@ export function WorkspaceShellBar({
               title={runLabel}
             >
               <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
-              <span className="hidden text-slate-500 lg:inline">Run</span>
+              <span className="hidden text-slate-500 lg:inline">运行</span>
               <span>{runStatus ?? text("已创建", "Created")}</span>
             </Link>
           ) : (
@@ -179,7 +179,7 @@ export function WorkspaceShellBar({
               title={runLabel}
             >
               <MessageSquareText aria-hidden="true" className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">Run</span>
+              <span className="hidden lg:inline">运行</span>
               <span>{text("待创建", "Idle")}</span>
             </span>
           )}

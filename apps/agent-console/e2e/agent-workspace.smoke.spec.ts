@@ -88,18 +88,18 @@ test.describe("Agent Workspace browser smoke", () => {
 
   test("desktop workspace controls stay distinct and usable", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await openWorkspaceInEnglish(page);
+    await openWorkspace(page);
 
-    await expect(page.getByText("Model + Harness = Agent")).toBeVisible();
+    await expect(page.getByText("模型 + Harness = 智能体")).toBeVisible();
     await expect(page.getByText("Default Agent").first()).toBeVisible();
     await expect(composer(page)).toBeVisible();
-    await expect(page.getByLabel("No run yet")).toBeVisible();
+    await expect(page.getByLabel("运行未创建")).toBeVisible();
 
     await expect(
       page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
     ).toHaveCount(0);
     await page.getByRole("button", { name: "deepseek-v4-flash" }).click();
-    const composerModelList = page.getByRole("listbox", { name: "Switch model" });
+    const composerModelList = page.getByRole("listbox", { name: "切换模型" });
     await expect(composerModelList).toBeVisible();
     await composerModelList.press("ArrowDown");
     await composerModelList.press("Enter");
@@ -108,37 +108,37 @@ test.describe("Agent Workspace browser smoke", () => {
     ).toBeVisible();
     await expect(composerModelList).toBeHidden();
 
-    await page.getByRole("button", { name: "Tools/MCP: 2 available" }).click();
-    const toolsDialog = page.getByRole("dialog", { name: "Tools" });
+    await page.getByRole("button", { name: "工具/MCP: 2 个可用" }).click();
+    const toolsDialog = page.getByRole("dialog", { name: "工具" });
     await expect(toolsDialog).toBeVisible();
     await expect(toolsDialog.getByRole("button", { name: /@read_file/ })).toBeVisible();
-    await expect(toolsDialog.getByText("Plugins / MCP")).toHaveCount(0);
+    await expect(toolsDialog.getByText("插件 / MCP")).toHaveCount(0);
     await expect(toolsDialog.getByText("github.search")).toHaveCount(0);
     await page.mouse.click(20, 20);
     await expect(toolsDialog).toBeHidden();
 
     await openComposerSettings(page);
-    const settingsDialog = page.getByRole("dialog", { name: "Composer settings" });
+    const settingsDialog = page.getByRole("dialog", { name: "输入设置" });
     await expect(settingsDialog).toBeVisible();
-    await expect(settingsDialog.getByText("Composer settings")).toHaveCount(0);
+    await expect(settingsDialog.getByText("输入设置")).toHaveCount(0);
     await expect(
-      settingsDialog.getByRole("button", { name: "Add photos and files" }),
+      settingsDialog.getByRole("button", { name: "添加照片和文件" }),
     ).toBeVisible();
-    await expect(settingsDialog.getByRole("switch", { name: "Plan mode" })).toBeVisible();
-    await expect(settingsDialog.getByRole("button", { name: "Plugins / MCP" })).toBeVisible();
+    await expect(settingsDialog.getByRole("switch", { name: "计划模式" })).toBeVisible();
+    await expect(settingsDialog.getByRole("button", { name: "插件 / MCP" })).toBeVisible();
     await expect(settingsDialog.getByRole("button", { name: /close/i })).toHaveCount(0);
     await page.mouse.click(20, 20);
     await expect(settingsDialog).toBeHidden();
 
     await openComposerSettings(page);
-    await page.getByRole("button", { name: "Plugins / MCP" }).click();
+    await page.getByRole("button", { name: "插件 / MCP" }).click();
     await expect(page.getByText("github.search")).toBeVisible();
     await page.getByRole("button", { name: /@github_search/ }).click();
     await expect(composer(page)).toHaveValue("@github_search ");
 
     await composer(page).fill("/model ");
     await composer(page).press("Enter");
-    const bottomModelDialog = page.getByRole("dialog", { name: "Switch model" });
+    const bottomModelDialog = page.getByRole("dialog", { name: "切换模型" });
     await expect(bottomModelDialog).toBeVisible();
     await expect(page.getByRole("dialog", { name: "Tools" })).toHaveCount(0);
     await bottomModelDialog.getByRole("option", { name: /deepseek-v4-flash/ }).click();
@@ -148,48 +148,48 @@ test.describe("Agent Workspace browser smoke", () => {
     await expect(page.getByRole("button", { name: "deepseek-v4-flash" })).toBeVisible();
 
     await openComposerSettings(page);
-    await page.getByRole("switch", { name: "Plan mode" }).click();
-    await expect(page.getByPlaceholder("Describe a goal; returns a markdown plan")).toBeVisible();
+    await page.getByRole("switch", { name: "计划模式" }).click();
+    await expect(page.getByPlaceholder("描述目标，返回 markdown 规划")).toBeVisible();
 
-    await page.getByPlaceholder("Describe a goal; returns a markdown plan").fill("draft a plan");
-    await page.getByRole("button", { name: "Send" }).click();
-    await expect(page.getByRole("alert")).toContainText("Cannot reach Harness backend");
+    await page.getByPlaceholder("描述目标，返回 markdown 规划").fill("draft a plan");
+    await sendButton(page).click();
+    await expect(page.getByRole("alert")).toContainText("无法连接 Harness 后端");
     await expect(composer(page)).toBeVisible();
   });
 
   test("narrow workspace keeps compact popovers inside the viewport", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await openWorkspaceInEnglish(page);
+    await openWorkspace(page);
 
     await expect(composer(page)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+    await expect(sendButton(page)).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
     ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "deepseek-v4-flash" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Tools/MCP: 2 available" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Open composer settings" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "工具/MCP: 2 个可用" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "打开输入设置" })).toBeVisible();
 
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
     await page.getByRole("button", { name: "deepseek-v4-flash" }).click();
-    await expect(page.getByRole("listbox", { name: "Switch model" })).toBeVisible();
+    await expect(page.getByRole("listbox", { name: "切换模型" })).toBeVisible();
     await expect(
-      locatorInsideViewport(page, page.getByRole("listbox", { name: "Switch model" })),
+      locatorInsideViewport(page, page.getByRole("listbox", { name: "切换模型" })),
     ).resolves.toBe(true);
     await page.mouse.click(20, 20);
 
-    await page.getByRole("button", { name: "Tools/MCP: 2 available" }).click();
-    await expect(page.getByRole("dialog", { name: "Tools" })).toBeVisible();
+    await page.getByRole("button", { name: "工具/MCP: 2 个可用" }).click();
+    await expect(page.getByRole("dialog", { name: "工具" })).toBeVisible();
     await expect(
-      locatorInsideViewport(page, page.getByRole("dialog", { name: "Tools" })),
+      locatorInsideViewport(page, page.getByRole("dialog", { name: "工具" })),
     ).resolves.toBe(true);
     await page.mouse.click(20, 20);
 
     await openComposerSettings(page);
-    await expect(page.getByRole("dialog", { name: "Composer settings" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "输入设置" })).toBeVisible();
     await expect(
-      locatorInsideViewport(page, page.getByRole("dialog", { name: "Composer settings" })),
+      locatorInsideViewport(page, page.getByRole("dialog", { name: "输入设置" })),
     ).resolves.toBe(true);
     await composer(page).fill("mobile smoke");
     await expect(composer(page)).toHaveValue("mobile smoke");
@@ -237,18 +237,21 @@ async function fulfillJson(route: Route, payload: unknown): Promise<void> {
   });
 }
 
-async function openWorkspaceInEnglish(page: Page): Promise<void> {
+async function openWorkspace(page: Page): Promise<void> {
   await page.goto("/agents/default/workspace");
-  await page.getByRole("button", { name: "语言" }).click();
-  await expect(page.getByRole("button", { name: "Language" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Language|语言/ })).toHaveCount(0);
 }
 
 function composer(page: Page): Locator {
-  return page.getByPlaceholder(/Chat with the agent|Describe a goal; returns a markdown plan/);
+  return page.getByPlaceholder(/直接与智能体对话|描述目标，返回 markdown 规划/);
 }
 
 async function openComposerSettings(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open composer settings" }).click();
+  await page.getByRole("button", { name: "打开输入设置" }).click();
+}
+
+function sendButton(page: Page): Locator {
+  return page.locator('button[aria-label="发送"]');
 }
 
 async function hasNoHorizontalOverflow(page: Page): Promise<boolean> {

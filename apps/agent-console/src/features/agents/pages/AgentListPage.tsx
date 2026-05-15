@@ -36,10 +36,10 @@ export function AgentListPage() {
     queryKey: ["agent-knowledge", selectedAgentId],
     queryFn: () => listAgentKnowledgeSources(selectedAgentId),
   });
-  const [knowledgeName, setKnowledgeName] = useState("Default Knowledge");
-  const [knowledgeTitle, setKnowledgeTitle] = useState("Team Handbook");
+  const [knowledgeName, setKnowledgeName] = useState("默认知识源");
+  const [knowledgeTitle, setKnowledgeTitle] = useState("团队手册");
   const [knowledgeContent, setKnowledgeContent] = useState(
-    "# Team Handbook\n\nUse concise, cited answers.\n",
+    "# 团队手册\n\n使用简洁、带引用的回答。\n",
   );
   const createKnowledge = useMutation({
     mutationFn: () =>
@@ -65,16 +65,16 @@ export function AgentListPage() {
   }, [agents.data?.items, selectedAgentId]);
 
   return (
-    <ConsoleShell title={text("Agent Studio", "Agent Studio")}>
+    <ConsoleShell title={text("智能体工作室", "Agent Studio")}>
       <div className="space-y-4 p-4">
         <section className="grid grid-cols-12 gap-4">
           <div className="col-span-8">
             <h1 className="text-lg font-semibold text-slate-950">
-              {text("Agent Studio", "Agent Studio")}
+              {text("智能体工作室", "Agent Studio")}
             </h1>
             <p className="mt-1 max-w-3xl text-sm text-slate-500">
               {text(
-                "这里构建 Model + Harness = Agent。选择模型、工具、Prompt、沙箱和编排能力后进入 Workspace 运行。",
+                "这里构建“模型 + Harness = 智能体”。选择模型、工具、Prompt、沙箱和编排能力后进入工作台运行。",
                 "Build Model + Harness = Agent here. Choose model, tools, prompt, sandbox, and orchestration before entering Workspace.",
               )}
             </p>
@@ -87,7 +87,7 @@ export function AgentListPage() {
             </Link>
             <Link to="/agents/default/workspace">
               <Button variant="primary">
-                <Bot className="h-3.5 w-3.5" /> {text("打开默认 Plan", "Open Default Plan")}
+                <Bot className="h-3.5 w-3.5" /> {text("打开默认计划", "Open Default Plan")}
               </Button>
             </Link>
           </div>
@@ -122,29 +122,29 @@ export function AgentListPage() {
         <section className="grid grid-cols-6 gap-3">
           <StudioCapability
             icon={<Brain className="h-4 w-4" />}
-            title={text("Model", "Model")}
+            title={text("模型", "Model")}
             status={text("API 已接入", "API-backed")}
             description={text("DeepSeek 默认预置，自定义模型通过模型设置保存。", "DeepSeek presets and custom providers are saved in Model Settings.")}
             to="/settings/models"
           />
           <StudioCapability
             icon={<Wrench className="h-4 w-4" />}
-            title={text("Tools / MCP", "Tools / MCP")}
+            title={text("工具 / MCP", "Tools / MCP")}
             status={text("API 已接入", "API-backed")}
-            description={text("工具权限来自 Agent 定义和 Tool Registry。", "Tool access comes from Agent definitions and Tool Registry.")}
+            description={text("工具权限来自智能体定义和工具注册表。", "Tool access comes from Agent definitions and Tool Registry.")}
             to="/tools"
           />
           <StudioCapability
             icon={<ScrollText className="h-4 w-4" />}
-            title="Prompt"
+            title={text("Prompt 提示词", "Prompt")}
             status={text("只读", "Read-only")}
-            description={text("当前展示 Agent system prompt 摘要，编辑器留到后续阶段。", "Shows Agent system prompt summary; editor belongs to a later stage.")}
+            description={text("当前展示智能体 system prompt（系统提示词）摘要，编辑器留到后续阶段。", "Shows Agent system prompt summary; editor belongs to a later stage.")}
           />
           <StudioCapability
             icon={<Database className="h-4 w-4" />}
-            title="RAG"
+            title={text("RAG 知识检索", "RAG")}
             status={text("API 已接入", "API-backed")}
-            description={text("知识源可创建并回看持久化文档与索引状态。", "Knowledge sources can be created and revisited as persisted documents and index state.")}
+            description={text("RAG 指检索增强生成；知识源可创建并回看持久化文档与索引状态。", "Knowledge sources can be created and revisited as persisted documents and index state.")}
           />
           <StudioCapability
             icon={<Package className="h-4 w-4" />}
@@ -157,7 +157,7 @@ export function AgentListPage() {
             icon={<GitBranch className="h-4 w-4" />}
             title={text("编排", "Orchestration")}
             status={text("API 已接入", "API-backed")}
-            description={text("Workspace 只暴露 Plan；执行、编排和审批作为 Run 详情与 Harness 观测能力呈现。", "Workspace exposes Plan only; execution, orchestration, and approval appear as Run detail and Harness observability.")}
+            description={text("工作台只暴露计划；执行、编排和审批作为运行详情与 Harness 观测能力呈现。", "Workspace exposes Plan only; execution, orchestration, and approval appear as Run detail and Harness observability.")}
           />
         </section>
 
@@ -166,14 +166,14 @@ export function AgentListPage() {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Database className="h-4 w-4" />
-                Knowledge Harness
+                知识 Harness
               </div>
-              <Badge tone="success">{knowledge.data?.items.length ?? 0} items</Badge>
+              <Badge tone="success">{knowledge.data?.items.length ?? 0} 个来源</Badge>
             </CardHeader>
             <div className="space-y-3 p-3">
               <div className="grid gap-2">
-                <Input value={knowledgeName} onChange={(e) => setKnowledgeName(e.target.value)} placeholder="Knowledge source name" />
-                <Input value={knowledgeTitle} onChange={(e) => setKnowledgeTitle(e.target.value)} placeholder="Document title" />
+                <Input value={knowledgeName} onChange={(e) => setKnowledgeName(e.target.value)} placeholder="知识源名称" />
+                <Input value={knowledgeTitle} onChange={(e) => setKnowledgeTitle(e.target.value)} placeholder="文档标题" />
                 <textarea
                   className="min-h-28 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700"
                   value={knowledgeContent}
@@ -189,7 +189,7 @@ export function AgentListPage() {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Database className="h-4 w-4" />
-                Knowledge Sources
+                知识源
               </div>
               <span className="text-xs text-slate-500">{knowledge.data?.items.length ?? 0}</span>
             </CardHeader>
@@ -209,7 +209,7 @@ export function AgentListPage() {
                           <span className="font-mono text-[11px] text-slate-500">v{document.version}</span>
                         </div>
                         <div className="mt-1 text-slate-500">
-                          {document.chunk_count} chunks · {document.status}
+                          {document.chunk_count} 个分片 · {document.status}
                         </div>
                       </div>
                     ))}
@@ -227,7 +227,7 @@ export function AgentListPage() {
 
         {agents.isLoading && (
           <Card>
-            <div className="p-4 text-sm text-slate-500">{text("加载 Agent...", "Loading Agents...")}</div>
+            <div className="p-4 text-sm text-slate-500">{text("加载智能体...", "Loading Agents...")}</div>
           </Card>
         )}
         {agents.error && (

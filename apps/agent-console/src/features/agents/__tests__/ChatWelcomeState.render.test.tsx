@@ -20,10 +20,10 @@ describe("ChatWelcomeState", () => {
       />,
     );
 
-    expect(screen.getByText("Where should we start?")).toBeInTheDocument();
+    expect(screen.getByText("我们先从哪里开始呢？")).toBeInTheDocument();
     expect(screen.getByText(/Default Agent/)).toBeInTheDocument();
 
-    const firstPrompt = EXAMPLE_PROMPTS[0].en;
+    const firstPrompt = EXAMPLE_PROMPTS[0].zh;
     await user.click(screen.getByRole("button", { name: firstPrompt }));
 
     expect(onPickPrompt).toHaveBeenCalledWith(firstPrompt);

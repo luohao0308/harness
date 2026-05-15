@@ -39,16 +39,16 @@ export function ChatModeBanner({
 
   const copy = isPlan
     ? text(
-        "当前是 Plan-Act Run 模式，提交会创建可执行 Run。切回 Chat 或确认创建。",
+        "当前是 Plan-Act 运行模式，提交会创建可执行运行。切回对话或确认创建。",
         "Currently in Plan-Act Run mode — submitting will create an executable Run. Switch back to Chat or confirm creation.",
       )
     : text(
-        "当前是 Plan (markdown) 模式，不执行工具。切回 Chat 或去创建 Plan-Act Run。",
+        "当前是 Plan（markdown）模式，不执行工具。切回对话或去创建 Plan-Act 运行。",
         "Currently in Plan (markdown) mode — no tools will run. Switch back to Chat or create a Plan-Act Run.",
       );
 
-  const backLabel = text("切回 Chat", "Back to Chat");
-  const createLabel = text("创建 Run", "Create Run");
+  const backLabel = text("切回对话", "Back to Chat");
+  const createLabel = text("创建运行", "Create Run");
 
   return (
     <div

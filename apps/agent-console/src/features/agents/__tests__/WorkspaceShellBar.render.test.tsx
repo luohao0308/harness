@@ -89,12 +89,12 @@ describe("WorkspaceShellBar", () => {
     useConsoleStore.getState().setLocale("en-US");
     renderShell();
 
-    expect(screen.getByRole("link", { name: "Back to Agent Studio" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回智能体列表" })).toHaveAttribute(
       "href",
       "/agents",
     );
     expect(screen.getByText("Default Agent")).toBeInTheDocument();
-    expect(screen.getByText(/Model \+ Harness = Agent/)).toBeInTheDocument();
+    expect(screen.getByText(/模型 \+ Harness = 智能体/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
         name: "Current model: deepseek-v4-flash",
@@ -102,13 +102,13 @@ describe("WorkspaceShellBar", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Tools/MCP: 2 available",
+        name: "工具/MCP: 2 个可用",
       }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Model:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Context:/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Tools:/ })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("No run yet")).toBeInTheDocument();
+    expect(screen.getByLabelText("运行未创建")).toBeInTheDocument();
   });
 
   it("links to Run Detail after a run exists", () => {
@@ -119,7 +119,7 @@ describe("WorkspaceShellBar", () => {
       runStatus: "WAITING_APPROVAL",
     });
 
-    expect(screen.getByRole("link", { name: "Run Detail" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "运行详情" })).toHaveAttribute(
       "href",
       "/runs/run-123",
     );
@@ -132,10 +132,10 @@ describe("WorkspaceShellBar", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Tools/MCP: 2 available",
+        name: "工具/MCP: 2 个可用",
       }),
     );
-    expect(screen.getByRole("dialog", { name: "Tools" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "工具" })).toBeInTheDocument();
     expect(screen.queryByText("Tool capabilities")).not.toBeInTheDocument();
     expect(screen.queryByText("Plugins / MCP")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /@read_file/ }));

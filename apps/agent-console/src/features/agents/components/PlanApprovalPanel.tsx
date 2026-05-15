@@ -79,7 +79,7 @@ export function PlanApprovalPanel({
           </p>
           <p className="mt-1 text-xs text-slate-500">
             {text(
-              "批准会创建 Plan-Act Run；修改会把规划填回输入框；丢弃会隐藏本次审批。",
+              "批准会创建 Plan-Act 运行；修改会把规划填回输入框；丢弃会隐藏本次审批。",
               "Approving creates a Plan-Act Run; Edit fills the composer with the plan; Discard dismisses it.",
             )}
           </p>
