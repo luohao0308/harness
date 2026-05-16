@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -16,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.db.models import ModelCall, SystemSetting, Task, utc_now
+from app.db.models import ModelCall, PromptAssemblyManifest, SystemSetting, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.observability.metrics import (
@@ -998,12 +999,22 @@ class AuditedModelGateway:
         task_id: str,
         agent_run_id: str | None = None,
         gateway: ModelGateway | None = None,
+        grounding_correlation_id: str | None = None,
+        prompt_manifest_id: str | None = None,
+        prompt_manifest_version: str | None = None,
+        retrieval_evidence_ids: list[str] | None = None,
+        evidence_text_sha256: str | None = None,
     ) -> None:
         self.session = session
         self.task_id = task_id
         self.agent_run_id = agent_run_id
         self.gateway = gateway
         self.event_store = EventStore(session)
+        self.grounding_correlation_id = grounding_correlation_id
+        self.prompt_manifest_id = prompt_manifest_id
+        self.prompt_manifest_version = prompt_manifest_version
+        self.retrieval_evidence_ids = retrieval_evidence_ids or []
+        self.evidence_text_sha256 = evidence_text_sha256
 
     def complete(
         self,
@@ -1014,7 +1025,7 @@ class AuditedModelGateway:
         fallbacks = fallback_requests or []
         primary_error: str | None = None
         try:
-            return self._attempt(request_payload)
+            return self._attempt(request_payload, attempt_index=1)
         except ModelGatewayError as exc:
             primary_error = str(exc)
             if not fallbacks:
@@ -1041,18 +1052,19 @@ class AuditedModelGateway:
                 },
             )
             try:
-                return self._attempt(fallback)
+                return self._attempt(fallback, attempt_index=fallback_index + 1)
             except ModelGatewayError as exc:
                 last_error = exc
         if last_error is not None:
             raise last_error
         raise ModelGatewayError("model gateway failed")
 
-    def _attempt(self, request_payload: ModelRequest) -> ModelResponse:
+    def _attempt(self, request_payload: ModelRequest, *, attempt_index: int) -> ModelResponse:
         request_payload, settings = ModelSettingsResolver(self.session).resolve(
             task_id=self.task_id,
             request_payload=request_payload,
         )
+        self._validate_grounding_binding(request_payload)
         limiter_key = (
             f"{settings.organization_id or 'global'}:"
             f"{request_payload.model_provider}:{request_payload.model_name}"
@@ -1061,6 +1073,7 @@ class AuditedModelGateway:
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         gateway = self.gateway or self._gateway_from_settings(settings.provider)
         started_at = time.monotonic()
+        model_request_sha256 = self._model_request_sha256(request_payload)
         model_call = ModelCall(
             task_id=self.task_id,
             agent_run_id=self.agent_run_id,
@@ -1070,6 +1083,10 @@ class AuditedModelGateway:
             prompt_tokens=0,
             completion_tokens=0,
             duration_ms=0,
+            grounding_correlation_id=self.grounding_correlation_id,
+            prompt_manifest_id=self.prompt_manifest_id,
+            model_request_sha256=model_request_sha256,
+            attempt_index=attempt_index,
             request_json=self._safe_request_json(request_payload),
             response_json={},
             created_at=utc_now(),
@@ -1085,6 +1102,10 @@ class AuditedModelGateway:
                 "model_provider": request_payload.model_provider,
                 "model_name": request_payload.model_name,
                 "prompt_message_count": len(request_payload.messages),
+                "grounding_correlation_id": self.grounding_correlation_id,
+                "prompt_manifest_id": self.prompt_manifest_id,
+                "model_request_sha256": model_request_sha256,
+                "attempt_index": attempt_index,
             },
         )
         try:
@@ -1108,6 +1129,7 @@ class AuditedModelGateway:
                     ),
                 )
             model_call.status = "FAILED"
+            model_call.terminal_status = "failed"
             model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
             model_call.error_message = str(exc)
             self.event_store.append(
@@ -1119,6 +1141,10 @@ class AuditedModelGateway:
                     "model_provider": request_payload.model_provider,
                     "model_name": request_payload.model_name,
                     "error": str(exc),
+                    "grounding_correlation_id": self.grounding_correlation_id,
+                    "prompt_manifest_id": self.prompt_manifest_id,
+                    "attempt_index": attempt_index,
+                    "terminal_status": model_call.terminal_status,
                 },
             )
             self.session.flush()
@@ -1129,6 +1155,7 @@ class AuditedModelGateway:
         usage = response_payload.usage
         ModelCircuitBreaker.record_success(key=circuit_key)
         model_call.status = "SUCCESS"
+        model_call.terminal_status = "success"
         model_call.prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         model_call.completion_tokens = int(usage.get("completion_tokens", 0) or 0)
         model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -1148,6 +1175,11 @@ class AuditedModelGateway:
                 "prompt_tokens": model_call.prompt_tokens,
                 "completion_tokens": model_call.completion_tokens,
                 "duration_ms": model_call.duration_ms,
+                "grounding_correlation_id": self.grounding_correlation_id,
+                "prompt_manifest_id": self.prompt_manifest_id,
+                "model_request_sha256": model_request_sha256,
+                "attempt_index": attempt_index,
+                "terminal_status": model_call.terminal_status,
             },
         )
         self.session.flush()
@@ -1160,6 +1192,12 @@ class AuditedModelGateway:
             "model_name": request_payload.model_name,
             "response_format": request_payload.response_format,
             "estimated_prompt_tokens": estimated_prompt_tokens,
+            "grounding_correlation_id": self.grounding_correlation_id,
+            "prompt_manifest_id": self.prompt_manifest_id,
+            "prompt_manifest_version": self.prompt_manifest_version,
+            "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
+            "evidence_text_sha256": self.evidence_text_sha256,
+            "model_request_sha256": self._model_request_sha256(request_payload),
             "messages": [
                 {
                     "role": message.role,
@@ -1169,6 +1207,59 @@ class AuditedModelGateway:
                 for message in request_payload.messages
             ],
         }
+
+    def _model_request_sha256(self, request_payload: ModelRequest) -> str:
+        canonical_payload = {
+            "model_provider": request_payload.model_provider,
+            "model_name": request_payload.model_name,
+            "response_format": request_payload.response_format,
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in request_payload.messages
+            ],
+            "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
+            "prompt_manifest_id": self.prompt_manifest_id,
+            "prompt_manifest_version": self.prompt_manifest_version,
+            "evidence_text_sha256": self.evidence_text_sha256,
+        }
+        encoded = json.dumps(
+            canonical_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _validate_grounding_binding(self, request_payload: ModelRequest) -> None:
+        if self.prompt_manifest_id is None:
+            return
+        manifest = self.session.get(PromptAssemblyManifest, self.prompt_manifest_id)
+        if manifest is None:
+            raise ModelGatewayError("prompt manifest not found for grounded model call")
+        if manifest.run_id != self.task_id:
+            raise ModelGatewayError("prompt manifest does not belong to model call task")
+        if self.grounding_correlation_id != manifest.grounding_correlation_id:
+            raise ModelGatewayError("grounding correlation does not match prompt manifest")
+        if sorted(self.retrieval_evidence_ids) != sorted(manifest.included_retrieval_hit_ids_json):
+            raise ModelGatewayError("retrieval evidence ids do not match prompt manifest")
+        if self.evidence_text_sha256 != manifest.evidence_text_sha256:
+            raise ModelGatewayError("evidence hash does not match prompt manifest")
+        manifest_metadata = (
+            manifest.metadata_json if isinstance(manifest.metadata_json, dict) else {}
+        )
+        manifest_version = str(
+            manifest_metadata.get("prompt_manifest_version")
+            or manifest_metadata.get("schema_version")
+            or ""
+        )
+        if self.prompt_manifest_version != manifest_version:
+            raise ModelGatewayError("prompt manifest version does not match")
+        evidence_message_hashes = {
+            hashlib.sha256(message.content.encode("utf-8")).hexdigest()
+            for message in request_payload.messages
+        }
+        if manifest.evidence_text_sha256 not in evidence_message_hashes:
+            raise ModelGatewayError("model messages do not include prompt manifest evidence")
 
     # -----------------------------------------------------------------
     # Streaming variant (v4 bugfix — true token-by-token SSE).
@@ -1191,7 +1282,7 @@ class AuditedModelGateway:
         fallbacks = fallback_requests or []
         primary_error: str | None = None
         try:
-            yield from self._attempt_stream(request_payload)
+            yield from self._attempt_stream(request_payload, attempt_index=1)
             return
         except ModelGatewayError as exc:
             primary_error = str(exc)
@@ -1219,7 +1310,7 @@ class AuditedModelGateway:
                 },
             )
             try:
-                yield from self._attempt_stream(fallback)
+                yield from self._attempt_stream(fallback, attempt_index=fallback_index + 1)
                 return
             except ModelGatewayError as exc:
                 last_error = exc
@@ -1230,11 +1321,14 @@ class AuditedModelGateway:
     def _attempt_stream(
         self,
         request_payload: ModelRequest,
+        *,
+        attempt_index: int,
     ) -> Iterator[ModelStreamChunk]:
         request_payload, settings = ModelSettingsResolver(self.session).resolve(
             task_id=self.task_id,
             request_payload=request_payload,
         )
+        self._validate_grounding_binding(request_payload)
         limiter_key = (
             f"{settings.organization_id or 'global'}:"
             f"{request_payload.model_provider}:{request_payload.model_name}"
@@ -1243,6 +1337,7 @@ class AuditedModelGateway:
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         gateway = self.gateway or self._gateway_from_settings(settings.provider)
         started_at = time.monotonic()
+        model_request_sha256 = self._model_request_sha256(request_payload)
         model_call = ModelCall(
             task_id=self.task_id,
             agent_run_id=self.agent_run_id,
@@ -1252,6 +1347,10 @@ class AuditedModelGateway:
             prompt_tokens=0,
             completion_tokens=0,
             duration_ms=0,
+            grounding_correlation_id=self.grounding_correlation_id,
+            prompt_manifest_id=self.prompt_manifest_id,
+            model_request_sha256=model_request_sha256,
+            attempt_index=attempt_index,
             request_json=self._safe_request_json(request_payload),
             response_json={},
             created_at=utc_now(),
@@ -1268,6 +1367,10 @@ class AuditedModelGateway:
                 "model_name": request_payload.model_name,
                 "prompt_message_count": len(request_payload.messages),
                 "streaming": True,
+                "grounding_correlation_id": self.grounding_correlation_id,
+                "prompt_manifest_id": self.prompt_manifest_id,
+                "model_request_sha256": model_request_sha256,
+                "attempt_index": attempt_index,
             },
         )
         text_accumulator = ""
@@ -1295,6 +1398,7 @@ class AuditedModelGateway:
                     break
         except GeneratorExit:
             model_call.status = "FAILED"
+            model_call.terminal_status = "stream_aborted"
             model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
             model_call.error_message = "stream closed before completion"
             self.event_store.append(
@@ -1308,6 +1412,10 @@ class AuditedModelGateway:
                     "error": model_call.error_message,
                     "streaming": True,
                     "cancelled": True,
+                    "grounding_correlation_id": self.grounding_correlation_id,
+                    "prompt_manifest_id": self.prompt_manifest_id,
+                    "attempt_index": attempt_index,
+                    "terminal_status": model_call.terminal_status,
                 },
             )
             self.session.flush()
@@ -1324,6 +1432,7 @@ class AuditedModelGateway:
                     ),
                 )
             model_call.status = "FAILED"
+            model_call.terminal_status = "failed"
             model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
             model_call.error_message = str(exc)
             self.event_store.append(
@@ -1335,6 +1444,10 @@ class AuditedModelGateway:
                     "model_provider": request_payload.model_provider,
                     "model_name": request_payload.model_name,
                     "error": str(exc),
+                    "grounding_correlation_id": self.grounding_correlation_id,
+                    "prompt_manifest_id": self.prompt_manifest_id,
+                    "attempt_index": attempt_index,
+                    "terminal_status": model_call.terminal_status,
                 },
             )
             self.session.flush()
@@ -1348,6 +1461,7 @@ class AuditedModelGateway:
             usage.get("completion_tokens", 0) or max(1, len(text_accumulator) // 4)
         )
         model_call.status = "SUCCESS"
+        model_call.terminal_status = "success"
         model_call.prompt_tokens = prompt_tokens
         model_call.completion_tokens = completion_tokens
         model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -1373,6 +1487,11 @@ class AuditedModelGateway:
                 "completion_tokens": completion_tokens,
                 "duration_ms": model_call.duration_ms,
                 "streaming": True,
+                "grounding_correlation_id": self.grounding_correlation_id,
+                "prompt_manifest_id": self.prompt_manifest_id,
+                "model_request_sha256": model_request_sha256,
+                "attempt_index": attempt_index,
+                "terminal_status": model_call.terminal_status,
             },
         )
         self.session.flush()

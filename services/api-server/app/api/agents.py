@@ -575,6 +575,33 @@ def stream_agent_chat_run(
                 session=session,
                 task_id=run.id,
                 agent_run_id=None,
+                grounding_correlation_id=(
+                    grounding.prompt_manifest.grounding_correlation_id
+                    if grounding and grounding.prompt_manifest
+                    else None
+                ),
+                prompt_manifest_id=(
+                    grounding.prompt_manifest.id
+                    if grounding and grounding.prompt_manifest
+                    else None
+                ),
+                prompt_manifest_version=(
+                    str(grounding.prompt_manifest.metadata_json.get("prompt_manifest_version"))
+                    if grounding
+                    and grounding.prompt_manifest
+                    and isinstance(grounding.prompt_manifest.metadata_json, dict)
+                    else None
+                ),
+                retrieval_evidence_ids=(
+                    list(grounding.prompt_manifest.included_retrieval_hit_ids_json)
+                    if grounding and grounding.prompt_manifest
+                    else []
+                ),
+                evidence_text_sha256=(
+                    grounding.prompt_manifest.evidence_text_sha256
+                    if grounding and grounding.prompt_manifest
+                    else None
+                ),
             )
             stream_iter = gateway.stream(
                 ModelRequest(
@@ -2406,6 +2433,11 @@ def _model_call_response(
         prompt_tokens=model_call.prompt_tokens,
         completion_tokens=model_call.completion_tokens,
         duration_ms=model_call.duration_ms,
+        grounding_correlation_id=model_call.grounding_correlation_id,
+        prompt_manifest_id=model_call.prompt_manifest_id,
+        model_request_sha256=model_call.model_request_sha256,
+        attempt_index=model_call.attempt_index,
+        terminal_status=model_call.terminal_status,
         request_json=model_call.request_json,
         response_json=model_call.response_json,
         error_message=model_call.error_message,
