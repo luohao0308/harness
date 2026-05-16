@@ -939,6 +939,10 @@ export type KnowledgeGrounding = {
   vector_capability: string;
   local_status: string;
   grounded: boolean;
+  grounding_provider: string;
+  fixture_grounded: boolean;
+  verified_grounded: boolean;
+  grounding_verification_reason: string;
   evidence_summary: string;
   inferred_fallback: boolean;
   fallback_reason: string | null;
@@ -1053,6 +1057,10 @@ export type ModelCall = {
   grounding_correlation_id: string | null;
   prompt_manifest_id: string | null;
   model_request_sha256: string | null;
+  model_request_hash_schema_version: number;
+  request_message_hashes_json: Array<Record<string, unknown>>;
+  request_message_hashes_sha256: string | null;
+  hash_recomputability_status: string;
   attempt_index: number;
   terminal_status: string | null;
   request_json: Record<string, unknown>;
