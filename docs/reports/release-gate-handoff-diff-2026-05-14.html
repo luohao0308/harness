@@ -188,6 +188,51 @@
       color: var(--ink);
     }
 
+    .capability-intro {
+      margin: 0 0 16px;
+      color: var(--muted);
+      max-width: 920px;
+    }
+
+    .capability-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .capability {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+      padding: 14px;
+    }
+
+    .capability h3 {
+      margin: 0 0 8px;
+      color: var(--navy);
+      font-size: 15px;
+    }
+
+    .capability dl {
+      margin: 0;
+      display: grid;
+      gap: 7px;
+    }
+
+    .capability dt {
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .capability dd {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     .arrow {
       display: flex;
       align-items: center;
@@ -355,7 +400,8 @@
 
       .grid,
       .routes,
-      .checklist {
+      .checklist,
+      .capability-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -419,6 +465,233 @@
               <li>L2 validation 改跑 release gate。</li>
               <li>README、progress docs、wiki handoff 统一说明 quick、release、live 三层验证。</li>
             </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Harness 层能力细分</h2>
+        <span class="tag">Model + Harness = Agent</span>
+      </div>
+      <div class="body">
+        <p class="capability-intro">下一步不要只说“加记忆”或“加 RAG”，而是把 Harness 拆成可配置、可审计、可评测的能力层。每一层都要回答：解决什么问题、用什么机制解决、运行证据落在哪。</p>
+        <div class="capability-grid">
+          <div class="capability">
+            <h3>短期记忆</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>当前 Workspace、会话、分支里的任务状态、用户偏好、未完成决策、最近工具观察。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>基于现有 conversation tree、Run events、pinned messages 和 workspace store，新增 session/branch memory projection；进入 prompt 前按 token 预算压缩或剔除。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Workspace Context 面板显示 included/omitted 原因，Run Detail 记录 memory snapshot、覆盖节点和压缩版本。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>长期记忆</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>跨 Run 可复用的稳定事实、组织知识、Agent 偏好、历史决策和可删除的用户资料。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>Postgres 持久表：memory_records、knowledge_sources、documents、chunks、provenance、expiry/delete rules；按 organization_id 和 agent_id 作用域隔离。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Agent Studio 的 Knowledge/Memory 标签页管理来源、更新时间、保留策略；Run Detail 显示命中的长期记忆和引用来源。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>RAG / 文档知识</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>让 Agent 回答来自用户文档或内部知识库的问题，而不是靠模型记忆猜。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>上传或录入知识源 -> chunker -> embedding adapter -> pgvector 或等价本地检索 -> rerank/threshold -> prompt evidence block。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>每次 Run 记录 retrieval_hits、chunk score、source title、citation span；Eval 可断言答案是否引用了正确 chunk。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>本地证据不足与 Web Research</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>本地知识不够时，避免模型编造，同时允许受控补充外部资料。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>retrieval confidence gate；低置信度时先声明本地证据不足，再调用 policy-gated research tool；没有真实 provider 时禁止把 mock research 当真。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>ToolCall、Policy decision、source fetch、citation 都进入 Run events，Observability 可筛 fallback rate 和 unsupported-claim rate。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>MCP 创建与管理</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>把外部系统能力变成 Agent 可调用工具，并统一走权限、沙箱、审计。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>Tool Registry 扩展 MCP server 配置、method schema、secret binding、health check、test invocation；沿用 ToolRunner 和 Policy 流程。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Tools 页面显示 server/method/risk/sandbox，Run Detail 的 Tool Calling Card 显示输入、输出、耗时、trace id。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>Skills / 能力包</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>把可复用工作流、提示词约束、工具组合和验收测试包装成可挂载能力。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>skill manifest：instructions、allowed tools、examples、constraints、version、eval cases；Agent Studio 可 attach/detach 和锁版本。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Run metadata 记录 active skills 和版本；Eval Regression Gate 绑定 skill-specific case，防止技能更新破坏行为。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>上下文与 Token 优化</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>在短期记忆、长期记忆、RAG、工具观察和聊天历史之间选择最有用的上下文。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>context router + budget allocator；按 pinned、recent pair、retrieval score、memory priority、compression summary 分层装配 prompt。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Workspace 显示 context ring、压缩率、token saved、included/omitted reason；Run Detail 保存 prompt assembly manifest。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>幻觉控制</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>减少无来源断言，区分已知、未知、需要外部检索、禁止回答。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>grounding policy：需要事实来源的问题必须带 citation；证据弱时触发 insufficient-evidence path；高风险工具和网络研究走审批策略。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Eval grader 检查 citation coverage、unsupported claims、fallback correctness；Observability 汇总 hallucination guardrail 命中率。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>Eval / 回归门</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>证明 Harness 改动真的提升 Agent 质量，而不是只改善 UI 或单次 demo。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>从 Run 保存 Eval Case；新增 groundedness、citation quality、retrieval precision、policy violation、cost/latency 指标。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Eval Run Results 和 Regression Gate 显示 pass/fail、grader trace、失败样例和关联 Run。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>Observability / 审计</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>调试为什么 Agent 这么答：用了哪些记忆、检索了什么、调用了什么工具、花了多少钱。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>统一 event sourcing：model_call、tool_call、retrieval_hit、citation、policy_decision、memory_write、context_compression。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Observability 通过 trace_id 串起 Run、工具、检索、模型调用；Run Detail 提供可回放 timeline。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>Policy / Sandbox</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>控制工具、网络、文件、MCP、Web research 的权限边界和副作用风险。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>现有 Policy Settings、Tool Registry、WarmPool sandbox 继续作为执行边界；新增知识和 research 操作的 allow/deny/approval 规则。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Policy decision 写入 ToolApproval 和 Run events；Sandboxes 页面显示资源、租户隔离和复用状态。</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div class="capability">
+            <h3>Agent Orchestration</h3>
+            <dl>
+              <div>
+                <dt>解决什么</dt>
+                <dd>把单模型回答变成可计划、可并行、可交接、可恢复的 Agent Run。</dd>
+              </div>
+              <div>
+                <dt>用什么解决</dt>
+                <dd>Plan DAG、Subagent assignments、handoff edges、pause/resume/cancel、event replay；后续把 memory/RAG evidence 注入每个 step。</dd>
+              </div>
+              <div>
+                <dt>证据落在哪</dt>
+                <dd>Workspace 显示 Plan、Subagents、Tool Calls；Run Detail 显示每个节点的输入、输出、证据和失败点。</dd>
+              </div>
+            </dl>
           </div>
         </div>
       </div>

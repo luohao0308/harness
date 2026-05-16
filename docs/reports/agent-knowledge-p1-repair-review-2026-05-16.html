@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Knowledge P1 Repair Review</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #5f6f86;
+      --line: #d7dee8;
+      --panel: #f7f9fc;
+      --good: #176d4d;
+      --warn: #946200;
+      --bad: #b42318;
+      --blue: #2357a5;
+      --violet: #6b4bb8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #fff;
+      line-height: 1.5;
+    }
+    header, main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    header { border-bottom: 1px solid var(--line); }
+    h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+    h2 { margin: 34px 0 14px; font-size: 20px; letter-spacing: 0; }
+    h3 { margin: 18px 0 8px; font-size: 15px; letter-spacing: 0; }
+    p { margin: 6px 0; }
+    .sub { color: var(--muted); max-width: 900px; }
+    .grid { display: grid; gap: 14px; }
+    .cards { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 14px;
+    }
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid currentColor;
+    }
+    .good { color: var(--good); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .blue { color: var(--blue); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: table;
+      font-size: 14px;
+    }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px; text-align: left; vertical-align: top; }
+    th { background: #eef3f8; font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .diagram {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      overflow-x: auto;
+      padding: 8px;
+    }
+    svg { min-width: 1000px; width: 100%; height: auto; display: block; }
+    .node { fill: #fff; stroke: #9fb0c3; stroke-width: 1.4; rx: 8; }
+    .node-blue { fill: #eef5ff; stroke: #79a2df; }
+    .node-green { fill: #effaf5; stroke: #71bc99; }
+    .node-warn { fill: #fff7e8; stroke: #d6aa4a; }
+    .node-bad { fill: #fff1f0; stroke: #de7c73; }
+    .arrow { stroke: #728299; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .label { font-size: 13px; fill: var(--ink); font-weight: 700; }
+    .small { font-size: 11px; fill: var(--muted); }
+    .checklist li { margin: 8px 0; }
+    .print-note { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Agent Knowledge P1 Repair Review</h1>
+    <p class="sub">一次性图解报告：说明本次新增了什么、子代理为什么之前不可用、代码审查发现了什么、前端如何验收 Run Detail 证据链。</p>
+    <p class="print-note">生成时间：2026-05-16。范围：刚新增的 P1 prompt manifest、policy audit、Run Detail、Eval 和迁移修复。</p>
+  </header>
+  <main>
+    <section class="grid cards">
+      <div class="card">
+        <span class="tag good">已新增</span>
+        <h3>Prompt 组装审计</h3>
+        <p>每次 grounding 现在会保存 manifest，记录哪些 retrieval hits 进入 prompt、哪些候选被省略、证据文本 hash 和 prompt section。</p>
+      </div>
+      <div class="card">
+        <span class="tag good">已新增</span>
+        <h3>Policy / Omission 审计</h3>
+        <p>保存 allowed、omitted、no_omission_applicable 决策，用于证明内容进入或没有进入上下文的原因。</p>
+      </div>
+      <div class="card">
+        <span class="tag good">已新增</span>
+        <h3>Run Detail 展示</h3>
+        <p>前端 Run Detail 的“知识依据”中新增 Prompt 组装审计和策略 / 省略审计区域。</p>
+      </div>
+      <div class="card">
+        <span class="tag warn">仍需注意</span>
+        <h3>Verified Baseline</h3>
+        <p>代码级修复基本到位，但 Docker/private deployment 证明仍缺。不能直接标 verified baseline。</p>
+      </div>
+      <div class="card">
+        <span class="tag good">已修复</span>
+        <h3>OMX 子代理</h3>
+        <p>刷新 OMX setup 后，<code>code-reviewer</code> 和 <code>architect</code> 均已返回可用探针。不可用原因是命名 agent registry 没有刷新到当前配置。</p>
+      </div>
+      <div class="card">
+        <span class="tag bad">审查结论</span>
+        <h3>REQUEST CHANGES</h3>
+        <p>code-reviewer 要求修改；architect 状态为 BLOCK。当前不能标 P1 gate-ready。</p>
+      </div>
+    </section>
+
+    <h2>子代理可用性修复</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>检查项</th>
+          <th>结果</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>不可用原因</td>
+          <td><span class="tag warn">配置注册问题</span></td>
+          <td>默认子代理可启动，但命名角色如 <code>code-reviewer</code> 初始不可用，说明问题在 OMX/Harness Agent agent registry surface 没刷新。</td>
+        </tr>
+        <tr>
+          <td>修复动作</td>
+          <td><span class="tag good">完成</span></td>
+          <td>执行 OMX setup 刷新 user scope 配置，并通过 doctor 检查。</td>
+        </tr>
+        <tr>
+          <td>验收证据</td>
+          <td><span class="tag good">通过</span></td>
+          <td><code>code-reviewer</code> 返回 <code>code-reviewer-ok</code>；<code>architect</code> 返回 <code>architect-ok</code>。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>新增功能数据流</h2>
+    <div class="diagram">
+      <svg viewBox="0 0 1120 390" role="img" aria-label="Knowledge evidence chain diagram">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L9,3 z" fill="#728299"></path>
+          </marker>
+        </defs>
+        <rect class="node node-blue" x="30" y="36" width="150" height="76"></rect>
+        <text class="label" x="48" y="64">Knowledge Source</text>
+        <text class="small" x="48" y="86">document/chunk</text>
+        <text class="small" x="48" y="102">version + hash</text>
+
+        <rect class="node node-blue" x="235" y="36" width="150" height="76"></rect>
+        <text class="label" x="263" y="64">Retrieval</text>
+        <text class="small" x="255" y="86">rank / score</text>
+        <text class="small" x="255" y="102">hit ids</text>
+
+        <rect class="node node-green" x="440" y="36" width="170" height="76"></rect>
+        <text class="label" x="460" y="64">Citation Binding</text>
+        <text class="small" x="462" y="86">citation -> hit</text>
+        <text class="small" x="462" y="102">snapshot metadata</text>
+
+        <rect class="node node-green" x="665" y="36" width="185" height="76"></rect>
+        <text class="label" x="688" y="64">Prompt Manifest</text>
+        <text class="small" x="688" y="86">included / omitted</text>
+        <text class="small" x="688" y="102">evidence hash</text>
+
+        <rect class="node node-warn" x="905" y="36" width="170" height="76"></rect>
+        <text class="label" x="930" y="64">Model Prompt</text>
+        <text class="small" x="930" y="86">system evidence</text>
+        <text class="small" x="930" y="102">answer generation</text>
+
+        <path class="arrow" d="M180 74 H235"></path>
+        <path class="arrow" d="M385 74 H440"></path>
+        <path class="arrow" d="M610 74 H665"></path>
+        <path class="arrow" d="M850 74 H905"></path>
+
+        <rect class="node node-green" x="305" y="190" width="190" height="82"></rect>
+        <text class="label" x="330" y="220">Policy Audit</text>
+        <text class="small" x="330" y="242">allowed / omitted</text>
+        <text class="small" x="330" y="258">no omission applicable</text>
+
+        <rect class="node node-blue" x="565" y="190" width="190" height="82"></rect>
+        <text class="label" x="590" y="220">Run Detail API</text>
+        <text class="small" x="590" y="242">manifest + audits</text>
+        <text class="small" x="590" y="258">hits + citations</text>
+
+        <rect class="node node-blue" x="825" y="190" width="190" height="82"></rect>
+        <text class="label" x="852" y="220">Frontend UI</text>
+        <text class="small" x="852" y="242">Prompt 组装审计</text>
+        <text class="small" x="852" y="258">策略 / 省略审计</text>
+
+        <path class="arrow" d="M525 112 C525 145 400 150 400 190"></path>
+        <path class="arrow" d="M760 112 C760 155 662 150 662 190"></path>
+        <path class="arrow" d="M495 231 H565"></path>
+        <path class="arrow" d="M755 231 H825"></path>
+
+        <rect class="node node-bad" x="360" y="310" width="395" height="52"></rect>
+        <text class="label" x="385" y="340">Review Risk: insufficient 但仍可能产生 citation</text>
+        <path class="arrow" d="M455 272 V310"></path>
+      </svg>
+    </div>
+
+    <h2>代码审查结论</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>严重级别</th>
+          <th>位置</th>
+          <th>问题</th>
+          <th>建议</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag bad">HIGH</span></td>
+          <td><code>services/api-server/app/knowledge.py:823-904</code></td>
+          <td>当检索只命中 1 个高分 chunk 时，<code>local_status</code> 会是 <code>insufficient</code>，但代码仍创建 retrieval hit 和 citation。P1 C4 要求低/不足证据不能生成 unsupported citation。</td>
+          <td>只有 <code>local_status == "sufficient"</code> 时创建 citations 和 included prompt evidence；不足证据下应记录候选但不创建 citation，并增加单命中负例测试。</td>
+        </tr>
+        <tr>
+          <td><span class="tag warn">MEDIUM</span></td>
+          <td><code>services/api-server/app/knowledge.py:555-610</code></td>
+          <td>Prompt manifest 记录了待注入的 evidence hash，但没有直接绑定实际 <code>ModelCall</code> 的 request/message id。当前可通过 run_id 间接重建，证明力还不够硬。</td>
+          <td>在 model call 完成后把 <code>model_call_id</code> 或 actual prompt message hash 回写到 manifest，或增加测试比对 manifest hash 和 ModelCall request messages。</td>
+        </tr>
+        <tr>
+          <td><span class="tag warn">MEDIUM</span></td>
+          <td><code>services/api-server/app/knowledge.py:453-472</code>, <code>584</code></td>
+          <td><code>omitted_candidates_json</code> 保存 source_id、document_id、chunk id/hash 等完整候选标识。当前同 scope 下可接受，但如果未来接入 denied/policy-redacted 候选，API projection 可能暴露过多元数据。</td>
+          <td>区分 <code>omitted_for_rank</code> 和 <code>denied_by_policy</code>，对 denied/redacted 候选只保存安全摘要，不把完整 candidate snapshot 放进 manifest projection。</td>
+        </tr>
+        <tr>
+          <td><span class="tag warn">MEDIUM</span></td>
+          <td><code>services/api-server/app/api/evals.py:616-646</code></td>
+          <td>Grounding Eval 只取 run 最新 retrieval session。多轮或多 query run 中，Eval 可能检查错 session。</td>
+          <td>Eval case 应允许声明 <code>retrieval_session_id</code>、query hash 或 prompt manifest id；默认 latest 可以保留为 fallback。</td>
+        </tr>
+        <tr>
+          <td><span class="tag warn">MEDIUM</span></td>
+          <td><code>services/api-server/app/api/evals.py:655</code></td>
+          <td><code>require_grounded</code> 只检查 hits/citations，没有要求 <code>local_status=sufficient</code>，会继承单命中不足证据的假通过风险。</td>
+          <td>Grounded contract 必须同时要求 sufficient、citation 绑定到 included hit、manifest included ids 与 citation hit ids 一致。</td>
+        </tr>
+        <tr>
+          <td><span class="tag warn">MEDIUM</span></td>
+          <td><code>services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py</code></td>
+          <td>新增迁移文件当前是 untracked。如果提交遗漏，部署库不会创建 prompt manifest / policy audit 表。</td>
+          <td>提交前必须纳入版本控制；同时清理与本次修复无关的 untracked artifacts。</td>
+        </tr>
+        <tr>
+          <td><span class="tag blue">LOW</span></td>
+          <td><code>apps/agent-console/src/features/runs/pages/RunDetailPage.tsx:221-258</code></td>
+          <td>前端展示只有计数和 hash，不能展开查看 included hit ids、omitted reasons、source snapshots。</td>
+          <td>P1 验收可先用 API；UI 后续建议加详情折叠区，显示 included ids、omitted reason 和 source snapshot hash。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>合成裁决</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>审查线</th>
+          <th>结论</th>
+          <th>关键原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>code-reviewer</td>
+          <td><span class="tag bad">REQUEST CHANGES</span></td>
+          <td>insufficient local retrieval 仍可能进入 prompt evidence 并生成 citation；Eval grounded contract 也会假通过。</td>
+        </tr>
+        <tr>
+          <td>architect</td>
+          <td><span class="tag bad">BLOCK</span></td>
+          <td>Prompt manifest 没有和实际 ModelCall request/message hash 建立不可抵赖绑定；latest retrieval session 选择也会造成错验。</td>
+        </tr>
+        <tr>
+          <td>最终建议</td>
+          <td><span class="tag bad">REQUEST CHANGES</span></td>
+          <td>方向完整，但 gate-ready 未证明。必须先修复 evidence chain false-pass path，再标 P1 gate-ready。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>前端验收路径</h2>
+    <ol class="checklist">
+      <li>在 Agent Studio / RAG 知识源区域添加一份包含明确事实的知识源，例如 <code>orion anchor local fact</code>。</li>
+      <li>进入 Workspace，问一个能命中知识源的问题，等待 Run 完成。</li>
+      <li>打开该 Run 的 Run Detail，定位 <strong>知识依据</strong> 区域。</li>
+      <li>确认出现 <strong>Prompt 组装审计</strong>：能看到 <code>manifest ...</code>、<code>included N</code>、<code>omitted N</code> 和 <code>sha256 ...</code>。</li>
+      <li>确认出现 <strong>策略 / 省略审计</strong>：能看到 <code>allowed</code>，如存在未选候选，还应看到 <code>omitted</code>。</li>
+      <li>确认下方仍展示 <strong>检索命中</strong> 和 <strong>引用</strong>，citation 的 hit id 能对应检索命中。</li>
+      <li>再问一个无知识源支撑的问题，确认状态为 insufficient，且 UI/API 不应显示伪造 citation。</li>
+      <li>验收 blocked 项：当前缺 Docker/private deployment 证明，所以不要在进度文档中标记 verified baseline。</li>
+    </ol>
+
+    <h2>建议的前端断言</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>场景</th>
+          <th>Run Detail 应看到</th>
+          <th>不应看到</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>命中知识源</td>
+          <td>local_status=sufficient、Prompt 组装审计、allowed audit、检索命中、citation</td>
+          <td>unsupported citation、空 manifest</td>
+        </tr>
+        <tr>
+          <td>低证据 / 无命中</td>
+          <td>local_status=insufficient、Prompt 组装审计、no_omission_applicable 或 omitted audit</td>
+          <td>伪造 citation、mock web research</td>
+        </tr>
+        <tr>
+          <td>跨租户隐藏知识</td>
+          <td>insufficient 或无命中</td>
+          <td>隐藏租户 source text、chunk id、snippet、citation</td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
