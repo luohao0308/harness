@@ -565,6 +565,53 @@ class CitationRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class PromptAssemblyManifest(Base):
+    __tablename__ = "prompt_assembly_manifests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    retrieval_session_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    included_retrieval_hit_ids_json: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    omitted_candidates_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_snapshots_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    token_budget_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    prompt_sections_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    evidence_text_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class KnowledgePolicyAudit(Base):
+    __tablename__ = "knowledge_policy_audits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    retrieval_session_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    decision: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    source_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_ref_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    safe_metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class EvalDataset(Base):
     __tablename__ = "eval_datasets"
 
