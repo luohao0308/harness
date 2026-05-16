@@ -20,7 +20,7 @@ Persistent project knowledge for the AI Harness Platform.
 - [[agent-workspace-execution-evidence-architecture]] - Context compression, Plan-Act, branching/search, Run Detail, and Eval Case architecture.
 - [[local-dev-eval-dataset-migration]] - Local Eval Dataset migration trap and recovery for `baseline_run_id`.
 - [[session-2026-05-14-workspace-execution-evidence]] - Session log for commit `e78f52a` and validation evidence.
-- [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] - P1 Knowledge/RAG grounding audit candidate, prompt manifests, attempt-level ModelCall binding, exact selectors, policy audits, CJK retrieval fix, pushed commits through `7524df0`, validation evidence, review blockers, and manual frontend acceptance path.
+- [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] - P1 Knowledge/RAG grounding audit and blocker-repair record through `4475eef`: prompt manifests, policy audits, verified-vs-fixture grounding, denied/redacted isolation, v2 request hashes, exact selectors, Run Detail Eval contract propagation, validation evidence, and remaining private-deployment gate.
 
 ## Categories
 

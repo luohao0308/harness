@@ -49,6 +49,16 @@
 - Updated [[agent-knowledge-harness-roadmap]] and [[project-handoff-current-state]] from `docs/reports/release-gate-handoff-diff-2026-05-14.html` plus current repository features. The final target is now Agent Knowledge Harness as a full configurable/auditable/evaluable capability stack, and the progress plan now starts by verifying/formalizing the existing Knowledge/RAG V1 implementation before expanding into local knowledge management, policy-gated web research, memory/context routing, MCP/skills, Eval/Observability, and release hardening.
 - Added [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] and updated [[project-handoff-current-state]], [[agent-knowledge-harness-roadmap]], and [[index]] after pushing commits through `1415bf6`. Captured prompt manifest persistence, policy/omission audit persistence, Run Detail evidence display, grounding Eval contract checks, CJK retrieval fix for small Chinese handbook content, validation evidence, and remaining P1 gate blockers.
 - Refreshed [[session-2026-05-16-agent-knowledge-p1-grounding-audit]], [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], and [[index]] after pushing commits through `7524df0`. Captured the latest audit-gate slice: attempt-level ModelCall binding, deterministic request hashing, exact Run Detail/Eval selectors, fallback metadata, bounded evidence snapshots, fake-web fixture coverage, local validation, manual frontend acceptance path, and the post-implementation REQUEST CHANGES blockers that prevent marking P1 as verified baseline.
+
+## 2026-05-17
+
+- Refreshed [[session-2026-05-16-agent-knowledge-p1-grounding-audit]], [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], and [[index]] after pushing blocker-repair commits through `4475eef`. Captured fixes for verified-vs-fixture grounding, denied/redacted policy isolation, v2 recomputable request hashes without raw request previews, Run Detail Model Call binding display, Run Detail Eval grounding-contract propagation, `[Wn]` citation normalization, validation evidence, and the remaining Docker/private-deployment gate before verified-baseline promotion.
 ## [2026-05-16T15:35:12.984Z] lint
+- **Pages:** none
+- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
+## [2026-05-16T15:39:44.504Z] lint
+- **Pages:** none
+- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
+## [2026-05-16T18:38:14.617Z] lint
 - **Pages:** none
 - **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
