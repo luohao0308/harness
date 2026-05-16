@@ -37,7 +37,8 @@ Read these first:
 11. [[local-dev-backend-port-cors]] if the frontend cannot reach the backend
 12. [[agent-workspace-execution-evidence-architecture]] if the work touches Workspace context, Plan-Act, branching, Run Detail, or Eval Case capture
 13. [[local-dev-eval-dataset-migration]] if Run Detail cannot list or save Eval Datasets
-14. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
+14. [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] if the next work touches Knowledge/RAG grounding, prompt manifests, policy audit, Run Detail evidence, Eval grounding contracts, or Chinese knowledge retrieval.
+15. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
 
 ## Current State
 
@@ -50,7 +51,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
-- Agent Knowledge Harness is the current product direction after private deployment. The current worktree already contains Knowledge/RAG implementation files, but the next agent must verify and record them before treating them as completed progress.
+- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 has a stronger auditable candidate on `main` through `1415bf6`, including prompt manifest persistence, policy/omission audits, Run Detail visibility, grounding Eval contract checks, and CJK lexical retrieval for small Chinese handbook content. It is still not verified baseline and not fully P1 gate-ready because model-call hash binding, exact multi-query evidence targeting, full policy isolation proof, and Docker/private deployment compatibility remain open.
 
 Evidence from `docs/task-progress.md`:
 
@@ -61,7 +62,7 @@ Evidence from `docs/task-progress.md`:
 
 Evidence from the current codebase:
 
-- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation.
+- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation with prompt assembly manifests, policy audits, citation snapshots, insufficient-evidence controls, and CJK fallback retrieval.
 - `services/api-server/app/api/agents.py` exposes knowledge source APIs and Workspace grounding behavior.
 - `apps/agent-console/src/features/agents/pages/AgentListPage.tsx` exposes Agent Studio knowledge source management.
 - `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` and `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` expose grounding evidence in Workspace and Run Detail.
@@ -87,17 +88,18 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 Recent pushed commits on `main`:
 
 ```text
-72591dc Document private deployment handoff
-8a7abbb Catch private deployment wiring in smoke tests
-d877233 Route console observability through configured API
-11b1ddc Expose private deployment runtime URLs
-0238b4a Keep local mock chat visible
-0980192 Add release gate handoff visual report
+1415bf6 Document P1 grounding audit status
+eefa906 Cover grounding audit gate regressions
+f199069 Show grounding audit evidence in Run Detail
+247beec Expose grounding audit contracts through APIs
+aef447c Persist auditable knowledge grounding evidence
+9bee19e Add knowledge audit persistence tables
 ```
 
 Captured in wiki:
 
 - [[project-handoff-current-state]]
+- [[session-2026-05-16-agent-knowledge-p1-grounding-audit]]
 - [[session-2026-05-14-workspace-execution-evidence]]
 - [[agent-workspace-execution-evidence-architecture]]
 - [[local-dev-eval-dataset-migration]]
@@ -105,13 +107,15 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed lane is Private Deployment Experience. The current target is **Agent Knowledge Harness**.
+The latest completed baseline lane remains Private Deployment Experience. The current target is **Agent Knowledge Harness**.
 
-The immediate next lane is to formalize and verify the existing Knowledge/RAG V1 foundation:
+The immediate next lane is to finish proving P1 gate readiness for the Knowledge/RAG V1 foundation:
 
-- run the relevant backend, frontend, docs, build, and browser validations;
+- bind `PromptAssemblyManifest` to the exact `ModelCall` request/message hash;
+- target exact retrieval sessions or prompt manifest IDs in Eval and Run Detail instead of relying only on latest-session fallback;
+- expand C10 into a full policy/isolation proof for denied or redacted content, not only retrieval selection;
 - verify Alembic migration and Docker/private deployment compatibility;
-- confirm Agent Studio knowledge source management, Workspace grounding metadata, and Run Detail retrieval/citation reconstruction;
+- run broader backend, frontend, docs, build, and browser validations;
 - then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki with fresh evidence.
 
 After V1 is formalized, follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
