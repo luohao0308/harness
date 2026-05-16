@@ -22,11 +22,16 @@ from app.api.schemas import (
 from app.db.models import (
     AdminAuditEvent,
     AgentAssignment,
+    CitationRecord,
     EvalCase,
     EvalDataset,
     EvalResult,
     EvalRun,
+    KnowledgePolicyAudit,
     ModelCall,
+    PromptAssemblyManifest,
+    RetrievalHit,
+    RetrievalSession,
     Task,
     ToolCall,
     utc_now,
@@ -556,7 +561,8 @@ def _grade_case(session: Session, eval_run_id: str, eval_case: EvalCase) -> Eval
     status_match = task is not None and (expected_status is None or task.status == expected_status)
     tool_denials = [call for call in tool_calls if call.status in {"DENIED", "BLOCKED"}]
     failed_tools = [call for call in tool_calls if call.status in {"FAILED", "TIMEOUT"}]
-    score = 1.0 if status_match and not failed_tools else 0.0
+    grounding_trace = _grade_grounding_contract(session, task, eval_case.expected_json)
+    score = 1.0 if status_match and not failed_tools and grounding_trace["passed"] else 0.0
     tool_selection_accuracy = (
         1.0 if tool_calls and not failed_tools else (1.0 if not tool_calls else 0.0)
     )
@@ -583,16 +589,112 @@ def _grade_case(session: Session, eval_run_id: str, eval_case: EvalCase) -> Eval
             "assignment_count": len(assignments),
             "failed_tool_count": len(failed_tools),
             "policy_denial_count": len(tool_denials),
+            **grounding_trace,
         },
         latency_ms=latency_ms,
         cost_usd="0",
         error_message=(
             None
             if result_status == "PASSED"
-            else "Trace did not satisfy expected status or tool checks"
+            else "Trace did not satisfy expected status, tool, or grounding checks"
         ),
         created_at=utc_now(),
     )
+
+
+def _grade_grounding_contract(session: Session, task: Task | None, expected_json: dict) -> dict:
+    contract = expected_json.get("grounding_contract")
+    if not isinstance(contract, dict):
+        return {"grader": "deterministic_trace_grader_v1", "passed": True}
+    if task is None:
+        return {
+            "grader": "deterministic_grounding_grader_v1",
+            "passed": False,
+            "grounding_failures": ["missing_task"],
+        }
+
+    retrieval_session = session.execute(
+        select(RetrievalSession)
+        .where(RetrievalSession.run_id == task.id)
+        .order_by(RetrievalSession.created_at.desc(), RetrievalSession.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    failures: list[str] = []
+    if retrieval_session is None:
+        return {
+            "grader": "deterministic_grounding_grader_v1",
+            "passed": False,
+            "grounding_failures": ["missing_retrieval_session"],
+        }
+
+    hits = list(
+        session.execute(
+            select(RetrievalHit).where(RetrievalHit.retrieval_session_id == retrieval_session.id)
+        ).scalars()
+    )
+    citations = list(
+        session.execute(
+            select(CitationRecord).where(
+                CitationRecord.retrieval_session_id == retrieval_session.id
+            )
+        ).scalars()
+    )
+    prompt_manifest = session.execute(
+        select(PromptAssemblyManifest)
+        .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
+        .limit(1)
+    ).scalar_one_or_none()
+    policy_audits = list(
+        session.execute(
+            select(KnowledgePolicyAudit).where(
+                KnowledgePolicyAudit.retrieval_session_id == retrieval_session.id
+            )
+        ).scalars()
+    )
+
+    if contract.get("require_grounded"):
+        if retrieval_session.local_status != "sufficient" or not hits or not citations:
+            failures.append("missing_grounded_hits_or_citations")
+        elif prompt_manifest is not None:
+            included_hit_ids = set(prompt_manifest.included_retrieval_hit_ids_json)
+            citation_hit_ids = {citation.retrieval_hit_id for citation in citations}
+            if not citation_hit_ids <= included_hit_ids:
+                failures.append("citation_hits_not_in_prompt_manifest")
+    if contract.get("require_insufficient") and retrieval_session.local_status != "insufficient":
+        failures.append("missing_insufficient_status")
+    if contract.get("require_prompt_manifest") and prompt_manifest is None:
+        failures.append("missing_prompt_manifest")
+    required_decisions = set(contract.get("require_policy_decisions") or [])
+    actual_decisions = {audit.decision for audit in policy_audits}
+    if not required_decisions <= actual_decisions:
+        failures.append("missing_policy_decisions")
+    forbidden_text = str(contract.get("forbid_text") or "")
+    if forbidden_text:
+        manifest_payload = (
+            str(prompt_manifest.omitted_candidates_json)
+            + str(prompt_manifest.source_snapshots_json)
+            + str(prompt_manifest.prompt_sections_json)
+            if prompt_manifest is not None
+            else ""
+        )
+        citation_payload = "".join(str(citation.quoted_text or "") for citation in citations)
+        audit_payload = "".join(str(audit.safe_metadata_json) for audit in policy_audits)
+        leaked = (
+            forbidden_text in manifest_payload
+            or forbidden_text in citation_payload
+            or forbidden_text in audit_payload
+        )
+        if leaked:
+            failures.append("forbidden_text_leaked")
+
+    return {
+        "grader": "deterministic_grounding_grader_v1",
+        "passed": not failures,
+        "grounding_failures": failures,
+        "retrieval_session_id": retrieval_session.id,
+        "prompt_manifest_id": prompt_manifest.id if prompt_manifest else None,
+        "policy_audit_ids": [audit.id for audit in policy_audits],
+    }
 
 
 def _aggregate_metrics(results: list[EvalResult]) -> dict:

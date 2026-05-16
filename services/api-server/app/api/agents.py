@@ -45,11 +45,13 @@ from app.api.schemas import (
     KnowledgeCitationResponse,
     KnowledgeDocumentResponse,
     KnowledgeGroundingResponse,
+    KnowledgePolicyAuditResponse,
     KnowledgeRetrievalHitResponse,
     KnowledgeSourceCreateRequest,
     KnowledgeSourcePage,
     KnowledgeSourceResponse,
     ModelCallResponse,
+    PromptAssemblyManifestResponse,
     RetrievalSessionResponse,
     SubagentResponse,
     TaskPage,
@@ -75,8 +77,10 @@ from app.db.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeEmbedding,
+    KnowledgePolicyAudit,
     KnowledgeSource,
     ModelCall,
+    PromptAssemblyManifest,
     RetrievalHit,
     RetrievalSession,
     Task,
@@ -2304,6 +2308,19 @@ def _knowledge_grounding_response(
             .order_by(WebResearchSource.fetched_at.asc(), WebResearchSource.id.asc())
         ).scalars()
     )
+    prompt_manifest = session.execute(
+        select(PromptAssemblyManifest)
+        .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
+        .order_by(PromptAssemblyManifest.created_at.desc(), PromptAssemblyManifest.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    policy_audits = list(
+        session.execute(
+            select(KnowledgePolicyAudit)
+            .where(KnowledgePolicyAudit.retrieval_session_id == retrieval_session.id)
+            .order_by(KnowledgePolicyAudit.created_at.asc(), KnowledgePolicyAudit.id.asc())
+        ).scalars()
+    )
     evidence_summary = "Local knowledge grounded the answer."
     if retrieval_session.local_status != "sufficient":
         evidence_summary = (
@@ -2313,10 +2330,18 @@ def _knowledge_grounding_response(
         retrieval_session=RetrievalSessionResponse.model_validate(retrieval_session),
         retrieval_hits=[KnowledgeRetrievalHitResponse.model_validate(hit) for hit in hits],
         citations=[KnowledgeCitationResponse.model_validate(citation) for citation in citations],
+        prompt_manifest=(
+            PromptAssemblyManifestResponse.model_validate(prompt_manifest)
+            if prompt_manifest is not None
+            else None
+        ),
+        policy_audits=[
+            KnowledgePolicyAuditResponse.model_validate(audit) for audit in policy_audits
+        ],
         web_sources=[WebResearchSourceResponse.model_validate(source) for source in web_sources],
         vector_capability=retrieval_session.vector_capability,
         local_status=retrieval_session.local_status,
-        grounded=bool(citations),
+        grounded=retrieval_session.local_status == "sufficient" and bool(citations),
         evidence_summary=evidence_summary,
     )
 
