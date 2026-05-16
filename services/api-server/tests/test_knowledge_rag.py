@@ -1,7 +1,15 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.model_gateway import (
+    AuditedModelGateway,
+    ModelGatewayError,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+)
 from app.db.models import (
     Agent,
     AgentEvent,
@@ -10,9 +18,11 @@ from app.db.models import (
     KnowledgeDocument,
     KnowledgeEmbedding,
     KnowledgePolicyAudit,
+    ModelCall,
     PromptAssemblyManifest,
     RetrievalHit,
     Task,
+    WebResearchSource,
     utc_now,
 )
 from app.events.event_types import EventType
@@ -22,6 +32,7 @@ from app.knowledge import (
     ground_query,
     ingest_knowledge_source,
     set_vector_capability,
+    set_web_research_provider,
 )
 from app.main import app
 from tests.conftest import AUTH_HEADERS
@@ -432,6 +443,70 @@ def test_grounding_persists_prompt_manifest_and_policy_audit(
     assert EventType.RAG_POLICY_AUDITED in event_types
 
 
+def test_omitted_candidates_do_not_leak_raw_text_to_manifest_or_run_detail(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Selected Facts",
+        description="Selected facts",
+        source_type="text",
+        title="Selected Facts",
+        content=_two_chunk_content("visible beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="selected-facts",
+    )
+    forbidden_text = "forbidden omitted raw text"
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Forbidden Omitted Facts",
+        description="Forbidden omitted facts",
+        source_type="text",
+        title="Forbidden Facts",
+        content=(forbidden_text + " ") * 30,
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="forbidden-omitted-facts",
+    )
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="visible beacon",
+    )
+    db_session.commit()
+    assert result.prompt_manifest is not None
+    manifest_payload = (
+        str(result.prompt_manifest.omitted_candidates_json)
+        + str(result.prompt_manifest.source_snapshots_json)
+        + str([audit.safe_metadata_json for audit in result.policy_audits])
+    )
+    assert forbidden_text not in manifest_payload
+    assert result.prompt_manifest.omitted_candidates_json
+    assert all(
+        "snapshot" not in candidate
+        for candidate in result.prompt_manifest.omitted_candidates_json
+    )
+
+    response = TestClient(app).get(
+        f"/api/agents/runs/{task.id}/workspace",
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    assert forbidden_text not in response.text
+
+
 def test_vector_capability_available_uses_vector_strategy(db_session: Session) -> None:
     _ensure_agent(db_session)
     set_vector_capability(
@@ -468,11 +543,17 @@ def test_vector_capability_available_uses_vector_strategy(db_session: Session) -
     assert result.retrieval_session.strategy == "vector"
 
 
-def test_insufficient_local_evidence_records_no_mock_web_sources_by_default(
+def test_insufficient_local_evidence_uses_fake_web_fallback_audit_path(
     db_session: Session,
 ) -> None:
     _ensure_agent(db_session)
     task = _task(db_session)
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="fake",
+        updated_by="dev-engineer",
+    )
 
     result = ground_query(
         db_session,
@@ -485,14 +566,17 @@ def test_insufficient_local_evidence_records_no_mock_web_sources_by_default(
 
     assert result.local_status == "insufficient"
     assert result.retrieval_session is not None
-    assert result.retrieval_session.mode == "local_insufficient"
-    assert result.retrieval_session.max_web_results == 0
+    assert result.retrieval_session.mode == "web_fallback"
+    assert result.retrieval_session.max_web_results == 2
     assert result.prompt_manifest is not None
-    assert result.prompt_manifest.included_retrieval_hit_ids_json == []
+    assert result.prompt_manifest.included_retrieval_hit_ids_json == [
+        hit.id for hit in result.retrieval_hits
+    ]
     assert result.prompt_manifest.omitted_candidates_json == []
-    assert [audit.decision for audit in result.policy_audits] == ["no_omission_applicable"]
-    assert not result.web_sources
-    assert not result.citations
+    assert result.web_sources
+    assert result.citations
+    assert all(citation.web_source_id for citation in result.citations)
+    assert db_session.scalar(select(func.count()).select_from(WebResearchSource)) == 2
     event_types = [
         event.event_type
         for event in db_session.execute(
@@ -500,9 +584,362 @@ def test_insufficient_local_evidence_records_no_mock_web_sources_by_default(
         ).scalars()
     ]
     assert EventType.RAG_RETRIEVAL_STARTED in event_types
-    assert EventType.WEB_RESEARCH_STARTED not in event_types
-    assert EventType.WEB_RESEARCH_COMPLETED not in event_types
-    assert EventType.RAG_CITATION_RECORDED not in event_types
+    assert EventType.WEB_RESEARCH_STARTED in event_types
+    assert EventType.WEB_RESEARCH_COMPLETED in event_types
+    assert EventType.RAG_CITATION_RECORDED in event_types
+
+
+class _StaticGateway:
+    def complete(self, request_payload: ModelRequest) -> ModelResponse:
+        return ModelResponse(
+            content="Grounded answer [1]",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 12, "completion_tokens": 4},
+            raw_response={},
+        )
+
+
+class _FailOnceGateway:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, request_payload: ModelRequest) -> ModelResponse:
+        self.calls += 1
+        if self.calls == 1:
+            raise ModelGatewayError("rate limited")
+        return ModelResponse(
+            content="Fallback grounded answer [1]",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 10, "completion_tokens": 5},
+            raw_response={},
+        )
+
+
+def test_prompt_manifest_model_call_binding_contract(db_session: Session) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Binding Facts",
+        description="Binding facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("binding beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="binding-facts",
+    )
+    grounding = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="binding beacon",
+    )
+    assert grounding.prompt_manifest is not None
+    manifest = grounding.prompt_manifest
+
+    gateway = AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=_StaticGateway(),
+        grounding_correlation_id=manifest.grounding_correlation_id,
+        prompt_manifest_id=manifest.id,
+        prompt_manifest_version=manifest.metadata_json["prompt_manifest_version"],
+        retrieval_evidence_ids=list(manifest.included_retrieval_hit_ids_json),
+        evidence_text_sha256=manifest.evidence_text_sha256,
+    )
+    gateway.complete(
+        ModelRequest(
+            model_provider="default",
+            model_name="default",
+            response_format="text",
+            messages=[
+                ModelMessage(role="system", content=grounding.evidence_summary),
+                ModelMessage(role="user", content="binding beacon"),
+            ],
+        )
+    )
+    db_session.flush()
+
+    model_call = db_session.scalar(select(ModelCall).where(ModelCall.task_id == task.id))
+    assert model_call is not None
+    assert manifest.grounding_correlation_id == model_call.grounding_correlation_id
+    assert model_call.prompt_manifest_id == manifest.id
+    assert model_call.model_request_sha256
+    assert model_call.request_json["model_request_sha256"] == model_call.model_request_sha256
+    assert model_call.request_json["messages"][0]["content_preview"]
+    assert "content" not in model_call.request_json["messages"][0]
+    assert model_call.attempt_index == 1
+    assert model_call.terminal_status == "success"
+
+
+def test_prompt_manifest_model_call_binding_rejects_stale_manifest(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    first_task = _task(db_session)
+    second_task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Stale Binding Facts",
+        description="Stale binding facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("stale beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="stale-binding-facts",
+    )
+    grounding = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=first_task.id,
+        query="stale beacon",
+    )
+    assert grounding.prompt_manifest is not None
+    manifest = grounding.prompt_manifest
+    gateway = AuditedModelGateway(
+        session=db_session,
+        task_id=second_task.id,
+        gateway=_StaticGateway(),
+        grounding_correlation_id=manifest.grounding_correlation_id,
+        prompt_manifest_id=manifest.id,
+        prompt_manifest_version=manifest.metadata_json["prompt_manifest_version"],
+        retrieval_evidence_ids=list(manifest.included_retrieval_hit_ids_json),
+        evidence_text_sha256=manifest.evidence_text_sha256,
+    )
+
+    with pytest.raises(ModelGatewayError, match="does not belong"):
+        gateway.complete(
+            ModelRequest(
+                model_provider="default",
+                model_name="default",
+                response_format="text",
+                messages=[
+                    ModelMessage(role="system", content=grounding.evidence_summary),
+                    ModelMessage(role="user", content="stale beacon"),
+                ],
+            )
+        )
+    assert db_session.scalar(select(func.count()).select_from(ModelCall)) == 0
+
+
+def test_prompt_manifest_model_call_binding_records_failed_and_fallback_attempts(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Retry Binding Facts",
+        description="Retry binding facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("retry beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="retry-binding-facts",
+    )
+    grounding = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="retry beacon",
+    )
+    assert grounding.prompt_manifest is not None
+    manifest = grounding.prompt_manifest
+    gateway = AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=_FailOnceGateway(),
+        grounding_correlation_id=manifest.grounding_correlation_id,
+        prompt_manifest_id=manifest.id,
+        prompt_manifest_version=manifest.metadata_json["prompt_manifest_version"],
+        retrieval_evidence_ids=list(manifest.included_retrieval_hit_ids_json),
+        evidence_text_sha256=manifest.evidence_text_sha256,
+    )
+    request = ModelRequest(
+        model_provider="default",
+        model_name="default",
+        response_format="text",
+        messages=[
+            ModelMessage(role="system", content=grounding.evidence_summary),
+            ModelMessage(role="user", content="retry beacon"),
+        ],
+    )
+    gateway.complete(request, fallback_requests=[request])
+
+    model_calls = list(
+        db_session.execute(
+            select(ModelCall).where(ModelCall.task_id == task.id).order_by(ModelCall.attempt_index)
+        ).scalars()
+    )
+    assert [call.attempt_index for call in model_calls] == [1, 2]
+    assert [call.terminal_status for call in model_calls] == ["failed", "success"]
+    assert {call.prompt_manifest_id for call in model_calls} == {manifest.id}
+
+
+def test_run_detail_grounding_uses_exact_selectors_and_marks_latest_fallback(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    client = TestClient(app)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Selector Facts",
+        description="Selector facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("first beacon") + _two_chunk_content("second beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="selector-facts",
+    )
+    first = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="first beacon",
+    )
+    second = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="second beacon",
+    )
+    db_session.commit()
+    assert first.prompt_manifest is not None
+    assert second.prompt_manifest is not None
+
+    latest_response = client.get(
+        f"/api/agents/runs/{task.id}/workspace",
+        headers=AUTH_HEADERS,
+    )
+    assert latest_response.status_code == 200
+    latest_grounding = latest_response.json()["knowledge_grounding"]
+    assert latest_grounding["inferred_fallback"] is True
+    assert latest_grounding["selected_retrieval_session_id"] == second.retrieval_session.id
+
+    exact_response = client.get(
+        f"/api/agents/runs/{task.id}/workspace",
+        headers=AUTH_HEADERS,
+        params={"prompt_manifest_id": first.prompt_manifest.id},
+    )
+    assert exact_response.status_code == 200
+    exact_grounding = exact_response.json()["knowledge_grounding"]
+    assert exact_grounding["inferred_fallback"] is False
+    assert exact_grounding["selected_prompt_manifest_id"] == first.prompt_manifest.id
+    assert exact_grounding["retrieval_session"]["id"] == first.retrieval_session.id
+
+    conflict_response = client.get(
+        f"/api/agents/runs/{task.id}/workspace",
+        headers=AUTH_HEADERS,
+        params={
+            "prompt_manifest_id": first.prompt_manifest.id,
+            "retrieval_session_id": second.retrieval_session.id,
+        },
+    )
+    assert conflict_response.status_code == 409
+
+
+def test_grounding_audit_survives_reingest_with_original_evidence_snapshot(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Lifecycle Facts",
+        description="Lifecycle facts",
+        source_type="text",
+        title="Facts v1",
+        content=_two_chunk_content("original beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="lifecycle-facts",
+    )
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="original beacon",
+    )
+    assert result.prompt_manifest is not None
+    manifest_id = result.prompt_manifest.id
+    original_snapshots = list(result.prompt_manifest.source_snapshots_json)
+
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Lifecycle Facts",
+        description="Lifecycle facts changed",
+        source_type="text",
+        title="Facts v2",
+        content=_two_chunk_content("changed beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="lifecycle-facts",
+    )
+    db_session.flush()
+    persisted_manifest = db_session.get(PromptAssemblyManifest, manifest_id)
+
+    assert persisted_manifest is not None
+    assert persisted_manifest.source_snapshots_json == original_snapshots
+    assert "original beacon" in str(persisted_manifest.source_snapshots_json)
+    assert "changed beacon" not in str(persisted_manifest.source_snapshots_json)
+
+
+def test_prompt_manifest_and_policy_audit_are_append_only(db_session: Session) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="append only",
+    )
+    assert result.prompt_manifest is not None
+    assert result.policy_audits
+    audit_id = result.policy_audits[0].id
+    db_session.commit()
+
+    result.prompt_manifest.query = "mutated"
+    with pytest.raises(ValueError, match="append-only"):
+        db_session.flush()
+    db_session.rollback()
+
+    audit = db_session.get(KnowledgePolicyAudit, audit_id)
+    assert audit is not None
+    db_session.delete(audit)
+    with pytest.raises(ValueError, match="append-only"):
+        db_session.flush()
 
 
 def test_org_scoped_retrieval_does_not_cross_tenant_boundary(db_session: Session) -> None:

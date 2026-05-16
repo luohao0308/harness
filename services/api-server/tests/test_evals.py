@@ -2,8 +2,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AdminAuditEvent, Agent, AgentEvent, EvalCase, EvalRun, Task, utc_now
-from app.knowledge import ground_query, ingest_knowledge_source
+from app.db.models import (
+    AdminAuditEvent,
+    Agent,
+    AgentEvent,
+    EvalCase,
+    EvalRun,
+    PromptAssemblyManifest,
+    Task,
+    utc_now,
+)
+from app.knowledge import ground_query, ingest_knowledge_source, set_web_research_provider
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -181,6 +190,10 @@ def test_eval_run_requires_cases() -> None:
 def test_eval_run_grades_grounding_contract_cases(db_session: Session) -> None:
     client = TestClient(app)
     run_id = _grounded_completed_run(db_session)
+    prompt_manifest = db_session.scalar(
+        select(PromptAssemblyManifest).where(PromptAssemblyManifest.run_id == run_id)
+    )
+    assert prompt_manifest is not None
     dataset = client.post(
         "/api/evals/datasets",
         headers=AUTH_HEADERS,
@@ -196,6 +209,7 @@ def test_eval_run_grades_grounding_contract_cases(db_session: Session) -> None:
                 "grounding_contract": {
                     "require_grounded": True,
                     "require_prompt_manifest": True,
+                    "prompt_manifest_id": prompt_manifest.id,
                     "require_policy_decisions": ["allowed", "no_omission_applicable"],
                 },
             },
@@ -231,6 +245,73 @@ def test_eval_run_grades_grounding_contract_cases(db_session: Session) -> None:
     assert statuses[failing_case.json()["id"]] == "FAILED"
     traces = {result["eval_case_id"]: result["grader_trace_json"] for result in results}
     assert traces[passing_case.json()["id"]]["grader"] == "deterministic_grounding_grader_v1"
+    assert traces[passing_case.json()["id"]]["inferred_fallback"] is False
     assert traces[failing_case.json()["id"]]["grounding_failures"] == [
         "missing_policy_decisions"
     ]
+
+
+def test_eval_run_grades_fake_web_fallback_as_grounded(db_session: Session) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Fake web grounding Eval source run",
+        goal="uncovered web claim",
+        status="COMPLETED",
+        model_provider="default",
+        model_name="default",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="fake",
+        updated_by="dev-engineer",
+    )
+    grounding = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="uncovered web claim",
+    )
+    assert grounding.prompt_manifest is not None
+    assert grounding.web_sources
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "Fake Web Dataset", "description": "P1 fake web fallback"},
+    ).json()
+    eval_case = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{task.id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "grounding_contract": {
+                    "require_grounded": True,
+                    "require_insufficient": True,
+                    "prompt_manifest_id": grounding.prompt_manifest.id,
+                },
+            },
+            "tags_json": ["grounding", "fake-web"],
+        },
+    )
+    assert eval_case.status_code == 201
+
+    eval_run_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/runs",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+
+    assert eval_run_response.status_code == 201
+    result = eval_run_response.json()["results"][0]
+    assert result["status"] == "PASSED"
+    assert result["grader_trace_json"]["inferred_fallback"] is False
