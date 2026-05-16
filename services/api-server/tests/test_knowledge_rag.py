@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -83,6 +86,40 @@ def _task(session: Session, *, organization_id: str = "dev-org") -> Task:
 def _two_chunk_content(term: str = "orion anchor") -> str:
     section = f"{term} local fact. " + ("alpha " * 120) + "\n"
     return section * 2
+
+
+def _request_hash_v2(
+    *,
+    model_provider: str,
+    model_name: str,
+    response_format: str,
+    generation_parameters: dict,
+    request_message_hashes: list[dict],
+    request_message_hashes_sha256: str,
+    retrieval_evidence_ids: list[str],
+    prompt_manifest_id: str | None,
+    prompt_manifest_version: str | None,
+    evidence_text_sha256: str | None,
+) -> str:
+    canonical_payload = {
+        "model_provider": model_provider,
+        "model_name": model_name,
+        "response_format": response_format,
+        "generation_parameters": generation_parameters,
+        "request_message_hashes_json": request_message_hashes,
+        "request_message_hashes_sha256": request_message_hashes_sha256,
+        "retrieval_evidence_ids": sorted(retrieval_evidence_ids),
+        "prompt_manifest_id": prompt_manifest_id,
+        "prompt_manifest_version": prompt_manifest_version,
+        "evidence_text_sha256": evidence_text_sha256,
+    }
+    encoded = json.dumps(
+        canonical_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def test_ingest_creates_versioned_source_document_chunks_and_embeddings(
@@ -427,6 +464,10 @@ def test_grounding_persists_prompt_manifest_and_policy_audit(
     assert result.prompt_manifest.source_snapshots_json
     assert result.prompt_manifest.prompt_sections_json[0]["section"] == "knowledge_evidence"
     assert result.prompt_manifest.omitted_candidates_json
+    assert result.grounding_provider == "local_knowledge"
+    assert result.fixture_grounded is False
+    assert result.verified_grounded is True
+    assert result.prompt_manifest.metadata_json["verified_grounded"] is True
     assert {
         audit.decision for audit in result.policy_audits
     } >= {"allowed", "omitted"}
@@ -507,6 +548,108 @@ def test_omitted_candidates_do_not_leak_raw_text_to_manifest_or_run_detail(
     assert forbidden_text not in response.text
 
 
+def test_denied_policy_candidates_do_not_reach_prompt_or_run_detail(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Allowed Deny Control",
+        description="Allowed facts",
+        source_type="text",
+        title="Allowed Facts",
+        content=_two_chunk_content("allowed beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="allowed-deny-control",
+    )
+    forbidden_text = "forbidden denied raw text"
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Denied Facts",
+        description="Denied facts",
+        source_type="text",
+        title="Denied Facts",
+        content=(f"allowed beacon DENY: {forbidden_text}. " + ("alpha " * 80) + "\n") * 2,
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="denied-facts",
+    )
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="allowed beacon",
+    )
+    db_session.commit()
+
+    assert {audit.decision for audit in result.policy_audits} >= {"allowed", "denied"}
+    payload = (
+        str(result.prompt_manifest.__dict__ if result.prompt_manifest else {})
+        + str([hit.snippet for hit in result.retrieval_hits])
+        + str([citation.quoted_text for citation in result.citations])
+        + str([audit.safe_metadata_json for audit in result.policy_audits])
+    )
+    assert forbidden_text not in payload
+
+    response = TestClient(app).get(
+        f"/api/agents/runs/{task.id}/workspace",
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    assert forbidden_text not in response.text
+
+
+def test_redacted_policy_candidates_use_marker_without_raw_secret(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    secret_text = "classified.launch/api:key@example.com"
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Redacted Facts",
+        description="Redacted facts",
+        source_type="text",
+        title="Redacted Facts",
+        content=(f"redaction beacon REDACT: {secret_text}. " + ("alpha " * 120) + "\n") * 2,
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="redacted-facts",
+    )
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="redaction beacon",
+    )
+
+    assert result.local_status == "sufficient"
+    assert {audit.decision for audit in result.policy_audits} >= {"allowed", "redacted"}
+    payload = (
+        str(result.prompt_manifest.__dict__ if result.prompt_manifest else {})
+        + str([hit.snippet for hit in result.retrieval_hits])
+        + str([citation.quoted_text for citation in result.citations])
+        + str([audit.safe_metadata_json for audit in result.policy_audits])
+    )
+    assert "[REDACTED:policy_marker]" in payload
+    assert secret_text not in payload
+
+
 def test_vector_capability_available_uses_vector_strategy(db_session: Session) -> None:
     _ensure_agent(db_session)
     set_vector_capability(
@@ -572,6 +715,14 @@ def test_insufficient_local_evidence_uses_fake_web_fallback_audit_path(
     assert result.prompt_manifest.included_retrieval_hit_ids_json == [
         hit.id for hit in result.retrieval_hits
     ]
+    assert result.grounding_provider == "fake_web_fixture"
+    assert result.fixture_grounded is True
+    assert result.verified_grounded is False
+    assert result.grounding_verification_reason == "fixture_web_not_verified"
+    assert result.retrieval_session.metadata_json["grounding_provider"] == (
+        "fake_web_fixture"
+    )
+    assert result.prompt_manifest.metadata_json["fixture_grounded"] is True
     assert result.prompt_manifest.omitted_candidates_json == []
     assert result.web_sources
     assert result.citations
@@ -672,8 +823,39 @@ def test_prompt_manifest_model_call_binding_contract(db_session: Session) -> Non
     assert manifest.grounding_correlation_id == model_call.grounding_correlation_id
     assert model_call.prompt_manifest_id == manifest.id
     assert model_call.model_request_sha256
+    assert model_call.model_request_hash_schema_version == 2
+    assert model_call.request_message_hashes_json
+    assert model_call.request_message_hashes_sha256
+    assert model_call.hash_recomputability_status == "recomputable_v2"
+    recomputed_message_hashes_sha256 = hashlib.sha256(
+        json.dumps(
+            model_call.request_message_hashes_json,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    assert recomputed_message_hashes_sha256 == model_call.request_message_hashes_sha256
+    assert model_call.model_request_sha256 == _request_hash_v2(
+        model_provider=model_call.model_provider,
+        model_name=model_call.model_name,
+        response_format=model_call.request_json["response_format"],
+        generation_parameters=model_call.request_json["generation_parameters"],
+        request_message_hashes=model_call.request_message_hashes_json,
+        request_message_hashes_sha256=model_call.request_message_hashes_sha256,
+        retrieval_evidence_ids=list(manifest.included_retrieval_hit_ids_json),
+        prompt_manifest_id=manifest.id,
+        prompt_manifest_version=manifest.metadata_json["prompt_manifest_version"],
+        evidence_text_sha256=manifest.evidence_text_sha256,
+    )
     assert model_call.request_json["model_request_sha256"] == model_call.model_request_sha256
-    assert model_call.request_json["messages"][0]["content_preview"]
+    assert model_call.request_json["model_request_hash_schema_version"] == 2
+    assert model_call.request_json["request_message_hashes_sha256"] == (
+        model_call.request_message_hashes_sha256
+    )
+    assert model_call.request_json["messages"][0]["content_sha256"]
+    assert model_call.request_json["messages"][0]["content_length"] > 0
+    assert "content_preview" not in model_call.request_json["messages"][0]
     assert "content" not in model_call.request_json["messages"][0]
     assert model_call.attempt_index == 1
     assert model_call.terminal_status == "success"
@@ -728,6 +910,60 @@ def test_prompt_manifest_model_call_binding_rejects_stale_manifest(
                 messages=[
                     ModelMessage(role="system", content=grounding.evidence_summary),
                     ModelMessage(role="user", content="stale beacon"),
+                ],
+            )
+        )
+    assert db_session.scalar(select(func.count()).select_from(ModelCall)) == 0
+
+
+def test_prompt_manifest_model_call_binding_requires_evidence_message(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Evidence Binding Facts",
+        description="Evidence binding facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("evidence beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="evidence-binding-facts",
+    )
+    grounding = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="evidence beacon",
+    )
+    assert grounding.prompt_manifest is not None
+    manifest = grounding.prompt_manifest
+    gateway = AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=_StaticGateway(),
+        grounding_correlation_id=manifest.grounding_correlation_id,
+        prompt_manifest_id=manifest.id,
+        prompt_manifest_version=manifest.metadata_json["prompt_manifest_version"],
+        retrieval_evidence_ids=list(manifest.included_retrieval_hit_ids_json),
+        evidence_text_sha256=manifest.evidence_text_sha256,
+    )
+
+    with pytest.raises(ModelGatewayError, match="do not include prompt manifest evidence"):
+        gateway.complete(
+            ModelRequest(
+                model_provider="default",
+                model_name="default",
+                response_format="text",
+                messages=[
+                    ModelMessage(role="system", content="No grounding evidence here."),
+                    ModelMessage(role="user", content="evidence beacon"),
                 ],
             )
         )
@@ -862,6 +1098,46 @@ def test_run_detail_grounding_uses_exact_selectors_and_marks_latest_fallback(
     assert conflict_response.status_code == 409
 
 
+def test_run_detail_rejects_foreign_run_prompt_manifest_selector(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    client = TestClient(app)
+    dev_task = _task(db_session, organization_id="dev-org")
+    other_task = _task(db_session, organization_id="other-org")
+    ingest_knowledge_source(
+        db_session,
+        organization_id="other-org",
+        agent_id="default",
+        name="Other Selector Facts",
+        description="Other selector facts",
+        source_type="text",
+        title="Other Facts",
+        content=_two_chunk_content("other selector beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-other-engineer",
+        idempotency_key="other-selector-facts",
+    )
+    other_grounding = ground_query(
+        db_session,
+        organization_id="other-org",
+        agent_id="default",
+        run_id=other_task.id,
+        query="other selector beacon",
+    )
+    db_session.commit()
+    assert other_grounding.prompt_manifest is not None
+
+    response = client.get(
+        f"/api/agents/runs/{dev_task.id}/workspace",
+        headers=AUTH_HEADERS,
+        params={"prompt_manifest_id": other_grounding.prompt_manifest.id},
+    )
+
+    assert response.status_code == 404
+
+
 def test_grounding_audit_survives_reingest_with_original_evidence_snapshot(
     db_session: Session,
 ) -> None:
@@ -942,9 +1218,12 @@ def test_prompt_manifest_and_policy_audit_are_append_only(db_session: Session) -
         db_session.flush()
 
 
-def test_org_scoped_retrieval_does_not_cross_tenant_boundary(db_session: Session) -> None:
+def test_org_scoped_retrieval_does_not_expose_foreign_tenant_signal(
+    db_session: Session,
+) -> None:
     _ensure_agent(db_session)
-    _source, _document, chunks, _embeddings = ingest_knowledge_source(
+    task = _task(db_session)
+    source, document, chunks, _embeddings = ingest_knowledge_source(
         db_session,
         organization_id="other-org",
         agent_id="default",
@@ -963,20 +1242,39 @@ def test_org_scoped_retrieval_does_not_cross_tenant_boundary(db_session: Session
         db_session,
         organization_id="dev-org",
         agent_id="default",
-        run_id=None,
+        run_id=task.id,
         query="tenant secret",
     )
+    db_session.commit()
 
     assert result.local_status == "insufficient"
     assert all(hit.source_kind != "knowledge_chunk" for hit in result.retrieval_hits)
     hidden_chunk_ids = {chunk.id for chunk in chunks}
+    hidden_hashes = {chunk.text_sha256 for chunk in chunks}
     evidence_payload = (
         str(result.prompt_manifest.__dict__ if result.prompt_manifest else {})
         + str([audit.safe_metadata_json for audit in result.policy_audits])
         + str([citation.metadata_json for citation in result.citations])
+        + str([audit.decision for audit in result.policy_audits])
     )
     assert "tenant secret local fact" not in evidence_payload
+    assert "foreign_tenant_denied" not in evidence_payload
+    assert document.id not in evidence_payload
+    assert source.id not in evidence_payload
     assert not any(chunk_id in evidence_payload for chunk_id in hidden_chunk_ids)
+    assert not any(text_hash in evidence_payload for text_hash in hidden_hashes)
+
+    response = TestClient(app).get(
+        f"/api/agents/runs/{task.id}/workspace",
+        headers=AUTH_HEADERS,
+    )
+    assert response.status_code == 200
+    assert "tenant secret local fact" not in response.text
+    assert "foreign_tenant_denied" not in response.text
+    assert document.id not in response.text
+    assert source.id not in response.text
+    assert not any(chunk_id in response.text for chunk_id in hidden_chunk_ids)
+    assert not any(text_hash in response.text for text_hash in hidden_hashes)
 
 
 def test_web_research_url_policy_blocks_local_and_private_targets() -> None:

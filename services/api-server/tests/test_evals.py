@@ -246,12 +246,17 @@ def test_eval_run_grades_grounding_contract_cases(db_session: Session) -> None:
     traces = {result["eval_case_id"]: result["grader_trace_json"] for result in results}
     assert traces[passing_case.json()["id"]]["grader"] == "deterministic_grounding_grader_v1"
     assert traces[passing_case.json()["id"]]["inferred_fallback"] is False
+    assert traces[passing_case.json()["id"]]["grounding_provider"] == "local_knowledge"
+    assert traces[passing_case.json()["id"]]["fixture_grounded"] is False
+    assert traces[passing_case.json()["id"]]["verified_grounded"] is True
     assert traces[failing_case.json()["id"]]["grounding_failures"] == [
         "missing_policy_decisions"
     ]
 
 
-def test_eval_run_grades_fake_web_fallback_as_grounded(db_session: Session) -> None:
+def test_eval_run_rejects_fake_web_fallback_unless_fixture_opted_in(
+    db_session: Session,
+) -> None:
     client = TestClient(app)
     _ensure_agent(db_session)
     task = Task(
@@ -288,7 +293,7 @@ def test_eval_run_grades_fake_web_fallback_as_grounded(db_session: Session) -> N
         headers=AUTH_HEADERS,
         json={"name": "Fake Web Dataset", "description": "P1 fake web fallback"},
     ).json()
-    eval_case = client.post(
+    default_case = client.post(
         f"/api/evals/datasets/{dataset['id']}/cases/from-run/{task.id}",
         headers=AUTH_HEADERS,
         json={
@@ -303,7 +308,24 @@ def test_eval_run_grades_fake_web_fallback_as_grounded(db_session: Session) -> N
             "tags_json": ["grounding", "fake-web"],
         },
     )
-    assert eval_case.status_code == 201
+    assert default_case.status_code == 201
+    opt_in_case = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{task.id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "grounding_contract": {
+                    "require_grounded": True,
+                    "require_insufficient": True,
+                    "allow_fixture_grounding": True,
+                    "prompt_manifest_id": grounding.prompt_manifest.id,
+                },
+            },
+            "tags_json": ["grounding", "fake-web", "fixture-opt-in"],
+        },
+    )
+    assert opt_in_case.status_code == 201
 
     eval_run_response = client.post(
         f"/api/evals/datasets/{dataset['id']}/runs",
@@ -312,6 +334,15 @@ def test_eval_run_grades_fake_web_fallback_as_grounded(db_session: Session) -> N
     )
 
     assert eval_run_response.status_code == 201
-    result = eval_run_response.json()["results"][0]
-    assert result["status"] == "PASSED"
-    assert result["grader_trace_json"]["inferred_fallback"] is False
+    results = eval_run_response.json()["results"]
+    statuses = {result["eval_case_id"]: result["status"] for result in results}
+    traces = {result["eval_case_id"]: result["grader_trace_json"] for result in results}
+    assert statuses[default_case.json()["id"]] == "FAILED"
+    assert statuses[opt_in_case.json()["id"]] == "PASSED"
+    assert traces[default_case.json()["id"]]["grounding_failures"] == [
+        "missing_grounded_hits_or_citations"
+    ]
+    assert traces[opt_in_case.json()["id"]]["inferred_fallback"] is False
+    assert traces[opt_in_case.json()["id"]]["grounding_provider"] == "fake_web_fixture"
+    assert traces[opt_in_case.json()["id"]]["fixture_grounded"] is True
+    assert traces[opt_in_case.json()["id"]]["verified_grounded"] is False
