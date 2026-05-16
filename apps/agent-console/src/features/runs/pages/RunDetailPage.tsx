@@ -218,6 +218,44 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
                 </div>
                 <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
+                {grounding.prompt_manifest && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-slate-700">Prompt 组装审计</div>
+                    <div className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
+                      <div className="font-mono text-[11px] text-slate-500">
+                        manifest {grounding.prompt_manifest.id}
+                      </div>
+                      <div className="mt-1 text-slate-600">
+                        included {grounding.prompt_manifest.included_retrieval_hit_ids_json.length} · omitted{" "}
+                        {grounding.prompt_manifest.omitted_candidates_json.length}
+                      </div>
+                      <div className="mt-1 break-all text-slate-500">
+                        sha256 {grounding.prompt_manifest.evidence_text_sha256}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {grounding.policy_audits.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-slate-700">策略 / 省略审计</div>
+                    {grounding.policy_audits.map((audit) => (
+                      <div key={audit.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge tone={audit.decision === "allowed" ? "success" : "warning"}>
+                            {audit.decision}
+                          </Badge>
+                          <span className="font-mono text-[11px] text-slate-500">
+                            {audit.source_kind ?? "manifest"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-slate-600">{audit.reason}</div>
+                        {audit.source_ref_id && (
+                          <div className="mt-1 break-all text-slate-500">{audit.source_ref_id}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {grounding.retrieval_hits.length > 0 && (
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-slate-700">检索命中</div>
