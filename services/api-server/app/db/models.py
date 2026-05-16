@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -290,6 +291,19 @@ class ModelCall(Base):
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    grounding_correlation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+    prompt_manifest_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+    model_request_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempt_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    terminal_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     request_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     response_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -577,6 +591,7 @@ class PromptAssemblyManifest(Base):
     run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    grounding_correlation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     query: Mapped[str] = mapped_column(Text, nullable=False)
     included_retrieval_hit_ids_json: Mapped[list] = mapped_column(
         JSON,
@@ -610,6 +625,16 @@ class KnowledgePolicyAudit(Base):
     source_ref_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     safe_metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+def _reject_audit_update(_mapper, _connection, target) -> None:
+    raise ValueError(f"{target.__class__.__name__} is append-only")
+
+
+event.listen(PromptAssemblyManifest, "before_update", _reject_audit_update)
+event.listen(PromptAssemblyManifest, "before_delete", _reject_audit_update)
+event.listen(KnowledgePolicyAudit, "before_update", _reject_audit_update)
+event.listen(KnowledgePolicyAudit, "before_delete", _reject_audit_update)
 
 
 class EvalDataset(Base):
