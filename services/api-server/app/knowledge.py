@@ -36,6 +36,21 @@ VECTOR_CAPABILITY_DISABLED = "disabled"
 WEB_RESEARCH_PROVIDER_KEY = "knowledge.web_research_provider"
 WEB_RESEARCH_PROVIDER_DISABLED = "disabled"
 WEB_RESEARCH_PROVIDER_FAKE = "fake"
+GROUNDING_PROVIDER_LOCAL_KNOWLEDGE = "local_knowledge"
+GROUNDING_PROVIDER_FAKE_WEB_FIXTURE = "fake_web_fixture"
+GROUNDING_PROVIDER_NONE = "none"
+GROUNDING_REASON_LOCAL_SUFFICIENT = "local_evidence_sufficient"
+GROUNDING_REASON_FIXTURE_NOT_VERIFIED = "fixture_web_not_verified"
+GROUNDING_REASON_NO_VERIFIED_EVIDENCE = "no_verified_evidence"
+POLICY_DECISION_ALLOWED = "allowed"
+POLICY_DECISION_OMITTED = "omitted"
+POLICY_DECISION_DENIED = "denied"
+POLICY_DECISION_REDACTED = "redacted"
+POLICY_DECISION_FOREIGN_TENANT_DENIED = "foreign_tenant_denied"
+POLICY_DENY_MARKER = "DENY:"
+POLICY_REDACT_MARKER = "REDACT:"
+POLICY_REDACTION_REASON = "policy_marker"
+POLICY_REDACTION_TOKEN = f"[REDACTED:{POLICY_REDACTION_REASON}]"
 
 DEFAULT_MIN_HITS = 2
 DEFAULT_MIN_SCORE = 0.62
@@ -62,6 +77,10 @@ class KnowledgeGroundingResult:
     vector_capability: str = VECTOR_CAPABILITY_UNAVAILABLE
     local_status: str = "insufficient"
     grounded: bool = False
+    grounding_provider: str = GROUNDING_PROVIDER_NONE
+    fixture_grounded: bool = False
+    verified_grounded: bool = False
+    grounding_verification_reason: str = GROUNDING_REASON_NO_VERIFIED_EVIDENCE
     evidence_summary: str = ""
     evidence_message: str = ""
 
@@ -72,6 +91,50 @@ def _normalize_text(value: str) -> str:
 
 def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _grounding_outcome(
+    *,
+    local_status: str,
+    web_sources: list[WebResearchSource],
+) -> dict:
+    if local_status == "sufficient":
+        return {
+            "grounding_provider": GROUNDING_PROVIDER_LOCAL_KNOWLEDGE,
+            "fixture_grounded": False,
+            "verified_grounded": True,
+            "grounding_verification_reason": GROUNDING_REASON_LOCAL_SUFFICIENT,
+        }
+    if web_sources:
+        return {
+            "grounding_provider": GROUNDING_PROVIDER_FAKE_WEB_FIXTURE,
+            "fixture_grounded": True,
+            "verified_grounded": False,
+            "grounding_verification_reason": GROUNDING_REASON_FIXTURE_NOT_VERIFIED,
+        }
+    return {
+        "grounding_provider": GROUNDING_PROVIDER_NONE,
+        "fixture_grounded": False,
+        "verified_grounded": False,
+        "grounding_verification_reason": GROUNDING_REASON_NO_VERIFIED_EVIDENCE,
+    }
+
+
+def _policy_decision_for_text(value: str) -> str:
+    if POLICY_DENY_MARKER in value:
+        return POLICY_DECISION_DENIED
+    if POLICY_REDACT_MARKER in value:
+        return POLICY_DECISION_REDACTED
+    return POLICY_DECISION_ALLOWED
+
+
+def _redact_policy_marked_text(value: str) -> tuple[str, int]:
+    redacted, count = re.subn(
+        rf"{re.escape(POLICY_REDACT_MARKER)}[^\n]*",
+        POLICY_REDACTION_TOKEN,
+        value,
+    )
+    return redacted, count
 
 
 def _tokenize(value: str) -> list[str]:
@@ -554,6 +617,14 @@ def sanitize_audit_payload(payload: dict) -> dict:
         "status",
         "provider",
         "max_web_results",
+        "reason_code",
+        "redaction_count",
+        "redacted_text_sha256",
+        "denied_text_sha256",
+        "grounding_provider",
+        "fixture_grounded",
+        "verified_grounded",
+        "grounding_verification_reason",
     }
     return {key: value for key, value in payload.items() if key in allowed_keys}
 
@@ -584,16 +655,53 @@ def _create_policy_audits(
     retrieval_session: RetrievalSession,
     hits: list[RetrievalHit],
     omitted_candidates: list[dict],
+    denied_candidates: list[dict] | None = None,
+    redacted_candidates: list[dict] | None = None,
 ) -> list[KnowledgePolicyAudit]:
     audits: list[KnowledgePolicyAudit] = []
     now = utc_now()
+    denied_candidates = denied_candidates or []
+    redacted_candidates = redacted_candidates or []
+
+    for candidate in denied_candidates:
+        audit = KnowledgePolicyAudit(
+            retrieval_session_id=retrieval_session.id,
+            run_id=retrieval_session.run_id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            decision=str(candidate["policy_decision"]),
+            reason=str(candidate["reason"]),
+            source_kind=str(candidate["source_kind"]),
+            source_ref_id=None,
+            safe_metadata_json=sanitize_audit_payload(candidate),
+            created_at=now,
+        )
+        session.add(audit)
+        audits.append(audit)
+
+    for candidate in redacted_candidates:
+        audit = KnowledgePolicyAudit(
+            retrieval_session_id=retrieval_session.id,
+            run_id=retrieval_session.run_id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            decision=POLICY_DECISION_REDACTED,
+            reason=str(candidate["reason"]),
+            source_kind=str(candidate["source_kind"]),
+            source_ref_id=str(candidate["source_ref_id"]),
+            safe_metadata_json=sanitize_audit_payload(candidate),
+            created_at=now,
+        )
+        session.add(audit)
+        audits.append(audit)
+
     for hit in hits:
         audit = KnowledgePolicyAudit(
             retrieval_session_id=retrieval_session.id,
             run_id=retrieval_session.run_id,
             organization_id=retrieval_session.organization_id,
             agent_id=retrieval_session.agent_id,
-            decision="allowed",
+            decision=POLICY_DECISION_ALLOWED,
             reason="selected_for_prompt",
             source_kind=hit.source_kind,
             source_ref_id=hit.chunk_id or hit.web_source_id,
@@ -605,7 +713,7 @@ def _create_policy_audits(
                     "document_id": hit.document_id,
                     "document_version": hit.document_version,
                     "web_source_id": hit.web_source_id,
-                    "policy_decision": "allowed",
+                    "policy_decision": POLICY_DECISION_ALLOWED,
                 }
             ),
             created_at=now,
@@ -614,7 +722,7 @@ def _create_policy_audits(
         audits.append(audit)
         hit.metadata_json = {
             **(hit.metadata_json if isinstance(hit.metadata_json, dict) else {}),
-            "policy_decision": "allowed",
+            "policy_decision": POLICY_DECISION_ALLOWED,
             "omitted_reason": None,
         }
 
@@ -624,7 +732,7 @@ def _create_policy_audits(
             run_id=retrieval_session.run_id,
             organization_id=retrieval_session.organization_id,
             agent_id=retrieval_session.agent_id,
-            decision="omitted",
+            decision=POLICY_DECISION_OMITTED,
             reason=str(candidate["reason"]),
             source_kind=str(candidate["source_kind"]),
             source_ref_id=str(candidate["source_ref_id"]),
@@ -634,7 +742,7 @@ def _create_policy_audits(
         session.add(audit)
         audits.append(audit)
 
-    if not omitted_candidates:
+    if not omitted_candidates and not denied_candidates and not redacted_candidates:
         audit = KnowledgePolicyAudit(
             retrieval_session_id=retrieval_session.id,
             run_id=retrieval_session.run_id,
@@ -648,6 +756,11 @@ def _create_policy_audits(
                 {
                     "hit_count": len(hits),
                     "local_status": retrieval_session.local_status,
+                    **(
+                        retrieval_session.metadata_json
+                        if isinstance(retrieval_session.metadata_json, dict)
+                        else {}
+                    ),
                 }
             ),
             created_at=now,
@@ -667,6 +780,8 @@ def _create_prompt_manifest(
     citations: list[CitationRecord],
     omitted_candidates: list[dict],
     evidence_summary: str,
+    grounding_outcome: dict,
+    evidence_message: str,
 ) -> PromptAssemblyManifest:
     source_snapshots = []
     for hit in hits:
@@ -714,6 +829,8 @@ def _create_prompt_manifest(
             "local_status": retrieval_session.local_status,
             "grounding_correlation_id": retrieval_session.id,
             "prompt_manifest_version": "knowledge-prompt-assembly-v1",
+            "evidence_message": evidence_message,
+            **grounding_outcome,
         },
         created_at=utc_now(),
     )
@@ -967,13 +1084,54 @@ def ground_query(
         ).all()
     )
     candidates: list[tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument]] = []
+    redacted_text_by_chunk_id: dict[str, str] = {}
+    redacted_candidates: list[dict] = []
+    denied_candidates: list[dict] = []
     query_embedding = _fake_embedding(query)
     for chunk, embedding, document in chunk_rows:
+        policy_decision = _policy_decision_for_text(chunk.text)
+        if policy_decision == POLICY_DECISION_DENIED:
+            denied_candidates.append(
+                {
+                    "source_kind": "knowledge_chunk",
+                    "source_ref_id": chunk.id,
+                    "policy_decision": POLICY_DECISION_DENIED,
+                    "reason": "policy_marker_denied",
+                    "reason_code": "policy_marker_denied",
+                    "document_id": document.id,
+                    "document_version": document.version,
+                    "source_id": chunk.source_id,
+                    "source_version": chunk.source_version,
+                    "chunk_text_sha256": chunk.text_sha256,
+                    "denied_text_sha256": chunk.text_sha256,
+                }
+            )
+            continue
+        candidate_text = chunk.text
+        if policy_decision == POLICY_DECISION_REDACTED:
+            candidate_text, redaction_count = _redact_policy_marked_text(chunk.text)
+            redacted_text_by_chunk_id[chunk.id] = candidate_text
+            redacted_candidates.append(
+                {
+                    "source_kind": "knowledge_chunk",
+                    "source_ref_id": chunk.id,
+                    "policy_decision": POLICY_DECISION_REDACTED,
+                    "reason": "policy_marker_redacted",
+                    "reason_code": POLICY_REDACTION_REASON,
+                    "redaction_count": redaction_count,
+                    "redacted_text_sha256": _sha256(candidate_text),
+                    "document_id": document.id,
+                    "document_version": document.version,
+                    "source_id": chunk.source_id,
+                    "source_version": chunk.source_version,
+                    "chunk_text_sha256": chunk.text_sha256,
+                }
+            )
         vector = _chunk_embedding_vector(embedding)
         if capability == VECTOR_CAPABILITY_AVAILABLE and vector:
             score = _cosine_similarity(query_embedding, vector)
         else:
-            score = _lexical_similarity(query, chunk.text)
+            score = _lexical_similarity(query, candidate_text)
         candidates.append((score, chunk, embedding, document))
     candidates.sort(key=lambda item: item[0], reverse=True)
     top_candidates = [
@@ -1003,6 +1161,7 @@ def ground_query(
     if selected_candidates:
         for rank, (score, chunk, _embedding, document) in enumerate(selected_candidates, start=1):
             selected_chunk_ids.add(chunk.id)
+            snippet_text = redacted_text_by_chunk_id.get(chunk.id, chunk.text)
             hit = RetrievalHit(
                 retrieval_session_id=retrieval_session.id,
                 chunk_id=chunk.id,
@@ -1012,17 +1171,26 @@ def ground_query(
                 source_kind="knowledge_chunk",
                 document_id=document.id,
                 document_version=document.version,
-                snippet=chunk.text[:400],
+                snippet=snippet_text[:400],
                 metadata_json={
                     "source_id": chunk.source_id,
                     "source_version": chunk.source_version,
                     "chunk_version": chunk.chunk_version,
                     "document_content_sha256": document.content_sha256,
                     "chunk_text_sha256": chunk.text_sha256,
+                    "snippet_sha256": _sha256(snippet_text[:400]),
                     "chunk_span": {
                         "start_offset": chunk.start_offset,
                         "end_offset": chunk.end_offset,
                     },
+                    **(
+                        {
+                            "policy_decision": POLICY_DECISION_REDACTED,
+                            "reason_code": POLICY_REDACTION_REASON,
+                        }
+                        if chunk.id in redacted_text_by_chunk_id
+                        else {}
+                    ),
                 },
                 created_at=now,
             )
@@ -1120,6 +1288,19 @@ def ground_query(
         retrieval_session.mode = "web_fallback" if web_sources else "local_insufficient"
     elif local_status != "sufficient" and not web_sources:
         retrieval_session.mode = "local_insufficient"
+    grounding_outcome = _grounding_outcome(
+        local_status=local_status,
+        web_sources=web_sources,
+    )
+    evidence_message = (
+        "Local knowledge grounded the answer."
+        if local_status == "sufficient"
+        else (
+            "Local knowledge is insufficient; controlled fake web research grounded the answer."
+            if web_sources
+            else "Local knowledge is insufficient; no web research provider is configured."
+        )
+    )
     retrieval_session.metadata_json = {
         "web_research_provider": research_provider,
         "hit_count": len(hits),
@@ -1127,6 +1308,7 @@ def ground_query(
         "top_score": hits[0].score if hits else 0.0,
         "top_candidate_score": top_candidates[0][0] if top_candidates else 0.0,
         "sufficiency_reason": sufficiency_reason,
+        **grounding_outcome,
     }
     session.flush()
     omitted_candidates = []
@@ -1152,6 +1334,8 @@ def ground_query(
         retrieval_session=retrieval_session,
         hits=hits,
         omitted_candidates=omitted_candidates,
+        denied_candidates=denied_candidates,
+        redacted_candidates=redacted_candidates,
     )
     evidence_summary = _build_evidence_messages(
         query=query,
@@ -1166,6 +1350,8 @@ def ground_query(
         citations=citations,
         omitted_candidates=omitted_candidates,
         evidence_summary=evidence_summary,
+        grounding_outcome=grounding_outcome,
+        evidence_message=evidence_message,
     )
     if run_id:
         _record_retrieval_event(
@@ -1180,15 +1366,6 @@ def ground_query(
             local_status=local_status,
         )
     grounded = (local_status == "sufficient" or bool(web_sources)) and bool(citations)
-    evidence_message = (
-        "Local knowledge grounded the answer."
-        if local_status == "sufficient"
-        else (
-            "Local knowledge is insufficient; controlled fake web research grounded the answer."
-            if web_sources
-            else "Local knowledge is insufficient; no web research provider is configured."
-        )
-    )
     return KnowledgeGroundingResult(
         retrieval_session=retrieval_session,
         retrieval_hits=hits,
@@ -1199,6 +1376,12 @@ def ground_query(
         vector_capability=capability,
         local_status=local_status,
         grounded=grounded,
+        grounding_provider=str(grounding_outcome["grounding_provider"]),
+        fixture_grounded=bool(grounding_outcome["fixture_grounded"]),
+        verified_grounded=bool(grounding_outcome["verified_grounded"]),
+        grounding_verification_reason=str(
+            grounding_outcome["grounding_verification_reason"]
+        ),
         evidence_summary=evidence_summary,
         evidence_message=evidence_message,
     )
