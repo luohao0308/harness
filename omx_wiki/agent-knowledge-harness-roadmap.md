@@ -52,12 +52,14 @@ The repository already contains more than the original roadmap described:
 Knowledge/RAG code now exists in the current worktree:
 
 - `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py` creates knowledge, document, chunk, embedding, retrieval, citation, and web-source records.
-- `services/api-server/app/knowledge.py` implements ingestion, chunking, deterministic embeddings, vector capability state, lexical fallback, retrieval sessions, citations, and insufficient-local-evidence behavior.
-- `services/api-server/app/api/agents.py` exposes `GET/POST /api/agents/{agent_id}/knowledge/sources` and uses knowledge grounding in normal Workspace chat.
+- `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py` creates prompt assembly manifest and policy audit tables.
+- `services/api-server/app/knowledge.py` implements ingestion, chunking, deterministic embeddings, vector capability state, lexical/CJK fallback, retrieval sessions, citations, prompt manifest persistence, policy/omission audit rows, and insufficient-local-evidence behavior.
+- `services/api-server/app/api/agents.py` exposes `GET/POST /api/agents/{agent_id}/knowledge/sources`, uses knowledge grounding in normal Workspace chat, and returns manifest/audit evidence to Run Detail.
+- `services/api-server/app/api/evals.py` includes a deterministic grounding contract grader for prompt manifest, policy decisions, sufficient retrieval, citation-hit inclusion, and forbidden-text leakage.
 - `apps/agent-console/src/features/agents/pages/AgentListPage.tsx` includes a knowledge source add/list surface.
 - `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` renders assistant grounding metadata.
-- `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` renders retrieval hits, citations, web sources, vector capability, local status, and grounded status.
-- `services/api-server/tests/test_knowledge_rag.py` covers ingestion, versioning, lexical fallback, vector flag behavior, citation binding, insufficient local evidence, tenant isolation, URL policy, API, and event behavior.
+- `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` renders retrieval hits, citations, web sources, vector capability, local status, grounded status, prompt manifest counts/hash, and policy audit decisions.
+- `services/api-server/tests/test_knowledge_rag.py` covers ingestion, versioning, lexical/CJK fallback, vector flag behavior, citation binding, prompt manifest persistence, policy audit rows, insufficient local evidence, tenant isolation, URL policy, API, and event behavior.
 
 ## Replanned Progress
 
@@ -72,18 +74,29 @@ Status: completed / keep closed.
 
 ### P1: Formalize Agent Knowledge Harness V1
 
-Status: current next verification lane.
+Status: direction complete / gate-ready not proven.
 
 Goal: turn the existing Knowledge/RAG implementation into the official recorded progress state.
 
-Acceptance:
+Completed in the current P1 candidate:
 
-- Run backend knowledge tests, agent tests, frontend unit tests, lint, build, docs validation, and relevant browser smoke.
-- Confirm Alembic migration works from a clean database and does not break Docker/private handoff.
-- Confirm Agent Studio can add/reopen knowledge sources.
-- Confirm Workspace answers show grounding metadata.
-- Confirm Run Detail reconstructs retrieval hits and citations from persisted records.
-- Update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki only after fresh validation evidence.
+- prompt manifest persistence;
+- policy/omission audit persistence;
+- citation snapshot metadata;
+- Run Detail manifest/audit display;
+- grounding Eval contract checks;
+- CJK lexical fallback for small Chinese handbook content;
+- regression coverage for sufficient evidence, insufficient evidence, tenant isolation, policy audit, and CJK single-chunk grounding.
+
+Fresh validation evidence is captured in [[session-2026-05-16-agent-knowledge-p1-grounding-audit]].
+
+Remaining gate blockers:
+
+- bind prompt manifest to the exact `ModelCall` request/message hash;
+- make Eval and Run Detail target exact evidence IDs for multi-query runs;
+- prove denied/redacted content omission and isolation, not only selected/omitted retrieval candidates;
+- verify Docker/private deployment migration compatibility for the new audit tables;
+- run broader backend/frontend/docs/build/browser validation before marking P1 gate-ready or verified baseline.
 
 ### P2: Productize Local Knowledge Management
 
