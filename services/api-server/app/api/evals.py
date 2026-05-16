@@ -692,10 +692,29 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
             )
         ).scalars()
     )
+    model_calls = list(
+        session.execute(
+            select(ModelCall).where(ModelCall.task_id == task.id)
+        ).scalars()
+    )
+    outcome_source = (
+        prompt_manifest.metadata_json
+        if prompt_manifest is not None and isinstance(prompt_manifest.metadata_json, dict)
+        else retrieval_session.metadata_json
+        if isinstance(retrieval_session.metadata_json, dict)
+        else {}
+    )
+    grounding_provider = str(outcome_source.get("grounding_provider") or "none")
+    fixture_grounded = bool(outcome_source.get("fixture_grounded") or False)
+    verified_grounded = bool(outcome_source.get("verified_grounded") or False)
+    grounding_verification_reason = str(
+        outcome_source.get("grounding_verification_reason") or "no_verified_evidence"
+    )
 
     if contract.get("require_grounded"):
+        allow_fixture_grounding = bool(contract.get("allow_fixture_grounding") or False)
         grounded = bool(citations) and (
-            retrieval_session.local_status == "sufficient" or bool(web_sources)
+            verified_grounded or (allow_fixture_grounding and fixture_grounded)
         )
         if not grounded or not hits:
             failures.append("missing_grounded_hits_or_citations")
@@ -723,10 +742,15 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
         )
         citation_payload = "".join(str(citation.quoted_text or "") for citation in citations)
         audit_payload = "".join(str(audit.safe_metadata_json) for audit in policy_audits)
+        model_call_payload = "".join(
+            str(model_call.request_json) + str(model_call.response_json)
+            for model_call in model_calls
+        )
         leaked = (
             forbidden_text in manifest_payload
             or forbidden_text in citation_payload
             or forbidden_text in audit_payload
+            or forbidden_text in model_call_payload
         )
         if leaked:
             failures.append("forbidden_text_leaked")
@@ -740,6 +764,13 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
         "policy_audit_ids": [audit.id for audit in policy_audits],
         "inferred_fallback": inferred_fallback,
         "fallback_reason": fallback_reason,
+        "grounding_provider": grounding_provider,
+        "fixture_grounded": fixture_grounded,
+        "verified_grounded": verified_grounded,
+        "grounding_verification_reason": grounding_verification_reason,
+        "hit_count": len(hits),
+        "citation_count": len(citations),
+        "web_source_count": len(web_sources),
     }
 
 

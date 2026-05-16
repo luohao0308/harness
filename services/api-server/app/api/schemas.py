@@ -755,6 +755,13 @@ class KnowledgeGroundingResponse(BaseModel):
     vector_capability: str = Field(description="向量能力")
     local_status: str = Field(description="本地证据状态")
     grounded: bool = Field(description="是否已 grounding")
+    grounding_provider: str = Field(default="none", description="Grounding provider")
+    fixture_grounded: bool = Field(default=False, description="是否为 fixture evidence")
+    verified_grounded: bool = Field(default=False, description="是否 verified grounding")
+    grounding_verification_reason: str = Field(
+        default="no_verified_evidence",
+        description="Grounding verification reason code",
+    )
     evidence_summary: str = Field(description="证据摘要")
     inferred_fallback: bool = Field(default=False, description="是否使用 latest fallback")
     fallback_reason: str | None = Field(default=None, description="fallback 原因")
@@ -1284,6 +1291,22 @@ class ModelCallResponse(BaseModel):
     )
     prompt_manifest_id: str | None = Field(default=None, description="Prompt manifest ID")
     model_request_sha256: str | None = Field(default=None, description="请求哈希")
+    model_request_hash_schema_version: int = Field(
+        default=1,
+        description="请求哈希 schema version",
+    )
+    request_message_hashes_json: list = Field(
+        default_factory=list,
+        description="Ordered safe message hashes",
+    )
+    request_message_hashes_sha256: str | None = Field(
+        default=None,
+        description="Ordered message hashes digest",
+    )
+    hash_recomputability_status: str = Field(
+        default="legacy_not_recomputable",
+        description="Request hash recomputability status",
+    )
     attempt_index: int = Field(default=1, description="模型调用尝试序号")
     terminal_status: str | None = Field(default=None, description="终态")
     request_json: dict = Field(description="请求内容")

@@ -2252,7 +2252,7 @@ def _normalize_grounding_citations(
         invalid_keys.add(citation_key)
         return "[unsupported-citation]"
 
-    normalized = re.sub(r"\[(?:web-)?\d+\]", replace_invalid, content)
+    normalized = re.sub(r"\[(?:(?:web-)?\d+|W\d+)\]", replace_invalid, content)
     if not invalid_keys:
         return content
     return (
@@ -2411,6 +2411,13 @@ def _knowledge_grounding_response(
         evidence_summary = str(
             prompt_manifest.metadata_json.get("evidence_message") or evidence_summary
         )
+    outcome_source = (
+        prompt_manifest.metadata_json
+        if prompt_manifest is not None and isinstance(prompt_manifest.metadata_json, dict)
+        else retrieval_session.metadata_json
+        if isinstance(retrieval_session.metadata_json, dict)
+        else {}
+    )
     return KnowledgeGroundingResponse(
         retrieval_session=RetrievalSessionResponse.model_validate(retrieval_session),
         retrieval_hits=[KnowledgeRetrievalHitResponse.model_validate(hit) for hit in hits],
@@ -2427,6 +2434,13 @@ def _knowledge_grounding_response(
         vector_capability=retrieval_session.vector_capability,
         local_status=retrieval_session.local_status,
         grounded=is_grounded,
+        grounding_provider=str(outcome_source.get("grounding_provider") or "none"),
+        fixture_grounded=bool(outcome_source.get("fixture_grounded") or False),
+        verified_grounded=bool(outcome_source.get("verified_grounded") or False),
+        grounding_verification_reason=str(
+            outcome_source.get("grounding_verification_reason")
+            or "no_verified_evidence"
+        ),
         evidence_summary=evidence_summary,
         inferred_fallback=inferred_fallback,
         fallback_reason=fallback_reason,
@@ -2498,6 +2512,10 @@ def _model_call_response(
         grounding_correlation_id=model_call.grounding_correlation_id,
         prompt_manifest_id=model_call.prompt_manifest_id,
         model_request_sha256=model_call.model_request_sha256,
+        model_request_hash_schema_version=model_call.model_request_hash_schema_version,
+        request_message_hashes_json=model_call.request_message_hashes_json,
+        request_message_hashes_sha256=model_call.request_message_hashes_sha256,
+        hash_recomputability_status=model_call.hash_recomputability_status,
         attempt_index=model_call.attempt_index,
         terminal_status=model_call.terminal_status,
         request_json=model_call.request_json,
