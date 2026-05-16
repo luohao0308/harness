@@ -6,9 +6,9 @@ Tags: `agent-knowledge-harness`, `rag`, `knowledge-grounding`, `prompt-manifest`
 
 ## Summary
 
-Agent Knowledge Harness P1 now has a pushed audit-gate implementation slice on `main`, but the outcome remains **auditable candidate / request changes**, not **verified baseline** and not fully P1 gate-ready.
+Agent Knowledge Harness P1 now has a pushed blocker-repair slice on `main` through `4475eef`. The prior `$code-review` blockers for verified-vs-fixture grounding, denied/redacted isolation, DB binding integrity, independently recomputable request hashes, Run Detail binding display, and Eval grounding-contract propagation have been implemented and covered by targeted tests.
 
-The latest slice implements the executable parts of the reviewed Gate Matrix: model-call attempt binding, deterministic request hashing, exact Run Detail/Eval selectors, fallback metadata, bounded evidence snapshots, fake-web fallback audit fixtures, and regression coverage. A post-implementation `$code-review` found no critical security issue, but it returned **REQUEST CHANGES** with an architectural **BLOCK** because fixture/fake web grounding can still be interpreted as verified grounding and because policy isolation / DB integrity are not yet complete.
+The current status is **P1 audit-gate blocker repair complete / pushed**, but still not a fully promoted **verified baseline** because Docker/private deployment smoke remains unproven in this environment and docs/task-progress promotion has not been performed.
 
 Pushed commits on `main`:
 
@@ -24,6 +24,12 @@ aef447c Persist auditable knowledge grounding evidence
 f199069 Show grounding audit evidence in Run Detail
 eefa906 Cover grounding audit gate regressions
 1415bf6 Document P1 grounding audit status
+801e710 Add grounding audit contract storage
+d8a681f Persist safe grounding policy outcomes
+52fbc3d Bind model calls to recomputable request hashes
+baa0b4a Enforce exact grounding contracts through APIs
+6d51898 Preserve grounding contracts in Run Detail
+4475eef Cover grounding contract blocker regressions
 ```
 
 ## What Changed
@@ -73,6 +79,24 @@ eefa906 Cover grounding audit gate regressions
   - Chinese characters now tokenize for lexical fallback;
   - a single strong CJK match can be sufficient with `sufficiency_reason=single_cjk_strong_match`;
   - non-CJK single-hit evidence still cannot fake grounding below `min_hits`.
+- Added explicit grounding outcome fields:
+  - `grounding_provider`;
+  - `fixture_grounded`;
+  - `verified_grounded`;
+  - `grounding_verification_reason`.
+- Eval `require_grounded` now counts verified grounding by default and counts fake-web fixture grounding only with explicit `allow_fixture_grounding=true`.
+- Added denied/redacted policy decisions before prompt assembly:
+  - `DENY:` candidates are excluded from prompt evidence;
+  - `REDACT:` candidates are redacted before snippets, citations, manifests, and Run Detail exposure;
+  - redaction treats the marker as rest-of-line so secrets containing periods, URLs, or email-like tokens do not leak.
+- Hardened `ModelCall.prompt_manifest_id` persistence through the 20260517 migration and runtime/API contract:
+  - historical nullable/orphan values remain compatible;
+  - v2 rows bind to prompt manifests through persisted IDs and grounding correlation.
+- `model_request_sha256` v2 is recomputable from persisted ordered per-message hashes and generation metadata.
+- v2 request audit JSON no longer persists raw request `content_preview`; it keeps role, content length, and content hash.
+- Run Detail Model Calls now displays manifest ID, correlation ID, request hash, hash audit status, attempt index, terminal status, and message-hash aggregate.
+- Run Detail "Save as Eval Case" now writes exact `grounding_contract` selectors from the displayed grounding evidence instead of saving only status.
+- Citation normalization now recognizes `[Wn]` web citation keys and removes unsupported `[W999]`-style references.
 
 ## Validation Evidence
 
@@ -133,6 +157,37 @@ git push origin main
 d1fb051..7524df0  main -> main
 ```
 
+Fresh verification after the 2026-05-17 blocker-repair slice:
+
+```text
+cd services/api-server && uv run ruff check \
+  app/knowledge.py app/agents/model_gateway.py app/api/agents.py app/api/evals.py \
+  app/api/schemas.py app/db/models.py tests/test_knowledge_rag.py \
+  tests/test_evals.py tests/test_agents.py \
+  alembic/versions/20260517_0014_harden_grounding_audit_contract.py
+All checks passed
+
+cd services/api-server && uv run pytest \
+  tests/test_knowledge_rag.py tests/test_evals.py tests/test_agents.py -q
+63 passed
+
+cd apps/agent-console && npm run lint
+tsc --noEmit passed
+
+cd apps/agent-console && npm run test -- \
+  src/features/tasks/components/__tests__/ModelCallPanel.render.test.tsx
+1 passed
+
+cd apps/agent-console && npm run e2e:smoke -- e2e/run-detail.smoke.spec.ts
+14 passed
+
+cd services/api-server && DATABASE_URL=sqlite:///$tmpdb uv run alembic upgrade head
+passed through 20260517_0014
+
+git push origin main
+a3cbea0..4475eef  main -> main
+```
+
 Manual local service URLs used for latest acceptance:
 
 ```text
@@ -143,17 +198,24 @@ HTML report archive: http://127.0.0.1:18081/html-archive/
 
 ## Important Remaining Gaps
 
-Do not mark P1 as verified baseline yet.
+Do not mark P1 as verified baseline until the remaining release-gate evidence is collected.
 
-Remaining blockers after `$code-review`:
+Prior `$code-review` blockers now repaired:
 
-- **Fixture grounding versus verified grounding is not split.** Fake web fallback currently creates fixture evidence from the query and can satisfy `grounded` / Eval `require_grounded`. Before baseline, add explicit fields such as `grounding_provider`, `fixture_grounded`, and `verified_grounded`, and require Eval to opt into fixture grounding.
-- **C10 policy isolation is still incomplete.** The audit path proves selected/omitted candidates but does not yet implement a real denied/redacted policy pass before prompt assembly. Add denied/redacted audit decisions, exclude or redact those candidates, and test forbidden content across hits, citations, manifests, audits, and model-call previews.
-- **ModelCall binding is not DB-integrity protected.** Runtime validation exists, but `ModelCall.prompt_manifest_id` is still a nullable string, not a DB FK to `prompt_assembly_manifests.id`; `grounding_correlation_id` is also only a correlation string. Add FK/constraint or document the intentional boundary before verified baseline.
-- **Request hash is not independently recomputable from persisted audit data.** The hash includes full message content while stored request JSON keeps previews/lengths. Persist ordered per-message hashes if independent audit recomputation is required.
-- **Audit immutability is ORM-level only.** Ordinary SQLAlchemy update/delete paths are guarded, but DB triggers, RLS, or tamper-evident hashes are not present.
-- **Frontend binding-chain display is partial.** Run Detail consumes grounding selectors, but the Model Call panel still needs stronger display/linking for `prompt_manifest_id`, `model_request_sha256`, `attempt_index`, and `terminal_status`.
+- fixture grounding is split from verified grounding and Eval fixture use is opt-in;
+- denied/redacted policy isolation runs before prompt assembly and has forbidden-text regression coverage;
+- prompt manifest/model-call binding has migration/runtime/API coverage;
+- request hash v2 is recomputable from persisted ordered message hashes;
+- raw request previews are removed from v2 request audit JSON;
+- Run Detail displays the model-call binding chain;
+- Run Detail-saved Eval cases preserve exact grounding selectors;
+- `[Wn]` citation normalization is covered.
+
+Remaining gaps:
+
 - **Docker/private deployment compatibility for the new migration was not proven** in this environment because Docker was unavailable.
+- **Audit immutability is still primarily ORM-level.** Ordinary SQLAlchemy update/delete paths are guarded, but DB triggers, RLS, or tamper-evident hashes remain a future hardening lane if verified baseline requires stronger append-only guarantees.
+- **Task-progress promotion is not done.** `docs/ai/task-progress.yaml` and `docs/task-progress.md` should only be updated after the private deployment gate is rechecked.
 
 ## Frontend Acceptance Path
 
@@ -174,6 +236,8 @@ Expected:
 - Prompt assembly audit is present;
 - policy/omission audit is present;
 - retrieval hit and citation are present.
+- Model Calls show manifest ID, correlation ID, request hash, hash audit status, attempt index, terminal status, and message-hash aggregate.
+- Saving the Run as an Eval Case sends a `grounding_contract` with the displayed `retrieval_session_id` / `prompt_manifest_id`.
 
 For exact selector acceptance:
 
