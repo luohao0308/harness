@@ -17,7 +17,9 @@ from app.db.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeEmbedding,
+    KnowledgePolicyAudit,
     KnowledgeSource,
+    PromptAssemblyManifest,
     RetrievalHit,
     RetrievalSession,
     SystemSetting,
@@ -41,7 +43,9 @@ DEFAULT_MAX_WEB_RESULTS = 0
 DEFAULT_MAX_RETRIEVAL_CANDIDATES = 200
 MAX_INGESTION_CHUNKS = 200
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
+ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
+CJK_TOKEN_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]")
+CJK_STOP_CHARS = set("的了什么吗呢啊呀吧请看查找一下里面里写有是我你他她它们这那哪")
 CHUNK_TARGET_CHARS = 900
 CHUNK_OVERLAP_CHARS = 140
 
@@ -52,6 +56,8 @@ class KnowledgeGroundingResult:
     retrieval_hits: list[RetrievalHit] = field(default_factory=list)
     citations: list[CitationRecord] = field(default_factory=list)
     web_sources: list[WebResearchSource] = field(default_factory=list)
+    prompt_manifest: PromptAssemblyManifest | None = None
+    policy_audits: list[KnowledgePolicyAudit] = field(default_factory=list)
     vector_capability: str = VECTOR_CAPABILITY_UNAVAILABLE
     local_status: str = "insufficient"
     grounded: bool = False
@@ -68,7 +74,31 @@ def _sha256(value: str) -> str:
 
 
 def _tokenize(value: str) -> list[str]:
-    return [token.lower() for token in TOKEN_RE.findall(_normalize_text(value))]
+    normalized = _normalize_text(value)
+    tokens = [token.lower() for token in ASCII_TOKEN_RE.findall(normalized)]
+    cjk_tokens = [
+        token
+        for token in CJK_TOKEN_RE.findall(normalized)
+        if token not in CJK_STOP_CHARS
+    ]
+    tokens.extend(cjk_tokens)
+    return tokens
+
+
+def _has_cjk_signal(value: str) -> bool:
+    return sum(1 for token in _tokenize(value) if CJK_TOKEN_RE.fullmatch(token)) >= 2
+
+
+def _is_single_cjk_strong_match(
+    *,
+    query: str,
+    top_candidates: list[tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument]],
+) -> bool:
+    return (
+        len(top_candidates) == 1
+        and top_candidates[0][0] >= 0.95
+        and _has_cjk_signal(query)
+    )
 
 
 def _fake_embedding(value: str, *, dimensions: int = 24) -> list[float]:
@@ -432,6 +462,180 @@ def _build_evidence_messages(
     return "\n".join(lines)
 
 
+def _snapshot_for_chunk(chunk: KnowledgeChunk, document: KnowledgeDocument) -> dict:
+    return {
+        "source_id": chunk.source_id,
+        "source_version": chunk.source_version,
+        "document_id": document.id,
+        "document_version": document.version,
+        "document_content_sha256": document.content_sha256,
+        "chunk_id": chunk.id,
+        "chunk_version": chunk.chunk_version,
+        "chunk_text_sha256": chunk.text_sha256,
+        "chunk_span": {"start_offset": chunk.start_offset, "end_offset": chunk.end_offset},
+    }
+
+
+def _omitted_candidate_record(
+    *,
+    score: float,
+    chunk: KnowledgeChunk,
+    document: KnowledgeDocument,
+    reason: str,
+) -> dict:
+    snapshot = _snapshot_for_chunk(chunk, document)
+    return {
+        "source_kind": "knowledge_chunk",
+        "source_ref_id": chunk.id,
+        "score": score,
+        "reason": reason,
+        "document_id": document.id,
+        "document_version": document.version,
+        "source_id": chunk.source_id,
+        "source_version": chunk.source_version,
+        "chunk_text_sha256": chunk.text_sha256,
+        "snapshot": snapshot,
+    }
+
+
+def _create_policy_audits(
+    *,
+    session: Session,
+    retrieval_session: RetrievalSession,
+    hits: list[RetrievalHit],
+    omitted_candidates: list[dict],
+) -> list[KnowledgePolicyAudit]:
+    audits: list[KnowledgePolicyAudit] = []
+    now = utc_now()
+    for hit in hits:
+        audit = KnowledgePolicyAudit(
+            retrieval_session_id=retrieval_session.id,
+            run_id=retrieval_session.run_id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            decision="allowed",
+            reason="selected_for_prompt",
+            source_kind=hit.source_kind,
+            source_ref_id=hit.chunk_id or hit.web_source_id,
+            safe_metadata_json={
+                "retrieval_hit_id": hit.id,
+                "rank": hit.rank,
+                "score": hit.score,
+                "document_id": hit.document_id,
+                "document_version": hit.document_version,
+                "policy_decision": "allowed",
+            },
+            created_at=now,
+        )
+        session.add(audit)
+        audits.append(audit)
+        hit.metadata_json = {
+            **(hit.metadata_json if isinstance(hit.metadata_json, dict) else {}),
+            "policy_decision": "allowed",
+            "omitted_reason": None,
+        }
+
+    for candidate in omitted_candidates:
+        audit = KnowledgePolicyAudit(
+            retrieval_session_id=retrieval_session.id,
+            run_id=retrieval_session.run_id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            decision="omitted",
+            reason=str(candidate["reason"]),
+            source_kind=str(candidate["source_kind"]),
+            source_ref_id=str(candidate["source_ref_id"]),
+            safe_metadata_json={
+                key: value
+                for key, value in candidate.items()
+                if key not in {"snapshot"}
+            },
+            created_at=now,
+        )
+        session.add(audit)
+        audits.append(audit)
+
+    if not omitted_candidates:
+        audit = KnowledgePolicyAudit(
+            retrieval_session_id=retrieval_session.id,
+            run_id=retrieval_session.run_id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            decision="no_omission_applicable",
+            reason="no denied, redacted, or omitted knowledge candidates applied",
+            source_kind=None,
+            source_ref_id=None,
+            safe_metadata_json={
+                "hit_count": len(hits),
+                "local_status": retrieval_session.local_status,
+            },
+            created_at=now,
+        )
+        session.add(audit)
+        audits.append(audit)
+
+    session.flush()
+    return audits
+
+
+def _create_prompt_manifest(
+    *,
+    session: Session,
+    retrieval_session: RetrievalSession,
+    hits: list[RetrievalHit],
+    citations: list[CitationRecord],
+    omitted_candidates: list[dict],
+    evidence_summary: str,
+) -> PromptAssemblyManifest:
+    source_snapshots = []
+    for hit in hits:
+        snapshot = {
+            "retrieval_hit_id": hit.id,
+            "source_kind": hit.source_kind,
+            "chunk_id": hit.chunk_id,
+            "web_source_id": hit.web_source_id,
+            "document_id": hit.document_id,
+            "document_version": hit.document_version,
+            **(hit.metadata_json if isinstance(hit.metadata_json, dict) else {}),
+        }
+        source_snapshots.append(snapshot)
+
+    manifest = PromptAssemblyManifest(
+        retrieval_session_id=retrieval_session.id,
+        run_id=retrieval_session.run_id,
+        organization_id=retrieval_session.organization_id,
+        agent_id=retrieval_session.agent_id,
+        query=retrieval_session.query,
+        included_retrieval_hit_ids_json=[hit.id for hit in hits],
+        omitted_candidates_json=omitted_candidates,
+        source_snapshots_json=source_snapshots,
+        token_budget_json={
+            "prompt_message_count_delta": 1,
+            "evidence_char_count": len(evidence_summary),
+            "max_local_chunks": retrieval_session.max_local_chunks,
+            "max_web_results": retrieval_session.max_web_results,
+        },
+        prompt_sections_json=[
+            {
+                "section": "knowledge_evidence",
+                "role": "system",
+                "content_sha256": _sha256(evidence_summary),
+                "included_retrieval_hit_ids": [hit.id for hit in hits],
+                "citation_ids": [citation.id for citation in citations],
+            }
+        ],
+        evidence_text_sha256=_sha256(evidence_summary),
+        metadata_json={
+            "schema_version": "knowledge-prompt-assembly-v1",
+            "local_status": retrieval_session.local_status,
+        },
+        created_at=utc_now(),
+    )
+    session.add(manifest)
+    session.flush()
+    return manifest
+
+
 def _record_retrieval_event(
     *,
     session: Session,
@@ -440,6 +644,8 @@ def _record_retrieval_event(
     hits: list[RetrievalHit],
     citations: list[CitationRecord],
     web_sources: list[WebResearchSource],
+    prompt_manifest: PromptAssemblyManifest,
+    policy_audits: list[KnowledgePolicyAudit],
     local_status: str,
 ) -> None:
     event_store = EventStore(session)
@@ -487,6 +693,42 @@ def _record_retrieval_event(
                 "retrieval_session_id": retrieval_session.id,
                 "local_status": local_status,
                 "hit_ids": [hit.id for hit in hits],
+            },
+        )
+    event_store.append(
+        task_id=run_id,
+        event_type=EventType.RAG_PROMPT_ASSEMBLED,
+        payload_json={
+            "schema_version": "knowledge-grounding-v1",
+            "org_id": retrieval_session.organization_id,
+            "agent_id": retrieval_session.agent_id,
+            "run_id": retrieval_session.run_id,
+            "correlation_id": retrieval_session.id,
+            "causation_id": retrieval_session.id,
+            "retrieval_session_id": retrieval_session.id,
+            "prompt_manifest_id": prompt_manifest.id,
+            "included_retrieval_hit_ids": prompt_manifest.included_retrieval_hit_ids_json,
+            "omitted_count": len(prompt_manifest.omitted_candidates_json),
+            "evidence_text_sha256": prompt_manifest.evidence_text_sha256,
+        },
+    )
+    for audit in policy_audits:
+        event_store.append(
+            task_id=run_id,
+            event_type=EventType.RAG_POLICY_AUDITED,
+            payload_json={
+                "schema_version": "knowledge-grounding-v1",
+                "org_id": retrieval_session.organization_id,
+                "agent_id": retrieval_session.agent_id,
+                "run_id": retrieval_session.run_id,
+                "correlation_id": retrieval_session.id,
+                "causation_id": retrieval_session.id,
+                "retrieval_session_id": retrieval_session.id,
+                "policy_audit_id": audit.id,
+                "decision": audit.decision,
+                "reason": audit.reason,
+                "source_kind": audit.source_kind,
+                "source_ref_id": audit.source_ref_id,
             },
         )
     for citation in citations:
@@ -609,11 +851,15 @@ def ground_query(
         for candidate in candidates[: retrieval_session.max_local_chunks]
         if candidate[0] >= retrieval_session.min_score
     ]
-    local_status = (
-        "sufficient"
-        if len(top_candidates) >= retrieval_session.min_hits
-        else "insufficient"
-    )
+    sufficiency_reason = "insufficient_min_hits"
+    if len(top_candidates) >= retrieval_session.min_hits:
+        local_status = "sufficient"
+        sufficiency_reason = "min_hits_met"
+    elif _is_single_cjk_strong_match(query=query, top_candidates=top_candidates):
+        local_status = "sufficient"
+        sufficiency_reason = "single_cjk_strong_match"
+    else:
+        local_status = "insufficient"
     retrieval_session.local_status = local_status
     retrieval_session.strategy = (
         "vector" if capability == VECTOR_CAPABILITY_AVAILABLE else "lexical"
@@ -621,9 +867,12 @@ def ground_query(
     hits: list[RetrievalHit] = []
     citations: list[CitationRecord] = []
     web_sources: list[WebResearchSource] = []
+    selected_chunk_ids: set[str] = set()
     now = utc_now()
-    if top_candidates:
-        for rank, (score, chunk, _embedding, document) in enumerate(top_candidates, start=1):
+    selected_candidates = top_candidates if local_status == "sufficient" else []
+    if selected_candidates:
+        for rank, (score, chunk, _embedding, document) in enumerate(selected_candidates, start=1):
+            selected_chunk_ids.add(chunk.id)
             hit = RetrievalHit(
                 retrieval_session_id=retrieval_session.id,
                 chunk_id=chunk.id,
@@ -635,8 +884,15 @@ def ground_query(
                 document_version=document.version,
                 snippet=chunk.text[:400],
                 metadata_json={
+                    "source_id": chunk.source_id,
                     "source_version": chunk.source_version,
                     "chunk_version": chunk.chunk_version,
+                    "document_content_sha256": document.content_sha256,
+                    "chunk_text_sha256": chunk.text_sha256,
+                    "chunk_span": {
+                        "start_offset": chunk.start_offset,
+                        "end_offset": chunk.end_offset,
+                    },
                 },
                 created_at=now,
             )
@@ -644,6 +900,8 @@ def ground_query(
             session.flush()
             hits.append(hit)
         for hit in hits:
+            hit_metadata = hit.metadata_json if isinstance(hit.metadata_json, dict) else {}
+            hit_chunk = session.get(KnowledgeChunk, hit.chunk_id) if hit.chunk_id else None
             citation = CitationRecord(
                 retrieval_session_id=retrieval_session.id,
                 retrieval_hit_id=hit.id,
@@ -656,7 +914,20 @@ def ground_query(
                 claim_text=query,
                 quoted_text=hit.snippet,
                 confidence=hit.score,
-                metadata_json={},
+                metadata_json={
+                    "source_snapshot": {
+                        "source_id": hit_chunk.source_id if hit_chunk else None,
+                        "source_version": hit_chunk.source_version if hit_chunk else None,
+                        "document_id": hit.document_id,
+                        "document_version": hit.document_version,
+                        "document_content_sha256": hit_metadata.get("document_content_sha256"),
+                        "chunk_id": hit.chunk_id,
+                        "chunk_version": hit_metadata.get("chunk_version"),
+                        "chunk_text_sha256": hit_metadata.get("chunk_text_sha256"),
+                        "chunk_span": hit_metadata.get("chunk_span"),
+                        "quoted_text_sha256": _sha256(hit.snippet),
+                    },
+                },
                 created_at=now,
             )
             session.add(citation)
@@ -670,8 +941,48 @@ def ground_query(
         "hit_count": len(hits),
         "web_source_count": len(web_sources),
         "top_score": hits[0].score if hits else 0.0,
+        "top_candidate_score": top_candidates[0][0] if top_candidates else 0.0,
+        "sufficiency_reason": sufficiency_reason,
     }
     session.flush()
+    omitted_candidates = []
+    for score, chunk, _embedding, document in candidates:
+        if chunk.id in selected_chunk_ids:
+            continue
+        if score < retrieval_session.min_score:
+            reason = "score_below_threshold"
+        elif local_status != "sufficient":
+            reason = "insufficient_min_hits"
+        else:
+            reason = "outside_top_k"
+        omitted_candidates.append(
+            _omitted_candidate_record(
+                score=score,
+                chunk=chunk,
+                document=document,
+                reason=reason,
+            )
+        )
+    policy_audits = _create_policy_audits(
+        session=session,
+        retrieval_session=retrieval_session,
+        hits=hits,
+        omitted_candidates=omitted_candidates,
+    )
+    evidence_summary = _build_evidence_messages(
+        query=query,
+        hits=hits,
+        citations=citations,
+        web_sources=web_sources,
+    )
+    prompt_manifest = _create_prompt_manifest(
+        session=session,
+        retrieval_session=retrieval_session,
+        hits=hits,
+        citations=citations,
+        omitted_candidates=omitted_candidates,
+        evidence_summary=evidence_summary,
+    )
     if run_id:
         _record_retrieval_event(
             session=session,
@@ -680,15 +991,11 @@ def ground_query(
             hits=hits,
             citations=citations,
             web_sources=web_sources,
+            prompt_manifest=prompt_manifest,
+            policy_audits=policy_audits,
             local_status=local_status,
         )
-    evidence_summary = _build_evidence_messages(
-        query=query,
-        hits=hits,
-        citations=citations,
-        web_sources=web_sources,
-    )
-    grounded = bool(citations)
+    grounded = local_status == "sufficient" and bool(citations)
     evidence_message = (
         "Local knowledge is insufficient; no web research provider is configured."
         if local_status != "sufficient"
@@ -699,6 +1006,8 @@ def ground_query(
         retrieval_hits=hits,
         citations=citations,
         web_sources=web_sources,
+        prompt_manifest=prompt_manifest,
+        policy_audits=policy_audits,
         vector_capability=capability,
         local_status=local_status,
         grounded=grounded,
