@@ -18,6 +18,8 @@ Model + Harness = Agent
 
 The public website remains a public information shell. The implementation center is the Agent Console plus FastAPI backend.
 
+The current final task target is **Agent Knowledge Harness**. Based on the repository HTML report `docs/reports/release-gate-handoff-diff-2026-05-14.html`, the target is not merely "add memory" or "add RAG"; it is to make Harness a configurable, auditable, and evaluable capability layer across memory, knowledge retrieval, MCP, skills, context/token routing, hallucination control, Eval, Observability, Policy/Sandbox, and Agent orchestration.
+
 ## Authoritative Reading Order
 
 Read these first:
@@ -48,6 +50,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
+- Agent Knowledge Harness is the current product direction after private deployment. The current worktree already contains Knowledge/RAG implementation files, but the next agent must verify and record them before treating them as completed progress.
 
 Evidence from `docs/task-progress.md`:
 
@@ -55,6 +58,13 @@ Evidence from `docs/task-progress.md`:
 - Workspace browser smoke and compact chrome hardening were added after Stage 07.
 - Broader browser smoke now has an explicit release-gate entrypoint through `cd apps/agent-console && npm run e2e:smoke:release`.
 - Private deployment handoff now has a canonical Docker Compose path in `docs/runbooks/deployment.md`; static checks, compose config, compose startup, Docker smoke, Agent Run smoke, and compose cleanup have passed using intentional host-port overrides.
+
+Evidence from the current codebase:
+
+- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation.
+- `services/api-server/app/api/agents.py` exposes knowledge source APIs and Workspace grounding behavior.
+- `apps/agent-console/src/features/agents/pages/AgentListPage.tsx` exposes Agent Studio knowledge source management.
+- `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` and `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` expose grounding evidence in Workspace and Run Detail.
 
 ## Existing Handoff Solution
 
@@ -95,18 +105,30 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed lane is Private Deployment Experience. The next product direction selected through `$deep-interview` is **Agent Knowledge Harness**.
+The latest completed lane is Private Deployment Experience. The current target is **Agent Knowledge Harness**.
 
-The first thin slice should be Memory/RAG grounding: user-provided knowledge or documents are indexed, Workspace questions retrieve and cite sources, weak local evidence is surfaced explicitly, and Run Detail/Eval/observability show retrieval/citation evidence. Web research should stay disabled until a real policy-gated provider is configured; mock web research must not be presented as real evidence.
+The immediate next lane is to formalize and verify the existing Knowledge/RAG V1 foundation:
 
-Future engineers must preserve the broader follow-up goals from [[agent-knowledge-harness-roadmap]]: MCP creation and management, skill creation and management, short-term memory, long-term memory, token/context optimization, and hallucination reduction. These are follow-up product targets, not discarded scope.
+- run the relevant backend, frontend, docs, build, and browser validations;
+- verify Alembic migration and Docker/private deployment compatibility;
+- confirm Agent Studio knowledge source management, Workspace grounding metadata, and Run Detail retrieval/citation reconstruction;
+- then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki with fresh evidence.
 
-Useful follow-up slices:
+After V1 is formalized, follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
+
+- productize local knowledge management;
+- add real policy-gated web research only after provider configuration and safety policy exist;
+- connect short-term memory, long-term memory, RAG, pinned context, context compression, and token budget into a prompt assembly router;
+- productize MCP creation/management and Skills/capability packs;
+- add groundedness/citation/unsupported-claim Eval and Observability surfaces;
+- keep Docker Compose release and demo validation current.
+
+Useful follow-up rules:
 
 - Keep using host-port overrides when default local development ports are occupied.
 - Preserve the Private Deployment report at `.omx/reports/private-deployment-experience/report-20260514T074949Z.md` as the runtime evidence pointer.
 - If deployment handoff expands later, keep it bounded to documented private handoff improvements unless a new plan explicitly authorizes installer, Kubernetes, cloud matrix, or full operations work.
-- For Agent Knowledge Harness, start from `.omx/specs/deep-interview-agent-knowledge-harness-memory-rag.md` and plan with `$ralplan` before implementation because schema, retrieval, web research, prompt behavior, UI evidence, and Eval criteria need architecture/test-shape review.
+- For Agent Knowledge Harness changes, start from `.omx/specs/deep-interview-agent-knowledge-harness-memory-rag.md`, `.omx/plans/prd-agent-knowledge-harness-memory-rag.md`, `.omx/plans/test-spec-agent-knowledge-harness-memory-rag.md`, and this wiki page.
 
 ## Stop Rules For Future Agents
 

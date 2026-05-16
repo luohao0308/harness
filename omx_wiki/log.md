@@ -40,3 +40,10 @@
 ## [2026-05-14T12:46:01.296Z] query
 - **Pages:** none
 - **Summary:** Query "Agent Knowledge Harness v1 execution precision RAG pgvector lexical fallback event envelope retrieval citations UI persisted events" → 0 results (of 0 total)
+## [2026-05-15T04:03:47.581Z] query
+- **Pages:** none
+- **Summary:** Query "project handoff current state frontend workspace pages" → 0 results (of 0 total)
+
+## 2026-05-16
+
+- Updated [[agent-knowledge-harness-roadmap]] and [[project-handoff-current-state]] from `docs/reports/release-gate-handoff-diff-2026-05-14.html` plus current repository features. The final target is now Agent Knowledge Harness as a full configurable/auditable/evaluable capability stack, and the progress plan now starts by verifying/formalizing the existing Knowledge/RAG V1 implementation before expanding into local knowledge management, policy-gated web research, memory/context routing, MCP/skills, Eval/Observability, and release hardening.
