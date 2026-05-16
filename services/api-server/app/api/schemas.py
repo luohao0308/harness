@@ -682,6 +682,7 @@ class PromptAssemblyManifestResponse(BaseModel):
     id: str = Field(description="Prompt manifest ID")
     retrieval_session_id: str = Field(description="Retrieval session ID")
     run_id: str | None = Field(default=None, description="Run ID")
+    grounding_correlation_id: str = Field(description="Grounding correlation ID")
     query: str = Field(description="查询")
     included_retrieval_hit_ids_json: list = Field(description="进入 prompt/context 的命中")
     omitted_candidates_json: list = Field(description="未进入 prompt/context 的候选")
@@ -1267,6 +1268,14 @@ class ModelCallResponse(BaseModel):
     prompt_tokens: int = Field(description="提示词 token 数")
     completion_tokens: int = Field(description="输出 token 数")
     duration_ms: int = Field(description="耗时（毫秒）")
+    grounding_correlation_id: str | None = Field(
+        default=None,
+        description="Grounding correlation ID",
+    )
+    prompt_manifest_id: str | None = Field(default=None, description="Prompt manifest ID")
+    model_request_sha256: str | None = Field(default=None, description="请求哈希")
+    attempt_index: int = Field(default=1, description="模型调用尝试序号")
+    terminal_status: str | None = Field(default=None, description="终态")
     request_json: dict = Field(description="请求内容")
     response_json: dict = Field(description="响应内容")
     error_message: str | None = Field(default=None, description="错误信息")
