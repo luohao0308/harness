@@ -678,6 +678,37 @@ class WebResearchSourceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PromptAssemblyManifestResponse(BaseModel):
+    id: str = Field(description="Prompt manifest ID")
+    retrieval_session_id: str = Field(description="Retrieval session ID")
+    run_id: str | None = Field(default=None, description="Run ID")
+    query: str = Field(description="查询")
+    included_retrieval_hit_ids_json: list = Field(description="进入 prompt/context 的命中")
+    omitted_candidates_json: list = Field(description="未进入 prompt/context 的候选")
+    source_snapshots_json: list = Field(description="来源快照")
+    token_budget_json: dict = Field(description="Token/context budget")
+    prompt_sections_json: list = Field(description="Prompt section manifest")
+    evidence_text_sha256: str = Field(description="证据文本哈希")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnowledgePolicyAuditResponse(BaseModel):
+    id: str = Field(description="Policy audit ID")
+    retrieval_session_id: str = Field(description="Retrieval session ID")
+    run_id: str | None = Field(default=None, description="Run ID")
+    decision: str = Field(description="策略决策")
+    reason: str = Field(description="原因")
+    source_kind: str | None = Field(default=None, description="来源类型")
+    source_ref_id: str | None = Field(default=None, description="安全来源引用")
+    safe_metadata_json: dict = Field(default_factory=dict, description="安全元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RetrievalSessionResponse(BaseModel):
     id: str = Field(description="Retrieval session ID")
     query: str = Field(description="查询")
@@ -707,6 +738,14 @@ class KnowledgeGroundingResponse(BaseModel):
     citations: list[KnowledgeCitationResponse] = Field(
         default_factory=list,
         description="引用",
+    )
+    prompt_manifest: PromptAssemblyManifestResponse | None = Field(
+        default=None,
+        description="Prompt assembly manifest",
+    )
+    policy_audits: list[KnowledgePolicyAuditResponse] = Field(
+        default_factory=list,
+        description="Policy/omission audit",
     )
     web_sources: list[WebResearchSourceResponse] = Field(
         default_factory=list,
