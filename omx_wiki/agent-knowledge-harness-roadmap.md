@@ -74,7 +74,7 @@ Status: completed / keep closed.
 
 ### P1: Formalize Agent Knowledge Harness V1
 
-Status: audit-gate implementation slice pushed / code-review REQUEST CHANGES / verified baseline not reached.
+Status: audit-gate blocker repair pushed through `4475eef` / verified baseline not yet promoted.
 
 Goal: turn the existing Knowledge/RAG implementation into the official recorded progress state.
 
@@ -92,20 +92,23 @@ Completed in the current P1 audit-gate slice:
 - fallback metadata via `inferred_fallback` and `fallback_reason`;
 - bounded selected-evidence snapshots and safe omitted-candidate metadata;
 - fake web fallback isolated to the explicit `knowledge.web_research_provider=fake` fixture path;
-- regression coverage for sufficient evidence, insufficient evidence, tenant isolation, policy audit, CJK single-chunk grounding, model-call binding, exact selectors, fallback metadata, and stream-abort terminal status.
+- explicit `grounding_provider`, `fixture_grounded`, `verified_grounded`, and `grounding_verification_reason` semantics;
+- Eval fixture grounding opt-in via `allow_fixture_grounding`;
+- denied/redacted policy isolation before prompt assembly;
+- v2 model request hash recomputation from persisted ordered message hashes without raw request previews;
+- Run Detail Model Calls binding-chain display;
+- Run Detail saved Eval Cases preserve exact grounding contracts;
+- `[Wn]` web citation normalization;
+- regression coverage for sufficient evidence, insufficient evidence, tenant isolation, policy audit, denied/redacted isolation, CJK single-chunk grounding, model-call binding, v2 hash recomputation, exact selectors, fallback metadata, Run Detail Eval-save contract propagation, and stream-abort terminal status.
 
 Fresh validation evidence is captured in [[session-2026-05-16-agent-knowledge-p1-grounding-audit]].
 
-Remaining gate blockers after post-implementation review:
+Remaining gate work before verified baseline:
 
-- split fixture grounding from verified grounding. Fake web fallback can currently create query-derived fixture evidence and satisfy `grounded` / Eval `require_grounded`; add explicit provider and fixture/verified fields, and require Eval opt-in before fixture grounding counts;
-- complete C10 denied/redacted policy isolation. The current audit path proves selected/omitted retrieval candidates, but not a real denied/redacted policy pass before prompt assembly;
-- add DB-level or explicitly justified integrity for `ModelCall.prompt_manifest_id` and `grounding_correlation_id`; runtime validation exists, but a nullable string field is not a schema-level relationship;
-- make `model_request_sha256` independently recomputable from persisted audit data, likely by persisting ordered per-message hashes instead of only request previews/lengths;
-- strengthen audit immutability beyond ORM listeners if verified baseline requires append-only guarantees;
-- expose the full binding chain in the Run Detail / Model Calls UI, including prompt manifest ID, request hash, attempt index, and terminal status;
-- complete Docker/private migration validation. The latest local environment did not have Docker available, so G5/G7 cannot close;
-- rerun broad backend/frontend/docs/build/browser validation only after the blocking semantics above are fixed, then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from auditable candidate to verified baseline.
+- complete Docker/private migration validation. The latest local environment did not have Docker available, so private-deployment compatibility remains unproven;
+- verify upgrade behavior against an existing-data snapshot, not just an empty SQLite upgrade;
+- decide whether ORM-level append-only tests are enough for P1 or whether DB-level triggers/RLS/tamper-evident hashes are required;
+- rerun broad backend/frontend/docs/build/browser validation, then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from blocker-repair complete to verified baseline.
 
 ### P2: Productize Local Knowledge Management
 

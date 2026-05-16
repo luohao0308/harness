@@ -51,7 +51,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
-- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 has an audit-gate implementation slice on `main` through `7524df0`, including prompt manifest persistence, policy/omission audits, CJK lexical retrieval, attempt-level `ModelCall` binding, deterministic request hashing, exact Run Detail/Eval selectors, fallback metadata, selected-evidence snapshots, and fake-web fixture coverage. It is still not verified baseline: post-implementation review returned **REQUEST CHANGES** / architect **BLOCK** because fixture grounding can still be counted as verified grounding, denied/redacted policy isolation is incomplete, DB-level binding integrity and independent hash recomputation are not closed, and Docker/private deployment compatibility remains unproven.
+- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 has a pushed blocker-repair slice on `main` through `4475eef`, including prompt manifest persistence, policy/omission audits, CJK lexical retrieval, denied/redacted policy isolation, verified-vs-fixture grounding semantics, attempt-level `ModelCall` binding, recomputable v2 request hashes without raw request previews, exact Run Detail/Eval selectors, Run Detail binding-chain display, and Eval grounding-contract propagation from saved runs. It is still not promoted to verified baseline because Docker/private deployment compatibility for the latest migration remains unproven in this environment and task-progress docs have not been advanced.
 
 Evidence from `docs/task-progress.md`:
 
@@ -93,6 +93,12 @@ f087d45 Expose exact grounding selectors
 4034f9b Bind grounded prompts to model attempts
 7881cab Persist grounded prompt assembly evidence
 30e972b Add grounding audit binding fields
+4475eef Cover grounding contract blocker regressions
+6d51898 Preserve grounding contracts in Run Detail
+baa0b4a Enforce exact grounding contracts through APIs
+52fbc3d Bind model calls to recomputable request hashes
+d8a681f Persist safe grounding policy outcomes
+801e710 Add grounding audit contract storage
 1415bf6 Document P1 grounding audit status
 eefa906 Cover grounding audit gate regressions
 f199069 Show grounding audit evidence in Run Detail
@@ -114,16 +120,13 @@ Captured in wiki:
 
 The latest completed baseline lane remains Private Deployment Experience. The current target is **Agent Knowledge Harness**.
 
-The immediate next lane is to repair the post-implementation review blockers before any task-progress promotion:
+The immediate next lane is release-gate confirmation before any task-progress promotion:
 
-- split fixture grounding from verified grounding with explicit provider/fixture/verified fields, and make Eval opt into fixture grounding before it can satisfy `require_grounded`;
-- expand C10 into a real denied/redacted policy isolation pass before prompt assembly, with forbidden content excluded or redacted across hits, citations, manifests, policy audits, and model-call previews;
-- add DB-level or explicitly justified integrity for `ModelCall.prompt_manifest_id` / `grounding_correlation_id`;
-- persist enough ordered request-message hash data for independent recomputation of `model_request_sha256`;
-- expose the full binding chain in Run Detail / Model Calls UI;
-- verify Alembic migration and Docker/private deployment compatibility;
+- verify the latest Alembic migration on an existing-data private deployment snapshot, not only an empty SQLite upgrade;
+- rerun Docker/private deployment smoke once Docker is available;
+- decide whether ORM-level append-only audit protection is sufficient for P1 verified baseline or whether DB triggers/RLS/tamper-evident hashes are required;
 - rerun broad backend, frontend, docs, build, and browser validations;
-- only then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from auditable candidate to verified baseline.
+- only then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from blocker-repair complete to verified baseline.
 
 After V1 is formalized, follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
