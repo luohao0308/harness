@@ -131,6 +131,103 @@ const workspaceFixture = {
       created_at: now,
     },
   ],
+  knowledge_grounding: {
+    retrieval_session: {
+      id: "rs-detail-001",
+      query: "Validate Harness Chain",
+      mode: "local",
+      local_status: "sufficient",
+      vector_capability: "available",
+      strategy: "vector",
+      min_hits: 2,
+      min_score: 0.62,
+      max_local_chunks: 6,
+      max_web_results: 0,
+      metadata_json: {
+        grounding_provider: "local_knowledge",
+        fixture_grounded: false,
+        verified_grounded: true,
+        grounding_verification_reason: "local_evidence_sufficient",
+      },
+      created_at: now,
+    },
+    retrieval_hits: [
+      {
+        id: "rh-detail-001",
+        chunk_id: "chunk-detail-001",
+        web_source_id: null,
+        rank: 1,
+        score: 0.97,
+        source_kind: "knowledge_chunk",
+        document_id: "doc-detail-001",
+        document_version: 1,
+        snippet: "Harness chain evidence with persisted citations.",
+        metadata_json: {},
+        created_at: now,
+      },
+    ],
+    citations: [
+      {
+        id: "cit-detail-001",
+        retrieval_hit_id: "rh-detail-001",
+        citation_key: "[1]",
+        source_kind: "knowledge_chunk",
+        chunk_id: "chunk-detail-001",
+        web_source_id: null,
+        claim_text: "Validate Harness Chain",
+        quoted_text: "Harness chain evidence with persisted citations.",
+        confidence: 0.97,
+        metadata_json: {},
+        created_at: now,
+      },
+    ],
+    prompt_manifest: {
+      id: "pm-detail-001",
+      retrieval_session_id: "rs-detail-001",
+      run_id: STABLE_TASK_ID,
+      grounding_correlation_id: "rs-detail-001",
+      query: "Validate Harness Chain",
+      included_retrieval_hit_ids_json: ["rh-detail-001"],
+      omitted_candidates_json: [],
+      source_snapshots_json: [],
+      token_budget_json: {},
+      prompt_sections_json: [],
+      evidence_text_sha256: "evidence-hash-detail-001",
+      metadata_json: {
+        grounding_provider: "local_knowledge",
+        fixture_grounded: false,
+        verified_grounded: true,
+        grounding_verification_reason: "local_evidence_sufficient",
+      },
+      created_at: now,
+    },
+    policy_audits: [
+      {
+        id: "audit-detail-001",
+        retrieval_session_id: "rs-detail-001",
+        run_id: STABLE_TASK_ID,
+        decision: "allowed",
+        reason: "selected_for_prompt",
+        source_kind: "knowledge_chunk",
+        source_ref_id: "chunk-detail-001",
+        safe_metadata_json: {},
+        created_at: now,
+      },
+    ],
+    web_sources: [],
+    vector_capability: "available",
+    local_status: "sufficient",
+    grounded: true,
+    grounding_provider: "local_knowledge",
+    fixture_grounded: false,
+    verified_grounded: true,
+    grounding_verification_reason: "local_evidence_sufficient",
+    evidence_summary: "Local knowledge grounded the answer.",
+    inferred_fallback: false,
+    fallback_reason: null,
+    selected_retrieval_session_id: "rs-detail-001",
+    selected_prompt_manifest_id: "pm-detail-001",
+  },
   subagents: [
     {
       id: "sub-001",
@@ -177,7 +274,24 @@ const workspaceFixture = {
       prompt_tokens: 200,
       completion_tokens: 100,
       duration_ms: 850,
-      request_json: {},
+      grounding_correlation_id: "rs-detail-001",
+      prompt_manifest_id: "pm-detail-001",
+      model_request_sha256: "request-hash-detail-001",
+      model_request_hash_schema_version: 2,
+      request_message_hashes_json: [
+        {
+          index: 0,
+          role: "system",
+          content_sha256: "message-hash-detail-001",
+        },
+      ],
+      request_message_hashes_sha256: "message-hashes-hash-detail-001",
+      hash_recomputability_status: "recomputable_v2",
+      attempt_index: 1,
+      terminal_status: "success",
+      request_json: {
+        model_request_sha256: "request-hash-detail-001",
+      },
       response_json: {},
       error_message: null,
       created_at: now,
@@ -288,6 +402,24 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("模型调用")).toBeVisible();
     await expect(page.getByText("300 标记")).toBeVisible(); // 200 + 100
     await expect(page.getByText("850ms")).toBeVisible();
+    await expect(page.getByText("pm-detail-001").last()).toBeVisible();
+    await expect(page.getByText("request-hash-detail-001")).toBeVisible();
+    await expect(page.getByText("recomputable_v2")).toBeVisible();
+  });
+
+  test("Knowledge grounding shows provider and verification evidence", async ({
+    page,
+  }) => {
+    await page.goto(`/runs/${STABLE_RUN_ID}`);
+
+    await expect(page.getByText("知识依据")).toBeVisible();
+    await expect(page.getByText("local_knowledge")).toBeVisible();
+    await expect(page.getByText("local_evidence_sufficient")).toBeVisible();
+    await expect(page.getByText("Prompt 组装审计")).toBeVisible();
+    await expect(page.getByText("pm-detail-001").first()).toBeVisible();
+    await expect(
+      page.getByText("Harness chain evidence with persisted citations.").first(),
+    ).toBeVisible();
   });
 
   test("Replay returns and renders sequence, state summary, and diagnosis", async ({
@@ -427,12 +559,28 @@ async function routeRunDetailApis(page: Page): Promise<void> {
       path === `/api/evals/datasets/dataset-smoke/cases/from-run/${STABLE_TASK_ID}` &&
       method === "POST"
     ) {
+      const requestPayload = route.request().postDataJSON() as {
+        expected_json: {
+          status: string;
+          grounding_contract?: Record<string, unknown>;
+        };
+        tags_json: string[];
+      };
+      expect(requestPayload.expected_json.grounding_contract).toMatchObject({
+        retrieval_session_id: "rs-detail-001",
+        prompt_manifest_id: "pm-detail-001",
+        require_grounded: true,
+        require_prompt_manifest: true,
+        require_insufficient: false,
+        allow_fixture_grounding: false,
+        require_policy_decisions: ["allowed"],
+      });
       await fulfillJson(route, {
         id: "case-smoke",
         dataset_id: "dataset-smoke",
         source_task_id: STABLE_TASK_ID,
         input_json: {},
-        expected_json: { status: "COMPLETED" },
+        expected_json: requestPayload.expected_json,
         tags_json: ["saved-from-run"],
         created_at: now,
       });

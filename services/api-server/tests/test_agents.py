@@ -1,5 +1,6 @@
 import json
 import re
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelGatewayError, ModelResponse, ModelStreamChunk
 from app.agents.planner import DeterministicPlanner
+from app.api.agents import _normalize_grounding_citations
 from app.db.models import (
     Agent,
     AgentAssignment,
@@ -42,6 +44,19 @@ def parse_sse_events(body: str) -> list[tuple[str, dict]]:
             )
         )
     return events
+
+
+def test_normalize_grounding_citations_supports_web_citation_keys() -> None:
+    grounding = SimpleNamespace(citations=[SimpleNamespace(citation_key="[W1]")])
+
+    normalized = _normalize_grounding_citations(
+        content="Valid web citation [W1], unsupported web citation [W999].",
+        grounding=grounding,
+    )
+
+    assert "[W1]" in normalized
+    assert "[W999]" not in normalized
+    assert "[unsupported-citation]" in normalized
 
 
 class FakeWarmPoolManager:
@@ -175,7 +190,7 @@ def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
     def fake_complete(self, request_payload):
         assert request_payload.response_format == "text"
         return ModelResponse(
-            content="模型给出一个未绑定引用 [999]",
+            content="模型给出未绑定引用 [999] 和 [W999]",
             model_provider=request_payload.model_provider,
             model_name=request_payload.model_name,
             usage={"prompt_tokens": 12, "completion_tokens": 8},
@@ -223,9 +238,10 @@ def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
             )
         ).scalars()
     )
-    emitted_keys = set(re.findall(r"\[(?:web-)?\d+\]", full_answer))
+    emitted_keys = set(re.findall(r"\[(?:(?:web-)?\d+|W\d+)\]", full_answer))
 
     assert "[999]" not in full_answer
+    assert "[W999]" not in full_answer
     assert "[unsupported-citation]" in full_answer
     assert not emitted_keys
     assert emitted_keys <= persisted_keys
