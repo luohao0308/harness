@@ -74,11 +74,11 @@ Status: completed / keep closed.
 
 ### P1: Formalize Agent Knowledge Harness V1
 
-Status: direction complete / gate-ready not proven.
+Status: audit-gate implementation slice pushed / code-review REQUEST CHANGES / verified baseline not reached.
 
 Goal: turn the existing Knowledge/RAG implementation into the official recorded progress state.
 
-Completed in the current P1 candidate:
+Completed in the current P1 audit-gate slice:
 
 - prompt manifest persistence;
 - policy/omission audit persistence;
@@ -86,17 +86,26 @@ Completed in the current P1 candidate:
 - Run Detail manifest/audit display;
 - grounding Eval contract checks;
 - CJK lexical fallback for small Chinese handbook content;
-- regression coverage for sufficient evidence, insufficient evidence, tenant isolation, policy audit, and CJK single-chunk grounding.
+- attempt-level `ModelCall` binding through `grounding_correlation_id`, `prompt_manifest_id`, `model_request_sha256`, `attempt_index`, and `terminal_status`;
+- deterministic request-hash generation with manifest/model-call validation before grounded `ModelCall` insertion;
+- exact Run Detail and Eval selectors for `retrieval_session_id` and `prompt_manifest_id`;
+- fallback metadata via `inferred_fallback` and `fallback_reason`;
+- bounded selected-evidence snapshots and safe omitted-candidate metadata;
+- fake web fallback isolated to the explicit `knowledge.web_research_provider=fake` fixture path;
+- regression coverage for sufficient evidence, insufficient evidence, tenant isolation, policy audit, CJK single-chunk grounding, model-call binding, exact selectors, fallback metadata, and stream-abort terminal status.
 
 Fresh validation evidence is captured in [[session-2026-05-16-agent-knowledge-p1-grounding-audit]].
 
-Remaining gate blockers:
+Remaining gate blockers after post-implementation review:
 
-- bind prompt manifest to the exact `ModelCall` request/message hash;
-- make Eval and Run Detail target exact evidence IDs for multi-query runs;
-- prove denied/redacted content omission and isolation, not only selected/omitted retrieval candidates;
-- verify Docker/private deployment migration compatibility for the new audit tables;
-- run broader backend/frontend/docs/build/browser validation before marking P1 gate-ready or verified baseline.
+- split fixture grounding from verified grounding. Fake web fallback can currently create query-derived fixture evidence and satisfy `grounded` / Eval `require_grounded`; add explicit provider and fixture/verified fields, and require Eval opt-in before fixture grounding counts;
+- complete C10 denied/redacted policy isolation. The current audit path proves selected/omitted retrieval candidates, but not a real denied/redacted policy pass before prompt assembly;
+- add DB-level or explicitly justified integrity for `ModelCall.prompt_manifest_id` and `grounding_correlation_id`; runtime validation exists, but a nullable string field is not a schema-level relationship;
+- make `model_request_sha256` independently recomputable from persisted audit data, likely by persisting ordered per-message hashes instead of only request previews/lengths;
+- strengthen audit immutability beyond ORM listeners if verified baseline requires append-only guarantees;
+- expose the full binding chain in the Run Detail / Model Calls UI, including prompt manifest ID, request hash, attempt index, and terminal status;
+- complete Docker/private migration validation. The latest local environment did not have Docker available, so G5/G7 cannot close;
+- rerun broad backend/frontend/docs/build/browser validation only after the blocking semantics above are fixed, then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from auditable candidate to verified baseline.
 
 ### P2: Productize Local Knowledge Management
 

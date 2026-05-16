@@ -51,7 +51,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
-- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 has a stronger auditable candidate on `main` through `1415bf6`, including prompt manifest persistence, policy/omission audits, Run Detail visibility, grounding Eval contract checks, and CJK lexical retrieval for small Chinese handbook content. It is still not verified baseline and not fully P1 gate-ready because model-call hash binding, exact multi-query evidence targeting, full policy isolation proof, and Docker/private deployment compatibility remain open.
+- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 has an audit-gate implementation slice on `main` through `7524df0`, including prompt manifest persistence, policy/omission audits, CJK lexical retrieval, attempt-level `ModelCall` binding, deterministic request hashing, exact Run Detail/Eval selectors, fallback metadata, selected-evidence snapshots, and fake-web fixture coverage. It is still not verified baseline: post-implementation review returned **REQUEST CHANGES** / architect **BLOCK** because fixture grounding can still be counted as verified grounding, denied/redacted policy isolation is incomplete, DB-level binding integrity and independent hash recomputation are not closed, and Docker/private deployment compatibility remains unproven.
 
 Evidence from `docs/task-progress.md`:
 
@@ -62,7 +62,7 @@ Evidence from `docs/task-progress.md`:
 
 Evidence from the current codebase:
 
-- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation with prompt assembly manifests, policy audits, citation snapshots, insufficient-evidence controls, and CJK fallback retrieval.
+- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py`, `services/api-server/alembic/versions/20260516_0013_add_grounding_model_call_binding.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation with prompt assembly manifests, policy audits, citation snapshots, insufficient-evidence controls, CJK fallback retrieval, attempt-level model-call audit binding, request hashing, and exact selector behavior.
 - `services/api-server/app/api/agents.py` exposes knowledge source APIs and Workspace grounding behavior.
 - `apps/agent-console/src/features/agents/pages/AgentListPage.tsx` exposes Agent Studio knowledge source management.
 - `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` and `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` expose grounding evidence in Workspace and Run Detail.
@@ -88,6 +88,11 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 Recent pushed commits on `main`:
 
 ```text
+7524df0 Cover grounding gate readiness paths
+f087d45 Expose exact grounding selectors
+4034f9b Bind grounded prompts to model attempts
+7881cab Persist grounded prompt assembly evidence
+30e972b Add grounding audit binding fields
 1415bf6 Document P1 grounding audit status
 eefa906 Cover grounding audit gate regressions
 f199069 Show grounding audit evidence in Run Detail
@@ -109,14 +114,16 @@ Captured in wiki:
 
 The latest completed baseline lane remains Private Deployment Experience. The current target is **Agent Knowledge Harness**.
 
-The immediate next lane is to finish proving P1 gate readiness for the Knowledge/RAG V1 foundation:
+The immediate next lane is to repair the post-implementation review blockers before any task-progress promotion:
 
-- bind `PromptAssemblyManifest` to the exact `ModelCall` request/message hash;
-- target exact retrieval sessions or prompt manifest IDs in Eval and Run Detail instead of relying only on latest-session fallback;
-- expand C10 into a full policy/isolation proof for denied or redacted content, not only retrieval selection;
+- split fixture grounding from verified grounding with explicit provider/fixture/verified fields, and make Eval opt into fixture grounding before it can satisfy `require_grounded`;
+- expand C10 into a real denied/redacted policy isolation pass before prompt assembly, with forbidden content excluded or redacted across hits, citations, manifests, policy audits, and model-call previews;
+- add DB-level or explicitly justified integrity for `ModelCall.prompt_manifest_id` / `grounding_correlation_id`;
+- persist enough ordered request-message hash data for independent recomputation of `model_request_sha256`;
+- expose the full binding chain in Run Detail / Model Calls UI;
 - verify Alembic migration and Docker/private deployment compatibility;
-- run broader backend, frontend, docs, build, and browser validations;
-- then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki with fresh evidence.
+- rerun broad backend, frontend, docs, build, and browser validations;
+- only then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from auditable candidate to verified baseline.
 
 After V1 is formalized, follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
