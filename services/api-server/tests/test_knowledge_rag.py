@@ -9,6 +9,8 @@ from app.db.models import (
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeEmbedding,
+    KnowledgePolicyAudit,
+    PromptAssemblyManifest,
     RetrievalHit,
     Task,
     utc_now,
@@ -273,8 +275,161 @@ def test_lexical_fallback_creates_retrieval_hits_and_bound_citations(
     hit_ids = {hit.id for hit in result.retrieval_hits}
     assert all(citation.chunk_id for citation in result.citations)
     assert all(citation.retrieval_hit_id in hit_ids for citation in result.citations)
+    assert all(citation.metadata_json.get("source_snapshot") for citation in result.citations)
     assert db_session.scalar(select(func.count()).select_from(RetrievalHit)) >= 2
     assert db_session.scalar(select(func.count()).select_from(CitationRecord)) >= 2
+
+
+def test_cjk_single_chunk_strong_match_can_ground_small_handbook(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Team Handbook",
+        description="Chinese handbook",
+        source_type="markdown",
+        title="团队手册",
+        content="# 团队手册\n\n使用简洁、带引用的回答。",
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="team-handbook-cjk",
+    )
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="看一下团队手册里写了什么",
+    )
+    db_session.flush()
+
+    assert result.local_status == "sufficient"
+    assert result.grounded is True
+    assert len(result.retrieval_hits) == 1
+    assert len(result.citations) == 1
+    assert result.retrieval_session is not None
+    assert result.retrieval_session.metadata_json["sufficiency_reason"] == (
+        "single_cjk_strong_match"
+    )
+    assert result.prompt_manifest is not None
+    assert result.prompt_manifest.included_retrieval_hit_ids_json == [
+        result.retrieval_hits[0].id
+    ]
+    assert {audit.decision for audit in result.policy_audits} >= {"allowed"}
+
+
+def test_single_non_cjk_hit_below_min_hits_is_not_cited(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Short English Runbook",
+        description="Single chunk runbook",
+        source_type="text",
+        title="Short English Runbook",
+        content="orion anchor local fact",
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="short-english-runbook",
+    )
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="orion anchor",
+    )
+    db_session.flush()
+
+    assert result.local_status == "insufficient"
+    assert result.grounded is False
+    assert result.retrieval_hits == []
+    assert result.citations == []
+    assert result.prompt_manifest is not None
+    assert result.prompt_manifest.included_retrieval_hit_ids_json == []
+    assert result.prompt_manifest.omitted_candidates_json[0]["reason"] == (
+        "insufficient_min_hits"
+    )
+    assert {audit.decision for audit in result.policy_audits} >= {"omitted"}
+
+
+def test_grounding_persists_prompt_manifest_and_policy_audit(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Relevant Facts",
+        description="Relevant facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content(),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="relevant-facts",
+    )
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Omitted Facts",
+        description="Low-score facts",
+        source_type="text",
+        title="Low Score Facts",
+        content="unrelated low score material " * 20,
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="omitted-facts",
+    )
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="orion anchor",
+    )
+    db_session.flush()
+
+    assert result.prompt_manifest is not None
+    assert result.prompt_manifest.evidence_text_sha256
+    assert result.prompt_manifest.included_retrieval_hit_ids_json == [
+        hit.id for hit in result.retrieval_hits
+    ]
+    assert result.prompt_manifest.source_snapshots_json
+    assert result.prompt_manifest.prompt_sections_json[0]["section"] == "knowledge_evidence"
+    assert result.prompt_manifest.omitted_candidates_json
+    assert {
+        audit.decision for audit in result.policy_audits
+    } >= {"allowed", "omitted"}
+    assert db_session.scalar(select(func.count()).select_from(PromptAssemblyManifest)) == 1
+    assert db_session.scalar(select(func.count()).select_from(KnowledgePolicyAudit)) >= 2
+
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id)
+        ).scalars()
+    ]
+    assert EventType.RAG_PROMPT_ASSEMBLED in event_types
+    assert EventType.RAG_POLICY_AUDITED in event_types
 
 
 def test_vector_capability_available_uses_vector_strategy(db_session: Session) -> None:
@@ -332,6 +487,10 @@ def test_insufficient_local_evidence_records_no_mock_web_sources_by_default(
     assert result.retrieval_session is not None
     assert result.retrieval_session.mode == "local_insufficient"
     assert result.retrieval_session.max_web_results == 0
+    assert result.prompt_manifest is not None
+    assert result.prompt_manifest.included_retrieval_hit_ids_json == []
+    assert result.prompt_manifest.omitted_candidates_json == []
+    assert [audit.decision for audit in result.policy_audits] == ["no_omission_applicable"]
     assert not result.web_sources
     assert not result.citations
     event_types = [
@@ -348,7 +507,7 @@ def test_insufficient_local_evidence_records_no_mock_web_sources_by_default(
 
 def test_org_scoped_retrieval_does_not_cross_tenant_boundary(db_session: Session) -> None:
     _ensure_agent(db_session)
-    ingest_knowledge_source(
+    _source, _document, chunks, _embeddings = ingest_knowledge_source(
         db_session,
         organization_id="other-org",
         agent_id="default",
@@ -373,6 +532,14 @@ def test_org_scoped_retrieval_does_not_cross_tenant_boundary(db_session: Session
 
     assert result.local_status == "insufficient"
     assert all(hit.source_kind != "knowledge_chunk" for hit in result.retrieval_hits)
+    hidden_chunk_ids = {chunk.id for chunk in chunks}
+    evidence_payload = (
+        str(result.prompt_manifest.__dict__ if result.prompt_manifest else {})
+        + str([audit.safe_metadata_json for audit in result.policy_audits])
+        + str([citation.metadata_json for citation in result.citations])
+    )
+    assert "tenant secret local fact" not in evidence_payload
+    assert not any(chunk_id in evidence_payload for chunk_id in hidden_chunk_ids)
 
 
 def test_web_research_url_policy_blocks_local_and_private_targets() -> None:

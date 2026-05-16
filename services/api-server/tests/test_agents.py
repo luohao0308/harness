@@ -158,6 +158,14 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
     run = db_session.get(Task, run_created["run_id"])
     assert run is not None
     assert run.status == "COMPLETED"
+    workspace = client.get(
+        f"/api/agents/runs/{run_created['run_id']}/workspace",
+        headers=AUTH_HEADERS,
+    )
+    assert workspace.status_code == 200
+    grounding = workspace.json()["knowledge_grounding"]
+    assert grounding["prompt_manifest"]["included_retrieval_hit_ids_json"] == []
+    assert grounding["policy_audits"][0]["decision"] == "no_omission_applicable"
 
 
 def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
