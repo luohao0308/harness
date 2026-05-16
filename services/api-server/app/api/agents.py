@@ -6,7 +6,7 @@ import unicodedata
 from collections.abc import Iterator
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -1418,6 +1418,8 @@ def get_agent_run_workspace(
     run_id: str,
     session: DbSession,
     principal: Principal,
+    retrieval_session_id: str | None = Query(default=None),
+    prompt_manifest_id: str | None = Query(default=None),
 ) -> AgentRunWorkspaceResponse:
     require_role(principal, {"admin", "engineer", "operator"})
     run = _owned_run(run_id=run_id, session=session, principal=principal)
@@ -1480,7 +1482,12 @@ def get_agent_run_workspace(
         run=run,
         plan=_plan_response(plan) if plan is not None else None,
         events=[EventResponse.model_validate(event) for event in events],
-        knowledge_grounding=_knowledge_grounding_response(session, run=run),
+        knowledge_grounding=_knowledge_grounding_response(
+            session,
+            run=run,
+            retrieval_session_id=retrieval_session_id,
+            prompt_manifest_id=prompt_manifest_id,
+        ),
         subagents=[SubagentResponse.model_validate(subagent) for subagent in subagents],
         tool_calls=[
             _tool_call_response(call, trace_id=trace_ids.get(("tool", call.id)))
@@ -2305,13 +2312,52 @@ def _knowledge_grounding_response(
     session: Session,
     *,
     run: Task,
+    retrieval_session_id: str | None = None,
+    prompt_manifest_id: str | None = None,
 ) -> KnowledgeGroundingResponse | None:
-    retrieval_session = session.execute(
-        select(RetrievalSession)
-        .where(RetrievalSession.run_id == run.id)
-        .order_by(RetrievalSession.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    inferred_fallback = False
+    fallback_reason: str | None = None
+    prompt_manifest: PromptAssemblyManifest | None = None
+    if prompt_manifest_id:
+        prompt_manifest = session.get(PromptAssemblyManifest, prompt_manifest_id)
+        if (
+            prompt_manifest is None
+            or prompt_manifest.run_id != run.id
+            or prompt_manifest.organization_id != run.organization_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Prompt manifest not found",
+            )
+        if (
+            retrieval_session_id is not None
+            and prompt_manifest.retrieval_session_id != retrieval_session_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Prompt manifest does not belong to retrieval session",
+            )
+        retrieval_session = session.get(RetrievalSession, prompt_manifest.retrieval_session_id)
+    elif retrieval_session_id:
+        retrieval_session = session.get(RetrievalSession, retrieval_session_id)
+        if (
+            retrieval_session is None
+            or retrieval_session.run_id != run.id
+            or retrieval_session.organization_id != run.organization_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Retrieval session not found",
+            )
+    else:
+        inferred_fallback = True
+        fallback_reason = "latest_run_retrieval_session"
+        retrieval_session = session.execute(
+            select(RetrievalSession)
+            .where(RetrievalSession.run_id == run.id)
+            .order_by(RetrievalSession.created_at.desc(), RetrievalSession.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
     if retrieval_session is None:
         return None
     hits = list(
@@ -2335,12 +2381,13 @@ def _knowledge_grounding_response(
             .order_by(WebResearchSource.fetched_at.asc(), WebResearchSource.id.asc())
         ).scalars()
     )
-    prompt_manifest = session.execute(
-        select(PromptAssemblyManifest)
-        .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
-        .order_by(PromptAssemblyManifest.created_at.desc(), PromptAssemblyManifest.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    if prompt_manifest is None:
+        prompt_manifest = session.execute(
+            select(PromptAssemblyManifest)
+            .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
+            .order_by(PromptAssemblyManifest.created_at.desc(), PromptAssemblyManifest.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
     policy_audits = list(
         session.execute(
             select(KnowledgePolicyAudit)
@@ -2352,6 +2399,17 @@ def _knowledge_grounding_response(
     if retrieval_session.local_status != "sufficient":
         evidence_summary = (
             "Local knowledge is insufficient; no web research provider is configured."
+        )
+        if web_sources:
+            evidence_summary = (
+                "Local knowledge is insufficient; controlled web research grounded the answer."
+            )
+    is_grounded = bool(citations) and (
+        retrieval_session.local_status == "sufficient" or bool(web_sources)
+    )
+    if is_grounded and prompt_manifest is not None:
+        evidence_summary = str(
+            prompt_manifest.metadata_json.get("evidence_message") or evidence_summary
         )
     return KnowledgeGroundingResponse(
         retrieval_session=RetrievalSessionResponse.model_validate(retrieval_session),
@@ -2368,8 +2426,12 @@ def _knowledge_grounding_response(
         web_sources=[WebResearchSourceResponse.model_validate(source) for source in web_sources],
         vector_capability=retrieval_session.vector_capability,
         local_status=retrieval_session.local_status,
-        grounded=retrieval_session.local_status == "sufficient" and bool(citations),
+        grounded=is_grounded,
         evidence_summary=evidence_summary,
+        inferred_fallback=inferred_fallback,
+        fallback_reason=fallback_reason,
+        selected_retrieval_session_id=retrieval_session.id,
+        selected_prompt_manifest_id=prompt_manifest.id if prompt_manifest else None,
     )
 
 

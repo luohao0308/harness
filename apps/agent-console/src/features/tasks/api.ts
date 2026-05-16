@@ -890,6 +890,7 @@ export type PromptAssemblyManifest = {
   id: string;
   retrieval_session_id: string;
   run_id: string | null;
+  grounding_correlation_id: string;
   query: string;
   included_retrieval_hit_ids_json: string[];
   omitted_candidates_json: Record<string, unknown>[];
@@ -939,6 +940,10 @@ export type KnowledgeGrounding = {
   local_status: string;
   grounded: boolean;
   evidence_summary: string;
+  inferred_fallback: boolean;
+  fallback_reason: string | null;
+  selected_retrieval_session_id: string | null;
+  selected_prompt_manifest_id: string | null;
 };
 
 export type AgentRunWorkspace = {
@@ -1045,6 +1050,11 @@ export type ModelCall = {
   prompt_tokens: number;
   completion_tokens: number;
   duration_ms: number;
+  grounding_correlation_id: string | null;
+  prompt_manifest_id: string | null;
+  model_request_sha256: string | null;
+  attempt_index: number;
+  terminal_status: string | null;
   request_json: Record<string, unknown>;
   response_json: Record<string, unknown>;
   error_message: string | null;
@@ -1323,8 +1333,19 @@ export async function listRuns() {
   return request<{ items: Task[]; next_cursor: string | null }>("/api/agents/runs");
 }
 
-export async function getAgentRunWorkspace(runId: string) {
-  return request<AgentRunWorkspace>(`/api/agents/runs/${runId}/workspace`);
+export async function getAgentRunWorkspace(
+  runId: string,
+  selectors: { retrieval_session_id?: string; prompt_manifest_id?: string } = {},
+) {
+  const params = new URLSearchParams();
+  if (selectors.retrieval_session_id) {
+    params.set("retrieval_session_id", selectors.retrieval_session_id);
+  }
+  if (selectors.prompt_manifest_id) {
+    params.set("prompt_manifest_id", selectors.prompt_manifest_id);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<AgentRunWorkspace>(`/api/agents/runs/${runId}/workspace${suffix}`);
 }
 
 export async function planWithAgent(payload: AgentPlanPayload) {

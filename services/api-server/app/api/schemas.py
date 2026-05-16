@@ -756,6 +756,16 @@ class KnowledgeGroundingResponse(BaseModel):
     local_status: str = Field(description="本地证据状态")
     grounded: bool = Field(description="是否已 grounding")
     evidence_summary: str = Field(description="证据摘要")
+    inferred_fallback: bool = Field(default=False, description="是否使用 latest fallback")
+    fallback_reason: str | None = Field(default=None, description="fallback 原因")
+    selected_retrieval_session_id: str | None = Field(
+        default=None,
+        description="选中的检索会话 ID",
+    )
+    selected_prompt_manifest_id: str | None = Field(
+        default=None,
+        description="选中的 prompt manifest ID",
+    )
 
 
 class EventPage(BaseModel):

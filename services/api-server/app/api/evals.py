@@ -34,6 +34,7 @@ from app.db.models import (
     RetrievalSession,
     Task,
     ToolCall,
+    WebResearchSource,
     utc_now,
 )
 from app.db.session import get_db_session
@@ -613,12 +614,44 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
             "grounding_failures": ["missing_task"],
         }
 
-    retrieval_session = session.execute(
-        select(RetrievalSession)
-        .where(RetrievalSession.run_id == task.id)
-        .order_by(RetrievalSession.created_at.desc(), RetrievalSession.id.desc())
-        .limit(1)
-    ).scalar_one_or_none()
+    requested_prompt_manifest_id = contract.get("prompt_manifest_id")
+    requested_retrieval_session_id = contract.get("retrieval_session_id")
+    inferred_fallback = False
+    fallback_reason = None
+    prompt_manifest: PromptAssemblyManifest | None = None
+    if requested_prompt_manifest_id:
+        prompt_manifest = session.get(PromptAssemblyManifest, str(requested_prompt_manifest_id))
+        if prompt_manifest is None or prompt_manifest.run_id != task.id:
+            return {
+                "grader": "deterministic_grounding_grader_v1",
+                "passed": False,
+                "grounding_failures": ["missing_prompt_manifest"],
+                "inferred_fallback": False,
+            }
+        if (
+            requested_retrieval_session_id
+            and prompt_manifest.retrieval_session_id != str(requested_retrieval_session_id)
+        ):
+            return {
+                "grader": "deterministic_grounding_grader_v1",
+                "passed": False,
+                "grounding_failures": ["selector_conflict"],
+                "inferred_fallback": False,
+            }
+        retrieval_session = session.get(RetrievalSession, prompt_manifest.retrieval_session_id)
+    elif requested_retrieval_session_id:
+        retrieval_session = session.get(RetrievalSession, str(requested_retrieval_session_id))
+        if retrieval_session is not None and retrieval_session.run_id != task.id:
+            retrieval_session = None
+    else:
+        inferred_fallback = True
+        fallback_reason = "latest_run_retrieval_session"
+        retrieval_session = session.execute(
+            select(RetrievalSession)
+            .where(RetrievalSession.run_id == task.id)
+            .order_by(RetrievalSession.created_at.desc(), RetrievalSession.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
     failures: list[str] = []
     if retrieval_session is None:
         return {
@@ -639,11 +672,19 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
             )
         ).scalars()
     )
-    prompt_manifest = session.execute(
-        select(PromptAssemblyManifest)
-        .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
-        .limit(1)
-    ).scalar_one_or_none()
+    web_sources = list(
+        session.execute(
+            select(WebResearchSource).where(
+                WebResearchSource.retrieval_session_id == retrieval_session.id
+            )
+        ).scalars()
+    )
+    if prompt_manifest is None:
+        prompt_manifest = session.execute(
+            select(PromptAssemblyManifest)
+            .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
+            .limit(1)
+        ).scalar_one_or_none()
     policy_audits = list(
         session.execute(
             select(KnowledgePolicyAudit).where(
@@ -653,7 +694,10 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
     )
 
     if contract.get("require_grounded"):
-        if retrieval_session.local_status != "sufficient" or not hits or not citations:
+        grounded = bool(citations) and (
+            retrieval_session.local_status == "sufficient" or bool(web_sources)
+        )
+        if not grounded or not hits:
             failures.append("missing_grounded_hits_or_citations")
         elif prompt_manifest is not None:
             included_hit_ids = set(prompt_manifest.included_retrieval_hit_ids_json)
@@ -694,6 +738,8 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
         "retrieval_session_id": retrieval_session.id,
         "prompt_manifest_id": prompt_manifest.id if prompt_manifest else None,
         "policy_audit_ids": [audit.id for audit in policy_audits],
+        "inferred_fallback": inferred_fallback,
+        "fallback_reason": fallback_reason,
     }
 
 
