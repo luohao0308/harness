@@ -886,6 +886,33 @@ export type WebResearchSource = {
   fetched_at: string;
 };
 
+export type PromptAssemblyManifest = {
+  id: string;
+  retrieval_session_id: string;
+  run_id: string | null;
+  query: string;
+  included_retrieval_hit_ids_json: string[];
+  omitted_candidates_json: Record<string, unknown>[];
+  source_snapshots_json: Record<string, unknown>[];
+  token_budget_json: Record<string, unknown>;
+  prompt_sections_json: Record<string, unknown>[];
+  evidence_text_sha256: string;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type KnowledgePolicyAudit = {
+  id: string;
+  retrieval_session_id: string;
+  run_id: string | null;
+  decision: string;
+  reason: string;
+  source_kind: string | null;
+  source_ref_id: string | null;
+  safe_metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
 export type RetrievalSession = {
   id: string;
   query: string;
@@ -905,6 +932,8 @@ export type KnowledgeGrounding = {
   retrieval_session: RetrievalSession | null;
   retrieval_hits: KnowledgeRetrievalHit[];
   citations: KnowledgeCitation[];
+  prompt_manifest: PromptAssemblyManifest | null;
+  policy_audits: KnowledgePolicyAudit[];
   web_sources: WebResearchSource[];
   vector_capability: string;
   local_status: string;
