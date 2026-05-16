@@ -1016,6 +1016,35 @@ class AuditedModelGateway:
         self.retrieval_evidence_ids = retrieval_evidence_ids or []
         self.evidence_text_sha256 = evidence_text_sha256
 
+    def _generation_parameters(self, provider: dict) -> dict:
+        parameters: dict = {}
+        if provider.get("max_output_tokens") is not None:
+            parameters["max_tokens"] = int(provider.get("max_output_tokens") or 0)
+        if provider.get("temperature") is not None:
+            parameters["temperature"] = provider.get("temperature")
+        if provider.get("top_p") is not None:
+            parameters["top_p"] = provider.get("top_p")
+        return parameters
+
+    def _request_message_hashes(self, request_payload: ModelRequest) -> list[dict]:
+        return [
+            {
+                "index": index,
+                "role": message.role,
+                "content_sha256": hashlib.sha256(message.content.encode("utf-8")).hexdigest(),
+            }
+            for index, message in enumerate(request_payload.messages)
+        ]
+
+    def _request_message_hashes_sha256(self, request_message_hashes: list[dict]) -> str:
+        encoded = json.dumps(
+            request_message_hashes,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
     def complete(
         self,
         request_payload: ModelRequest,
@@ -1073,7 +1102,17 @@ class AuditedModelGateway:
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         gateway = self.gateway or self._gateway_from_settings(settings.provider)
         started_at = time.monotonic()
-        model_request_sha256 = self._model_request_sha256(request_payload)
+        generation_parameters = self._generation_parameters(settings.provider)
+        request_message_hashes = self._request_message_hashes(request_payload)
+        request_message_hashes_sha256 = self._request_message_hashes_sha256(
+            request_message_hashes
+        )
+        model_request_sha256 = self._model_request_sha256(
+            request_payload,
+            generation_parameters=generation_parameters,
+            request_message_hashes=request_message_hashes,
+            request_message_hashes_sha256=request_message_hashes_sha256,
+        )
         model_call = ModelCall(
             task_id=self.task_id,
             agent_run_id=self.agent_run_id,
@@ -1086,8 +1125,18 @@ class AuditedModelGateway:
             grounding_correlation_id=self.grounding_correlation_id,
             prompt_manifest_id=self.prompt_manifest_id,
             model_request_sha256=model_request_sha256,
+            model_request_hash_schema_version=2,
+            request_message_hashes_json=request_message_hashes,
+            request_message_hashes_sha256=request_message_hashes_sha256,
+            hash_recomputability_status="recomputable_v2",
             attempt_index=attempt_index,
-            request_json=self._safe_request_json(request_payload),
+            request_json=self._safe_request_json(
+                request_payload,
+                generation_parameters=generation_parameters,
+                request_message_hashes=request_message_hashes,
+                request_message_hashes_sha256=request_message_hashes_sha256,
+                model_request_sha256=model_request_sha256,
+            ),
             response_json={},
             created_at=utc_now(),
         )
@@ -1185,38 +1234,60 @@ class AuditedModelGateway:
         self.session.flush()
         return response_payload
 
-    def _safe_request_json(self, request_payload: ModelRequest) -> dict:
+    def _safe_request_json(
+        self,
+        request_payload: ModelRequest,
+        *,
+        generation_parameters: dict,
+        request_message_hashes: list[dict],
+        request_message_hashes_sha256: str,
+        model_request_sha256: str,
+    ) -> dict:
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         return {
             "model_provider": request_payload.model_provider,
             "model_name": request_payload.model_name,
             "response_format": request_payload.response_format,
+            "generation_parameters": generation_parameters,
             "estimated_prompt_tokens": estimated_prompt_tokens,
             "grounding_correlation_id": self.grounding_correlation_id,
             "prompt_manifest_id": self.prompt_manifest_id,
             "prompt_manifest_version": self.prompt_manifest_version,
             "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
             "evidence_text_sha256": self.evidence_text_sha256,
-            "model_request_sha256": self._model_request_sha256(request_payload),
+            "model_request_hash_schema_version": 2,
+            "request_message_hashes": request_message_hashes,
+            "request_message_hashes_sha256": request_message_hashes_sha256,
+            "model_request_sha256": model_request_sha256,
             "messages": [
                 {
                     "role": message.role,
-                    "content_preview": message.content[:500],
                     "content_length": len(message.content),
+                    "content_sha256": request_message_hashes[index]["content_sha256"],
                 }
-                for message in request_payload.messages
+                for index, message in enumerate(request_payload.messages)
             ],
         }
 
-    def _model_request_sha256(self, request_payload: ModelRequest) -> str:
+    def _model_request_sha256(
+        self,
+        request_payload: ModelRequest,
+        *,
+        generation_parameters: dict | None = None,
+        request_message_hashes: list[dict] | None = None,
+        request_message_hashes_sha256: str | None = None,
+    ) -> str:
+        message_hashes = request_message_hashes or self._request_message_hashes(request_payload)
+        message_hashes_sha256 = request_message_hashes_sha256 or (
+            self._request_message_hashes_sha256(message_hashes)
+        )
         canonical_payload = {
             "model_provider": request_payload.model_provider,
             "model_name": request_payload.model_name,
             "response_format": request_payload.response_format,
-            "messages": [
-                {"role": message.role, "content": message.content}
-                for message in request_payload.messages
-            ],
+            "generation_parameters": generation_parameters or {},
+            "request_message_hashes_json": message_hashes,
+            "request_message_hashes_sha256": message_hashes_sha256,
             "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
             "prompt_manifest_id": self.prompt_manifest_id,
             "prompt_manifest_version": self.prompt_manifest_version,
@@ -1337,7 +1408,17 @@ class AuditedModelGateway:
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         gateway = self.gateway or self._gateway_from_settings(settings.provider)
         started_at = time.monotonic()
-        model_request_sha256 = self._model_request_sha256(request_payload)
+        generation_parameters = self._generation_parameters(settings.provider)
+        request_message_hashes = self._request_message_hashes(request_payload)
+        request_message_hashes_sha256 = self._request_message_hashes_sha256(
+            request_message_hashes
+        )
+        model_request_sha256 = self._model_request_sha256(
+            request_payload,
+            generation_parameters=generation_parameters,
+            request_message_hashes=request_message_hashes,
+            request_message_hashes_sha256=request_message_hashes_sha256,
+        )
         model_call = ModelCall(
             task_id=self.task_id,
             agent_run_id=self.agent_run_id,
@@ -1350,8 +1431,18 @@ class AuditedModelGateway:
             grounding_correlation_id=self.grounding_correlation_id,
             prompt_manifest_id=self.prompt_manifest_id,
             model_request_sha256=model_request_sha256,
+            model_request_hash_schema_version=2,
+            request_message_hashes_json=request_message_hashes,
+            request_message_hashes_sha256=request_message_hashes_sha256,
+            hash_recomputability_status="recomputable_v2",
             attempt_index=attempt_index,
-            request_json=self._safe_request_json(request_payload),
+            request_json=self._safe_request_json(
+                request_payload,
+                generation_parameters=generation_parameters,
+                request_message_hashes=request_message_hashes,
+                request_message_hashes_sha256=request_message_hashes_sha256,
+                model_request_sha256=model_request_sha256,
+            ),
             response_json={},
             created_at=utc_now(),
         )
