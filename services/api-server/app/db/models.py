@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -281,6 +282,22 @@ class TaskSnapshot(Base):
 
 class ModelCall(Base):
     __tablename__ = "model_calls"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["prompt_manifest_id"],
+            ["prompt_assembly_manifests.id"],
+            name="model_calls_prompt_manifest_id_fkey",
+        ),
+        ForeignKeyConstraint(
+            ["prompt_manifest_id", "task_id", "grounding_correlation_id"],
+            [
+                "prompt_assembly_manifests.id",
+                "prompt_assembly_manifests.run_id",
+                "prompt_assembly_manifests.grounding_correlation_id",
+            ],
+            name="model_calls_prompt_manifest_binding_fkey",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
@@ -301,7 +318,20 @@ class ModelCall(Base):
         nullable=True,
         index=True,
     )
+    legacy_prompt_manifest_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     model_request_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_request_hash_schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=2,
+    )
+    request_message_hashes_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    request_message_hashes_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    hash_recomputability_status: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="recomputable_v2",
+    )
     attempt_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     terminal_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     request_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -581,6 +611,14 @@ class CitationRecord(Base):
 
 class PromptAssemblyManifest(Base):
     __tablename__ = "prompt_assembly_manifests"
+    __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "run_id",
+            "grounding_correlation_id",
+            name="prompt_assembly_manifests_binding_uidx",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     retrieval_session_id: Mapped[str] = mapped_column(
