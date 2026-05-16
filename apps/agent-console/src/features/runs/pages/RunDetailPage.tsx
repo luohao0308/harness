@@ -50,6 +50,9 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     enabled: Boolean(runId),
     refetchInterval: 5000,
   });
+  const data = workspace.data;
+  const run = data?.run;
+  const grounding = data?.knowledge_grounding;
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
@@ -82,8 +85,27 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
         datasetId = dataset.id;
       }
       if (!datasetId || !runId) throw new Error("No dataset or run");
+      const policyDecisions = Array.from(
+        new Set((grounding?.policy_audits ?? []).map((audit) => audit.decision)),
+      );
+      const groundingContract =
+        grounding?.selected_retrieval_session_id || grounding?.selected_prompt_manifest_id
+          ? {
+              grounding_contract: {
+                retrieval_session_id: grounding.selected_retrieval_session_id ?? undefined,
+                prompt_manifest_id: grounding.selected_prompt_manifest_id ?? undefined,
+                require_grounded: grounding.grounded,
+                require_prompt_manifest: Boolean(grounding.selected_prompt_manifest_id),
+                require_insufficient: grounding.local_status !== "sufficient",
+                allow_fixture_grounding: false,
+                ...(policyDecisions.length
+                  ? { require_policy_decisions: policyDecisions }
+                  : {}),
+              },
+            }
+          : {};
       return createEvalCaseFromRun(datasetId, runId, {
-        expected_json: { status: run?.status ?? "COMPLETED" },
+        expected_json: { status: run?.status ?? "COMPLETED", ...groundingContract },
         tags_json: ["saved-from-run"],
       });
     },
@@ -93,9 +115,6 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       queryClient.invalidateQueries({ queryKey: ["eval-cases"] });
     },
   });
-  const data = workspace.data;
-  const run = data?.run;
-  const grounding = data?.knowledge_grounding;
   const hitsById = useMemo(
     () => new Map((grounding?.retrieval_hits ?? []).map((hit) => [hit.id, hit])),
     [grounding?.retrieval_hits],
@@ -219,10 +238,16 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 </Badge>
               </CardHeader>
               <div className="space-y-3 p-3 text-sm">
-                <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
                   <Metric label="向量" value={grounding.vector_capability} />
                   <Metric label="命中" value={String(grounding.retrieval_hits.length)} />
                   <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
+                  <Metric label="Provider" value={grounding.grounding_provider} />
+                  <Metric label="Fixture evidence" value={grounding.fixture_grounded ? "是" : "否"} />
+                  <Metric label="Verified grounding" value={grounding.verified_grounded ? "是" : "否"} />
+                </div>
+                <div className="truncate font-mono text-[11px] text-slate-500" title={grounding.grounding_verification_reason}>
+                  {grounding.grounding_verification_reason}
                 </div>
                 <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
                 {grounding.inferred_fallback && (
@@ -438,6 +463,19 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   </div>
                   <div className="mt-1 text-slate-500">
                     {call.prompt_tokens + call.completion_tokens} 标记 · {call.duration_ms}ms
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
+                    <Metric label="Attempt" value={String(call.attempt_index)} />
+                    <Metric label="Terminal" value={call.terminal_status ?? "n/a"} />
+                    <Metric label="Manifest" value={call.prompt_manifest_id ?? "n/a"} />
+                    <Metric label="Correlation" value={call.grounding_correlation_id ?? "n/a"} />
+                    <Metric label="Request hash" value={call.model_request_sha256 ?? "n/a"} />
+                    <Metric label="Hash audit" value={call.hash_recomputability_status} />
+                  </div>
+                  <div className="mt-1 truncate font-mono text-[11px] text-slate-400" title={call.request_message_hashes_sha256 ?? undefined}>
+                    schema v{call.model_request_hash_schema_version} · messages{" "}
+                    {call.request_message_hashes_json.length} ·{" "}
+                    {call.request_message_hashes_sha256 ?? "n/a"}
                   </div>
                 </div>
               ))}
