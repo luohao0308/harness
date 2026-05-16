@@ -35,11 +35,12 @@ VECTOR_CAPABILITY_UNAVAILABLE = "unavailable"
 VECTOR_CAPABILITY_DISABLED = "disabled"
 WEB_RESEARCH_PROVIDER_KEY = "knowledge.web_research_provider"
 WEB_RESEARCH_PROVIDER_DISABLED = "disabled"
+WEB_RESEARCH_PROVIDER_FAKE = "fake"
 
 DEFAULT_MIN_HITS = 2
 DEFAULT_MIN_SCORE = 0.62
 DEFAULT_MAX_LOCAL_CHUNKS = 6
-DEFAULT_MAX_WEB_RESULTS = 0
+DEFAULT_MAX_WEB_RESULTS = 2
 DEFAULT_MAX_RETRIEVAL_CANDIDATES = 200
 MAX_INGESTION_CHUNKS = 200
 
@@ -170,6 +171,37 @@ def _system_setting(session: Session, key: str, organization_id: str | None) -> 
     return row.value_json if isinstance(row.value_json, dict) else None
 
 
+def _upsert_system_setting(
+    session: Session,
+    *,
+    key: str,
+    organization_id: str | None,
+    value: dict,
+    updated_by: str | None = None,
+) -> None:
+    row = session.execute(
+        select(SystemSetting).where(
+            SystemSetting.key == key,
+            SystemSetting.organization_id == organization_id,
+        )
+    ).scalar_one_or_none()
+    now = utc_now()
+    if row is None:
+        row = SystemSetting(
+            organization_id=organization_id,
+            key=key,
+            value_json=value,
+            updated_by=updated_by,
+            updated_at=now,
+        )
+        session.add(row)
+    else:
+        row.value_json = value
+        row.updated_by = updated_by
+        row.updated_at = now
+    session.flush()
+
+
 def vector_capability(session: Session, organization_id: str | None) -> str:
     value = _system_setting(session, VECTOR_CAPABILITY_KEY, organization_id)
     if not value:
@@ -192,34 +224,39 @@ def set_vector_capability(
     reason: str | None = None,
 ) -> None:
     value = {"status": status, "reason": reason, "updated_at": utc_now().isoformat()}
-    row = session.execute(
-        select(SystemSetting).where(
-            SystemSetting.key == VECTOR_CAPABILITY_KEY,
-            SystemSetting.organization_id == organization_id,
-        )
-    ).scalar_one_or_none()
-    now = utc_now()
-    if row is None:
-        row = SystemSetting(
-            organization_id=organization_id,
-            key=VECTOR_CAPABILITY_KEY,
-            value_json=value,
-            updated_by=None,
-            updated_at=now,
-        )
-        session.add(row)
-    else:
-        row.value_json = value
-        row.updated_at = now
-    session.flush()
+    _upsert_system_setting(
+        session,
+        key=VECTOR_CAPABILITY_KEY,
+        organization_id=organization_id,
+        value=value,
+    )
 
 
 def web_research_provider(session: Session, organization_id: str | None) -> str:
     value = _system_setting(session, WEB_RESEARCH_PROVIDER_KEY, organization_id)
     provider = str((value or {}).get("provider") or WEB_RESEARCH_PROVIDER_DISABLED).strip().lower()
-    if provider != WEB_RESEARCH_PROVIDER_DISABLED:
-        return WEB_RESEARCH_PROVIDER_DISABLED
+    if provider == WEB_RESEARCH_PROVIDER_FAKE:
+        return WEB_RESEARCH_PROVIDER_FAKE
     return WEB_RESEARCH_PROVIDER_DISABLED
+
+
+def set_web_research_provider(
+    session: Session,
+    *,
+    organization_id: str | None,
+    provider: str,
+    updated_by: str = "system",
+) -> None:
+    normalized = provider.strip().lower()
+    if normalized not in {WEB_RESEARCH_PROVIDER_DISABLED, WEB_RESEARCH_PROVIDER_FAKE}:
+        normalized = WEB_RESEARCH_PROVIDER_DISABLED
+    _upsert_system_setting(
+        session,
+        key=WEB_RESEARCH_PROVIDER_KEY,
+        organization_id=organization_id,
+        value={"provider": normalized},
+        updated_by=updated_by,
+    )
 
 
 def list_knowledge_sources(
@@ -432,8 +469,11 @@ def _build_evidence_messages(
         f"Query: {query}",
     ]
     if hits:
-        lines.append("Local evidence:")
-        for hit in hits:
+        local_hits = [hit for hit in hits if hit.source_kind == "knowledge_chunk"]
+        web_hits = [hit for hit in hits if hit.source_kind == "web_source"]
+        if local_hits:
+            lines.append("Local evidence:")
+        for hit in local_hits:
             citation_key = next(
                 (
                     citation.citation_key
@@ -449,7 +489,23 @@ def _build_evidence_messages(
                 f"citation={citation_key}: "
                 f"{hit.snippet}"
             )
-    if web_sources:
+        if web_hits:
+            lines.append("Web fallback evidence:")
+        for hit in web_hits:
+            citation_key = next(
+                (
+                    citation.citation_key
+                    for citation in citations
+                    if citation.web_source_id == hit.web_source_id
+                ),
+                "n/a",
+            )
+            lines.append(
+                f"- {hit.source_kind} {hit.rank} score={hit.score:.3f} "
+                f"web_source={hit.web_source_id or 'n/a'} citation={citation_key}: "
+                f"{hit.snippet}"
+            )
+    elif web_sources:
         lines.append("Web fallback evidence:")
         for source in web_sources:
             lines.append(f"- {source.url} :: {source.title} :: {source.snippet}")
@@ -472,8 +528,34 @@ def _snapshot_for_chunk(chunk: KnowledgeChunk, document: KnowledgeDocument) -> d
         "chunk_id": chunk.id,
         "chunk_version": chunk.chunk_version,
         "chunk_text_sha256": chunk.text_sha256,
+        "chunk_text_snapshot": chunk.text[:400],
         "chunk_span": {"start_offset": chunk.start_offset, "end_offset": chunk.end_offset},
     }
+
+
+def sanitize_audit_payload(payload: dict) -> dict:
+    allowed_keys = {
+        "retrieval_hit_id",
+        "rank",
+        "score",
+        "document_id",
+        "document_version",
+        "policy_decision",
+        "hit_count",
+        "local_status",
+        "source_kind",
+        "source_ref_id",
+        "reason",
+        "source_id",
+        "source_version",
+        "chunk_text_sha256",
+        "web_source_id",
+        "content_sha256",
+        "status",
+        "provider",
+        "max_web_results",
+    }
+    return {key: value for key, value in payload.items() if key in allowed_keys}
 
 
 def _omitted_candidate_record(
@@ -483,7 +565,6 @@ def _omitted_candidate_record(
     document: KnowledgeDocument,
     reason: str,
 ) -> dict:
-    snapshot = _snapshot_for_chunk(chunk, document)
     return {
         "source_kind": "knowledge_chunk",
         "source_ref_id": chunk.id,
@@ -494,7 +575,6 @@ def _omitted_candidate_record(
         "source_id": chunk.source_id,
         "source_version": chunk.source_version,
         "chunk_text_sha256": chunk.text_sha256,
-        "snapshot": snapshot,
     }
 
 
@@ -517,14 +597,17 @@ def _create_policy_audits(
             reason="selected_for_prompt",
             source_kind=hit.source_kind,
             source_ref_id=hit.chunk_id or hit.web_source_id,
-            safe_metadata_json={
-                "retrieval_hit_id": hit.id,
-                "rank": hit.rank,
-                "score": hit.score,
-                "document_id": hit.document_id,
-                "document_version": hit.document_version,
-                "policy_decision": "allowed",
-            },
+            safe_metadata_json=sanitize_audit_payload(
+                {
+                    "retrieval_hit_id": hit.id,
+                    "rank": hit.rank,
+                    "score": hit.score,
+                    "document_id": hit.document_id,
+                    "document_version": hit.document_version,
+                    "web_source_id": hit.web_source_id,
+                    "policy_decision": "allowed",
+                }
+            ),
             created_at=now,
         )
         session.add(audit)
@@ -545,11 +628,7 @@ def _create_policy_audits(
             reason=str(candidate["reason"]),
             source_kind=str(candidate["source_kind"]),
             source_ref_id=str(candidate["source_ref_id"]),
-            safe_metadata_json={
-                key: value
-                for key, value in candidate.items()
-                if key not in {"snapshot"}
-            },
+            safe_metadata_json=sanitize_audit_payload(candidate),
             created_at=now,
         )
         session.add(audit)
@@ -565,10 +644,12 @@ def _create_policy_audits(
             reason="no denied, redacted, or omitted knowledge candidates applied",
             source_kind=None,
             source_ref_id=None,
-            safe_metadata_json={
-                "hit_count": len(hits),
-                "local_status": retrieval_session.local_status,
-            },
+            safe_metadata_json=sanitize_audit_payload(
+                {
+                    "hit_count": len(hits),
+                    "local_status": retrieval_session.local_status,
+                }
+            ),
             created_at=now,
         )
         session.add(audit)
@@ -596,6 +677,8 @@ def _create_prompt_manifest(
             "web_source_id": hit.web_source_id,
             "document_id": hit.document_id,
             "document_version": hit.document_version,
+            "snippet_sha256": _sha256(hit.snippet),
+            "snippet_text_snapshot": hit.snippet[:400],
             **(hit.metadata_json if isinstance(hit.metadata_json, dict) else {}),
         }
         source_snapshots.append(snapshot)
@@ -605,6 +688,7 @@ def _create_prompt_manifest(
         run_id=retrieval_session.run_id,
         organization_id=retrieval_session.organization_id,
         agent_id=retrieval_session.agent_id,
+        grounding_correlation_id=retrieval_session.id,
         query=retrieval_session.query,
         included_retrieval_hit_ids_json=[hit.id for hit in hits],
         omitted_candidates_json=omitted_candidates,
@@ -628,6 +712,8 @@ def _create_prompt_manifest(
         metadata_json={
             "schema_version": "knowledge-prompt-assembly-v1",
             "local_status": retrieval_session.local_status,
+            "grounding_correlation_id": retrieval_session.id,
+            "prompt_manifest_version": "knowledge-prompt-assembly-v1",
         },
         created_at=utc_now(),
     )
@@ -791,6 +877,46 @@ def _is_safe_research_url(url: str) -> bool:
     return True
 
 
+def _fake_web_research_sources(
+    *,
+    session: Session,
+    retrieval_session: RetrievalSession,
+    query: str,
+) -> list[WebResearchSource]:
+    sources: list[WebResearchSource] = []
+    normalized_query = _normalize_text(query).strip() or "knowledge"
+    for index in range(1, retrieval_session.max_web_results + 1):
+        url = f"https://example.test/knowledge/{index}"
+        if not _is_safe_research_url(url):
+            continue
+        snippet = (
+            f"Controlled fake web result {index} for {normalized_query}. "
+            "This deterministic fixture is used for no-network grounding tests."
+        )
+        source = WebResearchSource(
+            retrieval_session_id=retrieval_session.id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            run_id=retrieval_session.run_id,
+            url=url,
+            title=f"Fake web source {index}",
+            content_sha256=_sha256(snippet),
+            snippet=snippet,
+            status="READY",
+            error_message=None,
+            metadata_json={
+                "provider": WEB_RESEARCH_PROVIDER_FAKE,
+                "fixture": True,
+                "query_sha256": _sha256(normalized_query),
+            },
+            fetched_at=utc_now(),
+        )
+        session.add(source)
+        session.flush()
+        sources.append(source)
+    return sources
+
+
 def ground_query(
     session: Session,
     *,
@@ -814,7 +940,11 @@ def ground_query(
         min_hits=DEFAULT_MIN_HITS,
         min_score=DEFAULT_MIN_SCORE,
         max_local_chunks=DEFAULT_MAX_LOCAL_CHUNKS,
-        max_web_results=DEFAULT_MAX_WEB_RESULTS,
+        max_web_results=(
+            DEFAULT_MAX_WEB_RESULTS
+            if research_provider == WEB_RESEARCH_PROVIDER_FAKE
+            else 0
+        ),
         metadata_json={"web_research_provider": research_provider},
         created_at=utc_now(),
     )
@@ -934,7 +1064,61 @@ def ground_query(
             session.flush()
             citations.append(citation)
 
-    if local_status != "sufficient" and not web_sources:
+    if local_status != "sufficient" and research_provider == WEB_RESEARCH_PROVIDER_FAKE:
+        web_sources = _fake_web_research_sources(
+            session=session,
+            retrieval_session=retrieval_session,
+            query=query,
+        )
+        for rank, source in enumerate(web_sources, start=1):
+            hit = RetrievalHit(
+                retrieval_session_id=retrieval_session.id,
+                chunk_id=None,
+                web_source_id=source.id,
+                rank=rank,
+                score=1.0,
+                source_kind="web_source",
+                document_id=None,
+                document_version=None,
+                snippet=source.snippet,
+                metadata_json={
+                    "content_sha256": source.content_sha256,
+                    "provider": WEB_RESEARCH_PROVIDER_FAKE,
+                    "source_url_sha256": _sha256(source.url),
+                },
+                created_at=now,
+            )
+            session.add(hit)
+            session.flush()
+            hits.append(hit)
+            citation = CitationRecord(
+                retrieval_session_id=retrieval_session.id,
+                retrieval_hit_id=hit.id,
+                run_id=run_id,
+                message_id=None,
+                citation_key=f"[W{rank}]",
+                source_kind="web_source",
+                chunk_id=None,
+                web_source_id=source.id,
+                claim_text=query,
+                quoted_text=source.snippet,
+                confidence=hit.score,
+                metadata_json={
+                    "source_snapshot": {
+                        "web_source_id": source.id,
+                        "url_sha256": _sha256(source.url),
+                        "title": source.title,
+                        "content_sha256": source.content_sha256,
+                        "quoted_text_sha256": _sha256(source.snippet),
+                    },
+                },
+                created_at=now,
+            )
+            session.add(citation)
+            session.flush()
+            citations.append(citation)
+        retrieval_session.mode = "web_fallback" if web_sources else "local_insufficient"
+    elif local_status != "sufficient" and not web_sources:
         retrieval_session.mode = "local_insufficient"
     retrieval_session.metadata_json = {
         "web_research_provider": research_provider,
@@ -995,11 +1179,15 @@ def ground_query(
             policy_audits=policy_audits,
             local_status=local_status,
         )
-    grounded = local_status == "sufficient" and bool(citations)
+    grounded = (local_status == "sufficient" or bool(web_sources)) and bool(citations)
     evidence_message = (
-        "Local knowledge is insufficient; no web research provider is configured."
-        if local_status != "sufficient"
-        else "Local knowledge grounded the answer."
+        "Local knowledge grounded the answer."
+        if local_status == "sufficient"
+        else (
+            "Local knowledge is insufficient; controlled fake web research grounded the answer."
+            if web_sources
+            else "Local knowledge is insufficient; no web research provider is configured."
+        )
     )
     return KnowledgeGroundingResult(
         retrieval_session=retrieval_session,
