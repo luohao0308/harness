@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Check, Database, FlaskConical, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
@@ -32,14 +32,21 @@ const DEFAULT_EVAL_DATASET_ID = "__create_default_eval_dataset__";
 export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const { text } = useI18n();
   const { runId } = useParams();
+  const [searchParams] = useSearchParams();
+  const retrievalSessionId = searchParams.get("retrieval_session_id") ?? undefined;
+  const promptManifestId = searchParams.get("prompt_manifest_id") ?? undefined;
   const queryClient = useQueryClient();
   const [replaySequence, setReplaySequence] = useState("");
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
   const [saveEvalSuccess, setSaveEvalSuccess] = useState(false);
   const [selectedEvalDatasetId, setSelectedEvalDatasetId] = useState("");
   const workspace = useQuery({
-    queryKey: ["agent-run-workspace", runId],
-    queryFn: () => getAgentRunWorkspace(runId!),
+    queryKey: ["agent-run-workspace", runId, retrievalSessionId, promptManifestId],
+    queryFn: () =>
+      getAgentRunWorkspace(runId!, {
+        retrieval_session_id: retrievalSessionId,
+        prompt_manifest_id: promptManifestId,
+      }),
     enabled: Boolean(runId),
     refetchInterval: 5000,
   });
@@ -218,6 +225,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
                 </div>
                 <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
+                {grounding.inferred_fallback && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                    fallback {grounding.fallback_reason ?? "latest"} · retrieval{" "}
+                    {grounding.selected_retrieval_session_id ?? "n/a"}
+                  </div>
+                )}
                 {grounding.prompt_manifest && (
                   <div className="space-y-2">
                     <div className="text-xs font-medium text-slate-700">Prompt 组装审计</div>
@@ -228,6 +241,9 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                       <div className="mt-1 text-slate-600">
                         included {grounding.prompt_manifest.included_retrieval_hit_ids_json.length} · omitted{" "}
                         {grounding.prompt_manifest.omitted_candidates_json.length}
+                      </div>
+                      <div className="mt-1 break-all text-slate-500">
+                        correlation {grounding.prompt_manifest.grounding_correlation_id}
                       </div>
                       <div className="mt-1 break-all text-slate-500">
                         sha256 {grounding.prompt_manifest.evidence_text_sha256}
