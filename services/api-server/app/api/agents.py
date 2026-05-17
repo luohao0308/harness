@@ -4,12 +4,15 @@ import re
 import time
 import unicodedata
 from collections.abc import Iterator
+from email.parser import BytesParser
+from email.policy import default as email_default_policy
+from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.agents.executor import PLANNER_SYSTEM_PROMPT, Executor
@@ -43,13 +46,17 @@ from app.api.schemas import (
     AgentSessionResponse,
     EventResponse,
     KnowledgeCitationResponse,
+    KnowledgeDocumentCreateRequest,
     KnowledgeDocumentResponse,
     KnowledgeGroundingResponse,
     KnowledgePolicyAuditResponse,
     KnowledgeRetrievalHitResponse,
+    KnowledgeSourceActionRequest,
     KnowledgeSourceCreateRequest,
     KnowledgeSourcePage,
     KnowledgeSourceResponse,
+    KnowledgeSourceScopeRequest,
+    KnowledgeSourceUpdateRequest,
     ModelCallResponse,
     PromptAssemblyManifestResponse,
     RetrievalSessionResponse,
@@ -93,9 +100,17 @@ from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.knowledge import (
+    SOURCE_HEALTH_HEALTHY,
+    SOURCE_STATUS_ACTIVE,
+    SOURCE_STATUS_ARCHIVED,
+    SOURCE_STATUS_DISABLED,
     KnowledgeGroundingResult,
+    KnowledgeIngestionError,
+    create_knowledge_lifecycle_audit,
+    get_visible_knowledge_source,
     ground_query,
     ingest_knowledge_source,
+    knowledge_source_lifecycle_snapshot,
     list_knowledge_sources,
 )
 from app.security.auth import Principal, require_role
@@ -109,6 +124,10 @@ SUMMARY_SCHEMA_VERSION = "workspace-context-summary-v1"
 COMPRESSION_PROMPT_VERSION = "workspace-context-compression-v1"
 CJK_TOKEN_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]")
 ASCII_WORD_RE = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
+KNOWLEDGE_UPLOAD_MAX_BYTES = 120_000
+KNOWLEDGE_UPLOAD_MAX_MULTIPART_BYTES = KNOWLEDGE_UPLOAD_MAX_BYTES + 20_000
+KNOWLEDGE_UPLOAD_MIME_TYPES = {"text/plain", "text/markdown"}
+KNOWLEDGE_UPLOAD_EXTENSIONS = {".txt", ".md"}
 
 
 # ---------------------------------------------------------------------------
@@ -242,27 +261,46 @@ def create_agent_knowledge_source(
 ) -> KnowledgeSourceResponse:
     require_role(principal, {"admin", "engineer"})
     _get_agent(agent_id=agent_id, session=session, principal=principal)
+    if request.scope == "org":
+        require_role(principal, {"admin"})
+    effective_agent_id = None if request.scope == "org" else agent_id
     source_was_new = _knowledge_source_exists(
         session=session,
         organization_id=principal.organization_id,
-        agent_id=agent_id,
+        agent_id=effective_agent_id,
         name=request.name,
         idempotency_key=request.idempotency_key,
     ) is False
-    source, document, chunks, embeddings = ingest_knowledge_source(
-        session,
-        organization_id=principal.organization_id,
-        agent_id=agent_id,
-        name=request.name,
-        description=request.description,
-        source_type=request.source_type,
-        title=request.title,
-        content=request.content,
-        uri=request.uri,
-        mime_type=request.mime_type,
-        created_by=principal.user_id,
-        idempotency_key=request.idempotency_key,
-    )
+    try:
+        source, document, chunks, embeddings = ingest_knowledge_source(
+            session,
+            organization_id=principal.organization_id,
+            agent_id=effective_agent_id,
+            name=request.name,
+            description=request.description,
+            source_type=request.source_type,
+            title=request.title,
+            content=request.content,
+            uri=request.uri,
+            mime_type=request.mime_type,
+            created_by=principal.user_id,
+            idempotency_key=request.idempotency_key,
+            create_new_logical_document=True,
+        )
+    except KnowledgeIngestionError as error:
+        _commit_failed_knowledge_ingestion(
+            session=session,
+            principal=principal,
+            action="document_import_failed",
+            error=error,
+            before=None,
+            idempotency_key=request.idempotency_key,
+        )
+    before_snapshot = None
+    if request.expires_at is not None:
+        before_snapshot = knowledge_source_lifecycle_snapshot(source)
+        source.expires_at = request.expires_at
+        source.updated_at = utc_now()
     _record_knowledge_ingestion_events(
         session=session,
         principal=principal,
@@ -274,9 +312,465 @@ def create_agent_knowledge_source(
         idempotency_key=request.idempotency_key,
         source_was_new=source_was_new,
     )
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action="created" if source_was_new else "document_indexed",
+        source=source,
+        before=before_snapshot,
+        after=knowledge_source_lifecycle_snapshot(source),
+        document_id=document.id,
+        idempotency_key=request.idempotency_key,
+    )
     session.commit()
     session.refresh(source)
     return _knowledge_source_response(session, source)
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/import",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="通过 multipart 文件创建 Agent 知识源",
+)
+async def import_agent_knowledge_source_file(
+    agent_id: str,
+    request: Request,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    upload = await _parse_knowledge_multipart_upload(request)
+    if upload["scope"] == "org":
+        require_role(principal, {"admin"})
+    payload = KnowledgeSourceCreateRequest(
+        name=upload["name"] or upload["title"],
+        description=upload["description"],
+        scope=upload["scope"],
+        source_type="text" if upload["mime_type"] == "text/plain" else "markdown",
+        title=upload["title"],
+        content=upload["content"],
+        uri=upload["filename"],
+        mime_type=upload["mime_type"],
+        idempotency_key=upload["idempotency_key"],
+    )
+    return create_agent_knowledge_source(
+        agent_id=agent_id,
+        request=payload,
+        session=session,
+        principal=principal,
+    )
+
+
+@router.patch(
+    "/{agent_id}/knowledge/sources/{source_id}",
+    response_model=KnowledgeSourceResponse,
+    summary="更新知识源普通字段",
+)
+def update_agent_knowledge_source(
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeSourceUpdateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _visible_knowledge_source_or_404(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    _require_org_source_admin(source=source, principal=principal)
+    before = knowledge_source_lifecycle_snapshot(source)
+    if request.name is not None:
+        source.name = request.name
+    if request.description is not None:
+        source.description = request.description
+    if "expires_at" in request.model_fields_set:
+        source.expires_at = request.expires_at
+    source.updated_at = utc_now()
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action="updated",
+        source=source,
+        before=before,
+        after=knowledge_source_lifecycle_snapshot(source),
+    )
+    session.commit()
+    session.refresh(source)
+    return _knowledge_source_response(session, source)
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/disable",
+    response_model=KnowledgeSourceResponse,
+    summary="停用知识源",
+)
+def disable_agent_knowledge_source(
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeSourceActionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    return _transition_knowledge_source(
+        agent_id=agent_id,
+        source_id=source_id,
+        request=request,
+        session=session,
+        principal=principal,
+        action="disabled",
+        status_value=SOURCE_STATUS_DISABLED,
+    )
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/enable",
+    response_model=KnowledgeSourceResponse,
+    summary="启用知识源",
+)
+def enable_agent_knowledge_source(
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeSourceActionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    return _transition_knowledge_source(
+        agent_id=agent_id,
+        source_id=source_id,
+        request=request,
+        session=session,
+        principal=principal,
+        action="enabled",
+        status_value=SOURCE_STATUS_ACTIVE,
+    )
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/archive",
+    response_model=KnowledgeSourceResponse,
+    summary="归档知识源",
+)
+def archive_agent_knowledge_source(
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeSourceActionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    return _transition_knowledge_source(
+        agent_id=agent_id,
+        source_id=source_id,
+        request=request,
+        session=session,
+        principal=principal,
+        action="archived",
+        status_value=SOURCE_STATUS_ARCHIVED,
+    )
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/scope",
+    response_model=KnowledgeSourceResponse,
+    summary="变更知识源作用域",
+)
+def change_agent_knowledge_source_scope(
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeSourceScopeRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    require_role(principal, {"admin"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _visible_knowledge_source_or_404(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    before = knowledge_source_lifecycle_snapshot(source)
+    next_agent_id = None if request.scope == "org" else agent_id
+    source.agent_id = next_agent_id
+    source.updated_at = utc_now()
+    _set_knowledge_source_scope_rows(
+        session=session,
+        source_id=source.id,
+        agent_id=next_agent_id,
+    )
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action="scope_changed",
+        source=source,
+        before=before,
+        after={
+            **knowledge_source_lifecycle_snapshot(source),
+            "reason": request.reason,
+        },
+    )
+    session.commit()
+    session.refresh(source)
+    return _knowledge_source_response(session, source)
+
+
+@router.get(
+    "/{agent_id}/knowledge/sources/{source_id}/documents",
+    response_model=list[KnowledgeDocumentResponse],
+    summary="查询知识源文档版本",
+)
+def list_agent_knowledge_documents(
+    agent_id: str,
+    source_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> list[KnowledgeDocumentResponse]:
+    require_role(principal, {"admin", "engineer", "operator"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _visible_knowledge_source_or_404(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    return _knowledge_document_responses(session, source)
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/documents",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="向知识源添加文档",
+)
+def create_agent_knowledge_document(
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeDocumentCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _active_knowledge_source_or_409(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    before = knowledge_source_lifecycle_snapshot(source)
+    try:
+        source, document, chunks, embeddings = ingest_knowledge_source(
+            session,
+            organization_id=principal.organization_id,
+            agent_id=source.agent_id,
+            source_id=source.id,
+            name=source.name,
+            description=source.description,
+            source_type=source.source_type,
+            title=request.title,
+            content=request.content,
+            uri=request.uri,
+            mime_type=request.mime_type,
+            created_by=principal.user_id,
+            idempotency_key=request.idempotency_key,
+            create_new_logical_document=True,
+        )
+    except KnowledgeIngestionError as error:
+        _commit_failed_knowledge_ingestion(
+            session=session,
+            principal=principal,
+            action="document_import_failed",
+            error=error,
+            before=before,
+            idempotency_key=request.idempotency_key,
+        )
+    _record_knowledge_ingestion_events(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source=source,
+        document=document,
+        chunks=chunks,
+        embeddings=embeddings,
+        idempotency_key=request.idempotency_key,
+        source_was_new=False,
+    )
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action="document_indexed",
+        source=source,
+        before=before,
+        after=knowledge_source_lifecycle_snapshot(source),
+        document_id=document.id,
+        idempotency_key=request.idempotency_key,
+    )
+    session.commit()
+    session.refresh(source)
+    return _knowledge_source_response(session, source)
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/documents/import",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="通过 multipart 文件添加知识源文档",
+)
+async def import_agent_knowledge_document_file(
+    agent_id: str,
+    source_id: str,
+    request: Request,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    _active_knowledge_source_or_409(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    upload = await _parse_knowledge_multipart_upload(request)
+    payload = KnowledgeDocumentCreateRequest(
+        title=upload["title"],
+        content=upload["content"],
+        uri=upload["filename"],
+        mime_type=upload["mime_type"],
+        idempotency_key=upload["idempotency_key"],
+    )
+    return create_agent_knowledge_document(
+        agent_id=agent_id,
+        source_id=source_id,
+        request=payload,
+        session=session,
+        principal=principal,
+    )
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/documents/{document_id}/versions",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="为文档创建新版本",
+)
+def create_agent_knowledge_document_version(
+    agent_id: str,
+    source_id: str,
+    document_id: str,
+    request: KnowledgeDocumentCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    source = _active_knowledge_source_or_409(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    document = session.get(KnowledgeDocument, document_id)
+    if document is None or document.source_id != source.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    before = knowledge_source_lifecycle_snapshot(source)
+    try:
+        source, new_document, chunks, embeddings = ingest_knowledge_source(
+            session,
+            organization_id=principal.organization_id,
+            agent_id=source.agent_id,
+            source_id=source.id,
+            name=source.name,
+            description=source.description,
+            source_type=source.source_type,
+            title=request.title,
+            content=request.content,
+            uri=request.uri,
+            mime_type=request.mime_type,
+            created_by=principal.user_id,
+            idempotency_key=request.idempotency_key,
+            reingest_document_id=document.id,
+        )
+    except KnowledgeIngestionError as error:
+        _commit_failed_knowledge_ingestion(
+            session=session,
+            principal=principal,
+            action="document_reingest_failed",
+            error=error,
+            before=before,
+            idempotency_key=request.idempotency_key,
+        )
+    _record_knowledge_ingestion_events(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source=source,
+        document=new_document,
+        chunks=chunks,
+        embeddings=embeddings,
+        idempotency_key=request.idempotency_key,
+        source_was_new=False,
+    )
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action="document_versioned",
+        source=source,
+        before=before,
+        after=knowledge_source_lifecycle_snapshot(source),
+        document_id=new_document.id,
+        idempotency_key=request.idempotency_key,
+    )
+    session.commit()
+    session.refresh(source)
+    return _knowledge_source_response(session, source)
+
+
+@router.post(
+    "/{agent_id}/knowledge/sources/{source_id}/documents/{document_id}/versions/import",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="通过 multipart 文件创建文档新版本",
+)
+async def import_agent_knowledge_document_version_file(
+    agent_id: str,
+    source_id: str,
+    document_id: str,
+    request: Request,
+    session: DbSession,
+    principal: Principal,
+) -> KnowledgeSourceResponse:
+    source = _active_knowledge_source_or_409(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    document = session.get(KnowledgeDocument, document_id)
+    if document is None or document.source_id != source.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    upload = await _parse_knowledge_multipart_upload(request)
+    payload = KnowledgeDocumentCreateRequest(
+        title=upload["title"],
+        content=upload["content"],
+        uri=upload["filename"],
+        mime_type=upload["mime_type"],
+        idempotency_key=upload["idempotency_key"],
+    )
+    return create_agent_knowledge_document_version(
+        agent_id=agent_id,
+        source_id=source_id,
+        document_id=document_id,
+        request=payload,
+        session=session,
+        principal=principal,
+    )
 
 
 @router.get(
@@ -2133,7 +2627,7 @@ def _knowledge_source_exists(
     *,
     session: Session,
     organization_id: str | None,
-    agent_id: str,
+    agent_id: str | None,
     name: str,
     idempotency_key: str | None,
 ) -> bool:
@@ -2146,6 +2640,256 @@ def _knowledge_source_exists(
     else:
         statement = statement.where(KnowledgeSource.name == name)
     return session.execute(statement.limit(1)).scalar_one_or_none() is not None
+
+
+def _visible_knowledge_source_or_404(
+    *,
+    session: Session,
+    principal: Principal,
+    agent_id: str,
+    source_id: str,
+) -> KnowledgeSource:
+    source = get_visible_knowledge_source(
+        session,
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge source not found",
+        )
+    return source
+
+
+def _active_knowledge_source_or_409(
+    *,
+    session: Session,
+    principal: Principal,
+    agent_id: str,
+    source_id: str,
+) -> KnowledgeSource:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _visible_knowledge_source_or_404(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    if source.status != SOURCE_STATUS_ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Knowledge source is not active",
+        )
+    _require_org_source_admin(source=source, principal=principal)
+    return source
+
+
+def _require_org_source_admin(*, source: KnowledgeSource, principal: Principal) -> None:
+    if source.agent_id is None:
+        require_role(principal, {"admin"})
+
+
+async def _parse_knowledge_multipart_upload(request: Request) -> dict[str, str | None]:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Expected multipart/form-data",
+        )
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Content-Length",
+            ) from exc
+        if declared_length > KNOWLEDGE_UPLOAD_MAX_MULTIPART_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Multipart upload too large",
+            )
+    body_parts: list[bytes] = []
+    body_size = 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > KNOWLEDGE_UPLOAD_MAX_MULTIPART_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail="Multipart upload too large",
+            )
+        body_parts.append(chunk)
+    body = b"".join(body_parts)
+    message = BytesParser(policy=email_default_policy).parsebytes(
+        b"Content-Type: "
+        + content_type.encode("utf-8")
+        + b"\r\nMIME-Version: 1.0\r\n\r\n"
+        + body
+    )
+    fields: dict[str, str] = {}
+    file_payload: bytes | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        part_filename = part.get_filename()
+        payload = part.get_payload(decode=True) or b""
+        if part_filename:
+            filename = part_filename
+            mime_type = part.get_content_type()
+            file_payload = payload
+        else:
+            fields[name] = payload.decode("utf-8", errors="replace")
+
+    if file_payload is None or filename is None or mime_type is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is required")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in KNOWLEDGE_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .txt/.md files are supported",
+        )
+    normalized_mime_type = "text/plain" if suffix == ".txt" else "text/markdown"
+    if len(file_payload) > KNOWLEDGE_UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="File too large",
+        )
+    try:
+        content = file_payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be valid UTF-8 text",
+        ) from exc
+    if not content.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty")
+    title = fields.get("title") or Path(filename).stem or filename
+    scope = fields.get("scope") or "agent"
+    if scope not in {"agent", "org"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid scope")
+    return {
+        "name": fields.get("name"),
+        "description": fields.get("description", ""),
+        "scope": scope,
+        "title": title,
+        "content": content,
+        "filename": filename,
+        "mime_type": normalized_mime_type,
+        "idempotency_key": fields.get("idempotency_key") or None,
+    }
+
+
+def _set_knowledge_source_scope_rows(
+    *,
+    session: Session,
+    source_id: str,
+    agent_id: str | None,
+) -> None:
+    session.execute(
+        update(KnowledgeDocument)
+        .where(KnowledgeDocument.source_id == source_id)
+        .values(agent_id=agent_id, updated_at=utc_now())
+    )
+    session.execute(
+        update(KnowledgeChunk)
+        .where(KnowledgeChunk.source_id == source_id)
+        .values(agent_id=agent_id)
+    )
+    session.execute(
+        update(KnowledgeEmbedding)
+        .where(
+            KnowledgeEmbedding.chunk_id.in_(
+                select(KnowledgeChunk.id).where(KnowledgeChunk.source_id == source_id)
+            )
+        )
+        .values(agent_id=agent_id, updated_at=utc_now())
+    )
+
+
+def _transition_knowledge_source(
+    *,
+    agent_id: str,
+    source_id: str,
+    request: KnowledgeSourceActionRequest,
+    session: Session,
+    principal: Principal,
+    action: str,
+    status_value: str,
+) -> KnowledgeSourceResponse:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _visible_knowledge_source_or_404(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    _require_org_source_admin(source=source, principal=principal)
+    if source.status == SOURCE_STATUS_ARCHIVED and status_value != SOURCE_STATUS_ARCHIVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archived knowledge source cannot be re-enabled in P2",
+        )
+    before = knowledge_source_lifecycle_snapshot(source)
+    now = utc_now()
+    source.status = status_value
+    source.updated_at = now
+    if status_value == SOURCE_STATUS_DISABLED:
+        source.disabled_at = now
+    elif status_value == SOURCE_STATUS_ACTIVE:
+        source.disabled_at = None
+        source.health_status = SOURCE_HEALTH_HEALTHY
+    elif status_value == SOURCE_STATUS_ARCHIVED:
+        source.archived_at = now
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action=action,
+        source=source,
+        before=before,
+        after={
+            **knowledge_source_lifecycle_snapshot(source),
+            "reason": request.reason,
+        },
+    )
+    session.commit()
+    session.refresh(source)
+    return _knowledge_source_response(session, source)
+
+
+def _commit_failed_knowledge_ingestion(
+    *,
+    session: Session,
+    principal: Principal,
+    action: str,
+    error: KnowledgeIngestionError,
+    before: dict | None,
+    idempotency_key: str | None,
+) -> None:
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action=action,
+        source=error.source,
+        before=before,
+        after={
+            **knowledge_source_lifecycle_snapshot(error.source),
+            "error": str(error),
+        },
+        document_id=error.document.id,
+        idempotency_key=idempotency_key,
+    )
+    session.commit()
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))
 
 
 def _record_knowledge_ingestion_events(
@@ -2265,30 +3009,7 @@ def _knowledge_source_response(
     session: Session,
     source: KnowledgeSource,
 ) -> KnowledgeSourceResponse:
-    documents = list(
-        session.execute(
-            select(KnowledgeDocument)
-            .where(KnowledgeDocument.source_id == source.id)
-            .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
-        ).scalars()
-    )
-    latest_document_ids = [document.id for document in documents[:5]]
-    chunk_counts = dict(
-        session.execute(
-            select(KnowledgeChunk.document_id, func.count(KnowledgeChunk.id))
-            .where(
-                KnowledgeChunk.document_id.in_(latest_document_ids),
-                KnowledgeChunk.status == "ACTIVE",
-            )
-            .group_by(KnowledgeChunk.document_id)
-        ).all()
-    ) if latest_document_ids else {}
-    latest_documents = [
-        KnowledgeDocumentResponse.model_validate(document).model_copy(
-            update={"chunk_count": int(chunk_counts.get(document.id, 0))}
-        )
-        for document in documents[:5]
-    ]
+    latest_documents = _knowledge_document_responses(session, source, limit=5)
     return KnowledgeSourceResponse(
         id=source.id,
         organization_id=source.organization_id,
@@ -2298,6 +3019,13 @@ def _knowledge_source_response(
         source_type=source.source_type,
         status=source.status,
         version=source.version,
+        scope="org" if source.agent_id is None else "agent",
+        expires_at=source.expires_at,
+        disabled_at=source.disabled_at,
+        archived_at=source.archived_at,
+        last_indexed_at=source.last_indexed_at,
+        last_ingestion_error=source.last_ingestion_error,
+        health_status=source.health_status,
         settings_json=source.settings_json if isinstance(source.settings_json, dict) else {},
         metadata_json=source.metadata_json if isinstance(source.metadata_json, dict) else {},
         idempotency_key=source.idempotency_key,
@@ -2306,6 +3034,41 @@ def _knowledge_source_response(
         updated_at=source.updated_at,
         latest_documents=latest_documents,
     )
+
+
+def _knowledge_document_responses(
+    session: Session,
+    source: KnowledgeSource,
+    *,
+    limit: int | None = None,
+) -> list[KnowledgeDocumentResponse]:
+    statement = (
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.source_id == source.id)
+        .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    documents = list(
+        session.execute(statement).scalars()
+    )
+    document_ids = [document.id for document in documents]
+    chunk_counts = dict(
+        session.execute(
+            select(KnowledgeChunk.document_id, func.count(KnowledgeChunk.id))
+            .where(
+                KnowledgeChunk.document_id.in_(document_ids),
+                KnowledgeChunk.status == "ACTIVE",
+            )
+            .group_by(KnowledgeChunk.document_id)
+        ).all()
+    ) if document_ids else {}
+    return [
+        KnowledgeDocumentResponse.model_validate(document).model_copy(
+            update={"chunk_count": int(chunk_counts.get(document.id, 0))}
+        )
+        for document in documents
+    ]
 
 
 def _knowledge_grounding_response(
