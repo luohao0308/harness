@@ -49,6 +49,16 @@ DEFAULT_POLICY_SETTINGS = PolicySettingsResponse(
         "network_allowlist": [],
     },
     audit={"model_calls": True, "tool_calls": True, "policy_actions": True},
+    web_research={
+        "enabled": False,
+        "require_allowlist": True,
+        "allow_domains": [],
+        "deny_domains": [],
+        "max_results": 2,
+        "timeout_seconds": 8,
+        "max_content_bytes": 1200,
+        "max_calls_per_run": 1,
+    },
 )
 
 

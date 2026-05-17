@@ -1684,3 +1684,4 @@ class PolicySettingsResponse(BaseModel):
     approvals: dict = Field(description="审批规则")
     sandbox: dict = Field(description="沙箱规则")
     audit: dict = Field(description="审计规则")
+    web_research: dict = Field(default_factory=dict, description="Web research 策略")
