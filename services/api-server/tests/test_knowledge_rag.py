@@ -1,11 +1,15 @@
 import hashlib
 import json
+import shutil
+from datetime import timedelta
 
 import pytest
+from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
+from alembic import command
 from app.agents.model_gateway import (
     AuditedModelGateway,
     ModelGatewayError,
@@ -13,14 +17,18 @@ from app.agents.model_gateway import (
     ModelRequest,
     ModelResponse,
 )
+from app.core.config import get_settings
 from app.db.models import (
+    AdminAuditEvent,
     Agent,
     AgentEvent,
+    Base,
     CitationRecord,
     KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeEmbedding,
     KnowledgePolicyAudit,
+    KnowledgeSource,
     ModelCall,
     PromptAssemblyManifest,
     RetrievalHit,
@@ -32,13 +40,31 @@ from app.events.event_types import EventType
 from app.knowledge import (
     VECTOR_CAPABILITY_AVAILABLE,
     _is_safe_research_url,
+    create_knowledge_lifecycle_audit,
     ground_query,
     ingest_knowledge_source,
+    knowledge_source_lifecycle_snapshot,
+    list_knowledge_sources,
     set_vector_capability,
     set_web_research_provider,
 )
 from app.main import app
 from tests.conftest import AUTH_HEADERS
+
+ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
+OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
+OTHER_ORG_HEADERS = {"Authorization": "Bearer dev-other-org-token"}
+
+
+def _run_alembic_upgrade(database_url: str, revision: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    get_settings.cache_clear()
+    try:
+        config = Config("alembic.ini")
+        config.set_main_option("script_location", "alembic")
+        command.upgrade(config, revision)
+    finally:
+        get_settings.cache_clear()
 
 
 def _ensure_agent(session: Session, agent_id: str = "default") -> Agent:
@@ -234,6 +260,317 @@ def test_knowledge_source_api_rejects_oversized_inline_content() -> None:
     assert response.status_code == 422
 
 
+def test_knowledge_source_api_rejects_unsupported_mime_type() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=AUTH_HEADERS,
+        json={
+            "name": "Unsupported Knowledge",
+            "description": "Only text and markdown are allowed",
+            "source_type": "document",
+            "title": "Unsupported",
+            "content": "%PDF-1.7",
+            "mime_type": "application/pdf",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_knowledge_lifecycle_migration_preserves_existing_p1_rows(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'p1-knowledge-baseline.db'}"
+    _run_alembic_upgrade(database_url, "20260517_0014", monkeypatch)
+    engine = create_engine(database_url)
+    now = "2026-05-16 22:30:00"
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO agents (
+                    id, organization_id, name, description, role, status,
+                    model_provider, model_name, system_prompt, tools_json,
+                    routing_tags, max_parallel_assignments, created_at, updated_at
+                )
+                VALUES (
+                    'default', 'dev-org', 'Default Agent', 'Test agent', 'planner',
+                    'ACTIVE', 'default', 'default', 'You are a test agent.',
+                    '[]', '[]', 1, :now, :now
+                )
+                """
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO tasks (
+                    id, organization_id, created_by, title, goal, status,
+                    model_provider, model_name, max_runtime_seconds, max_subagents,
+                    enable_sandbox, enable_network, created_at, updated_at
+                )
+                VALUES (
+                    'task-migration', 'dev-org', 'dev-engineer', 'Migration run',
+                    'Verify restored evidence', 'COMPLETED', 'default', 'default',
+                    60, 1, 0, 0, :now, :now
+                )
+                """
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO knowledge_sources (
+                    id, organization_id, agent_id, name, description, source_type,
+                    status, version, settings_json, metadata_json, idempotency_key,
+                    created_by, created_at, updated_at
+                )
+                VALUES (
+                    'source-migration', 'dev-org', 'default', 'Migration Source',
+                    'P1 source', 'text', 'ACTIVE', 1, '{}', '{}', 'source-key',
+                    'dev-engineer', :now, :now
+                )
+                """
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO knowledge_documents (
+                    id, source_id, organization_id, agent_id, title, uri,
+                    content_sha256, mime_type, status, version,
+                    supersedes_document_id, ingestion_error, metadata_json,
+                    idempotency_key, created_by, created_at, updated_at, indexed_at
+                )
+                VALUES (
+                    'document-migration', 'source-migration', 'dev-org', 'default',
+                    'Migration Doc', NULL, :content_hash, 'text/markdown',
+                    'INDEXED', 1, NULL, NULL, '{}', 'doc-key', 'dev-engineer',
+                    :now, :now, :now
+                )
+                """
+            ),
+            {
+                "content_hash": hashlib.sha256(b"migration anchor").hexdigest(),
+                "now": now,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO knowledge_chunks (
+                    id, document_id, source_id, organization_id, agent_id,
+                    source_version, document_version, chunk_version, chunk_index,
+                    text, text_sha256, start_offset, end_offset, status,
+                    metadata_json, created_at
+                )
+                VALUES (
+                    'chunk-migration', 'document-migration', 'source-migration',
+                    'dev-org', 'default', 1, 1, 1, 1, 'migration anchor text',
+                    :chunk_hash, 0, 21, 'ACTIVE', '{}', :now
+                )
+                """
+            ),
+            {
+                "chunk_hash": hashlib.sha256(b"migration anchor text").hexdigest(),
+                "now": now,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO retrieval_sessions (
+                    id, organization_id, agent_id, run_id, query, mode,
+                    local_status, vector_capability, strategy, min_hits, min_score,
+                    max_local_chunks, max_web_results, metadata_json, created_at
+                )
+                VALUES (
+                    'retrieval-migration', 'dev-org', 'default', 'task-migration',
+                    'migration anchor', 'local', 'sufficient', 'unavailable',
+                    'lexical', 1, 0.62, 6, 0, '{}', :now
+                )
+                """
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO retrieval_hits (
+                    id, retrieval_session_id, chunk_id, web_source_id, rank,
+                    score, source_kind, document_id, document_version, snippet,
+                    metadata_json, created_at
+                )
+                VALUES (
+                    'hit-migration', 'retrieval-migration', 'chunk-migration',
+                    NULL, 1, 0.99, 'knowledge_chunk', 'document-migration', 1,
+                    'migration anchor text', :metadata, :now
+                )
+                """
+            ),
+            {
+                "metadata": json.dumps(
+                    {
+                        "source_snapshot": {
+                            "source_id": "source-migration",
+                            "document_id": "document-migration",
+                            "chunk_id": "chunk-migration",
+                            "text": "migration anchor text",
+                        }
+                    }
+                ),
+                "now": now,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO citation_records (
+                    id, retrieval_session_id, retrieval_hit_id, run_id, message_id,
+                    citation_key, source_kind, chunk_id, web_source_id, claim_text,
+                    quoted_text, confidence, metadata_json, created_at
+                )
+                VALUES (
+                    'citation-migration', 'retrieval-migration', 'hit-migration',
+                    'task-migration', NULL, '1', 'knowledge_chunk',
+                    'chunk-migration', NULL, NULL, 'migration anchor text',
+                    0.99, :metadata, :now
+                )
+                """
+            ),
+            {"metadata": json.dumps({"source_id": "source-migration"}), "now": now},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO prompt_assembly_manifests (
+                    id, retrieval_session_id, run_id, organization_id, agent_id,
+                    grounding_correlation_id, query, included_retrieval_hit_ids_json,
+                    omitted_candidates_json, source_snapshots_json, token_budget_json,
+                    prompt_sections_json, evidence_text_sha256, metadata_json, created_at
+                )
+                VALUES (
+                    'manifest-migration', 'retrieval-migration', 'task-migration',
+                    'dev-org', 'default', 'correlation-migration',
+                    'migration anchor', '["hit-migration"]', '[]', :snapshots,
+                    '{}', '[]', :evidence_hash, '{}', :now
+                )
+                """
+            ),
+            {
+                "snapshots": json.dumps(
+                    [
+                        {
+                            "source_id": "source-migration",
+                            "document_id": "document-migration",
+                            "chunk_id": "chunk-migration",
+                            "text": "migration anchor text",
+                        }
+                    ]
+                ),
+                "evidence_hash": hashlib.sha256(b"migration anchor text").hexdigest(),
+                "now": now,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO admin_audit_events (
+                    id, organization_id, actor_id, event_type, resource_type,
+                    resource_id, action, payload_json, created_at
+                )
+                VALUES (
+                    'audit-migration', 'dev-org', 'dev-engineer',
+                    'knowledge_source.created', 'knowledge_source',
+                    'source-migration', 'created', '{}', :now
+                )
+                """
+            ),
+            {"now": now},
+        )
+
+    engine.dispose()
+    _run_alembic_upgrade(database_url, "head", monkeypatch)
+    upgraded_engine = create_engine(database_url)
+    with upgraded_engine.connect() as connection:
+        source_row = connection.execute(
+            text(
+                """
+                SELECT status, health_status, expires_at, disabled_at, archived_at
+                FROM knowledge_sources
+                WHERE id = 'source-migration'
+                """
+            )
+        ).one()
+        document_row = connection.execute(
+            text(
+                """
+                SELECT status, version, logical_document_id, superseded_at
+                FROM knowledge_documents
+                WHERE id = 'document-migration'
+                """
+            )
+        ).one()
+        chunk_row = connection.execute(
+            text(
+                """
+                SELECT status, document_version
+                FROM knowledge_chunks
+                WHERE id = 'chunk-migration'
+                """
+            )
+        ).one()
+        evidence_counts = connection.execute(
+            text(
+                """
+                SELECT
+                    (
+                        SELECT COUNT(*)
+                        FROM retrieval_hits
+                        WHERE id = 'hit-migration'
+                    ) AS hits,
+                    (
+                        SELECT COUNT(*)
+                        FROM citation_records
+                        WHERE id = 'citation-migration'
+                    ) AS citations,
+                    (
+                        SELECT COUNT(*)
+                        FROM prompt_assembly_manifests
+                        WHERE id = 'manifest-migration'
+                    ) AS manifests,
+                    (
+                        SELECT COUNT(*)
+                        FROM admin_audit_events
+                        WHERE id = 'audit-migration'
+                    ) AS audits
+                """
+            )
+        ).one()
+        manifest_snapshot = connection.execute(
+            text(
+                """
+                SELECT source_snapshots_json
+                FROM prompt_assembly_manifests
+                WHERE id = 'manifest-migration'
+                """
+            )
+        ).scalar_one()
+
+    upgraded_engine.dispose()
+    assert source_row == ("ACTIVE", "HEALTHY", None, None, None)
+    assert document_row == ("INDEXED", 1, "document-migration", None)
+    assert chunk_row == ("ACTIVE", 1)
+    assert evidence_counts == (1, 1, 1, 1)
+    assert "migration anchor text" in manifest_snapshot
+
+
 def test_reingest_changed_content_versions_document_and_marks_old_chunks_stale(
     db_session: Session,
 ) -> None:
@@ -271,7 +608,10 @@ def test_reingest_changed_content_versions_document_and_marks_old_chunks_stale(
 
     assert second_document.source_id == source.id
     assert second_document.version == first_document.version + 1
+    assert second_document.logical_document_id == first_document.logical_document_id
     assert second_document.supersedes_document_id == first_document.id
+    assert first_document.status == "SUPERSEDED"
+    assert first_document.superseded_at is not None
     assert {chunk.status for chunk in first_chunks} == {"STALE"}
     assert {chunk.status for chunk in second_chunks} == {"ACTIVE"}
 
@@ -284,6 +624,778 @@ def test_reingest_changed_content_versions_document_and_marks_old_chunks_stale(
     )
     stale_hit_ids = {chunk.id for chunk in first_chunks}
     assert all(hit.chunk_id not in stale_hit_ids for hit in result.retrieval_hits)
+
+
+def test_document_level_versioning_does_not_supersede_sibling_documents(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+
+    source, first_document, first_chunks, _embeddings = ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Multi Doc Source",
+        description="Multiple documents",
+        source_type="text",
+        title="Alpha v1",
+        content="alpha beacon first fact",
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="multi-doc-alpha",
+    )
+    _source, sibling_document, sibling_chunks, _sibling_embeddings = ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        source_id=source.id,
+        name=source.name,
+        description=source.description,
+        source_type=source.source_type,
+        title="Beta v1",
+        content="beta beacon sibling fact",
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="multi-doc-beta",
+        create_new_logical_document=True,
+    )
+    _source, first_v2, first_v2_chunks, _first_v2_embeddings = ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        source_id=source.id,
+        name=source.name,
+        description=source.description,
+        source_type=source.source_type,
+        title="Alpha v2",
+        content="alpha beacon changed fact",
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="multi-doc-alpha-v2",
+        reingest_document_id=first_document.id,
+    )
+    db_session.flush()
+
+    assert first_document.status == "SUPERSEDED"
+    assert {chunk.status for chunk in first_chunks} == {"STALE"}
+    assert first_v2.version == 2
+    assert first_v2.logical_document_id == first_document.logical_document_id
+    assert {chunk.status for chunk in first_v2_chunks} == {"ACTIVE"}
+    assert sibling_document.status == "INDEXED"
+    assert sibling_document.logical_document_id != first_document.logical_document_id
+    assert {chunk.status for chunk in sibling_chunks} == {"ACTIVE"}
+
+
+def test_source_lifecycle_status_and_expiry_exclude_retrieval(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=AUTH_HEADERS,
+        json={
+            "name": "Lifecycle Runbook",
+            "description": "Lifecycle source",
+            "source_type": "text",
+            "title": "Runbook",
+            "content": _two_chunk_content("lifecycle beacon"),
+            "mime_type": "text/markdown",
+            "idempotency_key": "lifecycle-runbook",
+        },
+    )
+    assert response.status_code == 201
+    source_id = response.json()["id"]
+
+    grounded = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=None,
+        query="lifecycle beacon",
+    )
+    assert grounded.local_status == "sufficient"
+
+    disabled = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/disable",
+        headers=AUTH_HEADERS,
+        json={"reason": "maintenance"},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["status"] == "DISABLED"
+    assert disabled.json()["disabled_at"] is not None
+    blocked = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=None,
+        query="lifecycle beacon",
+    )
+    assert blocked.local_status == "insufficient"
+    assert blocked.retrieval_hits == []
+
+    enabled = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/enable",
+        headers=AUTH_HEADERS,
+        json={"reason": "ready"},
+    )
+    assert enabled.status_code == 200
+    expired_at = utc_now() - timedelta(minutes=1)
+    source = db_session.get(KnowledgeSource, source_id)
+    assert source is not None
+    source.expires_at = expired_at
+    db_session.flush()
+
+    expired = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=None,
+        query="lifecycle beacon",
+    )
+    assert expired.local_status == "insufficient"
+    assert expired.retrieval_hits == []
+
+    source.expires_at = None
+    db_session.flush()
+    archived = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/archive",
+        headers=AUTH_HEADERS,
+        json={"reason": "retired"},
+    )
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "ARCHIVED"
+    assert archived.json()["archived_at"] is not None
+    archived_blocked = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=None,
+        query="lifecycle beacon",
+    )
+    assert archived_blocked.local_status == "insufficient"
+    assert archived_blocked.retrieval_hits == []
+
+    audit_actions = [
+        event.action
+        for event in db_session.execute(select(AdminAuditEvent)).scalars()
+        if event.resource_id == source_id
+    ]
+    assert {"created", "disabled", "enabled", "archived"}.issubset(set(audit_actions))
+
+
+def test_org_scoped_sources_require_admin_and_stay_tenant_isolated(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    _ensure_agent(db_session, "researcher")
+    client = TestClient(app)
+
+    forbidden = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=AUTH_HEADERS,
+        json={
+            "name": "Org Handbook",
+            "scope": "org",
+            "description": "Shared source",
+            "source_type": "markdown",
+            "title": "Org Handbook",
+            "content": "shared beacon fact",
+            "mime_type": "text/markdown",
+        },
+    )
+    assert forbidden.status_code == 403
+
+    created = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "Org Handbook",
+            "scope": "org",
+            "description": "Shared source",
+            "source_type": "markdown",
+            "title": "Org Handbook",
+            "content": _two_chunk_content("shared beacon"),
+            "mime_type": "text/markdown",
+            "idempotency_key": "org-handbook",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["scope"] == "org"
+    assert created.json()["agent_id"] is None
+    source_id = created.json()["id"]
+
+    default_list = client.get(
+        "/api/agents/default/knowledge/sources",
+        headers=ADMIN_HEADERS,
+    )
+    researcher_list = client.get(
+        "/api/agents/researcher/knowledge/sources",
+        headers=ADMIN_HEADERS,
+    )
+    foreign_list = client.get(
+        "/api/agents/default/knowledge/sources",
+        headers=OTHER_ORG_HEADERS,
+    )
+    assert source_id in {item["id"] for item in default_list.json()["items"]}
+    assert source_id in {item["id"] for item in researcher_list.json()["items"]}
+    assert source_id not in {item["id"] for item in foreign_list.json()["items"]}
+
+    engineer_update = client.patch(
+        f"/api/agents/default/knowledge/sources/{source_id}",
+        headers=AUTH_HEADERS,
+        json={"name": "Engineer rename should fail"},
+    )
+    engineer_disable = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/disable",
+        headers=AUTH_HEADERS,
+        json={"reason": "engineer should not affect org source"},
+    )
+    engineer_document = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/documents",
+        headers=AUTH_HEADERS,
+        json={
+            "title": "Engineer doc should fail",
+            "content": "unauthorized shared mutation",
+        },
+    )
+    assert engineer_update.status_code == 403
+    assert engineer_disable.status_code == 403
+    assert engineer_document.status_code == 403
+
+    default_grounded = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=None,
+        query="shared beacon",
+    )
+    researcher_grounded = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="researcher",
+        run_id=None,
+        query="shared beacon",
+    )
+    foreign_grounded = ground_query(
+        db_session,
+        organization_id="other-org",
+        agent_id="default",
+        run_id=None,
+        query="shared beacon",
+    )
+    assert default_grounded.local_status == "sufficient"
+    assert researcher_grounded.local_status == "sufficient"
+    assert foreign_grounded.retrieval_hits == []
+
+
+def test_scope_change_updates_source_document_chunk_and_embedding_scope(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    _ensure_agent(db_session, "researcher")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "Scoped Handbook",
+            "description": "Scope consistency",
+            "source_type": "markdown",
+            "title": "Scoped Handbook",
+            "content": _two_chunk_content("scope consistency beacon"),
+            "mime_type": "text/markdown",
+            "idempotency_key": "scope-consistency",
+        },
+    )
+    assert created.status_code == 201
+    source_id = created.json()["id"]
+
+    changed = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/scope",
+        headers=ADMIN_HEADERS,
+        json={"scope": "org", "reason": "share"},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["scope"] == "org"
+
+    source = db_session.get(KnowledgeSource, source_id)
+    documents = list(
+        db_session.execute(
+            select(KnowledgeDocument).where(KnowledgeDocument.source_id == source_id)
+        ).scalars()
+    )
+    chunks = list(
+        db_session.execute(
+            select(KnowledgeChunk).where(KnowledgeChunk.source_id == source_id)
+        ).scalars()
+    )
+    embeddings = list(
+        db_session.execute(
+            select(KnowledgeEmbedding)
+            .join(KnowledgeChunk, KnowledgeEmbedding.chunk_id == KnowledgeChunk.id)
+            .where(KnowledgeChunk.source_id == source_id)
+        ).scalars()
+    )
+    assert source is not None
+    assert source.agent_id is None
+    assert {document.agent_id for document in documents} == {None}
+    assert {chunk.agent_id for chunk in chunks} == {None}
+    assert {embedding.agent_id for embedding in embeddings} == {None}
+    researcher_sources = client.get(
+        "/api/agents/researcher/knowledge/sources",
+        headers=ADMIN_HEADERS,
+    )
+    assert source_id in {item["id"] for item in researcher_sources.json()["items"]}
+
+
+def test_multipart_text_file_import_creates_source_and_document(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents/default/knowledge/sources/import",
+        headers=ADMIN_HEADERS,
+        data={"name": "Uploaded Runbook", "title": "Uploaded Runbook", "scope": "agent"},
+        files={"file": ("uploaded-runbook.md", b"uploaded markdown beacon", "text/markdown")},
+    )
+
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["name"] == "Uploaded Runbook"
+    assert payload["latest_documents"][0]["title"] == "Uploaded Runbook"
+    assert payload["latest_documents"][0]["mime_type"] == "text/markdown"
+    assert payload["latest_documents"][0]["uri"] == "uploaded-runbook.md"
+
+
+def test_multipart_import_rejects_unauthorized_actor_before_parsing(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/agents/default/knowledge/sources/import",
+        headers={
+            **OPERATOR_HEADERS,
+            "Content-Type": "application/octet-stream",
+        },
+        content=b"not multipart",
+    )
+
+    assert response.status_code == 403
+
+
+def test_multipart_import_rejects_oversized_body_before_buffering(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+    boundary = "knowledge-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="too-large.md"\r\n'
+        "Content-Type: text/markdown\r\n\r\n"
+    ).encode() + (b"x" * 140_001) + f"\r\n--{boundary}--\r\n".encode()
+
+    response = client.post(
+        "/api/agents/default/knowledge/sources/import",
+        headers={
+            **ADMIN_HEADERS,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        content=body,
+    )
+
+    assert response.status_code == 413
+
+
+def test_multipart_markdown_import_accepts_unstable_browser_mime(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents/default/knowledge/sources/import",
+        headers=ADMIN_HEADERS,
+        data={"name": "Browser Markdown", "title": "Browser Markdown", "scope": "agent"},
+        files={
+            "file": (
+                "browser-runbook.md",
+                b"browser markdown mime fallback beacon",
+                "application/octet-stream",
+            )
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["latest_documents"][0]["mime_type"] == "text/markdown"
+
+
+def test_failed_reingest_records_failed_document_and_lifecycle_event(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "Failure Contract",
+            "description": "Failure visibility",
+            "source_type": "markdown",
+            "title": "Failure v1",
+            "content": "stable failure contract beacon",
+            "mime_type": "text/markdown",
+        },
+    )
+    assert created.status_code == 201
+    source_id = created.json()["id"]
+    document_id = created.json()["latest_documents"][0]["id"]
+    monkeypatch.setattr("app.knowledge.MAX_INGESTION_CHUNKS", 1)
+
+    failed = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/documents/{document_id}/versions",
+        headers=ADMIN_HEADERS,
+        json={
+            "title": "Failure v2",
+            "content": "first chunk marker\n" + ("x" * 1200) + "\nsecond chunk marker",
+            "mime_type": "text/markdown",
+        },
+    )
+
+    assert failed.status_code == 400
+    source = db_session.get(KnowledgeSource, source_id)
+    documents = list(
+        db_session.execute(
+            select(KnowledgeDocument)
+            .where(KnowledgeDocument.source_id == source_id)
+            .order_by(KnowledgeDocument.version.asc())
+        ).scalars()
+    )
+    assert source is not None
+    assert source.health_status == "ERROR"
+    assert source.last_ingestion_error is not None
+    assert [document.status for document in documents] == ["INDEXED", "FAILED"]
+    assert documents[1].ingestion_error == source.last_ingestion_error
+    assert documents[0].superseded_at is None
+    audit = db_session.execute(
+        select(AdminAuditEvent).where(
+            AdminAuditEvent.resource_id == source_id,
+            AdminAuditEvent.action == "document_reingest_failed",
+        )
+    ).scalar_one()
+    assert audit.payload_json["after"]["error"] == source.last_ingestion_error
+    assert audit.payload_json["document_id"] == documents[1].id
+
+
+def test_failed_reingest_idempotency_retry_remains_failed(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "Failure Retry Contract",
+            "description": "Failure retry visibility",
+            "source_type": "markdown",
+            "title": "Failure retry v1",
+            "content": "stable failure retry contract beacon",
+            "mime_type": "text/markdown",
+        },
+    )
+    assert created.status_code == 201
+    source_id = created.json()["id"]
+    document_id = created.json()["latest_documents"][0]["id"]
+    oversized_payload = {
+        "title": "Failure retry v2",
+        "content": "first chunk marker\n" + ("x" * 1200) + "\nsecond chunk marker",
+        "mime_type": "text/markdown",
+        "idempotency_key": "failed-retry-key",
+    }
+    monkeypatch.setattr("app.knowledge.MAX_INGESTION_CHUNKS", 1)
+
+    first = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/documents/{document_id}/versions",
+        headers=ADMIN_HEADERS,
+        json=oversized_payload,
+    )
+    second = client.post(
+        f"/api/agents/default/knowledge/sources/{source_id}/documents/{document_id}/versions",
+        headers=ADMIN_HEADERS,
+        json=oversized_payload,
+    )
+
+    assert first.status_code == 400
+    assert second.status_code == 400
+    documents = list(
+        db_session.execute(
+            select(KnowledgeDocument)
+            .where(KnowledgeDocument.source_id == source_id)
+            .order_by(KnowledgeDocument.version.asc())
+        ).scalars()
+    )
+    assert [document.status for document in documents] == ["INDEXED", "FAILED", "FAILED"]
+    assert all(document.indexed_at is None for document in documents[1:])
+    versioned_audits = list(
+        db_session.execute(
+            select(AdminAuditEvent).where(
+                AdminAuditEvent.resource_id == source_id,
+                AdminAuditEvent.action == "document_versioned",
+            )
+        ).scalars()
+    )
+    assert versioned_audits == []
+
+
+def test_knowledge_restore_smoke_preserves_current_and_historical_contracts(
+    tmp_path,
+) -> None:
+    source_db = tmp_path / "knowledge-source.db"
+    restored_db = tmp_path / "knowledge-restored.db"
+    source_engine = create_engine(f"sqlite+pysqlite:///{source_db}")
+    Base.metadata.create_all(bind=source_engine)
+    FileSession = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=source_engine,
+        expire_on_commit=False,
+    )
+
+    seed_session = FileSession()
+    try:
+        _ensure_agent(seed_session, "default")
+        _ensure_agent(seed_session, "researcher")
+        task = _task(seed_session)
+
+        source, first_document, first_chunks, _embeddings = ingest_knowledge_source(
+            seed_session,
+            organization_id="dev-org",
+            agent_id="default",
+            name="Restore Historical",
+            description="Historical restore source",
+            source_type="text",
+            title="Facts v1",
+            content=_two_chunk_content("amber restoration point"),
+            uri=None,
+            mime_type="text/markdown",
+            created_by="dev-engineer",
+            idempotency_key="restore-historical-v1",
+        )
+        historical = ground_query(
+            seed_session,
+            organization_id="dev-org",
+            agent_id="default",
+            run_id=task.id,
+            query="amber restoration point",
+        )
+        assert historical.retrieval_session is not None
+        assert historical.prompt_manifest is not None
+        manifest_id = historical.prompt_manifest.id
+        retrieval_session_id = historical.retrieval_session.id
+        historical_hit_ids = {hit.id for hit in historical.retrieval_hits}
+        historical_citation_ids = {citation.id for citation in historical.citations}
+
+        ingest_knowledge_source(
+            seed_session,
+            organization_id="dev-org",
+            agent_id="default",
+            source_id=source.id,
+            name="Restore Historical",
+            description="Historical restore source changed",
+            source_type="text",
+            title="Facts v2",
+            content=_two_chunk_content("cobalt restoration point"),
+            uri=None,
+            mime_type="text/markdown",
+            created_by="dev-engineer",
+            idempotency_key="restore-historical-v2",
+        )
+
+        disabled_source, _document, _chunks, _disabled_embeddings = ingest_knowledge_source(
+            seed_session,
+            organization_id="dev-org",
+            agent_id="default",
+            name="Restore Disabled",
+            description="Disabled restore source",
+            source_type="text",
+            title="Disabled Facts",
+            content=_two_chunk_content("quartz disabled phrase"),
+            uri=None,
+            mime_type="text/markdown",
+            created_by="dev-engineer",
+            idempotency_key="restore-disabled",
+        )
+        before = knowledge_source_lifecycle_snapshot(disabled_source)
+        disabled_source.status = "DISABLED"
+        disabled_source.disabled_at = utc_now()
+        disabled_source.updated_at = utc_now()
+        after = knowledge_source_lifecycle_snapshot(disabled_source)
+        lifecycle_event = create_knowledge_lifecycle_audit(
+            seed_session,
+            organization_id="dev-org",
+            actor_id="dev-engineer",
+            action="disabled",
+            source=disabled_source,
+            before=before,
+            after=after,
+            request_id="restore-smoke",
+        )
+
+        org_source, _org_doc, _org_chunks, _org_embeddings = ingest_knowledge_source(
+            seed_session,
+            organization_id="dev-org",
+            agent_id=None,
+            name="Restore Org Shared",
+            description="Org-scoped restore source",
+            source_type="text",
+            title="Org Shared Facts",
+            content=_two_chunk_content("shared org phrase"),
+            uri=None,
+            mime_type="text/markdown",
+            created_by="dev-admin",
+            idempotency_key="restore-org-shared",
+        )
+        foreign_source, _foreign_doc, _foreign_chunks, _foreign_embeddings = (
+            ingest_knowledge_source(
+                seed_session,
+                organization_id="other-org",
+                agent_id="default",
+                name="Restore Foreign",
+                description="Foreign restore source",
+                source_type="text",
+                title="Foreign Facts",
+                content=_two_chunk_content("foreign tenant phrase"),
+                uri=None,
+                mime_type="text/markdown",
+                created_by="dev-other-engineer",
+                idempotency_key="restore-foreign",
+            )
+        )
+
+        source_id = source.id
+        first_document_id = first_document.id
+        first_chunk_ids = {chunk.id for chunk in first_chunks}
+        disabled_source_id = disabled_source.id
+        lifecycle_event_id = lifecycle_event.id
+        org_source_id = org_source.id
+        foreign_source_id = foreign_source.id
+        seed_session.commit()
+    finally:
+        seed_session.close()
+        source_engine.dispose()
+
+    shutil.copyfile(source_db, restored_db)
+    restored_engine = create_engine(f"sqlite+pysqlite:///{restored_db}")
+    RestoredSession = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=restored_engine,
+    )
+    restored_session = RestoredSession()
+    try:
+        current = ground_query(
+            restored_session,
+            organization_id="dev-org",
+            agent_id="default",
+            run_id=None,
+            query="cobalt restoration point",
+        )
+        disabled = ground_query(
+            restored_session,
+            organization_id="dev-org",
+            agent_id="default",
+            run_id=None,
+            query="quartz disabled phrase",
+        )
+        foreign = ground_query(
+            restored_session,
+            organization_id="dev-org",
+            agent_id="default",
+            run_id=None,
+            query="foreign tenant phrase",
+        )
+        researcher_sources = list_knowledge_sources(
+            restored_session,
+            organization_id="dev-org",
+            agent_id="researcher",
+        )
+        other_org_sources = list_knowledge_sources(
+            restored_session,
+            organization_id="other-org",
+            agent_id="default",
+        )
+        manifest = restored_session.get(PromptAssemblyManifest, manifest_id)
+        restored_hits = list(
+            restored_session.execute(
+                select(RetrievalHit).where(
+                    RetrievalHit.retrieval_session_id == retrieval_session_id
+                )
+            ).scalars()
+        )
+        restored_citations = list(
+            restored_session.execute(
+                select(CitationRecord).where(
+                    CitationRecord.retrieval_session_id == retrieval_session_id
+                )
+            ).scalars()
+        )
+        event = restored_session.get(AdminAuditEvent, lifecycle_event_id)
+
+        assert current.local_status == "sufficient"
+        assert {hit.document_id for hit in current.retrieval_hits} != {first_document_id}
+        assert current.prompt_manifest is not None
+        assert "cobalt restoration point" in str(current.prompt_manifest.source_snapshots_json)
+        assert disabled.local_status == "insufficient"
+        assert all(
+            hit.metadata_json.get("source_snapshot", {}).get("source_id") != disabled_source_id
+            for hit in disabled.retrieval_hits
+        )
+        assert foreign.local_status == "insufficient"
+        assert foreign_source_id not in str(
+            [hit.metadata_json for hit in foreign.retrieval_hits]
+        )
+        assert org_source_id in {item.id for item in researcher_sources}
+        assert org_source_id not in {item.id for item in other_org_sources}
+
+        assert manifest is not None
+        assert manifest.retrieval_session_id == retrieval_session_id
+        assert set(manifest.included_retrieval_hit_ids_json) == historical_hit_ids
+        assert "amber restoration point" in str(manifest.source_snapshots_json)
+        assert "cobalt restoration point" not in str(manifest.source_snapshots_json)
+        assert {hit.id for hit in restored_hits} == historical_hit_ids
+        assert {hit.chunk_id for hit in restored_hits}.issubset(first_chunk_ids)
+        assert {citation.id for citation in restored_citations} == historical_citation_ids
+        assert all(
+            "amber restoration point" in (citation.quoted_text or "")
+            for citation in restored_citations
+        )
+        assert event is not None
+        assert event.action == "disabled"
+        assert event.resource_id == disabled_source_id
+        assert event.payload_json["schema_version"] == "knowledge-lifecycle-v1"
+        assert event.payload_json["before"]["status"] == "ACTIVE"
+        assert event.payload_json["after"]["status"] == "DISABLED"
+        assert source_id in {item.id for item in list_knowledge_sources(
+            restored_session,
+            organization_id="dev-org",
+            agent_id="default",
+        )}
+    finally:
+        restored_session.close()
+        restored_engine.dispose()
 
 
 def test_lexical_fallback_creates_retrieval_hits_and_bound_citations(
