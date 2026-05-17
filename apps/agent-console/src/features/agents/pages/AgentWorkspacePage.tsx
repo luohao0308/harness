@@ -22,6 +22,7 @@ import { useI18n } from "../../../lib/i18n";
 import {
   useWorkspaceStore,
   type ConversationArtifact,
+  type ConversationNode,
 } from "../../../stores/workspaceStore";
 import {
   getAgent,
@@ -29,6 +30,7 @@ import {
   getModelSettings,
   getToolRegistry,
   type ModelSettings,
+  type ToolCall,
 } from "../../tasks/api";
 import { ChatSurface } from "../components/ChatSurface";
 import { ConversationHistoryPanel } from "../components/ConversationHistoryPanel";
@@ -69,6 +71,7 @@ export function AgentWorkspacePage() {
   const [inspectorSection, setInspectorSection] = useState<InspectorSection | null>(null);
   const activeRunId = useWorkspaceStore((s) => s.activeRunId);
   const setActiveRunId = useWorkspaceStore((s) => s.setActiveRunId);
+  const updateNode = useWorkspaceStore((s) => s.updateNode);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
@@ -85,7 +88,8 @@ export function AgentWorkspacePage() {
   const workspace = useQuery({
     queryKey: ["agent-run-workspace", activeRunId],
     queryFn: () => getAgentRunWorkspace(activeRunId as string),
-    enabled: Boolean(activeRunId) && inspectorSection !== null,
+    enabled: Boolean(activeRunId),
+    refetchInterval: activeRunId ? 3000 : false,
   });
 
   const defaultModelLabel = useMemo(
@@ -150,6 +154,17 @@ export function AgentWorkspacePage() {
   );
   const pendingApprovalCount =
     workspace.data?.approvals.filter((approval) => approval.status === "PENDING").length ?? 0;
+
+  useEffect(() => {
+    if (!workspace.data?.tool_calls.length) return;
+    const callsById = new Map(workspace.data.tool_calls.map((call) => [call.id, call]));
+    for (const node of Object.values(nodesById)) {
+      const nextToolCalls = syncNodeToolCallsFromWorkspace(node, callsById);
+      if (nextToolCalls !== node.tool_calls) {
+        updateNode(node.id, { tool_calls: nextToolCalls });
+      }
+    }
+  }, [nodesById, updateNode, workspace.data?.tool_calls]);
 
   // ─── Agent scope + rehydration (v3 Req 4.10, Legacy migration) ─────────
   useEffect(() => {
@@ -476,4 +491,41 @@ function deriveModelOptions(settings: ModelSettings | undefined): ModelOption[] 
     });
   }
   return out;
+}
+
+function syncNodeToolCallsFromWorkspace(
+  node: ConversationNode,
+  callsById: Map<string, ToolCall>,
+): ConversationNode["tool_calls"] {
+  let changed = false;
+  const next = node.tool_calls.map((raw) => {
+    const toolCallId = typeof raw.tool_call_id === "string"
+      ? raw.tool_call_id
+      : typeof raw.id === "string"
+        ? raw.id
+        : null;
+    if (toolCallId === null) return raw;
+    const latest = callsById.get(toolCallId);
+    if (!latest) return raw;
+    const patch: Record<string, unknown> = {
+      status: latest.status,
+      output_json: latest.output_json ?? {},
+      output_summary: latest.output_summary,
+      duration_ms: latest.duration_ms,
+      trace_id: latest.trace_id ?? null,
+      error_message: latest.error_message ?? null,
+    };
+    const nextCall = { ...raw, ...patch };
+    if (
+      raw.status !== nextCall.status ||
+      raw.output_summary !== nextCall.output_summary ||
+      raw.duration_ms !== nextCall.duration_ms ||
+      raw.trace_id !== nextCall.trace_id ||
+      raw.error_message !== nextCall.error_message
+    ) {
+      changed = true;
+    }
+    return nextCall;
+  });
+  return changed ? next : node.tool_calls;
 }
