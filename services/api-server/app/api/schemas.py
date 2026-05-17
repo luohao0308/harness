@@ -1234,6 +1234,35 @@ class ObservabilitySummaryResponse(BaseModel):
     sandbox_total: int = Field(description="沙箱总数")
 
 
+class ObservabilityGroundingQualityItem(BaseModel):
+    eval_run_id: str = Field(description="Eval Run ID")
+    eval_result_id: str = Field(description="Eval Result ID")
+    eval_case_id: str = Field(description="Eval Case ID")
+    task_id: str | None = Field(default=None, description="关联 Run ID")
+    dataset_id: str = Field(description="Dataset ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    status: str = Field(description="Eval Result 状态")
+    created_at: datetime = Field(description="Result 创建时间")
+    grounding_passed: bool = Field(description="Eval 计算的 grounding pass/fail")
+    grounding_failures: list[str] = Field(description="Eval 计算的 grounding failure reason")
+    forbidden_evidence_leaked: bool = Field(description="Eval 计算的 forbidden evidence 泄漏状态")
+    forbidden_leak_sources: list[str] = Field(description="Eval 计算的泄漏来源类型")
+    fallback_expected: bool = Field(description="Eval contract fallback expectation")
+    fallback_observed: bool = Field(description="Eval 计算的 fallback observed 状态")
+    unsupported_marker_present: bool = Field(description="Eval 计算的 unsupported marker 状态")
+    citation_keys: list[str] = Field(description="Eval trace citation keys")
+    citation_hit_ids: list[str] = Field(description="Eval trace citation hit IDs")
+    retrieval_session_id: str | None = Field(default=None, description="Retrieval Session ID")
+    prompt_manifest_id: str | None = Field(default=None, description="Prompt Manifest ID")
+
+
+class ObservabilityGroundingQualityResponse(BaseModel):
+    items: list[ObservabilityGroundingQualityItem] = Field(description="Grounding quality 投影")
+    metrics: dict[str, float | int] = Field(description="Eval-owned aggregate metrics projection")
+    failure_facets: list[CountItem] = Field(description="Failure reason counts")
+    total: int = Field(description="返回结果数")
+
+
 class PlannerExecutorArchitectureResponse(BaseModel):
     enabled: bool = Field(description="Planner/Executor 架构是否启用")
     planner: str = Field(description="Planner 实现")
@@ -1772,12 +1801,25 @@ class RegressionDelta(BaseModel):
     task_success_rate_delta: float = Field(description="任务成功率变化（绝对百分点）")
     tool_selection_accuracy_delta: float = Field(description="工具选择准确率变化")
     avg_latency_ms_delta: int = Field(description="平均延迟变化（毫秒）")
+    grounding_pass_rate_delta: float = Field(description="Grounding pass rate 变化")
+    citation_coverage_rate_delta: float = Field(description="Citation coverage rate 变化")
+    unsupported_marker_rate_delta: float = Field(description="Unsupported marker rate 变化")
+    fallback_mismatch_rate_delta: float = Field(description="Fallback mismatch rate 变化")
+    forbidden_evidence_leak_rate_delta: float = Field(
+        description="Forbidden evidence leak rate 变化"
+    )
+    required_evidence_miss_rate_delta: float = Field(description="Required evidence miss rate 变化")
     newly_failing_case_ids: list[str] = Field(description="新增失败 Case ID")
     newly_passing_case_ids: list[str] = Field(description="新增通过 Case ID")
-    is_regression: bool = Field(description="是否回归（task_success_rate 下降 > 10pp）")
+    newly_grounding_failing_case_ids: list[str] = Field(description="新增 grounding 失败 Case ID")
+    newly_forbidden_leak_case_ids: list[str] = Field(description="新增 forbidden leak Case ID")
+    is_regression: bool = Field(description="是否触发 Eval 回归 gate")
     total_cases: int = Field(description="总 Case 数")
     passed_cases: int = Field(description="通过 Case 数")
     failed_cases: int = Field(description="失败 Case 数")
+    grounding_sample_count: int = Field(description="Grounding delta 样本数")
+    low_sample_count: bool = Field(description="Grounding delta 是否样本过少")
+    low_sample_caveat: str | None = Field(default=None, description="样本过少提示")
 
 
 class ModelSettingsResponse(BaseModel):

@@ -8,7 +8,9 @@ from app.db.models import (
     AgentEvent,
     EvalCase,
     EvalRun,
+    ModelCall,
     PromptAssemblyManifest,
+    RetrievalHit,
     SystemSetting,
     Task,
     utc_now,
@@ -289,6 +291,142 @@ def test_eval_run_grades_grounding_contract_cases(db_session: Session) -> None:
     assert traces[passing_case.json()["id"]]["fixture_grounded"] is False
     assert traces[passing_case.json()["id"]]["verified_grounded"] is True
     assert traces[failing_case.json()["id"]]["grounding_failures"] == ["missing_policy_decisions"]
+
+
+def test_eval_case_from_run_persists_grounding_selectors_without_forbidden_snippets(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    run_id = _grounded_completed_run(db_session)
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "Run Detail Saved Cases", "description": "Selector payload check"},
+    ).json()
+
+    response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={"expected_json": {"status": "COMPLETED"}, "tags_json": ["saved-from-run"]},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    contract = payload["expected_json"]["grounding_contract"]
+    assert contract["retrieval_session_id"]
+    assert contract["prompt_manifest_id"]
+    assert contract["hit_ids"]
+    assert contract["citation_keys"]
+    assert contract["citation_hit_ids"]
+    assert "forbidden_evidence_snippets" not in response.text
+
+
+def test_eval_forbidden_leak_uses_eval_evidence_package_not_raw_model_calls(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    run_id = _grounded_completed_run(db_session)
+    prompt_manifest = db_session.scalar(
+        select(PromptAssemblyManifest).where(PromptAssemblyManifest.run_id == run_id)
+    )
+    assert prompt_manifest is not None
+    hit = db_session.scalar(
+        select(RetrievalHit).where(
+            RetrievalHit.retrieval_session_id == prompt_manifest.retrieval_session_id
+        )
+    )
+    assert hit is not None
+    db_session.add(
+        ModelCall(
+            task_id=run_id,
+            model_provider="default",
+            model_name="default",
+            status="SUCCESS",
+            prompt_manifest_id=prompt_manifest.id,
+            grounding_correlation_id=prompt_manifest.grounding_correlation_id,
+            model_request_sha256="safe-request-hash",
+            request_message_hashes_json=["safe-message-hash"],
+            request_message_hashes_sha256="safe-message-hash-root",
+            request_json={"messages": [{"content": "raw-only forbidden token"}]},
+            response_json={"content": "raw-only forbidden token"},
+        )
+    )
+    db_session.flush()
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "P6 Forbidden Leak Dataset", "description": "Eval owns leak checks"},
+    ).json()
+
+    raw_model_only_case_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "grounding_contract": {
+                    "prompt_manifest_id": prompt_manifest.id,
+                    "forbidden_evidence_snippets": ["raw-only forbidden token"],
+                },
+            },
+            "tags_json": ["p6", "raw-model-call-boundary"],
+        },
+    )
+    raw_model_only_case = raw_model_only_case_response.json()
+    evidence_leak_snippet = hit.snippet[:20]
+    evidence_leak_case_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "grounding_contract": {
+                    "prompt_manifest_id": prompt_manifest.id,
+                    "forbidden_evidence_snippets": [evidence_leak_snippet],
+                },
+            },
+            "tags_json": ["p6", "forbidden-leak"],
+        },
+    )
+    evidence_leak_case = evidence_leak_case_response.json()
+    assert "raw-only forbidden token" not in raw_model_only_case_response.text
+    assert evidence_leak_snippet not in evidence_leak_case_response.text
+
+    listed_cases = client.get(
+        f"/api/evals/datasets/{dataset['id']}/cases",
+        headers=AUTH_HEADERS,
+    )
+    assert listed_cases.status_code == 200
+    assert "raw-only forbidden token" not in listed_cases.text
+    assert evidence_leak_snippet not in listed_cases.text
+
+    eval_run_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/runs",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+
+    assert eval_run_response.status_code == 201
+    body = eval_run_response.json()
+    traces = {result["eval_case_id"]: result["grader_trace_json"] for result in body["results"]}
+    assert traces[raw_model_only_case["id"]]["forbidden_evidence_leaked"] is False
+    assert traces[evidence_leak_case["id"]]["forbidden_evidence_leaked"] is True
+    assert "forbidden_evidence_snippets" not in traces[raw_model_only_case["id"]]
+    assert "forbidden_evidence_snippets" not in traces[evidence_leak_case["id"]]
+    assert "retrieval_hits" in traces[evidence_leak_case["id"]]["forbidden_leak_sources"]
+    assert "model_call_binding_metadata" not in traces[evidence_leak_case["id"]][
+        "forbidden_leak_sources"
+    ]
+    assert "forbidden_evidence_leaked" in traces[evidence_leak_case["id"]]["grounding_failures"]
+    assert body["metrics_json"]["forbidden_evidence_leak_rate"] == 0.5
+    assert body["metrics_json"]["grounding_failure_total"] >= 1
+    assert "raw-only forbidden token" not in eval_run_response.text
+    assert evidence_leak_snippet not in eval_run_response.text
+
+    eval_run_detail = client.get(f"/api/evals/runs/{body['id']}", headers=AUTH_HEADERS)
+    assert eval_run_detail.status_code == 200
+    assert "raw-only forbidden token" not in eval_run_detail.text
+    assert evidence_leak_snippet not in eval_run_detail.text
 
 
 def test_eval_run_rejects_fake_web_fallback_unless_fixture_opted_in(

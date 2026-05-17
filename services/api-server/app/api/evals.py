@@ -1,3 +1,4 @@
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -46,6 +47,12 @@ from app.tools.capabilities import CapabilityRegistry
 
 router = APIRouter(prefix="/evals", tags=["evals"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+
+GROUNDING_TRACE_SCHEMA_VERSION = 1
+LOW_GROUNDING_SAMPLE_THRESHOLD = 5
+GROUNDING_PASS_RATE_REGRESSION_THRESHOLD = -0.05
+TASK_SUCCESS_RATE_REGRESSION_THRESHOLD = -0.10
+QUALITY_RATE_REGRESSION_THRESHOLD = 0.05
 
 
 @router.post(
@@ -124,7 +131,7 @@ def create_eval_case(
     request: EvalCaseCreateRequest,
     session: DbSession,
     principal: Principal,
-) -> EvalCase:
+) -> EvalCaseResponse:
     dataset = _get_dataset(dataset_id, session, principal.organization_id)
     eval_case = EvalCase(
         dataset_id=dataset.id,
@@ -149,7 +156,7 @@ def create_eval_case(
     )
     session.commit()
     session.refresh(eval_case)
-    return eval_case
+    return _eval_case_response(eval_case)
 
 
 @router.post(
@@ -165,7 +172,7 @@ def create_eval_case_from_run(
     request: EvalCaseFromRunRequest,
     session: DbSession,
     principal: Principal,
-) -> EvalCase:
+) -> EvalCaseResponse:
     dataset = _get_dataset(dataset_id, session, principal.organization_id)
     task = _get_task(task_id, session, principal.organization_id)
     if task.status not in ("COMPLETED", "FAILED"):
@@ -190,6 +197,17 @@ def create_eval_case_from_run(
         "assignment_count": len(assignments),
         "step_count": len(assignments),
     }
+    expected_json = request.expected_json or {"status": task.status}
+    grounding_selectors = _grounding_selectors_for_run(session, task)
+    if grounding_selectors:
+        existing_contract = expected_json.get("grounding_contract")
+        expected_json = {
+            **expected_json,
+            "grounding_contract": _merge_grounding_contract_selectors(
+                existing_contract if isinstance(existing_contract, dict) else {},
+                grounding_selectors,
+            ),
+        }
     eval_case = EvalCase(
         dataset_id=dataset.id,
         source_task_id=task.id,
@@ -202,10 +220,7 @@ def create_eval_case_from_run(
             "model_name": task.model_name,
             "status": task.status,
         },
-        expected_json={
-            **(request.expected_json or {"status": task.status}),
-            "execution_trace": execution_trace,
-        },
+        expected_json={**expected_json, "execution_trace": execution_trace},
         tags_json=request.tags_json,
         created_at=utc_now(),
     )
@@ -225,7 +240,7 @@ def create_eval_case_from_run(
     )
     session.commit()
     session.refresh(eval_case)
-    return eval_case
+    return _eval_case_response(eval_case)
 
 
 @router.get(
@@ -249,7 +264,7 @@ def list_eval_cases(
             .limit(limit)
         ).scalars()
     )
-    return EvalCasePage(items=cases)
+    return EvalCasePage(items=[_eval_case_response(eval_case) for eval_case in cases])
 
 
 @router.post(
@@ -473,6 +488,26 @@ def get_regression_delta(
     current_metrics = _aggregate_metrics(current_results)
     baseline_case_status = {r.eval_case_id: r.status for r in baseline_results}
     current_case_status = {r.eval_case_id: r.status for r in current_results}
+    baseline_grounding_pass = {
+        r.eval_case_id: bool(_normalize_grounding_trace(r.grader_trace_json).get("passed"))
+        for r in baseline_results
+    }
+    current_grounding_pass = {
+        r.eval_case_id: bool(_normalize_grounding_trace(r.grader_trace_json).get("passed"))
+        for r in current_results
+    }
+    baseline_forbidden_leak = {
+        r.eval_case_id: bool(
+            _normalize_grounding_trace(r.grader_trace_json).get("forbidden_evidence_leaked")
+        )
+        for r in baseline_results
+    }
+    current_forbidden_leak = {
+        r.eval_case_id: bool(
+            _normalize_grounding_trace(r.grader_trace_json).get("forbidden_evidence_leaked")
+        )
+        for r in current_results
+    }
     newly_failing = [
         case_id
         for case_id, cur_status in current_case_status.items()
@@ -482,6 +517,16 @@ def get_regression_delta(
         case_id
         for case_id, cur_status in current_case_status.items()
         if cur_status == "PASSED" and baseline_case_status.get(case_id) == "FAILED"
+    ]
+    newly_grounding_failing = [
+        case_id
+        for case_id, cur_passed in current_grounding_pass.items()
+        if not cur_passed and baseline_grounding_pass.get(case_id) is True
+    ]
+    newly_forbidden_leak = [
+        case_id
+        for case_id, cur_leaked in current_forbidden_leak.items()
+        if cur_leaked and baseline_forbidden_leak.get(case_id) is not True
     ]
     task_success_rate_delta = round(
         current_metrics.get("task_success_rate", 0) - baseline_metrics.get("task_success_rate", 0),
@@ -495,20 +540,63 @@ def get_regression_delta(
     avg_latency_ms_delta = int(
         current_metrics.get("avg_latency_ms", 0) - baseline_metrics.get("avg_latency_ms", 0)
     )
+    grounding_pass_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "grounding_pass_rate"
+    )
+    citation_coverage_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "citation_coverage_rate"
+    )
+    unsupported_marker_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "unsupported_marker_rate"
+    )
+    fallback_mismatch_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "fallback_mismatch_rate"
+    )
+    forbidden_evidence_leak_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "forbidden_evidence_leak_rate"
+    )
+    required_evidence_miss_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "required_evidence_miss_rate"
+    )
+    forbidden_evidence_leak_rate = float(current_metrics.get("forbidden_evidence_leak_rate", 0))
     passed_cases = sum(1 for r in current_results if r.status == "PASSED")
     failed_cases = sum(1 for r in current_results if r.status == "FAILED")
+    low_sample_count = len(current_results) < LOW_GROUNDING_SAMPLE_THRESHOLD
     return RegressionDelta(
         baseline_run_id=baseline_run.id,
         current_run_id=eval_run.id,
         task_success_rate_delta=task_success_rate_delta,
         tool_selection_accuracy_delta=tool_selection_accuracy_delta,
         avg_latency_ms_delta=avg_latency_ms_delta,
+        grounding_pass_rate_delta=grounding_pass_rate_delta,
+        citation_coverage_rate_delta=citation_coverage_rate_delta,
+        unsupported_marker_rate_delta=unsupported_marker_rate_delta,
+        fallback_mismatch_rate_delta=fallback_mismatch_rate_delta,
+        forbidden_evidence_leak_rate_delta=forbidden_evidence_leak_rate_delta,
+        required_evidence_miss_rate_delta=required_evidence_miss_rate_delta,
         newly_failing_case_ids=newly_failing,
         newly_passing_case_ids=newly_passing,
-        is_regression=task_success_rate_delta < -0.10,
+        newly_grounding_failing_case_ids=newly_grounding_failing,
+        newly_forbidden_leak_case_ids=newly_forbidden_leak,
+        is_regression=(
+            task_success_rate_delta < TASK_SUCCESS_RATE_REGRESSION_THRESHOLD
+            or grounding_pass_rate_delta < GROUNDING_PASS_RATE_REGRESSION_THRESHOLD
+            or forbidden_evidence_leak_rate > 0
+            or bool(newly_forbidden_leak)
+            or unsupported_marker_rate_delta > QUALITY_RATE_REGRESSION_THRESHOLD
+            or fallback_mismatch_rate_delta > QUALITY_RATE_REGRESSION_THRESHOLD
+        ),
         total_cases=len(current_results),
         passed_cases=passed_cases,
         failed_cases=failed_cases,
+        grounding_sample_count=len(current_results),
+        low_sample_count=low_sample_count,
+        low_sample_caveat=(
+            "Grounding trend confidence is low for fewer than "
+            f"{LOW_GROUNDING_SAMPLE_THRESHOLD} cases."
+            if low_sample_count
+            else None
+        ),
     )
 
 
@@ -612,13 +700,16 @@ def _grade_case(session: Session, eval_run_id: str, eval_case: EvalCase) -> Eval
 def _grade_grounding_contract(session: Session, task: Task | None, expected_json: dict) -> dict:
     contract = expected_json.get("grounding_contract")
     if not isinstance(contract, dict):
-        return {"grader": "deterministic_trace_grader_v1", "passed": True}
+        return _grounding_trace_v1(
+            grader="deterministic_trace_grader_v1",
+            passed=True,
+        )
     if task is None:
-        return {
-            "grader": "deterministic_grounding_grader_v1",
-            "passed": False,
-            "grounding_failures": ["missing_task"],
-        }
+        return _grounding_trace_v1(
+            grader="deterministic_grounding_grader_v1",
+            passed=False,
+            grounding_failures=["missing_task"],
+        )
 
     requested_prompt_manifest_id = contract.get("prompt_manifest_id")
     requested_retrieval_session_id = contract.get("retrieval_session_id")
@@ -628,21 +719,24 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
     if requested_prompt_manifest_id:
         prompt_manifest = session.get(PromptAssemblyManifest, str(requested_prompt_manifest_id))
         if prompt_manifest is None or prompt_manifest.run_id != task.id:
-            return {
-                "grader": "deterministic_grounding_grader_v1",
-                "passed": False,
-                "grounding_failures": ["missing_prompt_manifest"],
-                "inferred_fallback": False,
-            }
+            return _grounding_trace_v1(
+                grader="deterministic_grounding_grader_v1",
+                passed=False,
+                grounding_failures=["missing_prompt_manifest"],
+                inferred_fallback=False,
+                prompt_manifest_id=str(requested_prompt_manifest_id),
+            )
         if requested_retrieval_session_id and prompt_manifest.retrieval_session_id != str(
             requested_retrieval_session_id
         ):
-            return {
-                "grader": "deterministic_grounding_grader_v1",
-                "passed": False,
-                "grounding_failures": ["selector_conflict"],
-                "inferred_fallback": False,
-            }
+            return _grounding_trace_v1(
+                grader="deterministic_grounding_grader_v1",
+                passed=False,
+                grounding_failures=["selector_conflict"],
+                inferred_fallback=False,
+                retrieval_session_id=str(requested_retrieval_session_id),
+                prompt_manifest_id=prompt_manifest.id,
+            )
         retrieval_session = session.get(RetrievalSession, prompt_manifest.retrieval_session_id)
     elif requested_retrieval_session_id:
         retrieval_session = session.get(RetrievalSession, str(requested_retrieval_session_id))
@@ -659,11 +753,13 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
         ).scalar_one_or_none()
     failures: list[str] = []
     if retrieval_session is None:
-        return {
-            "grader": "deterministic_grounding_grader_v1",
-            "passed": False,
-            "grounding_failures": ["missing_retrieval_session"],
-        }
+        return _grounding_trace_v1(
+            grader="deterministic_grounding_grader_v1",
+            passed=False,
+            grounding_failures=["missing_retrieval_session"],
+            inferred_fallback=inferred_fallback,
+            fallback_reason=fallback_reason,
+        )
 
     hits = list(
         session.execute(
@@ -734,51 +830,447 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
     actual_decisions = {audit.decision for audit in policy_audits}
     if not required_decisions <= actual_decisions:
         failures.append("missing_policy_decisions")
-    forbidden_text = str(contract.get("forbid_text") or "")
-    if forbidden_text:
-        manifest_payload = (
-            str(prompt_manifest.omitted_candidates_json)
-            + str(prompt_manifest.source_snapshots_json)
-            + str(prompt_manifest.prompt_sections_json)
-            if prompt_manifest is not None
-            else ""
-        )
-        citation_payload = "".join(str(citation.quoted_text or "") for citation in citations)
-        audit_payload = "".join(str(audit.safe_metadata_json) for audit in policy_audits)
-        model_call_payload = "".join(
-            str(model_call.request_json) + str(model_call.response_json)
-            for model_call in model_calls
-        )
-        leaked = (
-            forbidden_text in manifest_payload
-            or forbidden_text in citation_payload
-            or forbidden_text in audit_payload
-            or forbidden_text in model_call_payload
-        )
-        if leaked:
-            failures.append("forbidden_text_leaked")
 
-    return {
-        "grader": "deterministic_grounding_grader_v1",
-        "passed": not failures,
-        "grounding_failures": failures,
+    actual_hit_ids = [hit.id for hit in hits]
+    actual_citation_keys = [citation.citation_key for citation in citations]
+    actual_citation_hit_ids = [citation.retrieval_hit_id for citation in citations]
+    expected_hit_ids = _as_string_list(contract.get("hit_ids"))
+    expected_citation_keys = _as_string_list(contract.get("citation_keys"))
+    expected_hit_id_set = set(expected_hit_ids)
+    if expected_hit_id_set and not expected_hit_id_set <= set(actual_hit_ids):
+        failures.append("missing_required_evidence")
+    if expected_citation_keys and not set(expected_citation_keys) <= set(actual_citation_keys):
+        failures.append("citation_hit_mismatch")
+    expected_citation_hit_ids = _as_string_list(contract.get("citation_hit_ids"))
+    if expected_citation_hit_ids and not set(expected_citation_hit_ids) <= set(
+        actual_citation_hit_ids
+    ):
+        failures.append("citation_hit_mismatch")
+    if expected_hit_id_set:
+        required_citation_hit_ids = {
+            citation.retrieval_hit_id
+            for citation in citations
+            if not expected_citation_keys or citation.citation_key in expected_citation_keys
+        }
+        if not required_citation_hit_ids or not required_citation_hit_ids <= expected_hit_id_set:
+            failures.append("citation_hit_mismatch")
+
+    evidence_inputs = _grounding_evidence_inputs(
+        hits=hits,
+        prompt_manifest=prompt_manifest,
+        citations=citations,
+        policy_audits=policy_audits,
+        model_calls=model_calls,
+    )
+    required_evidence_snippets = _as_string_list(contract.get("required_evidence_snippets"))
+    missing_required_snippets = [
+        snippet
+        for snippet in required_evidence_snippets
+        if not _snippet_in_inputs(snippet, evidence_inputs)
+    ]
+    if missing_required_snippets:
+        failures.append("missing_required_evidence")
+
+    forbidden_evidence_snippets = _as_string_list(contract.get("forbidden_evidence_snippets"))
+    legacy_forbidden = _normalize_text(contract.get("forbid_text") or "")
+    if legacy_forbidden:
+        forbidden_evidence_snippets.append(legacy_forbidden)
+    forbidden_leak_sources = _matched_input_sources(forbidden_evidence_snippets, evidence_inputs)
+    forbidden_evidence_leaked = bool(forbidden_leak_sources)
+    if forbidden_evidence_leaked:
+        failures.append("forbidden_evidence_leaked")
+
+    unsupported_markers = _as_string_list(contract.get("unsupported_markers"))
+    unsupported_marker_sources = _matched_input_sources(
+        unsupported_markers,
+        {
+            "citations": evidence_inputs.get("citations", ""),
+            "prompt_manifest": evidence_inputs.get("prompt_manifest", ""),
+            "policy_audits": evidence_inputs.get("policy_audits", ""),
+        },
+    )
+    if unsupported_marker_sources:
+        failures.append("unsupported_marker_present")
+
+    fallback_expected = bool(contract.get("fallback_expected") or False)
+    fallback_observed = _fallback_observed(retrieval_session, web_sources, outcome_source)
+    if fallback_expected and not fallback_observed:
+        failures.append("fallback_expected_but_not_observed")
+    if fallback_observed and not fallback_expected and "fallback_expected" in contract:
+        failures.append("fallback_observed_but_not_expected")
+
+    return _grounding_trace_v1(
+        grader="deterministic_grounding_grader_v1",
+        passed=not failures,
+        grounding_failures=_dedupe(failures),
+        retrieval_session_id=retrieval_session.id,
+        prompt_manifest_id=prompt_manifest.id if prompt_manifest else None,
+        policy_audit_ids=[audit.id for audit in policy_audits],
+        hit_ids=actual_hit_ids,
+        citation_keys=actual_citation_keys,
+        citation_hit_ids=actual_citation_hit_ids,
+        required_evidence_snippets=required_evidence_snippets,
+        forbidden_evidence_snippets=forbidden_evidence_snippets,
+        forbidden_evidence_leaked=forbidden_evidence_leaked,
+        forbidden_leak_sources=forbidden_leak_sources,
+        fallback_expected=fallback_expected,
+        fallback_observed=fallback_observed,
+        fallback_reason=fallback_reason,
+        unsupported_markers=unsupported_markers,
+        inferred_fallback=inferred_fallback,
+        grounding_provider=grounding_provider,
+        fixture_grounded=fixture_grounded,
+        verified_grounded=verified_grounded,
+        grounding_verification_reason=grounding_verification_reason,
+        hit_count=len(hits),
+        citation_count=len(citations),
+        web_source_count=len(web_sources),
+    )
+
+
+def _grounding_selectors_for_run(session: Session, task: Task) -> dict:
+    prompt_manifest = session.execute(
+        select(PromptAssemblyManifest)
+        .where(PromptAssemblyManifest.run_id == task.id)
+        .order_by(PromptAssemblyManifest.created_at.desc(), PromptAssemblyManifest.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    retrieval_session = None
+    if prompt_manifest is not None:
+        retrieval_session = session.get(RetrievalSession, prompt_manifest.retrieval_session_id)
+    if retrieval_session is None:
+        retrieval_session = session.execute(
+            select(RetrievalSession)
+            .where(RetrievalSession.run_id == task.id)
+            .order_by(RetrievalSession.created_at.desc(), RetrievalSession.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if retrieval_session is None:
+        return {}
+    if prompt_manifest is None:
+        prompt_manifest = session.execute(
+            select(PromptAssemblyManifest)
+            .where(PromptAssemblyManifest.retrieval_session_id == retrieval_session.id)
+            .order_by(PromptAssemblyManifest.created_at.desc(), PromptAssemblyManifest.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    hits = list(
+        session.execute(
+            select(RetrievalHit)
+            .where(RetrievalHit.retrieval_session_id == retrieval_session.id)
+            .order_by(RetrievalHit.rank.asc(), RetrievalHit.id.asc())
+        ).scalars()
+    )
+    citations = list(
+        session.execute(
+            select(CitationRecord)
+            .where(CitationRecord.retrieval_session_id == retrieval_session.id)
+            .order_by(CitationRecord.created_at.asc(), CitationRecord.id.asc())
+        ).scalars()
+    )
+    policy_audits = list(
+        session.execute(
+            select(KnowledgePolicyAudit).where(
+                KnowledgePolicyAudit.retrieval_session_id == retrieval_session.id
+            )
+        ).scalars()
+    )
+    web_sources = list(
+        session.execute(
+            select(WebResearchSource).where(
+                WebResearchSource.retrieval_session_id == retrieval_session.id
+            )
+        ).scalars()
+    )
+    outcome_source = (
+        prompt_manifest.metadata_json
+        if prompt_manifest is not None and isinstance(prompt_manifest.metadata_json, dict)
+        else retrieval_session.metadata_json
+        if isinstance(retrieval_session.metadata_json, dict)
+        else {}
+    )
+    citation_keys = _dedupe([citation.citation_key for citation in citations])
+    citation_hit_ids = _dedupe([citation.retrieval_hit_id for citation in citations])
+    retrieval_hit_ids = _dedupe([hit.id for hit in hits])
+    selectors: dict[str, object] = {
         "retrieval_session_id": retrieval_session.id,
-        "prompt_manifest_id": prompt_manifest.id if prompt_manifest else None,
-        "policy_audit_ids": [audit.id for audit in policy_audits],
-        "inferred_fallback": inferred_fallback,
-        "fallback_reason": fallback_reason,
-        "grounding_provider": grounding_provider,
-        "fixture_grounded": fixture_grounded,
-        "verified_grounded": verified_grounded,
-        "grounding_verification_reason": grounding_verification_reason,
-        "hit_count": len(hits),
-        "citation_count": len(citations),
-        "web_source_count": len(web_sources),
+        "hit_ids": citation_hit_ids or retrieval_hit_ids,
+        "citation_keys": citation_keys,
+        "citation_hit_ids": citation_hit_ids,
+        "fallback_expected": _fallback_observed(retrieval_session, web_sources, outcome_source),
+        "require_grounded": bool(citations),
+        "require_insufficient": retrieval_session.local_status != "sufficient",
+        "allow_fixture_grounding": False,
     }
+    if prompt_manifest is not None:
+        selectors["prompt_manifest_id"] = prompt_manifest.id
+        selectors["require_prompt_manifest"] = True
+    policy_decisions = _dedupe([audit.decision for audit in policy_audits])
+    if policy_decisions:
+        selectors["require_policy_decisions"] = policy_decisions
+    return selectors
+
+
+def _merge_grounding_contract_selectors(existing: dict, selectors: dict) -> dict:
+    merged = {**selectors, **existing}
+    for key in ("hit_ids", "citation_keys", "citation_hit_ids", "require_policy_decisions"):
+        if not _as_string_list(merged.get(key)) and _as_string_list(selectors.get(key)):
+            merged[key] = selectors[key]
+    for key in ("retrieval_session_id", "prompt_manifest_id"):
+        if not merged.get(key) and selectors.get(key):
+            merged[key] = selectors[key]
+    for key in (
+        "fallback_expected",
+        "require_grounded",
+        "require_prompt_manifest",
+        "require_insufficient",
+        "allow_fixture_grounding",
+    ):
+        if key not in existing and key in selectors:
+            merged[key] = selectors[key]
+    return merged
+
+
+def _grounding_trace_v1(
+    *,
+    grader: str,
+    passed: bool,
+    grounding_failures: list[str] | None = None,
+    retrieval_session_id: str | None = None,
+    prompt_manifest_id: str | None = None,
+    policy_audit_ids: list[str] | None = None,
+    hit_ids: list[str] | None = None,
+    citation_keys: list[str] | None = None,
+    citation_hit_ids: list[str] | None = None,
+    required_evidence_snippets: list[str] | None = None,
+    forbidden_evidence_snippets: list[str] | None = None,
+    forbidden_evidence_leaked: bool = False,
+    forbidden_leak_sources: list[str] | None = None,
+    fallback_expected: bool = False,
+    fallback_observed: bool = False,
+    fallback_reason: str | None = None,
+    unsupported_markers: list[str] | None = None,
+    claim_checks: list[dict] | None = None,
+    **extra: object,
+) -> dict:
+    trace = {
+        "grader_trace_schema_version": GROUNDING_TRACE_SCHEMA_VERSION,
+        "grader": grader,
+        "passed": passed,
+        "grounding_failures": _dedupe(grounding_failures or []),
+        "retrieval_session_id": retrieval_session_id,
+        "prompt_manifest_id": prompt_manifest_id,
+        "policy_audit_ids": policy_audit_ids or [],
+        "hit_ids": hit_ids or [],
+        "citation_keys": citation_keys or [],
+        "citation_hit_ids": citation_hit_ids or [],
+        "required_evidence_snippets": required_evidence_snippets or [],
+        "forbidden_evidence_snippets": forbidden_evidence_snippets or [],
+        "forbidden_evidence_leaked": forbidden_evidence_leaked,
+        "forbidden_leak_sources": forbidden_leak_sources or [],
+        "fallback_expected": fallback_expected,
+        "fallback_observed": fallback_observed,
+        "fallback_reason": fallback_reason,
+        "unsupported_markers": unsupported_markers or [],
+        "claim_checks": claim_checks or [],
+    }
+    trace.update(extra)
+    return _normalize_grounding_trace(trace)
+
+
+def _normalize_grounding_trace(trace: dict | None) -> dict:
+    raw = trace if isinstance(trace, dict) else {}
+    failures = _as_string_list(raw.get("grounding_failures"))
+    forbidden_leak_sources = _as_string_list(raw.get("forbidden_leak_sources"))
+    forbidden_evidence_leaked = bool(raw.get("forbidden_evidence_leaked")) or bool(
+        forbidden_leak_sources
+    )
+    fallback_expected = bool(raw.get("fallback_expected") or False)
+    fallback_observed = bool(raw.get("fallback_observed") or False)
+    normalized = {
+        **raw,
+        "grader_trace_schema_version": int(raw.get("grader_trace_schema_version") or 0),
+        "grader": str(raw.get("grader") or "deterministic_trace_grader_v1"),
+        "passed": bool(raw.get("passed", True)),
+        "grounding_failures": failures,
+        "retrieval_session_id": _nullable_str(raw.get("retrieval_session_id")),
+        "prompt_manifest_id": _nullable_str(raw.get("prompt_manifest_id")),
+        "policy_audit_ids": _as_string_list(raw.get("policy_audit_ids")),
+        "hit_ids": _as_string_list(raw.get("hit_ids")),
+        "citation_keys": _as_string_list(raw.get("citation_keys")),
+        "citation_hit_ids": _as_string_list(raw.get("citation_hit_ids")),
+        "required_evidence_snippets": _as_string_list(raw.get("required_evidence_snippets")),
+        "forbidden_evidence_snippets": _as_string_list(raw.get("forbidden_evidence_snippets")),
+        "forbidden_evidence_leaked": forbidden_evidence_leaked,
+        "forbidden_leak_sources": forbidden_leak_sources,
+        "fallback_expected": fallback_expected,
+        "fallback_observed": fallback_observed,
+        "fallback_reason": _nullable_str(raw.get("fallback_reason")),
+        "unsupported_markers": _as_string_list(raw.get("unsupported_markers")),
+        "claim_checks": (
+            raw.get("claim_checks") if isinstance(raw.get("claim_checks"), list) else []
+        ),
+    }
+    if forbidden_evidence_leaked and "forbidden_evidence_leaked" not in failures:
+        normalized["grounding_failures"] = [*failures, "forbidden_evidence_leaked"]
+        normalized["passed"] = False
+    return normalized
+
+
+def _grounding_evidence_inputs(
+    *,
+    hits: list[RetrievalHit],
+    prompt_manifest: PromptAssemblyManifest | None,
+    citations: list[CitationRecord],
+    policy_audits: list[KnowledgePolicyAudit],
+    model_calls: list[ModelCall],
+) -> dict[str, str]:
+    prompt_payload = ""
+    if prompt_manifest is not None:
+        prompt_payload = _json_text(
+            {
+                "included_retrieval_hit_ids": prompt_manifest.included_retrieval_hit_ids_json,
+                "omitted_candidates": prompt_manifest.omitted_candidates_json,
+                "source_snapshots": prompt_manifest.source_snapshots_json,
+                "prompt_sections": prompt_manifest.prompt_sections_json,
+                "evidence_text_sha256": prompt_manifest.evidence_text_sha256,
+                "metadata": prompt_manifest.metadata_json,
+            }
+        )
+    return {
+        "retrieval_hits": _json_text(
+            [
+                {
+                    "id": hit.id,
+                    "chunk_id": hit.chunk_id,
+                    "web_source_id": hit.web_source_id,
+                    "source_kind": hit.source_kind,
+                    "snippet": hit.snippet,
+                    "metadata": hit.metadata_json,
+                }
+                for hit in hits
+            ]
+        ),
+        "prompt_manifest": prompt_payload,
+        "citations": _json_text(
+            [
+                {
+                    "id": citation.id,
+                    "retrieval_hit_id": citation.retrieval_hit_id,
+                    "citation_key": citation.citation_key,
+                    "claim_text": citation.claim_text,
+                    "quoted_text": citation.quoted_text,
+                    "metadata": citation.metadata_json,
+                }
+                for citation in citations
+            ]
+        ),
+        "policy_audits": _json_text(
+            [
+                {
+                    "id": audit.id,
+                    "decision": audit.decision,
+                    "reason": audit.reason,
+                    "source_kind": audit.source_kind,
+                    "source_ref_id": audit.source_ref_id,
+                    "safe_metadata": audit.safe_metadata_json,
+                }
+                for audit in policy_audits
+            ]
+        ),
+        "model_call_binding_metadata": _json_text(
+            [
+                {
+                    "id": model_call.id,
+                    "prompt_manifest_id": model_call.prompt_manifest_id,
+                    "context_manifest_id": model_call.context_manifest_id,
+                    "grounding_correlation_id": model_call.grounding_correlation_id,
+                    "model_request_sha256": model_call.model_request_sha256,
+                    "request_message_hashes_json": model_call.request_message_hashes_json,
+                    "request_message_hashes_sha256": model_call.request_message_hashes_sha256,
+                    "hash_recomputability_status": model_call.hash_recomputability_status,
+                }
+                for model_call in model_calls
+            ]
+        ),
+    }
+
+
+def _fallback_observed(
+    retrieval_session: RetrievalSession,
+    web_sources: list[WebResearchSource],
+    outcome_source: dict,
+) -> bool:
+    if retrieval_session.mode in {"web", "web_fallback", "fallback"}:
+        return True
+    if web_sources:
+        return True
+    if bool(outcome_source.get("web_fallback_observed") or outcome_source.get("fallback_observed")):
+        return True
+    return str(outcome_source.get("grounding_provider") or "").endswith("_web_fixture")
+
+
+def _matched_input_sources(snippets: list[str], inputs: dict[str, str]) -> list[str]:
+    sources: list[str] = []
+    for source, payload in inputs.items():
+        if any(_contains_snippet(payload, snippet) for snippet in snippets):
+            sources.append(source)
+    return sources
+
+
+def _snippet_in_inputs(snippet: str, inputs: dict[str, str]) -> bool:
+    return any(_contains_snippet(payload, snippet) for payload in inputs.values())
+
+
+def _contains_snippet(payload: object, snippet: str) -> bool:
+    normalized_snippet = _normalize_text(snippet)
+    if not normalized_snippet:
+        return False
+    return normalized_snippet in _normalize_text(payload)
+
+
+def _as_string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [item for item in (_normalize_text(item) for item in value) if item]
+    normalized = _normalize_text(value)
+    return [normalized] if normalized else []
+
+
+def _normalize_text(value: object) -> str:
+    return str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _nullable_str(value: object) -> str | None:
+    normalized = _normalize_text(value or "")
+    return normalized or None
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(items))
+
+
+def _metric_delta(current_metrics: dict, baseline_metrics: dict, key: str) -> float:
+    return round(float(current_metrics.get(key, 0)) - float(baseline_metrics.get(key, 0)), 4)
 
 
 def _aggregate_metrics(results: list[EvalResult]) -> dict:
     total = len(results) or 1
+    traces = [_normalize_grounding_trace(result.grader_trace_json) for result in results]
+    grounding_failures = [
+        failure for trace in traces for failure in trace.get("grounding_failures", [])
+    ]
+    fallback_mismatches = [
+        trace
+        for trace in traces
+        if bool(trace.get("fallback_expected")) != bool(trace.get("fallback_observed"))
+    ]
     return {
         "task_success_rate": _avg(results, "task_success"),
         "tool_selection_accuracy": _avg(results, "tool_selection_accuracy"),
@@ -790,6 +1282,35 @@ def _aggregate_metrics(results: list[EvalResult]) -> dict:
         "case_total": len(results),
         "passed_total": sum(1 for result in results if result.status == "PASSED"),
         "failed_total": sum(1 for result in results if result.status == "FAILED"),
+        "grounding_pass_rate": round(
+            sum(1 for trace in traces if bool(trace.get("passed"))) / total,
+            4,
+        ),
+        "citation_coverage_rate": round(
+            sum(1 for trace in traces if "citation_hit_mismatch" not in trace["grounding_failures"])
+            / total,
+            4,
+        ),
+        "unsupported_marker_rate": round(
+            sum(
+                1
+                for trace in traces
+                if "unsupported_marker_present" in trace["grounding_failures"]
+            )
+            / total,
+            4,
+        ),
+        "fallback_mismatch_rate": round(len(fallback_mismatches) / total, 4),
+        "forbidden_evidence_leak_rate": round(
+            sum(1 for trace in traces if bool(trace.get("forbidden_evidence_leaked"))) / total,
+            4,
+        ),
+        "required_evidence_miss_rate": round(
+            sum(1 for trace in traces if "missing_required_evidence" in trace["grounding_failures"])
+            / total,
+            4,
+        ),
+        "grounding_failure_total": len(grounding_failures),
     }
 
 
@@ -832,10 +1353,51 @@ def _eval_run_response(eval_run: EvalRun, results: list[EvalResult]) -> EvalRunR
         started_at=eval_run.started_at,
         completed_at=eval_run.completed_at,
         created_at=eval_run.created_at,
-        results=[
-            EvalResultResponse.model_validate(result, from_attributes=True) for result in results
-        ],
+        results=[_eval_result_response(result) for result in results],
     )
+
+
+def _eval_case_response(eval_case: EvalCase) -> EvalCaseResponse:
+    return EvalCaseResponse(
+        id=eval_case.id,
+        dataset_id=eval_case.dataset_id,
+        source_task_id=eval_case.source_task_id,
+        input_json=_scrub_forbidden_evidence_snippets(eval_case.input_json),
+        expected_json=_scrub_forbidden_evidence_snippets(eval_case.expected_json),
+        capability_snapshot_json=_scrub_forbidden_evidence_snippets(
+            eval_case.capability_snapshot_json
+        ),
+        tags_json=eval_case.tags_json,
+        created_at=eval_case.created_at,
+    )
+
+
+def _eval_result_response(result: EvalResult) -> EvalResultResponse:
+    return EvalResultResponse(
+        id=result.id,
+        eval_run_id=result.eval_run_id,
+        eval_case_id=result.eval_case_id,
+        task_id=result.task_id,
+        status=result.status,
+        scores_json=result.scores_json,
+        grader_trace_json=_scrub_forbidden_evidence_snippets(result.grader_trace_json),
+        latency_ms=result.latency_ms,
+        cost_usd=result.cost_usd,
+        error_message=result.error_message,
+        created_at=result.created_at,
+    )
+
+
+def _scrub_forbidden_evidence_snippets(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _scrub_forbidden_evidence_snippets(item)
+            for key, item in value.items()
+            if key not in {"forbidden_evidence_snippet", "forbidden_evidence_snippets"}
+        }
+    if isinstance(value, list):
+        return [_scrub_forbidden_evidence_snippets(item) for item in value]
+    return value
 
 
 def _eval_run_capability_snapshot(
