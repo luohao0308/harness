@@ -85,4 +85,57 @@ describe("useChatStream run lifecycle callbacks", () => {
       "Local knowledge grounded the answer.",
     );
   });
+
+  it("sends the full active path and leaves token trimming to the backend", async () => {
+    useWorkspaceStore.getState().setContextMaxTokens(1);
+    const oldNodeId = useWorkspaceStore.getState().appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "older context that exceeds the tiny UI hint",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      streamResponse(
+        [
+          sseFrame("run_created", {
+            run_id: "run-full-path",
+            status: "RUNNING",
+            step_count: 0,
+            message: "started",
+          }),
+          sseFrame("delta", { content: "ok" }),
+          sseFrame("done", {
+            run_id: "run-full-path",
+            active_branch_id: "branch",
+            status: "COMPLETED",
+            step_count: 0,
+            message: "done",
+          }),
+        ].join(""),
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatStream({
+        agentId: "default",
+        workspaceMode: "chat",
+        selectedProviderId: "deepseek-flash",
+        selectedModelId: "deepseek-v4-flash",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.start({ goal: "new prompt", mode: "chat" });
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String(init?.body));
+    expect(typeof payload.context_max_tokens).toBe("number");
+    expect(payload.context_max_tokens).toBeGreaterThan(0);
+    expect(payload.messages.map((message: { id: string }) => message.id)).toContain(oldNodeId);
+  });
 });

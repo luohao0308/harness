@@ -20,6 +20,7 @@ describe("ModelCallPanel", () => {
       duration_ms: 42,
       grounding_correlation_id: null,
       prompt_manifest_id: null,
+      context_manifest_id: null,
       model_request_sha256: null,
       model_request_hash_schema_version: 1,
       request_message_hashes_json: [],

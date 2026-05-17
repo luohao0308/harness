@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from types import SimpleNamespace
@@ -15,7 +16,9 @@ from app.db.models import (
     AgentAssignment,
     AgentEvent,
     CitationRecord,
+    ContextAssemblyManifest,
     ExecutionPlan,
+    ModelCall,
     SandboxInstance,
     SystemSetting,
     Task,
@@ -28,6 +31,9 @@ from app.main import app
 from app.sandbox.docker_manager import SandboxCommandResult
 from app.workers.agent_assignment_worker import execute_agent_assignment
 from tests.conftest import AUTH_HEADERS
+
+ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
+OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
 
 
 def parse_sse_events(body: str) -> list[tuple[str, dict]]:
@@ -471,8 +477,9 @@ def test_agent_workspace_chat_prompt_orders_compressed_pinned_recent(
     assert response.status_code == 200
     contents = [message.content for message in captured_messages]
     summary_index = contents.index(next(c for c in contents if "Compressed prior" in c))
-    assert summary_index < contents.index("pinned raw wins")
-    assert contents.index("pinned raw wins") < contents.index("recent uncovered")
+    pinned_index = contents.index("pinned raw wins")
+    assert summary_index < pinned_index
+    assert pinned_index < contents.index("recent uncovered")
     assert contents[-1] == "current goal"
     assert "covered raw should not repeat" not in contents
 
@@ -847,6 +854,260 @@ def test_agent_workspace_pro_chat_stream_creates_auditable_run(db_session: Sessi
     assert usage["cost_usd"] is None
     assert usage["cost_unavailable"] is True
     assert db_session.execute(select(Task)).scalar_one_or_none() is not None
+
+
+def test_agent_run_workspace_returns_latest_context_assembly(
+    db_session: Session,
+) -> None:
+    run = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Context assembly workspace",
+        goal="Inspect context assembly evidence",
+        status="RUNNING",
+        model_provider="default",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(run)
+    db_session.flush()
+    manifest = ContextAssemblyManifest(
+        organization_id=run.organization_id,
+        agent_id="default",
+        run_id=run.id,
+        mode="authoritative",
+        token_budget_json={"estimator": "chars_div_4", "requested_max_tokens": 2048},
+        sections_json=[{"section_id": "authority:0", "section_type": "system_developer"}],
+        included_refs_json=[{"section_id": "authority:0", "type": "system"}],
+        omitted_refs_json=[{"section_id": "rag:1", "omission_reason": "token_budget"}],
+        policy_decisions_json=[],
+        tombstoned_refs_json=[],
+        context_text_sha256=hashlib.sha256(b"context").hexdigest(),
+        metadata_json={"schema_version": "context-assembly-v1"},
+        created_at=utc_now(),
+    )
+    db_session.add(manifest)
+    db_session.commit()
+
+    response = TestClient(app).get(
+        f"/api/agents/runs/{run.id}/workspace",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["context_assembly"]["id"] == manifest.id
+    assert payload["context_assembly"]["mode"] == "authoritative"
+    assert payload["context_assembly"]["included_refs_json"][0]["section_id"] == "authority:0"
+    assert payload["context_assembly"]["omitted_refs_json"][0]["omission_reason"] == "token_budget"
+
+
+def test_agent_run_memory_scope_requires_owned_run(
+    db_session: Session,
+) -> None:
+    own_run = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Own run",
+        goal="Use run memory",
+        status="RUNNING",
+        model_provider="default",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    other_user_run = Task(
+        organization_id="dev-org",
+        created_by="dev-admin",
+        title="Other user run",
+        goal="Must not accept injected run memory",
+        status="RUNNING",
+        model_provider="default",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add_all([own_run, other_user_run])
+    db_session.commit()
+    client = TestClient(app)
+
+    missing_run = client.post(
+        "/api/agents/default/memories",
+        headers=AUTH_HEADERS,
+        json={"scope": "run", "text": "missing run id"},
+    )
+    assert missing_run.status_code == 400
+
+    operator_create = client.post(
+        "/api/agents/default/memories",
+        headers=OPERATOR_HEADERS,
+        json={"scope": "agent", "text": "operator cannot write memory"},
+    )
+    assert operator_create.status_code == 403
+
+    non_manual_source = client.post(
+        "/api/agents/default/memories",
+        headers=AUTH_HEADERS,
+        json={
+            "scope": "agent",
+            "source_type": "run_summary",
+            "text": "client cannot spoof generated source",
+        },
+    )
+    assert non_manual_source.status_code == 400
+
+    engineer_org_memory = client.post(
+        "/api/agents/default/memories",
+        headers=AUTH_HEADERS,
+        json={"scope": "org", "text": "org-wide poisoning"},
+    )
+    assert engineer_org_memory.status_code == 403
+
+    admin_org_memory = client.post(
+        "/api/agents/default/memories",
+        headers=ADMIN_HEADERS,
+        json={"scope": "org", "text": "admin org memory"},
+    )
+    assert admin_org_memory.status_code == 201
+
+    foreign_run = client.post(
+        "/api/agents/default/memories",
+        headers=AUTH_HEADERS,
+        json={"scope": "run", "run_id": other_user_run.id, "text": "foreign run memory"},
+    )
+    assert foreign_run.status_code == 404
+
+    created = client.post(
+        "/api/agents/default/memories",
+        headers=AUTH_HEADERS,
+        json={"scope": "run", "run_id": own_run.id, "text": "own run memory"},
+    )
+    assert created.status_code == 201
+    assert created.json()["run_id"] == own_run.id
+
+
+def test_workspace_context_manifest_binding_tracks_authoritative_mode(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class StubGateway:
+        def stream(self, request_payload):
+            yield ModelStreamChunk(text="ok")
+            yield ModelStreamChunk(
+                usage={"prompt_tokens": 2, "completion_tokens": 1},
+                raw_response={"status": "ok"},
+                done=True,
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.AuditedModelGateway._gateway_from_settings",
+        lambda self, _provider: StubGateway(),
+    )
+
+    client = TestClient(app)
+    shadow_response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "codex_plan",
+            "goal": "shadow binding",
+            "messages": [
+                {
+                    "id": "root",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "shadow binding",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-17T00:00:00Z",
+                }
+            ],
+            "context_window_turns": 8,
+            "pinned_node_ids": [],
+        },
+    )
+    assert shadow_response.status_code == 200
+    shadow_events = parse_sse_events(shadow_response.text)
+    assert any(event == "run_created" for event, _payload in shadow_events)
+
+    shadow_call = db_session.execute(
+        select(ModelCall).order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
+    ).scalar_one()
+    shadow_manifest = db_session.execute(
+        select(ContextAssemblyManifest).order_by(
+            ContextAssemblyManifest.created_at.desc(),
+            ContextAssemblyManifest.id.desc(),
+        ).limit(1)
+    ).scalar_one()
+    assert shadow_call.context_manifest_id is None
+    assert shadow_manifest.mode == "shadow"
+
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.context_assembly_v2_enabled",
+            value_json={"enabled": True},
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    authoritative_response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "codex_plan",
+            "goal": "authoritative binding",
+            "messages": [
+                {
+                    "id": "root",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "authoritative binding",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                    "created_at": "2026-05-17T00:00:00Z",
+                }
+            ],
+            "context_window_turns": 8,
+            "pinned_node_ids": [],
+        },
+    )
+    assert authoritative_response.status_code == 200
+
+    calls = list(
+        db_session.execute(
+            select(ModelCall).order_by(ModelCall.created_at.asc(), ModelCall.id.asc())
+        ).scalars()
+    )
+    assert len(calls) >= 2
+    authoritative_call = calls[-1]
+    authoritative_manifest = db_session.get(
+        ContextAssemblyManifest, authoritative_call.context_manifest_id
+    )
+    assert authoritative_call.context_manifest_id is not None
+    assert authoritative_manifest is not None
+    assert authoritative_manifest.mode == "authoritative"
 
 
 def test_agent_workspace_pro_chat_stream_continue_preserves_run_identity(
