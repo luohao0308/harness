@@ -7,10 +7,12 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -284,6 +286,11 @@ class ModelCall(Base):
     __tablename__ = "model_calls"
     __table_args__ = (
         ForeignKeyConstraint(
+            ["context_manifest_id"],
+            ["context_assembly_manifests.id"],
+            name="model_calls_context_manifest_id_fkey",
+        ),
+        ForeignKeyConstraint(
             ["prompt_manifest_id"],
             ["prompt_assembly_manifests.id"],
             name="model_calls_prompt_manifest_id_fkey",
@@ -314,6 +321,11 @@ class ModelCall(Base):
         index=True,
     )
     prompt_manifest_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+        index=True,
+    )
+    context_manifest_id: Mapped[str | None] = mapped_column(
         String(36),
         nullable=True,
         index=True,
@@ -645,6 +657,63 @@ class CitationRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class AgentMemoryRecord(Base):
+    __tablename__ = "agent_memory_records"
+    __table_args__ = (
+        CheckConstraint(
+            "scope IN ('org', 'agent', 'user', 'run')",
+            name="agent_memory_records_scope_check",
+        ),
+        CheckConstraint(
+            "lifecycle_status IN ('active', 'disabled', 'archived', 'deleted', 'expired')",
+            name="agent_memory_records_lifecycle_check",
+        ),
+        CheckConstraint(
+            "scope != 'user' OR owner_user_id IS NOT NULL",
+            name="agent_memory_records_user_owner_check",
+        ),
+        CheckConstraint(
+            "scope != 'run' OR run_id IS NOT NULL",
+            name="agent_memory_records_run_id_check",
+        ),
+        Index(
+            "ix_agent_memory_records_scope_lookup",
+            "organization_id",
+            "agent_id",
+            "owner_user_id",
+            "scope",
+            "lifecycle_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    message_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default="agent", index=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False, default="manual")
+    canonical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    content_length: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    policy_flags_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    lifecycle_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="active",
+        index=True,
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class PromptAssemblyManifest(Base):
     __tablename__ = "prompt_assembly_manifests"
     __table_args__ = (
@@ -681,6 +750,70 @@ class PromptAssemblyManifest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ContextAssemblyManifest(Base):
+    __tablename__ = "context_assembly_manifests"
+    __table_args__ = (
+        Index("ix_context_assembly_manifests_org_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    retrieval_session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=True,
+        index=True,
+    )
+    prompt_manifest_id: Mapped[str | None] = mapped_column(
+        ForeignKey("prompt_assembly_manifests.id"),
+        nullable=True,
+        index=True,
+    )
+    active_branch_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_leaf_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False, default="shadow", index=True)
+    token_budget_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    sections_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    included_refs_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    omitted_refs_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    policy_decisions_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    tombstoned_refs_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    context_text_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ContextAssemblyManifestLifecycle(Base):
+    __tablename__ = "context_assembly_manifest_lifecycle"
+    __table_args__ = (
+        CheckConstraint(
+            "lifecycle_status IN ('active', 'tombstoned', 'expired')",
+            name="context_assembly_manifest_lifecycle_status_check",
+        ),
+        Index(
+            "ix_context_assembly_manifest_lifecycle_org_expires",
+            "organization_id",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    context_manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("context_assembly_manifests.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    lifecycle_status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    tombstoned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class KnowledgePolicyAudit(Base):
     __tablename__ = "knowledge_policy_audits"
 
@@ -707,6 +840,8 @@ def _reject_audit_update(_mapper, _connection, target) -> None:
 
 event.listen(PromptAssemblyManifest, "before_update", _reject_audit_update)
 event.listen(PromptAssemblyManifest, "before_delete", _reject_audit_update)
+event.listen(ContextAssemblyManifest, "before_update", _reject_audit_update)
+event.listen(ContextAssemblyManifest, "before_delete", _reject_audit_update)
 event.listen(KnowledgePolicyAudit, "before_update", _reject_audit_update)
 event.listen(KnowledgePolicyAudit, "before_delete", _reject_audit_update)
 

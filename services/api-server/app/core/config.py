@@ -46,6 +46,10 @@ class Settings(BaseSettings):
         default="/tmp/agent-harness/exports",
         alias="OBSERVABILITY_EXPORT_DIR",
     )
+    context_manifest_retention_days: int = Field(
+        default=90,
+        alias="CONTEXT_MANIFEST_RETENTION_DAYS",
+    )
 
     model_config = SettingsConfigDict(
         case_sensitive=True,
