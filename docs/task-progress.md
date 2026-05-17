@@ -21,6 +21,29 @@ The website remains present as a public information shell. Console execution foc
 - Status: `completed`
 - Updated at: `2026-05-14`
 
+## Completed: P6 Groundedness Eval And Observability
+
+Date: 2026-05-18
+
+Status: `P6 Eval-owned grounding quality verified`
+
+Changes:
+- Added `GroundingTraceV1` normalization so Eval owns groundedness pass/fail, failure reasons, citation selectors, fallback expectation/observation, unsupported markers, and forbidden evidence leak status.
+- Scoped forbidden evidence leakage to Eval's normalized evidence package and removed raw `ModelCall.request_json` / `response_json` scanning from leak detection.
+- Added grounding quality metrics and regression gates for grounding pass rate, citation coverage, unsupported marker rate, fallback mismatch, forbidden leak rate, required evidence misses, and low-sample caveats.
+- Added read-only `GET /api/observability/grounding-quality` projection over Eval-owned traces/metrics with no raw forbidden snippet rendering.
+- Updated Run Detail Eval Case save flow to persist objective evidence selectors only: citation keys, retrieval hit IDs, fallback expectation, retrieval session ID, prompt manifest ID, and policy decisions.
+- Updated Eval Harness and Observability UI to display grounding metrics, regression gate state, failure reasons, leak sources, and evidence indexes without client-side quality recomputation.
+
+Verification:
+```text
+cd services/api-server && uv run pytest tests/test_evals.py tests/test_eval_regression.py tests/test_observability.py -q -> 36 passed
+cd services/api-server && uv run ruff check app tests -> passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+cd apps/agent-console && npm test -> 147 passed
+```
+
 ## Completed: P3 Real Policy-Gated Web Research
 
 Date: 2026-05-17

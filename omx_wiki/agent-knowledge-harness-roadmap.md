@@ -226,15 +226,28 @@ deterministic backfill input only. New runtime execution must resolve from enabl
 
 ### P6: Groundedness Eval And Observability
 
-Status: planned.
+Status: completed locally.
 
 Goal: make quality and hallucination control measurable.
 
-Scope:
+Delivered scope:
 
-- groundedness, citation coverage, unsupported-claim, retrieval precision, fallback correctness graders;
-- Observability filters for retrieval sessions, citations, insufficient-evidence, fallback, and unsupported claims;
-- dashboards for token savings, retrieval cost, grounding quality, latency, and policy decisions.
+- Eval-owned `GroundingTraceV1` contract and normalizer with stable failure reasons;
+- deterministic citation selector, retrieval hit selector, required evidence, forbidden evidence, fallback, and unsupported marker checks;
+- forbidden evidence leakage evaluated only by Eval against normalized retrieval, prompt manifest, citation, policy/audit, and model-call binding metadata inputs;
+- no raw `ModelCall.request_json` or `ModelCall.response_json` scanning for forbidden leaks;
+- grounding quality metrics in `EvalRun.metrics_json` and grounding deltas/gates in `RegressionDelta`;
+- read-only `GET /api/observability/grounding-quality` projection over Eval-owned traces/metrics;
+- Eval Harness metric/regression/failure display and Observability grounding-quality UI;
+- Run Detail Eval Case save flow stores objective selectors only and does not infer required/forbidden snippets or unsupported markers.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_evals.py tests/test_eval_regression.py tests/test_observability.py -q` -> `36 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `cd apps/agent-console && npm run lint` -> passed.
+- `cd apps/agent-console && npm run build` -> passed.
+- `cd apps/agent-console && npm test` -> `147 passed`.
 
 ### P7: Release And Demo Hardening
 

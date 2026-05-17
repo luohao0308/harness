@@ -89,3 +89,7 @@
 - **Pages:** none
 - **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
 
+## [2026-05-17T19:09:16.022Z] query
+- **Pages:** none
+- **Summary:** Query "P6 Eval Observability P7 roadmap next task progress" → 0 results (of 0 total)
+

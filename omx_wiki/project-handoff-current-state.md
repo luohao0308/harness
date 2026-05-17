@@ -58,6 +58,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Agent Knowledge Harness P3 real policy-gated web research is completed and pushed through `76f11d5`: Tavily provider adapter, no backend second-hop URL fetch, pre-call and post-result policy gates, DNS/IP URL safety checks, per-run attempt ledger, source-bound web citations, fake-provider hardening, Run Detail evidence, runbook, HTML explanation report, and live Tavily smoke evidence are recorded.
 - Agent Knowledge Harness P4 memory and context router V2 is completed and pushed through `6c4a95d`: backend context assembly manifests, long-term memory records, SQL-level scope filtering, token estimator/drop ordering, pinned-message tagging, compressed-summary schema/model/branch/path checks, model-call context binding, shadow/authoritative feature flag behavior, memory injection flags, and Run Detail context manifest projection are implemented and verified.
 - Agent Knowledge Harness P5 MCP/Skills productization is completed and pushed through `f05816e`: runtime tool authority is now `CapabilityRegistry -> AgentCapabilityAttachment -> immutable CapabilityVersion -> ToolRunner metadata snapshot`, legacy `Agent.tools_json` is only deterministic migration/seed backfill input with no runtime lazy backfill, ToolRunner fails closed without Agent attachment scope, executing test invocation is agent-scoped, admin validation is non-executing, approval decisions resume or fail runs correctly, console tool cards refresh after approval, and Run/ModelCall/ToolCall/Eval artifacts carry capability snapshot refs/hashes.
+- Agent Knowledge Harness P6 groundedness Eval and Observability is completed locally: Eval now owns `GroundingTraceV1`, forbidden evidence leak judgment, grounding metrics, regression deltas/gates, and failure reasons; Observability has a read-only grounding-quality projection; Run Detail saves objective evidence selectors without inferring required/forbidden snippets or unsupported markers.
 - Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
 - P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
 
@@ -190,11 +191,11 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed Agent Knowledge Harness lane is **P5 MCP and Skills productization**. The next planned lane is **P6 Groundedness Eval and Observability**.
+The latest completed Agent Knowledge Harness lane is **P6 Groundedness Eval and Observability**. The next planned lane is **P7 Release And Demo Hardening**.
 
 Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
-- add groundedness/citation/unsupported-claim Eval and Observability surfaces;
+- keep groundedness/citation/unsupported-claim Eval and Observability surfaces regression-tested;
 - keep Docker Compose release and demo validation current.
 
 Useful follow-up rules:
