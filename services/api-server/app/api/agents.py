@@ -126,6 +126,7 @@ from app.knowledge import (
     list_knowledge_sources,
 )
 from app.security.auth import Principal, require_role
+from app.tools.capabilities import CapabilityRegistry
 from app.tools.registry import ToolMetadata, ToolRegistry
 from app.tools.runner import ToolExecution, ToolRunner
 
@@ -173,12 +174,7 @@ def list_agents(session: DbSession, principal: Principal) -> AgentPage:
     require_role(principal, {"admin", "engineer", "operator"})
     ensure_default_agents(session, principal.organization_id)
     session.commit()
-    agents = list(
-        session.execute(
-            select(Agent)
-            .order_by(Agent.id.asc())
-        ).scalars()
-    )
+    agents = list(session.execute(select(Agent).order_by(Agent.id.asc())).scalars())
     return AgentPage(items=agents)
 
 
@@ -276,13 +272,16 @@ def create_agent_knowledge_source(
     if request.scope == "org":
         require_role(principal, {"admin"})
     effective_agent_id = None if request.scope == "org" else agent_id
-    source_was_new = _knowledge_source_exists(
-        session=session,
-        organization_id=principal.organization_id,
-        agent_id=effective_agent_id,
-        name=request.name,
-        idempotency_key=request.idempotency_key,
-    ) is False
+    source_was_new = (
+        _knowledge_source_exists(
+            session=session,
+            organization_id=principal.organization_id,
+            agent_id=effective_agent_id,
+            name=request.name,
+            idempotency_key=request.idempotency_key,
+        )
+        is False
+    )
     try:
         source, document, chunks, embeddings = ingest_knowledge_source(
             session,
@@ -876,8 +875,7 @@ def create_agent_run(
     "/{agent_id}/runs/plan/stream",
     summary="流式创建 Agent Plan",
     description=(
-        "Claude Code 风格入口：用户只提交目标，服务端流式返回计划进度，"
-        "最终创建 Agent Run。"
+        "Claude Code 风格入口：用户只提交目标，服务端流式返回计划进度，最终创建 Agent Run。"
     ),
 )
 def stream_agent_plan_run(
@@ -955,9 +953,7 @@ def stream_agent_chat_run(
         return "Start a normal assistant conversation."
 
     def estimated_input_tokens() -> int:
-        pinned = {
-            node.id for node in request.messages if node.id in set(request.pinned_node_ids)
-        }
+        pinned = {node.id for node in request.messages if node.id in set(request.pinned_node_ids)}
         coverage_ids = (
             set(request.compressed_context.coverage_node_ids)
             if request.compressed_context is not None
@@ -973,9 +969,7 @@ def stream_agent_chat_run(
             node for node in request.messages if node.id in pinned and node not in carried
         ]
         summary_length = (
-            len(request.compressed_context.summary)
-            if request.compressed_context is not None
-            else 0
+            len(request.compressed_context.summary) if request.compressed_context is not None else 0
         )
         content_length = summary_length + sum(
             len(node.content) for node in [*pinned_nodes, *carried]
@@ -1019,6 +1013,259 @@ def stream_agent_chat_run(
         if isinstance(approval_id, str):
             payload["approval_id"] = approval_id
         return payload
+
+    def append_tool_summary(
+        summaries: list[dict],
+        execution: ToolExecution,
+        input_json: dict,
+    ) -> None:
+        tool_call = execution.tool_call
+        output_json = tool_call.output_json if isinstance(tool_call.output_json, dict) else {}
+        approval_id = execution.output.get("approval_id")
+        summaries.append(
+            {
+                "tool_name": tool_call.tool_name,
+                "status": tool_call.status,
+                "input_json": input_json,
+                "output_json": output_json,
+                "output_summary": _tool_output_summary(tool_call, output_json),
+                "error_message": tool_call.error_message,
+                "approval_id": approval_id if isinstance(approval_id, str) else None,
+            }
+        )
+
+    def workspace_tool_delta(summaries: list[dict]) -> str:
+        if not summaries:
+            return "没有可执行的工具请求。\n"
+        sections: list[str] = []
+        for summary in summaries:
+            tool_name = str(summary["tool_name"])
+            status_value = str(summary["status"])
+            output_json = summary["output_json"] if isinstance(summary["output_json"], dict) else {}
+            if status_value == "SUCCESS" and tool_name == "list_files":
+                files = [str(item) for item in output_json.get("files", [])]
+                preview = "\n".join(f"- `{item}`" for item in files[:50])
+                more = f"\n- ...还有 {len(files) - 50} 项未显示" if len(files) > 50 else ""
+                body = f"\n\n{preview}{more}" if preview else ""
+                sections.append(f"已列出工作区文件，共 {len(files)} 项。{body}")
+                continue
+            if status_value == "SUCCESS" and tool_name == "read_file":
+                content = str(output_json.get("content") or "")
+                preview = content[:4000]
+                truncated = "\n\n...内容已截断" if len(content) > len(preview) else ""
+                sections.append(
+                    f"已读取文件，共 {len(content)} 字符。\n\n"
+                    f"```text\n{preview}\n```{truncated}"
+                )
+                continue
+            if status_value == "PENDING_APPROVAL":
+                sections.append(
+                    f"工具 `{tool_name}` 需要审批，已创建审批请求。请在运行详情的审批区域处理。"
+                )
+                continue
+            if status_value == "DENIED":
+                reason = str(summary.get("error_message") or "权限策略拒绝")
+                sections.append(f"工具 `{tool_name}` 被权限策略拒绝：{reason}")
+                continue
+            if status_value in {"FAILED", "TIMEOUT"}:
+                reason = str(summary.get("error_message") or summary.get("output_summary") or "")
+                sections.append(f"工具 `{tool_name}` 执行失败：{reason}")
+                continue
+            sections.append(f"工具 `{tool_name}` 状态：{status_value}")
+        return "\n\n".join(sections).strip() + "\n"
+
+    def workspace_tool_mention_events(
+        *,
+        run_id: str,
+        goal: str,
+        summaries: list[dict],
+    ) -> Iterator[str]:
+        capability_registry = CapabilityRegistry(session, principal.organization_id)
+        registry, registry_snapshot = capability_registry.tool_registry_for_agent(agent_id)
+        static_registry = ToolRegistry.default()
+        run = session.get(Task, run_id)
+        if run is not None:
+            run.capability_snapshot_json = registry_snapshot
+        runner = ToolRunner(
+            session=session,
+            registry=static_registry,
+            agent_id=agent_id,
+            capability_registry=capability_registry,
+        )
+        for index, mention in enumerate(request.tool_mentions):
+            metadata = registry.tools.get(mention.name)
+            fallback_metadata = static_registry.tools.get(mention.name)
+            input_json = _normalize_tool_mention_payload(mention.name, mention.payload, goal)
+            if metadata is None:
+                if fallback_metadata is None:
+                    tool_call_id = f"workspace-tool-{run_id}-{index}"
+                    yield sse(
+                        "tool_call_requested",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": mention.name,
+                            "source": mention.source,
+                            "input_json": input_json,
+                            "status": "failed",
+                            "risk": "unknown",
+                            "sandbox": "none",
+                        },
+                    )
+                    yield sse(
+                        "tool_call_result",
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": mention.name,
+                            "status": "failed",
+                            "output_summary": "unknown tool",
+                            "output_json": {},
+                            "duration_ms": 0,
+                            "trace_id": None,
+                        },
+                    )
+                    summaries.append(
+                        {
+                            "tool_name": mention.name,
+                            "status": "FAILED",
+                            "input_json": input_json,
+                            "output_json": {},
+                            "output_summary": "unknown tool",
+                            "error_message": "unknown tool",
+                            "approval_id": None,
+                        }
+                    )
+                    continue
+                execution = runner.execute(
+                    task_id=run_id,
+                    agent_run_id=None,
+                    tool_name=mention.name,
+                    input_json=input_json,
+                    roles=principal.roles,
+                )
+                session.commit()
+                yield sse(
+                    "tool_call_requested",
+                    requested_tool_payload(
+                        mention,
+                        fallback_metadata,
+                        execution.tool_call.id,
+                        _workspace_tool_status(execution.tool_call.status),
+                        input_json,
+                    ),
+                )
+                yield sse("tool_call_result", result_payload(execution, execution.tool_call.id))
+                append_tool_summary(summaries, execution, input_json)
+                continue
+            executable = (
+                metadata.risk_level == "low"
+                and metadata.idempotent
+                and not metadata.requires_sandbox
+                and metadata.network_policy in {"none", "restricted"}
+            )
+            if not executable:
+                execution = runner.request_approval(
+                    task_id=run_id,
+                    agent_run_id=None,
+                    tool_name=mention.name,
+                    input_json=input_json,
+                )
+                current_run = session.get(Task, run_id)
+                if current_run is not None and execution.tool_call.status == "PENDING_APPROVAL":
+                    current_run.status = "WAITING_APPROVAL"
+                    current_run.updated_at = utc_now()
+                session.commit()
+                approval_id = execution.output.get("approval_id")
+                yield sse(
+                    "tool_call_requested",
+                    requested_tool_payload(
+                        mention,
+                        metadata,
+                        execution.tool_call.id,
+                        _workspace_tool_status(execution.tool_call.status),
+                        input_json,
+                        approval_id if isinstance(approval_id, str) else None,
+                    ),
+                )
+                if execution.tool_call.status != "PENDING_APPROVAL":
+                    yield sse("tool_call_result", result_payload(execution, execution.tool_call.id))
+                append_tool_summary(summaries, execution, input_json)
+                continue
+            execution = runner.execute(
+                task_id=run_id,
+                agent_run_id=None,
+                tool_name=mention.name,
+                input_json=input_json,
+                roles=principal.roles,
+            )
+            session.commit()
+            yield sse(
+                "tool_call_requested",
+                requested_tool_payload(
+                    mention,
+                    metadata,
+                    execution.tool_call.id,
+                    "running",
+                    input_json,
+                ),
+            )
+            yield sse("tool_call_result", result_payload(execution, execution.tool_call.id))
+            append_tool_summary(summaries, execution, input_json)
+
+    def workspace_tool_only_events(
+        *,
+        run: Task,
+        goal: str,
+        started_at: float,
+        first_byte_at: float,
+    ) -> Iterator[str]:
+        run.status = "RUNNING"
+        run.updated_at = utc_now()
+        session.flush()
+        yield sse(
+            "run_created",
+            {
+                "run_id": run.id,
+                "status": run.status,
+                "step_count": 0,
+                "message": "Chat tool run started.",
+            },
+        )
+        summaries: list[dict] = []
+        yield from workspace_tool_mention_events(run_id=run.id, goal=goal, summaries=summaries)
+        content = workspace_tool_delta(summaries)
+        current_run = session.get(Task, run.id)
+        pending_approval = any(summary["status"] == "PENDING_APPROVAL" for summary in summaries)
+        if current_run is not None:
+            current_run.status = "WAITING_APPROVAL" if pending_approval else "COMPLETED"
+            if not pending_approval:
+                current_run.completed_at = utc_now()
+            current_run.updated_at = utc_now()
+        session.commit()
+        yield sse("delta", {"content": content})
+        yield sse(
+            "usage",
+            {
+                "input_tokens": estimated_input_tokens(),
+                "output_tokens": max(1, len(content) // 4),
+                "cost_usd": None,
+                "cost_unavailable": True,
+                "ttfb_ms": int((first_byte_at - started_at) * 1000),
+                "duration_ms": int((time.monotonic() - started_at) * 1000),
+                "model_call_id": None,
+            },
+        )
+        yield sse(
+            "done",
+            {
+                "run_id": run.id,
+                "active_branch_id": request.active_branch_id,
+                "continue_from_node_id": request.continue_from_node_id,
+                "status": _run_status(run.id, fallback=run.status, session=session),
+                "step_count": 0,
+                "message": "Chat tool run completed.",
+                "knowledge_grounding": None,
+            },
+        )
 
     def workspace_text_events(
         *,
@@ -1304,6 +1551,14 @@ def stream_agent_chat_run(
                         model_name=request.model_name,
                     )
                 )
+                if request.tool_mentions:
+                    yield from workspace_tool_only_events(
+                        run=run,
+                        goal=goal,
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                    )
+                    return
                 if request.mode == "codex_plan":
                     yield from workspace_text_events(
                         run=run,
@@ -1352,8 +1607,7 @@ def stream_agent_chat_run(
                         "think_delta",
                         {
                             "content": (
-                                "已读取当前分支、Pinned 消息和上下文窗口，"
-                                "准备生成可审计计划。\n"
+                                "已读取当前分支、Pinned 消息和上下文窗口，准备生成可审计计划。\n"
                             ),
                             "active_leaf_id": request.active_leaf_id,
                             "active_branch_id": request.active_branch_id,
@@ -1372,6 +1626,14 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                     )
+                    if request.tool_mentions:
+                        yield from workspace_tool_only_events(
+                            run=run,
+                            goal=goal,
+                            started_at=started_at,
+                            first_byte_at=first_byte_at,
+                        )
+                        return
                     yield from workspace_text_events(
                         run=run,
                         messages=_workspace_codex_plan_messages(
@@ -1397,6 +1659,14 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                     )
+                    if request.tool_mentions:
+                        yield from workspace_tool_only_events(
+                            run=run,
+                            goal=goal,
+                            started_at=started_at,
+                            first_byte_at=first_byte_at,
+                        )
+                        return
                     yield from workspace_text_events(
                         run=run,
                         messages=_workspace_chat_messages(
@@ -1437,83 +1707,13 @@ def stream_agent_chat_run(
                 "message": planned.message,
             },
         )
-        registry = ToolRegistry.default()
-        runner = ToolRunner(session=session, registry=registry)
+        tool_summaries: list[dict] = []
         if request.tool_mentions:
-            for index, mention in enumerate(request.tool_mentions):
-                metadata = registry.tools.get(mention.name)
-                tool_call_id = f"workspace-tool-{planned.run_id}-{index}"
-                if metadata is None:
-                    yield sse(
-                        "tool_call_requested",
-                        {
-                            "tool_call_id": tool_call_id,
-                            "tool_name": mention.name,
-                            "source": mention.source,
-                            "input_json": mention.payload,
-                            "status": "failed",
-                            "risk": "unknown",
-                            "sandbox": "none",
-                        },
-                    )
-                    yield sse(
-                        "tool_call_result",
-                        {
-                            "tool_call_id": tool_call_id,
-                            "tool_name": mention.name,
-                            "status": "failed",
-                            "output_summary": "unknown tool",
-                            "output_json": {},
-                            "duration_ms": 0,
-                            "trace_id": None,
-                        },
-                    )
-                    continue
-                input_json = _normalize_tool_mention_payload(mention.name, mention.payload, goal)
-                executable = (
-                    metadata.risk_level == "low"
-                    and metadata.idempotent
-                    and not metadata.requires_sandbox
-                    and metadata.network_policy in {"none", "restricted"}
-                )
-                if not executable:
-                    execution = runner.request_approval(
-                        task_id=planned.run_id,
-                        agent_run_id=planned.run_id,
-                        tool_name=mention.name,
-                        input_json=input_json,
-                    )
-                    run = session.get(Task, planned.run_id)
-                    if run is not None:
-                        run.status = "WAITING_APPROVAL"
-                        run.updated_at = utc_now()
-                    session.commit()
-                    approval_id = execution.output.get("approval_id")
-                    yield sse(
-                        "tool_call_requested",
-                        requested_tool_payload(
-                            mention,
-                            metadata,
-                            execution.tool_call.id,
-                            "pending_approval",
-                            input_json,
-                            approval_id if isinstance(approval_id, str) else None,
-                        ),
-                    )
-                    continue
-                yield sse(
-                    "tool_call_requested",
-                    requested_tool_payload(mention, metadata, tool_call_id, "running", input_json),
-                )
-                execution = runner.execute(
-                    task_id=planned.run_id,
-                    agent_run_id=planned.run_id,
-                    tool_name=mention.name,
-                    input_json=input_json,
-                    roles=principal.roles,
-                )
-                session.commit()
-                yield sse("tool_call_result", result_payload(execution, tool_call_id))
+            yield from workspace_tool_mention_events(
+                run_id=planned.run_id,
+                goal=goal,
+                summaries=tool_summaries,
+            )
         plan_json = planned.plan.plan_json
         summary = planned.plan.summary or planned.message
         yield sse("delta", {"content": f"{summary}\n"})
@@ -1759,8 +1959,11 @@ def plan_with_agent(
     principal: Principal,
 ) -> AgentPlanResponse:
     require_role(principal, {"admin", "engineer"})
+    ensure_default_agents(session, principal.organization_id)
+    _get_agent(agent_id=request.agent_id, session=session, principal=principal)
     task = Task(
         organization_id=principal.organization_id,
+        agent_id=request.agent_id,
         created_by=principal.user_id,
         title=request.title or _title_from_goal(request.goal),
         goal=request.goal,
@@ -1776,6 +1979,9 @@ def plan_with_agent(
     )
     session.add(task)
     session.flush()
+    capability_registry = CapabilityRegistry(session, principal.organization_id)
+    _registry, capability_snapshot = capability_registry.tool_registry_for_agent(request.agent_id)
+    task.capability_snapshot_json = capability_snapshot
     event_store = EventStore(session)
     event_store.append(
         task_id=task.id,
@@ -2319,8 +2525,7 @@ def _repair_plan_prompt(*, task: Task, invalid_content: str, session: Session) -
                     ModelMessage(
                         role="user",
                         content=(
-                            "Task goal:\n"
-                            f"{task.goal}\n\nInvalid Planner output:\n{invalid_content}"
+                            f"Task goal:\n{task.goal}\n\nInvalid Planner output:\n{invalid_content}"
                         ),
                     ),
                 ],
@@ -2343,6 +2548,7 @@ def _create_workspace_chat_run(
 ) -> Task:
     task = Task(
         organization_id=principal.organization_id,
+        agent_id=agent_id,
         created_by=principal.user_id,
         title=_title_from_goal(goal),
         goal=goal,
@@ -2358,6 +2564,9 @@ def _create_workspace_chat_run(
     )
     session.add(task)
     session.flush()
+    capability_registry = CapabilityRegistry(session, principal.organization_id)
+    _registry, capability_snapshot = capability_registry.tool_registry_for_agent(agent_id)
+    task.capability_snapshot_json = capability_snapshot
     EventStore(session).append(
         task_id=task.id,
         event_type=EventType.TASK_CREATED,
@@ -2543,7 +2752,7 @@ def _workspace_compression_prompt(nodes: list) -> str:
         if not content:
             continue
         blocks.append(
-            f"\n<message id=\"{node.id}\" role=\"{node.role}\" state=\"{node.state}\">\n"
+            f'\n<message id="{node.id}" role="{node.role}" state="{node.state}">\n'
             f"{content}\n"
             "</message>"
         )
@@ -2560,8 +2769,7 @@ def _workspace_attachment_context(request: AgentChatStreamRequest) -> str:
             return ""
         return (
             "User selected attachments, but their contents were not provided to the model. "
-            "Do not infer or fabricate their contents. File names: "
-            + ", ".join(attachment_names)
+            "Do not infer or fabricate their contents. File names: " + ", ".join(attachment_names)
         )
 
     blocks = [
@@ -2581,15 +2789,15 @@ def _workspace_attachment_context(request: AgentChatStreamRequest) -> str:
                 else ""
             )
             blocks.append(
-                f"\n<attachment index=\"{index}\" name=\"{name}\" mime=\"{mime_type}\" "
-                f"size_bytes=\"{size}\" status=\"readable{truncated_note}\">\n"
+                f'\n<attachment index="{index}" name="{name}" mime="{mime_type}" '
+                f'size_bytes="{size}" status="readable{truncated_note}">\n'
                 f"{content}\n</attachment>"
             )
         else:
             reason = "read failed" if status == "error" else "content unavailable to this model"
             blocks.append(
-                f"\n<attachment index=\"{index}\" name=\"{name}\" mime=\"{mime_type}\" "
-                f"size_bytes=\"{size}\" status=\"unreadable\" reason=\"{reason}\" />"
+                f'\n<attachment index="{index}" name="{name}" mime="{mime_type}" '
+                f'size_bytes="{size}" status="unreadable" reason="{reason}" />'
             )
     return "\n".join(blocks)
 
@@ -2686,11 +2894,15 @@ def _latest_plan(*, run_id: str, session: Session) -> ExecutionPlan | None:
 
 
 def _latest_model_call_id(run_id: str, *, session: Session) -> str | None:
-    model_call = session.execute(
-        select(ModelCall)
-        .where(ModelCall.task_id == run_id)
-        .order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
-    ).scalars().first()
+    model_call = (
+        session.execute(
+            select(ModelCall)
+            .where(ModelCall.task_id == run_id)
+            .order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
+        )
+        .scalars()
+        .first()
+    )
     return model_call.id if model_call is not None else None
 
 
@@ -2820,10 +3032,7 @@ async def _parse_knowledge_multipart_upload(request: Request) -> dict[str, str |
         body_parts.append(chunk)
     body = b"".join(body_parts)
     message = BytesParser(policy=email_default_policy).parsebytes(
-        b"Content-Type: "
-        + content_type.encode("utf-8")
-        + b"\r\nMIME-Version: 1.0\r\n\r\n"
-        + body
+        b"Content-Type: " + content_type.encode("utf-8") + b"\r\nMIME-Version: 1.0\r\n\r\n" + body
     )
     fields: dict[str, str] = {}
     file_payload: bytes | None = None
@@ -3002,6 +3211,7 @@ def _record_knowledge_ingestion_events(
     now = utc_now()
     audit_task = Task(
         organization_id=principal.organization_id,
+        agent_id=agent_id,
         created_by=principal.user_id,
         title=f"Knowledge ingestion: {source.name}",
         goal=f"Index knowledge document {document.title}",
@@ -3094,10 +3304,7 @@ def _normalize_grounding_citations(
     normalized = re.sub(r"\[(?:(?:web-)?\d+|W\d+)\]", replace_invalid, content)
     if not invalid_keys:
         return content
-    return (
-        f"{normalized}\n\nUnsupported citations removed: "
-        f"{len(invalid_keys)}"
-    )
+    return f"{normalized}\n\nUnsupported citations removed: {len(invalid_keys)}"
 
 
 def _knowledge_source_response(
@@ -3144,20 +3351,22 @@ def _knowledge_document_responses(
     )
     if limit is not None:
         statement = statement.limit(limit)
-    documents = list(
-        session.execute(statement).scalars()
-    )
+    documents = list(session.execute(statement).scalars())
     document_ids = [document.id for document in documents]
-    chunk_counts = dict(
-        session.execute(
-            select(KnowledgeChunk.document_id, func.count(KnowledgeChunk.id))
-            .where(
-                KnowledgeChunk.document_id.in_(document_ids),
-                KnowledgeChunk.status == "ACTIVE",
-            )
-            .group_by(KnowledgeChunk.document_id)
-        ).all()
-    ) if document_ids else {}
+    chunk_counts = (
+        dict(
+            session.execute(
+                select(KnowledgeChunk.document_id, func.count(KnowledgeChunk.id))
+                .where(
+                    KnowledgeChunk.document_id.in_(document_ids),
+                    KnowledgeChunk.status == "ACTIVE",
+                )
+                .group_by(KnowledgeChunk.document_id)
+            ).all()
+        )
+        if document_ids
+        else {}
+    )
     return [
         KnowledgeDocumentResponse.model_validate(document).model_copy(
             update={"chunk_count": int(chunk_counts.get(document.id, 0))}
@@ -3296,8 +3505,7 @@ def _knowledge_grounding_response(
         fixture_grounded=bool(outcome_source.get("fixture_grounded") or False),
         verified_grounded=bool(outcome_source.get("verified_grounded") or False),
         grounding_verification_reason=str(
-            outcome_source.get("grounding_verification_reason")
-            or "no_verified_evidence"
+            outcome_source.get("grounding_verification_reason") or "no_verified_evidence"
         ),
         evidence_summary=evidence_summary,
         inferred_fallback=inferred_fallback,
@@ -3473,11 +3681,15 @@ def update_agent_memory_lifecycle(
 
 
 def _trace_id_for_tool_call(tool_call_id: str, *, session: Session) -> str | None:
-    event = session.execute(
-        select(AgentEvent)
-        .where(AgentEvent.payload_json["tool_call_id"].as_string() == tool_call_id)
-        .order_by(AgentEvent.sequence.desc())
-    ).scalars().first()
+    event = (
+        session.execute(
+            select(AgentEvent)
+            .where(AgentEvent.payload_json["tool_call_id"].as_string() == tool_call_id)
+            .order_by(AgentEvent.sequence.desc())
+        )
+        .scalars()
+        .first()
+    )
     return event.trace_id if event is not None else None
 
 
@@ -3524,6 +3736,8 @@ def _model_call_response(
         duration_ms=model_call.duration_ms,
         grounding_correlation_id=model_call.grounding_correlation_id,
         prompt_manifest_id=model_call.prompt_manifest_id,
+        context_manifest_id=model_call.context_manifest_id,
+        capability_snapshot_json=model_call.capability_snapshot_json,
         model_request_sha256=model_call.model_request_sha256,
         model_request_hash_schema_version=model_call.model_request_hash_schema_version,
         request_message_hashes_json=model_call.request_message_hashes_json,
@@ -3552,6 +3766,13 @@ def _tool_call_response(
         tool_name=tool_call.tool_name,
         status=tool_call.status,
         risk_level=tool_call.risk_level,
+        capability_id=tool_call.capability_id,
+        capability_version_id=tool_call.capability_version_id,
+        capability_type=tool_call.capability_type,
+        capability_content_sha256=tool_call.capability_content_sha256,
+        capability_config_sha256=tool_call.capability_config_sha256,
+        capability_schema_version=tool_call.capability_schema_version,
+        capability_snapshot_json=tool_call.capability_snapshot_json,
         requires_sandbox=tool_call.requires_sandbox,
         sandbox_id=tool_call.sandbox_id,
         duration_ms=tool_call.duration_ms,

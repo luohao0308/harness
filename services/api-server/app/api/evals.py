@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.registry import ensure_default_agents
 from app.api.schemas import (
     EvalCaseCreateRequest,
     EvalCaseFromRunRequest,
@@ -41,6 +42,7 @@ from app.db.session import get_db_session
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.security.auth import Principal
+from app.tools.capabilities import CapabilityRegistry
 
 router = APIRouter(prefix="/evals", tags=["evals"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -105,8 +107,7 @@ def list_eval_datasets(
     counts = _case_counts(session, [dataset.id for dataset in datasets])
     return EvalDatasetPage(
         items=[
-            _dataset_response(dataset, case_count=counts.get(dataset.id, 0))
-            for dataset in datasets
+            _dataset_response(dataset, case_count=counts.get(dataset.id, 0)) for dataset in datasets
         ]
     )
 
@@ -130,6 +131,7 @@ def create_eval_case(
         source_task_id=None,
         input_json=request.input_json,
         expected_json=request.expected_json,
+        capability_snapshot_json={},
         tags_json=request.tags_json,
         created_at=utc_now(),
     )
@@ -191,6 +193,7 @@ def create_eval_case_from_run(
     eval_case = EvalCase(
         dataset_id=dataset.id,
         source_task_id=task.id,
+        capability_snapshot_json=task.capability_snapshot_json,
         input_json={
             "task_id": task.id,
             "title": task.title,
@@ -278,6 +281,11 @@ def create_eval_run(
         organization_id=principal.organization_id,
         agent_id=request.agent_id,
         status="RUNNING",
+        capability_snapshot_json=_eval_run_capability_snapshot(
+            session=session,
+            organization_id=principal.organization_id,
+            agent_id=request.agent_id,
+        ),
         metrics_json={},
         created_by=principal.user_id,
         started_at=utc_now(),
@@ -459,9 +467,7 @@ def get_regression_delta(
         ).scalars()
     )
     current_results = list(
-        session.execute(
-            select(EvalResult).where(EvalResult.eval_run_id == eval_run.id)
-        ).scalars()
+        session.execute(select(EvalResult).where(EvalResult.eval_run_id == eval_run.id)).scalars()
     )
     baseline_metrics = _aggregate_metrics(baseline_results)
     current_metrics = _aggregate_metrics(current_results)
@@ -628,9 +634,8 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
                 "grounding_failures": ["missing_prompt_manifest"],
                 "inferred_fallback": False,
             }
-        if (
+        if requested_retrieval_session_id and prompt_manifest.retrieval_session_id != str(
             requested_retrieval_session_id
-            and prompt_manifest.retrieval_session_id != str(requested_retrieval_session_id)
         ):
             return {
                 "grader": "deterministic_grounding_grader_v1",
@@ -693,9 +698,7 @@ def _grade_grounding_contract(session: Session, task: Task | None, expected_json
         ).scalars()
     )
     model_calls = list(
-        session.execute(
-            select(ModelCall).where(ModelCall.task_id == task.id)
-        ).scalars()
+        session.execute(select(ModelCall).where(ModelCall.task_id == task.id)).scalars()
     )
     outcome_source = (
         prompt_manifest.metadata_json
@@ -823,6 +826,7 @@ def _eval_run_response(eval_run: EvalRun, results: list[EvalResult]) -> EvalRunR
         organization_id=eval_run.organization_id,
         agent_id=eval_run.agent_id,
         status=eval_run.status,
+        capability_snapshot_json=eval_run.capability_snapshot_json,
         metrics_json=eval_run.metrics_json,
         created_by=eval_run.created_by,
         started_at=eval_run.started_at,
@@ -832,6 +836,21 @@ def _eval_run_response(eval_run: EvalRun, results: list[EvalResult]) -> EvalRunR
             EvalResultResponse.model_validate(result, from_attributes=True) for result in results
         ],
     )
+
+
+def _eval_run_capability_snapshot(
+    *,
+    session: Session,
+    organization_id: str,
+    agent_id: str | None,
+) -> dict:
+    if agent_id is None:
+        return {}
+    ensure_default_agents(session, organization_id)
+    _registry, snapshot = CapabilityRegistry(session, organization_id).tool_registry_for_agent(
+        agent_id
+    )
+    return snapshot
 
 
 def _audit(

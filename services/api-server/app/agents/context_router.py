@@ -352,8 +352,7 @@ class ContextAssemblyService:
             sections.append(rag_section)
 
         if goal.strip() and not any(
-            section.role == "user" and section.text.strip() == goal.strip()
-            for section in sections
+            section.role == "user" and section.text.strip() == goal.strip() for section in sections
         ):
             sections.append(
                 ContextSection(
@@ -376,9 +375,7 @@ class ContextAssemblyService:
         if prompt_manifest is None:
             return None
         metadata = (
-            prompt_manifest.metadata_json
-            if isinstance(prompt_manifest.metadata_json, dict)
-            else {}
+            prompt_manifest.metadata_json if isinstance(prompt_manifest.metadata_json, dict) else {}
         )
         evidence_text = self._prompt_manifest_evidence_text(prompt_manifest=prompt_manifest)
         if not evidence_text:
@@ -414,9 +411,7 @@ class ContextAssemblyService:
                 if isinstance(value, str) and value.strip():
                     return value.strip()
         metadata = (
-            prompt_manifest.metadata_json
-            if isinstance(prompt_manifest.metadata_json, dict)
-            else {}
+            prompt_manifest.metadata_json if isinstance(prompt_manifest.metadata_json, dict) else {}
         )
         metadata_evidence = str(metadata.get("evidence_summary") or "").strip()
         if metadata_evidence:
@@ -720,11 +715,10 @@ class ContextAssemblyService:
             if status == "ready" and content:
                 snippet = content[:6000]
                 blocks.append(
-                    f"\n<attachment name=\"{name}\" status=\"ready\">\n"
-                    f"{snippet}\n</attachment>"
+                    f'\n<attachment name="{name}" status="ready">\n{snippet}\n</attachment>'
                 )
             else:
-                blocks.append(f"\n<attachment name=\"{name}\" status=\"unavailable\" />")
+                blocks.append(f'\n<attachment name="{name}" status="unavailable" />')
         return "\n".join(blocks)
 
     def _apply_budget(
@@ -1078,9 +1072,7 @@ class RunContextRouter:
                     "tool_name": call.tool_name,
                     "status": call.status,
                     "query": (
-                        call.input_json.get("query")
-                        if isinstance(call.input_json, dict)
-                        else None
+                        call.input_json.get("query") if isinstance(call.input_json, dict) else None
                     ),
                     "summary": self._summarize_json(call.output_json),
                 }
@@ -1162,9 +1154,7 @@ class RunContextRouter:
         )
         model_class = str(policy_entry.get("model_class") or task_type)
         decision_source = (
-            "task override"
-            if explicit_task_model or explicit_task_provider
-            else "routing policy"
+            "task override" if explicit_task_model or explicit_task_provider else "routing policy"
         )
         reason = (
             f"task_type={task_type}; {decision_source} "

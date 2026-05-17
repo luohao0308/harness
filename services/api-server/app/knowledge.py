@@ -99,6 +99,7 @@ class KnowledgeIngestionError(ValueError):
         self.source = source
         self.document = document
 
+
 ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
 CJK_TOKEN_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]")
 CJK_STOP_CHARS = set("的了什么吗呢啊呀吧请看查找一下里面里写有是我你他她它们这那哪")
@@ -201,9 +202,7 @@ def _tokenize(value: str) -> list[str]:
     normalized = _normalize_text(value)
     tokens = [token.lower() for token in ASCII_TOKEN_RE.findall(normalized)]
     cjk_tokens = [
-        token
-        for token in CJK_TOKEN_RE.findall(normalized)
-        if token not in CJK_STOP_CHARS
+        token for token in CJK_TOKEN_RE.findall(normalized) if token not in CJK_STOP_CHARS
     ]
     tokens.extend(cjk_tokens)
     return tokens
@@ -220,11 +219,7 @@ def _is_single_cjk_strong_match(
         tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument, KnowledgeSource]
     ],
 ) -> bool:
-    return (
-        len(top_candidates) == 1
-        and top_candidates[0][0] >= 0.95
-        and _has_cjk_signal(query)
-    )
+    return len(top_candidates) == 1 and top_candidates[0][0] >= 0.95 and _has_cjk_signal(query)
 
 
 def _fake_embedding(value: str, *, dimensions: int = 24) -> list[float]:
@@ -1129,9 +1124,7 @@ def _record_retrieval_event(
         },
     )
     retrieval_metadata = (
-        retrieval_session.metadata_json
-        if isinstance(retrieval_session.metadata_json, dict)
-        else {}
+        retrieval_session.metadata_json if isinstance(retrieval_session.metadata_json, dict) else {}
     )
     web_attempt = retrieval_metadata.get("web_research_attempt")
     if web_sources or web_attempt:
@@ -1534,8 +1527,7 @@ def _run_web_research_fallback(
         return [], audits, metadata
 
     api_key_present = (
-        bool(resolve_web_research_api_key(provider))
-        or provider == WEB_RESEARCH_PROVIDER_FAKE
+        bool(resolve_web_research_api_key(provider)) or provider == WEB_RESEARCH_PROVIDER_FAKE
     )
     calls_used = _web_provider_calls_used(
         session,
@@ -1933,9 +1925,7 @@ def ground_query(
                         "source_name_snapshot": hit_metadata.get("source_name_snapshot"),
                         "document_id": hit.document_id,
                         "document_version": hit.document_version,
-                        "document_title_snapshot": hit_metadata.get(
-                            "document_title_snapshot"
-                        ),
+                        "document_title_snapshot": hit_metadata.get("document_title_snapshot"),
                         "document_content_sha256": hit_metadata.get("document_content_sha256"),
                         "chunk_id": hit.chunk_id,
                         "chunk_version": hit_metadata.get("chunk_version"),
@@ -1958,9 +1948,7 @@ def ground_query(
             query=query,
         )
         for rank, source in enumerate(web_sources, start=1):
-            source_metadata = (
-                source.metadata_json if isinstance(source.metadata_json, dict) else {}
-            )
+            source_metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
             hit = RetrievalHit(
                 retrieval_session_id=retrieval_session.id,
                 chunk_id=None,
@@ -2044,9 +2032,7 @@ def ground_query(
         "local_insufficient": local_status != "sufficient",
         "local_hit_count": len(top_candidates),
         "local_best_score": top_candidates[0][0] if top_candidates else 0.0,
-        "fallback_trigger_reason": (
-            sufficiency_reason if local_status != "sufficient" else None
-        ),
+        "fallback_trigger_reason": (sufficiency_reason if local_status != "sufficient" else None),
         **web_research_metadata,
         **grounding_outcome,
     }
@@ -2120,9 +2106,7 @@ def ground_query(
         grounding_provider=str(grounding_outcome["grounding_provider"]),
         fixture_grounded=bool(grounding_outcome["fixture_grounded"]),
         verified_grounded=bool(grounding_outcome["verified_grounded"]),
-        grounding_verification_reason=str(
-            grounding_outcome["grounding_verification_reason"]
-        ),
+        grounding_verification_reason=str(grounding_outcome["grounding_verification_reason"]),
         evidence_summary=evidence_summary,
         evidence_message=evidence_message,
     )

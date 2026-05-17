@@ -35,8 +35,7 @@ from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
 
 RUN_COMPATIBILITY_DESCRIPTION = (
-    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs "
-    "和 /api/agents/runs/*。"
+    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。"
 )
 
 router = APIRouter(tags=["subagents"])

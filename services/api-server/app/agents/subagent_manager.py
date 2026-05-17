@@ -47,6 +47,7 @@ class SubagentManager:
             agent_type="subagent",
             status="PENDING",
             context_json=assignment,
+            capability_snapshot_json=task.capability_snapshot_json,
             timeout_at=timeout_at_from_now(timeout_seconds),
         )
         self.session.add(agent_run)

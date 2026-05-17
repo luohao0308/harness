@@ -121,8 +121,7 @@ class DAGScheduler:
         # Special case: all empty depends_on → linear execution
         if all(len(step.depends_on) == 0 for step in plan.steps):
             return [
-                ExecutionGroup(steps=[step], group_index=i)
-                for i, step in enumerate(plan.steps)
+                ExecutionGroup(steps=[step], group_index=i) for i, step in enumerate(plan.steps)
             ]
 
         # Build in-degree map and adjacency list
@@ -137,9 +136,7 @@ class DAGScheduler:
 
         # Kahn's algorithm with level-based grouping
         groups: list[ExecutionGroup] = []
-        queue: deque[str] = deque(
-            key for key, degree in in_degree.items() if degree == 0
-        )
+        queue: deque[str] = deque(key for key, degree in in_degree.items() if degree == 0)
 
         group_index = 0
         while queue:

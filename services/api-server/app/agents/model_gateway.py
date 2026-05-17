@@ -178,8 +178,7 @@ def normalize_model_settings(settings: dict | None) -> dict:
         provider
         for provider in providers
         if not (
-            isinstance(provider, dict)
-            and provider.get("name") in LEGACY_BUILTIN_PROVIDER_NAMES
+            isinstance(provider, dict) and provider.get("name") in LEGACY_BUILTIN_PROVIDER_NAMES
         )
     ]
     for provider in defaults["providers"]:
@@ -250,9 +249,7 @@ class ModelRateLimiter:
         timestamps = [
             timestamp for timestamp in cls._calls.get(key, []) if timestamp >= window_start
         ]
-        token_entries = [
-            entry for entry in cls._tokens.get(key, []) if entry[0] >= window_start
-        ]
+        token_entries = [entry for entry in cls._tokens.get(key, []) if entry[0] >= window_start]
         if rpm > 0 and len(timestamps) >= rpm:
             cls._calls[key] = timestamps
             cls._tokens[key] = token_entries
@@ -326,9 +323,7 @@ class ModelCircuitBreaker:
         return {
             "status": "open" if is_open else "closed",
             "consecutive_failures": int(state.get("consecutive_failures") or 0),
-            "opened_until": datetime.fromtimestamp(opened_until).isoformat()
-            if is_open
-            else None,
+            "opened_until": datetime.fromtimestamp(opened_until).isoformat() if is_open else None,
         }
 
     @classmethod
@@ -669,9 +664,7 @@ class AnthropicCompatibleModelGateway:
 
     def _normalize_usage(self, usage: dict) -> dict:
         prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-        completion_tokens = int(
-            usage.get("completion_tokens") or usage.get("output_tokens") or 0
-        )
+        completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
         return {
             **usage,
             "prompt_tokens": prompt_tokens,
@@ -753,9 +746,7 @@ class AnthropicCompatibleModelGateway:
                         continue
                     last_frame = frame
                     ftype = (
-                        frame.get("type")
-                        if isinstance(frame.get("type"), str)
-                        else current_event
+                        frame.get("type") if isinstance(frame.get("type"), str) else current_event
                     )
                     if ftype == "content_block_delta":
                         delta = frame.get("delta") or {}
@@ -822,14 +813,10 @@ class ModelSettingsResolver:
             model_name = default_model
         provider = self._provider(settings=settings, provider_name=provider_name)
         rpm = int(
-            provider.get("rate_limit_rpm")
-            or settings.get("rate_limits", {}).get("rpm")
-            or 600
+            provider.get("rate_limit_rpm") or settings.get("rate_limits", {}).get("rpm") or 600
         )
         tpm = int(
-            provider.get("rate_limit_tpm")
-            or settings.get("rate_limits", {}).get("tpm")
-            or 120000
+            provider.get("rate_limit_tpm") or settings.get("rate_limits", {}).get("tpm") or 120000
         )
         circuit_breaker = {
             **dict(settings.get("circuit_breaker") or {}),
@@ -1025,6 +1012,12 @@ class AuditedModelGateway:
         self.evidence_text_sha256 = evidence_text_sha256
         self.context_manifest_id = context_manifest_id
 
+    def _capability_snapshot_json(self) -> dict:
+        task = self.session.get(Task, self.task_id)
+        if task is None or not isinstance(task.capability_snapshot_json, dict):
+            return {}
+        return task.capability_snapshot_json
+
     def _generation_parameters(self, provider: dict) -> dict:
         parameters: dict = {}
         if provider.get("max_output_tokens") is not None:
@@ -1114,9 +1107,7 @@ class AuditedModelGateway:
         started_at = time.monotonic()
         generation_parameters = self._generation_parameters(settings.provider)
         request_message_hashes = self._request_message_hashes(request_payload)
-        request_message_hashes_sha256 = self._request_message_hashes_sha256(
-            request_message_hashes
-        )
+        request_message_hashes_sha256 = self._request_message_hashes_sha256(request_message_hashes)
         model_request_sha256 = self._model_request_sha256(
             request_payload,
             generation_parameters=generation_parameters,
@@ -1135,6 +1126,7 @@ class AuditedModelGateway:
             grounding_correlation_id=self.grounding_correlation_id,
             prompt_manifest_id=self.prompt_manifest_id,
             context_manifest_id=self.context_manifest_id,
+            capability_snapshot_json=self._capability_snapshot_json(),
             model_request_sha256=model_request_sha256,
             model_request_hash_schema_version=2,
             request_message_hashes_json=request_message_hashes,
@@ -1182,12 +1174,8 @@ class AuditedModelGateway:
             if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
                 ModelCircuitBreaker.record_failure(
                     key=circuit_key,
-                    failure_threshold=int(
-                        settings.circuit_breaker.get("failure_threshold") or 3
-                    ),
-                    cooldown_seconds=int(
-                        settings.circuit_breaker.get("cooldown_seconds") or 60
-                    ),
+                    failure_threshold=int(settings.circuit_breaker.get("failure_threshold") or 3),
+                    cooldown_seconds=int(settings.circuit_breaker.get("cooldown_seconds") or 60),
                 )
             model_call.status = "FAILED"
             model_call.terminal_status = "failed"
@@ -1440,9 +1428,7 @@ class AuditedModelGateway:
         started_at = time.monotonic()
         generation_parameters = self._generation_parameters(settings.provider)
         request_message_hashes = self._request_message_hashes(request_payload)
-        request_message_hashes_sha256 = self._request_message_hashes_sha256(
-            request_message_hashes
-        )
+        request_message_hashes_sha256 = self._request_message_hashes_sha256(request_message_hashes)
         model_request_sha256 = self._model_request_sha256(
             request_payload,
             generation_parameters=generation_parameters,
@@ -1461,6 +1447,7 @@ class AuditedModelGateway:
             grounding_correlation_id=self.grounding_correlation_id,
             prompt_manifest_id=self.prompt_manifest_id,
             context_manifest_id=self.context_manifest_id,
+            capability_snapshot_json=self._capability_snapshot_json(),
             model_request_sha256=model_request_sha256,
             model_request_hash_schema_version=2,
             request_message_hashes_json=request_message_hashes,
@@ -1548,12 +1535,8 @@ class AuditedModelGateway:
             if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
                 ModelCircuitBreaker.record_failure(
                     key=circuit_key,
-                    failure_threshold=int(
-                        settings.circuit_breaker.get("failure_threshold") or 3
-                    ),
-                    cooldown_seconds=int(
-                        settings.circuit_breaker.get("cooldown_seconds") or 60
-                    ),
+                    failure_threshold=int(settings.circuit_breaker.get("failure_threshold") or 3),
+                    cooldown_seconds=int(settings.circuit_breaker.get("cooldown_seconds") or 60),
                 )
             model_call.status = "FAILED"
             model_call.terminal_status = "failed"

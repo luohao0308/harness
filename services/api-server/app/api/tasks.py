@@ -58,11 +58,11 @@ from app.observability.metrics import (
 )
 from app.sandbox.docker_manager import DockerManager
 from app.security.auth import Principal, require_role
+from app.tools.capabilities import CapabilityRegistry, redact_secrets
 from app.tools.runner import ToolRunner
 
 RUN_COMPATIBILITY_DESCRIPTION = (
-    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs "
-    "和 /api/agents/runs/*。"
+    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。"
 )
 
 router = APIRouter(
@@ -89,8 +89,7 @@ def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task
     status_code=status.HTTP_201_CREATED,
     summary="兼容层：创建 Agent Run 记录",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 创建一条 Agent Run 兼容记录，"
-        "并写入 TASK_CREATED 事件。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 创建一条 Agent Run 兼容记录，并写入 TASK_CREATED 事件。"
     ),
 )
 def create_task(
@@ -131,8 +130,7 @@ def create_task(
     response_model=TaskPage,
     summary="兼容层：查询 Agent Run 列表",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 按组织查询 Agent Run 列表，"
-        "支持状态过滤和分页大小。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 按组织查询 Agent Run 列表，支持状态过滤和分页大小。"
     ),
 )
 def list_tasks(
@@ -170,9 +168,7 @@ def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     task = get_owned_task(task_id, session, principal.organization_id)
     if task.status not in {"CREATED", "FAILED"}:
         plan_exists = session.execute(
-            select(ExecutionPlan.id)
-            .where(ExecutionPlan.task_id == task.id)
-            .limit(1)
+            select(ExecutionPlan.id).where(ExecutionPlan.task_id == task.id).limit(1)
         ).scalar_one_or_none()
         # Workspace chat/codex_plan can produce a COMPLETED run without a plan DAG.
         # Allow one-way promotion into full Harness execution on the same run identity.
@@ -409,8 +405,7 @@ def get_task_result(task_id: str, session: DbSession, principal: Principal) -> T
     response_model=TaskPlanResponse,
     summary="兼容层：查询 Agent Run Plan",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 最新执行计划，"
-        "并合并已落库步骤的当前状态。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 最新执行计划，并合并已落库步骤的当前状态。"
     ),
 )
 def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> TaskPlanResponse:
@@ -463,9 +458,7 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
         summary=plan.plan_json.get("summary"),
         planner_source=str(plan.plan_json.get("planner_source", "deterministic")),
         planner_attempts=int(plan.plan_json.get("planner_attempts", 1) or 1),
-        planner_prompt_version=str(
-            plan.plan_json.get("planner_prompt_version") or "1.1.0"
-        ),
+        planner_prompt_version=str(plan.plan_json.get("planner_prompt_version") or "1.1.0"),
         quality_score=int(plan.plan_json.get("quality_score", 100) or 100),
         validation_warnings=_string_list(plan.plan_json.get("validation_warnings")),
         quality_gates=(
@@ -484,8 +477,7 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
     response_model=TaskPlanVersionPage,
     summary="兼容层：查询 Agent Run Plan 版本",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 全部执行计划版本，"
-        "用于计划变更对比。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回 Agent Run 全部执行计划版本，用于计划变更对比。"
     ),
 )
 def list_task_plan_versions(
@@ -509,8 +501,7 @@ def list_task_plan_versions(
     response_model=TaskPlanDiffResponse,
     summary="兼容层：对比 Agent Run Plan 版本",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 按两个 Agent Run 计划版本对比步骤新增、"
-        "移除和变更。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 按两个 Agent Run 计划版本对比步骤新增、移除和变更。"
     ),
 )
 def diff_task_plan_versions(
@@ -627,10 +618,7 @@ def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> 
         session=session,
     )
     return ModelCallPage(
-        items=[
-            _to_model_call_response(call, trace_id=trace_ids.get(call.id))
-            for call in calls
-        ]
+        items=[_to_model_call_response(call, trace_id=trace_ids.get(call.id)) for call in calls]
     )
 
 
@@ -676,10 +664,7 @@ def list_tool_calls(
         session=session,
     )
     return ToolCallPage(
-        items=[
-            _to_tool_call_response(call, trace_id=trace_ids.get(call.id))
-            for call in calls
-        ]
+        items=[_to_tool_call_response(call, trace_id=trace_ids.get(call.id)) for call in calls]
     )
 
 
@@ -689,8 +674,7 @@ def list_tool_calls(
     status_code=status.HTTP_202_ACCEPTED,
     summary="兼容层：执行工具",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 按工具注册表和策略执行工具，"
-        "并写入工具调用审计与事件流。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 按工具注册表和策略执行工具，并写入工具调用审计与事件流。"
     ),
 )
 def execute_task_tool(
@@ -708,6 +692,7 @@ def execute_task_tool(
     execution = ToolRunner(
         session=session,
         workspace_root=Path(__file__).resolve().parents[2],
+        agent_id=task.agent_id or "__missing_agent__",
     ).execute(
         task_id=task.id,
         tool_name=request.tool_name,
@@ -885,13 +870,14 @@ def _decide_tool_approval(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工具调用未找到")
 
     if modified_input_json is not None:
+        safe_modified_input_json = redact_secrets(modified_input_json)
         request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
         approval.request_json = {
             **request_json,
-            "input_json": modified_input_json,
+            "input_json": safe_modified_input_json,
             "modified": True,
         }
-        tool_call.input_json = modified_input_json
+        tool_call.input_json = safe_modified_input_json
 
     approval.status = decision
     approval.decided_by = principal.user_id
@@ -922,6 +908,23 @@ def _decide_tool_approval(
         actor_type="user",
         actor_id=principal.user_id,
     )
+    if decision == "APPROVED":
+        _execute_approved_tool_call(
+            task=task,
+            tool_call=tool_call,
+            approval=approval,
+            session=session,
+            principal=principal,
+        )
+    else:
+        _advance_task_after_tool_approval(
+            task=task,
+            tool_call=tool_call,
+            approval=approval,
+            step_completed=False,
+            session=session,
+            principal=principal,
+        )
     session.commit()
     approvals = list(
         session.execute(
@@ -931,6 +934,192 @@ def _decide_tool_approval(
         ).scalars()
     )
     return ToolApprovalPage(items=approvals)
+
+
+def _execute_approved_tool_call(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    session: Session,
+    principal,
+) -> None:
+    sandbox = None
+    if tool_call.requires_sandbox and task.enable_sandbox:
+        sandbox = DockerManager().create_sandbox(session=session, task_id=task.id)
+        session.flush()
+    execution = ToolRunner(
+        session=session,
+        workspace_root=Path(__file__).resolve().parents[2],
+        agent_id=task.agent_id,
+        capability_registry=CapabilityRegistry(session, task.organization_id),
+    ).execute_approved_call(tool_call=tool_call, sandbox=sandbox)
+    step_completed = False
+    if execution.tool_call.status == "SUCCESS":
+        step_completed = _complete_approved_tool_step(
+            task=task,
+            tool_call=execution.tool_call,
+            approval=approval,
+            session=session,
+        )
+    _advance_task_after_tool_approval(
+        task=task,
+        tool_call=execution.tool_call,
+        approval=approval,
+        step_completed=step_completed,
+        session=session,
+        principal=principal,
+    )
+
+
+def _complete_approved_tool_step(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    session: Session,
+) -> bool:
+    failed_step_event = _failed_step_event_for_tool_call(
+        task_id=task.id,
+        tool_call_id=tool_call.id,
+        session=session,
+    )
+    if failed_step_event is None:
+        return False
+    payload = (
+        failed_step_event.payload_json
+        if isinstance(failed_step_event.payload_json, dict)
+        else {}
+    )
+    step_id = payload.get("step_id")
+    step_key = payload.get("step_key")
+    if not isinstance(step_key, str):
+        return False
+    if isinstance(step_id, str):
+        step_row = session.get(TaskStep, step_id)
+        if step_row is not None:
+            step_row.status = "STEP_COMPLETED"
+            step_row.error_message = None
+            step_row.completed_at = utc_now()
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.STEP_COMPLETED,
+        payload_json={
+            "step_id": step_id,
+            "step_key": step_key,
+            "tool_call_id": tool_call.id,
+            "tool_approval_id": approval.id,
+            "summary": _tool_output_summary(tool_call),
+            "approval_resume": True,
+            "trace_summary": "工具审批通过后，已执行挂起工具并完成步骤。",
+        },
+    )
+    session.flush()
+    return True
+
+
+def _failed_step_event_for_tool_call(
+    *,
+    task_id: str,
+    tool_call_id: str,
+    session: Session,
+) -> AgentEvent | None:
+    events = list(
+        session.execute(
+            select(AgentEvent)
+            .where(
+                AgentEvent.task_id == task_id,
+                AgentEvent.event_type == EventType.STEP_FAILED.value,
+            )
+            .order_by(AgentEvent.sequence.desc())
+            .limit(100)
+        ).scalars()
+    )
+    for event in events:
+        payload = event.payload_json if isinstance(event.payload_json, dict) else {}
+        if payload.get("tool_call_id") == tool_call_id:
+            return event
+    return None
+
+
+def _advance_task_after_tool_approval(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    step_completed: bool,
+    session: Session,
+    principal,
+) -> None:
+    pending_approvals = session.execute(
+        select(func.count(ToolApproval.id)).where(
+            ToolApproval.task_id == task.id,
+            ToolApproval.status == "PENDING",
+        )
+    ).scalar_one()
+    if pending_approvals:
+        task.status = "WAITING_APPROVAL"
+        task.updated_at = utc_now()
+        session.flush()
+        return
+
+    plan_exists = _latest_plan(task.id, session) is not None
+    if plan_exists and step_completed and tool_call.status == "SUCCESS":
+        task.status = "RUNNING"
+        task.completed_at = None
+        task.updated_at = utc_now()
+        EventStore(session).append(
+            task_id=task.id,
+            event_type=EventType.TASK_RESUMED,
+            payload_json={
+                "task_id": task.id,
+                "resumed_by": principal.user_id,
+                "tool_approval_id": approval.id,
+                "tool_call_id": tool_call.id,
+                "mode": "tool_approval",
+                "trace_summary": "工具审批通过，Run 自动从等待审批状态继续执行。",
+            },
+            actor_type="user",
+            actor_id=principal.user_id,
+        )
+        Executor(session).resume_task(task)
+        session.flush()
+        return
+
+    if plan_exists:
+        task.status = "RUNNING" if tool_call.status == "SUCCESS" else "FAILED"
+        task.updated_at = utc_now()
+        session.flush()
+        return
+
+    if tool_call.status == "SUCCESS":
+        task.status = "COMPLETED"
+        task.completed_at = utc_now()
+        EventStore(session).append(
+            task_id=task.id,
+            event_type=EventType.TASK_COMPLETED,
+            payload_json={
+                "task_id": task.id,
+                "tool_approval_id": approval.id,
+                "tool_call_id": tool_call.id,
+                "mode": "tool_approval",
+                "trace_summary": "工具审批通过后，已执行工具并完成 Run。",
+            },
+        )
+    else:
+        task.status = "FAILED"
+        EventStore(session).append(
+            task_id=task.id,
+            event_type=EventType.TASK_FAILED,
+            payload_json={
+                "summary": tool_call.error_message or "approved tool execution failed",
+                "tool_approval_id": approval.id,
+                "tool_call_id": tool_call.id,
+                "mode": "tool_approval",
+            },
+        )
+    task.updated_at = utc_now()
+    session.flush()
 
 
 def _model_call_trace_ids(
@@ -976,6 +1165,13 @@ def _to_tool_call_response(tool_call: ToolCall, trace_id: str | None = None) -> 
         tool_name=tool_call.tool_name,
         status=tool_call.status,
         risk_level=tool_call.risk_level,
+        capability_id=tool_call.capability_id,
+        capability_version_id=tool_call.capability_version_id,
+        capability_type=tool_call.capability_type,
+        capability_content_sha256=tool_call.capability_content_sha256,
+        capability_config_sha256=tool_call.capability_config_sha256,
+        capability_schema_version=tool_call.capability_schema_version,
+        capability_snapshot_json=tool_call.capability_snapshot_json,
         requires_sandbox=tool_call.requires_sandbox,
         sandbox_id=tool_call.sandbox_id,
         duration_ms=tool_call.duration_ms,

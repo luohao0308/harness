@@ -186,7 +186,8 @@ class DeterministicPlanner:
             if not isinstance(raw_depends_on, list):
                 raw_depends_on = []
             depends_on = [
-                str(dep) for dep in raw_depends_on
+                str(dep)
+                for dep in raw_depends_on
                 if isinstance(dep, str) and dep in seen_keys and dep != key
             ]
             normalized_steps.append(
@@ -256,9 +257,7 @@ class DeterministicPlanner:
         if not async_steps:
             warnings.append("计划未包含异步步骤，长任务并发能力未被使用。")
         if high_risk_without_sandbox:
-            warnings.append(
-                "高风险步骤缺少沙箱约束：" + "、".join(high_risk_without_sandbox)
-            )
+            warnings.append("高风险步骤缺少沙箱约束：" + "、".join(high_risk_without_sandbox))
         if missing_acceptance:
             warnings.append("步骤缺少验收标准：" + "、".join(missing_acceptance))
         if missing_artifacts:

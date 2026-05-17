@@ -133,9 +133,7 @@ class PolicyEngine:
             approval = "auto"
             allowed_roles = metadata.allowed_roles
         else:
-            requires_sandbox = bool(
-                risk_policy.get("requires_sandbox", metadata.requires_sandbox)
-            )
+            requires_sandbox = bool(risk_policy.get("requires_sandbox", metadata.requires_sandbox))
             approval = str(risk_policy.get("approval", "auto"))
             allowed_roles = list(risk_policy.get("allowed_roles", metadata.allowed_roles))
 
@@ -743,6 +741,5 @@ def is_safe_web_research_url(url: str) -> bool:
     if _metadata_hostname(normalized.hostname):
         return False
     return not any(
-        _blocked_address(address)
-        for address in _resolve_host_addresses(normalized.hostname)
+        _blocked_address(address) for address in _resolve_host_addresses(normalized.hostname)
     )

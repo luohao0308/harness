@@ -155,8 +155,7 @@ def get_observability_summary(
     response_model=RuntimeArchitectureResponse,
     summary="查询运行时架构能力",
     description=(
-        "返回 Planner/Executor、Event Sourcing、Subagent 编排和 WarmPool 的"
-        "当前组织能力摘要。"
+        "返回 Planner/Executor、Event Sourcing、Subagent 编排和 WarmPool 的当前组织能力摘要。"
     ),
 )
 def get_runtime_architecture(
@@ -165,9 +164,7 @@ def get_runtime_architecture(
 ) -> RuntimeArchitectureResponse:
     task_ids = select(Task.id).where(Task.organization_id == principal.organization_id)
     plan_rows = list(
-        session.execute(
-            select(ExecutionPlan.plan_json).where(ExecutionPlan.task_id.in_(task_ids))
-        )
+        session.execute(select(ExecutionPlan.plan_json).where(ExecutionPlan.task_id.in_(task_ids)))
     )
     sync_step_total = 0
     async_step_total = 0
@@ -319,8 +316,7 @@ def get_runtime_architecture(
     response_model=ObservabilityLogPage,
     summary="查询结构化日志",
     description=(
-        "按任务、trace、服务和事件类型查询结构化日志；"
-        "Loki 不可用时返回 Event Store 日志视图。"
+        "按任务、trace、服务和事件类型查询结构化日志；Loki 不可用时返回 Event Store 日志视图。"
     ),
 )
 def list_observability_logs(
@@ -669,8 +665,7 @@ def _observability_logs(
     response_model=ObservabilityTraceResponse,
     summary="查询 Trace 链路",
     description=(
-        "按 trace_id 查询链路；"
-        "优先返回 Tempo 真实 span，Tempo 不可用时返回 Event Store 合成 span。"
+        "按 trace_id 查询链路；优先返回 Tempo 真实 span，Tempo 不可用时返回 Event Store 合成 span。"
     ),
 )
 def get_observability_trace(
@@ -1101,9 +1096,7 @@ def _tempo_trace_spans(
     for batch in batches:
         resource_attrs = _tempo_attributes(batch.get("resource", {}).get("attributes", []))
         service_name = str(
-            resource_attrs.get("service.name")
-            or resource_attrs.get("service_name")
-            or "unknown"
+            resource_attrs.get("service.name") or resource_attrs.get("service_name") or "unknown"
         )
         scope_spans = batch.get("scopeSpans") or batch.get("instrumentationLibrarySpans") or []
         for scope_span in scope_spans:
@@ -1239,9 +1232,7 @@ def _loki_label_selector(
         "event_type": event_type,
     }
     selector_parts = [
-        f'{key}="{_escape_loki_label_value(value)}"'
-        for key, value in labels.items()
-        if value
+        f'{key}="{_escape_loki_label_value(value)}"' for key, value in labels.items() if value
     ]
     return "{" + ",".join(selector_parts) + "}"
 

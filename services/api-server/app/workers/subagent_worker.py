@@ -20,6 +20,7 @@ from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.observability.metrics import agent_subagents_failed_total, agent_subagents_running
 from app.sandbox.docker_manager import DockerManager
+from app.tools.capabilities import CapabilityRegistry
 from app.tools.registry import ToolRegistry
 from app.tools.runner import ToolExecution, ToolRunner
 from app.workers.broker import broker
@@ -274,15 +275,38 @@ def _execute_tool_batch(
             "tool_count": len(tools),
         },
     )
-    registry = ToolRegistry.default()
-    runner = ToolRunner(session=session, workspace_root=workspace_root, registry=registry)
+    if task.agent_id is None:
+        return [
+            {
+                "tool_name": str(item.get("tool_name", "")),
+                "status": "DENIED",
+                "allowed": False,
+                "output": {
+                    "error": "Agent capability attachment is required for subagent tool execution",
+                },
+            }
+            for item in tools
+        ]
+    capability_registry = CapabilityRegistry(session, task.organization_id)
+    registry, _snapshot = capability_registry.tool_registry_for_agent(task.agent_id)
+    runner = ToolRunner(
+        session=session,
+        workspace_root=workspace_root,
+        agent_id=task.agent_id,
+        capability_registry=capability_registry,
+    )
     roles = _assignment_roles(agent_run.context_json)
     sandbox = None
     results = []
     for item in tools:
         tool_name = str(item["tool_name"])
-        metadata = registry.tools[tool_name]
-        if metadata.requires_sandbox and task.enable_sandbox and sandbox is None:
+        metadata = registry.tools.get(tool_name)
+        if (
+            metadata is not None
+            and metadata.requires_sandbox
+            and task.enable_sandbox
+            and sandbox is None
+        ):
             sandbox = DockerManager().create_sandbox(
                 session=session,
                 task_id=task.id,
@@ -486,9 +510,7 @@ def _tool_result_payload(execution: ToolExecution) -> dict:
 def _summary_with_tool_results(*, summary: str, tool_results: list[dict]) -> str:
     success_count = sum(1 for result in tool_results if result["status"] == "SUCCESS")
     denied_count = sum(1 for result in tool_results if result["status"] == "DENIED")
-    failed_count = sum(
-        1 for result in tool_results if result["status"] in {"FAILED", "TIMEOUT"}
-    )
+    failed_count = sum(1 for result in tool_results if result["status"] in {"FAILED", "TIMEOUT"})
     return (
         f"{summary}。工具执行 {len(tool_results)} 个，"
         f"成功 {success_count} 个，拒绝 {denied_count} 个，失败 {failed_count} 个"
