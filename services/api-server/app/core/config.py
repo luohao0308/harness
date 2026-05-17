@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     )
     model_gateway_api_key: str = Field(default="replace-me", alias="MODEL_GATEWAY_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
     docker_host: str = Field(default="unix:///var/run/docker.sock", alias="DOCKER_HOST")
     prometheus_base_url: AnyHttpUrl = Field(
         default="http://localhost:9091",
