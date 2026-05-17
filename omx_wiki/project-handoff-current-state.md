@@ -53,6 +53,8 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
 - Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 is now a verified baseline in `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md`, including Docker/private, existing-data migration, exact selector, Eval grounding, append-only audit, backend/frontend/docs/browser, and Agent Run smoke evidence.
 - Agent Knowledge Harness P2 local knowledge management is completed in the current worktree: agent/org-scoped text and Markdown knowledge sources now have lifecycle controls, document-level versioning, stale chunk filtering, retrieval eligibility, lifecycle audit events, failure audit records, multipart `.txt` / `.md` import, Agent Studio management UI, restore smoke coverage, and compose/Postgres private smoke evidence.
+- Git persistence status on 2026-05-17: P2 was split into five local Lore commits on `main`, but push to `origin/main` failed because the environment could not connect to `github.com:443`. The branch is ahead of `origin/main` until network access is restored and `git push origin main` succeeds.
+- Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
 
 Evidence from `docs/task-progress.md`:
 
@@ -86,7 +88,25 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 
 ## Most Recent Completed Work
 
-Recent pushed commits on `main`:
+Recent local P2 commits pending push on `main`:
+
+```text
+8eed571 Record P2 knowledge management evidence
+3877433 Productize Agent Studio knowledge management
+a95eb3f Cover knowledge lifecycle regressions
+fdc04df Manage knowledge lifecycle and document versions
+19802ab Add knowledge lifecycle schema contract
+```
+
+Push evidence:
+
+```text
+git push origin main
+fatal: unable to access 'https://github.com/luohao0308/harness.git/':
+Failed to connect to github.com port 443 after 75005 ms: Couldn't connect to server
+```
+
+Previously pushed P1 commits on `main`:
 
 ```text
 7524df0 Cover grounding gate readiness paths

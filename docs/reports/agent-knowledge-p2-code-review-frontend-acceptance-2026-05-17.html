@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P2 Knowledge Fixed Review & Frontend Acceptance</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --paper: #fff;
+      --ink: #18212f;
+      --muted: #5f6b7a;
+      --line: #d9e0ea;
+      --blue: #2f6fed;
+      --green: #168a5b;
+      --amber: #b46a00;
+      --red: #c73232;
+      --violet: #7653d8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 20px 56px; }
+    header { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; margin-bottom: 18px; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 4vw, 44px); line-height: 1.08; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.2; letter-spacing: 0; }
+    h3 { margin: 0 0 6px; font-size: 16px; letter-spacing: 0; }
+    p { margin: 0 0 10px; }
+    code {
+      border: 1px solid #dce3ee;
+      border-radius: 5px;
+      background: #f2f5fa;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+    }
+    .muted { color: var(--muted); }
+    .panel {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 10px 24px rgba(30, 42, 62, .06);
+    }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin: 16px 0; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-12 { grid-column: span 12; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .green { background: #e4f8ef; color: var(--green); }
+    .blue { background: #e9f0ff; color: var(--blue); }
+    .amber { background: #fff0d9; color: var(--amber); }
+    .red { background: #ffe8e8; color: var(--red); }
+    .violet { background: #f1edff; color: var(--violet); }
+    .verdict { border-left: 6px solid var(--green); }
+    .diagram {
+      width: 100%;
+      min-height: 320px;
+      border: 1px solid #e1e6ef;
+      border-radius: 8px;
+      background: #fbfcff;
+    }
+    .finding {
+      border-left: 5px solid var(--green);
+      padding: 12px 12px 12px 14px;
+      background: #fbfcfe;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .finding.warn { border-left-color: var(--amber); }
+    .finding.fix { border-left-color: var(--blue); }
+    .evidence { margin-top: 7px; color: var(--muted); font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; overflow: hidden; border-radius: 8px; }
+    th, td { border-bottom: 1px solid #e5eaf2; padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: #eef3fa; color: #26364d; font-weight: 800; }
+    tr:last-child td { border-bottom: 0; }
+    .steps { display: grid; gap: 10px; counter-reset: step; }
+    .step {
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr);
+      gap: 12px;
+      padding: 12px;
+      background: #fbfcfe;
+      border: 1px solid #e3e9f2;
+      border-radius: 8px;
+    }
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #e9f0ff;
+      color: var(--blue);
+      font-weight: 900;
+    }
+    .step-title { font-weight: 800; margin-bottom: 4px; }
+    .checklist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .checklist li { border: 1px solid #e3e9f2; background: #fbfcfe; border-radius: 8px; padding: 10px 12px; }
+    .checklist li::before { content: "□"; margin-right: 8px; color: var(--blue); font-weight: 900; }
+    .small { font-size: 13px; }
+    @media (max-width: 880px) {
+      header, .grid { display: block; }
+      .panel { margin: 14px 0; }
+      .checklist { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <section>
+        <h1>P2 Knowledge 修复后审查与前端验收图</h1>
+        <p class="muted">范围：本地知识源生命周期、文档版本、文件导入、检索过滤、Agent Studio 管理面，以及刚修复的审查阻塞项。</p>
+        <p class="muted">生成时间：2026-05-17。报告状态：修复后版本。</p>
+      </section>
+      <aside class="panel verdict">
+        <span class="pill green">FIXED + VERIFIED</span>
+        <h2 style="margin-top:12px;">阻塞项已修</h2>
+        <p>原 code review 的 <code>BLOCK</code> / <code>HIGH</code> 项已处理，并通过后端、前端、lint、build 验证。</p>
+      </aside>
+    </header>
+
+    <section class="grid">
+      <article class="panel span-4">
+        <span class="pill green">Backend</span>
+        <h2 style="margin-top:10px;">幂等失败修复</h2>
+        <p><code>FAILED</code> document 不再被当作成功幂等结果复用；失败重试仍返回失败，不写成功 version/audit。</p>
+      </article>
+      <article class="panel span-4">
+        <span class="pill green">Upload</span>
+        <h2 style="margin-top:10px;">文件边界修复</h2>
+        <p>multipart 先做角色/资源校验，再流式读取并限制总 body；<code>.txt/.md</code> 用扩展名加 UTF-8 内容校验。</p>
+      </article>
+      <article class="panel span-4">
+        <span class="pill green">Frontend</span>
+        <h2 style="margin-top:10px;">Admin 边界修复</h2>
+        <p>org scope 创建、scope change、org source 生命周期操作走显式 admin token；测试覆盖 scope 调用的 admin header。</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>新增功能总览</h2>
+      <svg class="diagram" viewBox="0 0 1120 360" role="img" aria-label="新增知识管理功能架构图">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10z" fill="#516177"></path>
+          </marker>
+          <style>
+            .box{fill:#fff;stroke:#cfd8e6;stroke-width:2;rx:8}
+            .bblue{fill:#edf4ff;stroke:#2f6fed}
+            .bgreen{fill:#edf9f3;stroke:#168a5b}
+            .bviolet{fill:#f3efff;stroke:#7653d8}
+            .label{font:700 16px Inter,sans-serif;fill:#18212f}
+            .sub{font:12px Inter,sans-serif;fill:#5d6878}
+            .flow{stroke:#516177;stroke-width:2.2;fill:none;marker-end:url(#arrow)}
+          </style>
+        </defs>
+        <rect class="box bblue" x="30" y="42" width="195" height="100"></rect>
+        <text class="label" x="52" y="78">Agent Studio UI</text>
+        <text class="sub" x="52" y="104">source list/detail</text>
+        <text class="sub" x="52" y="124">text / .txt / .md import</text>
+        <rect class="box" x="280" y="42" width="190" height="100"></rect>
+        <text class="label" x="304" y="78">Tasks API Client</text>
+        <text class="sub" x="304" y="104">JSON + multipart</text>
+        <text class="sub" x="304" y="124">admin token for org ops</text>
+        <rect class="box bgreen" x="525" y="42" width="210" height="100"></rect>
+        <text class="label" x="548" y="78">FastAPI Routes</text>
+        <text class="sub" x="548" y="104">create / patch / scope</text>
+        <text class="sub" x="548" y="124">disable / enable / archive</text>
+        <rect class="box bviolet" x="790" y="42" width="260" height="100"></rect>
+        <text class="label" x="812" y="78">Ingestion & Versioning</text>
+        <text class="sub" x="812" y="104">document versions</text>
+        <text class="sub" x="812" y="124">FAILED cannot replay as success</text>
+        <rect class="box" x="170" y="220" width="220" height="90"></rect>
+        <text class="label" x="194" y="254">DB Contract</text>
+        <text class="sub" x="194" y="280">source / document / chunk</text>
+        <rect class="box bgreen" x="455" y="220" width="225" height="90"></rect>
+        <text class="label" x="479" y="254">Lifecycle Audit</text>
+        <text class="sub" x="479" y="280">event in same transaction</text>
+        <rect class="box bgreen" x="745" y="220" width="250" height="90"></rect>
+        <text class="label" x="769" y="254">Retrieval Filter</text>
+        <text class="sub" x="769" y="280">ACTIVE source + current doc</text>
+        <path class="flow" d="M225 92 H280"></path>
+        <path class="flow" d="M470 92 H525"></path>
+        <path class="flow" d="M735 92 H790"></path>
+        <path class="flow" d="M920 142 C920 180 875 188 875 220"></path>
+        <path class="flow" d="M630 142 C630 178 570 185 570 220"></path>
+        <path class="flow" d="M630 142 C610 178 350 185 300 220"></path>
+        <path class="flow" d="M680 265 H745"></path>
+        <path class="flow" d="M390 265 H455"></path>
+      </svg>
+    </section>
+
+    <section class="grid">
+      <article class="panel span-6">
+        <h2>Source 生命周期</h2>
+        <svg class="diagram" viewBox="0 0 540 300" role="img" aria-label="Source lifecycle">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10z" fill="#516177"></path>
+            </marker>
+            <style>
+              .sbox{fill:#fff;stroke:#cfd8e6;stroke-width:2;rx:8}
+              .sgreen{fill:#edf9f3;stroke:#168a5b}
+              .samber{fill:#fff6e8;stroke:#b46a00}
+              .sgray{fill:#eef2f7;stroke:#6b7788}
+              .txt{font:700 15px Inter,sans-serif;fill:#18212f}
+              .mini{font:12px Inter,sans-serif;fill:#5d6878}
+              .arr{stroke:#516177;stroke-width:2;fill:none;marker-end:url(#arrow2)}
+            </style>
+          </defs>
+          <rect class="sbox sgreen" x="44" y="40" width="130" height="58"></rect>
+          <text class="txt" x="82" y="65">ACTIVE</text>
+          <text class="mini" x="73" y="86">可检索</text>
+          <rect class="sbox samber" x="204" y="40" width="135" height="58"></rect>
+          <text class="txt" x="230" y="65">DISABLED</text>
+          <text class="mini" x="236" y="86">不可检索</text>
+          <rect class="sbox sgray" x="367" y="40" width="130" height="58"></rect>
+          <text class="txt" x="399" y="65">ARCHIVED</text>
+          <text class="mini" x="397" y="86">不可检索</text>
+          <path class="arr" d="M174 69 H204"></path>
+          <path class="arr" d="M204 88 H174"></path>
+          <path class="arr" d="M339 69 H367"></path>
+          <path class="arr" d="M109 98 C120 146 245 160 387 98"></path>
+        </svg>
+        <p class="small muted">验收含义：ACTIVE 才能被当前检索命中；DISABLED/ARCHIVED 不应参与当前检索。</p>
+      </article>
+
+      <article class="panel span-6">
+        <h2>Document 版本与失败路径</h2>
+        <svg class="diagram" viewBox="0 0 540 300" role="img" aria-label="Document versioning">
+          <defs>
+            <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10z" fill="#516177"></path>
+            </marker>
+            <style>
+              .dbox{fill:#fff;stroke:#cfd8e6;stroke-width:2;rx:8}
+              .dgreen{fill:#edf9f3;stroke:#168a5b}
+              .dred{fill:#fff0f0;stroke:#c73232}
+              .dgray{fill:#eef2f7;stroke:#6b7788}
+              .dtxt{font:700 15px Inter,sans-serif;fill:#18212f}
+              .dmini{font:12px Inter,sans-serif;fill:#5d6878}
+              .darr{stroke:#516177;stroke-width:2;fill:none;marker-end:url(#arrow3)}
+            </style>
+          </defs>
+          <rect class="dbox dgreen" x="42" y="44" width="135" height="70"></rect>
+          <text class="dtxt" x="72" y="72">v1 INDEXED</text>
+          <text class="dmini" x="66" y="94">chunks ACTIVE</text>
+          <rect class="dbox dgray" x="207" y="44" width="150" height="70"></rect>
+          <text class="dtxt" x="232" y="72">v1 SUPERSEDED</text>
+          <text class="dmini" x="237" y="94">chunks STALE</text>
+          <rect class="dbox dgreen" x="387" y="44" width="120" height="70"></rect>
+          <text class="dtxt" x="421" y="72">v2 INDEXED</text>
+          <text class="dmini" x="414" y="94">current only</text>
+          <path class="darr" d="M177 79 H207"></path>
+          <path class="darr" d="M357 79 H387"></path>
+          <rect class="dbox dred" x="165" y="184" width="210" height="72"></rect>
+          <text class="dtxt" x="204" y="212">FAILED version</text>
+          <text class="dmini" x="185" y="234">visible error, never replayed as success</text>
+          <path class="darr" d="M270 114 V184"></path>
+        </svg>
+        <p class="small muted">验收含义：失败版本会显示错误；相同 idempotency 重试仍失败，不能出现“无 chunk 成功版本”。</p>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel span-7">
+        <h2>修复清单</h2>
+        <div class="finding">
+          <h3>修复 1：FAILED document 不再被成功幂等复用</h3>
+          <p>previous document 查询增加 <code>status == INDEXED</code> 限制，并补上 latest version 查询的 <code>limit(1)</code>。失败后重试会继续走失败路径，不会写 <code>document_versioned</code> 成功审计。</p>
+          <p class="evidence">代码：<code>services/api-server/app/knowledge.py</code>；测试：<code>test_failed_reingest_idempotency_retry_remains_failed</code>。</p>
+        </div>
+        <div class="finding">
+          <h3>修复 2：multipart 鉴权与大小边界前置</h3>
+          <p>source import 先 role + agent 校验；document import / version import 先 source/document 权限校验；body 通过 <code>request.stream()</code> 累积读取，超过上限立即 413。</p>
+          <p class="evidence">测试：unauthorized actor invalid body 返回 403；oversized multipart 返回 413。</p>
+        </div>
+        <div class="finding">
+          <h3>修复 3：真实浏览器 .md MIME 容错</h3>
+          <p>后端不再依赖浏览器 part MIME 必须准确；只允许 <code>.txt/.md</code> 扩展名，并要求内容可 UTF-8 解码，再规范化为 <code>text/plain</code> 或 <code>text/markdown</code>。</p>
+        </div>
+        <div class="finding">
+          <h3>修复 4：org scope 前端走显式 admin 边界</h3>
+          <p>org source 创建、scope change、org source 生命周期操作使用 admin token；若没有 admin token，org scope 控件会被禁用。</p>
+        </div>
+      </article>
+
+      <aside class="panel span-5">
+        <h2>验证证据</h2>
+        <table>
+          <tbody>
+            <tr><td><code>pytest tests/test_knowledge_rag.py</code></td><td><span class="pill green">36 passed</span></td></tr>
+            <tr><td><code>pytest tests/test_knowledge_rag.py tests/test_evals.py tests/test_agents.py</code></td><td><span class="pill green">76 passed</span></td></tr>
+            <tr><td><code>ruff check</code></td><td><span class="pill green">passed</span></td></tr>
+            <tr><td><code>npm test -- KnowledgeManagementPanel</code></td><td><span class="pill green">7 passed</span></td></tr>
+            <tr><td><code>npm run lint -- --pretty false</code></td><td><span class="pill green">passed</span></td></tr>
+            <tr><td><code>npm run build</code></td><td><span class="pill green">passed</span></td></tr>
+          </tbody>
+        </table>
+        <p class="small muted" style="margin-top:10px;">build 仍有既有 Vite large chunk warning，不影响本轮修复结论。</p>
+      </aside>
+    </section>
+
+    <section class="grid">
+      <article class="panel span-6">
+        <h2>前端验收路径</h2>
+        <div class="steps">
+          <div class="step"><div><div class="step-title">打开 Agent Studio</div><div class="muted">进入 <code>/agents</code>，选择 agent，确认 Knowledge 面板加载 source 列表。</div></div></div>
+          <div class="step"><div><div class="step-title">创建文本知识源</div><div class="muted">创建 agent-scoped source，确认显示 <code>ACTIVE</code>、<code>HEALTHY</code>、<code>agent</code>。</div></div></div>
+          <div class="step"><div><div class="step-title">上传 .txt / .md</div><div class="muted">上传小文件应成功；上传 .pdf 或超大文件应被拒绝，错误信息可读。</div></div></div>
+          <div class="step"><div><div class="step-title">新增文档与 reingest</div><div class="muted">新增 sibling document；重新导入原 document 后，新版本 <code>INDEXED</code>，旧版本 <code>SUPERSEDED</code>。</div></div></div>
+          <div class="step"><div><div class="step-title">生命周期操作</div><div class="muted">disable 后不可检索；enable 后恢复；archive 需确认，归档后不可检索。</div></div></div>
+          <div class="step"><div><div class="step-title">org scope</div><div class="muted">scope change 会确认，并通过 admin token 调用；同 org agent 可见，foreign org 不可见。</div></div></div>
+        </div>
+      </article>
+
+      <article class="panel span-6">
+        <h2>验收勾选表</h2>
+        <ul class="checklist">
+          <li>Source list 显示 status、health、scope、latest documents。</li>
+          <li>Source detail 显示 document/version history。</li>
+          <li>.txt 文件上传成功。</li>
+          <li>.md 文件在浏览器 MIME 不稳定时仍可上传。</li>
+          <li>.pdf 文件被拒绝。</li>
+          <li>超大 multipart 文件被 413 拒绝。</li>
+          <li>Reingest 成功后旧版本 SUPERSEDED，旧 chunks STALE。</li>
+          <li>Reingest 失败后旧 INDEXED 版本仍可用。</li>
+          <li>同 idempotency 失败重试仍失败，不产生成功 audit。</li>
+          <li>Disable 后 retrieval 不命中该 source。</li>
+          <li>Enable 后 retrieval 恢复。</li>
+          <li>Archive 后不参与 retrieval。</li>
+          <li>Scope change 有确认弹窗。</li>
+          <li>org scope 调用使用 admin token。</li>
+          <li>同 org 其他 agent 能看到 org source。</li>
+          <li>foreign org 看不到/操作不到 source。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
