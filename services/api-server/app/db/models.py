@@ -402,6 +402,17 @@ class KnowledgeSource(Base):
     source_type: Mapped[str] = mapped_column(String(64), nullable=False, default="text")
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="ACTIVE", index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    health_status: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="HEALTHY",
+        index=True,
+    )
     settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
@@ -427,10 +438,12 @@ class KnowledgeDocument(Base):
     mime_type: Mapped[str] = mapped_column(Text, nullable=False, default="text/markdown")
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="INDEXED", index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    logical_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     supersedes_document_id: Mapped[str | None] = mapped_column(
         ForeignKey("knowledge_documents.id"),
         nullable=True,
     )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ingestion_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
