@@ -559,6 +559,29 @@ class WebResearchSource(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class WebResearchAttempt(Base):
+    __tablename__ = "web_research_attempts"
+    __table_args__ = (
+        UniqueConstraint("run_id", "call_slot", name="web_research_attempts_run_slot_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    retrieval_session_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    call_slot: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="RESERVED", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class RetrievalHit(Base):
     __tablename__ = "retrieval_hits"
 
