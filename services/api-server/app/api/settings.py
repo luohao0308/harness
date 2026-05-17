@@ -59,6 +59,7 @@ DEFAULT_POLICY_SETTINGS = PolicySettingsResponse(
         "max_content_bytes": 1200,
         "max_calls_per_run": 1,
     },
+    context_assembly_v2_enabled=False,
 )
 
 
