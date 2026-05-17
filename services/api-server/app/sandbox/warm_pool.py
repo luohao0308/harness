@@ -68,8 +68,7 @@ class WarmPoolManager:
 
         self._prune_expired(session)
         while (
-            self._idle_count(session) < self.min_size
-            and self._total_count(session) < self.max_size
+            self._idle_count(session) < self.min_size and self._total_count(session) < self.max_size
         ):
             container = self.docker_manager.create_container(task_id="warm-pool")
             row = WarmPoolContainer(

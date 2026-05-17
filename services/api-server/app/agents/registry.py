@@ -104,3 +104,8 @@ def ensure_default_agents(session: Session, organization_id: str) -> None:
             )
         )
     session.flush()
+    from app.tools.capabilities import CapabilityRegistry
+
+    capability_registry = CapabilityRegistry(session, None)
+    for preset in DEFAULT_AGENT_PRESETS:
+        capability_registry.backfill_agent_attachments(preset.id, attached_by="system")

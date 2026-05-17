@@ -47,6 +47,7 @@ def build_cors_origins() -> list[str]:
 
     return sorted(origins)
 
+
 app = FastAPI(
     title="企业级 AI Agent Harness API",
     version="0.1.0",

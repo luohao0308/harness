@@ -25,6 +25,7 @@ from app.observability.metrics import (
     agent_parallel_branches_running,
     agent_reduce_duration_seconds,
 )
+from app.tools.capabilities import CapabilityRegistry
 from app.tools.runner import ToolRunner
 
 AGENT_ROUTER_PROMPT_VERSION = "agent-router-v1"
@@ -244,7 +245,10 @@ class MultiAgentOrchestrator:
                                             "role": agent.role,
                                             "description": agent.description,
                                             "routing_tags": agent.routing_tags,
-                                            "tools": agent.tools_json,
+                                            "tools": self._agent_capability_names(
+                                                agent=agent,
+                                                organization_id=run.organization_id,
+                                            ),
                                             "max_parallel_assignments": (
                                                 agent.max_parallel_assignments
                                             ),
@@ -285,9 +289,7 @@ class MultiAgentOrchestrator:
         if not decision.selected_agent_ids:
             return decision.model_copy(update={"selected_agent_ids": []})
         selected_agent_ids = [
-            agent_id
-            for agent_id in decision.selected_agent_ids
-            if agent_id in available_agent_ids
+            agent_id for agent_id in decision.selected_agent_ids if agent_id in available_agent_ids
         ]
         if entry_agent_id in available_agent_ids and entry_agent_id not in selected_agent_ids:
             selected_agent_ids.insert(0, entry_agent_id)
@@ -338,9 +340,8 @@ class MultiAgentOrchestrator:
             ).scalars()
         )
 
-        runner = ToolRunner(session=self.session, workspace_root=self.workspace_root)
         for assignment in assignments:
-            self.execute_assignment(run=run, assignment=assignment, runner=runner)
+            self.execute_assignment(run=run, assignment=assignment)
             if assignment.status == "FAILED":
                 return assignments, handoffs
 
@@ -392,11 +393,21 @@ class MultiAgentOrchestrator:
     ) -> AgentAssignment:
         if assignment.status == "SUCCESS":
             return assignment
-        runner = runner or ToolRunner(session=self.session, workspace_root=self.workspace_root)
         agent = self.session.get(Agent, assignment.agent_id)
-        allowed_tools = list(agent.tools_json) if agent is not None else []
+        capability_registry = CapabilityRegistry(self.session, run.organization_id)
+        if agent is None:
+            allowed_tools = []
+        else:
+            registry, _snapshot = capability_registry.tool_registry_for_agent(agent.id)
+            allowed_tools = sorted(registry.tools)
+        runner = runner or ToolRunner(
+            session=self.session,
+            workspace_root=self.workspace_root,
+            agent_id=assignment.agent_id,
+            capability_registry=capability_registry,
+        )
         tool_name, tool_input = self._assignment_tool(assignment)
-        if allowed_tools and tool_name not in allowed_tools:
+        if tool_name not in allowed_tools:
             assignment.status = "FAILED"
             assignment.started_at = utc_now()
             assignment.completed_at = utc_now()
@@ -404,7 +415,7 @@ class MultiAgentOrchestrator:
                 "summary": f"{assignment.agent_id} is not allowed to run {tool_name}.",
                 "tool_name": tool_name,
                 "allowed_tools": allowed_tools,
-                "permission_boundary": "agent.tools_json",
+                "permission_boundary": "agent_capability_attachment",
             }
             self.event_store.append(
                 task_id=run.id,
@@ -414,7 +425,7 @@ class MultiAgentOrchestrator:
                     "assignment_id": assignment.id,
                     "agent_id": assignment.agent_id,
                     "summary": assignment.output_json["summary"],
-                    "permission_boundary": "agent.tools_json",
+                    "permission_boundary": "agent_capability_attachment",
                     "allowed_tools": allowed_tools,
                     "requested_tool": tool_name,
                 },
@@ -457,7 +468,7 @@ class MultiAgentOrchestrator:
                 "tool_call_id": execution.tool_call.id,
                 "tool_name": tool_name,
                 "allowed_tools": allowed_tools,
-                "permission_boundary": "agent.tools_json",
+                "permission_boundary": "agent_capability_attachment",
             }
             self.event_store.append(
                 task_id=run.id,
@@ -480,7 +491,7 @@ class MultiAgentOrchestrator:
             "tool_call_id": execution.tool_call.id,
             "tool_name": tool_name,
             "allowed_tools": allowed_tools,
-            "permission_boundary": "agent.tools_json",
+            "permission_boundary": "agent_capability_attachment",
             "tool_output": execution.output,
         }
         self.event_store.append(
@@ -550,6 +561,13 @@ class MultiAgentOrchestrator:
         if assignment.role in {"researcher", "operator"}:
             return "list_files", {"root": ".", "glob": "*"}
         return "read_file", {"path": "pyproject.toml"}
+
+    def _agent_capability_names(self, *, agent: Agent, organization_id: str | None) -> list[str]:
+        registry, _snapshot = CapabilityRegistry(
+            self.session,
+            organization_id,
+        ).tool_registry_for_agent(agent.id)
+        return sorted(registry.tools)
 
     def _assignment_summary(self, assignment: AgentAssignment, output: dict) -> str:
         if "files" in output:

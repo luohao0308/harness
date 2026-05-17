@@ -194,9 +194,7 @@ def update_model_settings(
 def get_model_health(session: DbSession, principal: Principal) -> ModelHealthPage:
     items = ModelHealthChecker(session).check(organization_id=principal.organization_id)
     session.commit()
-    return ModelHealthPage(
-        items=items
-    )
+    return ModelHealthPage(items=items)
 
 
 @router.get(
@@ -244,8 +242,7 @@ def get_model_fallbacks(
             for provider, count in sorted(provider_counts.items())
         ],
         recent_events=[
-            _model_fallback_event_item(event)
-            for event in fallback_events[:capped_limit]
+            _model_fallback_event_item(event) for event in fallback_events[:capped_limit]
         ],
     )
 

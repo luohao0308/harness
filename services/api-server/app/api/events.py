@@ -14,8 +14,7 @@ from app.events.event_store import EventStore
 from app.security.auth import Principal
 
 RUN_COMPATIBILITY_DESCRIPTION = (
-    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs "
-    "和 /api/agents/runs/*。"
+    "内部兼容接口；产品主入口使用 /api/agents/{agent_id}/runs 和 /api/agents/runs/*。"
 )
 
 router = APIRouter(
@@ -31,8 +30,7 @@ DbSession = Annotated[Session, Depends(get_db_session)]
     response_model=EventPage,
     summary="兼容层：查询 Agent Run 事件",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 的事件溯源流，"
-        "支持从指定序号之后读取。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 的事件溯源流，支持从指定序号之后读取。"
     ),
 )
 def list_task_events(
@@ -55,8 +53,7 @@ def list_task_events(
     "/stream",
     summary="兼容层：订阅 Agent Run 事件流",
     description=(
-        f"{RUN_COMPATIBILITY_DESCRIPTION} 通过 Server-Sent Events 持续推送 "
-        "Agent Run 事件。"
+        f"{RUN_COMPATIBILITY_DESCRIPTION} 通过 Server-Sent Events 持续推送 Agent Run 事件。"
     ),
 )
 def stream_task_events(
@@ -106,10 +103,7 @@ def stream_task_events(
                 idle_polls = 0
                 for event in events:
                     current_sequence = event.sequence
-                    yield (
-                        f"id: {event.sequence}\n"
-                        f"data: {json.dumps(event_payload(event))}\n\n"
-                    )
+                    yield (f"id: {event.sequence}\ndata: {json.dumps(event_payload(event))}\n\n")
                 continue
 
             yield ": heartbeat\n\n"

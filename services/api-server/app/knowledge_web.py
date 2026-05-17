@@ -64,8 +64,7 @@ class WebResearchAdapter(Protocol):
         timeout_seconds: int,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
-    ) -> list[WebResearchResult]:
-        ...
+    ) -> list[WebResearchResult]: ...
 
 
 def redacted_query_preview(query: str, *, max_chars: int = 160) -> str:

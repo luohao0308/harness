@@ -20,6 +20,7 @@ from app.agents.model_gateway import (
 )
 from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
+from app.agents.registry import ensure_default_agents
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
 from app.agents.subagent_manager import SubagentManager
 from app.db.models import AgentEvent, Task, TaskStep, utc_now
@@ -29,6 +30,7 @@ from app.events.event_types import EventType
 from app.events.replay import EventReplay
 from app.observability.metrics import agent_tasks_failed_total
 from app.sandbox.warm_pool import WarmPoolManager
+from app.tools.capabilities import CapabilityRegistry
 from app.tools.runner import ToolRunner
 
 DEFAULT_TOOL_TIMEOUT = 60
@@ -119,6 +121,7 @@ class Executor:
         self.step_context: dict[str, DAGStepResult] = {}
 
     def start_task(self, task: Task) -> Task:
+        self._ensure_task_agent_scope(task)
         task.status = "PLANNING"
         task.updated_at = utc_now()
         self.event_store.append(
@@ -235,6 +238,7 @@ class Executor:
         return self._execute_dag(task, plan_row, plan)
 
     def execute_existing_plan(self, task: Task) -> Task:
+        self._ensure_task_agent_scope(task)
         plan_row = self._latest_plan(task)
         if plan_row is None:
             msg = "Execution plan not found"
@@ -257,6 +261,7 @@ class Executor:
         return self._execute_dag(task, plan_row, plan)
 
     def resume_task(self, task: Task) -> Task:
+        self._ensure_task_agent_scope(task)
         replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
         plan_row = self._latest_plan(task)
         if plan_row is None:
@@ -318,6 +323,7 @@ class Executor:
         step_keys: list[str],
         resume_mode: str = "from_first_selected",
     ) -> StepResumeOutcome:
+        self._ensure_task_agent_scope(task)
         replay_state = EventReplay(self.session).replay_state_json(task_id=task.id)
         plan_row = self._latest_plan(task)
         if plan_row is None:
@@ -443,6 +449,18 @@ class Executor:
             error_message=error_message,
         )
 
+    def _ensure_task_agent_scope(self, task: Task) -> None:
+        if task.agent_id is None:
+            ensure_default_agents(self.session, task.organization_id or "")
+            task.agent_id = "default"
+        if not task.capability_snapshot_json:
+            _registry, snapshot = CapabilityRegistry(
+                self.session,
+                task.organization_id,
+            ).tool_registry_for_agent(task.agent_id)
+            task.capability_snapshot_json = snapshot
+        self.session.flush()
+
     def _execute_dag(self, task: Task, plan_row: ExecutionPlanModel, plan: ExecutionPlan) -> Task:
         """Execute plan steps in DAG order using execution groups."""
         groups = self.dag_scheduler.resolve(plan)
@@ -456,8 +474,7 @@ class Executor:
             for step in group.steps:
                 # Check if any dependency has failed or been skipped
                 deps_failed = any(
-                    dep in failed_steps or dep in skipped_steps
-                    for dep in step.depends_on
+                    dep in failed_steps or dep in skipped_steps for dep in step.depends_on
                 )
                 if deps_failed:
                     skipped_steps.add(step.key)
@@ -710,12 +727,36 @@ class Executor:
         # Execute tool with timeout
         timeout = step.timeout_seconds or DEFAULT_TOOL_TIMEOUT
         sandbox = None
+        if task.agent_id is None:
+            step_row.status = "STEP_FAILED"
+            step_row.error_message = "Agent capability attachment is required for tool execution"
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_FAILED,
+                payload_json={
+                    "step_id": step_row.id,
+                    "step_key": step.key,
+                    "summary": step_row.error_message,
+                    "permission_boundary": "agent_capability_attachment",
+                },
+            )
+            self.session.flush()
+            return StepResult(
+                step_key=step.key,
+                status="STEP_FAILED",
+                summary=step_row.error_message,
+                output="",
+                tool_calls=[],
+                next_action="stop",
+            )
         try:
             if step.requires_sandbox and task.enable_sandbox:
                 sandbox = WarmPoolManager().acquire(session=self.session, task_id=task.id)
             execution = ToolRunner(
                 session=self.session,
                 workspace_root=self.workspace_root,
+                agent_id=task.agent_id,
             ).execute(
                 task_id=task.id,
                 tool_name=tool_name,
@@ -881,9 +922,7 @@ class Executor:
                 "assigned_agent_id": agent_run.id,
                 "execution_mode": step.execution_mode,
                 "next_action": result.next_action,
-                "trace_summary": (
-                    f"异步步骤 {step.key} 已派生子 Agent {agent_run.id[:8]}"
-                ),
+                "trace_summary": (f"异步步骤 {step.key} 已派生子 Agent {agent_run.id[:8]}"),
                 "react_trace": {
                     "reason": {
                         "step_key": step.key,
