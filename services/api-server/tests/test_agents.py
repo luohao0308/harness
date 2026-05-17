@@ -180,7 +180,10 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
     assert workspace.status_code == 200
     grounding = workspace.json()["knowledge_grounding"]
     assert grounding["prompt_manifest"]["included_retrieval_hit_ids_json"] == []
-    assert grounding["policy_audits"][0]["decision"] == "no_omission_applicable"
+    assert {audit["decision"] for audit in grounding["policy_audits"]} >= {
+        "denied",
+        "no_omission_applicable",
+    }
 
 
 def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
