@@ -2,6 +2,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0
 const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
 const DEV_ADMIN_BEARER_TOKEN =
   import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? "dev-admin-token";
+export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
 
 function authHeaders(token = DEV_BEARER_TOKEN): HeadersInit {
   return {
@@ -801,7 +802,9 @@ export type KnowledgeDocument = {
   mime_type: string;
   status: string;
   version: number;
+  logical_document_id: string | null;
   supersedes_document_id: string | null;
+  superseded_at: string | null;
   ingestion_error: string | null;
   metadata_json: Record<string, unknown>;
   idempotency_key: string | null;
@@ -821,6 +824,13 @@ export type KnowledgeSource = {
   source_type: string;
   status: string;
   version: number;
+  scope: "agent" | "org";
+  expires_at: string | null;
+  disabled_at: string | null;
+  archived_at: string | null;
+  last_indexed_at: string | null;
+  last_ingestion_error: string | null;
+  health_status: string;
   settings_json: Record<string, unknown>;
   metadata_json: Record<string, unknown>;
   idempotency_key: string | null;
@@ -833,7 +843,32 @@ export type KnowledgeSource = {
 export type KnowledgeSourceCreatePayload = {
   name: string;
   description?: string;
+  scope?: "agent" | "org";
   source_type?: "text" | "markdown" | "document";
+  title: string;
+  content: string;
+  uri?: string | null;
+  mime_type?: string;
+  idempotency_key?: string | null;
+  expires_at?: string | null;
+};
+
+export type KnowledgeSourceUpdatePayload = {
+  name?: string;
+  description?: string;
+  expires_at?: string | null;
+};
+
+export type KnowledgeSourceActionPayload = {
+  reason?: string | null;
+};
+
+export type KnowledgeSourceScopePayload = {
+  scope: "agent" | "org";
+  reason?: string | null;
+};
+
+export type KnowledgeDocumentCreatePayload = {
   title: string;
   content: string;
   uri?: string | null;
@@ -1201,9 +1236,10 @@ export type EvalRun = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const { headers, ...requestInit } = init ?? {};
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
-    ...init,
+    ...requestInit,
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...headers },
   });
   if (!response.ok) {
     let detail = "";
@@ -1216,6 +1252,49 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`请求失败 ${response.status}${detail}`);
   }
   return response.json() as Promise<T>;
+}
+
+async function requestMultipart<T>(
+  path: string,
+  body: FormData,
+  token = DEV_BEARER_TOKEN,
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body,
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      detail = payload.detail ? `：${payload.detail}` : "";
+    } catch {
+      detail = "";
+    }
+    throw new Error(`请求失败 ${response.status}${detail}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function knowledgeFileFormData(
+  file: File,
+  payload: {
+    title?: string;
+    name?: string;
+    description?: string;
+    scope?: "agent" | "org";
+    idempotency_key?: string | null;
+  },
+) {
+  const body = new FormData();
+  body.append("file", file);
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== undefined && value !== null) {
+      body.append(key, value);
+    }
+  }
+  return body;
 }
 
 export async function listTasks() {
@@ -1247,8 +1326,160 @@ export async function createAgentKnowledgeSource(
 ) {
   return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources`, {
     method: "POST",
+    headers: payload.scope === "org" ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
     body: JSON.stringify(payload),
   });
+}
+
+export async function importAgentKnowledgeSourceFile(
+  agentId: string,
+  file: File,
+  payload: {
+    title?: string;
+    name?: string;
+    description?: string;
+    scope?: "agent" | "org";
+    idempotency_key?: string | null;
+  },
+) {
+  return requestMultipart<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/import`,
+    knowledgeFileFormData(file, payload),
+    payload.scope === "org" ? DEV_ADMIN_BEARER_TOKEN : DEV_BEARER_TOKEN,
+  );
+}
+
+export async function updateAgentKnowledgeSource(
+  agentId: string,
+  sourceId: string,
+  payload: KnowledgeSourceUpdatePayload,
+  options: { admin?: boolean } = {},
+) {
+  return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources/${sourceId}`, {
+    method: "PATCH",
+    headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function disableAgentKnowledgeSource(
+  agentId: string,
+  sourceId: string,
+  payload: KnowledgeSourceActionPayload = {},
+  options: { admin?: boolean } = {},
+) {
+  return request<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/disable`,
+    {
+      method: "POST",
+      headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function enableAgentKnowledgeSource(
+  agentId: string,
+  sourceId: string,
+  payload: KnowledgeSourceActionPayload = {},
+  options: { admin?: boolean } = {},
+) {
+  return request<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/enable`,
+    {
+      method: "POST",
+      headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function archiveAgentKnowledgeSource(
+  agentId: string,
+  sourceId: string,
+  payload: KnowledgeSourceActionPayload = {},
+  options: { admin?: boolean } = {},
+) {
+  return request<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/archive`,
+    {
+      method: "POST",
+      headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function changeAgentKnowledgeSourceScope(
+  agentId: string,
+  sourceId: string,
+  payload: KnowledgeSourceScopePayload,
+) {
+  return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources/${sourceId}/scope`, {
+    method: "POST",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listAgentKnowledgeDocuments(agentId: string, sourceId: string) {
+  return request<KnowledgeDocument[]>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/documents`,
+  );
+}
+
+export async function createAgentKnowledgeDocument(
+  agentId: string,
+  sourceId: string,
+  payload: KnowledgeDocumentCreatePayload,
+) {
+  return request<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/documents`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function importAgentKnowledgeDocumentFile(
+  agentId: string,
+  sourceId: string,
+  file: File,
+  payload: { title?: string; idempotency_key?: string | null },
+) {
+  return requestMultipart<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/documents/import`,
+    knowledgeFileFormData(file, payload),
+  );
+}
+
+export async function createAgentKnowledgeDocumentVersion(
+  agentId: string,
+  sourceId: string,
+  documentId: string,
+  payload: KnowledgeDocumentCreatePayload,
+) {
+  return request<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/documents/${documentId}/versions`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function importAgentKnowledgeDocumentVersionFile(
+  agentId: string,
+  sourceId: string,
+  documentId: string,
+  file: File,
+  payload: { title?: string; idempotency_key?: string | null },
+) {
+  return requestMultipart<KnowledgeSource>(
+    `/api/agents/${agentId}/knowledge/sources/${sourceId}/documents/${documentId}/versions/import`,
+    knowledgeFileFormData(file, payload),
+  );
 }
 
 export async function compressAgentWorkspaceContext(

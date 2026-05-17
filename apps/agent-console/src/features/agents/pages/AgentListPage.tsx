@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Bot,
   Brain,
@@ -18,42 +18,14 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
-import { Input } from "../../../components/ui/input";
 import { useI18n } from "../../../lib/i18n";
-import {
-  createAgentKnowledgeSource,
-  listAgentKnowledgeSources,
-  listAgents,
-  type AgentDefinition,
-} from "../../tasks/api";
+import { listAgents, type AgentDefinition } from "../../tasks/api";
+import { KnowledgeManagementPanel } from "../components/KnowledgeManagementPanel";
 
 export function AgentListPage() {
   const { text } = useI18n();
-  const queryClient = useQueryClient();
   const agents = useQuery({ queryKey: ["agents"], queryFn: listAgents });
   const [selectedAgentId, setSelectedAgentId] = useState("default");
-  const knowledge = useQuery({
-    queryKey: ["agent-knowledge", selectedAgentId],
-    queryFn: () => listAgentKnowledgeSources(selectedAgentId),
-  });
-  const [knowledgeName, setKnowledgeName] = useState("默认知识源");
-  const [knowledgeTitle, setKnowledgeTitle] = useState("团队手册");
-  const [knowledgeContent, setKnowledgeContent] = useState(
-    "# 团队手册\n\n使用简洁、带引用的回答。\n",
-  );
-  const createKnowledge = useMutation({
-    mutationFn: () =>
-      createAgentKnowledgeSource(selectedAgentId, {
-        name: knowledgeName,
-        title: knowledgeTitle,
-        content: knowledgeContent,
-        source_type: "markdown",
-        mime_type: "text/markdown",
-    }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agent-knowledge", selectedAgentId] });
-    },
-  });
 
   useEffect(() => {
     if (
@@ -161,69 +133,7 @@ export function AgentListPage() {
           />
         </section>
 
-        <section className="grid grid-cols-12 gap-4">
-          <Card className="col-span-4">
-            <CardHeader>
-              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Database className="h-4 w-4" />
-                知识 Harness
-              </div>
-              <Badge tone="success">{knowledge.data?.items.length ?? 0} 个来源</Badge>
-            </CardHeader>
-            <div className="space-y-3 p-3">
-              <div className="grid gap-2">
-                <Input value={knowledgeName} onChange={(e) => setKnowledgeName(e.target.value)} placeholder="知识源名称" />
-                <Input value={knowledgeTitle} onChange={(e) => setKnowledgeTitle(e.target.value)} placeholder="文档标题" />
-                <textarea
-                  className="min-h-28 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700"
-                  value={knowledgeContent}
-                  onChange={(e) => setKnowledgeContent(e.target.value)}
-                />
-                <Button onClick={() => createKnowledge.mutate()} disabled={createKnowledge.isPending}>
-                  {createKnowledge.isPending ? text("索引中...", "Indexing...") : text("添加知识", "Add Knowledge")}
-                </Button>
-              </div>
-            </div>
-          </Card>
-          <Card className="col-span-8">
-            <CardHeader>
-              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Database className="h-4 w-4" />
-                知识源
-              </div>
-              <span className="text-xs text-slate-500">{knowledge.data?.items.length ?? 0}</span>
-            </CardHeader>
-            <div className="space-y-2 p-3">
-              {(knowledge.data?.items ?? []).map((source) => (
-                <div key={source.id} className="rounded-md border border-slate-100 bg-white p-3 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="font-medium text-slate-900">{source.name}</div>
-                    <Badge tone={source.status === "ACTIVE" ? "success" : "warning"}>{source.status}</Badge>
-                  </div>
-                  <div className="mt-1 text-slate-500">{source.description || source.source_type}</div>
-                  <div className="mt-2 space-y-1">
-                    {(source.latest_documents ?? []).map((document) => (
-                      <div key={document.id} className="rounded border border-slate-100 bg-slate-50 p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-medium text-slate-800">{document.title}</span>
-                          <span className="font-mono text-[11px] text-slate-500">v{document.version}</span>
-                        </div>
-                        <div className="mt-1 text-slate-500">
-                          {document.chunk_count} 个分片 · {document.status}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-              {!knowledge.isLoading && (knowledge.data?.items.length ?? 0) === 0 && (
-                <div className="py-6 text-center text-sm text-slate-500">
-                  {text("暂无知识源。", "No knowledge sources yet.")}
-                </div>
-              )}
-            </div>
-          </Card>
-        </section>
+        <KnowledgeManagementPanel agentId={selectedAgentId} />
 
         {agents.isLoading && (
           <Card>

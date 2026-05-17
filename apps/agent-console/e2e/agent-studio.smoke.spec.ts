@@ -3,7 +3,7 @@
  *
  * Proves the Agent Studio page renders Model, Tools/MCP, Prompt, RAG,
  * Templates, and Orchestration surfaces, shows model provider info,
- * and displays API-pending state for disabled surfaces.
+ * and exposes the P2 knowledge-management surface.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
@@ -54,6 +54,13 @@ const knowledgeFixture = {
       source_type: "markdown",
       status: "ACTIVE",
       version: 1,
+      scope: "agent",
+      expires_at: null,
+      disabled_at: null,
+      archived_at: null,
+      last_indexed_at: "2026-05-15T00:00:00Z",
+      last_ingestion_error: null,
+      health_status: "HEALTHY",
       settings_json: {},
       metadata_json: {},
       idempotency_key: null,
@@ -72,7 +79,9 @@ const knowledgeFixture = {
           mime_type: "text/markdown",
           status: "INDEXED",
           version: 1,
+          logical_document_id: "document-handbook",
           supersedes_document_id: null,
+          superseded_at: null,
           ingestion_error: null,
           metadata_json: {},
           idempotency_key: null,
@@ -87,6 +96,8 @@ const knowledgeFixture = {
   ],
   next_cursor: null,
 };
+
+const knowledgeDocumentsFixture = knowledgeFixture.items[0].latest_documents;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -130,37 +141,44 @@ test.describe("Agent Studio page mocked smoke tests", () => {
     await expect(page.getByText("API 已接入").first()).toBeVisible();
   });
 
-  test("Disabled surfaces (RAG, Templates) show API-pending state", async ({ page }) => {
+  test("Templates remain disabled while RAG is API-backed", async ({ page }) => {
     await page.goto("/agents");
 
-    // RAG surface visible
     await expect(page.getByText("RAG 知识检索").first()).toBeVisible();
-
-    // Templates surface — Chinese: "模板"
     await expect(page.getByText("模板").first()).toBeVisible();
-
-    // Both disabled surfaces have "未启用" (Disabled) status badges
+    await expect(page.getByText("API 已接入").first()).toBeVisible();
     await expect(page.getByText("未启用").first()).toBeVisible();
-
-    // Verify RAG description text
-    await expect(
-      page.getByText("RAG 指检索增强生成"),
-    ).toBeVisible();
-
-    // Verify disabled description text for Templates — Chinese
-    await expect(
-      page.getByText("模板市场保留禁用态"),
-    ).toBeVisible();
+    await expect(page.getByText("RAG 指检索增强生成")).toBeVisible();
+    await expect(page.getByText("模板市场保留禁用态")).toBeVisible();
   });
 
-  test("Knowledge source metadata uses Chinese units", async ({ page }) => {
+  test("Knowledge management shows source lifecycle, health, scope, and document versions", async ({
+    page,
+  }) => {
     await page.goto("/agents");
 
-    await expect(page.getByPlaceholder("知识源名称")).toHaveValue("默认知识源");
-    await expect(page.getByPlaceholder("文档标题")).toHaveValue("团队手册");
-    await expect(page.locator("textarea")).toHaveValue("# 团队手册\n\n使用简洁、带引用的回答。\n");
-    await expect(page.getByText("1 个来源")).toBeVisible();
-    await expect(page.getByText("3 个分片 · INDEXED")).toBeVisible();
+    await expect(page.getByText("知识源").first()).toBeVisible();
+    await expect(page.getByText("团队手册").first()).toBeVisible();
+    await expect(page.getByText("ACTIVE").first()).toBeVisible();
+    await expect(page.getByText("HEALTHY").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /团队手册.*agent/ })).toBeVisible();
+    await expect(page.getByText("文档与生命周期")).toBeVisible();
+    await expect(page.getByText("v1 · INDEXED")).toBeVisible();
+    await expect(page.getByText("3 chunks")).toBeVisible();
+    await expect(page.getByLabel("新增文档标题")).toBeVisible();
+    await expect(page.getByLabel("选择重新导入文档")).toBeVisible();
+  });
+
+  test("Knowledge management remains usable at 390px width", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.goto("/agents");
+
+    await expect(page.getByText("知识源").first()).toBeVisible();
+    await expect(page.getByText("文档与生命周期")).toBeVisible();
+    await expect(page.getByLabel("导入初始文件")).toBeAttached();
+
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+    expect(overflow).toBe(false);
   });
 });
 
@@ -180,6 +198,14 @@ async function routeAgentStudioApis(page: Page): Promise<void> {
 
     if (path === "/api/agents/default/knowledge/sources" && route.request().method() === "GET") {
       await fulfillJson(route, knowledgeFixture);
+      return;
+    }
+
+    if (
+      path === "/api/agents/default/knowledge/sources/knowledge-default/documents" &&
+      route.request().method() === "GET"
+    ) {
+      await fulfillJson(route, knowledgeDocumentsFixture);
       return;
     }
 
