@@ -846,6 +846,7 @@ def _to_model_call_response(
         "duration_ms": model_call.duration_ms,
         "grounding_correlation_id": model_call.grounding_correlation_id,
         "prompt_manifest_id": model_call.prompt_manifest_id,
+        "context_manifest_id": model_call.context_manifest_id,
         "model_request_sha256": model_call.model_request_sha256,
         "attempt_index": model_call.attempt_index,
         "terminal_status": model_call.terminal_status,

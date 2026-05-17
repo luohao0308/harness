@@ -187,6 +187,7 @@ class AttachmentPayload(BaseModel):
 
 class CompressedContext(BaseModel):
     summary: str = Field(default="", description="压缩后的上下文摘要")
+    branch_id: str = Field(default="", description="摘要所属前端分支 ID")
     coverage_node_ids: list[str] = Field(default_factory=list, description="摘要覆盖的节点 ID")
     coverage_path_hash: str = Field(default="", description="覆盖路径哈希")
     summary_schema_version: str = Field(default="", description="摘要结构版本")
@@ -221,12 +222,12 @@ class AgentChatStreamRequest(BaseModel):
         default_factory=list,
         description="前端读取后的附件内容摘要",
     )
-    # v4 additive: UI-side token budget hint. Optional; backend is free to
-    # ignore. See agent-workspace-chat-v4-refine/design.md §Req 5.5.
+    # v4 additive: UI-side token budget hint. ContextAssemblyService
+    # recounts with the backend estimator and records any omissions.
     context_max_tokens: int | None = Field(
         default=None,
         ge=1,
-        description="UI-side context window budget; currently ignored by the backend",
+        description="UI-side context window budget; backend recounts before model calls",
     )
     compressed_context: CompressedContext | None = Field(
         default=None,
@@ -545,6 +546,10 @@ class RunContextResponse(BaseModel):
     context_compression: dict = Field(description="上下文压缩结果")
     model_routing: dict = Field(description="模型路由决策")
     latest_agent_router: dict | None = Field(default=None, description="最近一次 Agent 路由事件")
+    context_assembly: dict | None = Field(
+        default=None,
+        description="Context assembly manifest summary",
+    )
 
 
 class EventResponse(BaseModel):
@@ -772,6 +777,88 @@ class PromptAssemblyManifestResponse(BaseModel):
     created_at: datetime = Field(description="创建时间")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ContextAssemblyManifestResponse(BaseModel):
+    id: str = Field(description="Context assembly manifest ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    agent_id: str = Field(description="Agent ID")
+    run_id: str | None = Field(default=None, description="Run ID")
+    retrieval_session_id: str | None = Field(default=None, description="Retrieval session ID")
+    prompt_manifest_id: str | None = Field(
+        default=None,
+        description="Authoritative retrieval prompt manifest ID",
+    )
+    active_branch_id: str | None = Field(default=None, description="Active branch ID")
+    active_leaf_id: str | None = Field(default=None, description="Active leaf ID")
+    mode: Literal["authoritative", "shadow"] | str = Field(description="Assembly mode")
+    token_budget_json: dict = Field(description="Backend token budget manifest")
+    sections_json: list = Field(description="Ordered context section metadata")
+    included_refs_json: list = Field(description="Included context refs")
+    omitted_refs_json: list = Field(description="Omitted context refs")
+    policy_decisions_json: list = Field(description="Policy decisions")
+    tombstoned_refs_json: list = Field(description="Compliance tombstoned refs")
+    context_text_sha256: str = Field(description="Assembled context hash")
+    metadata_json: dict = Field(default_factory=dict, description="元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentMemoryCreateRequest(BaseModel):
+    scope: Literal["org", "agent", "user", "run"] = Field(
+        default="agent",
+        description="Memory scope",
+    )
+    source_type: Literal[
+        "manual",
+        "run_summary",
+        "user_preference",
+        "decision",
+        "tool_observation",
+        "imported",
+    ] = Field(default="manual", description="Memory source type")
+    text: str = Field(min_length=1, max_length=8_000, description="Memory text")
+    run_id: str | None = Field(default=None, description="Run scope ID")
+    message_id: str | None = Field(default=None, description="Source message ID")
+    score: float = Field(default=0, ge=0, le=1, description="Relevance score")
+    metadata: dict = Field(default_factory=dict, description="Safe metadata")
+    expires_at: datetime | None = Field(default=None, description="Expiration time")
+
+
+class AgentMemoryActionRequest(BaseModel):
+    action: Literal["disable", "archive", "delete"] = Field(description="Lifecycle action")
+    reason: str | None = Field(default=None, max_length=500, description="Reason")
+
+
+class AgentMemoryResponse(BaseModel):
+    id: str = Field(description="Memory ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    owner_user_id: str | None = Field(default=None, description="Owner user ID")
+    run_id: str | None = Field(default=None, description="Run ID")
+    message_id: str | None = Field(default=None, description="Message ID")
+    scope: str = Field(description="Scope")
+    source_type: str = Field(description="Source type")
+    canonical_text: str = Field(description="Memory text")
+    content_sha256: str = Field(description="Content hash")
+    content_length: int = Field(description="Content length")
+    score: float = Field(description="Score")
+    policy_flags_json: list = Field(description="Policy flags")
+    metadata_json: dict = Field(description="Metadata")
+    lifecycle_status: str = Field(description="Lifecycle status")
+    expires_at: datetime | None = Field(default=None, description="Expiration time")
+    deleted_at: datetime | None = Field(default=None, description="Deleted time")
+    created_by: str | None = Field(default=None, description="Created by")
+    updated_by: str | None = Field(default=None, description="Updated by")
+    created_at: datetime = Field(description="Created at")
+    updated_at: datetime = Field(description="Updated at")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentMemoryPage(BaseModel):
+    items: list[AgentMemoryResponse] = Field(description="Memory records")
 
 
 class KnowledgePolicyAuditResponse(BaseModel):
@@ -1368,6 +1455,7 @@ class ModelCallResponse(BaseModel):
         description="Grounding correlation ID",
     )
     prompt_manifest_id: str | None = Field(default=None, description="Prompt manifest ID")
+    context_manifest_id: str | None = Field(default=None, description="Context manifest ID")
     model_request_sha256: str | None = Field(default=None, description="请求哈希")
     model_request_hash_schema_version: int = Field(
         default=1,
@@ -1492,6 +1580,10 @@ class AgentRunWorkspaceResponse(BaseModel):
     knowledge_grounding: KnowledgeGroundingResponse | None = Field(
         default=None,
         description="Knowledge / RAG grounding evidence",
+    )
+    context_assembly: ContextAssemblyManifestResponse | None = Field(
+        default=None,
+        description="Backend context assembly evidence",
     )
     subagents: list[SubagentResponse] = Field(default_factory=list, description="Subagent 状态")
     tool_calls: list[ToolCallResponse] = Field(default_factory=list, description="工具调用日志")
@@ -1685,3 +1777,7 @@ class PolicySettingsResponse(BaseModel):
     sandbox: dict = Field(description="沙箱规则")
     audit: dict = Field(description="审计规则")
     web_research: dict = Field(default_factory=dict, description="Web research 策略")
+    context_assembly_v2_enabled: bool = Field(
+        default=False,
+        description="Enable authoritative backend context assembly v2",
+    )

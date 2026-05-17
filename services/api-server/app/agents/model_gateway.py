@@ -17,7 +17,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.db.models import ModelCall, PromptAssemblyManifest, SystemSetting, Task, utc_now
+from app.db.models import (
+    ContextAssemblyManifest,
+    ModelCall,
+    PromptAssemblyManifest,
+    SystemSetting,
+    Task,
+    utc_now,
+)
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.observability.metrics import (
@@ -1004,6 +1011,7 @@ class AuditedModelGateway:
         prompt_manifest_version: str | None = None,
         retrieval_evidence_ids: list[str] | None = None,
         evidence_text_sha256: str | None = None,
+        context_manifest_id: str | None = None,
     ) -> None:
         self.session = session
         self.task_id = task_id
@@ -1015,6 +1023,7 @@ class AuditedModelGateway:
         self.prompt_manifest_version = prompt_manifest_version
         self.retrieval_evidence_ids = retrieval_evidence_ids or []
         self.evidence_text_sha256 = evidence_text_sha256
+        self.context_manifest_id = context_manifest_id
 
     def _generation_parameters(self, provider: dict) -> dict:
         parameters: dict = {}
@@ -1094,6 +1103,7 @@ class AuditedModelGateway:
             request_payload=request_payload,
         )
         self._validate_grounding_binding(request_payload)
+        self._validate_context_manifest_binding()
         limiter_key = (
             f"{settings.organization_id or 'global'}:"
             f"{request_payload.model_provider}:{request_payload.model_name}"
@@ -1124,6 +1134,7 @@ class AuditedModelGateway:
             duration_ms=0,
             grounding_correlation_id=self.grounding_correlation_id,
             prompt_manifest_id=self.prompt_manifest_id,
+            context_manifest_id=self.context_manifest_id,
             model_request_sha256=model_request_sha256,
             model_request_hash_schema_version=2,
             request_message_hashes_json=request_message_hashes,
@@ -1153,6 +1164,7 @@ class AuditedModelGateway:
                 "prompt_message_count": len(request_payload.messages),
                 "grounding_correlation_id": self.grounding_correlation_id,
                 "prompt_manifest_id": self.prompt_manifest_id,
+                "context_manifest_id": self.context_manifest_id,
                 "model_request_sha256": model_request_sha256,
                 "attempt_index": attempt_index,
             },
@@ -1192,6 +1204,7 @@ class AuditedModelGateway:
                     "error": str(exc),
                     "grounding_correlation_id": self.grounding_correlation_id,
                     "prompt_manifest_id": self.prompt_manifest_id,
+                    "context_manifest_id": self.context_manifest_id,
                     "attempt_index": attempt_index,
                     "terminal_status": model_call.terminal_status,
                 },
@@ -1226,6 +1239,7 @@ class AuditedModelGateway:
                 "duration_ms": model_call.duration_ms,
                 "grounding_correlation_id": self.grounding_correlation_id,
                 "prompt_manifest_id": self.prompt_manifest_id,
+                "context_manifest_id": self.context_manifest_id,
                 "model_request_sha256": model_request_sha256,
                 "attempt_index": attempt_index,
                 "terminal_status": model_call.terminal_status,
@@ -1252,6 +1266,7 @@ class AuditedModelGateway:
             "estimated_prompt_tokens": estimated_prompt_tokens,
             "grounding_correlation_id": self.grounding_correlation_id,
             "prompt_manifest_id": self.prompt_manifest_id,
+            "context_manifest_id": self.context_manifest_id,
             "prompt_manifest_version": self.prompt_manifest_version,
             "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
             "evidence_text_sha256": self.evidence_text_sha256,
@@ -1290,9 +1305,12 @@ class AuditedModelGateway:
             "request_message_hashes_sha256": message_hashes_sha256,
             "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
             "prompt_manifest_id": self.prompt_manifest_id,
+            "context_manifest_id": self.context_manifest_id,
             "prompt_manifest_version": self.prompt_manifest_version,
             "evidence_text_sha256": self.evidence_text_sha256,
         }
+        if self.context_manifest_id is None:
+            canonical_payload.pop("context_manifest_id", None)
         encoded = json.dumps(
             canonical_payload,
             ensure_ascii=False,
@@ -1331,6 +1349,17 @@ class AuditedModelGateway:
         }
         if manifest.evidence_text_sha256 not in evidence_message_hashes:
             raise ModelGatewayError("model messages do not include prompt manifest evidence")
+
+    def _validate_context_manifest_binding(self) -> None:
+        if self.context_manifest_id is None:
+            return
+        manifest = self.session.get(ContextAssemblyManifest, self.context_manifest_id)
+        if manifest is None:
+            raise ModelGatewayError("context manifest not found for model call")
+        if manifest.run_id != self.task_id:
+            raise ModelGatewayError("context manifest does not belong to model call task")
+        if manifest.prompt_manifest_id != self.prompt_manifest_id:
+            raise ModelGatewayError("context manifest prompt manifest mirror does not match")
 
     # -----------------------------------------------------------------
     # Streaming variant (v4 bugfix — true token-by-token SSE).
@@ -1400,6 +1429,7 @@ class AuditedModelGateway:
             request_payload=request_payload,
         )
         self._validate_grounding_binding(request_payload)
+        self._validate_context_manifest_binding()
         limiter_key = (
             f"{settings.organization_id or 'global'}:"
             f"{request_payload.model_provider}:{request_payload.model_name}"
@@ -1430,6 +1460,7 @@ class AuditedModelGateway:
             duration_ms=0,
             grounding_correlation_id=self.grounding_correlation_id,
             prompt_manifest_id=self.prompt_manifest_id,
+            context_manifest_id=self.context_manifest_id,
             model_request_sha256=model_request_sha256,
             model_request_hash_schema_version=2,
             request_message_hashes_json=request_message_hashes,
@@ -1460,6 +1491,7 @@ class AuditedModelGateway:
                 "streaming": True,
                 "grounding_correlation_id": self.grounding_correlation_id,
                 "prompt_manifest_id": self.prompt_manifest_id,
+                "context_manifest_id": self.context_manifest_id,
                 "model_request_sha256": model_request_sha256,
                 "attempt_index": attempt_index,
             },
@@ -1505,6 +1537,7 @@ class AuditedModelGateway:
                     "cancelled": True,
                     "grounding_correlation_id": self.grounding_correlation_id,
                     "prompt_manifest_id": self.prompt_manifest_id,
+                    "context_manifest_id": self.context_manifest_id,
                     "attempt_index": attempt_index,
                     "terminal_status": model_call.terminal_status,
                 },
@@ -1537,6 +1570,7 @@ class AuditedModelGateway:
                     "error": str(exc),
                     "grounding_correlation_id": self.grounding_correlation_id,
                     "prompt_manifest_id": self.prompt_manifest_id,
+                    "context_manifest_id": self.context_manifest_id,
                     "attempt_index": attempt_index,
                     "terminal_status": model_call.terminal_status,
                 },
@@ -1580,6 +1614,7 @@ class AuditedModelGateway:
                 "streaming": True,
                 "grounding_correlation_id": self.grounding_correlation_id,
                 "prompt_manifest_id": self.prompt_manifest_id,
+                "context_manifest_id": self.context_manifest_id,
                 "model_request_sha256": model_request_sha256,
                 "attempt_index": attempt_index,
                 "terminal_status": model_call.terminal_status,

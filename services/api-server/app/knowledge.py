@@ -1077,6 +1077,7 @@ def _create_prompt_manifest(
             {
                 "section": "knowledge_evidence",
                 "role": "system",
+                "content": evidence_summary,
                 "content_sha256": _sha256(evidence_summary),
                 "included_retrieval_hit_ids": [hit.id for hit in hits],
                 "citation_ids": [citation.id for citation in citations],
@@ -1088,6 +1089,7 @@ def _create_prompt_manifest(
             "local_status": retrieval_session.local_status,
             "grounding_correlation_id": retrieval_session.id,
             "prompt_manifest_version": "knowledge-prompt-assembly-v1",
+            "evidence_summary": evidence_summary,
             "evidence_message": evidence_message,
             **grounding_outcome,
         },
