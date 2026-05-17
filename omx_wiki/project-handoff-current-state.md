@@ -51,7 +51,8 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Stage 01-07 are recorded as completed.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
-- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 has a pushed blocker-repair slice on `main` through `4475eef`, including prompt manifest persistence, policy/omission audits, CJK lexical retrieval, denied/redacted policy isolation, verified-vs-fixture grounding semantics, attempt-level `ModelCall` binding, recomputable v2 request hashes without raw request previews, exact Run Detail/Eval selectors, Run Detail binding-chain display, and Eval grounding-contract propagation from saved runs. It is still not promoted to verified baseline because Docker/private deployment compatibility for the latest migration remains unproven in this environment and task-progress docs have not been advanced.
+- Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 is now a verified baseline in `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md`, including Docker/private, existing-data migration, exact selector, Eval grounding, append-only audit, backend/frontend/docs/browser, and Agent Run smoke evidence.
+- Agent Knowledge Harness P2 local knowledge management is completed in the current worktree: agent/org-scoped text and Markdown knowledge sources now have lifecycle controls, document-level versioning, stale chunk filtering, retrieval eligibility, lifecycle audit events, failure audit records, multipart `.txt` / `.md` import, Agent Studio management UI, restore smoke coverage, and compose/Postgres private smoke evidence.
 
 Evidence from `docs/task-progress.md`:
 
@@ -62,9 +63,9 @@ Evidence from `docs/task-progress.md`:
 
 Evidence from the current codebase:
 
-- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py`, `services/api-server/alembic/versions/20260516_0013_add_grounding_model_call_binding.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation with prompt assembly manifests, policy audits, citation snapshots, insufficient-evidence controls, CJK fallback retrieval, attempt-level model-call audit binding, request hashing, and exact selector behavior.
-- `services/api-server/app/api/agents.py` exposes knowledge source APIs and Workspace grounding behavior.
-- `apps/agent-console/src/features/agents/pages/AgentListPage.tsx` exposes Agent Studio knowledge source management.
+- `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py`, `services/api-server/alembic/versions/20260516_0013_add_grounding_model_call_binding.py`, `services/api-server/alembic/versions/20260517_0015_add_knowledge_lifecycle_contract.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation with prompt assembly manifests, policy audits, citation snapshots, insufficient-evidence controls, CJK fallback retrieval, attempt-level model-call audit binding, request hashing, exact selector behavior, lifecycle/versioning, restore/migration smoke, and org/agent scope isolation.
+- `services/api-server/app/api/agents.py` exposes knowledge source lifecycle APIs, document APIs, scope APIs, and Workspace grounding behavior.
+- `apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx` exposes Agent Studio knowledge source management.
 - `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` and `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` expose grounding evidence in Workspace and Run Detail.
 
 ## Existing Handoff Solution
@@ -118,19 +119,10 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed baseline lane remains Private Deployment Experience. The current target is **Agent Knowledge Harness**.
+The latest completed Agent Knowledge Harness lane is **P2 local knowledge management**. The next planned lane is **P3 real policy-gated web research**, and it should not be mocked as user-facing real evidence.
 
-The immediate next lane is release-gate confirmation before any task-progress promotion:
+Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
-- verify the latest Alembic migration on an existing-data private deployment snapshot, not only an empty SQLite upgrade;
-- rerun Docker/private deployment smoke once Docker is available;
-- decide whether ORM-level append-only audit protection is sufficient for P1 verified baseline or whether DB triggers/RLS/tamper-evident hashes are required;
-- rerun broad backend, frontend, docs, build, and browser validations;
-- only then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from blocker-repair complete to verified baseline.
-
-After V1 is formalized, follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
-
-- productize local knowledge management;
 - add real policy-gated web research only after provider configuration and safety policy exist;
 - connect short-term memory, long-term memory, RAG, pinned context, context compression, and token budget into a prompt assembly router;
 - productize MCP creation/management and Skills/capability packs;

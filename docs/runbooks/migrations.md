@@ -72,6 +72,32 @@ alembic downgrade <revision_id>
 pg_dump "$DATABASE_URL" > "/opt/agent-harness/backups/agent_harness_$(date +%Y%m%d_%H%M%S).sql"
 ```
 
+## Knowledge Restore Verification
+
+For Agent Knowledge Harness migrations, a backup/restore note is not enough.
+After restoring the database and running migrations, verify:
+
+```text
+current retrieval returns ACTIVE source chunks only
+DISABLED or ARCHIVED sources are not retrieved
+historical Run Detail evidence renders by exact selector
+lifecycle audit events exist for create/version/disable/archive actions
+org-scoped sources stay isolated to their organization
+```
+
+Automated smoke coverage:
+`tests/test_knowledge_rag.py::test_knowledge_lifecycle_migration_preserves_existing_p1_rows`
+and
+`tests/test_knowledge_rag.py::test_knowledge_restore_smoke_preserves_current_and_historical_contracts`.
+
+Candidate-safe rule:
+
+```text
+If the P1 Docker/private baseline is unavailable, record:
+Private deployment verification deferred.
+P2 cannot be promoted to completed baseline.
+```
+
 ## Event Store Constraint
 
 Migration must preserve:
@@ -81,4 +107,3 @@ agent_events append-only behavior
 unique(task_id, sequence)
 event replay compatibility
 ```
-

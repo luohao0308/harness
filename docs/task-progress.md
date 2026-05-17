@@ -280,3 +280,52 @@ docker compose -p harness-private-test --env-file deploy/docker-compose/.env.exa
 ```
 
 The local default ports `127.0.0.1:8000` and `127.0.0.1:5173` were already occupied, so the runtime proof intentionally used host-port overrides instead of killing unrelated local services. During smoke verification, Promtail was fixed to preserve Loki `app` and `service` labels when Docker Compose runs with a custom project name such as `harness-private-test`.
+
+## Completed: Agent Knowledge Harness P1 Gate
+
+Date: 2026-05-16
+
+P1 is now recorded as a verified baseline in `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md`.
+
+Gate evidence:
+```text
+status: verified_baseline
+clean_alembic_upgrade: pass
+existing_data_upgrade: pass
+docker_compose_config: pass
+docker_private_smoke: pass
+agent_run_smoke: pass
+run_detail_exact_selector: pass
+eval_grounding_contract: pass
+append_only_audit_decision: pass
+backend_frontend_docs_browser_gate: pass
+```
+
+The Docker/private blocker was cleared after Docker Desktop became available. The `harness-p2-knowledge-test` compose stack started with host-port overrides, Postgres migration reached `20260517_0015 (head)`, `scripts/smoke-test-docker.py` passed, `scripts/smoke-test-agent-run.py` passed with run `f2f14ba1-92ea-495f-973a-8eca21d6374d`, and compose cleanup completed.
+
+## Completed: Agent Knowledge Harness P2 Local Knowledge Management
+
+Date: 2026-05-17
+
+P2 delivers a local knowledge source manager for agent/org-scoped text and Markdown documents, with lifecycle controls, versioned reingestion, retrieval eligibility filtering, audit-preserving historical reconstruction, `.txt` / `.md` import, and private deployment recovery evidence.
+
+Implemented:
+- Backend lifecycle contract: typed source/document/chunk fields, source disable/enable/archive, document-level version creation, stale chunks, current-version retrieval, source/document/chunk retrieval eligibility, expiry filtering, and org/agent scoped visibility.
+- Scope mutation contract: source, document, chunk, and embedding `agent_id` values are updated together when a source changes between agent and org scope.
+- Audit and history contract: lifecycle mutations write `knowledge-lifecycle-v1` audit events in the same request transaction, failed import/reingest creates a `FAILED` document and audit event, and historical Run/Eval exact selectors use persisted retrieval/citation/prompt snapshots instead of current active chunk state.
+- Agent Studio management surface: `KnowledgeManagementPanel` covers source list/detail, document list, version history, add/reingest document, disable/enable/archive, scope changes, health/error/status badges, and actual multipart `.txt` / `.md` import controls.
+- Recovery path: `docs/runbooks/migrations.md` records the knowledge restore verification contract, backed by automated restore smoke coverage.
+
+Verification:
+```text
+cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_evals.py tests/test_agents.py -q -> 72 passed
+cd services/api-server && uv run ruff check app/api/agents.py app/api/schemas.py app/db/models.py app/knowledge.py tests/test_knowledge_rag.py -> passed
+cd apps/agent-console && npm test -- KnowledgeManagementPanel -> 7 passed
+cd apps/agent-console && npm run e2e:smoke:release -- --grep "Agent Studio" -> 5 passed
+cd apps/agent-console && npm run lint -- --pretty false -> passed
+cd apps/agent-console && npm run build -> passed
+docker compose private smoke + P2 Knowledge API smoke against Postgres -> passed
+git diff --check -> passed
+```
+
+Private P2 smoke was refreshed after the multipart/failure/scope fixes. The compose stack built and started on override ports, Postgres migration reached `20260517_0015 (head)`, `scripts/smoke-test-docker.py` passed, `scripts/smoke-test-agent-run.py` passed with run `173a957a-50c7-4730-864f-a170030d4107`, and cleanup completed. The P2 Knowledge API smoke created multipart agent-scoped source `e4207b6c-4779-442b-9eb0-045ebd5c5065`, added a sibling document, created a multipart v2 version while preserving v1 as superseded, disabled/enabled the source, created org-scoped source `9abb368e-1011-4735-8bb5-9c98fc507ff1`, verified same-org visibility, and confirmed lifecycle audit events in compose Postgres.
