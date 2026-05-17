@@ -1150,6 +1150,13 @@ export type ToolCall = {
   tool_name: string;
   status: string;
   risk_level: string;
+  capability_id?: string | null;
+  capability_version_id?: string | null;
+  capability_type?: string | null;
+  capability_content_sha256?: string | null;
+  capability_config_sha256?: string | null;
+  capability_schema_version?: number | null;
+  capability_snapshot_json?: Record<string, unknown>;
   requires_sandbox: boolean;
   sandbox_id?: string | null;
   duration_ms: number;

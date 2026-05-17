@@ -21,6 +21,7 @@ import {
   orchestrateAgentRun,
   rejectToolApproval,
   replayTask,
+  type AgentRunWorkspace,
   type AgentEvent,
   type ReplayResult,
   type ToolApproval,
@@ -40,8 +41,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
   const [saveEvalSuccess, setSaveEvalSuccess] = useState(false);
   const [selectedEvalDatasetId, setSelectedEvalDatasetId] = useState("");
+  const workspaceQueryKey = useMemo(
+    () => ["agent-run-workspace", runId, retrievalSessionId, promptManifestId] as const,
+    [promptManifestId, retrievalSessionId, runId],
+  );
   const workspace = useQuery({
-    queryKey: ["agent-run-workspace", runId, retrievalSessionId, promptManifestId],
+    queryKey: workspaceQueryKey,
     queryFn: () =>
       getAgentRunWorkspace(runId!, {
         retrieval_session_id: retrievalSessionId,
@@ -57,11 +62,11 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
   });
   const orchestrate = useMutation({
     mutationFn: () => orchestrateAgentRun(runId!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
   });
   const replay = useMutation({
     mutationFn: () => replayTask(runId!, parseReplaySequence(replaySequence)),
@@ -69,11 +74,53 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   });
   const approve = useMutation({
     mutationFn: (approvalId: string) => approveToolApproval(runId!, approvalId, "Approved from Agent Run Detail"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
+    onMutate: async (approvalId) => {
+      await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
+      const previous = queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey);
+      queryClient.setQueryData<AgentRunWorkspace>(
+        workspaceQueryKey,
+        optimisticApprovalDecision(previous, approvalId, "APPROVED"),
+      );
+      return { previous };
+    },
+    onError: (_error, _approvalId, context) => {
+      if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData<AgentRunWorkspace>(
+        workspaceQueryKey,
+        mergeApprovalPage(queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey), result.items),
+      );
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceQueryKey, refetchType: "active" });
+      void queryClient.refetchQueries({ queryKey: workspaceQueryKey, type: "active" });
+    },
   });
   const reject = useMutation({
     mutationFn: (approvalId: string) => rejectToolApproval(runId!, approvalId, "Rejected from Agent Run Detail"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] }),
+    onMutate: async (approvalId) => {
+      await queryClient.cancelQueries({ queryKey: workspaceQueryKey });
+      const previous = queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey);
+      queryClient.setQueryData<AgentRunWorkspace>(
+        workspaceQueryKey,
+        optimisticApprovalDecision(previous, approvalId, "DENIED"),
+      );
+      return { previous };
+    },
+    onError: (_error, _approvalId, context) => {
+      if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData<AgentRunWorkspace>(
+        workspaceQueryKey,
+        mergeApprovalPage(queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey), result.items),
+      );
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceQueryKey, refetchType: "active" });
+      void queryClient.refetchQueries({ queryKey: workspaceQueryKey, type: "active" });
+    },
   });
   const saveEvalCase = useMutation({
     mutationFn: async () => {
@@ -666,8 +713,11 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
             <Th>工具</Th>
             <Th>状态</Th>
             <Th>风险</Th>
+            <Th>Capability</Th>
+            <Th>Content hash</Th>
+            <Th>Config hash</Th>
             <Th>延迟</Th>
-            <Th>输出</Th>
+            <Th>输出摘要</Th>
           </tr>
         </thead>
         <tbody>
@@ -676,14 +726,93 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
               <Td className="font-mono">{call.tool_name}</Td>
               <Td><Badge tone={statusTone(call.status)}>{call.status}</Badge></Td>
               <Td>{call.risk_level}</Td>
+              <Td>
+                <div className="font-mono text-[11px] text-slate-700">
+                  {shortCapability(call.capability_version_id)}
+                </div>
+              </Td>
+              <Td className="font-mono text-[11px] text-slate-500">
+                {shortCapability(call.capability_content_sha256)}
+              </Td>
+              <Td className="font-mono text-[11px] text-slate-500">
+                {shortCapability(call.capability_config_sha256)}
+              </Td>
               <Td className="font-mono">{call.duration_ms}ms</Td>
-              <Td className="max-w-72 truncate text-slate-500">{call.output_summary}</Td>
+              <Td className="max-w-72 text-slate-500">
+                <div className="truncate" title={call.output_summary}>
+                  {toolOutputSummary(call)}
+                </div>
+              </Td>
             </tr>
           ))}
         </tbody>
       </Table>
     </Card>
   );
+}
+
+export function shortCapability(value?: string | null) {
+  return value ? value.slice(0, 18) : "n/a";
+}
+
+export function toolOutputSummary(call: ToolCall): string {
+  if (call.status === "APPROVED") return "已批准，等待执行";
+  if (call.status === "PENDING_APPROVAL") return "等待审批";
+  return call.output_summary || "无输出";
+}
+
+export function optimisticApprovalDecision(
+  workspace: AgentRunWorkspace | undefined,
+  approvalId: string,
+  nextStatus: "APPROVED" | "DENIED",
+): AgentRunWorkspace | undefined {
+  if (!workspace) return workspace;
+  const nextApprovals = workspace.approvals.map((approval) =>
+    approval.id !== approvalId
+      ? approval
+      : {
+          ...approval,
+          status: nextStatus,
+          decided_at: new Date().toISOString(),
+        },
+  );
+  const nextToolCalls = workspace.tool_calls.map((toolCall) =>
+    nextApprovals.some((approval) => approval.tool_call_id === toolCall.id && approval.id === approvalId)
+      ? {
+          ...toolCall,
+          status: nextStatus,
+          error_message: nextStatus === "APPROVED" ? null : toolCall.error_message,
+        }
+      : toolCall,
+  );
+  return {
+    ...workspace,
+    approvals: nextApprovals,
+    tool_calls: nextToolCalls,
+  };
+}
+
+export function mergeApprovalPage(
+  workspace: AgentRunWorkspace | undefined,
+  approvals: ToolApproval[],
+): AgentRunWorkspace | undefined {
+  if (!workspace) return workspace;
+  const approvalById = new Map(approvals.map((approval) => [approval.id, approval]));
+  return {
+    ...workspace,
+    approvals: workspace.approvals.map((approval) => approvalById.get(approval.id) ?? approval),
+    tool_calls: workspace.tool_calls.map((toolCall) => {
+      const approval = workspace.approvals.find((item) => item.tool_call_id === toolCall.id);
+      if (!approval) return toolCall;
+      const updated = approvalById.get(approval.id);
+      if (!updated) return toolCall;
+      return {
+        ...toolCall,
+        status: updated.status === "APPROVED" ? "APPROVED" : "DENIED",
+        error_message: updated.status === "APPROVED" ? null : updated.reason,
+      };
+    }),
+  };
 }
 
 function EventRow({ event }: { event: AgentEvent }) {

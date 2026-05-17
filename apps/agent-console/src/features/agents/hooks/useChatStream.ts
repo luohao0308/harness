@@ -345,6 +345,8 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
     (input: BuildPayloadInput): AgentChatStreamPayload => {
       const store = useWorkspaceStore.getState();
       const activePath = store.activePath();
+      const toolMentions = extractToolMentions(input.goal, tools);
+      const mode = toolAwareWorkspaceMode(input.mode, toolMentions.length);
       const branchKey = contextCompressionBranchKey(
         store.currentConversationId,
         store.activeLeafId,
@@ -358,7 +360,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         modelId: selectedModelId,
       });
       return {
-        mode: input.mode,
+        mode,
         goal: input.goal,
         model_provider: selectedProviderId,
         model_name: selectedModelId,
@@ -370,7 +372,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         context_window_turns: store.contextWindowTurns,
         continue_from_node_id: input.continueFromNodeId,
         partial_assistant_content: input.partialContent,
-        tool_mentions: extractToolMentions(input.goal, tools),
+        tool_mentions: toolMentions,
         attachment_names: input.attachmentNames ?? [],
         attachments: input.attachments ?? [],
         // v4 additive: UI-side context budget hint (Req 5.5).
@@ -400,7 +402,11 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       if (goal.length === 0 || controllerRef.current !== null) return;
 
       const store = useWorkspaceStore.getState();
-      const [userPatch, assistantPatch] = planInitialNodes(goal, input.mode);
+      const effectiveMode = toolAwareWorkspaceMode(
+        input.mode,
+        extractToolMentions(goal, tools).length,
+      );
+      const [userPatch, assistantPatch] = planInitialNodes(goal, effectiveMode);
 
       // Two atomic appends — the store wires `parent_id` from the active leaf
       // on the first call, then we explicitly nest the assistant under the
@@ -423,14 +429,14 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         assistantNodeId,
         abort,
         payload: buildPayload({
-          mode: input.mode,
+          mode: effectiveMode,
           goal,
           attachmentNames: input.attachmentNames,
           attachments: input.attachments,
         }),
       });
     },
-    [buildPayload, driveStream],
+    [buildPayload, driveStream, tools],
   );
 
   const pause = useCallback((): void => {
@@ -476,7 +482,13 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       });
       store.updateNode(pausedNodeId, { state: "streaming" });
 
-      const mode = paused.metadata.workspace_mode ?? workspaceMode;
+      const mode = toolAwareWorkspaceMode(
+        paused.metadata.workspace_mode ?? workspaceMode,
+        extractToolMentions(prevUser.content, tools).length,
+      );
+      store.updateNode(pausedNodeId, {
+        metadata: { ...paused.metadata, workspace_mode: mode },
+      });
 
       await driveStream({
         assistantNodeId: pausedNodeId,
@@ -490,7 +502,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         }),
       });
     },
-    [buildPayload, driveStream, workspaceMode],
+    [buildPayload, driveStream, tools, workspaceMode],
   );
 
   const retry = useCallback(
@@ -540,17 +552,31 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         controller: abort,
         started_at: performance.now(),
       });
+      const existing = store.nodesById[input.assistantNodeId];
+      const mode = toolAwareWorkspaceMode(
+        input.mode,
+        extractToolMentions(input.goal, tools).length,
+      );
+      if (existing) {
+        store.updateNode(input.assistantNodeId, {
+          metadata: { ...existing.metadata, workspace_mode: mode },
+        });
+      }
 
       await driveStream({
         assistantNodeId: input.assistantNodeId,
         abort,
-        payload: buildPayload({ mode: input.mode, goal: input.goal }),
+        payload: buildPayload({ mode, goal: input.goal }),
       });
     },
-    [buildPayload, driveStream],
+    [buildPayload, driveStream, tools],
   );
 
   return { isStreaming, start, pause, resume, retry, driveBranch };
+}
+
+function toolAwareWorkspaceMode(mode: WorkspaceMode, toolMentionCount: number): WorkspaceMode {
+  return mode === "codex_plan" && toolMentionCount > 0 ? "chat" : mode;
 }
 
 /**
