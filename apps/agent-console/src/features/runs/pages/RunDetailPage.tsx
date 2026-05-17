@@ -53,6 +53,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const data = workspace.data;
   const run = data?.run;
   const grounding = data?.knowledge_grounding;
+  const contextAssembly = data?.context_assembly;
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
@@ -373,6 +374,46 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             </Card>
           )}
 
+          {contextAssembly && (
+            <Card id="context-assembly">
+              <CardHeader>
+                <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Database className="h-4 w-4" />
+                  上下文组装
+                </div>
+                <Badge tone={contextAssembly.mode === "authoritative" ? "success" : "warning"}>
+                  {contextAssembly.mode}
+                </Badge>
+              </CardHeader>
+              <div className="space-y-3 p-3 text-sm">
+                <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                  <Metric label="Manifest" value={contextAssembly.id} />
+                  <Metric label="Prompt manifest" value={contextAssembly.prompt_manifest_id ?? "n/a"} />
+                  <Metric label="Included" value={String(contextAssembly.included_refs_json.length)} />
+                  <Metric label="Omitted" value={String(contextAssembly.omitted_refs_json.length)} />
+                  <Metric
+                    label="Estimator"
+                    value={String(contextAssembly.token_budget_json.estimator ?? "n/a")}
+                  />
+                  <Metric
+                    label="Budget"
+                    value={String(contextAssembly.token_budget_json.requested_max_tokens ?? "n/a")}
+                  />
+                  <Metric label="Sections" value={String(contextAssembly.sections_json.length)} />
+                  <Metric label="Hash" value={contextAssembly.context_text_sha256.slice(0, 12)} />
+                </div>
+                {contextAssembly.omitted_refs_json.length > 0 && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                    {contextAssembly.omitted_refs_json
+                      .map((ref) => String(ref.omission_reason ?? "omitted"))
+                      .filter((reason, index, reasons) => reasons.indexOf(reason) === index)
+                      .join(", ")}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
           <Card id="plan">
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -481,7 +522,8 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
                     <Metric label="Attempt" value={String(call.attempt_index)} />
                     <Metric label="Terminal" value={call.terminal_status ?? "n/a"} />
-                    <Metric label="Manifest" value={call.prompt_manifest_id ?? "n/a"} />
+                    <Metric label="Prompt manifest" value={call.prompt_manifest_id ?? "n/a"} />
+                    <Metric label="Context manifest" value={call.context_manifest_id ?? "n/a"} />
                     <Metric label="Correlation" value={call.grounding_correlation_id ?? "n/a"} />
                     <Metric label="Request hash" value={call.model_request_sha256 ?? "n/a"} />
                     <Metric label="Hash audit" value={call.hash_recomputability_status} />

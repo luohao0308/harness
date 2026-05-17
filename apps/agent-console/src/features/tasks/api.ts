@@ -145,6 +145,13 @@ export type AgentPlanStreamEvent =
       status: string;
       step_count: number;
       message: string;
+      context_assembly?: {
+        context_manifest_id: string | null;
+        mode: string | null;
+        included_count: number;
+        omitted_count: number;
+        omission_reasons: string[];
+      };
     }
   | { type: "error"; message: string };
 
@@ -194,9 +201,8 @@ export type AgentChatStreamPayload = {
   attachment_names?: string[];
   attachments?: AgentAttachmentPayload[];
   /**
-   * v4 additive UI-side token budget hint. Backend ignores this field
-   * today (Pydantic `extra="ignore"`); it is surfaced so future
-   * context-trimming logic can see the user's slider value.
+   * UI-side token budget hint. The backend recounts with its estimator and
+   * returns omission reasons when authoritative assembly trims context.
    */
   context_max_tokens?: number;
   compressed_context?: AgentCompressedContext | null;
@@ -204,6 +210,7 @@ export type AgentChatStreamPayload = {
 
 export type AgentCompressedContext = {
   summary: string;
+  branch_id: string;
   coverage_node_ids: string[];
   coverage_path_hash: string;
   summary_schema_version: string;
@@ -254,6 +261,13 @@ export type AgentChatStreamEvent =
       status: string;
       step_count: number;
       message: string;
+      context_assembly?: {
+        context_manifest_id: string | null;
+        mode: string | null;
+        included_count: number;
+        omitted_count: number;
+        omission_reasons: string[];
+      };
     }
   | {
       type: "tool_call_requested";
@@ -990,12 +1004,34 @@ export type AgentRunWorkspace = {
   plan: TaskPlan | null;
   events: AgentEvent[];
   knowledge_grounding: KnowledgeGrounding | null;
+  context_assembly: ContextAssemblyManifest | null;
   subagents: Subagent[];
   tool_calls: ToolCall[];
   model_calls: ModelCall[];
   approvals: ToolApproval[];
   assignments: AgentAssignment[];
   handoffs: AgentHandoff[];
+};
+
+export type ContextAssemblyManifest = {
+  id: string;
+  organization_id: string | null;
+  agent_id: string;
+  run_id: string | null;
+  retrieval_session_id: string | null;
+  prompt_manifest_id: string | null;
+  active_branch_id: string | null;
+  active_leaf_id: string | null;
+  mode: string;
+  token_budget_json: Record<string, unknown>;
+  sections_json: Array<Record<string, unknown>>;
+  included_refs_json: Array<Record<string, unknown>>;
+  omitted_refs_json: Array<Record<string, unknown>>;
+  policy_decisions_json: Array<Record<string, unknown>>;
+  tombstoned_refs_json: Array<Record<string, unknown>>;
+  context_text_sha256: string;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
 };
 
 export type TaskPlanVersionSummary = {
@@ -1076,6 +1112,7 @@ export type RunContext = {
   context_compression: Record<string, unknown>;
   model_routing: Record<string, unknown>;
   latest_agent_router: Record<string, unknown> | null;
+  context_assembly: Record<string, unknown> | null;
 };
 
 export type ModelCall = {
@@ -1091,6 +1128,7 @@ export type ModelCall = {
   duration_ms: number;
   grounding_correlation_id: string | null;
   prompt_manifest_id: string | null;
+  context_manifest_id: string | null;
   model_request_sha256: string | null;
   model_request_hash_schema_version: number;
   request_message_hashes_json: Array<Record<string, unknown>>;
@@ -1917,12 +1955,25 @@ function parseSseFrame(frame: string): AgentPlanStreamEvent | null {
     return { type: "delta", content: String(payload.content ?? "") };
   }
   if (eventType === "run_created") {
+    const contextAssembly = asRecord(payload.context_assembly);
     return {
       type: "run_created",
       run_id: String(payload.run_id),
       status: String(payload.status),
       step_count: Number(payload.step_count ?? 0),
       message: String(payload.message ?? ""),
+      context_assembly: {
+        context_manifest_id:
+          typeof contextAssembly.context_manifest_id === "string"
+            ? contextAssembly.context_manifest_id
+            : null,
+        mode: typeof contextAssembly.mode === "string" ? contextAssembly.mode : null,
+        included_count: Number(contextAssembly.included_count ?? 0),
+        omitted_count: Number(contextAssembly.omitted_count ?? 0),
+        omission_reasons: Array.isArray(contextAssembly.omission_reasons)
+          ? contextAssembly.omission_reasons.map(String)
+          : [],
+      },
     };
   }
   if (eventType === "error") {
@@ -1943,12 +1994,25 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
     return { type: "think_delta", content: String(payload.content ?? "") };
   }
   if (eventType === "run_created") {
+    const contextAssembly = asRecord(payload.context_assembly);
     return {
       type: "run_created",
       run_id: String(payload.run_id),
       status: String(payload.status),
       step_count: Number(payload.step_count ?? 0),
       message: String(payload.message ?? ""),
+      context_assembly: {
+        context_manifest_id:
+          typeof contextAssembly.context_manifest_id === "string"
+            ? contextAssembly.context_manifest_id
+            : null,
+        mode: typeof contextAssembly.mode === "string" ? contextAssembly.mode : null,
+        included_count: Number(contextAssembly.included_count ?? 0),
+        omitted_count: Number(contextAssembly.omitted_count ?? 0),
+        omission_reasons: Array.isArray(contextAssembly.omission_reasons)
+          ? contextAssembly.omission_reasons.map(String)
+          : [],
+      },
     };
   }
   if (eventType === "tool_call_requested") {

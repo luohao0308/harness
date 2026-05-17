@@ -41,9 +41,7 @@ import {
   SUMMARY_SCHEMA_VERSION,
   contextCompressionBranchKey,
   selectBestCompressionSummary,
-  uncoveredContextPath,
 } from "../lib/contextCompression";
-import { truncateForContext } from "../lib/contextTruncation";
 import { extractToolMentions } from "../lib/toolMentions";
 import {
   SseError,
@@ -339,9 +337,9 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
    * the legacy `AgentWorkspacePage` implementation so the backend contract is
    * unchanged (Req 10.3).
    *
-   * v4.1 additive: applies `truncateForContext` before serializing messages
-   * so the API payload stays within the configured token budget. The store
-   * data is never mutated — truncation is payload-only.
+   * v4.1/P4 additive: sends the full active path plus a UI token budget hint.
+   * The backend is the authoritative assembly surface and records any trimmed
+   * references in the context manifest.
    */
   const buildPayload = useCallback(
     (input: BuildPayloadInput): AgentChatStreamPayload => {
@@ -359,25 +357,12 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         providerId: selectedProviderId,
         modelId: selectedModelId,
       });
-      const promptPath = uncoveredContextPath({
-        activePath,
-        pinnedNodeIds: store.pinnedNodeIds,
-        summary,
-      });
-
-      // Apply fallback truncation after summary + pinned + uncovered assembly.
-      const { messages: truncatedMessages } = truncateForContext(
-        promptPath,
-        store.pinnedNodeIds,
-        store.contextMaxTokens,
-      );
-
       return {
         mode: input.mode,
         goal: input.goal,
         model_provider: selectedProviderId,
         model_name: selectedModelId,
-        messages: serializeMessages(truncatedMessages),
+        messages: serializeMessages(activePath),
         active_leaf_id: store.activeLeafId,
         run_id: input.runId,
         active_branch_id: store.activeLeafId,
@@ -395,6 +380,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
             ? null
             : {
                 summary: summary.summary,
+                branch_id: store.activeLeafId,
                 coverage_node_ids: summary.coverageNodeIds,
                 coverage_path_hash: summary.coveragePathHash,
                 summary_schema_version: SUMMARY_SCHEMA_VERSION,
