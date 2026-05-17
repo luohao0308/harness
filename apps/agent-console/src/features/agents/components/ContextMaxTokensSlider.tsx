@@ -88,8 +88,8 @@ export function ContextMaxTokensSlider({
       </div>
       <p className="text-[10px] leading-4 text-slate-500">
         {text(
-          "上下文窗口大小，超出时自动截断旧消息",
-          "Context window size; older messages are truncated when exceeded",
+          "预测标记数；后端会重新计数并返回裁剪原因",
+          "Predicted tokens; backend will recount and return omission reasons",
         )}
       </p>
     </div>
