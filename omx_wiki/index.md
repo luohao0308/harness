@@ -24,6 +24,7 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-17-agent-knowledge-p3-web-research]] - P3 real policy-gated web research record through `76f11d5`: Tavily adapter, URL/DNS policy gates, attempt ledger, source-bound citations, fake-provider hardening, Run Detail evidence, reports, validation, live smoke, and push evidence.
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]] - P4 memory/context router V2 record through `6c4a95d`: backend authoritative context assembly, scoped memory, token-budget pruning, pinned-message tagging, context manifests, Run Detail evidence, validation, and push evidence.
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]] - P5 MCP/Skills productization record through `f05816e`: capability registry, Agent attachments, immutable capability versions, fail-closed ToolRunner, approval resume, console feedback, tests, report, and push evidence.
+- [[session-2026-05-18-agent-knowledge-p6-groundedness-eval-observability]] - P6 groundedness Eval and Observability record through `83c8eee`: Eval-owned grounding traces, forbidden leak boundaries, Observability projection, Run Detail selector saves, tests, report, and push evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P6 Eval/Observability.
 
 ## Categories
@@ -69,3 +70,5 @@ Persistent project knowledge for the AI Harness Platform.
 - `policy-audit`
 - `cjk-retrieval`
 - `task-progress`
+- `observability`
+- `forbidden-leak`

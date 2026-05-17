@@ -226,7 +226,7 @@ deterministic backfill input only. New runtime execution must resolve from enabl
 
 ### P6: Groundedness Eval And Observability
 
-Status: completed locally.
+Status: completed and pushed through `83c8eee`.
 
 Goal: make quality and hallucination control measurable.
 
@@ -248,6 +248,8 @@ Verification evidence:
 - `cd apps/agent-console && npm run lint` -> passed.
 - `cd apps/agent-console && npm run build` -> passed.
 - `cd apps/agent-console && npm test` -> `147 passed`.
+- Pushed to `origin/main` through `83c8eee`.
+- Detailed P6 session record: [[session-2026-05-18-agent-knowledge-p6-groundedness-eval-observability]].
 
 ### P7: Release And Demo Hardening
 
