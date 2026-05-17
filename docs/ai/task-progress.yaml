@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-17T09:55:00Z
+last_updated_at: 2026-05-17T18:20:00Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -116,6 +116,25 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: p6-groundedness-eval-observability
+    date: 2026-05-18
+    status: eval_owned_grounding_quality_verified
+    demo: Eval computes deterministic grounding quality, regression gates, and failure reasons while Observability and Run Detail only project Eval-owned results/selectors.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_evals.py tests/test_eval_regression.py tests/test_observability.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npm test
+    acceptance_notes:
+      - GroundingTraceV1 normalizes Eval-owned pass/fail, failure reasons, citation keys, retrieval hit IDs, fallback expectation/observation, unsupported markers, and forbidden leak fields.
+      - Forbidden evidence leakage is evaluated only by Eval against normalized retrieval, prompt manifest, citation, policy/audit, and model-call binding metadata inputs.
+      - Eval no longer scans raw ModelCall.request_json or ModelCall.response_json for forbidden snippets.
+      - RegressionDelta includes grounding metric deltas, newly grounding-failing cases, newly forbidden-leak cases, and low-sample caveat fields.
+      - Observability grounding-quality is a read-only projection endpoint and does not render forbidden snippet text.
+      - Run Detail saved Eval Cases auto-populate only objective selectors and indexes, not required/forbidden snippets or unsupported markers.
+
   - id: p4-memory-context-router-v2
     date: 2026-05-17
     status: backend_context_assembly_verified
