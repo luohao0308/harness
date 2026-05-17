@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import EvalDataset
+from app.db.models import EvalCase, EvalDataset, EvalResult, EvalRun, utc_now
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -204,6 +204,107 @@ class TestRegressionDelta:
         assert delta["total_cases"] == 1
         assert delta["passed_cases"] == 1
         assert delta["failed_cases"] == 0
+
+    def test_grounding_regression_fields_and_forbidden_leak_gate(
+        self,
+        db_session: Session,
+    ) -> None:
+        dataset = EvalDataset(
+            organization_id="dev-org",
+            name="P6 Grounding Regression",
+            description="Grounding gate coverage",
+            status="ACTIVE",
+            created_by="dev-engineer",
+        )
+        db_session.add(dataset)
+        db_session.flush()
+        baseline_run = EvalRun(
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            metrics_json={},
+            created_by="dev-engineer",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        current_run = EvalRun(
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            metrics_json={},
+            created_by="dev-engineer",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        db_session.add_all([baseline_run, current_run])
+        db_session.flush()
+        dataset.baseline_run_id = baseline_run.id
+        eval_case = EvalCase(
+            dataset_id=dataset.id,
+            source_task_id=None,
+            input_json={},
+            expected_json={},
+            tags_json=["p6"],
+        )
+        db_session.add(eval_case)
+        db_session.flush()
+        eval_case_id = eval_case.id
+        db_session.add_all(
+            [
+                EvalResult(
+                    eval_run_id=baseline_run.id,
+                    eval_case_id=eval_case_id,
+                    task_id=None,
+                    status="PASSED",
+                    scores_json={"task_success": 1, "tool_selection_accuracy": 1},
+                    grader_trace_json={
+                        "grader_trace_schema_version": 1,
+                        "grader": "deterministic_grounding_grader_v1",
+                        "passed": True,
+                        "grounding_failures": [],
+                        "forbidden_evidence_leaked": False,
+                    },
+                    latency_ms=0,
+                    cost_usd="0",
+                ),
+                EvalResult(
+                    eval_run_id=current_run.id,
+                    eval_case_id=eval_case_id,
+                    task_id=None,
+                    status="FAILED",
+                    scores_json={"task_success": 0, "tool_selection_accuracy": 1},
+                    grader_trace_json={
+                        "grader_trace_schema_version": 1,
+                        "grader": "deterministic_grounding_grader_v1",
+                        "passed": False,
+                        "grounding_failures": ["forbidden_evidence_leaked"],
+                        "forbidden_evidence_leaked": True,
+                        "forbidden_leak_sources": ["citations"],
+                    },
+                    latency_ms=0,
+                    cost_usd="0",
+                ),
+            ]
+        )
+        db_session.commit()
+
+        client = TestClient(app)
+        response = client.get(
+            f"/api/evals/runs/{current_run.id}/regression",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        delta = response.json()
+        assert delta["is_regression"] is True
+        assert delta["grounding_pass_rate_delta"] == -1.0
+        assert delta["forbidden_evidence_leak_rate_delta"] == 1.0
+        assert delta["newly_grounding_failing_case_ids"] == [eval_case_id]
+        assert delta["newly_forbidden_leak_case_ids"] == [eval_case_id]
+        assert delta["grounding_sample_count"] == 1
+        assert delta["low_sample_count"] is True
 
     def test_regression_run_not_found(self, db_session: Session) -> None:
         client = TestClient(app)
