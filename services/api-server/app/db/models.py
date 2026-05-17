@@ -39,6 +39,7 @@ class Task(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
@@ -49,6 +50,7 @@ class Task(Base):
     max_subagents: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     enable_sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     enable_network: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -58,9 +60,7 @@ class Task(Base):
 
 class Agent(Base):
     __tablename__ = "agents"
-    __table_args__ = (
-        UniqueConstraint("organization_id", "id", name="agents_org_id_uidx"),
-    )
+    __table_args__ = (UniqueConstraint("organization_id", "id", name="agents_org_id_uidx"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
@@ -76,6 +76,91 @@ class Agent(Base):
     max_parallel_assignments: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class Capability(Base):
+    __tablename__ = "capabilities"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "capability_key",
+            name="capabilities_org_key_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    capability_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    current_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class CapabilityVersion(Base):
+    __tablename__ = "capability_versions"
+    __table_args__ = (
+        UniqueConstraint("capability_id", "version", name="capability_versions_version_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    capability_id: Mapped[str] = mapped_column(
+        ForeignKey("capabilities.id"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    content_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    config_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AgentCapabilityAttachment(Base):
+    __tablename__ = "agent_capability_attachments"
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id",
+            "capability_version_id",
+            name="agent_capability_attachments_agent_version_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    capability_id: Mapped[str] = mapped_column(
+        ForeignKey("capabilities.id"), nullable=False, index=True
+    )
+    capability_version_id: Mapped[str] = mapped_column(
+        ForeignKey("capability_versions.id"),
+        nullable=False,
+        index=True,
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    attached_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    attached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class CapabilitySnapshot(Base):
+    __tablename__ = "capability_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class AgentSession(Base):
@@ -147,6 +232,7 @@ class AgentRun(Base):
     agent_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     timeout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -330,6 +416,7 @@ class ModelCall(Base):
         nullable=True,
         index=True,
     )
+    capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     legacy_prompt_manifest_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     model_request_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_request_hash_schema_version: Mapped[int] = mapped_column(
@@ -361,6 +448,13 @@ class ToolCall(Base):
     tool_name: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     risk_level: Mapped[str] = mapped_column(String(64), nullable=False)
+    capability_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    capability_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    capability_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    capability_content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    capability_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    capability_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     requires_sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sandbox_id: Mapped[str | None] = mapped_column(
         ForeignKey("sandbox_instances.id"),
@@ -878,6 +972,7 @@ class EvalCase(Base):
     )
     input_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     expected_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     tags_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -894,6 +989,7 @@ class EvalRun(Base):
     organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="PENDING", index=True)
+    capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
