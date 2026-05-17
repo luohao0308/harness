@@ -194,7 +194,7 @@ Verification evidence:
 
 ### P5: Productize MCP And Skills
 
-Status: committed / pending push.
+Status: completed / pushed.
 
 Goal: make tools and skills manageable Harness capabilities, not hidden implementation details.
 
@@ -219,6 +219,7 @@ Verification evidence:
 - `cd services/api-server && uv run pytest -q` -> `272 passed`.
 - `cd services/api-server && uv run ruff check app tests alembic/versions/20260517_0018_create_capability_registry.py` -> passed.
 - `cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-p5-alembic.sqlite uv run alembic upgrade head` -> reached `20260517_0018`.
+- Pushed to `origin/main` through `f05816e`.
 
 Important boundary: `Agent.tools_json` remains visible as legacy registry/preset metadata and as
 deterministic backfill input only. New runtime execution must resolve from enabled attachments.
@@ -263,3 +264,4 @@ Scope:
 - [[session-2026-05-14-workspace-execution-evidence]]
 - [[session-2026-05-17-agent-knowledge-p3-web-research]]
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]]
+- [[session-2026-05-17-agent-knowledge-p5-capability-registry]]
