@@ -54,12 +54,12 @@ Knowledge/RAG code now exists in the current worktree:
 - `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py` creates knowledge, document, chunk, embedding, retrieval, citation, and web-source records.
 - `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py` creates prompt assembly manifest and policy audit tables.
 - `services/api-server/app/knowledge.py` implements ingestion, chunking, deterministic embeddings, vector capability state, lexical/CJK fallback, retrieval sessions, citations, prompt manifest persistence, policy/omission audit rows, and insufficient-local-evidence behavior.
-- `services/api-server/app/api/agents.py` exposes `GET/POST /api/agents/{agent_id}/knowledge/sources`, uses knowledge grounding in normal Workspace chat, and returns manifest/audit evidence to Run Detail.
+- `services/api-server/app/api/agents.py` exposes knowledge source lifecycle, document versioning, scope, and document endpoints, uses knowledge grounding in normal Workspace chat, and returns manifest/audit evidence to Run Detail.
 - `services/api-server/app/api/evals.py` includes a deterministic grounding contract grader for prompt manifest, policy decisions, sufficient retrieval, citation-hit inclusion, and forbidden-text leakage.
-- `apps/agent-console/src/features/agents/pages/AgentListPage.tsx` includes a knowledge source add/list surface.
+- `apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx` provides source list/detail, document versions, add/reingest, lifecycle controls, scope/health badges, and multipart `.txt` / `.md` import controls inside Agent Studio.
 - `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` renders assistant grounding metadata.
 - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` renders retrieval hits, citations, web sources, vector capability, local status, grounded status, prompt manifest counts/hash, and policy audit decisions.
-- `services/api-server/tests/test_knowledge_rag.py` covers ingestion, versioning, lexical/CJK fallback, vector flag behavior, citation binding, prompt manifest persistence, policy audit rows, insufficient local evidence, tenant isolation, URL policy, API, and event behavior.
+- `services/api-server/tests/test_knowledge_rag.py` covers ingestion, versioning, lifecycle, retrieval eligibility, exact historical selectors, restore/migration, lexical/CJK fallback, vector flag behavior, citation binding, prompt manifest persistence, policy audit rows, insufficient local evidence, tenant isolation, URL policy, API, and event behavior.
 
 ## Replanned Progress
 
@@ -74,7 +74,7 @@ Status: completed / keep closed.
 
 ### P1: Formalize Agent Knowledge Harness V1
 
-Status: audit-gate blocker repair pushed through `4475eef` / verified baseline not yet promoted.
+Status: verified baseline.
 
 Goal: turn the existing Knowledge/RAG implementation into the official recorded progress state.
 
@@ -101,28 +101,36 @@ Completed in the current P1 audit-gate slice:
 - `[Wn]` web citation normalization;
 - regression coverage for sufficient evidence, insufficient evidence, tenant isolation, policy audit, denied/redacted isolation, CJK single-chunk grounding, model-call binding, v2 hash recomputation, exact selectors, fallback metadata, Run Detail Eval-save contract propagation, and stream-abort terminal status.
 
-Fresh validation evidence is captured in [[session-2026-05-16-agent-knowledge-p1-grounding-audit]].
+Fresh validation evidence is captured in [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] and `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md`.
 
-Remaining gate work before verified baseline:
+Verified-baseline evidence:
 
-- complete Docker/private migration validation. The latest local environment did not have Docker available, so private-deployment compatibility remains unproven;
-- verify upgrade behavior against an existing-data snapshot, not just an empty SQLite upgrade;
-- decide whether ORM-level append-only tests are enough for P1 or whether DB-level triggers/RLS/tamper-evident hashes are required;
-- rerun broad backend/frontend/docs/build/browser validation, then update `docs/ai/task-progress.yaml`, `docs/task-progress.md`, and wiki from blocker-repair complete to verified baseline.
+- P1 gate artifact status is `verified_baseline`.
+- Clean SQLite upgrade and compose/Postgres migration reached `20260517_0015 (head)`.
+- Existing-data and restore smoke tests preserve P1 knowledge rows, exact historical evidence, lifecycle events, and org isolation.
+- Docker/private smoke, Agent Run smoke, backend/frontend/docs/browser gates, exact selector, Eval grounding, and append-only audit decision are recorded as pass.
 
 ### P2: Productize Local Knowledge Management
 
-Status: planned.
+Status: completed.
 
 Goal: make local knowledge usable beyond an inline demo form.
 
-Scope:
+Delivered scope:
 
-- source lifecycle: edit, reingest, disable/delete, status, versions, provenance, expiry;
-- document/file ingestion beyond inline text when safe;
-- org-scoped versus agent-scoped source visibility;
+- source lifecycle: edit, disable, enable, archive, status, versions, provenance, expiry;
+- document-level versioned reingestion with stale chunks and current-version retrieval;
+- multipart `.txt` / `.md` import with MIME and size validation;
+- org-scoped versus agent-scoped source visibility and same-org/foreign-org isolation;
 - source health and indexing errors in Agent Studio;
-- migration and backup notes for private deployment.
+- migration and backup/restore notes for private deployment, backed by automated restore smoke.
+
+Verification evidence:
+
+- `uv run pytest tests/test_knowledge_rag.py tests/test_evals.py tests/test_agents.py -q` -> `72 passed`.
+- `npm test -- KnowledgeManagementPanel` -> `7 passed`.
+- `npm run e2e:smoke:release -- --grep "Agent Studio"` -> `5 passed`.
+- Compose/Postgres P2 Knowledge API smoke passed with agent-scoped source, sibling document, v2 document version, lifecycle actions, org-scoped source visibility, and lifecycle audit rows.
 
 ### P3: Add Real Policy-Gated Web Research
 

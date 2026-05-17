@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-14T05:02:00Z
+last_updated_at: 2026-05-16T22:52:31Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -245,6 +245,50 @@ post_stage_hardening:
       - scripts/smoke-test-docker.py passed against the compose stack and proved API, Console API base URL, Website, Nginx, Prometheus, Grafana, Loki, Tempo, OpenAPI, task, tool, model, subagent, metrics, trace, and log paths.
       - scripts/smoke-test-agent-run.py passed against the compose API and proved the canonical Agent Run path, sandbox/tool/subagent/eval/observability correlation.
       - docker compose down cleanup completed for the harness-private-test stack.
+
+  - id: agent-knowledge-harness-p1-gate
+    date: 2026-05-16
+    status: completed
+    demo: Agent Knowledge Harness P1 is recorded as a verified baseline with Docker/private, existing-data migration, exact-selector, Eval, audit, backend, frontend, docs, and browser evidence.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && DATABASE_URL=sqlite:///$tmpdb uv run alembic upgrade head && DATABASE_URL=sqlite:///$tmpdb uv run alembic current
+      - cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_evals.py tests/test_agents.py -q
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npm run e2e:smoke:release
+      - python3 scripts/validate-docs.py
+      - docker compose -p harness-p2-knowledge-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config
+      - python3 scripts/smoke-test-docker.py with HARNESS_* override URLs
+      - python3 scripts/smoke-test-agent-run.py with HARNESS_API_BASE_URL=http://127.0.0.1:28000
+    acceptance_notes:
+      - P1 gate artifact is `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md` with `status: verified_baseline`.
+      - Clean SQLite Alembic upgrade and Postgres compose migration reached `20260517_0015 (head)`.
+      - Existing-data and restore smoke tests preserve P1 knowledge rows, exact historical evidence, lifecycle events, and org isolation.
+      - Docker Compose private stack passed API, Console, Website, Nginx, Prometheus, Grafana, Loki, Tempo, Docker smoke, Agent Run smoke, and cleanup using host-port overrides.
+
+  - id: agent-knowledge-harness-p2-local-knowledge-management
+    date: 2026-05-17
+    status: completed
+    demo: Local knowledge manager for agent/org-scoped text and Markdown documents, with lifecycle controls, versioned reingestion, retrieval eligibility, audit retention, file import, and private recovery evidence.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_evals.py tests/test_agents.py -q
+      - cd services/api-server && uv run ruff check app/api/agents.py app/api/schemas.py app/db/models.py app/knowledge.py tests/test_knowledge_rag.py
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel
+      - cd apps/agent-console && npm run e2e:smoke:release -- --grep "Agent Studio"
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - docker compose private smoke and P2 Knowledge API smoke against Postgres on override ports
+      - git diff --check
+    acceptance_notes:
+      - Backend targeted regression is now `72 passed`.
+      - P2a backend lifecycle, document versioning, stale chunk filtering, retrieval source join, immutable historical selectors, lifecycle audit events, failure audit records, and org/agent isolation are covered in `services/api-server/tests/test_knowledge_rag.py`.
+      - Scope mutation updates source, document, chunk, and embedding `agent_id` consistently.
+      - P2b Agent Studio uses `KnowledgeManagementPanel` for source list/detail, document list, version history, add/reingest, disable/enable/archive, scope, health, error, and file import controls.
+      - P2c `.txt` / `.md` import uses actual multipart upload endpoints, with backend MIME/size validation and frontend FormData tests.
+      - Restore verification is documented in `docs/runbooks/migrations.md` and backed by `test_knowledge_restore_smoke_preserves_current_and_historical_contracts`.
+      - Private P2 Knowledge API smoke created agent-scoped and org-scoped sources, added a sibling document, created a v2 document version, checked lifecycle actions, verified same-org org-scope visibility, and confirmed lifecycle audit rows in compose Postgres.
 
 stage_completion_rule:
   - run_backend_tests
