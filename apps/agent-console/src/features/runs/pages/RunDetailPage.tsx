@@ -136,12 +136,28 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       const policyDecisions = Array.from(
         new Set((grounding?.policy_audits ?? []).map((audit) => audit.decision)),
       );
+      const citationKeys = Array.from(
+        new Set((grounding?.citations ?? []).map((citation) => citation.citation_key)),
+      );
+      const citationHitIds = Array.from(
+        new Set((grounding?.citations ?? []).map((citation) => citation.retrieval_hit_id)),
+      );
+      const retrievalHitIds = Array.from(
+        new Set((grounding?.retrieval_hits ?? []).map((hit) => hit.id)),
+      );
+      const fallbackExpected = Boolean(
+        grounding?.web_sources.length ||
+          ["web", "web_fallback", "fallback"].includes(grounding?.retrieval_session?.mode ?? ""),
+      );
       const groundingContract =
         grounding?.selected_retrieval_session_id || grounding?.selected_prompt_manifest_id
           ? {
               grounding_contract: {
                 retrieval_session_id: grounding.selected_retrieval_session_id ?? undefined,
                 prompt_manifest_id: grounding.selected_prompt_manifest_id ?? undefined,
+                hit_ids: citationHitIds.length ? citationHitIds : retrievalHitIds,
+                citation_keys: citationKeys,
+                fallback_expected: fallbackExpected,
                 require_grounded: grounding.grounded,
                 require_prompt_manifest: Boolean(grounding.selected_prompt_manifest_id),
                 require_insufficient: grounding.local_status !== "sufficient",

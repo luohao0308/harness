@@ -497,6 +497,35 @@ export type ObservabilitySummary = {
   sandbox_total: number;
 };
 
+export type ObservabilityGroundingQualityItem = {
+  eval_run_id: string;
+  eval_result_id: string;
+  eval_case_id: string;
+  task_id: string | null;
+  dataset_id: string;
+  agent_id: string | null;
+  status: string;
+  created_at: string;
+  grounding_passed: boolean;
+  grounding_failures: string[];
+  forbidden_evidence_leaked: boolean;
+  forbidden_leak_sources: string[];
+  fallback_expected: boolean;
+  fallback_observed: boolean;
+  unsupported_marker_present: boolean;
+  citation_keys: string[];
+  citation_hit_ids: string[];
+  retrieval_session_id: string | null;
+  prompt_manifest_id: string | null;
+};
+
+export type ObservabilityGroundingQuality = {
+  items: ObservabilityGroundingQualityItem[];
+  metrics: Record<string, number>;
+  failure_facets: CountItem[];
+  total: number;
+};
+
 export type ObservabilityLogEntry = {
   timestamp: string;
   level: string;
@@ -1927,12 +1956,23 @@ export type RegressionDelta = {
   task_success_rate_delta: number;
   tool_selection_accuracy_delta: number;
   avg_latency_ms_delta: number;
+  grounding_pass_rate_delta: number;
+  citation_coverage_rate_delta: number;
+  unsupported_marker_rate_delta: number;
+  fallback_mismatch_rate_delta: number;
+  forbidden_evidence_leak_rate_delta: number;
+  required_evidence_miss_rate_delta: number;
   newly_failing_case_ids: string[];
   newly_passing_case_ids: string[];
+  newly_grounding_failing_case_ids: string[];
+  newly_forbidden_leak_case_ids: string[];
   is_regression: boolean;
   total_cases: number;
   passed_cases: number;
   failed_cases: number;
+  grounding_sample_count: number;
+  low_sample_count: boolean;
+  low_sample_caveat: string | null;
 };
 
 export async function setEvalBaseline(datasetId: string, evalRunId: string) {
@@ -2161,6 +2201,27 @@ export async function listSandboxQuotaHistory(limit = 100) {
 
 export async function getObservabilitySummary() {
   return request<ObservabilitySummary>("/api/observability/summary");
+}
+
+export async function getObservabilityGroundingQuality(params?: {
+  dataset_id?: string;
+  eval_run_id?: string;
+  agent_id?: string;
+  failure_type?: string;
+  grounding_passed?: boolean;
+  forbidden_evidence_leaked?: boolean;
+  fallback_mismatch?: boolean;
+  unsupported_marker_present?: boolean;
+  limit?: number;
+}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<ObservabilityGroundingQuality>(`/api/observability/grounding-quality${suffix}`);
 }
 
 export async function listObservabilityLogs(params?: {
