@@ -125,6 +125,7 @@ class AgentChatResponse(BaseModel):
 
 class TaskResponse(BaseModel):
     id: str = Field(description="任务 ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
     title: str = Field(description="任务标题")
     goal: str = Field(description="任务目标")
     status: str = Field(description="任务状态")
@@ -134,6 +135,7 @@ class TaskResponse(BaseModel):
     max_subagents: int = Field(description="最大子 Agent 数")
     enable_sandbox: bool = Field(description="是否启用容器沙箱")
     enable_network: bool = Field(description="是否启用网络访问")
+    capability_snapshot_json: dict = Field(default_factory=dict, description="Capability snapshot")
     created_at: datetime = Field(description="创建时间")
     updated_at: datetime = Field(description="更新时间")
     completed_at: datetime | None = Field(default=None, description="完成时间")
@@ -1456,6 +1458,7 @@ class ModelCallResponse(BaseModel):
     )
     prompt_manifest_id: str | None = Field(default=None, description="Prompt manifest ID")
     context_manifest_id: str | None = Field(default=None, description="Context manifest ID")
+    capability_snapshot_json: dict = Field(default_factory=dict, description="Capability snapshot")
     model_request_sha256: str | None = Field(default=None, description="请求哈希")
     model_request_hash_schema_version: int = Field(
         default=1,
@@ -1518,6 +1521,17 @@ class ToolCallResponse(BaseModel):
     tool_name: str = Field(description="工具名称")
     status: str = Field(description="调用状态")
     risk_level: str = Field(description="风险等级")
+    capability_id: str | None = Field(default=None, description="Capability ID")
+    capability_version_id: str | None = Field(default=None, description="Capability version ID")
+    capability_type: str | None = Field(default=None, description="Capability type")
+    capability_content_sha256: str | None = Field(
+        default=None, description="Capability content hash"
+    )
+    capability_config_sha256: str | None = Field(default=None, description="Capability config hash")
+    capability_schema_version: int | None = Field(
+        default=None, description="Capability schema version"
+    )
+    capability_snapshot_json: dict = Field(default_factory=dict, description="Capability snapshot")
     requires_sandbox: bool = Field(description="是否需要沙箱")
     sandbox_id: str | None = Field(default=None, description="沙箱 ID")
     duration_ms: int = Field(description="耗时（毫秒）")
@@ -1548,6 +1562,25 @@ class ToolExecuteResponse(BaseModel):
     tool_call: ToolCallResponse = Field(description="工具调用审计记录")
     allowed: bool = Field(description="是否通过策略")
     output: dict = Field(description="工具输出")
+
+
+class CapabilityAdminValidationRequest(BaseModel):
+    content: dict = Field(default_factory=dict, description="Capability content")
+    config: dict = Field(default_factory=dict, description="Capability config")
+
+
+class CapabilityAdminValidationResponse(BaseModel):
+    status: str = Field(description="Validation status")
+    schema_version: int = Field(description="Capability schema version")
+    content_sha256: str = Field(description="Redacted content hash")
+    config_sha256: str = Field(description="Redacted config hash")
+    redacted_payload: dict = Field(description="Redacted validation payload")
+
+
+class CapabilityTestInvocationRequest(BaseModel):
+    agent_id: str = Field(min_length=1, description="Agent ID")
+    tool_name: str = Field(min_length=1, description="Tool/capability name")
+    input_json: dict = Field(default_factory=dict, description="Tool input")
 
 
 class ToolApprovalResponse(BaseModel):
@@ -1675,6 +1708,7 @@ class EvalCaseResponse(BaseModel):
     source_task_id: str | None = Field(default=None, description="来源 Run ID")
     input_json: dict = Field(description="Case 输入")
     expected_json: dict = Field(description="期望输出")
+    capability_snapshot_json: dict = Field(default_factory=dict, description="Capability snapshot")
     tags_json: list[str] = Field(description="标签")
     created_at: datetime = Field(description="创建时间")
 
@@ -1712,6 +1746,7 @@ class EvalRunResponse(BaseModel):
     organization_id: str | None = Field(default=None, description="组织 ID")
     agent_id: str | None = Field(default=None, description="Agent ID")
     status: str = Field(description="Eval Run 状态")
+    capability_snapshot_json: dict = Field(default_factory=dict, description="Capability snapshot")
     metrics_json: dict = Field(description="聚合指标")
     created_by: str | None = Field(default=None, description="创建者")
     started_at: datetime | None = Field(default=None, description="开始时间")
