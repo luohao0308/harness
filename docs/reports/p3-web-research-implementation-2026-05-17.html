@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>P3 Web Research 功能说明</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f8;
+      color: #17212b;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f6f8; }
+    header {
+      background: #193047;
+      color: #fff;
+      padding: 28px 40px 24px;
+      border-bottom: 5px solid #2ca58d;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 40px 48px; }
+    h1 { margin: 0 0 10px; font-size: 30px; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 18px; letter-spacing: 0; }
+    h3 { margin: 0 0 8px; font-size: 15px; letter-spacing: 0; }
+    p { margin: 0 0 10px; line-height: 1.65; }
+    a { color: #0b6bcb; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      background: #edf2f7;
+      border: 1px solid #d9e2ec;
+      border-radius: 5px;
+      padding: 1px 5px;
+    }
+    .lead { max-width: 940px; color: #d8e6f0; font-size: 16px; }
+    .grid { display: grid; gap: 16px; }
+    .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      background: #fff;
+      border: 1px solid #d9e2ea;
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 1px 2px rgba(20, 33, 45, 0.04);
+    }
+    .hero { background: #fff; border-left: 5px solid #2ca58d; }
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 9px 0;
+      border-bottom: 1px solid #edf1f5;
+    }
+    .metric:last-child { border-bottom: 0; }
+    .metric span { color: #5b6876; }
+    .metric strong { text-align: right; }
+    .pill {
+      display: inline-block;
+      margin: 3px 4px 3px 0;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: #e7f5f1;
+      color: #0d654f;
+      font-size: 12px;
+      border: 1px solid #c7e7dd;
+    }
+    .pill.warn { background: #fff5df; color: #744b00; border-color: #f1d398; }
+    .pill.neutral { background: #edf2f7; color: #465463; border-color: #d8e1ea; }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .step {
+      min-height: 132px;
+      background: #f9fbfc;
+      border: 1px solid #ccd8e2;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .step strong { display: block; margin-bottom: 6px; color: #13283a; }
+    ul, ol { margin: 0; padding-left: 20px; }
+    li { margin: 7px 0; line-height: 1.55; }
+    pre {
+      margin: 0;
+      overflow: auto;
+      background: #101820;
+      color: #edf7ff;
+      border-radius: 8px;
+      padding: 14px;
+      line-height: 1.48;
+      font-size: 13px;
+    }
+    .note {
+      border-left: 4px solid #f2b84b;
+      background: #fffaf0;
+      padding: 12px 14px;
+      border-radius: 6px;
+      color: #5b3b00;
+    }
+    .ok {
+      border-left: 4px solid #2ca58d;
+      background: #f0faf7;
+      padding: 12px 14px;
+      border-radius: 6px;
+      color: #174f42;
+    }
+    .small { color: #5f6b76; font-size: 13px; }
+    @media (max-width: 900px) {
+      header, main { padding-left: 18px; padding-right: 18px; }
+      .cols-2, .cols-3, .flow { grid-template-columns: 1fr; }
+      .metric { display: block; }
+      .metric strong { display: block; text-align: left; margin-top: 3px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>P3 Web Research 新增功能说明</h1>
+    <p class="lead">
+      这个功能让 Agent 在本地知识库证据不足时，可以按组织策略调用真实搜索 provider
+      补充网页来源，并把来源、策略判断、引用绑定结果保存到 Run Detail，方便用户审计。
+    </p>
+  </header>
+
+  <main class="grid">
+    <section class="card hero">
+      <h2>一句话总结</h2>
+      <p>
+        新增的是一套<strong>受策略门控的真实 Web Research fallback</strong>：
+        本地知识库答不上来时，系统可以调用 Tavily Search 获取网页摘要，但不会自己二次抓取网页正文；
+        返回结果必须通过 URL/DNS/域名策略检查，合格后才会成为可引用的网页证据。
+      </p>
+      <div>
+        <span class="pill">真实 Tavily provider</span>
+        <span class="pill">默认不抓 raw content</span>
+        <span class="pill">post-result policy 强制执行</span>
+        <span class="pill">Run Detail 可审计</span>
+        <span class="pill warn">source-bound 不等于事实验证</span>
+      </div>
+    </section>
+
+    <section class="grid cols-3">
+      <div class="card">
+        <h2>它解决什么问题</h2>
+        <ul>
+          <li>本地知识库没有覆盖某个公开网页事实时，可以补充真实来源。</li>
+          <li>答案引用不再只能依赖 fake fixture 或不可审计的临时结果。</li>
+          <li>用户可以在 Run Detail 看到来源来自哪里、为什么被接受或拒绝。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>它不做什么</h2>
+        <ul>
+          <li>不把 provider 返回的 URL 再交给后端二次 HTTP fetch。</li>
+          <li>不默认保存无边界网页正文。</li>
+          <li>不声称网页内容一定真实，也不声称 citation 一定支持所有 claim。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>当前本地服务</h2>
+        <div class="metric"><span>Frontend</span><strong><a href="http://127.0.0.1:15180/">127.0.0.1:15180</a></strong></div>
+        <div class="metric"><span>Backend</span><strong><a href="http://127.0.0.1:18080/health">127.0.0.1:18080</a></strong></div>
+        <div class="metric"><span>Dev org</span><strong><code>dev-org</code></strong></div>
+        <div class="metric"><span>Allowlist</span><strong><code>openai.com</code></strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>功能链路</h2>
+      <div class="flow">
+        <div class="step">
+          <strong>1. 先查本地知识库</strong>
+          本地证据足够时直接回答，不触发外部搜索，也不消耗 provider 调用次数。
+        </div>
+        <div class="step">
+          <strong>2. Pre-call 策略门控</strong>
+          检查 provider、API key、query 长度、secret pattern、allowlist、timeout、max_results 和 per-run 调用上限。
+        </div>
+        <div class="step">
+          <strong>3. 预留调用账本</strong>
+          在 <code>web_research_attempts</code> 里按 <code>(run_id, call_slot)</code> 记录调用预留，避免并发绕过次数限制。
+        </div>
+        <div class="step">
+          <strong>4. 调用 Tavily Search</strong>
+          只消费 Tavily 返回的 title、url、snippet、score、provider metadata；默认 <code>include_raw_content=false</code>。
+        </div>
+        <div class="step">
+          <strong>5. Post-result 策略检查</strong>
+          标准化 URL，拒绝私网、本地、metadata、credential URL、denylist 或 allowlist 外来源，再持久化 citation。
+        </div>
+      </div>
+    </section>
+
+    <section class="grid cols-2">
+      <div class="card">
+        <h2>用户能看到什么效果</h2>
+        <ul>
+          <li>聊天结果可以带有真实网页来源，而不是 fake fixture。</li>
+          <li>Run Detail 会展示 provider、accepted/omitted source、citation count、policy decision 和时间戳。</li>
+          <li>被拒绝的网页不会成为引用，审计里只保留安全摘要，例如 URL hash，不泄露原始敏感 URL。</li>
+          <li>当 provider disabled、missing key、policy denied、timeout 或 rate limited 时，会产生明确失败状态。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>核心安全收益</h2>
+        <ul>
+          <li>provider-side domain filter 只当作优化，真正安全边界在本系统 post-result policy。</li>
+          <li>fake provider 被限制在开发/测试场景，不能伪装成真实 web evidence。</li>
+          <li>策略决策保存 snapshot，Run Detail 不靠当前设置反推历史结果。</li>
+          <li>query 默认最小化发送，不把本地私有文档内容拼进 web query。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>重要语义边界</h2>
+      <div class="note">
+        <p>
+          <strong>Source-bound 不是事实验证。</strong>
+          它只表示真实 provider 来源已通过策略、被持久化，并且答案 citation 能绑定到该 source。
+          它不表示网页内容一定正确，也不表示每一句回答都被该 citation 充分支持。
+        </p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>前端手动操作例子</h2>
+      <ol>
+        <li>打开 <a href="http://127.0.0.1:15180/agents/default/workspace">Agent Workspace</a>。</li>
+        <li>输入：<code>请基于 OpenAI 官网资料，说明 OpenAI API 是什么，并给出来源。</code></li>
+        <li>等待回答完成后，打开该 run 的 Run Detail。</li>
+        <li>检查「知识依据」或来源区域：provider 应显示真实 web research/Tavily，fixture evidence 应为否。</li>
+        <li>检查网页来源列表：应能看到 accepted source，例如 <code>https://openai.com/</code> 相关来源。</li>
+        <li>检查策略审计：accepted source 有 allowed decision；如果某个 URL 被拒绝，会显示 omitted/denied 原因。</li>
+      </ol>
+      <p class="small">
+        当前开发库已为 <code>dev-org</code> 配置 <code>web_research.enabled=true</code>、
+        <code>require_allowlist=true</code>、<code>allow_domains=["openai.com"]</code>。
+      </p>
+    </section>
+
+    <section class="grid cols-2">
+      <div class="card">
+        <h2>本次验证证据</h2>
+        <div class="metric"><span>Backend tests</span><strong>96 passed</strong></div>
+        <div class="metric"><span>Ruff</span><strong>passed</strong></div>
+        <div class="metric"><span>Alembic clean DB upgrade</span><strong>passed</strong></div>
+        <div class="metric"><span>Frontend lint/build/tests</span><strong>passed</strong></div>
+        <div class="metric"><span>Live Tavily smoke</span><strong>passed in this session</strong></div>
+      </div>
+      <div class="card">
+        <h2>已修复的 Review 问题</h2>
+        <ul>
+          <li>denied URL 不再以原文写入 audit/UI，只保留 <code>url_sha256:</code> 形式引用。</li>
+          <li><code>max_calls_per_run</code> 使用 <code>web_research_attempts</code> ledger 预留 provider call。</li>
+          <li>Run Detail 文案从“verified”收敛到 source-bound 语义，避免误解为事实验证。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>开发/验证命令参考</h2>
+      <pre><code>cd services/api-server
+uv run pytest tests/test_knowledge_rag.py tests/test_settings.py tests/test_evals.py tests/test_agents.py tests/test_tool_runner.py -q
+uv run ruff check app/api/agents.py app/api/schemas.py app/api/settings.py app/db/models.py app/knowledge.py app/knowledge_web.py app/core/config.py app/sandbox/policies.py tests/test_knowledge_rag.py tests/test_settings.py tests/test_evals.py tests/test_agents.py alembic/versions/20260517_0016_create_web_research_attempts.py
+DATABASE_URL=sqlite+pysqlite:////tmp/harness-p3-review-clean.db uv run alembic upgrade head
+
+cd apps/agent-console
+npm run lint -- --pretty false
+npm run build
+npm test -- RunDetailPage KnowledgeManagementPanel</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>剩余注意点</h2>
+      <div class="ok">
+        <p>
+          P3 当前刻意限定为“消费 provider 返回的摘要/内容字段，不做后端二次抓取”。
+          如果后续要让系统自己 fetch 网页正文，需要单独做 P4 crawler/fetcher 安全设计。
+        </p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-16T22:52:31Z
+last_updated_at: 2026-05-17T06:05:00Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -116,6 +116,22 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: p3-real-policy-gated-web-research
+    date: 2026-05-17
+    status: live_provider_verified
+    demo: Insufficient local knowledge can fall back to policy-gated real web research with persisted source-bound citations.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_settings.py tests/test_evals.py tests/test_agents.py tests/test_tool_runner.py -q
+      - cd services/api-server && uv run ruff check app/api/agents.py app/api/schemas.py app/api/settings.py app/db/models.py app/knowledge.py app/knowledge_web.py app/core/config.py app/sandbox/policies.py tests/test_knowledge_rag.py tests/test_settings.py tests/test_evals.py tests/test_agents.py
+      - Tavily live smoke with fixed low-risk query and temporary TAVILY_API_KEY
+    acceptance_notes:
+      - Tavily adapter defaults to include_raw_content=false and the backend does not fetch provider-returned URLs.
+      - Provider-side domain filters are advisory; post-result URL policy is authoritative before source persistence and citation.
+      - Fake provider remains fixture-only and non-verified, with environment gating.
+      - verified_grounded means real-source-bound compatibility state, not factual verification.
+      - Tavily live smoke passed with source_bound=true, fixture=false, raw_content_available=false, usage_credits=1.0.
+
   - id: workspace-browser-e2e-smoke
     date: 2026-05-13
     status: completed
