@@ -21,6 +21,28 @@ The website remains present as a public information shell. Console execution foc
 - Status: `completed`
 - Updated at: `2026-05-14`
 
+## Completed: P3 Real Policy-Gated Web Research
+
+Date: 2026-05-17
+
+Status: `P3 live provider verified`
+
+Changes:
+- Added Tavily as the first production web research adapter with `include_raw_content=false` and no backend second-hop fetch of provider-returned URLs.
+- Added organization-scoped pre-call and post-result web policy gates with historical policy snapshots in `KnowledgePolicyAudit`.
+- Hardened fake web research so fixture evidence stays non-verified and environment-limited.
+- Bound accepted real web results to `WebResearchSource`, retrieval hits, citations, prompt manifests, events, and Run Detail evidence.
+- Clarified `verified_grounded=true` as real-source-bound compatibility wording, not factual verification.
+- Added deployment/runbook notes in `docs/runbooks/web-research.md`.
+- Verified Tavily live smoke with a fixed low-risk query and no backend second-hop fetch.
+
+Verification:
+```text
+cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_settings.py tests/test_evals.py tests/test_agents.py tests/test_tool_runner.py -q -> 96 passed
+cd services/api-server && uv run ruff check app/api/agents.py app/api/schemas.py app/api/settings.py app/db/models.py app/knowledge.py app/knowledge_web.py app/core/config.py app/sandbox/policies.py tests/test_knowledge_rag.py tests/test_settings.py tests/test_evals.py tests/test_agents.py -> passed
+Tavily live smoke -> passed (source_bound=true, fixture=false, raw_content_available=false, usage_credits=1.0)
+```
+
 ## Completed In This Pass
 
 - Rewrote core Spec files around AI Harness Platform.
