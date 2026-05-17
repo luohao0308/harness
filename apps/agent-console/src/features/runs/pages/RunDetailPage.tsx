@@ -244,7 +244,8 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
                   <Metric label="Provider" value={grounding.grounding_provider} />
                   <Metric label="Fixture evidence" value={grounding.fixture_grounded ? "是" : "否"} />
-                  <Metric label="Verified grounding" value={grounding.verified_grounded ? "是" : "否"} />
+                  <Metric label="Source-bound" value={grounding.verified_grounded ? "是" : "否"} />
+                  <Metric label="Citation count" value={String(grounding.citations.length)} />
                 </div>
                 <div className="truncate font-mono text-[11px] text-slate-500" title={grounding.grounding_verification_reason}>
                   {grounding.grounding_verification_reason}
@@ -350,6 +351,19 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                         <div className="mt-1 text-slate-500">
                           {source.status}
                           {source.error_message ? ` · ${source.error_message}` : ""}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1 text-slate-500">
+                          <Badge tone={source.metadata_json.fixture ? "warning" : "info"}>
+                            {String(source.metadata_json.provider ?? "unknown")}
+                          </Badge>
+                          {source.metadata_json.request_id ? (
+                            <Badge tone="neutral">
+                              {String(source.metadata_json.request_id)}
+                            </Badge>
+                          ) : null}
+                          {source.metadata_json.raw_content_available ? (
+                            <Badge tone="warning">raw</Badge>
+                          ) : null}
                         </div>
                       </div>
                     ))}
