@@ -1,7 +1,26 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+ALLOWED_KNOWLEDGE_MIME_TYPES = {"text/plain", "text/markdown"}
+MAX_KNOWLEDGE_IMPORT_BYTES = 120_000
+
+
+def _validate_knowledge_mime_type(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in ALLOWED_KNOWLEDGE_MIME_TYPES:
+        allowed = ", ".join(sorted(ALLOWED_KNOWLEDGE_MIME_TYPES))
+        raise ValueError(f"mime_type must be one of: {allowed}")
+    return normalized
+
+
+def _validate_knowledge_content_bytes(value: str) -> str:
+    if len(value.encode("utf-8")) > MAX_KNOWLEDGE_IMPORT_BYTES:
+        raise ValueError(
+            f"content must be at most {MAX_KNOWLEDGE_IMPORT_BYTES} bytes after UTF-8 encoding"
+        )
+    return value
 
 
 class TaskCreateRequest(BaseModel):
@@ -546,6 +565,7 @@ class EventResponse(BaseModel):
 class KnowledgeSourceCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120, description="知识源名称")
     description: str = Field(default="", max_length=1_000, description="知识源说明")
+    scope: Literal["agent", "org"] = Field(default="agent", description="知识源作用域")
     source_type: Literal["text", "markdown", "document"] = Field(
         default="text",
         description="知识源类型",
@@ -560,6 +580,55 @@ class KnowledgeSourceCreateRequest(BaseModel):
         description="文档 MIME type",
     )
     idempotency_key: str | None = Field(default=None, max_length=200, description="幂等键")
+    expires_at: datetime | None = Field(default=None, description="过期时间")
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _validate_knowledge_mime_type(value)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content_bytes(cls, value: str) -> str:
+        return _validate_knowledge_content_bytes(value)
+
+
+class KnowledgeSourceUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120, description="知识源名称")
+    description: str | None = Field(default=None, max_length=1_000, description="知识源说明")
+    expires_at: datetime | None = Field(default=None, description="过期时间")
+
+
+class KnowledgeSourceActionRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500, description="操作原因")
+
+
+class KnowledgeSourceScopeRequest(BaseModel):
+    scope: Literal["agent", "org"] = Field(description="目标作用域")
+    reason: str | None = Field(default=None, max_length=500, description="操作原因")
+
+
+class KnowledgeDocumentCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200, description="文档标题")
+    content: str = Field(min_length=1, max_length=120_000, description="文档内容")
+    uri: str | None = Field(default=None, max_length=2_000, description="来源 URI")
+    mime_type: str = Field(
+        default="text/markdown",
+        min_length=1,
+        max_length=120,
+        description="文档 MIME type",
+    )
+    idempotency_key: str | None = Field(default=None, max_length=200, description="幂等键")
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        return _validate_knowledge_mime_type(value)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content_bytes(cls, value: str) -> str:
+        return _validate_knowledge_content_bytes(value)
 
 
 class KnowledgeChunkResponse(BaseModel):
@@ -591,7 +660,9 @@ class KnowledgeDocumentResponse(BaseModel):
     mime_type: str = Field(description="MIME type")
     status: str = Field(description="状态")
     version: int = Field(description="版本")
+    logical_document_id: str | None = Field(default=None, description="逻辑文档 ID")
     supersedes_document_id: str | None = Field(default=None, description="前一版本 ID")
+    superseded_at: datetime | None = Field(default=None, description="被替换时间")
     ingestion_error: str | None = Field(default=None, description="导入错误")
     metadata_json: dict = Field(default_factory=dict, description="元数据")
     idempotency_key: str | None = Field(default=None, description="幂等键")
@@ -613,6 +684,13 @@ class KnowledgeSourceResponse(BaseModel):
     source_type: str = Field(description="知识源类型")
     status: str = Field(description="状态")
     version: int = Field(description="版本")
+    scope: Literal["agent", "org"] = Field(description="知识源作用域")
+    expires_at: datetime | None = Field(default=None, description="过期时间")
+    disabled_at: datetime | None = Field(default=None, description="停用时间")
+    archived_at: datetime | None = Field(default=None, description="归档时间")
+    last_indexed_at: datetime | None = Field(default=None, description="最后索引时间")
+    last_ingestion_error: str | None = Field(default=None, description="最后导入错误")
+    health_status: str = Field(description="健康状态")
     settings_json: dict = Field(default_factory=dict, description="设置")
     metadata_json: dict = Field(default_factory=dict, description="元数据")
     idempotency_key: str | None = Field(default=None, description="幂等键")
