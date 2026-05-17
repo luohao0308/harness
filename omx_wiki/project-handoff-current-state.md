@@ -57,7 +57,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Agent Knowledge Harness P2 local knowledge management is completed and pushed: agent/org-scoped text and Markdown knowledge sources now have lifecycle controls, document-level versioning, stale chunk filtering, retrieval eligibility, lifecycle audit events, failure audit records, multipart `.txt` / `.md` import, Agent Studio management UI, restore smoke coverage, and compose/Postgres private smoke evidence.
 - Agent Knowledge Harness P3 real policy-gated web research is completed and pushed through `76f11d5`: Tavily provider adapter, no backend second-hop URL fetch, pre-call and post-result policy gates, DNS/IP URL safety checks, per-run attempt ledger, source-bound web citations, fake-provider hardening, Run Detail evidence, runbook, HTML explanation report, and live Tavily smoke evidence are recorded.
 - Agent Knowledge Harness P4 memory and context router V2 is completed and pushed through `6c4a95d`: backend context assembly manifests, long-term memory records, SQL-level scope filtering, token estimator/drop ordering, pinned-message tagging, compressed-summary schema/model/branch/path checks, model-call context binding, shadow/authoritative feature flag behavior, memory injection flags, and Run Detail context manifest projection are implemented and verified.
-- Agent Knowledge Harness P5 MCP/Skills productization is locally completed and verified: runtime tool authority is now `CapabilityRegistry -> AgentCapabilityAttachment -> immutable CapabilityVersion -> ToolRunner metadata snapshot`, legacy `Agent.tools_json` is only deterministic migration/seed backfill input with no runtime lazy backfill, ToolRunner fails closed without Agent attachment scope, executing test invocation is agent-scoped, admin validation is non-executing, and Run/ModelCall/ToolCall/Eval artifacts carry capability snapshot refs/hashes.
+- Agent Knowledge Harness P5 MCP/Skills productization is completed and pushed through `f05816e`: runtime tool authority is now `CapabilityRegistry -> AgentCapabilityAttachment -> immutable CapabilityVersion -> ToolRunner metadata snapshot`, legacy `Agent.tools_json` is only deterministic migration/seed backfill input with no runtime lazy backfill, ToolRunner fails closed without Agent attachment scope, executing test invocation is agent-scoped, admin validation is non-executing, approval decisions resume or fail runs correctly, console tool cards refresh after approval, and Run/ModelCall/ToolCall/Eval artifacts carry capability snapshot refs/hashes.
 - Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
 - P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
 
@@ -69,6 +69,7 @@ Evidence from `docs/task-progress.md`:
 - Private deployment handoff now has a canonical Docker Compose path in `docs/runbooks/deployment.md`; static checks, compose config, compose startup, Docker smoke, Agent Run smoke, and compose cleanup have passed using intentional host-port overrides.
 - P3 real policy-gated web research is recorded as completed with `96 passed` backend target tests, ruff, Alembic clean upgrade, frontend lint/build/targeted tests, and a live Tavily smoke.
 - P4 memory/context router V2 is recorded as completed with backend context assembly tests, model-call binding tests, ruff, frontend build/lint/test evidence, docs validation, and final pushed commits through `6c4a95d`.
+- P5 MCP/Skills productization is recorded as completed with capability registry storage, attachment-only runtime authority, approval resume fixes, console feedback, targeted backend/frontend tests, ruff, lint, and final pushed commits through `f05816e`.
 
 Evidence from the current codebase:
 
@@ -97,7 +98,26 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 
 ## Most Recent Completed Work
 
-Recent P4 commits pushed on `main`:
+Recent P5 commits pushed on `main`:
+
+```text
+f05816e Record P5 capability registry handoff
+152d070 Cover capability and approval regressions
+b0fbbd2 Expose capability-bound tool feedback in console
+237c403 Resolve tool execution through capability attachments
+67b7a5c Add capability registry storage contract
+```
+
+Push evidence:
+
+```text
+git push origin main
+6c4a95d..f05816e  main -> main
+git rev-list --left-right --count origin/main...HEAD
+0 0
+```
+
+Previous P4 commits pushed on `main`:
 
 ```text
 6c4a95d Record P4 context assembly handoff
@@ -107,7 +127,7 @@ d2b6e50 Assemble authoritative workspace context
 45da62f Add context assembly storage contract
 ```
 
-Push evidence:
+P4 push evidence:
 
 ```text
 git push origin main
@@ -166,6 +186,7 @@ Captured in wiki:
 - [[session-2026-05-13-workspace-browser-smoke]]
 - [[session-2026-05-17-agent-knowledge-p3-web-research]]
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]]
+- [[session-2026-05-17-agent-knowledge-p5-capability-registry]]
 
 ## Next Known Work
 

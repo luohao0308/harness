@@ -23,7 +23,8 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] - P1 Knowledge/RAG grounding audit and blocker-repair record through `4475eef`: prompt manifests, policy audits, verified-vs-fixture grounding, denied/redacted isolation, v2 request hashes, exact selectors, Run Detail Eval contract propagation, validation evidence, and remaining private-deployment gate.
 - [[session-2026-05-17-agent-knowledge-p3-web-research]] - P3 real policy-gated web research record through `76f11d5`: Tavily adapter, URL/DNS policy gates, attempt ledger, source-bound citations, fake-provider hardening, Run Detail evidence, reports, validation, live smoke, and push evidence.
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]] - P4 memory/context router V2 record through `6c4a95d`: backend authoritative context assembly, scoped memory, token-budget pruning, pinned-message tagging, context manifests, Run Detail evidence, validation, and push evidence.
-- [[agent-knowledge-harness-roadmap]] - P5 MCP/Skills productization status: capability registry, Agent attachments, immutable capability versions, fail-closed ToolRunner, agent-scoped test invocation, snapshots, and verification evidence.
+- [[session-2026-05-17-agent-knowledge-p5-capability-registry]] - P5 MCP/Skills productization record through `f05816e`: capability registry, Agent attachments, immutable capability versions, fail-closed ToolRunner, approval resume, console feedback, tests, report, and push evidence.
+- [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P6 Eval/Observability.
 
 ## Categories
 
