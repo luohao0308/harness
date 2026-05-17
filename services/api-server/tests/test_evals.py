@@ -9,6 +9,7 @@ from app.db.models import (
     EvalCase,
     EvalRun,
     PromptAssemblyManifest,
+    SystemSetting,
     Task,
     utc_now,
 )
@@ -63,6 +64,45 @@ def _ensure_agent(session: Session, agent_id: str = "default") -> Agent:
     session.add(agent)
     session.flush()
     return agent
+
+
+def _enable_web_research_policy(session: Session) -> None:
+    session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {"name": "low", "requires_sandbox": False, "approval": "auto"},
+                    {"name": "medium", "requires_sandbox": True, "approval": "auto"},
+                    {"name": "high", "requires_sandbox": True, "approval": "admin"},
+                    {"name": "critical", "requires_sandbox": True, "approval": "admin"},
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {
+                    "default_network": False,
+                    "default_timeout_seconds": 60,
+                    "memory_mb": 1024,
+                    "cpus": "1.0",
+                    "workspace_quota_mb": 1024,
+                    "network_allowlist": [],
+                },
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+                "web_research": {
+                    "enabled": True,
+                    "require_allowlist": True,
+                    "allow_domains": ["example.test"],
+                    "deny_domains": [],
+                    "max_results": 2,
+                    "timeout_seconds": 8,
+                    "max_content_bytes": 1200,
+                    "max_calls_per_run": 1,
+                },
+            },
+            updated_by="dev-admin",
+        )
+    )
+    session.flush()
 
 
 def _grounded_completed_run(session: Session) -> str:
@@ -273,6 +313,7 @@ def test_eval_run_rejects_fake_web_fallback_unless_fixture_opted_in(
     )
     db_session.add(task)
     db_session.flush()
+    _enable_web_research_policy(db_session)
     set_web_research_provider(
         db_session,
         organization_id="dev-org",

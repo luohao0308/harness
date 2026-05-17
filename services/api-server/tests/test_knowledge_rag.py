@@ -32,6 +32,7 @@ from app.db.models import (
     ModelCall,
     PromptAssemblyManifest,
     RetrievalHit,
+    SystemSetting,
     Task,
     WebResearchSource,
     utc_now,
@@ -48,6 +49,7 @@ from app.knowledge import (
     set_vector_capability,
     set_web_research_provider,
 )
+from app.knowledge_web import WebResearchResult
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -112,6 +114,54 @@ def _task(session: Session, *, organization_id: str = "dev-org") -> Task:
 def _two_chunk_content(term: str = "orion anchor") -> str:
     section = f"{term} local fact. " + ("alpha " * 120) + "\n"
     return section * 2
+
+
+def _enable_web_research_policy(
+    session: Session,
+    *,
+    organization_id: str = "dev-org",
+    allow_domains: list[str] | None = None,
+    max_content_bytes: int = 1200,
+    max_calls_per_run: int = 1,
+) -> None:
+    session.add(
+        SystemSetting(
+            organization_id=organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {"name": "low", "requires_sandbox": False, "approval": "auto"},
+                    {"name": "medium", "requires_sandbox": True, "approval": "auto"},
+                    {"name": "high", "requires_sandbox": True, "approval": "admin"},
+                    {"name": "critical", "requires_sandbox": True, "approval": "admin"},
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {
+                    "default_network": False,
+                    "default_timeout_seconds": 60,
+                    "memory_mb": 1024,
+                    "cpus": "1.0",
+                    "workspace_quota_mb": 1024,
+                    "network_allowlist": [],
+                },
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+                "web_research": {
+                    "enabled": True,
+                    "require_allowlist": True,
+                    "allow_domains": (
+                        allow_domains if allow_domains is not None else ["example.test"]
+                    ),
+                    "deny_domains": [],
+                    "max_results": 2,
+                    "timeout_seconds": 8,
+                    "max_content_bytes": max_content_bytes,
+                    "max_calls_per_run": max_calls_per_run,
+                },
+            },
+            updated_by="dev-admin",
+        )
+    )
+    session.flush()
 
 
 def _request_hash_v2(
@@ -1803,6 +1853,7 @@ def test_insufficient_local_evidence_uses_fake_web_fallback_audit_path(
 ) -> None:
     _ensure_agent(db_session)
     task = _task(db_session)
+    _enable_web_research_policy(db_session)
     set_web_research_provider(
         db_session,
         organization_id="dev-org",
@@ -1850,6 +1901,423 @@ def test_insufficient_local_evidence_uses_fake_web_fallback_audit_path(
     assert EventType.WEB_RESEARCH_STARTED in event_types
     assert EventType.WEB_RESEARCH_COMPLETED in event_types
     assert EventType.RAG_CITATION_RECORDED in event_types
+
+
+def test_real_web_research_success_is_source_bound_with_mock_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(db_session, allow_domains=["docs.example.com"])
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="tavily",
+        updated_by="dev-engineer",
+    )
+    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.sandbox.policies.socket.getaddrinfo",
+        lambda host, *_args, **_kwargs: [
+            (None, None, None, None, ("93.184.216.34", 443))
+        ],
+    )
+
+    class Adapter:
+        provider = "tavily"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def search(self, **kwargs):
+            self.calls += 1
+            assert kwargs["query"] == "uncovered real claim"
+            assert kwargs["include_domains"] == ["docs.example.com"]
+            return [
+                WebResearchResult(
+                    title="Real source",
+                    url="https://docs.example.com:443/research#fragment",
+                    snippet="Real provider snippet for uncovered real claim.",
+                    rank=1,
+                    score=0.87,
+                    provider_request_id="req-123",
+                    usage_credits=1.0,
+                )
+            ]
+
+    adapter = Adapter()
+    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: adapter)
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="uncovered real claim",
+    )
+    db_session.flush()
+
+    assert adapter.calls == 1
+    assert result.local_status == "insufficient"
+    assert result.grounding_provider == "tavily_search"
+    assert result.fixture_grounded is False
+    assert result.verified_grounded is True
+    assert result.grounding_verification_reason == "real_source_bound"
+    assert result.retrieval_session is not None
+    assert result.retrieval_session.mode == "web_fallback"
+    assert result.retrieval_session.metadata_json["verified_grounded_semantics"] == (
+        "real_source_bound_not_factual_verification"
+    )
+    assert len(result.web_sources) == 1
+    source = result.web_sources[0]
+    assert source.url == "https://docs.example.com/research"
+    assert source.metadata_json["provider"] == "tavily"
+    assert source.metadata_json["request_id"] == "req-123"
+    assert result.citations[0].web_source_id == source.id
+    web_audits = [
+        audit
+        for audit in result.policy_audits
+        if audit.source_kind == "web_research"
+    ]
+    assert web_audits[0].safe_metadata_json["web_pre_call_policy_snapshot"][
+        "provider_domain_filters_advisory_only"
+    ] is True
+    assert any(
+        audit.safe_metadata_json.get("policy_snapshot", {}).get(
+            "authoritative_enforcement"
+        )
+        == "post_result_policy_before_persistence"
+        for audit in web_audits
+    )
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id)
+        ).scalars()
+    ]
+    assert EventType.WEB_RESEARCH_STARTED in event_types
+    assert EventType.WEB_RESEARCH_COMPLETED in event_types
+    assert EventType.WEB_RESEARCH_FAILED not in event_types
+
+
+def test_missing_tavily_key_does_not_call_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(db_session, allow_domains=["docs.example.com"])
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="tavily",
+        updated_by="dev-engineer",
+    )
+    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "")
+
+    def fail_adapter(provider):
+        raise AssertionError("provider adapter must not be called")
+
+    monkeypatch.setattr("app.knowledge.get_web_research_adapter", fail_adapter)
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="uncovered key claim",
+    )
+    db_session.flush()
+
+    assert result.web_sources == []
+    assert result.retrieval_session is not None
+    assert result.retrieval_session.mode == "local_insufficient"
+    assert result.retrieval_session.metadata_json["web_research_failed"] is True
+    assert result.retrieval_session.metadata_json["web_research_failure_reason"] == (
+        "web research provider api key is missing"
+    )
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id)
+        ).scalars()
+    ]
+    assert EventType.WEB_RESEARCH_FAILED in event_types
+
+
+def test_pre_call_policy_denied_does_not_call_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(db_session, allow_domains=[])
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="tavily",
+        updated_by="dev-engineer",
+    )
+    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+
+    def fail_adapter(provider):
+        raise AssertionError("provider adapter must not be called")
+
+    monkeypatch.setattr("app.knowledge.get_web_research_adapter", fail_adapter)
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="uncovered policy claim",
+    )
+    db_session.flush()
+
+    assert result.web_sources == []
+    assert result.retrieval_session is not None
+    assert result.retrieval_session.metadata_json["web_research_failed"] is True
+    assert result.retrieval_session.metadata_json["web_research_failure_reason"] == (
+        "web research domain allowlist is required"
+    )
+
+
+def test_denied_web_result_does_not_persist_raw_secret_url(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(db_session, allow_domains=["safe.example.com"])
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="tavily",
+        updated_by="dev-engineer",
+    )
+    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+
+    class Adapter:
+        provider = "tavily"
+
+        def search(self, **kwargs):
+            return [
+                WebResearchResult(
+                    title="Denied secret URL",
+                    url="https://user:pass@evil.example.com/path?token=secret",
+                    snippet="Denied result",
+                    rank=1,
+                    score=0.4,
+                )
+            ]
+
+    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: Adapter())
+
+    result = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="denied secret url claim",
+    )
+
+    assert result.web_sources == []
+    denied_audits = [
+        audit
+        for audit in result.policy_audits
+        if audit.source_kind == "web_research" and audit.decision == "denied"
+    ]
+    payload = str([audit.source_ref_id for audit in denied_audits]) + str(
+        [audit.safe_metadata_json for audit in denied_audits]
+    )
+    assert "user:pass" not in payload
+    assert "token=secret" not in payload
+    assert any((audit.source_ref_id or "").startswith("url_sha256:") for audit in denied_audits)
+
+
+def test_fake_provider_refused_in_production_even_with_allow_env(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(db_session)
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="fake",
+        updated_by="dev-engineer",
+    )
+    monkeypatch.setenv("APP_ENV", "production")
+    get_settings.cache_clear()
+    try:
+        result = ground_query(
+            db_session,
+            organization_id="dev-org",
+            agent_id="default",
+            run_id=task.id,
+            query="uncovered prod fake claim",
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert result.web_sources == []
+    assert result.retrieval_session is not None
+    assert result.retrieval_session.metadata_json["web_research_failed"] is True
+    assert result.retrieval_session.metadata_json["web_research_failure_reason"] == (
+        "fake provider is not allowed in this environment"
+    )
+
+
+def test_web_research_policy_limits_content_and_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(
+        db_session,
+        allow_domains=["docs.example.com"],
+        max_content_bytes=24,
+        max_calls_per_run=1,
+    )
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="tavily",
+        updated_by="dev-engineer",
+    )
+    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.sandbox.policies.socket.getaddrinfo",
+        lambda host, *_args, **_kwargs: [
+            (None, None, None, None, ("93.184.216.34", 443))
+        ],
+    )
+    calls = 0
+
+    class Adapter:
+        provider = "tavily"
+
+        def search(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            return [
+                WebResearchResult(
+                    title="Limited source",
+                    url="https://docs.example.com/research",
+                    snippet="x" * 200,
+                    rank=1,
+                    score=0.7,
+                )
+            ]
+
+    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: Adapter())
+
+    first = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="first limited claim",
+    )
+    second = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="second limited claim",
+    )
+
+    assert calls == 1
+    assert len(first.web_sources[0].snippet) == 24
+    assert second.web_sources == []
+    assert second.retrieval_session is not None
+    assert second.retrieval_session.metadata_json["web_research_failure_reason"] == (
+        "web research call limit is exhausted for this run"
+    )
+
+
+def test_local_sufficient_grounding_does_not_consume_web_call_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session)
+    task = _task(db_session)
+    _enable_web_research_policy(
+        db_session,
+        allow_domains=["docs.example.com"],
+        max_calls_per_run=1,
+    )
+    set_web_research_provider(
+        db_session,
+        organization_id="dev-org",
+        provider="tavily",
+        updated_by="dev-engineer",
+    )
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Budget Local Facts",
+        description="Budget local facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("budget beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="budget-local-facts",
+    )
+    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.sandbox.policies.socket.getaddrinfo",
+        lambda host, *_args, **_kwargs: [
+            (None, None, None, None, ("93.184.216.34", 443))
+        ],
+    )
+    calls = 0
+
+    class Adapter:
+        provider = "tavily"
+
+        def search(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            return [
+                WebResearchResult(
+                    title="Budget source",
+                    url="https://docs.example.com/research",
+                    snippet="Budget fallback snippet",
+                    rank=1,
+                    score=0.7,
+                )
+            ]
+
+    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: Adapter())
+
+    local = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="budget beacon",
+    )
+    fallback = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=task.id,
+        query="uncovered budget claim",
+    )
+
+    assert local.local_status == "sufficient"
+    assert local.web_sources == []
+    assert calls == 1
+    assert fallback.web_sources
+    assert fallback.retrieval_session is not None
+    assert fallback.retrieval_session.metadata_json["web_provider_call_attempted"] is True
 
 
 class _StaticGateway:
@@ -2394,6 +2862,10 @@ def test_web_research_url_policy_blocks_local_and_private_targets() -> None:
     assert not _is_safe_research_url("file:///etc/passwd")
     assert not _is_safe_research_url("http://localhost:8080")
     assert not _is_safe_research_url("http://127.0.0.1/latest")
+    assert not _is_safe_research_url("http://2130706433/latest")
+    assert not _is_safe_research_url("http://0177.0.0.1/latest")
+    assert not _is_safe_research_url("http://[::1]/latest")
     assert not _is_safe_research_url("http://169.254.169.254/latest/meta-data")
     assert not _is_safe_research_url("http://10.0.0.8/internal")
+    assert not _is_safe_research_url("https://user:pass@example.com/secret")
     assert not _is_safe_research_url("http://metadata.google.internal/computeMetadata/v1")

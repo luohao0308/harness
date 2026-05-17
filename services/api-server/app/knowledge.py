@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -24,24 +23,42 @@ from app.db.models import (
     RetrievalHit,
     RetrievalSession,
     SystemSetting,
+    WebResearchAttempt,
     WebResearchSource,
     utc_now,
 )
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.knowledge_web import (
+    DEFAULT_WEB_RESEARCH_MAX_CONTENT_BYTES,
+    DEFAULT_WEB_RESEARCH_MAX_RESULTS,
+    DEFAULT_WEB_RESEARCH_TIMEOUT_SECONDS,
+    GROUNDING_PROVIDER_TAVILY_SEARCH,
+    WEB_RESEARCH_PROVIDER_DISABLED,
+    WEB_RESEARCH_PROVIDER_FAKE,
+    WEB_RESEARCH_PROVIDER_TAVILY,
+    WebResearchProviderError,
+    WebResearchResult,
+    fake_web_research_allowed,
+    get_web_research_adapter,
+    query_has_secret_pattern,
+    redacted_query_preview,
+    resolve_web_research_api_key,
+)
+from app.sandbox.policies import PolicyEngine, is_safe_web_research_url
 
 VECTOR_CAPABILITY_KEY = "knowledge.vector_capability"
 VECTOR_CAPABILITY_AVAILABLE = "available"
 VECTOR_CAPABILITY_UNAVAILABLE = "unavailable"
 VECTOR_CAPABILITY_DISABLED = "disabled"
 WEB_RESEARCH_PROVIDER_KEY = "knowledge.web_research_provider"
-WEB_RESEARCH_PROVIDER_DISABLED = "disabled"
-WEB_RESEARCH_PROVIDER_FAKE = "fake"
+POLICY_SETTINGS_KEY = "settings.policies"
 GROUNDING_PROVIDER_LOCAL_KNOWLEDGE = "local_knowledge"
 GROUNDING_PROVIDER_FAKE_WEB_FIXTURE = "fake_web_fixture"
 GROUNDING_PROVIDER_NONE = "none"
 GROUNDING_REASON_LOCAL_SUFFICIENT = "local_evidence_sufficient"
 GROUNDING_REASON_FIXTURE_NOT_VERIFIED = "fixture_web_not_verified"
+GROUNDING_REASON_REAL_SOURCE_BOUND = "real_source_bound"
 GROUNDING_REASON_NO_VERIFIED_EVIDENCE = "no_verified_evidence"
 POLICY_DECISION_ALLOWED = "allowed"
 POLICY_DECISION_OMITTED = "omitted"
@@ -66,7 +83,6 @@ CHUNK_STATUS_STALE = "STALE"
 DEFAULT_MIN_HITS = 2
 DEFAULT_MIN_SCORE = 0.62
 DEFAULT_MAX_LOCAL_CHUNKS = 6
-DEFAULT_MAX_WEB_RESULTS = 2
 DEFAULT_MAX_RETRIEVAL_CANDIDATES = 200
 MAX_INGESTION_CHUNKS = 200
 
@@ -130,6 +146,26 @@ def _grounding_outcome(
             "grounding_verification_reason": GROUNDING_REASON_LOCAL_SUFFICIENT,
         }
     if web_sources:
+        provider = str(
+            (
+                web_sources[0].metadata_json
+                if isinstance(web_sources[0].metadata_json, dict)
+                else {}
+            ).get("provider")
+            or WEB_RESEARCH_PROVIDER_FAKE
+        )
+        if provider != WEB_RESEARCH_PROVIDER_FAKE:
+            return {
+                "grounding_provider": (
+                    GROUNDING_PROVIDER_TAVILY_SEARCH
+                    if provider == WEB_RESEARCH_PROVIDER_TAVILY
+                    else provider
+                ),
+                "fixture_grounded": False,
+                "verified_grounded": True,
+                "grounding_verification_reason": GROUNDING_REASON_REAL_SOURCE_BOUND,
+                "verified_grounded_semantics": "real_source_bound_not_factual_verification",
+            }
         return {
             "grounding_provider": GROUNDING_PROVIDER_FAKE_WEB_FIXTURE,
             "fixture_grounded": True,
@@ -324,8 +360,8 @@ def set_vector_capability(
 def web_research_provider(session: Session, organization_id: str | None) -> str:
     value = _system_setting(session, WEB_RESEARCH_PROVIDER_KEY, organization_id)
     provider = str((value or {}).get("provider") or WEB_RESEARCH_PROVIDER_DISABLED).strip().lower()
-    if provider == WEB_RESEARCH_PROVIDER_FAKE:
-        return WEB_RESEARCH_PROVIDER_FAKE
+    if provider in {WEB_RESEARCH_PROVIDER_FAKE, WEB_RESEARCH_PROVIDER_TAVILY}:
+        return provider
     return WEB_RESEARCH_PROVIDER_DISABLED
 
 
@@ -337,7 +373,11 @@ def set_web_research_provider(
     updated_by: str = "system",
 ) -> None:
     normalized = provider.strip().lower()
-    if normalized not in {WEB_RESEARCH_PROVIDER_DISABLED, WEB_RESEARCH_PROVIDER_FAKE}:
+    if normalized not in {
+        WEB_RESEARCH_PROVIDER_DISABLED,
+        WEB_RESEARCH_PROVIDER_FAKE,
+        WEB_RESEARCH_PROVIDER_TAVILY,
+    }:
         normalized = WEB_RESEARCH_PROVIDER_DISABLED
     _upsert_system_setting(
         session,
@@ -817,6 +857,33 @@ def sanitize_audit_payload(payload: dict) -> dict:
         "fixture_grounded",
         "verified_grounded",
         "grounding_verification_reason",
+        "api_key_present",
+        "policy_id",
+        "policy_snapshot",
+        "web_pre_call_policy_snapshot",
+        "web_research_provider",
+        "web_query_sha256",
+        "web_query_preview_redacted",
+        "web_research_timeout_seconds",
+        "web_research_failed",
+        "web_research_failure_reason",
+        "web_research_retryable",
+        "web_provider_call_attempted",
+        "web_result_count",
+        "web_result_denied_count",
+        "web_partial_results_warning",
+        "url_sha256",
+        "normalized_url_sha256",
+        "normalized_hostname",
+        "resolved_ip_classification",
+        "blocked_resolved_addresses",
+        "request_id",
+        "response_time_ms",
+        "usage_credits",
+        "result_rank",
+        "result_score",
+        "raw_content_available",
+        "calls_used",
     }
     return {key: value for key, value in payload.items() if key in allowed_keys}
 
@@ -1059,7 +1126,13 @@ def _record_retrieval_event(
             "query": retrieval_session.query,
         },
     )
-    if web_sources:
+    retrieval_metadata = (
+        retrieval_session.metadata_json
+        if isinstance(retrieval_session.metadata_json, dict)
+        else {}
+    )
+    web_attempt = retrieval_metadata.get("web_research_attempt")
+    if web_sources or web_attempt:
         event_store.append(
             task_id=run_id,
             event_type=EventType.WEB_RESEARCH_STARTED,
@@ -1072,6 +1145,7 @@ def _record_retrieval_event(
                 "causation_id": retrieval_session.id,
                 "retrieval_session_id": retrieval_session.id,
                 "max_web_results": retrieval_session.max_web_results,
+                "provider": retrieval_metadata.get("web_research_provider"),
             },
         )
     if hits:
@@ -1158,72 +1232,505 @@ def _record_retrieval_event(
                 "causation_id": retrieval_session.id,
                 "retrieval_session_id": retrieval_session.id,
                 "web_source_ids": [source.id for source in web_sources],
+                "provider": retrieval_metadata.get("web_research_provider"),
+                "partial_denied_count": retrieval_metadata.get("web_result_denied_count", 0),
+            },
+        )
+    elif web_attempt and retrieval_metadata.get("web_research_failed"):
+        event_store.append(
+            task_id=run_id,
+            event_type=EventType.WEB_RESEARCH_FAILED,
+            payload_json={
+                "schema_version": "knowledge-grounding-v1",
+                "org_id": retrieval_session.organization_id,
+                "agent_id": retrieval_session.agent_id,
+                "run_id": retrieval_session.run_id,
+                "correlation_id": retrieval_session.id,
+                "causation_id": retrieval_session.id,
+                "retrieval_session_id": retrieval_session.id,
+                "provider": retrieval_metadata.get("web_research_provider"),
+                "reason": retrieval_metadata.get("web_research_failure_reason"),
+                "retryable": bool(retrieval_metadata.get("web_research_retryable", False)),
+                "timeout_seconds": retrieval_metadata.get("web_research_timeout_seconds"),
             },
         )
 
 
 def _is_safe_research_url(url: str) -> bool:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"}:
-        return False
-    host = (parsed.hostname or "").lower()
-    if host in {"localhost", "metadata.google.internal"}:
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        address = None
-    if address is not None and (
-        address.is_loopback
-        or address.is_link_local
-        or address.is_private
-        or address.is_reserved
-        or address.is_multicast
-    ):
-        return False
-    if host.endswith(".local"):
-        return False
-    return True
+    return is_safe_web_research_url(url)
 
 
-def _fake_web_research_sources(
+def _create_web_policy_audit(
     *,
     session: Session,
     retrieval_session: RetrievalSession,
-    query: str,
-) -> list[WebResearchSource]:
-    sources: list[WebResearchSource] = []
-    normalized_query = _normalize_text(query).strip() or "knowledge"
-    for index in range(1, retrieval_session.max_web_results + 1):
-        url = f"https://example.test/knowledge/{index}"
-        if not _is_safe_research_url(url):
-            continue
-        snippet = (
-            f"Controlled fake web result {index} for {normalized_query}. "
-            "This deterministic fixture is used for no-network grounding tests."
+    decision: str,
+    reason: str,
+    source_ref_id: str | None,
+    metadata: dict,
+) -> KnowledgePolicyAudit:
+    audit = KnowledgePolicyAudit(
+        retrieval_session_id=retrieval_session.id,
+        run_id=retrieval_session.run_id,
+        organization_id=retrieval_session.organization_id,
+        agent_id=retrieval_session.agent_id,
+        decision=decision,
+        reason=reason,
+        source_kind="web_research",
+        source_ref_id=source_ref_id,
+        safe_metadata_json=sanitize_audit_payload(metadata),
+        created_at=utc_now(),
+    )
+    session.add(audit)
+    session.flush()
+    return audit
+
+
+def _web_policy_limit(snapshot: dict, key: str, default: int) -> int:
+    try:
+        value = int(snapshot.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _configured_web_policy_limit(
+    session: Session,
+    *,
+    organization_id: str | None,
+    key: str,
+    default: int,
+) -> int:
+    setting = _system_setting(session, POLICY_SETTINGS_KEY, organization_id)
+    web = setting.get("web_research", {}) if isinstance(setting, dict) else {}
+    if not isinstance(web, dict):
+        return default
+    try:
+        value = int(web.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _web_provider_calls_used(
+    session: Session,
+    *,
+    run_id: str | None,
+    current_retrieval_session_id: str,
+) -> int:
+    if not run_id:
+        return 0
+    return len(
+        list(
+            session.execute(
+                select(WebResearchAttempt.id).where(
+                    WebResearchAttempt.run_id == run_id,
+                    WebResearchAttempt.retrieval_session_id != current_retrieval_session_id,
+                )
+            ).scalars()
         )
+    )
+
+
+def _reserve_web_provider_call(
+    session: Session,
+    *,
+    retrieval_session: RetrievalSession,
+    provider: str,
+    max_calls_per_run: int,
+) -> WebResearchAttempt | None:
+    if not retrieval_session.run_id:
+        return None
+    for slot in range(1, max_calls_per_run + 1):
+        attempt = WebResearchAttempt(
+            run_id=retrieval_session.run_id,
+            retrieval_session_id=retrieval_session.id,
+            organization_id=retrieval_session.organization_id,
+            agent_id=retrieval_session.agent_id,
+            provider=provider,
+            call_slot=slot,
+            status="RESERVED",
+            metadata_json={"reservation": "web_research_call"},
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        try:
+            with session.begin_nested():
+                session.add(attempt)
+                session.flush()
+            return attempt
+        except IntegrityError:
+            continue
+    return None
+
+
+def _update_web_attempt(
+    attempt: WebResearchAttempt | None,
+    *,
+    status: str,
+    metadata: dict | None = None,
+) -> None:
+    if attempt is None:
+        return
+    attempt.status = status
+    attempt.updated_at = utc_now()
+    attempt.metadata_json = {
+        **(attempt.metadata_json if isinstance(attempt.metadata_json, dict) else {}),
+        **(metadata or {}),
+    }
+
+
+def _provider_metadata(result: WebResearchResult, *, policy_snapshot: dict) -> dict:
+    return {
+        "request_id": result.provider_request_id,
+        "response_time_ms": result.response_time_ms,
+        "usage_credits": result.usage_credits,
+        "result_rank": result.rank,
+        "result_score": result.score,
+        "raw_content_available": result.raw_content_available,
+        "policy_snapshot": policy_snapshot,
+    }
+
+
+def _safe_denied_web_source_ref(result: WebResearchResult, decision) -> str:
+    if decision.normalized_url_sha256:
+        return f"url_sha256:{decision.normalized_url_sha256}"
+    return f"url_sha256:{_sha256(result.url)}"
+
+
+def _persist_web_research_results(
+    *,
+    session: Session,
+    retrieval_session: RetrievalSession,
+    provider: str,
+    results: list[WebResearchResult],
+    max_content_bytes: int,
+) -> tuple[list[WebResearchSource], list[KnowledgePolicyAudit], int]:
+    engine = PolicyEngine(session)
+    sources: list[WebResearchSource] = []
+    audits: list[KnowledgePolicyAudit] = []
+    seen_hashes: set[str] = set()
+    denied_count = 0
+    for result in results:
+        decision = engine.evaluate_web_research_result(
+            organization_id=retrieval_session.organization_id,
+            provider=provider,
+            url=result.url,
+            seen_url_hashes=seen_hashes,
+        )
+        metadata = {
+            "provider": provider,
+            "url_sha256": _sha256(result.url),
+            "normalized_url_sha256": decision.normalized_url_sha256,
+            "normalized_hostname": decision.hostname,
+            "policy_id": decision.policy_id,
+            "policy_snapshot": decision.snapshot or {},
+        }
+        if (
+            not decision.allowed
+            or not decision.normalized_url
+            or not decision.normalized_url_sha256
+        ):
+            denied_count += 1
+            audits.append(
+                _create_web_policy_audit(
+                    session=session,
+                    retrieval_session=retrieval_session,
+                    decision=POLICY_DECISION_DENIED,
+                    reason=decision.reason,
+                    source_ref_id=_safe_denied_web_source_ref(result, decision),
+                    metadata=metadata,
+                )
+            )
+            continue
+        seen_hashes.add(decision.normalized_url_sha256)
+        snippet = result.snippet[:max_content_bytes]
         source = WebResearchSource(
             retrieval_session_id=retrieval_session.id,
             organization_id=retrieval_session.organization_id,
             agent_id=retrieval_session.agent_id,
             run_id=retrieval_session.run_id,
-            url=url,
-            title=f"Fake web source {index}",
+            url=decision.normalized_url,
+            title=result.title or decision.normalized_url,
             content_sha256=_sha256(snippet),
             snippet=snippet,
             status="READY",
             error_message=None,
             metadata_json={
-                "provider": WEB_RESEARCH_PROVIDER_FAKE,
-                "fixture": True,
-                "query_sha256": _sha256(normalized_query),
+                "provider": provider,
+                "fixture": provider == WEB_RESEARCH_PROVIDER_FAKE,
+                "source_url_sha256": decision.normalized_url_sha256,
+                **_provider_metadata(result, policy_snapshot=decision.snapshot or {}),
             },
             fetched_at=utc_now(),
         )
         session.add(source)
         session.flush()
         sources.append(source)
-    return sources
+        audits.append(
+            _create_web_policy_audit(
+                session=session,
+                retrieval_session=retrieval_session,
+                decision=POLICY_DECISION_ALLOWED,
+                reason=decision.reason,
+                source_ref_id=source.id,
+                metadata={
+                    **metadata,
+                    "web_source_id": source.id,
+                    "status": "READY",
+                },
+            )
+        )
+    return sources, audits, denied_count
+
+
+def _run_web_research_fallback(
+    *,
+    session: Session,
+    retrieval_session: RetrievalSession,
+    provider: str,
+    query: str,
+) -> tuple[list[WebResearchSource], list[KnowledgePolicyAudit], dict]:
+    metadata: dict = {
+        "web_research_provider": provider,
+        "web_query_sha256": _sha256(query),
+        "web_query_preview_redacted": redacted_query_preview(query),
+        "web_research_timeout_seconds": DEFAULT_WEB_RESEARCH_TIMEOUT_SECONDS,
+    }
+    audits: list[KnowledgePolicyAudit] = []
+    if provider == WEB_RESEARCH_PROVIDER_DISABLED:
+        audits.append(
+            _create_web_policy_audit(
+                session=session,
+                retrieval_session=retrieval_session,
+                decision=POLICY_DECISION_DENIED,
+                reason="web research provider is disabled",
+                source_ref_id=None,
+                metadata={**metadata, "policy_id": "web-research-provider-enabled"},
+            )
+        )
+        return [], audits, metadata
+    if provider == WEB_RESEARCH_PROVIDER_FAKE and not fake_web_research_allowed():
+        metadata.update(
+            {
+                "web_research_attempt": True,
+                "web_research_failed": True,
+                "web_research_failure_reason": "fake provider is not allowed in this environment",
+                "web_research_retryable": False,
+            }
+        )
+        audits.append(
+            _create_web_policy_audit(
+                session=session,
+                retrieval_session=retrieval_session,
+                decision=POLICY_DECISION_DENIED,
+                reason=str(metadata["web_research_failure_reason"]),
+                source_ref_id=None,
+                metadata={**metadata, "policy_id": "web-research-fake-environment"},
+            )
+        )
+        return [], audits, metadata
+
+    api_key_present = (
+        bool(resolve_web_research_api_key(provider))
+        or provider == WEB_RESEARCH_PROVIDER_FAKE
+    )
+    calls_used = _web_provider_calls_used(
+        session,
+        run_id=retrieval_session.run_id,
+        current_retrieval_session_id=retrieval_session.id,
+    )
+    requested_max_results = min(
+        DEFAULT_WEB_RESEARCH_MAX_RESULTS,
+        _configured_web_policy_limit(
+            session,
+            organization_id=retrieval_session.organization_id,
+            key="max_results",
+            default=DEFAULT_WEB_RESEARCH_MAX_RESULTS,
+        ),
+    )
+    requested_timeout_seconds = min(
+        DEFAULT_WEB_RESEARCH_TIMEOUT_SECONDS,
+        _configured_web_policy_limit(
+            session,
+            organization_id=retrieval_session.organization_id,
+            key="timeout_seconds",
+            default=DEFAULT_WEB_RESEARCH_TIMEOUT_SECONDS,
+        ),
+    )
+    metadata["web_research_timeout_seconds"] = requested_timeout_seconds
+    engine = PolicyEngine(session)
+    pre_call = engine.evaluate_web_research_pre_call(
+        organization_id=retrieval_session.organization_id,
+        provider=provider,
+        api_key_present=api_key_present,
+        query=query,
+        max_results=requested_max_results,
+        timeout_seconds=requested_timeout_seconds,
+        calls_used=calls_used,
+        query_has_secret=query_has_secret_pattern(query),
+    )
+    metadata["web_pre_call_policy_snapshot"] = pre_call.snapshot or {}
+    audits.append(
+        _create_web_policy_audit(
+            session=session,
+            retrieval_session=retrieval_session,
+            decision=POLICY_DECISION_ALLOWED if pre_call.allowed else POLICY_DECISION_DENIED,
+            reason=pre_call.reason,
+            source_ref_id=None,
+            metadata={
+                **metadata,
+                "policy_id": pre_call.policy_id,
+                "api_key_present": api_key_present,
+                "calls_used": calls_used,
+            },
+        )
+    )
+    if not pre_call.allowed:
+        metadata.update(
+            {
+                "web_research_attempt": True,
+                "web_research_failed": True,
+                "web_research_failure_reason": pre_call.reason,
+                "web_research_retryable": False,
+            }
+        )
+        return [], audits, metadata
+
+    max_calls_per_run = _web_policy_limit(
+        pre_call.snapshot or {},
+        "max_calls_per_run",
+        1,
+    )
+    attempt = _reserve_web_provider_call(
+        session,
+        retrieval_session=retrieval_session,
+        provider=provider,
+        max_calls_per_run=max_calls_per_run,
+    )
+    if retrieval_session.run_id and attempt is None:
+        metadata.update(
+            {
+                "web_research_attempt": True,
+                "web_research_failed": True,
+                "web_research_failure_reason": (
+                    "web research call limit is exhausted for this run"
+                ),
+                "web_research_retryable": False,
+            }
+        )
+        audits.append(
+            _create_web_policy_audit(
+                session=session,
+                retrieval_session=retrieval_session,
+                decision=POLICY_DECISION_DENIED,
+                reason=str(metadata["web_research_failure_reason"]),
+                source_ref_id=None,
+                metadata={
+                    **metadata,
+                    "policy_id": "web-research-call-limit",
+                    "calls_used": max_calls_per_run,
+                },
+            )
+        )
+        return [], audits, metadata
+
+    adapter = get_web_research_adapter(provider)
+    if adapter is None:
+        metadata.update(
+            {
+                "web_research_attempt": True,
+                "web_research_failed": True,
+                "web_research_failure_reason": "web research provider is unsupported",
+                "web_research_retryable": False,
+            }
+        )
+        audits.append(
+            _create_web_policy_audit(
+                session=session,
+                retrieval_session=retrieval_session,
+                decision=POLICY_DECISION_DENIED,
+                reason=str(metadata["web_research_failure_reason"]),
+                source_ref_id=None,
+                metadata={**metadata, "policy_id": "web-research-provider-supported"},
+            )
+        )
+        _update_web_attempt(attempt, status="PROVIDER_UNSUPPORTED", metadata=metadata)
+        return [], audits, metadata
+
+    metadata["web_research_attempt"] = True
+    metadata["web_provider_call_attempted"] = True
+    max_results = _web_policy_limit(
+        pre_call.snapshot or {},
+        "max_results",
+        DEFAULT_WEB_RESEARCH_MAX_RESULTS,
+    )
+    max_content_bytes = _web_policy_limit(
+        pre_call.snapshot or {},
+        "max_content_bytes",
+        DEFAULT_WEB_RESEARCH_MAX_CONTENT_BYTES,
+    )
+    try:
+        results = adapter.search(
+            query=query,
+            max_results=max_results,
+            timeout_seconds=requested_timeout_seconds,
+            include_domains=list((pre_call.snapshot or {}).get("allow_domains") or []),
+            exclude_domains=list((pre_call.snapshot or {}).get("deny_domains") or []),
+        )
+    except WebResearchProviderError as exc:
+        metadata.update(
+            {
+                "web_research_failed": True,
+                "web_research_failure_reason": str(exc),
+                "web_research_retryable": exc.retryable,
+            }
+        )
+        audits.append(
+            _create_web_policy_audit(
+                session=session,
+                retrieval_session=retrieval_session,
+                decision=POLICY_DECISION_DENIED,
+                reason=str(exc),
+                source_ref_id=None,
+                metadata={**metadata, "policy_id": "web-research-provider-error"},
+            )
+        )
+        _update_web_attempt(attempt, status="PROVIDER_ERROR", metadata=metadata)
+        return [], audits, metadata
+
+    sources, post_audits, denied_count = _persist_web_research_results(
+        session=session,
+        retrieval_session=retrieval_session,
+        provider=provider,
+        results=results,
+        max_content_bytes=max_content_bytes,
+    )
+    audits.extend(post_audits)
+    metadata.update(
+        {
+            "web_result_count": len(results),
+            "web_source_count": len(sources),
+            "web_result_denied_count": denied_count,
+            "web_partial_results_warning": bool(sources and denied_count),
+        }
+    )
+    if results and not sources:
+        metadata.update(
+            {
+                "web_research_failed": True,
+                "web_research_failure_reason": "all web research results were denied by policy",
+                "web_research_retryable": False,
+            }
+        )
+        _update_web_attempt(attempt, status="ALL_RESULTS_DENIED", metadata=metadata)
+    else:
+        _update_web_attempt(
+            attempt,
+            status="SUCCEEDED" if sources else "NO_RESULTS",
+            metadata=metadata,
+        )
+    return sources, audits, metadata
 
 
 def ground_query(
@@ -1250,8 +1757,8 @@ def ground_query(
         min_score=DEFAULT_MIN_SCORE,
         max_local_chunks=DEFAULT_MAX_LOCAL_CHUNKS,
         max_web_results=(
-            DEFAULT_MAX_WEB_RESULTS
-            if research_provider == WEB_RESEARCH_PROVIDER_FAKE
+            DEFAULT_WEB_RESEARCH_MAX_RESULTS
+            if research_provider != WEB_RESEARCH_PROVIDER_DISABLED
             else 0
         ),
         metadata_json={"web_research_provider": research_provider},
@@ -1354,6 +1861,8 @@ def ground_query(
     hits: list[RetrievalHit] = []
     citations: list[CitationRecord] = []
     web_sources: list[WebResearchSource] = []
+    web_policy_audits: list[KnowledgePolicyAudit] = []
+    web_research_metadata: dict = {}
     selected_chunk_ids: set[str] = set()
     selected_candidates = top_candidates if local_status == "sufficient" else []
     if selected_candidates:
@@ -1439,27 +1948,35 @@ def ground_query(
             session.flush()
             citations.append(citation)
 
-    if local_status != "sufficient" and research_provider == WEB_RESEARCH_PROVIDER_FAKE:
-        web_sources = _fake_web_research_sources(
+    if local_status != "sufficient":
+        web_sources, web_policy_audits, web_research_metadata = _run_web_research_fallback(
             session=session,
             retrieval_session=retrieval_session,
+            provider=research_provider,
             query=query,
         )
         for rank, source in enumerate(web_sources, start=1):
+            source_metadata = (
+                source.metadata_json if isinstance(source.metadata_json, dict) else {}
+            )
             hit = RetrievalHit(
                 retrieval_session_id=retrieval_session.id,
                 chunk_id=None,
                 web_source_id=source.id,
                 rank=rank,
-                score=1.0,
+                score=float(source_metadata.get("result_score") or 1.0),
                 source_kind="web_source",
                 document_id=None,
                 document_version=None,
                 snippet=source.snippet,
                 metadata_json={
                     "content_sha256": source.content_sha256,
-                    "provider": WEB_RESEARCH_PROVIDER_FAKE,
-                    "source_url_sha256": _sha256(source.url),
+                    "provider": source_metadata.get("provider", research_provider),
+                    "source_url_sha256": source_metadata.get(
+                        "source_url_sha256",
+                        _sha256(source.url),
+                    ),
+                    "source_bound_semantics": "source_bound_not_factual_verification",
                 },
                 created_at=now,
             )
@@ -1485,6 +2002,8 @@ def ground_query(
                         "title": source.title,
                         "content_sha256": source.content_sha256,
                         "quoted_text_sha256": _sha256(source.snippet),
+                        "provider": source_metadata.get("provider", research_provider),
+                        "source_status": source.status,
                     },
                 },
                 created_at=now,
@@ -1493,8 +2012,6 @@ def ground_query(
             session.flush()
             citations.append(citation)
         retrieval_session.mode = "web_fallback" if web_sources else "local_insufficient"
-    elif local_status != "sufficient" and not web_sources:
-        retrieval_session.mode = "local_insufficient"
     grounding_outcome = _grounding_outcome(
         local_status=local_status,
         web_sources=web_sources,
@@ -1503,9 +2020,16 @@ def ground_query(
         "Local knowledge grounded the answer."
         if local_status == "sufficient"
         else (
-            "Local knowledge is insufficient; controlled fake web research grounded the answer."
+            "Local knowledge is insufficient; web research grounded the answer."
             if web_sources
-            else "Local knowledge is insufficient; no web research provider is configured."
+            else (
+                "Local knowledge is insufficient; no web research provider is configured."
+                if research_provider == WEB_RESEARCH_PROVIDER_DISABLED
+                else (
+                    "Local knowledge is insufficient; web research did not provide "
+                    "accepted sources."
+                )
+            )
         )
     )
     retrieval_session.metadata_json = {
@@ -1515,6 +2039,13 @@ def ground_query(
         "top_score": hits[0].score if hits else 0.0,
         "top_candidate_score": top_candidates[0][0] if top_candidates else 0.0,
         "sufficiency_reason": sufficiency_reason,
+        "local_insufficient": local_status != "sufficient",
+        "local_hit_count": len(top_candidates),
+        "local_best_score": top_candidates[0][0] if top_candidates else 0.0,
+        "fallback_trigger_reason": (
+            sufficiency_reason if local_status != "sufficient" else None
+        ),
+        **web_research_metadata,
         **grounding_outcome,
     }
     session.flush()
@@ -1544,6 +2075,7 @@ def ground_query(
         denied_candidates=denied_candidates,
         redacted_candidates=redacted_candidates,
     )
+    policy_audits = [*web_policy_audits, *policy_audits]
     evidence_summary = _build_evidence_messages(
         query=query,
         hits=hits,
