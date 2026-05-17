@@ -107,9 +107,7 @@ def test_warm_pool_bypasses_pool_when_policy_requires_network(db_session: Sessio
             organization_id=task.organization_id,
             key="settings.policies",
             value_json={
-                "risk_levels": [
-                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
-                ],
+                "risk_levels": [{"name": "high", "requires_sandbox": True, "approval": "admin"}],
                 "approvals": {"manual_review": True, "deny_on_missing_policy": True},
                 "sandbox": {"default_network": True, "default_timeout_seconds": 60},
                 "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
@@ -139,9 +137,7 @@ def test_warm_pool_bypasses_pool_for_custom_resources(db_session: Session) -> No
             organization_id=task.organization_id,
             key="settings.policies",
             value_json={
-                "risk_levels": [
-                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
-                ],
+                "risk_levels": [{"name": "high", "requires_sandbox": True, "approval": "admin"}],
                 "approvals": {"manual_review": True, "deny_on_missing_policy": True},
                 "sandbox": {
                     "default_network": False,

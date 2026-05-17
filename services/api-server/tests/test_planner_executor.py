@@ -10,16 +10,20 @@ from tests.conftest import AUTH_HEADERS
 
 
 def test_planner_uses_model_generated_sync_and_async_steps(db_session: Session) -> None:
-    created = TestClient(app).post(
-        "/api/tasks",
-        headers=AUTH_HEADERS,
-        json={
-            "title": "LLM Plan",
-            "goal": "拆分同步和异步任务",
-            "model_provider": "openai-compatible",
-            "model_name": "default",
-        },
-    ).json()
+    created = (
+        TestClient(app)
+        .post(
+            "/api/tasks",
+            headers=AUTH_HEADERS,
+            json={
+                "title": "LLM Plan",
+                "goal": "拆分同步和异步任务",
+                "model_provider": "openai-compatible",
+                "model_name": "default",
+            },
+        )
+        .json()
+    )
     task = db_session.get(Task, created["id"])
     assert task is not None
 

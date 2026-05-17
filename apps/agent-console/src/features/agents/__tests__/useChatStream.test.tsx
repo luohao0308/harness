@@ -138,4 +138,67 @@ describe("useChatStream run lifecycle callbacks", () => {
     expect(payload.context_max_tokens).toBeGreaterThan(0);
     expect(payload.messages.map((message: { id: string }) => message.id)).toContain(oldNodeId);
   });
+
+  it("routes explicit tool mentions through chat mode instead of markdown planning", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      streamResponse(
+        [
+          sseFrame("run_created", {
+            run_id: "run-tool",
+            status: "RUNNING",
+            step_count: 0,
+            message: "tool started",
+          }),
+          sseFrame("tool_call_requested", {
+            tool_call_id: "tool-1",
+            tool_name: "list_files",
+            source: "builtin",
+            input_json: { root: ".", glob: "**/*" },
+            status: "running",
+          }),
+          sseFrame("tool_call_result", {
+            tool_call_id: "tool-1",
+            tool_name: "list_files",
+            output_json: { files: ["pyproject.toml"] },
+            output_summary: "文件列表 1 项",
+            status: "success",
+          }),
+          sseFrame("delta", { content: "已列出工作区文件，共 1 项。" }),
+          sseFrame("done", {
+            run_id: "run-tool",
+            active_branch_id: "branch",
+            status: "COMPLETED",
+            step_count: 0,
+            message: "done",
+          }),
+        ].join(""),
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatStream({
+        agentId: "default",
+        workspaceMode: "codex_plan",
+        selectedProviderId: "deepseek-flash",
+        selectedModelId: "deepseek-v4-flash",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.start({ goal: "@list_files", mode: "codex_plan" });
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.mode).toBe("chat");
+    expect(payload.tool_mentions).toEqual([
+      { name: "list_files", source: "builtin", payload: { mention: "@list_files" } },
+    ]);
+    const assistantNode = Object.values(useWorkspaceStore.getState().nodesById).find(
+      (node) => node.role === "assistant",
+    );
+    expect(assistantNode?.metadata.workspace_mode).toBe("chat");
+    expect(assistantNode?.tool_calls).toHaveLength(1);
+  });
 });

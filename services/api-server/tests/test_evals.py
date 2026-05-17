@@ -202,8 +202,7 @@ def test_eval_dataset_case_from_run_and_eval_run_vertical_slice(db_session: Sess
     ]
     assert "EVAL_CASE_CREATED" in task_event_types
     audit_types = [
-        event.event_type
-        for event in db_session.execute(select(AdminAuditEvent)).scalars()
+        event.event_type for event in db_session.execute(select(AdminAuditEvent)).scalars()
     ]
     assert "EVAL_DATASET_CREATED" in audit_types
     assert "EVAL_RUN_STARTED" in audit_types
@@ -289,9 +288,7 @@ def test_eval_run_grades_grounding_contract_cases(db_session: Session) -> None:
     assert traces[passing_case.json()["id"]]["grounding_provider"] == "local_knowledge"
     assert traces[passing_case.json()["id"]]["fixture_grounded"] is False
     assert traces[passing_case.json()["id"]]["verified_grounded"] is True
-    assert traces[failing_case.json()["id"]]["grounding_failures"] == [
-        "missing_policy_decisions"
-    ]
+    assert traces[failing_case.json()["id"]]["grounding_failures"] == ["missing_policy_decisions"]
 
 
 def test_eval_run_rejects_fake_web_fallback_unless_fixture_opted_in(

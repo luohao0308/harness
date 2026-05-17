@@ -110,9 +110,7 @@ def test_docker_manager_reads_sandbox_policy_settings(db_session: Session) -> No
             organization_id=task.organization_id,
             key="settings.policies",
             value_json={
-                "risk_levels": [
-                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
-                ],
+                "risk_levels": [{"name": "high", "requires_sandbox": True, "approval": "admin"}],
                 "approvals": {"manual_review": True, "deny_on_missing_policy": True},
                 "sandbox": {
                     "default_network": True,
@@ -195,9 +193,7 @@ def test_docker_manager_uses_policy_timeout_when_command_timeout_missing(
             organization_id=task.organization_id,
             key="settings.policies",
             value_json={
-                "risk_levels": [
-                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
-                ],
+                "risk_levels": [{"name": "high", "requires_sandbox": True, "approval": "admin"}],
                 "approvals": {"manual_review": True, "deny_on_missing_policy": True},
                 "sandbox": {"default_network": False, "default_timeout_seconds": 9},
                 "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
@@ -283,9 +279,7 @@ def test_sandbox_quota_usage_and_history_aggregate_policy_and_instances(
             organization_id=task.organization_id,
             key="settings.policies",
             value_json={
-                "risk_levels": [
-                    {"name": "high", "requires_sandbox": True, "approval": "admin"}
-                ],
+                "risk_levels": [{"name": "high", "requires_sandbox": True, "approval": "admin"}],
                 "approvals": {"manual_review": True, "deny_on_missing_policy": True},
                 "sandbox": {
                     "default_network": True,

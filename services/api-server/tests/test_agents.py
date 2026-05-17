@@ -14,6 +14,7 @@ from app.api.agents import _normalize_grounding_citations
 from app.db.models import (
     Agent,
     AgentAssignment,
+    AgentCapabilityAttachment,
     AgentEvent,
     CitationRecord,
     ContextAssemblyManifest,
@@ -29,6 +30,7 @@ from app.db.models import (
 )
 from app.main import app
 from app.sandbox.docker_manager import SandboxCommandResult
+from app.tools.capabilities import CapabilityRegistry
 from app.workers.agent_assignment_worker import execute_agent_assignment
 from tests.conftest import AUTH_HEADERS
 
@@ -162,9 +164,7 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
     run_created = next(payload for event, payload in events if event == "run_created")
     delta = next(payload for event, payload in events if event == "delta")
     done = next(payload for event, payload in events if event == "done")
-    full_answer = "".join(
-        payload["content"] for event, payload in events if event == "delta"
-    )
+    full_answer = "".join(payload["content"] for event, payload in events if event == "delta")
     assert "think_delta" not in event_names
     assert "artifact_created" not in event_names
     assert "tool_call_requested" not in event_names
@@ -237,9 +237,7 @@ def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
     assert response.status_code == 200
     events = parse_sse_events(response.text)
     run_created = next(payload for event, payload in events if event == "run_created")
-    full_answer = "".join(
-        payload["content"] for event, payload in events if event == "delta"
-    )
+    full_answer = "".join(payload["content"] for event, payload in events if event == "delta")
     persisted_keys = set(
         db_session.execute(
             select(CitationRecord.citation_key).where(
@@ -628,7 +626,6 @@ def test_agent_workspace_pro_chat_mode_does_not_auto_promote_plan_keywords(
             "active_branch_id": "branch-chat-keywords",
             "pinned_node_ids": [],
             "context_window_turns": 8,
-            "tool_mentions": [{"name": "read_file", "source": "builtin", "payload": {}}],
         },
     )
 
@@ -643,6 +640,127 @@ def test_agent_workspace_pro_chat_mode_does_not_auto_promote_plan_keywords(
     assert "artifact_created" not in event_names
     assert "tool_call_requested" not in event_names
     assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
+
+
+def test_agent_workspace_pro_chat_mode_executes_list_files_tool_mention(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "列出项目文件",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-chat-files",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "list_files", "source": "builtin", "payload": {}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    result = next(payload for event, payload in events if event == "tool_call_result")
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    tool_call = db_session.execute(
+        select(ToolCall).where(ToolCall.task_id == run_created["run_id"])
+    ).scalar_one()
+
+    assert "artifact_created" not in event_names
+    assert requested["tool_call_id"] == tool_call.id
+    assert requested["status"] == "running"
+    assert result["tool_call_id"] == tool_call.id
+    assert result["status"] == "success"
+    assert result["output_json"]["files"]
+    assert "已列出工作区文件" in delta["content"]
+    assert done["status"] == "COMPLETED"
+    assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
+
+
+def test_agent_workspace_pro_chat_mode_keeps_side_effect_tool_pending_approval(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "run shell",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-chat-approval",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [
+                {"name": "run_shell", "source": "builtin", "payload": {"command": "echo hi"}}
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    run_created = next(payload for event, payload in events if event == "run_created")
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    tool_call = db_session.execute(
+        select(ToolCall).where(ToolCall.task_id == run_created["run_id"])
+    ).scalar_one()
+    approval = db_session.execute(
+        select(ToolApproval).where(ToolApproval.task_id == run_created["run_id"])
+    ).scalar_one()
+
+    assert requested["tool_call_id"] == tool_call.id
+    assert requested["status"] == "pending_approval"
+    assert requested["approval_id"] == approval.id
+    assert not [payload for event, payload in events if event == "tool_call_result"]
+    assert "需要审批" in delta["content"]
+    assert done["status"] == "WAITING_APPROVAL"
+    assert tool_call.status == "PENDING_APPROVAL"
+
+
+def test_agent_workspace_pro_codex_plan_mode_tool_mention_executes_tool_first(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "codex_plan",
+            "goal": "@list_files",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-codex-tool",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "list_files", "source": "builtin", "payload": {}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    result = next(payload for event, payload in events if event == "tool_call_result")
+    delta = next(payload for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+    tool_call = db_session.execute(
+        select(ToolCall).where(ToolCall.task_id == run_created["run_id"])
+    ).scalar_one()
+
+    assert "artifact_created" not in event_names
+    assert requested["tool_call_id"] == tool_call.id
+    assert result["tool_call_id"] == tool_call.id
+    assert result["status"] == "success"
+    assert "已列出工作区文件" in delta["content"]
+    assert done["status"] == "COMPLETED"
 
 
 def test_agent_workspace_pro_codex_plan_streams_markdown_plan_without_plan_act(
@@ -671,7 +789,6 @@ def test_agent_workspace_pro_codex_plan_streams_markdown_plan_without_plan_act(
             "active_branch_id": "branch-codex-plan",
             "pinned_node_ids": [],
             "context_window_turns": 8,
-            "tool_mentions": [{"name": "run_shell", "source": "builtin", "payload": {}}],
         },
     )
 
@@ -782,7 +899,6 @@ def test_agent_workspace_pro_chat_mode_does_not_resume_plan_run(
             "active_branch_id": "branch-chat-run",
             "pinned_node_ids": [],
             "context_window_turns": 8,
-            "tool_mentions": [{"name": "read_file", "source": "builtin", "payload": {}}],
         },
     )
 
@@ -1050,10 +1166,12 @@ def test_workspace_context_manifest_binding_tracks_authoritative_mode(
         select(ModelCall).order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
     ).scalar_one()
     shadow_manifest = db_session.execute(
-        select(ContextAssemblyManifest).order_by(
+        select(ContextAssemblyManifest)
+        .order_by(
             ContextAssemblyManifest.created_at.desc(),
             ContextAssemblyManifest.id.desc(),
-        ).limit(1)
+        )
+        .limit(1)
     ).scalar_one()
     assert shadow_call.context_manifest_id is None
     assert shadow_manifest.mode == "shadow"
@@ -1151,9 +1269,9 @@ def test_agent_workspace_pro_chat_stream_continue_preserves_run_identity(
         },
     )
     assert created.status_code == 200
-    run_id = next(
-        payload for event, payload in parse_sse_events(created.text) if event == "done"
-    )["run_id"]
+    run_id = next(payload for event, payload in parse_sse_events(created.text) if event == "done")[
+        "run_id"
+    ]
 
     continued = client.post(
         "/api/agents/default/runs/chat/stream",
@@ -1222,9 +1340,9 @@ def test_agent_workspace_chat_run_can_be_promoted_to_full_harness_execution(
     )
 
     assert created.status_code == 200
-    run_id = next(
-        payload for event, payload in parse_sse_events(created.text) if event == "done"
-    )["run_id"]
+    run_id = next(payload for event, payload in parse_sse_events(created.text) if event == "done")[
+        "run_id"
+    ]
     assert db_session.get(Task, run_id).status == "COMPLETED"
     assert (
         db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == run_id)).first()
@@ -1305,10 +1423,72 @@ def test_agent_workspace_pro_chat_stream_side_effect_tool_stays_pending(
     assert tool_call.status == "PENDING_APPROVAL"
     assert run is not None
     assert run.status == "WAITING_APPROVAL"
-
     workspace = client.get(f"/api/agents/runs/{run_id}/workspace", headers=AUTH_HEADERS)
     assert workspace.status_code == 200
     assert workspace.json()["approvals"][0]["id"] == approval.id
+
+
+def test_agent_workspace_tool_mention_denies_unattached_known_tool(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        Agent(
+            id="workspace-restricted",
+            organization_id=None,
+            name="Workspace Restricted",
+            description="Attached only to read_file",
+            role="reviewer",
+            status="ACTIVE",
+            model_provider="default",
+            model_name="default",
+            system_prompt="Restricted workspace test agent.",
+            tools_json=["read_file"],
+            routing_tags=[],
+        )
+    )
+    db_session.flush()
+    CapabilityRegistry(db_session, "dev-org").backfill_agent_attachments(
+        "workspace-restricted",
+        attached_by="test",
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/workspace-restricted/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "Try listing files without an attachment",
+            "mode": "plan",
+            "messages": [],
+            "active_leaf_id": "root",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+            "tool_mentions": [{"name": "list_files", "source": "builtin", "payload": {}}],
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    run_id = next(payload for event, payload in events if event == "run_created")["run_id"]
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    result = next(payload for event, payload in events if event == "tool_call_result")
+    tool_call = db_session.execute(select(ToolCall).where(ToolCall.task_id == run_id)).scalar_one()
+
+    assert requested["tool_call_id"] == tool_call.id
+    assert requested["status"] == "rejected"
+    assert result["tool_call_id"] == tool_call.id
+    assert result["status"] == "rejected"
+    assert tool_call.status == "DENIED"
+    assert tool_call.tool_name == "list_files"
+    assert tool_call.capability_version_id is None
+    assert "not attached to capability list_files" in tool_call.error_message
+    attachments = list(
+        db_session.execute(
+            select(AgentCapabilityAttachment).where(
+                AgentCapabilityAttachment.agent_id == "workspace-restricted",
+            )
+        ).scalars()
+    )
+    assert len(attachments) == 1
 
 
 @pytest.fixture(autouse=True)
@@ -1515,8 +1695,9 @@ def test_agent_plan_mode_surfaces_model_gateway_failure_without_fallback(
     ).scalar_one()
     assert task.status == "FAILED"
     assert (
-        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == task.id))
-        .scalar_one_or_none()
+        db_session.execute(
+            select(ExecutionPlan).where(ExecutionPlan.task_id == task.id)
+        ).scalar_one_or_none()
         is None
     )
     event_types = [
@@ -1569,8 +1750,9 @@ def test_agent_run_create_surfaces_model_gateway_failure_without_fallback(
     ).scalar_one()
     assert task.status == "FAILED"
     assert (
-        db_session.execute(select(ExecutionPlan).where(ExecutionPlan.task_id == task.id))
-        .scalar_one_or_none()
+        db_session.execute(
+            select(ExecutionPlan).where(ExecutionPlan.task_id == task.id)
+        ).scalar_one_or_none()
         is None
     )
     event_types = [
@@ -1721,9 +1903,7 @@ def test_agent_run_create_records_repair_failure_before_deterministic_plan(
         "PLAN_GENERATED",
     ]
     plan_rejection_reasons = [
-        event.payload_json["reason"]
-        for event in events
-        if event.event_type == "PLAN_REJECTED"
+        event.payload_json["reason"] for event in events if event.event_type == "PLAN_REJECTED"
     ]
     assert plan_rejection_reasons == [
         "model_plan_schema_invalid",
@@ -1887,11 +2067,15 @@ def test_agent_execute_run_waits_for_admin_approval(db_session: Session) -> None
         select(ToolApproval).where(ToolApproval.task_id == run_id)
     ).scalar_one()
     assert approval.status == "PENDING"
-    failed_event = db_session.execute(
-        select(AgentEvent)
-        .where(AgentEvent.task_id == run_id, AgentEvent.event_type == "TASK_FAILED")
-        .order_by(AgentEvent.sequence.desc())
-    ).scalars().first()
+    failed_event = (
+        db_session.execute(
+            select(AgentEvent)
+            .where(AgentEvent.task_id == run_id, AgentEvent.event_type == "TASK_FAILED")
+            .order_by(AgentEvent.sequence.desc())
+        )
+        .scalars()
+        .first()
+    )
     assert failed_event is not None
     assert failed_event.payload_json["awaiting_approval"] is True
 
@@ -1945,11 +2129,15 @@ def test_agent_orchestrate_run_creates_named_assignments_and_events(
     assert "AGENT_ASSIGNMENT_CREATED" in event_types
     assert "AGENT_HANDOFF_COMPLETED" in event_types
     assert "AGENT_REDUCE_STARTED" in event_types
-    selected_event = db_session.execute(
-        select(AgentEvent)
-        .where(AgentEvent.task_id == run_id, AgentEvent.event_type == "AGENT_SELECTED")
-        .order_by(AgentEvent.sequence.desc())
-    ).scalars().first()
+    selected_event = (
+        db_session.execute(
+            select(AgentEvent)
+            .where(AgentEvent.task_id == run_id, AgentEvent.event_type == "AGENT_SELECTED")
+            .order_by(AgentEvent.sequence.desc())
+        )
+        .scalars()
+        .first()
+    )
     assert selected_event is not None
     assert selected_event.payload_json["router_prompt_version"] == "agent-router-v1"
 
@@ -2089,9 +2277,7 @@ def test_agent_orchestration_enqueue_marks_assignments_for_worker(
     assert response.status_code == 202
     payload = response.json()
     assert all(item["status"] == "QUEUED" for item in payload["assignments"])
-    assert sorted(sent_assignment_ids) == sorted(
-        item["id"] for item in payload["assignments"]
-    )
+    assert sorted(sent_assignment_ids) == sorted(item["id"] for item in payload["assignments"])
     event_types = [
         event.event_type
         for event in db_session.execute(
@@ -2168,6 +2354,10 @@ def test_agent_assignment_respects_agent_tool_allowlist(db_session: Session) -> 
         )
     )
     db_session.flush()
+    CapabilityRegistry(db_session, "dev-org").backfill_agent_attachments(
+        "restricted",
+        attached_by="test",
+    )
     assignment = AgentAssignment(
         run_id=run_id,
         agent_id="restricted",
@@ -2182,7 +2372,7 @@ def test_agent_assignment_respects_agent_tool_allowlist(db_session: Session) -> 
     status = execute_agent_assignment(assignment.id, session=db_session)
 
     assert status == "FAILED"
-    assert assignment.output_json["permission_boundary"] == "agent.tools_json"
+    assert assignment.output_json["permission_boundary"] == "agent_capability_attachment"
     assert assignment.output_json["tool_name"] == "list_files"
 
 
@@ -2206,8 +2396,7 @@ def test_agent_auto_mode_plans_orchestrates_and_executes_run(db_session: Session
     assert payload["task"]["status"] == "COMPLETED"
     assert payload["plan"]["steps"]
     assert all(
-        assignment["status"] == "SUCCESS"
-        for assignment in payload["orchestration"]["assignments"]
+        assignment["status"] == "SUCCESS" for assignment in payload["orchestration"]["assignments"]
     )
     run_id = payload["run_id"]
     event_types = [

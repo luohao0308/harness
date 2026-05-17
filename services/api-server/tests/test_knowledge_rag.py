@@ -280,9 +280,7 @@ def test_knowledge_source_api_records_ingestion_audit_events(db_session: Session
     assert EventType.KNOWLEDGE_SOURCE_CREATED in event_types
     assert EventType.KNOWLEDGE_DOCUMENT_INDEXED in event_types
     indexed = next(
-        event
-        for event in events
-        if event.event_type == EventType.KNOWLEDGE_DOCUMENT_INDEXED
+        event for event in events if event.event_type == EventType.KNOWLEDGE_DOCUMENT_INDEXED
     )
     assert indexed.payload_json["schema_version"] == "knowledge-grounding-v1"
     assert indexed.payload_json["org_id"] == "dev-org"
@@ -1050,10 +1048,14 @@ def test_multipart_import_rejects_oversized_body_before_buffering(
     client = TestClient(app)
     boundary = "knowledge-boundary"
     body = (
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="too-large.md"\r\n'
-        "Content-Type: text/markdown\r\n\r\n"
-    ).encode() + (b"x" * 140_001) + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="too-large.md"\r\n'
+            "Content-Type: text/markdown\r\n\r\n"
+        ).encode()
+        + (b"x" * 140_001)
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     response = client.post(
         "/api/agents/default/knowledge/sources/import",
@@ -1414,9 +1416,7 @@ def test_knowledge_restore_smoke_preserves_current_and_historical_contracts(
             for hit in disabled.retrieval_hits
         )
         assert foreign.local_status == "insufficient"
-        assert foreign_source_id not in str(
-            [hit.metadata_json for hit in foreign.retrieval_hits]
-        )
+        assert foreign_source_id not in str([hit.metadata_json for hit in foreign.retrieval_hits])
         assert org_source_id in {item.id for item in researcher_sources}
         assert org_source_id not in {item.id for item in other_org_sources}
 
@@ -1438,11 +1438,14 @@ def test_knowledge_restore_smoke_preserves_current_and_historical_contracts(
         assert event.payload_json["schema_version"] == "knowledge-lifecycle-v1"
         assert event.payload_json["before"]["status"] == "ACTIVE"
         assert event.payload_json["after"]["status"] == "DISABLED"
-        assert source_id in {item.id for item in list_knowledge_sources(
-            restored_session,
-            organization_id="dev-org",
-            agent_id="default",
-        )}
+        assert source_id in {
+            item.id
+            for item in list_knowledge_sources(
+                restored_session,
+                organization_id="dev-org",
+                agent_id="default",
+            )
+        }
     finally:
         restored_session.close()
         restored_engine.dispose()
@@ -1528,9 +1531,7 @@ def test_cjk_single_chunk_strong_match_can_ground_small_handbook(
         "single_cjk_strong_match"
     )
     assert result.prompt_manifest is not None
-    assert result.prompt_manifest.included_retrieval_hit_ids_json == [
-        result.retrieval_hits[0].id
-    ]
+    assert result.prompt_manifest.included_retrieval_hit_ids_json == [result.retrieval_hits[0].id]
     assert {audit.decision for audit in result.policy_audits} >= {"allowed"}
 
 
@@ -1569,9 +1570,7 @@ def test_single_non_cjk_hit_below_min_hits_is_not_cited(
     assert result.citations == []
     assert result.prompt_manifest is not None
     assert result.prompt_manifest.included_retrieval_hit_ids_json == []
-    assert result.prompt_manifest.omitted_candidates_json[0]["reason"] == (
-        "insufficient_min_hits"
-    )
+    assert result.prompt_manifest.omitted_candidates_json[0]["reason"] == ("insufficient_min_hits")
     assert {audit.decision for audit in result.policy_audits} >= {"omitted"}
 
 
@@ -1630,9 +1629,7 @@ def test_grounding_persists_prompt_manifest_and_policy_audit(
     assert result.fixture_grounded is False
     assert result.verified_grounded is True
     assert result.prompt_manifest.metadata_json["verified_grounded"] is True
-    assert {
-        audit.decision for audit in result.policy_audits
-    } >= {"allowed", "omitted"}
+    assert {audit.decision for audit in result.policy_audits} >= {"allowed", "omitted"}
     assert db_session.scalar(select(func.count()).select_from(PromptAssemblyManifest)) == 1
     assert db_session.scalar(select(func.count()).select_from(KnowledgePolicyAudit)) >= 2
 
@@ -1698,8 +1695,7 @@ def test_omitted_candidates_do_not_leak_raw_text_to_manifest_or_run_detail(
     assert forbidden_text not in manifest_payload
     assert result.prompt_manifest.omitted_candidates_json
     assert all(
-        "snapshot" not in candidate
-        for candidate in result.prompt_manifest.omitted_candidates_json
+        "snapshot" not in candidate for candidate in result.prompt_manifest.omitted_candidates_json
     )
 
     response = TestClient(app).get(
@@ -1882,9 +1878,7 @@ def test_insufficient_local_evidence_uses_fake_web_fallback_audit_path(
     assert result.fixture_grounded is True
     assert result.verified_grounded is False
     assert result.grounding_verification_reason == "fixture_web_not_verified"
-    assert result.retrieval_session.metadata_json["grounding_provider"] == (
-        "fake_web_fixture"
-    )
+    assert result.retrieval_session.metadata_json["grounding_provider"] == ("fake_web_fixture")
     assert result.prompt_manifest.metadata_json["fixture_grounded"] is True
     assert result.prompt_manifest.omitted_candidates_json == []
     assert result.web_sources
@@ -1919,9 +1913,7 @@ def test_real_web_research_success_is_source_bound_with_mock_adapter(
     monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
     monkeypatch.setattr(
         "app.sandbox.policies.socket.getaddrinfo",
-        lambda host, *_args, **_kwargs: [
-            (None, None, None, None, ("93.184.216.34", 443))
-        ],
+        lambda host, *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
     )
 
     class Adapter:
@@ -1975,18 +1967,15 @@ def test_real_web_research_success_is_source_bound_with_mock_adapter(
     assert source.metadata_json["provider"] == "tavily"
     assert source.metadata_json["request_id"] == "req-123"
     assert result.citations[0].web_source_id == source.id
-    web_audits = [
-        audit
-        for audit in result.policy_audits
-        if audit.source_kind == "web_research"
-    ]
-    assert web_audits[0].safe_metadata_json["web_pre_call_policy_snapshot"][
-        "provider_domain_filters_advisory_only"
-    ] is True
+    web_audits = [audit for audit in result.policy_audits if audit.source_kind == "web_research"]
+    assert (
+        web_audits[0].safe_metadata_json["web_pre_call_policy_snapshot"][
+            "provider_domain_filters_advisory_only"
+        ]
+        is True
+    )
     assert any(
-        audit.safe_metadata_json.get("policy_snapshot", {}).get(
-            "authoritative_enforcement"
-        )
+        audit.safe_metadata_json.get("policy_snapshot", {}).get("authoritative_enforcement")
         == "post_result_policy_before_persistence"
         for audit in web_audits
     )
@@ -2191,9 +2180,7 @@ def test_web_research_policy_limits_content_and_calls(
     monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
     monkeypatch.setattr(
         "app.sandbox.policies.socket.getaddrinfo",
-        lambda host, *_args, **_kwargs: [
-            (None, None, None, None, ("93.184.216.34", 443))
-        ],
+        lambda host, *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
     )
     calls = 0
 
@@ -2273,9 +2260,7 @@ def test_local_sufficient_grounding_does_not_consume_web_call_budget(
     monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
     monkeypatch.setattr(
         "app.sandbox.policies.socket.getaddrinfo",
-        lambda host, *_args, **_kwargs: [
-            (None, None, None, None, ("93.184.216.34", 443))
-        ],
+        lambda host, *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
     )
     calls = 0
 

@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelRequest, ModelResponse
 from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT, SubagentManager
-from app.db.models import AgentRun, SubagentRecoveryBatch, Task, utc_now
+from app.db.models import Agent, AgentRun, SubagentRecoveryBatch, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
+from app.tools.capabilities import CapabilityRegistry
 from app.workers.subagent_recovery_worker import _sqlite_recovery_lock, recover_stalled_subagents
 from app.workers.subagent_worker import (
     DEFAULT_REACT_CONTEXT_RECENT_RESULTS,
@@ -39,8 +40,26 @@ class SequencedModelGateway:
 
 
 def create_task(db_session: Session, organization_id: str = "dev-org") -> Task:
+    if db_session.get(Agent, "subagent-test-agent") is None:
+        db_session.add(
+            Agent(
+                id="subagent-test-agent",
+                organization_id=None,
+                name="Subagent Test Agent",
+                description="Owns read_file for subagent worker tests",
+                role="tester",
+                status="ACTIVE",
+                model_provider="default",
+                model_name="default",
+                system_prompt="Run subagent tools through capability attachments.",
+                tools_json=["read_file"],
+                routing_tags=[],
+            )
+        )
+        db_session.flush()
     task = Task(
         organization_id=organization_id,
+        agent_id="subagent-test-agent",
         created_by="dev-engineer",
         title="Demo",
         goal="Analyze project",
@@ -56,6 +75,10 @@ def create_task(db_session: Session, organization_id: str = "dev-org") -> Task:
     )
     db_session.add(task)
     db_session.flush()
+    CapabilityRegistry(db_session, task.organization_id).backfill_agent_attachments(
+        "subagent-test-agent",
+        attached_by="test",
+    )
     return task
 
 
@@ -128,6 +151,32 @@ def test_worker_executes_assignment_tools_and_writes_results(
     assert "TOOL_RESULT_RECEIVED" in event_types
 
 
+def test_worker_denies_assignment_tool_missing_agent_attachment(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    task = create_task(db_session)
+    agent_run = SubagentManager(db_session).spawn(
+        task=task,
+        assignment={
+            "step_key": "tool_review",
+            "tools": [{"tool_name": "list_files", "input_json": {"root": "."}}],
+        },
+    )
+    db_session.commit()
+
+    status = execute_subagent(agent_run.id, session=db_session, workspace_root=tmp_path)
+
+    assert status == "SUCCESS"
+    refreshed = db_session.get(AgentRun, agent_run.id)
+    assert refreshed is not None
+    tool_result = refreshed.context_json["result"]["tool_results"][0]
+    assert tool_result["tool_name"] == "list_files"
+    assert tool_result["status"] == "DENIED"
+    assert tool_result["allowed"] is False
+    assert "not attached to capability list_files" in tool_result["error_message"]
+
+
 def test_worker_runs_multiround_react_tools(
     db_session: Session,
     tmp_path: Path,
@@ -140,9 +189,7 @@ def test_worker_runs_multiround_react_tools(
             {
                 "summary": "第一轮完成，继续补充文件",
                 "done": False,
-                "next_tools": [
-                    {"tool_name": "read_file", "input_json": {"path": "extra.md"}}
-                ],
+                "next_tools": [{"tool_name": "read_file", "input_json": {"path": "extra.md"}}],
             },
             {"summary": "多轮 ReAct 子 Agent 完成", "done": True, "next_tools": []},
         ]
@@ -252,8 +299,7 @@ def test_worker_compacts_long_react_context_for_model_requests(
     assert len(result["tool_results"]) == 5
     assert result["context_summary"]["total_tool_results"] == 5
     assert (
-        result["context_summary"]["retained_tool_results"]
-        == DEFAULT_REACT_CONTEXT_RECENT_RESULTS
+        result["context_summary"]["retained_tool_results"] == DEFAULT_REACT_CONTEXT_RECENT_RESULTS
     )
     assert result["context_summary"]["omitted_tool_results"] == 2
     assert result["react_trace"][-1]["context_omitted_tool_result_count"] == 2
