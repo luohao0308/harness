@@ -53,6 +53,7 @@
 ## 2026-05-17
 
 - Refreshed [[session-2026-05-16-agent-knowledge-p1-grounding-audit]], [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], and [[index]] after pushing blocker-repair commits through `4475eef`. Captured fixes for verified-vs-fixture grounding, denied/redacted policy isolation, v2 recomputable request hashes without raw request previews, Run Detail Model Call binding display, Run Detail Eval grounding-contract propagation, `[Wn]` citation normalization, validation evidence, and the remaining Docker/private-deployment gate before verified-baseline promotion.
+- Added [[session-2026-05-17-agent-knowledge-p3-web-research]] and refreshed [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], and [[index]] after pushing P3 commits through `76f11d5`. Captured Tavily-backed source-bound web research, no backend second-hop fetch, pre-call/post-result URL policy gates, DNS/IP blocking, attempt ledger, fake-provider hardening, Run Detail evidence, HTML report, validation evidence, live smoke, and the handoff to P4 memory/context router work.
 ## [2026-05-16T15:35:12.984Z] lint
 - **Pages:** none
 - **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
@@ -63,6 +64,9 @@
 - **Pages:** none
 - **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
 ## [2026-05-17T01:05:53.522Z] lint
+- **Pages:** none
+- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
+## [2026-05-17T09:26:13.395Z] lint
 - **Pages:** none
 - **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
 

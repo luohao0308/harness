@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-17T06:05:00Z
+last_updated_at: 2026-05-17T09:55:00Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -116,6 +116,31 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: p4-memory-context-router-v2
+    date: 2026-05-17
+    status: backend_context_assembly_verified
+    demo: Workspace chat context is assembled by the backend with deterministic token-budget pruning, long-term memory eligibility, and persisted context manifests bound to model calls.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_context_router.py tests/test_agents.py tests/test_knowledge_rag.py tests/test_evals.py -q
+      - cd services/api-server && uv run pytest tests -q
+      - cd services/api-server && uv run ruff check app tests
+      - DATABASE_URL=sqlite:////tmp/harness-p4-alembic.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm test
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - ContextAssemblyManifest is the parent model-input assembly record; PromptAssemblyManifest remains retrieval-focused and authoritative for retrieval evidence.
+      - ModelCall.context_manifest_id supports N model calls per context manifest; context manifests do not store model_call_id.
+      - Backend TokenEstimator owns final budget enforcement with fixed retention/drop ordering and token_budget omission reasons.
+      - AgentMemoryRecord supports org, agent, user, and run scopes with SQL-level eligibility filtering and lifecycle redaction semantics.
+      - Memory prompt injection text is wrapped as evidence, scanned, and marked trust=low with policy decisions.
+      - Compressed summaries require current schema, allowed producer model, matching branch ID, and matching coverage path hash.
+      - Feature flag settings.context_assembly_v2_enabled supports shadow mode versus authoritative v2 assembly.
+      - Manifest bounds and retention config are fixed: 240-char snippets, 64 sections, 128 omitted refs, 90-day retention default.
+
   - id: p3-real-policy-gated-web-research
     date: 2026-05-17
     status: live_provider_verified

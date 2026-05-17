@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>P4 Memory Context Router v2 Review Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d8dee8;
+      --panel: #ffffff;
+      --band: #f6f8fb;
+      --blue: #1d4ed8;
+      --green: #15803d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --teal: #0f766e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--band);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+    header {
+      background: #0f172a;
+      color: white;
+      padding: 32px 40px;
+    }
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+    header p { margin: 0; color: #cbd5e1; max-width: 900px; }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 56px; }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+    h2 { margin: 0 0 14px; font-size: 19px; }
+    h3 { margin: 18px 0 8px; font-size: 15px; }
+    p { margin: 8px 0; }
+    ul, ol { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 6px 0; }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    pre {
+      overflow: auto;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 14px;
+      border-radius: 6px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+    .label {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .ok { color: var(--green); background: #dcfce7; }
+    .fix { color: var(--blue); background: #dbeafe; }
+    .warn { color: var(--amber); background: #fef3c7; }
+    .block { color: var(--red); background: #fee2e2; }
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 36px 1fr 36px 1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .node {
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--blue);
+      border-radius: 8px;
+      padding: 12px;
+      background: white;
+      min-height: 120px;
+    }
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 22px;
+    }
+    .checks {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .check {
+      border: 1px solid #bbf7d0;
+      background: #f0fdf4;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .manual {
+      counter-reset: step;
+      list-style: none;
+      margin-left: 0;
+    }
+    .manual li {
+      counter-increment: step;
+      border-left: 3px solid var(--teal);
+      padding: 8px 0 8px 12px;
+      margin: 0 0 8px;
+      background: #f8fafc;
+    }
+    .manual li::before {
+      content: counter(step);
+      display: inline-flex;
+      width: 22px;
+      height: 22px;
+      align-items: center;
+      justify-content: center;
+      margin-right: 8px;
+      border-radius: 50%;
+      background: var(--teal);
+      color: white;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    @media (max-width: 900px) {
+      .grid, .checks { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); min-height: 22px; }
+      header { padding: 26px 22px; }
+      main { padding: 18px 14px 36px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>P4 Memory Context Router v2 审核与修复报告</h1>
+    <p>日期：2026-05-17。范围：后端权威上下文组装、manifest 审计绑定、memory 注入治理、前端上下文预算提示、Run Detail 可视化。</p>
+  </header>
+  <main>
+    <section>
+      <h2>最终结论</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="label ok">Review Gate</span>
+          <p>原审查结论为 REQUEST CHANGES。阻塞项已修复，并用后端、前端、迁移和文档校验覆盖。</p>
+        </div>
+        <div class="card">
+          <span class="label fix">功能效果</span>
+          <p>前端发送完整 active path；后端按模型 tokenizer/预算统一裁剪，并把 included/omitted refs 写入 manifest。</p>
+        </div>
+        <div class="card">
+          <span class="label ok">用户可见</span>
+          <p>Run Detail 页面新增“上下文组装”区块，可看到 mode、manifest、included、omitted、token budget 与裁剪原因。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>实现流程图</h2>
+      <div class="flow" aria-label="Context assembly flow">
+        <div class="node">
+          <h3>1. Workspace 前端</h3>
+          <p>发送完整 active path、pinned 节点、附件摘要、压缩摘要 hint 和 <code>context_max_tokens</code>。</p>
+          <p>UI 只显示预测值，并提示后端会重新计数。</p>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node">
+          <h3>2. ContextAssemblyService</h3>
+          <p>按固定优先级组装 system/developer、pinned、recent、attachments、memory、compressed summary、RAG evidence。</p>
+          <p>超预算时写入 <code>omission_reason=token_budget</code>。</p>
+        </div>
+        <div class="arrow">→</div>
+        <div class="node">
+          <h3>3. Manifest + ModelCall</h3>
+          <p><code>authoritative</code> 模式绑定 <code>ModelCall.context_manifest_id</code>。</p>
+          <p><code>shadow</code> 模式只写 manifest 用于对比，不伪装成实际请求上下文。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>已修复的审查问题</h2>
+      <ul>
+        <li><strong>Shadow 绑定错误：</strong>shadow manifest 不再绑定到实际 ModelCall；只有 authoritative manifest 才作为模型调用上下文证据。</li>
+        <li><strong>前端预裁剪：</strong><code>useChatStream</code> 不再用 UI 截断结果作为请求正文，改为发送完整 active path。</li>
+        <li><strong>append-only 冲突：</strong>从 immutable manifest 移除可变生命周期字段，新增 <code>context_assembly_manifest_lifecycle</code> 表承载 tombstone/retention 状态。</li>
+        <li><strong>Memory 权限：</strong>memory list/create/lifecycle 增加 role gate；org scope 仅 admin 可写；run scope 验证 run 所属用户；manual endpoint 禁止伪造 server source_type。</li>
+        <li><strong>RAG evidence 哈希：</strong>v2 RAG section 使用 prompt manifest 中用于 <code>evidence_text_sha256</code> 的同一份 evidence 文本，避免 grounded call 被哈希校验拒绝。</li>
+        <li><strong>Memory 注入包装：</strong>memory 文本在 XML-like 标签内 HTML escape；疑似 prompt injection 仍可注入但标记 <code>trust=low</code> 并记录 policy decision。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>验证证据</h2>
+      <div class="checks">
+        <div class="check"><code>uv run ruff check app tests</code>：通过</div>
+        <div class="check"><code>uv run pytest tests/test_context_router.py tests/test_model_gateway.py tests/test_agents.py -q</code>：68 passed</div>
+        <div class="check"><code>uv run pytest tests -q</code>：265 passed</div>
+        <div class="check"><code>npm run lint</code>：通过</div>
+        <div class="check"><code>npm test</code>：140 passed</div>
+        <div class="check"><code>npm run build</code>：通过，Vite build completed</div>
+        <div class="check"><code>alembic upgrade head</code> with SQLite：通过</div>
+        <div class="check"><code>python3 scripts/validate-docs.py</code> 与 <code>git diff --check</code>：通过</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>前端手动验证例子</h2>
+      <p>目标：验证低 token 预算下，后端会裁剪上下文并在 Run Detail 展示 manifest 结果。</p>
+      <ol class="manual">
+        <li>启动后端：<code>cd services/api-server &amp;&amp; uv run uvicorn app.main:app --reload --port 8000</code>。</li>
+        <li>启动前端：<code>cd apps/agent-console &amp;&amp; npm run dev</code>，打开 Vite 输出的本地地址。</li>
+        <li>启用 v2：先 <code>GET /api/settings/policies</code>，把返回 JSON 的 <code>context_assembly_v2_enabled</code> 改成 <code>true</code> 后 <code>PUT /api/settings/policies</code>。</li>
+        <li>进入 Agent Console 的 Workspace，对同一个会话连续发送 4 到 6 条较长消息，并 pin 其中一条关键消息。</li>
+        <li>打开 composer 的上下文窗口设置，把“上下文窗口大小 (标记)”调到较低值，例如 1k 或 2k。</li>
+        <li>再发送一句：<code>请总结本轮上下文，并明确引用我 pin 的那条关键消息。</code></li>
+        <li>进入该 Run 的详情页，查看“上下文组装”区块。</li>
+        <li>预期：mode 为 <code>authoritative</code>；Included/Omitted 有数值；低预算时出现 <code>token_budget</code>；Pinned 内容仍被保留；Model call 显示 Context manifest ID。</li>
+      </ol>
+
+      <h3>启用 v2 的命令示例</h3>
+      <pre><code>curl -s http://127.0.0.1:8000/api/settings/policies \
+  -H 'Authorization: Bearer dev-admin-token' \
+| jq '.context_assembly_v2_enabled = true' \
+| curl -s -X PUT http://127.0.0.1:8000/api/settings/policies \
+  -H 'Authorization: Bearer dev-admin-token' \
+  -H 'Content-Type: application/json' \
+  --data-binary @-</code></pre>
+    </section>
+
+    <section>
+      <h2>预期效果截图说明</h2>
+      <p>Run Detail 页面应出现一个带数据库图标的“上下文组装”面板。面板中可核对：</p>
+      <ul>
+        <li><code>Manifest</code>：本次上下文组装 manifest ID。</li>
+        <li><code>Prompt manifest</code>：如果 RAG evidence 被纳入，则展示对应 prompt manifest。</li>
+        <li><code>Included / Omitted</code>：进入模型请求与被裁剪引用数量。</li>
+        <li><code>Estimator / Budget</code>：后端使用的 token estimator 与本次请求预算。</li>
+        <li>黄色提示条：展示唯一裁剪原因，例如 <code>token_budget</code> 或 compression mismatch。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

@@ -43,6 +43,33 @@ cd services/api-server && uv run ruff check app/api/agents.py app/api/schemas.py
 Tavily live smoke -> passed (source_bound=true, fixture=false, raw_content_available=false, usage_credits=1.0)
 ```
 
+## Completed: P4 Memory And Context Router V2
+
+Date: 2026-05-17
+
+Status: `P4 backend context assembly verified`
+
+Changes:
+- Added backend-owned `ContextAssemblyManifest` and `AgentMemoryRecord` persistence with memory scope, lifecycle, policy flags, retention metadata, append-only guards, and `ModelCall.context_manifest_id`.
+- Added deterministic `ContextAssemblyService` with `TokenEstimator`, fixed token-budget drop order, memory injection wrapping, SQL-level memory eligibility, shadow/authoritative feature flag behavior, and bounded manifest metadata.
+- Bound Workspace chat model calls to context manifests while preserving `PromptAssemblyManifest` as the retrieval truth source.
+- Added memory lifecycle APIs and Run Detail/model-call context manifest evidence without raw prompt previews.
+- Enforced compressed-summary eligibility with current schema, producer-model allowlist, branch ID match, and coverage path hash match.
+- Updated frontend token-budget copy to clarify that UI token counts are predictive and backend recounts.
+
+Verification:
+```text
+cd services/api-server && uv run pytest tests/test_context_router.py tests/test_agents.py tests/test_knowledge_rag.py tests/test_evals.py -q -> 91 passed
+cd services/api-server && uv run pytest tests -q -> 260 passed
+cd services/api-server && uv run ruff check app tests -> passed
+DATABASE_URL=sqlite:////tmp/harness-p4-alembic.sqlite uv run alembic upgrade head -> reached 20260517_0017
+cd apps/agent-console && npm test -> 139 passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+```
+
 ## Completed In This Pass
 
 - Rewrote core Spec files around AI Harness Platform.

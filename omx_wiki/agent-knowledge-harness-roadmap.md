@@ -134,31 +134,62 @@ Verification evidence:
 
 ### P3: Add Real Policy-Gated Web Research
 
-Status: planned / blocked on provider choice.
+Status: completed / pushed.
 
 Goal: support external research only when a real provider and policy boundary exist.
 
-Scope:
+Delivered scope:
 
-- provider adapter and configuration;
-- URL allow/deny policy, private-network blocking, approval behavior, and audit;
-- source snapshots and citation binding;
-- explicit "local evidence insufficient" behavior when provider is disabled;
-- no mock research presented as real evidence.
+- Tavily adapter and `TAVILY_API_KEY` configuration with `include_raw_content=false`;
+- no backend second-hop fetch of provider-returned URLs;
+- organization-scoped pre-call policy for provider enablement, key presence, query bounds, secret-pattern blocking, allowlist intent, timeout, max results, and per-run call limits;
+- authoritative post-result URL policy for normalized URL, credentials, allow/deny domains, DNS/IP classification, private/local/link-local/metadata/reserved/multicast blocking, and safe URL hashing;
+- `web_research_attempts` ledger with `(run_id, call_slot)` uniqueness for call reservation;
+- source snapshots, retrieval hits, prompt manifests, citations, policy audit snapshots, and events for accepted real web results;
+- fake provider hardening so fixture evidence remains non-verified and environment-limited;
+- Run Detail source-bound wording, citation count, and provider/request/raw badges;
+- runbook and HTML explanation report.
+
+Verification evidence:
+
+- Backend target tests: `96 passed`.
+- Ruff: passed.
+- Alembic clean SQLite upgrade to `20260517_0016`: passed.
+- Frontend lint/build/targeted tests: passed.
+- Live Tavily smoke: passed with `source_bound=true`, `fixture=false`, `raw_content_available=false`, `usage_credits=1.0`.
+- Pushed to `origin/main` through `76f11d5`.
+
+Important boundary: P3 is not a crawler. If the backend later fetches webpage bodies, that belongs in a separate P4+ crawler/fetcher security design.
 
 ### P4: Build Memory And Context Router V2
 
-Status: planned.
+Status: completed locally / backend verified.
 
 Goal: connect short-term memory, long-term memory, RAG, pinned context, compression, and prompt assembly.
 
 Scope:
 
-- session/branch memory projection from conversation tree and Run events;
-- durable long-term memory records with provenance and deletion rules;
-- prompt assembly manifest with included/omitted reasons;
-- Workspace Context panel for memory/RAG/compression/token evidence;
-- Run Detail snapshot of memory and prompt assembly.
+- backend-owned `ContextAssemblyManifest` parent record with included/omitted refs, token budget, policy decisions, hashes, bounds, retention metadata, and append-only guards;
+- `AgentMemoryRecord` with org/agent/user/run scopes, owner user, provenance fields, lifecycle status, expiry/deletion, policy flags, and SQL-level eligibility filtering;
+- deterministic `TokenEstimator` path with `cl100k_base` for known OpenAI-family models when available and `ceil(chars / 4)` fallback for unknown models;
+- fixed pruning order: authority, pinned, recent window, attachments, long-term memory, compressed summary, RAG/web evidence;
+- compressed-summary eligibility requiring current schema, allowed producer model, matching branch ID, and matching coverage path hash;
+- `ModelCall.context_manifest_id -> ContextAssemblyManifest.id` binding with `ContextAssemblyManifest.prompt_manifest_id` as retrieval truth source;
+- shadow/authoritative rollout through `settings.context_assembly_v2_enabled`;
+- memory injection wrapper and low-trust policy flags for suspicious instruction-like memory;
+- Run Detail/model-call context manifest projection and predictive frontend token-budget wording.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_context_router.py tests/test_agents.py tests/test_knowledge_rag.py tests/test_evals.py -q` -> `91 passed`.
+- `cd services/api-server && uv run pytest tests -q` -> `260 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `DATABASE_URL=sqlite:////tmp/harness-p4-alembic.sqlite uv run alembic upgrade head` -> reached `20260517_0017`.
+- `cd apps/agent-console && npm test` -> `139 passed`.
+- `cd apps/agent-console && npm run lint` -> passed.
+- `cd apps/agent-console && npm run build` -> passed.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
 
 ### P5: Productize MCP And Skills
 
@@ -211,3 +242,4 @@ Scope:
 - [[deep-interview-private-harness-chain]]
 - [[agent-workspace-execution-evidence-architecture]]
 - [[session-2026-05-14-workspace-execution-evidence]]
+- [[session-2026-05-17-agent-knowledge-p3-web-research]]
