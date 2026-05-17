@@ -13,6 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AdminAuditEvent,
     CitationRecord,
     KnowledgeChunk,
     KnowledgeDocument,
@@ -51,6 +52,16 @@ POLICY_DENY_MARKER = "DENY:"
 POLICY_REDACT_MARKER = "REDACT:"
 POLICY_REDACTION_REASON = "policy_marker"
 POLICY_REDACTION_TOKEN = f"[REDACTED:{POLICY_REDACTION_REASON}]"
+SOURCE_STATUS_ACTIVE = "ACTIVE"
+SOURCE_STATUS_DISABLED = "DISABLED"
+SOURCE_STATUS_ARCHIVED = "ARCHIVED"
+SOURCE_HEALTH_HEALTHY = "HEALTHY"
+SOURCE_HEALTH_ERROR = "ERROR"
+DOCUMENT_STATUS_INDEXED = "INDEXED"
+DOCUMENT_STATUS_SUPERSEDED = "SUPERSEDED"
+DOCUMENT_STATUS_FAILED = "FAILED"
+CHUNK_STATUS_ACTIVE = "ACTIVE"
+CHUNK_STATUS_STALE = "STALE"
 
 DEFAULT_MIN_HITS = 2
 DEFAULT_MIN_SCORE = 0.62
@@ -58,6 +69,19 @@ DEFAULT_MAX_LOCAL_CHUNKS = 6
 DEFAULT_MAX_WEB_RESULTS = 2
 DEFAULT_MAX_RETRIEVAL_CANDIDATES = 200
 MAX_INGESTION_CHUNKS = 200
+
+
+class KnowledgeIngestionError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        source: KnowledgeSource,
+        document: KnowledgeDocument,
+    ) -> None:
+        super().__init__(message)
+        self.source = source
+        self.document = document
 
 ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
 CJK_TOKEN_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]")
@@ -156,7 +180,9 @@ def _has_cjk_signal(value: str) -> bool:
 def _is_single_cjk_strong_match(
     *,
     query: str,
-    top_candidates: list[tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument]],
+    top_candidates: list[
+        tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument, KnowledgeSource]
+    ],
 ) -> bool:
     return (
         len(top_candidates) == 1
@@ -341,11 +367,80 @@ def list_knowledge_sources(
     return sources
 
 
-def ingest_knowledge_source(
+def get_visible_knowledge_source(
     session: Session,
     *,
     organization_id: str | None,
     agent_id: str,
+    source_id: str,
+) -> KnowledgeSource | None:
+    return session.execute(
+        select(KnowledgeSource).where(
+            KnowledgeSource.id == source_id,
+            KnowledgeSource.organization_id == organization_id,
+            or_(KnowledgeSource.agent_id == None, KnowledgeSource.agent_id == agent_id),  # noqa: E711
+        )
+    ).scalar_one_or_none()
+
+
+def knowledge_source_lifecycle_snapshot(source: KnowledgeSource) -> dict:
+    return {
+        "name": source.name,
+        "description": source.description,
+        "status": source.status,
+        "agent_id": source.agent_id,
+        "expires_at": source.expires_at.isoformat() if source.expires_at else None,
+        "disabled_at": source.disabled_at.isoformat() if source.disabled_at else None,
+        "archived_at": source.archived_at.isoformat() if source.archived_at else None,
+        "health_status": source.health_status,
+    }
+
+
+def create_knowledge_lifecycle_audit(
+    session: Session,
+    *,
+    organization_id: str | None,
+    actor_id: str | None,
+    action: str,
+    source: KnowledgeSource,
+    before: dict | None,
+    after: dict | None,
+    document_id: str | None = None,
+    idempotency_key: str | None = None,
+    request_id: str | None = None,
+) -> AdminAuditEvent:
+    event = AdminAuditEvent(
+        organization_id=organization_id,
+        actor_id=actor_id,
+        event_type=f"knowledge_source.{action}",
+        resource_type="knowledge_source",
+        resource_id=source.id,
+        action=action,
+        payload_json={
+            "schema_version": "knowledge-lifecycle-v1",
+            "org_id": organization_id,
+            "agent_id": source.agent_id,
+            "actor_user_id": actor_id,
+            "source_id": source.id,
+            "document_id": document_id,
+            "before": before,
+            "after": after,
+            "request_id": request_id,
+            "idempotency_key": idempotency_key,
+            "timestamp": utc_now().isoformat(),
+        },
+        created_at=utc_now(),
+    )
+    session.add(event)
+    session.flush()
+    return event
+
+
+def ingest_knowledge_source(
+    session: Session,
+    *,
+    organization_id: str | None,
+    agent_id: str | None,
     name: str,
     description: str,
     source_type: str,
@@ -355,12 +450,24 @@ def ingest_knowledge_source(
     mime_type: str,
     created_by: str | None,
     idempotency_key: str | None = None,
+    source_id: str | None = None,
+    create_new_logical_document: bool = False,
+    reingest_document_id: str | None = None,
 ) -> tuple[KnowledgeSource, KnowledgeDocument, list[KnowledgeChunk], list[KnowledgeEmbedding]]:
     normalized_content = _normalize_text(content)
     content_sha256 = _sha256(normalized_content)
     now = utc_now()
     source = None
-    if idempotency_key:
+    if source_id:
+        source = session.execute(
+            select(KnowledgeSource).where(
+                KnowledgeSource.id == source_id,
+                KnowledgeSource.organization_id == organization_id,
+            )
+        ).scalar_one_or_none()
+        if source is None:
+            raise ValueError("knowledge source not found")
+    if source is None and idempotency_key:
         source = session.execute(
             select(KnowledgeSource).where(
                 KnowledgeSource.organization_id == organization_id,
@@ -385,8 +492,14 @@ def ingest_knowledge_source(
             name=name,
             description=description,
             source_type=source_type,
-            status="ACTIVE",
+            status=SOURCE_STATUS_ACTIVE,
             version=1,
+            expires_at=None,
+            disabled_at=None,
+            archived_at=None,
+            last_indexed_at=now,
+            last_ingestion_error=None,
+            health_status=SOURCE_HEALTH_HEALTHY,
             settings_json={},
             metadata_json={},
             idempotency_key=idempotency_key,
@@ -396,6 +509,10 @@ def ingest_knowledge_source(
         )
         session.add(source)
         session.flush()
+    elif source.status != SOURCE_STATUS_ARCHIVED:
+        source.description = description
+        source.source_type = source_type
+        source.updated_at = now
 
     previous_document = session.execute(
         select(KnowledgeDocument)
@@ -403,8 +520,10 @@ def ingest_knowledge_source(
             KnowledgeDocument.source_id == source.id,
             KnowledgeDocument.idempotency_key == idempotency_key,
             KnowledgeDocument.content_sha256 == content_sha256,
+            KnowledgeDocument.status == DOCUMENT_STATUS_INDEXED,
         )
         .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
+        .limit(1)
     ).scalar_one_or_none()
     if previous_document is not None:
         chunks = list(
@@ -424,21 +543,107 @@ def ingest_knowledge_source(
         )
         return source, previous_document, chunks, embeddings
 
-    previous_version = session.execute(
-        select(KnowledgeDocument)
-        .where(KnowledgeDocument.source_id == source.id)
-        .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
-    ).scalar_one_or_none()
+    previous_version = None
+    if reingest_document_id is not None:
+        previous_version = session.get(KnowledgeDocument, reingest_document_id)
+        if previous_version is None or previous_version.source_id != source.id:
+            raise ValueError("knowledge document not found")
+    elif not create_new_logical_document:
+        previous_version = session.execute(
+            select(KnowledgeDocument)
+            .where(KnowledgeDocument.source_id == source.id)
+            .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    logical_document_id = (
+        (previous_version.logical_document_id or previous_version.id)
+        if previous_version is not None
+        else None
+    )
+    next_version = 1
+    if logical_document_id is not None:
+        latest_logical_version = session.execute(
+            select(KnowledgeDocument)
+            .where(
+                KnowledgeDocument.source_id == source.id,
+                KnowledgeDocument.logical_document_id == logical_document_id,
+            )
+            .order_by(KnowledgeDocument.version.desc(), KnowledgeDocument.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if latest_logical_version is not None:
+            next_version = latest_logical_version.version + 1
+            if latest_logical_version.status == DOCUMENT_STATUS_INDEXED:
+                previous_version = latest_logical_version
+            else:
+                latest_indexed_version = session.execute(
+                    select(KnowledgeDocument)
+                    .where(
+                        KnowledgeDocument.source_id == source.id,
+                        KnowledgeDocument.logical_document_id == logical_document_id,
+                        KnowledgeDocument.status == DOCUMENT_STATUS_INDEXED,
+                    )
+                    .order_by(
+                        KnowledgeDocument.version.desc(),
+                        KnowledgeDocument.created_at.desc(),
+                    )
+                    .limit(1)
+                ).scalar_one_or_none()
+                if latest_indexed_version is not None:
+                    previous_version = latest_indexed_version
+    chunk_specs = _chunk_text(normalized_content)
+    if len(chunk_specs) > MAX_INGESTION_CHUNKS:
+        failed_document = KnowledgeDocument(
+            source_id=source.id,
+            organization_id=organization_id,
+            agent_id=source.agent_id,
+            title=title,
+            uri=uri,
+            content_sha256=content_sha256,
+            mime_type=mime_type,
+            status=DOCUMENT_STATUS_FAILED,
+            version=next_version,
+            logical_document_id=logical_document_id,
+            supersedes_document_id=previous_version.id if previous_version is not None else None,
+            ingestion_error=(
+                f"knowledge source produced {len(chunk_specs)} chunks; "
+                f"maximum is {MAX_INGESTION_CHUNKS}"
+            ),
+            metadata_json={},
+            idempotency_key=idempotency_key,
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+            indexed_at=None,
+        )
+        session.add(failed_document)
+        session.flush()
+        if failed_document.logical_document_id is None:
+            failed_document.logical_document_id = (
+                previous_version.logical_document_id
+                if previous_version is not None
+                else failed_document.id
+            )
+        source.health_status = SOURCE_HEALTH_ERROR
+        source.last_ingestion_error = failed_document.ingestion_error
+        source.updated_at = now
+        session.flush()
+        raise KnowledgeIngestionError(
+            source.last_ingestion_error,
+            source=source,
+            document=failed_document,
+        )
     document = KnowledgeDocument(
         source_id=source.id,
         organization_id=organization_id,
-        agent_id=agent_id,
+        agent_id=source.agent_id,
         title=title,
         uri=uri,
         content_sha256=content_sha256,
         mime_type=mime_type,
-        status="INDEXED",
-        version=(previous_version.version + 1) if previous_version is not None else 1,
+        status=DOCUMENT_STATUS_INDEXED,
+        version=next_version,
+        logical_document_id=logical_document_id,
         supersedes_document_id=previous_version.id if previous_version is not None else None,
         metadata_json={},
         idempotency_key=idempotency_key,
@@ -449,28 +654,27 @@ def ingest_knowledge_source(
     )
     session.add(document)
     session.flush()
+    if document.logical_document_id is None:
+        document.logical_document_id = document.id
 
     if previous_version is not None:
+        previous_version.status = DOCUMENT_STATUS_SUPERSEDED
+        previous_version.superseded_at = now
+        previous_version.updated_at = now
         for chunk in session.execute(
             select(KnowledgeChunk).where(KnowledgeChunk.document_id == previous_version.id)
         ).scalars():
-            chunk.status = "STALE"
+            chunk.status = CHUNK_STATUS_STALE
 
     chunks: list[KnowledgeChunk] = []
     embeddings: list[KnowledgeEmbedding] = []
     capability = vector_capability(session, organization_id)
-    chunk_specs = _chunk_text(normalized_content)
-    if len(chunk_specs) > MAX_INGESTION_CHUNKS:
-        raise ValueError(
-            f"knowledge source produced {len(chunk_specs)} chunks; "
-            f"maximum is {MAX_INGESTION_CHUNKS}"
-        )
     for index, (start_offset, end_offset, chunk_text) in enumerate(chunk_specs, start=1):
         chunk = KnowledgeChunk(
             document_id=document.id,
             source_id=source.id,
             organization_id=organization_id,
-            agent_id=agent_id,
+            agent_id=source.agent_id,
             source_version=source.version,
             document_version=document.version,
             chunk_version=1,
@@ -479,7 +683,7 @@ def ingest_knowledge_source(
             text_sha256=_sha256(chunk_text),
             start_offset=start_offset,
             end_offset=end_offset,
-            status="ACTIVE",
+            status=CHUNK_STATUS_ACTIVE,
             metadata_json={},
             created_at=now,
         )
@@ -489,7 +693,7 @@ def ingest_knowledge_source(
         embedding = KnowledgeEmbedding(
             chunk_id=chunk.id,
             organization_id=organization_id,
-            agent_id=agent_id,
+            agent_id=source.agent_id,
             provider="deterministic",
             model="hash-embedding",
             model_version="v1",
@@ -505,6 +709,9 @@ def ingest_knowledge_source(
         embeddings.append(embedding)
 
     source.updated_at = now
+    source.last_indexed_at = now
+    source.last_ingestion_error = None
+    source.health_status = SOURCE_HEALTH_HEALTHY
     session.flush()
     return source, document, chunks, embeddings
 
@@ -579,21 +786,6 @@ def _build_evidence_messages(
     else:
         lines.append("Do not cite unavailable sources.")
     return "\n".join(lines)
-
-
-def _snapshot_for_chunk(chunk: KnowledgeChunk, document: KnowledgeDocument) -> dict:
-    return {
-        "source_id": chunk.source_id,
-        "source_version": chunk.source_version,
-        "document_id": document.id,
-        "document_version": document.version,
-        "document_content_sha256": document.content_sha256,
-        "chunk_id": chunk.id,
-        "chunk_version": chunk.chunk_version,
-        "chunk_text_sha256": chunk.text_sha256,
-        "chunk_text_snapshot": chunk.text[:400],
-        "chunk_span": {"start_offset": chunk.start_offset, "end_offset": chunk.end_offset},
-    }
 
 
 def sanitize_audit_payload(payload: dict) -> dict:
@@ -1068,27 +1260,34 @@ def ground_query(
     session.add(retrieval_session)
     session.flush()
 
+    now = utc_now()
     chunk_rows = list(
         session.execute(
-            select(KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument)
+            select(KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument, KnowledgeSource)
             .join(KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id)
+            .join(KnowledgeSource, KnowledgeChunk.source_id == KnowledgeSource.id)
             .join(KnowledgeEmbedding, KnowledgeEmbedding.chunk_id == KnowledgeChunk.id)
             .where(
-                KnowledgeChunk.organization_id == organization_id,
-                or_(KnowledgeChunk.agent_id == None, KnowledgeChunk.agent_id == agent_id),  # noqa: E711
-                KnowledgeChunk.status == "ACTIVE",
-                KnowledgeDocument.status == "INDEXED",
+                KnowledgeSource.organization_id == organization_id,
+                or_(KnowledgeSource.agent_id == None, KnowledgeSource.agent_id == agent_id),  # noqa: E711
+                KnowledgeSource.status == SOURCE_STATUS_ACTIVE,
+                or_(KnowledgeSource.expires_at == None, KnowledgeSource.expires_at > now),  # noqa: E711
+                KnowledgeChunk.status == CHUNK_STATUS_ACTIVE,
+                KnowledgeDocument.status == DOCUMENT_STATUS_INDEXED,
+                KnowledgeDocument.superseded_at == None,  # noqa: E711
             )
             .order_by(KnowledgeChunk.created_at.desc(), KnowledgeChunk.chunk_index.asc())
             .limit(DEFAULT_MAX_RETRIEVAL_CANDIDATES)
         ).all()
     )
-    candidates: list[tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument]] = []
+    candidates: list[
+        tuple[float, KnowledgeChunk, KnowledgeEmbedding, KnowledgeDocument, KnowledgeSource]
+    ] = []
     redacted_text_by_chunk_id: dict[str, str] = {}
     redacted_candidates: list[dict] = []
     denied_candidates: list[dict] = []
     query_embedding = _fake_embedding(query)
-    for chunk, embedding, document in chunk_rows:
+    for chunk, embedding, document, source in chunk_rows:
         policy_decision = _policy_decision_for_text(chunk.text)
         if policy_decision == POLICY_DECISION_DENIED:
             denied_candidates.append(
@@ -1132,7 +1331,7 @@ def ground_query(
             score = _cosine_similarity(query_embedding, vector)
         else:
             score = _lexical_similarity(query, candidate_text)
-        candidates.append((score, chunk, embedding, document))
+        candidates.append((score, chunk, embedding, document, source))
     candidates.sort(key=lambda item: item[0], reverse=True)
     top_candidates = [
         candidate
@@ -1156,10 +1355,12 @@ def ground_query(
     citations: list[CitationRecord] = []
     web_sources: list[WebResearchSource] = []
     selected_chunk_ids: set[str] = set()
-    now = utc_now()
     selected_candidates = top_candidates if local_status == "sufficient" else []
     if selected_candidates:
-        for rank, (score, chunk, _embedding, document) in enumerate(selected_candidates, start=1):
+        for rank, (score, chunk, _embedding, document, source) in enumerate(
+            selected_candidates,
+            start=1,
+        ):
             selected_chunk_ids.add(chunk.id)
             snippet_text = redacted_text_by_chunk_id.get(chunk.id, chunk.text)
             hit = RetrievalHit(
@@ -1175,7 +1376,9 @@ def ground_query(
                 metadata_json={
                     "source_id": chunk.source_id,
                     "source_version": chunk.source_version,
+                    "source_name_snapshot": source.name,
                     "chunk_version": chunk.chunk_version,
+                    "document_title_snapshot": document.title,
                     "document_content_sha256": document.content_sha256,
                     "chunk_text_sha256": chunk.text_sha256,
                     "snippet_sha256": _sha256(snippet_text[:400]),
@@ -1216,8 +1419,12 @@ def ground_query(
                     "source_snapshot": {
                         "source_id": hit_chunk.source_id if hit_chunk else None,
                         "source_version": hit_chunk.source_version if hit_chunk else None,
+                        "source_name_snapshot": hit_metadata.get("source_name_snapshot"),
                         "document_id": hit.document_id,
                         "document_version": hit.document_version,
+                        "document_title_snapshot": hit_metadata.get(
+                            "document_title_snapshot"
+                        ),
                         "document_content_sha256": hit_metadata.get("document_content_sha256"),
                         "chunk_id": hit.chunk_id,
                         "chunk_version": hit_metadata.get("chunk_version"),
@@ -1312,7 +1519,7 @@ def ground_query(
     }
     session.flush()
     omitted_candidates = []
-    for score, chunk, _embedding, document in candidates:
+    for score, chunk, _embedding, document, _source in candidates:
         if chunk.id in selected_chunk_ids:
             continue
         if score < retrieval_session.min_score:
