@@ -9,6 +9,13 @@ import type { EvalRun, RegressionDelta } from "../../tasks/api";
 
 const metricLabels: Record<string, string> = {
   task_success_rate: "任务成功率",
+  grounding_pass_rate: "Grounding 通过率",
+  citation_coverage_rate: "引用覆盖率",
+  unsupported_marker_rate: "Unsupported 标记率",
+  fallback_mismatch_rate: "Fallback 不匹配率",
+  forbidden_evidence_leak_rate: "Forbidden 泄漏率",
+  required_evidence_miss_rate: "Required evidence 缺失率",
+  grounding_failure_total: "Grounding 失败总数",
   tool_selection_accuracy: "工具选择准确率",
   policy_violation_rate: "策略违规率",
   avg_latency_ms: "平均延迟",
@@ -71,9 +78,26 @@ export function EvalRunResults({
               isPercentage
             />
             <DeltaMetric
+              label="Grounding"
+              delta={regressionDelta.grounding_pass_rate_delta}
+              isPercentage
+            />
+            <DeltaMetric
               label="工具准确率"
               delta={regressionDelta.tool_selection_accuracy_delta}
               isPercentage
+            />
+            <DeltaMetric
+              label="Forbidden leak"
+              delta={regressionDelta.forbidden_evidence_leak_rate_delta}
+              isPercentage
+              invertColor
+            />
+            <DeltaMetric
+              label="Unsupported"
+              delta={regressionDelta.unsupported_marker_rate_delta}
+              isPercentage
+              invertColor
             />
             <DeltaMetric
               label="平均延迟"
@@ -88,9 +112,15 @@ export function EvalRunResults({
               className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700"
             >
               {text(
-                "⚠️ 回归检测：task_success_rate 下降超过 10 个百分点",
-                "⚠️ Regression detected: task_success_rate dropped > 10pp",
+                "回归检测：Eval gate 已触发",
+                "Regression detected: Eval gate triggered",
               )}
+            </div>
+          )}
+          {regressionDelta.low_sample_count && (
+            <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              {regressionDelta.low_sample_caveat ??
+                text("样本数偏低，趋势置信度有限", "Low sample count; trend confidence is limited")}
             </div>
           )}
           {!regressionDelta.is_regression &&
@@ -99,7 +129,7 @@ export function EvalRunResults({
                 data-improvement="true"
                 className="mt-2 rounded-md border border-green-200 bg-green-50 p-2 text-xs text-green-700"
               >
-                {text("✓ 改进：指标有所提升", "✓ Improvement: metrics improved")}
+                {text("改进：指标有所提升", "Improvement: metrics improved")}
               </div>
             )}
           {regressionDelta.newly_failing_case_ids.length > 0 && (
@@ -112,6 +142,11 @@ export function EvalRunResults({
             <div className="mt-1 text-xs text-green-600">
               {text("新增通过", "Newly passing")}: {regressionDelta.newly_passing_case_ids.length}{" "}
               个用例
+            </div>
+          )}
+          {regressionDelta.newly_forbidden_leak_case_ids.length > 0 && (
+            <div className="mt-1 text-xs text-red-600">
+              Forbidden leak: {regressionDelta.newly_forbidden_leak_case_ids.length} 个用例
             </div>
           )}
         </div>
@@ -150,30 +185,61 @@ export function EvalRunResults({
             <Th>{text("任务", "Task")}</Th>
             <Th>{text("分数", "Score")}</Th>
             <Th>{text("Trace 评分器", "Trace Grader")}</Th>
+            <Th>{text("Grounding", "Grounding")}</Th>
           </tr>
         </thead>
         <tbody>
-          {(latestRun?.results ?? []).map((result) => (
-            <tr key={result.id} className="border-t border-slate-100">
-              <Td className="font-mono text-slate-500">{result.id.slice(0, 8)}</Td>
-              <Td>
-                <Badge>{result.status}</Badge>
-              </Td>
-              <Td className="font-mono text-slate-600">
-                {result.task_id?.slice(0, 8) ?? "手动录入"}
-              </Td>
-              <Td className="font-mono text-slate-900">
-                {result.scores_json.task_success ?? 0}
-              </Td>
-              <Td className="text-slate-600">
-                {String(result.grader_trace_json.grader ?? "未知评分器")}
-              </Td>
-            </tr>
-          ))}
+          {(latestRun?.results ?? []).map((result) => {
+            const failures = stringList(result.grader_trace_json.grounding_failures);
+            const leakSources = stringList(result.grader_trace_json.forbidden_leak_sources);
+            return (
+              <tr key={result.id} className="border-t border-slate-100">
+                <Td className="font-mono text-slate-500">{result.id.slice(0, 8)}</Td>
+                <Td>
+                  <Badge>{result.status}</Badge>
+                </Td>
+                <Td className="font-mono text-slate-600">
+                  {result.task_id?.slice(0, 8) ?? "手动录入"}
+                </Td>
+                <Td className="font-mono text-slate-900">
+                  {result.scores_json.task_success ?? 0}
+                </Td>
+                <Td className="text-slate-600">
+                  {String(result.grader_trace_json.grader ?? "未知评分器")}
+                </Td>
+                <Td className="max-w-xs text-slate-600">
+                  <div className="flex flex-wrap gap-1">
+                    <Badge
+                      tone={result.grader_trace_json.passed === false ? "failed" : "success"}
+                    >
+                      {result.grader_trace_json.passed === false ? "failed" : "passed"}
+                    </Badge>
+                    {result.grader_trace_json.forbidden_evidence_leaked === true && (
+                      <Badge tone="failed">forbidden leak</Badge>
+                    )}
+                    {leakSources.map((source) => (
+                      <Badge key={source} tone="warning">
+                        {source}
+                      </Badge>
+                    ))}
+                  </div>
+                  {failures.length > 0 && (
+                    <div className="mt-1 truncate font-mono text-[11px] text-slate-500">
+                      {failures.join(", ")}
+                    </div>
+                  )}
+                </Td>
+              </tr>
+            );
+          })}
         </tbody>
       </Table>
     </Card>
   );
+}
+
+function stringList(value: unknown) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
 function DeltaMetric({

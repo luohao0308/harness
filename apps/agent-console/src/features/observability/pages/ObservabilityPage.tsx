@@ -26,10 +26,12 @@ import type {
   CountItem,
   ObservabilityExportHistoryItem,
   ObservabilityExportItem,
+  ObservabilityGroundingQualityItem,
 } from "../../tasks/api";
 import {
   API_BASE_URL,
   downloadObservabilityExport,
+  getObservabilityGroundingQuality,
   getObservabilityServicesHealth,
   getObservabilitySummary,
   getObservabilityTrace,
@@ -43,7 +45,7 @@ import {
 
 export function ObservabilityPage() {
   const { text } = useI18n();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialTraceId = searchParams.get("trace_id") ?? "";
   const initialLogFilters = {
     task_id: searchParams.get("task_id") ?? "",
@@ -62,9 +64,25 @@ export function ObservabilityPage() {
     attribute_value: "",
   });
   const [traceFilters, setTraceFilters] = useState(draftTraceFilters);
+  const [draftGroundingFilters, setDraftGroundingFilters] = useState({
+    eval_run_id: searchParams.get("eval_run_id") ?? "",
+    dataset_id: searchParams.get("dataset_id") ?? "",
+    failure_type: searchParams.get("failure_type") ?? "",
+  });
+  const [groundingFilters, setGroundingFilters] = useState(draftGroundingFilters);
   const summary = useQuery({
     queryKey: ["observability", "summary"],
     queryFn: getObservabilitySummary,
+  });
+  const groundingQuality = useQuery({
+    queryKey: ["observability", "grounding-quality", groundingFilters],
+    queryFn: () =>
+      getObservabilityGroundingQuality({
+        eval_run_id: cleanFilter(groundingFilters.eval_run_id),
+        dataset_id: cleanFilter(groundingFilters.dataset_id),
+        failure_type: cleanFilter(groundingFilters.failure_type),
+        limit: 20,
+      }),
   });
   const health = useQuery({
     queryKey: ["observability", "services-health"],
@@ -128,6 +146,24 @@ export function ObservabilityPage() {
     const emptyFilters = { task_id: "", trace_id: "", service: "", event_type: "" };
     setDraftLogFilters(emptyFilters);
     setLogFilters(emptyFilters);
+  };
+  const applyGroundingFilters = () => {
+    const nextFilters = {
+      eval_run_id: draftGroundingFilters.eval_run_id.trim(),
+      dataset_id: draftGroundingFilters.dataset_id.trim(),
+      failure_type: draftGroundingFilters.failure_type.trim(),
+    };
+    setDraftGroundingFilters(nextFilters);
+    setGroundingFilters(nextFilters);
+    const nextSearchParams = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(nextFilters)) {
+      if (value) {
+        nextSearchParams.set(key, value);
+      } else {
+        nextSearchParams.delete(key);
+      }
+    }
+    setSearchParams(nextSearchParams, { replace: true });
   };
   const queryTrace = (value = draftTraceId) => {
     const nextTraceId = value.trim();
@@ -251,6 +287,86 @@ export function ObservabilityPage() {
             <Metric label={text("沙箱总数", "Sandboxes")} value={formatNumber(data?.sandbox_total)} />
           </div>
           <StatusLine isLoading={summary.isLoading} error={summary.error} />
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Gauge className="h-4 w-4" /> Grounding Quality
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label="Eval Run ID"
+                value={draftGroundingFilters.eval_run_id}
+                onChange={(event) =>
+                  setDraftGroundingFilters((current) => ({
+                    ...current,
+                    eval_run_id: event.target.value,
+                  }))
+                }
+                placeholder="eval_run_id"
+                className="h-8 w-36"
+              />
+              <Input
+                aria-label="Dataset ID"
+                value={draftGroundingFilters.dataset_id}
+                onChange={(event) =>
+                  setDraftGroundingFilters((current) => ({
+                    ...current,
+                    dataset_id: event.target.value,
+                  }))
+                }
+                placeholder="dataset_id"
+                className="h-8 w-36"
+              />
+              <Input
+                aria-label="Failure Type"
+                value={draftGroundingFilters.failure_type}
+                onChange={(event) =>
+                  setDraftGroundingFilters((current) => ({
+                    ...current,
+                    failure_type: event.target.value,
+                  }))
+                }
+                placeholder={text("失败原因", "failure_type")}
+                className="h-8 w-44"
+              />
+              <Button className="h-8 px-2" onClick={applyGroundingFilters}>
+                {text("筛选", "Filter")}
+              </Button>
+            </div>
+          </CardHeader>
+          <div className="grid grid-cols-2 gap-3 border-b border-slate-100 p-3 text-xs md:grid-cols-3 xl:grid-cols-6">
+            <Metric
+              label="Grounding pass"
+              value={formatRate(groundingQuality.data?.metrics.grounding_pass_rate)}
+            />
+            <Metric
+              label="Citation coverage"
+              value={formatRate(groundingQuality.data?.metrics.citation_coverage_rate)}
+            />
+            <Metric
+              label="Forbidden leak"
+              value={formatRate(groundingQuality.data?.metrics.forbidden_evidence_leak_rate)}
+            />
+            <Metric
+              label="Fallback mismatch"
+              value={formatRate(groundingQuality.data?.metrics.fallback_mismatch_rate)}
+            />
+            <Metric
+              label="Unsupported"
+              value={formatRate(groundingQuality.data?.metrics.unsupported_marker_rate)}
+            />
+            <Metric
+              label="Failures"
+              value={formatNumber(groundingQuality.data?.metrics.grounding_failure_total)}
+            />
+          </div>
+          <GroundingQualityTable
+            items={groundingQuality.data?.items ?? []}
+            isLoading={groundingQuality.isLoading}
+          />
+          <StatusLine isLoading={groundingQuality.isLoading} error={groundingQuality.error} />
         </Card>
 
         <div className="grid grid-cols-3 gap-4">
@@ -1026,6 +1142,116 @@ function ExportHistoryTable({
   );
 }
 
+function GroundingQualityTable({
+  items,
+  isLoading,
+}: {
+  items: ObservabilityGroundingQualityItem[];
+  isLoading: boolean;
+}) {
+  const { text } = useI18n();
+  return (
+    <Table>
+      <thead className="bg-slate-50 text-slate-500">
+        <tr>
+          <Th>Eval</Th>
+          <Th>Dataset</Th>
+          <Th>{text("状态", "Status")}</Th>
+          <Th>Grounding</Th>
+          <Th>{text("失败原因", "Failures")}</Th>
+          <Th>Forbidden</Th>
+          <Th>{text("证据索引", "Evidence Indexes")}</Th>
+          <Th>{text("任务", "Task")}</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item) => (
+          <tr key={item.eval_result_id} className="border-t border-slate-100">
+            <Td>
+              <Link
+                to={`/evals?run=${item.eval_run_id}`}
+                className="font-mono text-slate-900 hover:text-slate-950"
+              >
+                {item.eval_run_id.slice(0, 8)}
+              </Link>
+              <div className="mt-0.5 font-mono text-[10px] text-slate-500">
+                {item.eval_case_id.slice(0, 8)}
+              </div>
+            </Td>
+            <Td>
+              <div className="font-mono text-[11px] text-slate-700">
+                {item.dataset_id.slice(0, 8)}
+              </div>
+            </Td>
+            <Td>
+              <Badge tone={statusTone(item.status)}>{item.status}</Badge>
+            </Td>
+            <Td>
+              <Badge tone={item.grounding_passed ? "success" : "failed"}>
+                {item.grounding_passed ? "passed" : "failed"}
+              </Badge>
+              {item.fallback_expected !== item.fallback_observed && (
+                <Badge tone="warning" className="ml-1">
+                  fallback mismatch
+                </Badge>
+              )}
+              {item.unsupported_marker_present && (
+                <Badge tone="warning" className="ml-1">
+                  unsupported
+                </Badge>
+              )}
+            </Td>
+            <Td className="max-w-xs">
+              <div className="truncate font-mono text-[11px] text-slate-600">
+                {item.grounding_failures.join(", ") || "none"}
+              </div>
+            </Td>
+            <Td>
+              <Badge tone={item.forbidden_evidence_leaked ? "failed" : "success"}>
+                {item.forbidden_evidence_leaked ? "leaked" : "clear"}
+              </Badge>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {item.forbidden_leak_sources.map((source) => (
+                  <Badge key={source} tone="warning">
+                    {source}
+                  </Badge>
+                ))}
+              </div>
+            </Td>
+            <Td className="max-w-xs">
+              <div className="truncate font-mono text-[11px] text-slate-500">
+                citations {item.citation_keys.join(", ") || "none"}
+              </div>
+              <div className="truncate font-mono text-[11px] text-slate-500">
+                hits {item.citation_hit_ids.join(", ") || "none"}
+              </div>
+            </Td>
+            <Td>
+              {item.task_id ? (
+                <Link
+                  to={`/runs/${item.task_id}`}
+                  className="font-mono text-slate-900 hover:text-slate-950"
+                >
+                  {item.task_id.slice(0, 8)}
+                </Link>
+              ) : (
+                <span className="text-slate-500">manual</span>
+              )}
+            </Td>
+          </tr>
+        ))}
+        {!isLoading && items.length === 0 && (
+          <tr className="border-t border-slate-100">
+            <Td colSpan={8} className="py-8 text-center text-slate-500">
+              {text("暂无 grounding quality 数据", "No grounding quality data")}
+            </Td>
+          </tr>
+        )}
+      </tbody>
+    </Table>
+  );
+}
+
 function DistributionCard({ title, items }: { title: string; items: CountItem[] }) {
   const { text } = useI18n();
   return (
@@ -1098,6 +1324,10 @@ function StatusLine({ isLoading, error }: { isLoading: boolean; error: Error | n
 
 function formatNumber(value: number | undefined) {
   return value === undefined ? "..." : new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatRate(value: number | undefined) {
+  return value === undefined ? "..." : `${(value * 100).toFixed(1)}%`;
 }
 
 function formatBytes(value: number) {
