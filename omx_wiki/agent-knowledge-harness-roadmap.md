@@ -163,7 +163,7 @@ Important boundary: P3 is not a crawler. If the backend later fetches webpage bo
 
 ### P4: Build Memory And Context Router V2
 
-Status: completed locally / backend verified.
+Status: completed / pushed.
 
 Goal: connect short-term memory, long-term memory, RAG, pinned context, compression, and prompt assembly.
 
@@ -190,19 +190,38 @@ Verification evidence:
 - `cd apps/agent-console && npm run build` -> passed.
 - `python3 scripts/validate-docs.py` -> passed.
 - `git diff --check` -> passed.
+- Pushed to `origin/main` through `6c4a95d`.
 
 ### P5: Productize MCP And Skills
 
-Status: planned.
+Status: committed / pending push.
 
 Goal: make tools and skills manageable Harness capabilities, not hidden implementation details.
 
-Scope:
+Delivered scope:
 
-- MCP server/method registry, health checks, schema, secret binding, and test invocation;
-- skill manifest with instructions, allowed tools, examples, constraints, versions, and eval cases;
-- attach/detach skills to Agents;
-- Run metadata and Eval regression by active skill version.
+- unified `CapabilityRegistry -> AgentCapabilityAttachment -> CapabilityVersion -> ToolRunner`
+  authority boundary;
+- deterministic one-way backfill from legacy `Agent.tools_json` into attachments, with no union
+  or intersection bridge at runtime;
+- immutable capability versions, capability snapshots, and Run/ModelCall/ToolCall/Eval snapshot
+  refs/hashes;
+- agent-scoped Workspace chat, Agent Run, assignment, subagent, compatibility, and test-invocation
+  execution paths;
+- non-executing admin validation with secret redaction;
+- agent-scoped executing test invocation through ToolRunner/ToolCall/EventStore;
+- fail-closed ToolRunner behavior when no Agent capability attachment is supplied.
+- no runtime lazy backfill from `Agent.tools_json`; migration/seed/test setup are the only
+  allowed one-way backfill surfaces.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest -q` -> `272 passed`.
+- `cd services/api-server && uv run ruff check app tests alembic/versions/20260517_0018_create_capability_registry.py` -> passed.
+- `cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-p5-alembic.sqlite uv run alembic upgrade head` -> reached `20260517_0018`.
+
+Important boundary: `Agent.tools_json` remains visible as legacy registry/preset metadata and as
+deterministic backfill input only. New runtime execution must resolve from enabled attachments.
 
 ### P6: Groundedness Eval And Observability
 
@@ -243,3 +262,4 @@ Scope:
 - [[agent-workspace-execution-evidence-architecture]]
 - [[session-2026-05-14-workspace-execution-evidence]]
 - [[session-2026-05-17-agent-knowledge-p3-web-research]]
+- [[session-2026-05-17-agent-knowledge-p4-context-assembly]]

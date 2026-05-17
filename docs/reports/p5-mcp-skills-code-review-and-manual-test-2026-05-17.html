@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P5 MCP Skills Productization Code Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172033;
+        --muted: #5b6475;
+        --line: #d9e1ec;
+        --panel: #f7f9fc;
+        --ok: #0f7a4f;
+        --warn: #9a5b00;
+        --bad: #b42318;
+        --accent: #2457c5;
+      }
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: var(--ink);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 32px 24px 56px;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 30px;
+        letter-spacing: 0;
+      }
+      h2 {
+        margin-top: 32px;
+        font-size: 20px;
+      }
+      h3 {
+        margin-top: 22px;
+        font-size: 16px;
+      }
+      p {
+        margin: 8px 0 0;
+      }
+      code {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--panel);
+        padding: 1px 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      pre {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #111827;
+        color: #eef2ff;
+        padding: 14px;
+        font-size: 12px;
+      }
+      table {
+        width: 100%;
+        margin-top: 12px;
+        border-collapse: collapse;
+        border: 1px solid var(--line);
+      }
+      th,
+      td {
+        border-top: 1px solid var(--line);
+        padding: 10px 12px;
+        vertical-align: top;
+        text-align: left;
+      }
+      th {
+        background: var(--panel);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      ul,
+      ol {
+        margin: 8px 0 0 20px;
+        padding: 0;
+      }
+      li {
+        margin: 5px 0;
+      }
+      .hero {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 22px;
+      }
+      .meta {
+        margin-top: 10px;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        padding: 14px;
+      }
+      .card strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .pill {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 2px 9px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .ok {
+        background: #e9f8f0;
+        color: var(--ok);
+      }
+      .watch {
+        background: #fff5df;
+        color: var(--warn);
+      }
+      .bad {
+        background: #fdecea;
+        color: var(--bad);
+      }
+      .note {
+        border-left: 4px solid var(--accent);
+        background: #f4f7ff;
+        padding: 10px 12px;
+        margin-top: 12px;
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 22px 14px 40px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        table {
+          display: block;
+          overflow-x: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>P5 MCP / Skills Productization 代码审查与前端手测报告</h1>
+        <p class="meta">
+          日期：2026-05-17 ｜ 范围：Capability Registry、Agent Capability Attachment、ToolRunner
+          权限解析、审计快照、前端工具运行可见性
+        </p>
+        <div class="grid">
+          <div class="card">
+            <strong>审查结论</strong>
+            <span class="pill ok">可继续集成</span>
+            <p>审查发现的问题已修复，当前没有阻塞 P5 合入的已知代码问题。</p>
+          </div>
+          <div class="card">
+            <strong>修复数量</strong>
+            <span class="pill watch">2 项</span>
+            <p>修复迁移双权威风险和 Workspace chat 未授权工具审计不一致。</p>
+          </div>
+          <div class="card">
+            <strong>验证结果</strong>
+            <span class="pill ok">273 passed</span>
+            <p>后端完整测试、迁移升级、前端 typecheck、相关 lint 和 diff check 均完成。</p>
+          </div>
+        </div>
+      </section>
+
+      <h2>新增功能</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>功能</th>
+            <th>作用</th>
+            <th>前端或 API 可见点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Capability Registry</td>
+            <td>将 builtin tool、MCP-shaped tool 和后续 skill 能力固化为可版本化能力记录。</td>
+            <td><code>/tools</code> 工具运行层展示工具来源、风险、沙箱、角色和 MCP 元数据。</td>
+          </tr>
+          <tr>
+            <td>Agent Capability Attachment</td>
+            <td>将 Agent 能执行什么工具固定到 attachment 表，运行时不再信任 <code>Agent.tools_json</code>。</td>
+            <td>Workspace chat、Agent Run、assignment worker、test invoke 都通过同一 capability resolver。</td>
+          </tr>
+          <tr>
+            <td>Immutable Capability Version</td>
+            <td>每个工具元数据版本生成 content/config hash，ToolCall 和快照引用不可变版本。</td>
+            <td>Run Detail 的工具调用表现在展示 capability version 和 content hash 缩写。</td>
+          </tr>
+          <tr>
+            <td>Capability Snapshot</td>
+            <td>Run、Task、ModelCall、ToolCall、Eval 记录执行当时的能力证据，支持重放和审计。</td>
+            <td>Run Detail 的工具调用表和事件流可看到执行证据。</td>
+          </tr>
+          <tr>
+            <td>Admin Validate / Test Invoke</td>
+            <td>区分“只校验元数据”和“以 Agent 身份试运行工具”，避免 admin 校验被误当成执行权限。</td>
+            <td><code>POST /api/tools/capabilities/admin-validate</code> 与 <code>/test-invoke</code>。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>修复的问题</h2>
+      <h3>1. 迁移文件不能引用运行时 ToolRegistry</h3>
+      <p>
+        问题：<code>20260517_0018_create_capability_registry.py</code> 原先从运行时
+        <code>ToolRegistry</code> 读取 builtin 工具并 seed migration。未来运行时代码一变，历史迁移行为也会变。
+      </p>
+      <p>
+        修复：迁移内置 <code>FROZEN_TOOL_METADATA</code> 历史快照，seed 只使用冻结数据。这样
+        migration 是历史记录，不再和运行时代码形成双权威。
+      </p>
+
+      <h3>2. Workspace chat 未授权工具不应提前变成 unknown tool</h3>
+      <p>
+        问题：Workspace chat 对“全局已知但当前 Agent 未 attach 的工具”会在 SSE 层提前返回
+        <code>unknown tool</code>，没有生成 DENIED ToolCall。权限没有被放宽，但四个入口的审计证据不一致。
+      </p>
+      <p>
+        修复：Workspace chat 现在对已知工具也进入 <code>ToolRunner</code>，由 capability resolver
+        统一拒绝，并写入 <code>DENIED</code> ToolCall。新增测试锁住不允许从
+        <code>tools_json</code> lazy backfill。
+      </p>
+
+      <h2>手动前端测试</h2>
+      <h3>入口</h3>
+      <ol>
+        <li>打开本次测试地址：<code>http://127.0.0.1:5179</code>。</li>
+        <li>确认页面能正常进入 Agent Console，没有空白页或全屏错误。</li>
+      </ol>
+
+      <h3>测试 1：工具注册表页面</h3>
+      <ol>
+        <li>进入 <code>/tools</code>。</li>
+        <li>确认顶部统计展示工具总数、MCP 数、需要沙箱数量、分类数量。</li>
+        <li>切换 <code>all</code>、<code>builtin</code>、<code>mcp</code> 筛选。</li>
+        <li>确认表格展示工具名、来源、风险、角色权限、审计级别、MCP server/method 和 input schema。</li>
+      </ol>
+
+      <h3>测试 2：Workspace chat 工具 mention</h3>
+      <ol>
+        <li>进入默认 Agent Workspace。</li>
+        <li>在 Plan 模式输入包含工具 mention 的目标，例如：<code>请读取项目配置 @read_file</code>。</li>
+        <li>发送后观察聊天流里出现工具调用请求和结果卡片。</li>
+        <li>工具 mention 语法是独立 token：<code>@read_file</code>、<code>@list_files</code>、<code>@mcp_context_search</code>。</li>
+        <li>如果工具需要审批，确认页面显示 pending approval，而不是直接执行。</li>
+      </ol>
+
+      <h3>测试 3：Run Detail 工具调用证据</h3>
+      <ol>
+        <li>从 Workspace 创建一个带工具 mention 的 run。</li>
+        <li>进入该 run 的详情页：<code>/runs/{run_id}</code>。</li>
+        <li>在“工具调用”表确认工具名、状态、风险、Capability version 缩写、content hash 缩写、延迟和输出摘要。</li>
+        <li>确认同一个 run 的事件流仍然正常展示，工具调用状态和聊天里看到的结果一致。</li>
+      </ol>
+
+      <h3>测试 4：审批可见性</h3>
+      <ol>
+        <li>在 Workspace 中输入需要副作用工具的 mention，例如：<code>执行一次 shell 检查 @run_shell</code>。</li>
+        <li>发送后确认聊天里出现 pending approval 状态。</li>
+        <li>进入对应 Run Detail，确认右侧审批区域出现同一条审批请求。</li>
+        <li>点击批准或拒绝，确认审批状态在页面上发生变化。</li>
+      </ol>
+
+      <h2>验证证据</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>检查</th>
+            <th>命令</th>
+            <th>结果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>后端完整测试</td>
+            <td><code>cd services/api-server &amp;&amp; uv run pytest -q</code></td>
+            <td><span class="pill ok">273 passed</span></td>
+          </tr>
+          <tr>
+            <td>针对性权限回归</td>
+            <td><code>uv run pytest tests/test_agents.py::test_agent_workspace_tool_mention_denies_unattached_known_tool ... -q</code></td>
+            <td><span class="pill ok">3 passed</span></td>
+          </tr>
+          <tr>
+            <td>迁移升级</td>
+            <td><code>DATABASE_URL=sqlite:////tmp/harness-p5-alembic.sqlite uv run alembic upgrade head</code></td>
+            <td><span class="pill ok">升级到 20260517_0018</span></td>
+          </tr>
+          <tr>
+            <td>后端 lint</td>
+            <td><code>uv run ruff check app tests alembic/versions/20260517_0018_create_capability_registry.py</code></td>
+            <td><span class="pill ok">All checks passed</span></td>
+          </tr>
+          <tr>
+            <td>前端类型检查</td>
+            <td><code>cd apps/agent-console &amp;&amp; npm run lint</code></td>
+            <td><span class="pill ok">tsc --noEmit passed</span></td>
+          </tr>
+          <tr>
+            <td>空白检查</td>
+            <td><code>git diff --check</code></td>
+            <td><span class="pill ok">passed</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note">
+        说明：全量 <code>ruff check app tests alembic</code> 会命中历史 Alembic 文件的既有 import
+        顺序和行宽问题。本次没有格式化旧迁移，使用本次代码范围加当前 P5 迁移文件的 ruff 结果作为验收。
+      </div>
+    </main>
+  </body>
+</html>
