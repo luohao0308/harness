@@ -18,6 +18,10 @@ from app.core.logging import JsonFormatter
 from app.db.models import (
     AgentAssignment,
     AgentRun,
+    EvalCase,
+    EvalDataset,
+    EvalResult,
+    EvalRun,
     ModelCall,
     ObservabilityExportRecord,
     SandboxInstance,
@@ -208,6 +212,150 @@ def test_observability_summary_aggregates_current_organization(db_session: Sessi
     assert payload["subagent_queue"]["capacity"] == 0
     assert payload["assignment_queue"]["queued"] == 1
     assert payload["assignment_queue"]["active_total"] == 1
+
+
+def test_grounding_quality_projects_eval_owned_trace_without_forbidden_snippets(
+    db_session: Session,
+) -> None:
+    dataset = EvalDataset(
+        organization_id="dev-org",
+        name="P6 Grounding Quality",
+        description="Projection source",
+        status="ACTIVE",
+        created_by="dev-engineer",
+    )
+    other_dataset = EvalDataset(
+        organization_id="other-org",
+        name="Other",
+        description="Out of scope",
+        status="ACTIVE",
+        created_by="other",
+    )
+    db_session.add_all([dataset, other_dataset])
+    db_session.flush()
+    eval_case = EvalCase(
+        dataset_id=dataset.id,
+        source_task_id=None,
+        input_json={},
+        expected_json={},
+        tags_json=["p6"],
+    )
+    eval_run = EvalRun(
+        dataset_id=dataset.id,
+        organization_id="dev-org",
+        agent_id="default",
+        status="COMPLETED",
+        metrics_json={"grounding_pass_rate": 0, "forbidden_evidence_leak_rate": 1},
+        created_by="dev-engineer",
+        started_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    other_run = EvalRun(
+        dataset_id=other_dataset.id,
+        organization_id="other-org",
+        agent_id="default",
+        status="COMPLETED",
+        metrics_json={},
+        created_by="other",
+        started_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add_all([eval_case, eval_run, other_run])
+    db_session.flush()
+    db_session.add_all(
+        [
+            EvalResult(
+                eval_run_id=eval_run.id,
+                eval_case_id=eval_case.id,
+                task_id=None,
+                status="FAILED",
+                scores_json={"task_success": 0},
+                grader_trace_json={
+                    "grader_trace_schema_version": 1,
+                    "passed": False,
+                    "grounding_failures": ["forbidden_evidence_leaked"],
+                    "forbidden_evidence_leaked": True,
+                    "forbidden_leak_sources": ["prompt_manifest"],
+                    "forbidden_evidence_snippets": ["do-not-render-this"],
+                    "fallback_expected": True,
+                    "fallback_observed": False,
+                    "citation_keys": ["c1"],
+                    "citation_hit_ids": ["h1"],
+                },
+                latency_ms=0,
+                cost_usd="0",
+            ),
+            EvalResult(
+                eval_run_id=other_run.id,
+                eval_case_id=eval_case.id,
+                task_id=None,
+                status="PASSED",
+                scores_json={"task_success": 1},
+                grader_trace_json={"passed": True},
+                latency_ms=0,
+                cost_usd="0",
+            ),
+            EvalResult(
+                eval_run_id=eval_run.id,
+                eval_case_id=eval_case.id,
+                task_id=None,
+                status="PASSED",
+                scores_json={"task_success": 1},
+                grader_trace_json={
+                    "grader_trace_schema_version": 1,
+                    "passed": True,
+                    "grounding_failures": [],
+                    "forbidden_evidence_leaked": False,
+                },
+                latency_ms=0,
+                cost_usd="0",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/observability/grounding-quality?forbidden_evidence_leaked=true&limit=1",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    item = payload["items"][0]
+    assert item["eval_run_id"] == eval_run.id
+    assert item["forbidden_evidence_leaked"] is True
+    assert item["forbidden_leak_sources"] == ["prompt_manifest"]
+    assert "forbidden_evidence_snippets" not in item
+    assert "do-not-render-this" not in response.text
+    assert payload["metrics"]["citation_coverage_rate"] == 1.0
+    assert payload["metrics"]["fallback_mismatch_rate"] == 1.0
+    assert payload["failure_facets"] == [{"name": "forbidden_evidence_leaked", "count": 1}]
+
+    short_eval_run_response = client.get(
+        (
+            "/api/observability/grounding-quality"
+            f"?eval_run_id={eval_run.id[:8]}&failure_type=forbidden&limit=10"
+        ),
+        headers=AUTH_HEADERS,
+    )
+    assert short_eval_run_response.status_code == 200
+    short_eval_run_payload = short_eval_run_response.json()
+    assert short_eval_run_payload["total"] == 1
+    assert short_eval_run_payload["items"][0]["eval_run_id"] == eval_run.id
+
+    short_dataset_response = client.get(
+        (
+            "/api/observability/grounding-quality"
+            f"?dataset_id={dataset.id[:8]}&failure_type=evidence_leaked&limit=10"
+        ),
+        headers=AUTH_HEADERS,
+    )
+    assert short_dataset_response.status_code == 200
+    short_dataset_payload = short_dataset_response.json()
+    assert short_dataset_payload["total"] == 1
+    assert short_dataset_payload["items"][0]["dataset_id"] == dataset.id
 
 
 def test_observability_logs_returns_event_store_entries(db_session: Session) -> None:

@@ -25,6 +25,8 @@ from app.api.schemas import (
     ObservabilityExportHistoryPage,
     ObservabilityExportItem,
     ObservabilityExportPage,
+    ObservabilityGroundingQualityItem,
+    ObservabilityGroundingQualityResponse,
     ObservabilityLogEntry,
     ObservabilityLogPage,
     ObservabilityQueueResponse,
@@ -48,6 +50,8 @@ from app.db.models import (
     AgentEvent,
     AgentHandoff,
     AgentRun,
+    EvalResult,
+    EvalRun,
     ExecutionPlan,
     ModelCall,
     ObservabilityExportRecord,
@@ -147,6 +151,130 @@ def get_observability_summary(
             session,
             select(func.count(SandboxInstance.id)).where(SandboxInstance.task_id.in_(task_ids)),
         ),
+    )
+
+
+@router.get(
+    "/grounding-quality",
+    response_model=ObservabilityGroundingQualityResponse,
+    summary="查询 Grounding Quality 投影",
+    description="只投影 Eval 已计算的 grounding trace/metrics，不重新扫描原始 evidence。",
+)
+def get_grounding_quality(
+    session: DbSession,
+    principal: Principal,
+    dataset_id: Annotated[str | None, Query()] = None,
+    eval_run_id: Annotated[str | None, Query()] = None,
+    agent_id: Annotated[str | None, Query()] = None,
+    failure_type: Annotated[str | None, Query()] = None,
+    grounding_passed: Annotated[bool | None, Query()] = None,
+    forbidden_evidence_leaked: Annotated[bool | None, Query()] = None,
+    fallback_mismatch: Annotated[bool | None, Query()] = None,
+    unsupported_marker_present: Annotated[bool | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ObservabilityGroundingQualityResponse:
+    filters = [EvalRun.organization_id == principal.organization_id]
+    if dataset_id:
+        filters.append(EvalRun.dataset_id.startswith(dataset_id.strip()))
+    if eval_run_id:
+        filters.append(EvalRun.id.startswith(eval_run_id.strip()))
+    if agent_id:
+        filters.append(EvalRun.agent_id == agent_id)
+
+    rows = list(
+        session.execute(
+            select(EvalRun, EvalResult)
+            .join(EvalResult, EvalResult.eval_run_id == EvalRun.id)
+            .where(*filters)
+            .order_by(EvalResult.created_at.desc(), EvalResult.id.desc())
+        ).all()
+    )
+    items: list[ObservabilityGroundingQualityItem] = []
+    failure_counts: dict[str, int] = {}
+    metric_totals = {
+        "grounding_pass_rate": 0.0,
+        "citation_coverage_rate": 0.0,
+        "forbidden_evidence_leak_rate": 0.0,
+        "fallback_mismatch_rate": 0.0,
+        "unsupported_marker_rate": 0.0,
+        "required_evidence_miss_rate": 0.0,
+    }
+    for eval_run, result in rows:
+        trace = _project_grounding_trace(result.grader_trace_json)
+        failures = trace["grounding_failures"]
+        item_fallback_mismatch = bool(trace["fallback_expected"]) != bool(
+            trace["fallback_observed"]
+        )
+        item_unsupported_marker_present = "unsupported_marker_present" in failures
+        if failure_type and not _failure_type_matches(failure_type, failures):
+            continue
+        if grounding_passed is not None and bool(trace["passed"]) != grounding_passed:
+            continue
+        if (
+            forbidden_evidence_leaked is not None
+            and bool(trace["forbidden_evidence_leaked"]) != forbidden_evidence_leaked
+        ):
+            continue
+        if fallback_mismatch is not None and item_fallback_mismatch != fallback_mismatch:
+            continue
+        if (
+            unsupported_marker_present is not None
+            and item_unsupported_marker_present != unsupported_marker_present
+        ):
+            continue
+        if len(items) >= limit:
+            break
+        for failure in failures:
+            failure_counts[failure] = failure_counts.get(failure, 0) + 1
+        metric_totals["grounding_pass_rate"] += 1.0 if trace["passed"] else 0.0
+        metric_totals["citation_coverage_rate"] += (
+            1.0 if "citation_hit_mismatch" not in failures else 0.0
+        )
+        metric_totals["forbidden_evidence_leak_rate"] += (
+            1.0 if trace["forbidden_evidence_leaked"] else 0.0
+        )
+        metric_totals["fallback_mismatch_rate"] += 1.0 if item_fallback_mismatch else 0.0
+        metric_totals["unsupported_marker_rate"] += (
+            1.0 if item_unsupported_marker_present else 0.0
+        )
+        metric_totals["required_evidence_miss_rate"] += (
+            1.0 if "missing_required_evidence" in failures else 0.0
+        )
+        items.append(
+            ObservabilityGroundingQualityItem(
+                eval_run_id=eval_run.id,
+                eval_result_id=result.id,
+                eval_case_id=result.eval_case_id,
+                task_id=result.task_id,
+                dataset_id=eval_run.dataset_id,
+                agent_id=eval_run.agent_id,
+                status=result.status,
+                created_at=result.created_at,
+                grounding_passed=bool(trace["passed"]),
+                grounding_failures=failures,
+                forbidden_evidence_leaked=bool(trace["forbidden_evidence_leaked"]),
+                forbidden_leak_sources=trace["forbidden_leak_sources"],
+                fallback_expected=bool(trace["fallback_expected"]),
+                fallback_observed=bool(trace["fallback_observed"]),
+                unsupported_marker_present=item_unsupported_marker_present,
+                citation_keys=trace["citation_keys"],
+                citation_hit_ids=trace["citation_hit_ids"],
+                retrieval_session_id=trace["retrieval_session_id"],
+                prompt_manifest_id=trace["prompt_manifest_id"],
+            )
+        )
+    total = len(items) or 1
+    metrics = {key: round(value / total, 4) for key, value in metric_totals.items()}
+    metrics["grounding_failure_total"] = sum(failure_counts.values())
+    metrics["case_total"] = len(items)
+    return ObservabilityGroundingQualityResponse(
+        items=items,
+        metrics=metrics,
+        failure_facets=[
+            CountItem(name=name, count=count)
+            for name, count in sorted(failure_counts.items(), key=lambda item: item[0])
+        ],
+        total=len(items),
     )
 
 
@@ -1405,3 +1533,51 @@ def _export_history_item(record: ObservabilityExportRecord) -> ObservabilityExpo
 def _safe_filename(value: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)
     return safe.strip("._") or "export"
+
+
+def _project_grounding_trace(trace: dict | None) -> dict:
+    raw = trace if isinstance(trace, dict) else {}
+    forbidden_leak_sources = _string_list(raw.get("forbidden_leak_sources"))
+    forbidden_evidence_leaked = bool(raw.get("forbidden_evidence_leaked")) or bool(
+        forbidden_leak_sources
+    )
+    failures = _string_list(raw.get("grounding_failures"))
+    if forbidden_evidence_leaked and "forbidden_evidence_leaked" not in failures:
+        failures.append("forbidden_evidence_leaked")
+    return {
+        "passed": bool(raw.get("passed", True)) and not forbidden_evidence_leaked,
+        "grounding_failures": failures,
+        "forbidden_evidence_leaked": forbidden_evidence_leaked,
+        "forbidden_leak_sources": forbidden_leak_sources,
+        "fallback_expected": bool(raw.get("fallback_expected") or False),
+        "fallback_observed": bool(raw.get("fallback_observed") or False),
+        "citation_keys": _string_list(raw.get("citation_keys")),
+        "citation_hit_ids": _string_list(raw.get("citation_hit_ids")),
+        "retrieval_session_id": _nullable_string(raw.get("retrieval_session_id")),
+        "prompt_manifest_id": _nullable_string(raw.get("prompt_manifest_id")),
+    }
+
+
+def _failure_type_matches(query: str, failures: list[str]) -> bool:
+    needle = _clean_string(query).lower()
+    if not needle:
+        return True
+    return any(needle in failure.lower() for failure in failures)
+
+
+def _string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [item for item in (_clean_string(item) for item in value) if item]
+    item = _clean_string(value)
+    return [item] if item else []
+
+
+def _nullable_string(value: object) -> str | None:
+    item = _clean_string(value or "")
+    return item or None
+
+
+def _clean_string(value: object) -> str:
+    return str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
