@@ -1,8 +1,10 @@
+import hashlib
 import json
 from io import BytesIO
 from types import SimpleNamespace
 from urllib import error
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,7 +23,7 @@ from app.agents.model_gateway import (
     OpenAICompatibleModelGateway,
     provider_api_key,
 )
-from app.db.models import ModelCall, SystemSetting, Task, utc_now
+from app.db.models import ContextAssemblyManifest, ModelCall, SystemSetting, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.main import app
@@ -291,6 +293,44 @@ def test_audited_model_gateway_records_failed_event_when_stream_closes(
     ]
     assert events[-1].payload_json["cancelled"] is True
     assert gateway.closed is True
+
+
+def test_audited_model_gateway_validates_context_manifest_before_streaming(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session)
+    other_task = create_task(db_session)
+    manifest = ContextAssemblyManifest(
+        organization_id=other_task.organization_id,
+        agent_id="default",
+        run_id=other_task.id,
+        mode="authoritative",
+        token_budget_json={},
+        sections_json=[],
+        included_refs_json=[],
+        omitted_refs_json=[],
+        policy_decisions_json=[],
+        tombstoned_refs_json=[],
+        context_text_sha256=hashlib.sha256(b"").hexdigest(),
+        metadata_json={},
+        created_at=utc_now(),
+    )
+    db_session.add(manifest)
+    db_session.flush()
+    gateway = StreamingSequenceGateway([ModelStreamChunk(text="must not stream")])
+
+    with pytest.raises(ModelGatewayError, match="context manifest does not belong"):
+        list(
+            AuditedModelGateway(
+                session=db_session,
+                task_id=task.id,
+                gateway=gateway,
+                context_manifest_id=manifest.id,
+            ).stream(model_request())
+        )
+
+    assert gateway.requests == []
+    assert db_session.execute(select(ModelCall)).scalars().all() == []
 
 
 def test_model_fallback_summary_endpoint_aggregates_current_org(db_session: Session) -> None:
