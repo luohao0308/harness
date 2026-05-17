@@ -498,9 +498,9 @@ def test_compressed_summary_requires_allowed_model_and_matching_branch(
         mode="authoritative",
     )
 
-    assert {
-        ref.get("omission_reason") for ref in disallowed.manifest.omitted_refs_json
-    } == {"compression_model_not_allowed"}
+    assert {ref.get("omission_reason") for ref in disallowed.manifest.omitted_refs_json} == {
+        "compression_model_not_allowed"
+    }
 
     add_model_router_settings(db_session)
     branch_mismatch = ContextAssemblyService(db_session).assemble_workspace_chat(
@@ -530,9 +530,9 @@ def test_compressed_summary_requires_allowed_model_and_matching_branch(
         mode="authoritative",
     )
 
-    assert {
-        ref.get("omission_reason") for ref in branch_mismatch.manifest.omitted_refs_json
-    } == {"compression_branch_mismatch"}
+    assert {ref.get("omission_reason") for ref in branch_mismatch.manifest.omitted_refs_json} == {
+        "compression_branch_mismatch"
+    }
 
 
 def test_compressed_summary_accepts_full_active_path_coverage(
@@ -580,9 +580,7 @@ def test_compressed_summary_accepts_full_active_path_coverage(
 
     assert any("compressed branch content" in message.content for message in result.messages)
     assert not [
-        ref
-        for ref in result.manifest.omitted_refs_json
-        if ref.get("type") == "compressed_summary"
+        ref for ref in result.manifest.omitted_refs_json if ref.get("type") == "compressed_summary"
     ]
 
 

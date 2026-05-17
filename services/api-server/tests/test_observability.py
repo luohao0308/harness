@@ -502,9 +502,7 @@ def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:
         "batches": [
             {
                 "resource": {
-                    "attributes": [
-                        {"key": "service.name", "value": {"stringValue": "api-server"}}
-                    ]
+                    "attributes": [{"key": "service.name", "value": {"stringValue": "api-server"}}]
                 },
                 "scopeSpans": [
                     {
@@ -543,7 +541,7 @@ def test_observability_trace_prefers_tempo_spans(db_session: Session) -> None:
                                         "value": {"stringValue": "POST"},
                                     },
                                 ],
-                            }
+                            },
                         ]
                     }
                 ],
@@ -681,9 +679,7 @@ def test_observability_services_health_returns_all_services() -> None:
         "otel-collector",
         "tempo",
     }
-    assert {service["alert_status"] for service in payload["services"]}.issubset(
-        {"ok", "firing"}
-    )
+    assert {service["alert_status"] for service in payload["services"]}.issubset({"ok", "firing"})
     assert all(service["runbook_url"].endswith("#observability") for service in payload["services"])
 
 

@@ -3,15 +3,46 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import SandboxInstance, SystemSetting, Task, ToolApproval, ToolCall, utc_now
+from app.db.models import (
+    Agent,
+    SandboxInstance,
+    SystemSetting,
+    Task,
+    ToolApproval,
+    ToolCall,
+    utc_now,
+)
 from app.events.event_store import EventStore
 from app.sandbox.docker_manager import SandboxCommandResult
+from app.tools.capabilities import CapabilityRegistry
 from app.tools.runner import ToolRunner
 
 
-def create_task(db_session: Session) -> Task:
+def create_task(
+    db_session: Session,
+    *,
+    agent_id: str = "tool-runner-agent",
+    tools: list[str] | None = None,
+) -> Task:
+    db_session.add(
+        Agent(
+            id=agent_id,
+            organization_id=None,
+            name="Tool Runner Agent",
+            description="Owns explicit tool attachments for ToolRunner tests",
+            role="tester",
+            status="ACTIVE",
+            model_provider="default",
+            model_name="default",
+            system_prompt="Run tools under attachment policy.",
+            tools_json=tools or ["read_file", "list_files", "run_shell", "network_request"],
+            routing_tags=[],
+        )
+    )
+    db_session.flush()
     task = Task(
         organization_id="dev-org",
+        agent_id=agent_id,
         created_by="dev-engineer",
         title="Tool runner",
         goal="Audit tool execution",
@@ -27,6 +58,10 @@ def create_task(db_session: Session) -> Task:
     )
     db_session.add(task)
     db_session.flush()
+    CapabilityRegistry(db_session, task.organization_id).backfill_agent_attachments(
+        agent_id,
+        attached_by="test",
+    )
     return task
 
 
@@ -38,7 +73,11 @@ def test_tool_runner_executes_read_file_and_writes_audit(
     target = tmp_path / "result.md"
     target.write_text("hello", encoding="utf-8")
 
-    execution = ToolRunner(session=db_session, workspace_root=tmp_path).execute(
+    execution = ToolRunner(
+        session=db_session,
+        workspace_root=tmp_path,
+        agent_id=task.agent_id,
+    ).execute(
         task_id=task.id,
         tool_name="read_file",
         input_json={"path": "result.md"},
@@ -47,6 +86,9 @@ def test_tool_runner_executes_read_file_and_writes_audit(
 
     assert execution.allowed is True
     assert execution.tool_call.status == "SUCCESS"
+    assert execution.tool_call.capability_version_id is not None
+    assert execution.tool_call.capability_content_sha256 is not None
+    assert execution.tool_call.capability_snapshot_json["agent_id"] == task.agent_id
     assert execution.output["content"] == "hello"
     events = EventStore(db_session).list_by_task(task_id=task.id)
     assert [event.event_type for event in events] == [
@@ -59,7 +101,7 @@ def test_tool_runner_executes_read_file_and_writes_audit(
 def test_tool_runner_denies_sandbox_tool_without_sandbox(db_session: Session) -> None:
     task = create_task(db_session)
 
-    execution = ToolRunner(session=db_session).execute(
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
         task_id=task.id,
         tool_name="run_shell",
         input_json={"command": "pytest"},
@@ -78,10 +120,28 @@ def test_tool_runner_denies_sandbox_tool_without_sandbox(db_session: Session) ->
     ]
 
 
-def test_tool_runner_denies_network_request_for_engineer(db_session: Session) -> None:
+def test_tool_runner_requires_agent_attachment_boundary(db_session: Session) -> None:
     task = create_task(db_session)
 
     execution = ToolRunner(session=db_session).execute(
+        task_id=task.id,
+        tool_name="read_file",
+        input_json={"path": "pyproject.toml"},
+        roles=["engineer"],
+    )
+
+    assert execution.allowed is False
+    assert execution.tool_call.status == "DENIED"
+    assert execution.tool_call.error_message == (
+        "agent capability attachment is required for tool execution"
+    )
+    assert execution.tool_call.capability_version_id is None
+
+
+def test_tool_runner_denies_network_request_for_engineer(db_session: Session) -> None:
+    task = create_task(db_session)
+
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
         task_id=task.id,
         tool_name="network_request",
         input_json={"method": "GET", "url": "https://example.com", "headers": {}},
@@ -118,7 +178,7 @@ def test_tool_runner_reads_policy_settings_for_risk_level(db_session: Session) -
     )
     db_session.flush()
 
-    execution = ToolRunner(session=db_session).execute(
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
         task_id=task.id,
         tool_name="read_file",
         input_json={"path": "pyproject.toml"},
@@ -156,7 +216,7 @@ def test_tool_runner_uses_policy_settings_admin_approval(db_session: Session) ->
     )
     db_session.flush()
 
-    execution = ToolRunner(session=db_session).execute(
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
         task_id=task.id,
         tool_name="read_file",
         input_json={"path": "pyproject.toml"},
@@ -231,7 +291,7 @@ def test_tool_runner_enforces_network_allowlist(db_session: Session) -> None:
         ]
     )
     db_session.flush()
-    runner = ToolRunner(session=db_session, shell_tool=FakeShellTool())
+    runner = ToolRunner(session=db_session, agent_id=task.agent_id, shell_tool=FakeShellTool())
 
     blocked = runner.execute(
         task_id=task.id,

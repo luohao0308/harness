@@ -215,9 +215,7 @@ def test_model_settings_health_endpoint_probes_real_provider(
     health = client.get("/api/settings/models/health", headers=ADMIN_HEADERS)
 
     assert health.status_code == 200
-    payload = next(
-        item for item in health.json()["items"] if item["provider"] == "deepseek-pro"
-    )
+    payload = next(item for item in health.json()["items"] if item["provider"] == "deepseek-pro")
     assert payload["status"] == "healthy"
     assert payload["mode"] == "probe"
     assert {

@@ -1,6 +1,5 @@
 """Unit tests for DAG Scheduler module."""
 
-
 from app.agents.dag_scheduler import (
     MAX_DAG_DEPTH,
     MAX_DAG_FANOUT,

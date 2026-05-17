@@ -279,9 +279,9 @@ class TestFailurePropagation:
         assert response.json()["status"] == "FAILED"
 
         # Check events for STEP_SKIPPED
-        events = client.get(
-            f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS
-        ).json()["items"]
+        events = client.get(f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS).json()[
+            "items"
+        ]
         event_types = [e["event_type"] for e in events]
         assert "STEP_FAILED" in event_types
         assert "STEP_SKIPPED" in event_types
@@ -345,9 +345,7 @@ class TestRunFinalState:
 class TestModelCallEvent:
     """Tests for MODEL_CALL event with purpose=tool_parameter_generation."""
 
-    def test_model_call_event_emitted_for_tool_selection(
-        self, db_session: Session
-    ) -> None:
+    def test_model_call_event_emitted_for_tool_selection(self, db_session: Session) -> None:
         """MODEL_CALLED event is emitted with purpose=tool_parameter_generation."""
         client = TestClient(app)
         created = client.post(
@@ -363,11 +361,12 @@ class TestModelCallEvent:
 
         client.post(f"/api/tasks/{created['id']}/start", headers=AUTH_HEADERS)
 
-        events = client.get(
-            f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS
-        ).json()["items"]
+        events = client.get(f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS).json()[
+            "items"
+        ]
         model_called_events = [
-            e for e in events
+            e
+            for e in events
             if e["event_type"] == "MODEL_CALLED"
             and e.get("payload_json", {}).get("purpose") == "tool_parameter_generation"
         ]
@@ -494,9 +493,7 @@ class TestTimeoutHandling:
 class TestSubagentHeartbeat:
     """Tests for subagent heartbeat emission."""
 
-    def test_heartbeat_event_emitted_on_subagent_spawn(
-        self, db_session: Session
-    ) -> None:
+    def test_heartbeat_event_emitted_on_subagent_spawn(self, db_session: Session) -> None:
         """SUBAGENT_HEARTBEAT event is emitted when subagent is spawned."""
         client = TestClient(app)
         created = client.post(
@@ -512,12 +509,10 @@ class TestSubagentHeartbeat:
 
         client.post(f"/api/tasks/{created['id']}/start", headers=AUTH_HEADERS)
 
-        events = client.get(
-            f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS
-        ).json()["items"]
-        heartbeat_events = [
-            e for e in events if e["event_type"] == "SUBAGENT_HEARTBEAT"
+        events = client.get(f"/api/tasks/{created['id']}/events", headers=AUTH_HEADERS).json()[
+            "items"
         ]
+        heartbeat_events = [e for e in events if e["event_type"] == "SUBAGENT_HEARTBEAT"]
         assert len(heartbeat_events) >= 1
         interval = heartbeat_events[0]["payload_json"]["interval_seconds"]
         assert interval == SUBAGENT_HEARTBEAT_INTERVAL
