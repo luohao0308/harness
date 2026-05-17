@@ -21,6 +21,7 @@ Persistent project knowledge for the AI Harness Platform.
 - [[local-dev-eval-dataset-migration]] - Local Eval Dataset migration trap and recovery for `baseline_run_id`.
 - [[session-2026-05-14-workspace-execution-evidence]] - Session log for commit `e78f52a` and validation evidence.
 - [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] - P1 Knowledge/RAG grounding audit and blocker-repair record through `4475eef`: prompt manifests, policy audits, verified-vs-fixture grounding, denied/redacted isolation, v2 request hashes, exact selectors, Run Detail Eval contract propagation, validation evidence, and remaining private-deployment gate.
+- [[session-2026-05-17-agent-knowledge-p3-web-research]] - P3 real policy-gated web research record through `76f11d5`: Tavily adapter, URL/DNS policy gates, attempt ledger, source-bound citations, fake-provider hardening, Run Detail evidence, reports, validation, live smoke, and push evidence.
 
 ## Categories
 
@@ -59,6 +60,7 @@ Persistent project knowledge for the AI Harness Platform.
 - `token-optimization`
 - `hallucination`
 - `knowledge-grounding`
+- `web-research`
 - `prompt-manifest`
 - `policy-audit`
 - `cjk-retrieval`

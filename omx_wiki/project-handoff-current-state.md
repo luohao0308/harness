@@ -38,7 +38,9 @@ Read these first:
 12. [[agent-workspace-execution-evidence-architecture]] if the work touches Workspace context, Plan-Act, branching, Run Detail, or Eval Case capture
 13. [[local-dev-eval-dataset-migration]] if Run Detail cannot list or save Eval Datasets
 14. [[session-2026-05-16-agent-knowledge-p1-grounding-audit]] if the next work touches Knowledge/RAG grounding, prompt manifests, policy audit, Run Detail evidence, Eval grounding contracts, or Chinese knowledge retrieval.
-15. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
+15. [[session-2026-05-17-agent-knowledge-p3-web-research]] if the next work touches real web research, Tavily, source-bound web citations, URL policy, fake-provider hardening, or web research Run Detail evidence.
+16. `.omx/plans/ralplan-agent-knowledge-harness-p4-memory-context-router-v2.md` if the next work touches backend context assembly, long-term memory records, context manifests, token budgeting, or model-call context binding.
+17. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
 
 ## Current State
 
@@ -52,9 +54,11 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
 - Private deployment experience is the latest completed post-stage lane: Docker Compose is the canonical private handoff path, host-port overrides are documented, Docker smoke and Agent Run smoke pass, and cleanup evidence is recorded.
 - Agent Knowledge Harness is the current product direction after private deployment. Knowledge/RAG P1 is now a verified baseline in `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md`, including Docker/private, existing-data migration, exact selector, Eval grounding, append-only audit, backend/frontend/docs/browser, and Agent Run smoke evidence.
-- Agent Knowledge Harness P2 local knowledge management is completed in the current worktree: agent/org-scoped text and Markdown knowledge sources now have lifecycle controls, document-level versioning, stale chunk filtering, retrieval eligibility, lifecycle audit events, failure audit records, multipart `.txt` / `.md` import, Agent Studio management UI, restore smoke coverage, and compose/Postgres private smoke evidence.
-- Git persistence status on 2026-05-17: P2 was split into five local Lore commits on `main`, but push to `origin/main` failed because the environment could not connect to `github.com:443`. The branch is ahead of `origin/main` until network access is restored and `git push origin main` succeeds.
+- Agent Knowledge Harness P2 local knowledge management is completed and pushed: agent/org-scoped text and Markdown knowledge sources now have lifecycle controls, document-level versioning, stale chunk filtering, retrieval eligibility, lifecycle audit events, failure audit records, multipart `.txt` / `.md` import, Agent Studio management UI, restore smoke coverage, and compose/Postgres private smoke evidence.
+- Agent Knowledge Harness P3 real policy-gated web research is completed and pushed through `76f11d5`: Tavily provider adapter, no backend second-hop URL fetch, pre-call and post-result policy gates, DNS/IP URL safety checks, per-run attempt ledger, source-bound web citations, fake-provider hardening, Run Detail evidence, runbook, HTML explanation report, and live Tavily smoke evidence are recorded.
+- Agent Knowledge Harness P4 memory and context router V2 is completed locally: backend context assembly manifests, long-term memory records, SQL-level scope filtering, token estimator/drop ordering, compressed-summary schema/model/branch/path checks, model-call context binding, shadow/authoritative feature flag behavior, memory injection flags, and Run Detail context manifest projection are implemented and verified.
 - Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
+- P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
 
 Evidence from `docs/task-progress.md`:
 
@@ -62,13 +66,16 @@ Evidence from `docs/task-progress.md`:
 - Workspace browser smoke and compact chrome hardening were added after Stage 07.
 - Broader browser smoke now has an explicit release-gate entrypoint through `cd apps/agent-console && npm run e2e:smoke:release`.
 - Private deployment handoff now has a canonical Docker Compose path in `docs/runbooks/deployment.md`; static checks, compose config, compose startup, Docker smoke, Agent Run smoke, and compose cleanup have passed using intentional host-port overrides.
+- P3 real policy-gated web research is recorded as completed with `96 passed` backend target tests, ruff, Alembic clean upgrade, frontend lint/build/targeted tests, and a live Tavily smoke.
 
 Evidence from the current codebase:
 
 - `services/api-server/app/knowledge.py`, `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`, `services/api-server/alembic/versions/20260516_0012_create_knowledge_audit_manifests.py`, `services/api-server/alembic/versions/20260516_0013_add_grounding_model_call_binding.py`, `services/api-server/alembic/versions/20260517_0015_add_knowledge_lifecycle_contract.py`, and `services/api-server/tests/test_knowledge_rag.py` define a Knowledge/RAG foundation with prompt assembly manifests, policy audits, citation snapshots, insufficient-evidence controls, CJK fallback retrieval, attempt-level model-call audit binding, request hashing, exact selector behavior, lifecycle/versioning, restore/migration smoke, and org/agent scope isolation.
 - `services/api-server/app/api/agents.py` exposes knowledge source lifecycle APIs, document APIs, scope APIs, and Workspace grounding behavior.
+- `services/api-server/app/knowledge_web.py`, `services/api-server/app/sandbox/policies.py`, `services/api-server/app/knowledge.py`, and `services/api-server/alembic/versions/20260517_0016_create_web_research_attempts.py` implement P3 Tavily-backed source-bound web research with policy gates and attempt reservations.
+- `services/api-server/app/agents/context_router.py`, `services/api-server/alembic/versions/20260517_0017_create_context_assembly.py`, and `services/api-server/tests/test_context_router.py` implement P4 backend context assembly, memory eligibility, token pruning, append-only context manifests, and model-call context binding.
 - `apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx` exposes Agent Studio knowledge source management.
-- `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` and `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` expose grounding evidence in Workspace and Run Detail.
+- `apps/agent-console/src/features/agents/components/ChatMessageBubble.tsx` and `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` expose grounding evidence in Workspace and Run Detail, including P3 source-bound web evidence.
 
 ## Existing Handoff Solution
 
@@ -88,22 +95,22 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 
 ## Most Recent Completed Work
 
-Recent local P2 commits pending push on `main`:
+Recent P3 commits pushed on `main`:
 
 ```text
-8eed571 Record P2 knowledge management evidence
-3877433 Productize Agent Studio knowledge management
-a95eb3f Cover knowledge lifecycle regressions
-fdc04df Manage knowledge lifecycle and document versions
-19802ab Add knowledge lifecycle schema contract
+76f11d5 Document P3 web research handoff
+50f6d33 Show source-bound web evidence in Run Detail
+03f4814 Bind web research fallback evidence
+39ec034 Enforce web research policy gates
+7cb3e9a Persist web research attempt reservations
+d3e8d24 Add Tavily web research adapter
 ```
 
 Push evidence:
 
 ```text
 git push origin main
-fatal: unable to access 'https://github.com/luohao0308/harness.git/':
-Failed to connect to github.com port 443 after 75005 ms: Couldn't connect to server
+11a4906..76f11d5  main -> main
 ```
 
 Previously pushed P1 commits on `main`:
@@ -136,15 +143,14 @@ Captured in wiki:
 - [[agent-workspace-execution-evidence-architecture]]
 - [[local-dev-eval-dataset-migration]]
 - [[session-2026-05-13-workspace-browser-smoke]]
+- [[session-2026-05-17-agent-knowledge-p3-web-research]]
 
 ## Next Known Work
 
-The latest completed Agent Knowledge Harness lane is **P2 local knowledge management**. The next planned lane is **P3 real policy-gated web research**, and it should not be mocked as user-facing real evidence.
+The latest completed Agent Knowledge Harness lane is **P4 memory and context router V2**. The next planned lane is **P5 MCP and Skills productization**.
 
 Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
-- add real policy-gated web research only after provider configuration and safety policy exist;
-- connect short-term memory, long-term memory, RAG, pinned context, context compression, and token budget into a prompt assembly router;
 - productize MCP creation/management and Skills/capability packs;
 - add groundedness/citation/unsupported-claim Eval and Observability surfaces;
 - keep Docker Compose release and demo validation current.
@@ -155,6 +161,7 @@ Useful follow-up rules:
 - Preserve the Private Deployment report at `.omx/reports/private-deployment-experience/report-20260514T074949Z.md` as the runtime evidence pointer.
 - If deployment handoff expands later, keep it bounded to documented private handoff improvements unless a new plan explicitly authorizes installer, Kubernetes, cloud matrix, or full operations work.
 - For Agent Knowledge Harness changes, start from `.omx/specs/deep-interview-agent-knowledge-harness-memory-rag.md`, `.omx/plans/prd-agent-knowledge-harness-memory-rag.md`, `.omx/plans/test-spec-agent-knowledge-harness-memory-rag.md`, and this wiki page.
+- If future web work fetches webpage bodies from returned URLs, treat it as a new crawler/fetcher security design rather than an implicit P3 extension.
 
 ## Stop Rules For Future Agents
 
@@ -175,3 +182,4 @@ Do not treat legacy `/api/tasks/*` as the primary product proof. Agent Run is th
 - [[agent-workspace-execution-evidence-architecture]]
 - [[local-dev-eval-dataset-migration]]
 - [[session-2026-05-14-workspace-execution-evidence]]
+- [[session-2026-05-17-agent-knowledge-p3-web-research]]
