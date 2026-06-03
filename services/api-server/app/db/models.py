@@ -14,10 +14,12 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
     event,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -46,6 +48,13 @@ class User(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    avatar_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    avatar_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    avatar_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    avatar_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -499,6 +508,7 @@ class CapabilityPackage(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="staged", index=True)
     risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="medium")
     manifest_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    content_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     validation_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     audit_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -1552,6 +1562,65 @@ class EvalResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class EvalExperiment(Base):
+    __tablename__ = "eval_experiments"
+    __table_args__ = (
+        Index("ix_eval_experiments_org_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("eval_datasets.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="COMPLETED", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class EvalExperimentArm(Base):
+    __tablename__ = "eval_experiment_arms"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "name",
+            name="eval_experiment_arms_experiment_name_uidx",
+        ),
+        Index("ix_eval_experiment_arms_experiment_created", "experiment_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    experiment_id: Mapped[str] = mapped_column(
+        ForeignKey("eval_experiments.id"),
+        nullable=False,
+        index=True,
+    )
+    dataset_id: Mapped[str] = mapped_column(
+        ForeignKey("eval_datasets.id"),
+        nullable=False,
+        index=True,
+    )
+    eval_run_id: Mapped[str] = mapped_column(
+        ForeignKey("eval_runs.id"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    arm_type: Mapped[str] = mapped_column(String(64), nullable=False, default="candidate")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="COMPLETED", index=True)
+    capability_hashes_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metrics_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ModelPricing(Base):
     __tablename__ = "model_pricing"
     __table_args__ = (
@@ -1789,3 +1858,65 @@ class SystemSetting(Base):
     value_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class StoredSecret(Base):
+    __tablename__ = "stored_secrets"
+    __table_args__ = (
+        CheckConstraint("scope IN ('user', 'org')", name="stored_secrets_scope_chk"),
+        CheckConstraint(
+            "status IN ('active', 'disabled')",
+            name="stored_secrets_status_chk",
+        ),
+        CheckConstraint(
+            "scope != 'user' OR owner_user_id IS NOT NULL",
+            name="stored_secrets_user_owner_chk",
+        ),
+        CheckConstraint(
+            "scope != 'org' OR owner_user_id IS NULL",
+            name="stored_secrets_org_owner_chk",
+        ),
+        Index(
+            "ix_stored_secrets_lookup",
+            "organization_id",
+            "owner_user_id",
+            "provider",
+            "purpose",
+            "status",
+        ),
+        Index(
+            "ix_stored_secrets_user_active_uidx",
+            "organization_id",
+            "owner_user_id",
+            "provider",
+            "purpose",
+            unique=True,
+            sqlite_where=text("scope = 'user' AND status = 'active'"),
+            postgresql_where=text("scope = 'user' AND status = 'active'"),
+        ),
+        Index(
+            "ix_stored_secrets_org_active_uidx",
+            "organization_id",
+            "provider",
+            "purpose",
+            unique=True,
+            sqlite_where=text("scope = 'org' AND status = 'active'"),
+            postgresql_where=text("scope = 'org' AND status = 'active'"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    secret_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_value: Mapped[str] = mapped_column(Text, nullable=False)
+    encryption_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

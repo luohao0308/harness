@@ -1800,6 +1800,7 @@ class PlannerExecutorArchitectureResponse(BaseModel):
     plan_total: int = Field(description="当前组织计划总数")
     sync_step_total: int = Field(description="同步步骤总数")
     async_step_total: int = Field(description="异步步骤总数")
+    langgraph_step_total: int = Field(default=0, description="LangGraph workflow node 步骤总数")
     status: str = Field(description="当前能力状态")
 
 
@@ -2579,6 +2580,7 @@ class CapabilityPackageResponse(BaseModel):
     status: str = Field(description="Lifecycle status")
     risk_level: str = Field(description="Risk level")
     manifest_json: dict = Field(description="Redacted manifest")
+    content_json: dict = Field(default_factory=dict, description="Redacted package content")
     validation_json: dict = Field(description="Validation evidence")
     provenance_json: dict = Field(description="Provenance/SBOM/signature evidence")
     audit_json: dict = Field(description="Audit evidence")
@@ -2619,6 +2621,7 @@ class CapabilitySimpleInstallRequest(BaseModel):
         "prompt_template",
         "knowledge_connector",
         "context_optimizer",
+        "langgraph_workflow",
     ] = Field(
         default="skill_pack",
         description="Package type hint",
@@ -2759,6 +2762,7 @@ class CapabilityMarketplaceItem(BaseModel):
         "prompt_template",
         "knowledge_connector",
         "context_optimizer",
+        "langgraph_workflow",
     ] = Field(description="Harness package type")
     install_mode: Literal[
         "attach_existing",
@@ -2981,6 +2985,74 @@ class EvalRunPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
+class EvalExperimentArmCreateRequest(BaseModel):
+    name: str = Field(min_length=1, description="Experiment arm name")
+    eval_run_id: str = Field(min_length=1, description="Linked Eval Run ID")
+    arm_type: Literal["baseline", "candidate", "control"] = Field(
+        default="candidate",
+        description="Arm role",
+    )
+    status: Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"] | None = Field(
+        default=None,
+        description="Arm status",
+    )
+    capability_hashes_json: dict = Field(
+        default_factory=dict,
+        description="Capability hashes for this arm",
+    )
+    metadata_json: dict = Field(default_factory=dict, description="Arm metadata")
+    error_message: str | None = Field(default=None, description="Arm-local failure message")
+
+
+class EvalExperimentCreateRequest(BaseModel):
+    name: str = Field(min_length=1, description="Experiment name")
+    description: str = Field(default="", description="Experiment description")
+    metadata_json: dict = Field(default_factory=dict, description="Experiment metadata")
+    arms: list[EvalExperimentArmCreateRequest] = Field(
+        min_length=1,
+        description="Experiment arms",
+    )
+
+
+class EvalExperimentArmResponse(BaseModel):
+    id: str = Field(description="Arm ID")
+    experiment_id: str = Field(description="Experiment ID")
+    dataset_id: str = Field(description="Dataset ID")
+    eval_run_id: str = Field(description="Linked Eval Run ID")
+    organization_id: str | None = Field(default=None, description="Organization ID")
+    name: str = Field(description="Arm name")
+    arm_type: str = Field(description="Arm role")
+    status: str = Field(description="Arm status")
+    capability_hashes_json: dict = Field(description="Capability hashes")
+    metrics_json: dict = Field(description="Linked EvalRun metrics snapshot")
+    error_message: str | None = Field(default=None, description="Arm-local failure")
+    created_at: datetime = Field(description="Created time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalExperimentResponse(BaseModel):
+    id: str = Field(description="Experiment ID")
+    dataset_id: str = Field(description="Dataset ID")
+    organization_id: str | None = Field(default=None, description="Organization ID")
+    name: str = Field(description="Experiment name")
+    description: str = Field(description="Experiment description")
+    status: str = Field(description="Experiment status")
+    metadata_json: dict = Field(description="Experiment metadata")
+    created_by: str | None = Field(default=None, description="Creator")
+    created_at: datetime = Field(description="Created time")
+    updated_at: datetime = Field(description="Updated time")
+    eval_run_ids: list[str] = Field(description="Linked Eval Run IDs")
+    arms: list[EvalExperimentArmResponse] = Field(default_factory=list, description="Arms")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalExperimentPage(BaseModel):
+    items: list[EvalExperimentResponse] = Field(description="Eval experiment list")
+    next_cursor: str | None = Field(default=None, description="Next cursor")
+
+
 class SetBaselineRequest(BaseModel):
     eval_run_id: str = Field(description="要设为基线的 Eval Run ID")
 
@@ -3066,6 +3138,23 @@ class ModelHealthPage(BaseModel):
     items: list[ModelHealthResponse] = Field(description="模型健康状态列表")
 
 
+class ModelOfficialStatusResponse(BaseModel):
+    provider: str = Field(description="供应商")
+    label: str = Field(description="显示名称")
+    status: str = Field(description="归一化状态")
+    indicator: str = Field(description="官方 Statuspage indicator")
+    description: str = Field(description="官方状态描述")
+    page_url: str = Field(description="官方状态页 URL")
+    api_url: str = Field(description="官方状态 API URL 或页面探测 URL")
+    checked_at: datetime = Field(description="检查时间")
+    updated_at: str | None = Field(default=None, description="官方页面更新时间")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class ModelOfficialStatusPage(BaseModel):
+    items: list[ModelOfficialStatusResponse] = Field(description="官方模型服务状态列表")
+
+
 class PolicySettingsResponse(BaseModel):
     risk_levels: list[dict] = Field(description="风险等级")
     approvals: dict = Field(description="审批规则")
@@ -3083,6 +3172,11 @@ class AuthRegisterRequest(BaseModel):
     password: str = Field(min_length=8, description="Password")
     name: str = Field(min_length=1, description="Display name")
     organization_name: str | None = Field(default=None, description="Personal org name")
+
+
+class AuthConfigResponse(BaseModel):
+    public_registration_enabled: bool = Field(description="Whether public registration is open")
+    oauth_providers: list[str] = Field(description="Enabled OAuth providers")
 
 
 class AuthLoginRequest(BaseModel):
@@ -3114,6 +3208,7 @@ class AuthMeResponse(BaseModel):
     user_id: str = Field(description="User ID")
     email: str = Field(description="Email")
     name: str = Field(description="Display name")
+    avatar_data_url: str | None = Field(default=None, description="Current user's avatar data URL")
     organization_id: str = Field(description="Current organization ID")
     role: str = Field(description="Current RBAC role")
     permissions: list[str] = Field(description="Granted permissions")
@@ -3124,6 +3219,51 @@ class OAuthStartResponse(BaseModel):
     provider: str = Field(description="OAuth provider")
     authorization_url: str = Field(description="Provider authorization URL")
     state: str = Field(description="Opaque state value")
+
+
+class StoredSecretUpsertRequest(BaseModel):
+    scope: Literal["user", "org"] = Field(default="user", description="Secret scope")
+    provider: str = Field(min_length=1, max_length=128, description="Provider key")
+    purpose: Literal[
+        "model_provider",
+        "knowledge_connector",
+        "mcp_runtime",
+        "web_research",
+        "notification_channel",
+    ] = Field(description="Secret purpose")
+    secret_ref: str | None = Field(default=None, max_length=500, description="Logical secret ref")
+    secret_value: str = Field(min_length=1, max_length=10_000, description="One-time secret value")
+
+
+class StoredSecretResponse(BaseModel):
+    id: str = Field(description="Secret ID")
+    organization_id: str = Field(description="Organization ID")
+    owner_user_id: str | None = Field(default=None, description="Owner user for user scope")
+    scope: str = Field(description="Secret scope")
+    provider: str = Field(description="Provider key")
+    purpose: str = Field(description="Secret purpose")
+    secret_ref: str | None = Field(default=None, description="Logical secret ref")
+    status: str = Field(description="Secret status")
+    configured: bool = Field(description="Whether secret material is configured")
+    source: str = Field(
+        default="stored_secret_user",
+        description="Secret source, for example stored_secret_user or stored_secret_org",
+    )
+    created_at: datetime = Field(description="Created time")
+    updated_at: datetime = Field(description="Updated time")
+    last_used_at: datetime | None = Field(default=None, description="Last used time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoredSecretPage(BaseModel):
+    items: list[StoredSecretResponse] = Field(description="Stored secrets")
+    next_cursor: str | None = Field(default=None, description="Next cursor")
+
+
+class StoredSecretImportResponse(BaseModel):
+    imported: list[StoredSecretResponse] = Field(description="Imported env secrets")
+    skipped: list[dict] = Field(default_factory=list, description="Skipped env secrets")
 
 
 class ApiKeyCreateRequest(BaseModel):

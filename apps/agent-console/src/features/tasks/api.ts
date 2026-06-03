@@ -45,6 +45,7 @@ const DEV_ADMIN_BEARER_TOKEN =
   import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-admin-token" : "");
 const AUTH_ACCESS_TOKEN_KEY = "harness.auth.access_token";
 const AUTH_REFRESH_TOKEN_KEY = "harness.auth.refresh_token";
+export const AUTH_SESSION_EXPIRED_EVENT = "harness.auth.session_expired";
 export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
 const KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS = 12_000;
 
@@ -60,6 +61,18 @@ export function getStoredRefreshToken() {
   return browserStorage()?.getItem(AUTH_REFRESH_TOKEN_KEY) ?? "";
 }
 
+export function getAuthBearerToken() {
+  return getStoredAccessToken().trim() || DEV_BEARER_TOKEN.trim();
+}
+
+export function isDevAuthFallbackEnabled() {
+  return !getStoredAccessToken().trim() && DEV_BEARER_TOKEN.trim().length > 0;
+}
+
+function getAdminBearerToken() {
+  return getStoredAccessToken().trim() || DEV_ADMIN_BEARER_TOKEN.trim();
+}
+
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
   const storage = browserStorage();
   storage?.setItem(AUTH_ACCESS_TOKEN_KEY, tokens.access_token);
@@ -72,12 +85,75 @@ export function clearAuthTokens() {
   storage?.removeItem(AUTH_REFRESH_TOKEN_KEY);
 }
 
+function notifyAuthSessionExpired() {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT));
+}
+
+function headersWithoutAuthorization(headers?: HeadersInit) {
+  if (!headers) return {};
+  const normalized = new Headers(headers);
+  normalized.delete("authorization");
+  return Object.fromEntries(normalized.entries());
+}
+
+async function refreshAuthForRetry() {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) {
+    if (getStoredAccessToken()) {
+      clearAuthTokens();
+      notifyAuthSessionExpired();
+    }
+    return false;
+  }
+  try {
+    const refreshed = await refreshAuthToken(refreshToken);
+    setAuthTokens(refreshed);
+    return true;
+  } catch (refreshError) {
+    clearAuthTokens();
+    notifyAuthSessionExpired();
+    throw refreshError;
+  }
+}
+
+async function fetchWithAuthRetry(
+  path: string,
+  init: RequestInit,
+  options: { skipRefresh?: boolean; token?: string } = {},
+) {
+  const initialStoredAccessToken = getStoredAccessToken().trim();
+  const response = await fetchApi(path, init);
+  if (response.status !== 401 || options.skipRefresh) {
+    return response;
+  }
+  const refreshed = await refreshAuthForRetry();
+  if (!refreshed) {
+    return response;
+  }
+  const explicitToken = options.token?.trim();
+  const retryToken =
+    explicitToken && explicitToken !== initialStoredAccessToken ? explicitToken : undefined;
+  return fetchApi(path, {
+    ...init,
+    headers: {
+      ...authHeaders(retryToken),
+      ...headersWithoutAuthorization(init.headers),
+    },
+  });
+}
+
 function authToken(token?: string) {
-  return token?.trim() || getStoredAccessToken().trim() || DEV_BEARER_TOKEN.trim();
+  return token?.trim() || getAuthBearerToken();
 }
 
 function authHeaders(token?: string): HeadersInit {
   const bearer = authToken(token);
+  return bearer ? { Authorization: `Bearer ${bearer}` } : {};
+}
+
+function adminAuthHeaders(): HeadersInit {
+  const bearer = getAdminBearerToken();
   return bearer ? { Authorization: `Bearer ${bearer}` } : {};
 }
 
@@ -141,6 +217,11 @@ export type AuthTokenResponse = {
   expires_in: number;
 };
 
+export type AuthConfigResponse = {
+  public_registration_enabled: boolean;
+  oauth_providers: string[];
+};
+
 export type OrganizationSummary = {
   id: string;
   name: string;
@@ -152,6 +233,7 @@ export type AuthMeResponse = {
   user_id: string;
   email: string;
   name: string;
+  avatar_data_url: string | null;
   organization_id: string;
   role: string;
   permissions: string[];
@@ -813,6 +895,45 @@ export type ModelSettings = {
   circuit_breaker: Record<string, unknown>;
 };
 
+export type StoredSecret = {
+  id: string;
+  organization_id: string;
+  owner_user_id: string | null;
+  scope: "user" | "org" | string;
+  provider: string;
+  purpose: string;
+  secret_ref: string | null;
+  status: string;
+  configured: boolean;
+  source: string;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+};
+
+export type StoredSecretPage = {
+  items: StoredSecret[];
+  next_cursor: string | null;
+};
+
+export type StoredSecretUpsertPayload = {
+  scope: "user" | "org";
+  provider: string;
+  purpose:
+    | "model_provider"
+    | "knowledge_connector"
+    | "mcp_runtime"
+    | "web_research"
+    | "notification_channel";
+  secret_ref?: string | null;
+  secret_value: string;
+};
+
+export type StoredSecretImportResponse = {
+  imported: StoredSecret[];
+  skipped: Array<Record<string, unknown>>;
+};
+
 export type ModelFallbackEvent = {
   event_id: string;
   task_id: string;
@@ -900,6 +1021,23 @@ export type ModelHealth = {
 
 export type ModelHealthPage = {
   items: ModelHealth[];
+};
+
+export type ModelOfficialStatus = {
+  provider: string;
+  label: string;
+  status: string;
+  indicator: string;
+  description: string;
+  page_url: string;
+  api_url: string;
+  checked_at: string;
+  updated_at: string | null;
+  error_message: string | null;
+};
+
+export type ModelOfficialStatusPage = {
+  items: ModelOfficialStatus[];
 };
 
 export type PolicySettings = {
@@ -1016,6 +1154,33 @@ export type ObservabilitySummary = {
   tool_call_total: number;
   sandbox_total: number;
   token_optimization: Record<string, unknown>;
+};
+
+export type RuntimeArchitecture = {
+  planner_executor: {
+    enabled: boolean;
+    planner: string;
+    executor: string;
+    react_engine: string;
+    planner_prompt_version: string;
+    plan_total: number;
+    sync_step_total: number;
+    async_step_total: number;
+    langgraph_step_total: number;
+    status: string;
+  };
+  event_sourcing: {
+    enabled: boolean;
+    event_total: number;
+    snapshot_total: number;
+    snapshot_frequency_events: number;
+    replay_enabled: boolean;
+    resume_enabled: boolean;
+    audit_log_enabled: boolean;
+    time_travel_debugging_enabled: boolean;
+    last_sequence: number;
+  };
+  notes: string[];
 };
 
 export type TokenSavingsSummary = {
@@ -2207,6 +2372,8 @@ export type CapabilityValidationResponse = {
   redacted_payload: Record<string, unknown>;
   validation_mode?: string;
   activation_allowed?: boolean;
+  errors?: string[];
+  warnings?: string[];
   issues?: Array<Record<string, unknown>>;
   risk_preview?: Record<string, unknown>;
 };
@@ -2339,6 +2506,7 @@ export type CapabilitySimpleInstallPayload = {
     | "skill_pack"
     | "tool_definition"
     | "mcp_server"
+    | "langgraph_workflow"
     | "prompt_template"
     | "knowledge_connector"
     | "context_optimizer";
@@ -2373,7 +2541,7 @@ export type CapabilityPackageAttachment = {
 
 export type CapabilityMarketplaceItem = {
   id: string;
-  kind: "mcp" | "skill";
+  kind: "mcp" | "skill" | "workflow";
   source: string;
   source_label: string;
   name: string;
@@ -2408,7 +2576,7 @@ export type CapabilityMarketplaceItem = {
 };
 
 export type CapabilityMarketplaceResponse = {
-  kind: "all" | "mcp" | "skill";
+  kind: "all" | "mcp" | "skill" | "workflow";
   query: string;
   items: CapabilityMarketplaceItem[];
   sources: Array<{
@@ -2517,11 +2685,59 @@ export type EvalRun = {
   agent_id: string | null;
   status: string;
   metrics_json: Record<string, unknown>;
+  capability_snapshot_json?: Record<string, unknown>;
   created_by: string | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
   results: EvalResult[];
+};
+
+export type EvalExperimentArmCreatePayload = {
+  name: string;
+  eval_run_id: string;
+  arm_type?: "baseline" | "candidate" | "control";
+  status?: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  capability_hashes_json?: Record<string, unknown>;
+  metadata_json?: Record<string, unknown>;
+  error_message?: string | null;
+};
+
+export type EvalExperimentCreatePayload = {
+  name: string;
+  description?: string;
+  metadata_json?: Record<string, unknown>;
+  arms: EvalExperimentArmCreatePayload[];
+};
+
+export type EvalExperimentArm = {
+  id: string;
+  experiment_id: string;
+  dataset_id: string;
+  eval_run_id: string;
+  organization_id: string | null;
+  name: string;
+  arm_type: string;
+  status: string;
+  capability_hashes_json: Record<string, unknown>;
+  metrics_json: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type EvalExperiment = {
+  id: string;
+  dataset_id: string;
+  organization_id: string | null;
+  name: string;
+  description: string;
+  status: string;
+  metadata_json: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  eval_run_ids: string[];
+  arms: EvalExperimentArm[];
 };
 
 async function request<T>(
@@ -2537,11 +2753,11 @@ async function request<T>(
       : globalThis.setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetchApi(path, {
+    response = await fetchWithAuthRetry(path, {
       ...requestInit,
       signal: signal ?? controller?.signal,
       headers: { "Content-Type": "application/json", ...authHeaders(), ...headers },
-    });
+    }, { skipRefresh });
   } catch (error) {
     if (controller?.signal.aborted) {
       throw new Error(`请求超时：API ${Math.round(timeoutMs / 1000)} 秒内未响应`);
@@ -2553,11 +2769,6 @@ async function request<T>(
     }
   }
   if (!response.ok) {
-    if (response.status === 401 && !skipRefresh && getStoredRefreshToken()) {
-      const refreshed = await refreshAuthToken(getStoredRefreshToken());
-      setAuthTokens(refreshed);
-      return request<T>(path, { ...init, skipRefresh: true });
-    }
     let detail = "";
     try {
       const payload = (await response.json()) as { detail?: string };
@@ -2576,15 +2787,15 @@ async function request<T>(
 async function requestMultipart<T>(
   path: string,
   body: FormData,
-  token = DEV_BEARER_TOKEN,
+  token?: string,
 ): Promise<T> {
   let response: Response;
   try {
-    response = await fetchApi(path, {
+    response = await fetchWithAuthRetry(path, {
       method: "POST",
       headers: authHeaders(token),
       body,
-    });
+    }, { token });
   } catch (error) {
     throw error instanceof Error ? error : apiConnectionError(error, apiRequestUrls(path));
   }
@@ -2665,6 +2876,16 @@ export async function getMe() {
   return request<AuthMeResponse>("/api/auth/me");
 }
 
+export async function uploadCurrentUserAvatar(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return requestMultipart<AuthMeResponse>("/api/auth/me/avatar", body);
+}
+
+export async function getAuthConfig() {
+  return request<AuthConfigResponse>("/api/auth/config", { skipRefresh: true });
+}
+
 export async function startOAuth(provider: "github" | "google") {
   return request<{ provider: string; authorization_url: string; state: string }>(
     `/api/auth/oauth/${provider}/start`,
@@ -2690,6 +2911,32 @@ export async function createApiKey(payload: {
 export async function revokeApiKey(keyId: string) {
   return request<void>(`/api/api-keys/${encodeURIComponent(keyId)}`, {
     method: "DELETE",
+  });
+}
+
+export async function listStoredSecrets() {
+  return request<StoredSecretPage>("/api/secrets");
+}
+
+export async function saveStoredSecret(payload: StoredSecretUpsertPayload) {
+  return request<StoredSecret>("/api/secrets", {
+    method: "PUT",
+    headers: payload.scope === "org" ? adminAuthHeaders() : undefined,
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteStoredSecret(secretId: string, scope?: string) {
+  return request<void>(`/api/secrets/${encodeURIComponent(secretId)}`, {
+    method: "DELETE",
+    headers: scope === "org" ? adminAuthHeaders() : undefined,
+  });
+}
+
+export async function importEnvSecrets() {
+  return request<StoredSecretImportResponse>("/api/secrets/import-env", {
+    method: "POST",
+    headers: adminAuthHeaders(),
   });
 }
 
@@ -2981,14 +3228,14 @@ export async function completeOnboarding(payload: { agent_id?: string | null; de
 export async function loadDemoData() {
   return request<DemoLoadResponse>("/api/demo/load", {
     method: "POST",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
   });
 }
 
 export async function resetDemoData(confirmToken = "reset-demo-data") {
   return request<DemoLoadResponse>("/api/demo/reset", {
     method: "POST",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
     body: JSON.stringify({ confirm_token: confirmToken }),
   });
 }
@@ -3003,13 +3250,13 @@ export async function createFrontendError(payload: FrontendErrorPayload) {
 export async function listFrontendErrors(limit = 100) {
   return request<{ items: FrontendErrorItem[]; next_cursor: string | null }>(
     `/api/frontend-errors?limit=${limit}`,
-    { headers: authHeaders(DEV_ADMIN_BEARER_TOKEN) },
+    { headers: adminAuthHeaders() },
   );
 }
 
 export async function summarizeFrontendErrors() {
   return request<{ items: FrontendErrorSummaryItem[] }>("/api/frontend-errors/summary", {
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
   });
 }
 
@@ -3083,7 +3330,7 @@ export async function streamTeamEvents(
   let response: Response;
   try {
     const path = `/api/teams/${teamId}/stream`;
-    response = await fetchApi(path, {
+    response = await fetchWithAuthRetry(path, {
       method: "GET",
       headers: authHeaders(),
       signal,
@@ -3123,7 +3370,7 @@ export async function streamWakeTeamAgent(
   const path = `/api/teams/${teamId}/agents/${slotId}/wake/stream`;
   let response: Response;
   try {
-    response = await fetchApi(path, {
+    response = await fetchWithAuthRetry(path, {
       method: "POST",
       headers: authHeaders(),
       signal,
@@ -3175,7 +3422,7 @@ export async function createAgentKnowledgeSource(
 ) {
   return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources`, {
     method: "POST",
-    headers: payload.scope === "org" ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+    headers: payload.scope === "org" ? adminAuthHeaders() : undefined,
     timeoutMs:
       payload.source_type === "connector" ? KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS : 0,
     body: JSON.stringify(payload),
@@ -3196,7 +3443,7 @@ export async function importAgentKnowledgeSourceFile(
   return requestMultipart<KnowledgeSource>(
     `/api/agents/${agentId}/knowledge/sources/import`,
     knowledgeFileFormData(file, payload),
-    payload.scope === "org" ? DEV_ADMIN_BEARER_TOKEN : DEV_BEARER_TOKEN,
+    payload.scope === "org" ? getAdminBearerToken() : undefined,
   );
 }
 
@@ -3208,7 +3455,7 @@ export async function updateAgentKnowledgeSource(
 ) {
   return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources/${sourceId}`, {
     method: "PATCH",
-    headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+    headers: options.admin ? adminAuthHeaders() : undefined,
     body: JSON.stringify(payload),
   });
 }
@@ -3223,7 +3470,7 @@ export async function disableAgentKnowledgeSource(
     `/api/agents/${agentId}/knowledge/sources/${sourceId}/disable`,
     {
       method: "POST",
-      headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+      headers: options.admin ? adminAuthHeaders() : undefined,
       body: JSON.stringify(payload),
     },
   );
@@ -3239,7 +3486,7 @@ export async function enableAgentKnowledgeSource(
     `/api/agents/${agentId}/knowledge/sources/${sourceId}/enable`,
     {
       method: "POST",
-      headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+      headers: options.admin ? adminAuthHeaders() : undefined,
       body: JSON.stringify(payload),
     },
   );
@@ -3255,7 +3502,7 @@ export async function archiveAgentKnowledgeSource(
     `/api/agents/${agentId}/knowledge/sources/${sourceId}/archive`,
     {
       method: "POST",
-      headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+      headers: options.admin ? adminAuthHeaders() : undefined,
       body: JSON.stringify(payload),
     },
   );
@@ -3268,7 +3515,7 @@ export async function deleteAgentKnowledgeSource(
 ) {
   return request<void>(`/api/agents/${agentId}/knowledge/sources/${sourceId}`, {
     method: "DELETE",
-    headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+    headers: options.admin ? adminAuthHeaders() : undefined,
   });
 }
 
@@ -3279,7 +3526,7 @@ export async function changeAgentKnowledgeSourceScope(
 ) {
   return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources/${sourceId}/scope`, {
     method: "POST",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
     body: JSON.stringify(payload),
   });
 }
@@ -3370,7 +3617,8 @@ export async function streamAgentPlanRun(
   onEvent: (event: AgentPlanStreamEvent) => void,
   signal?: AbortSignal,
 ) {
-  const response = await fetch(`${API_BASE_URL}/api/agents/${agentId}/runs/plan/stream`, {
+  const planStreamPath = `/api/agents/${agentId}/runs/plan/stream`;
+  const response = await fetchWithAuthRetry(planStreamPath, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ ...payload, mode: "plan" }),
@@ -3403,7 +3651,8 @@ export async function streamAgentChatRun(
   onEvent: (event: AgentChatStreamEvent) => void,
   signal?: AbortSignal,
 ) {
-  const response = await fetch(`${API_BASE_URL}/api/agents/${agentId}/runs/chat/stream`, {
+  const chatStreamPath = `/api/agents/${agentId}/runs/chat/stream`;
+  const response = await fetchWithAuthRetry(chatStreamPath, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
@@ -3822,7 +4071,7 @@ export async function listCapabilityPackages() {
 }
 
 export async function listCapabilityMarketplace(params?: {
-  kind?: "all" | "mcp" | "skill";
+  kind?: "all" | "mcp" | "skill" | "workflow";
   query?: string;
   limit?: number;
 }) {
@@ -4001,7 +4250,7 @@ export async function approveToolApproval(taskId: string, approvalId: string, re
     `/api/tasks/${taskId}/tool-approvals/${approvalId}/approve`,
     {
       method: "POST",
-      headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+      headers: adminAuthHeaders(),
       body: JSON.stringify({ reason }),
     },
   );
@@ -4012,7 +4261,7 @@ export async function rejectToolApproval(taskId: string, approvalId: string, rea
     `/api/tasks/${taskId}/tool-approvals/${approvalId}/reject`,
     {
       method: "POST",
-      headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+      headers: adminAuthHeaders(),
       body: JSON.stringify({ reason }),
     },
   );
@@ -4028,7 +4277,7 @@ export async function modifyToolApproval(
     `/api/tasks/${taskId}/tool-approvals/${approvalId}/modify`,
     {
       method: "POST",
-      headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+      headers: adminAuthHeaders(),
       body: JSON.stringify({ modified_input_json: modifiedInputJson, reason }),
     },
   );
@@ -4075,6 +4324,32 @@ export async function listEvalRuns() {
 
 export async function getEvalRun(evalRunId: string) {
   return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
+}
+
+export async function createEvalExperiment(datasetId: string, payload: EvalExperimentCreatePayload) {
+  return request<EvalExperiment>(`/api/evals/datasets/${datasetId}/experiments`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listEvalExperiments(params?: {
+  dataset_id?: string;
+  limit?: number;
+  cursor?: string;
+}) {
+  const searchParams = new URLSearchParams();
+  if (params?.dataset_id) searchParams.set("dataset_id", params.dataset_id);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  if (params?.cursor) searchParams.set("cursor", params.cursor);
+  const suffix = searchParams.toString();
+  return request<{ items: EvalExperiment[]; next_cursor: string | null }>(
+    `/api/evals/experiments${suffix ? `?${suffix}` : ""}`,
+  );
+}
+
+export async function getEvalExperiment(experimentId: string) {
+  return request<EvalExperiment>(`/api/evals/experiments/${experimentId}`);
 }
 
 export type RegressionDelta = {
@@ -4313,13 +4588,17 @@ export async function getModelSettings() {
 export async function updateModelSettings(payload: ModelSettings) {
   return request<ModelSettings>("/api/settings/models", {
     method: "PUT",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
     body: JSON.stringify(payload),
   });
 }
 
 export async function getModelHealth() {
   return request<ModelHealthPage>("/api/settings/models/health");
+}
+
+export async function getModelOfficialStatus() {
+  return request<ModelOfficialStatusPage>("/api/settings/models/official-status");
 }
 
 export async function getModelFallbackSummary(limit = 20) {
@@ -4429,6 +4708,10 @@ export async function listSandboxQuotaHistory(limit = 100) {
 
 export async function getObservabilitySummary() {
   return request<ObservabilitySummary>("/api/observability/summary");
+}
+
+export async function getRuntimeArchitecture() {
+  return request<RuntimeArchitecture>("/api/observability/architecture");
 }
 
 export async function getTokenSavings(limit = 50) {
@@ -4563,14 +4846,14 @@ export async function listAlertEvents(params?: { since?: string; limit?: number 
 export async function listNotificationChannels() {
   return request<{ items: NotificationChannel[]; next_cursor: string | null }>(
     "/api/observability/notification-channels",
-    { headers: authHeaders(DEV_ADMIN_BEARER_TOKEN) },
+    { headers: adminAuthHeaders() },
   );
 }
 
 export async function createNotificationChannel(payload: NotificationChannelPayload) {
   return request<NotificationChannel>("/api/observability/notification-channels", {
     method: "POST",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
     body: JSON.stringify(payload),
   });
 }
@@ -4581,7 +4864,7 @@ export async function updateNotificationChannel(
 ) {
   return request<NotificationChannel>(`/api/observability/notification-channels/${channelId}`, {
     method: "PATCH",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
     body: JSON.stringify(payload),
   });
 }
@@ -4589,7 +4872,7 @@ export async function updateNotificationChannel(
 export async function deleteNotificationChannel(channelId: string) {
   return request<void>(`/api/observability/notification-channels/${channelId}`, {
     method: "DELETE",
-    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    headers: adminAuthHeaders(),
   });
 }
 
