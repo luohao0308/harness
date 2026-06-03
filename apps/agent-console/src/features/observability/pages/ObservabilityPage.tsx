@@ -288,15 +288,15 @@ export function ObservabilityPage() {
             <Metric label={text("工具调用", "Tool Calls")} value={formatNumber(data?.tool_call_total)} />
             <Metric label={text("沙箱总数", "Sandboxes")} value={formatNumber(data?.sandbox_total)} />
             <Metric
-              label={<TermHint description="上下文剪枝估算节省的标记数">Token saved</TermHint>}
+              label={<TermHint description="上下文剪枝估算节省的标记数">已省标记</TermHint>}
               value={formatNumber(tokenOptimizationNumber(data?.token_optimization, "estimated_saved_tokens"))}
             />
             <Metric
-              label={<TermHint description="模型调用实际消耗标记数">Actual tokens</TermHint>}
+              label={<TermHint description="模型调用实际消耗标记数">实际标记</TermHint>}
               value={formatNumber(tokenOptimizationNumber(data?.token_optimization, "actual_total_tokens"))}
             />
             <Metric
-              label={<TermHint description="低成本模型路由次数">Low-cost routes</TermHint>}
+              label={<TermHint description="低成本模型路由次数">低成本路由</TermHint>}
               value={formatNumber(tokenOptimizationNumber(data?.token_optimization, "low_cost_route_count"))}
             />
           </div>
@@ -307,7 +307,7 @@ export function ObservabilityPage() {
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
               <Gauge className="h-4 w-4" />
-              <TermHint description="依据质量，衡量回答是否绑定到来源">Grounding Quality</TermHint>
+              <TermHint description="依据质量，衡量回答是否绑定到来源">依据质量</TermHint>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Input
@@ -353,23 +353,23 @@ export function ObservabilityPage() {
           </CardHeader>
           <div className="grid grid-cols-2 gap-3 border-b border-slate-100 p-3 text-xs md:grid-cols-3 xl:grid-cols-6">
             <Metric
-              label={<TermHint description="依据校验通过率">Grounding pass</TermHint>}
+              label={<TermHint description="依据校验通过率">依据校验通过率</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.grounding_pass_rate)}
             />
             <Metric
-              label={<TermHint description="引用覆盖率">Citation coverage</TermHint>}
+              label={<TermHint description="引用覆盖率">引用覆盖率</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.citation_coverage_rate)}
             />
             <Metric
-              label={<TermHint description="禁止证据泄漏率">Forbidden leak</TermHint>}
+              label={<TermHint description="禁止证据泄漏率">禁止证据泄漏率</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.forbidden_evidence_leak_rate)}
             />
             <Metric
-              label={<TermHint description="后备路径预期与实际不一致率">Fallback mismatch</TermHint>}
+              label={<TermHint description="后备路径预期与实际不一致率">后备不一致率</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.fallback_mismatch_rate)}
             />
             <Metric
-              label={<TermHint description="不支持标记出现率">Unsupported</TermHint>}
+              label={<TermHint description="不支持标记出现率">不支持标记率</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.unsupported_marker_rate)}
             />
             <Metric
@@ -749,7 +749,7 @@ export function ObservabilityPage() {
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
               <Logs className="h-4 w-4" />
               {text("日志与 ", "Logs & ")}
-              <TermHint description="跨服务追踪链路">Trace</TermHint>
+              <TermHint description="跨服务追踪链路">追踪</TermHint>
               {text("链路查询", "Deep Search")}
             </div>
             <span className="text-xs text-slate-500">
@@ -880,7 +880,7 @@ export function ObservabilityPage() {
                   <Th>{text("事件", "Event")}</Th>
                   <Th>{text("任务", "Task")}</Th>
                   <Th>
-                    <TermHint description="跨服务追踪标识">Trace</TermHint>
+                    <TermHint description="跨服务追踪标识">追踪</TermHint>
                   </Th>
                   <Th>{text("级别", "Level")}</Th>
                 </tr>
@@ -930,7 +930,7 @@ export function ObservabilityPage() {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <GitBranch className="h-4 w-4" />
-                <TermHint description="跨服务追踪链路">Trace</TermHint>
+                <TermHint description="跨服务追踪链路">追踪</TermHint>
                 {text("链路", "Chain")}
               </div>
               <span className="font-mono text-xs text-slate-500">
@@ -1180,18 +1180,18 @@ function GroundingQualityTable({
       <thead className="bg-slate-50 text-slate-500">
         <tr>
           <Th>
-            <TermHint description="评测运行">Eval</TermHint>
+            <TermHint description="评测运行">评测</TermHint>
           </Th>
           <Th>
-            <TermHint description="评测数据集">Dataset</TermHint>
+            <TermHint description="评测数据集">数据集</TermHint>
           </Th>
           <Th>{text("状态", "Status")}</Th>
           <Th>
-            <TermHint description="依据校验结果">Grounding</TermHint>
+            <TermHint description="依据校验结果">依据校验</TermHint>
           </Th>
           <Th>{text("失败原因", "Failures")}</Th>
           <Th>
-            <TermHint description="禁止证据泄漏检查">Forbidden</TermHint>
+            <TermHint description="禁止证据泄漏检查">禁止泄漏</TermHint>
           </Th>
           <Th>{text("证据索引", "Evidence Indexes")}</Th>
           <Th>{text("任务", "Task")}</Th>

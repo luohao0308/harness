@@ -27,6 +27,7 @@ export type SlashCommandName =
   | "pin"
   | "clear"
   | "model"
+  | "mcp"
   | "tool"
   | "search"
   | "help";
@@ -109,6 +110,14 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     zh: "打开模型选择器",
     en: "Open model picker",
     trigger: "/model",
+  },
+  {
+    name: "mcp",
+    aliases: ["plugins"],
+    needsArgs: false,
+    zh: "列出当前可用 MCP",
+    en: "List available MCP tools",
+    trigger: "/mcp",
   },
   {
     name: "tool",

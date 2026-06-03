@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CapabilityVersion, SandboxInstance, Task, ToolApproval, ToolCall, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.knowledge_dify import resolve_connector_secret_ref
 from app.sandbox.docker_manager import SandboxCommandTimeoutError
 from app.sandbox.policies import PolicyEngine, SandboxPolicyDecision
 from app.tools.capabilities import (
@@ -196,7 +197,13 @@ class ToolRunner:
         )
 
         try:
-            output = self._execute_allowed(metadata, input_json, sandbox)
+            output = self._execute_allowed(
+                metadata,
+                input_json,
+                sandbox,
+                capability_config=resolved.version.config_json if resolved is not None else {},
+                organization_id=task.organization_id if task is not None else None,
+            )
         except SandboxCommandTimeoutError as exc:
             tool_call.status = "TIMEOUT"
             tool_call.error_message = str(exc)
@@ -349,8 +356,16 @@ class ToolRunner:
             payload_json={"tool_call_id": tool_call.id, "tool_name": metadata.name},
         )
 
+        task = self.session.get(Task, tool_call.task_id)
+        capability_config = self._capability_config_for_existing_call(tool_call)
         try:
-            output = self._execute_allowed(metadata, input_json, sandbox)
+            output = self._execute_allowed(
+                metadata,
+                input_json,
+                sandbox,
+                capability_config=capability_config,
+                organization_id=task.organization_id if task is not None else None,
+            )
         except SandboxCommandTimeoutError as exc:
             tool_call.status = "TIMEOUT"
             tool_call.error_message = str(exc)
@@ -430,6 +445,13 @@ class ToolRunner:
                 if isinstance(raw, dict):
                     return ToolMetadata.model_validate(raw)
         return self._metadata(tool_call.tool_name)
+
+    def _capability_config_for_existing_call(self, tool_call: ToolCall) -> dict:
+        if tool_call.capability_version_id:
+            version = self.session.get(CapabilityVersion, tool_call.capability_version_id)
+            if version is not None and isinstance(version.config_json, dict):
+                return version.config_json
+        return {}
 
     def _check_policy(
         self,
@@ -610,10 +632,30 @@ class ToolRunner:
         metadata: ToolMetadata,
         input_json: dict,
         sandbox: SandboxInstance | None,
+        *,
+        capability_config: dict | None = None,
+        organization_id: str | None = None,
     ) -> dict:
         filesystem = WorkspaceFileTool(self.workspace_root)
         if metadata.source == "mcp":
-            result = self.mcp_adapter.execute(metadata=metadata, input_json=input_json)
+            config = capability_config if isinstance(capability_config, dict) else {}
+            secret_ref = str(config.get("secret_ref") or "").strip()
+            secret_value = (
+                resolve_connector_secret_ref(
+                    secret_ref,
+                    provider=metadata.name,
+                    session=self.session,
+                    organization_id=organization_id,
+                )
+                if secret_ref
+                else ""
+            )
+            result = self.mcp_adapter.execute(
+                metadata=metadata,
+                input_json=input_json,
+                config_json=config,
+                secret_value=secret_value,
+            )
             return {
                 "mcp_server": result.server,
                 "mcp_method": result.method,

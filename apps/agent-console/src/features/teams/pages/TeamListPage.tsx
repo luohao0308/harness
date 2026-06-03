@@ -8,6 +8,7 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import { listTeams } from "../../tasks/api";
 import { TeamRail, TeamRailMobileStrip } from "../components/TeamRail";
@@ -60,7 +61,7 @@ export function TeamListPage() {
                           <div className="truncate text-sm font-semibold text-slate-950">{team.name}</div>
                           <div className="mt-1 font-mono text-[11px] text-slate-400">{team.id.slice(0, 8)}</div>
                         </div>
-                        <Badge tone={team.status === "ACTIVE" ? "success" : "neutral"}>{team.status}</Badge>
+                        <Badge tone={team.status === "ACTIVE" ? "success" : "neutral"}>{statusLabel(team.status)}</Badge>
                       </div>
                       <div className="mt-4 grid grid-cols-3 gap-2">
                         <Metric icon={<Users className="h-3.5 w-3.5" />} label={text("成员", "Agents")} value={activeAgentCount} />
@@ -73,7 +74,7 @@ export function TeamListPage() {
                             key={agent.slot_id}
                             className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600"
                           >
-                            {agent.role === "leader" ? "Leader" : agent.agent_name}
+                            {agent.role === "leader" ? text("队长", "Leader") : agent.agent_name}
                           </span>
                         ))}
                       </div>
@@ -92,7 +93,7 @@ export function TeamListPage() {
                   <Network className="mx-auto h-7 w-7 text-slate-300" />
                   <div className="mt-3 text-sm font-semibold text-slate-900">{text("还没有团队", "No teams yet")}</div>
                   <p className="mt-1 text-xs text-slate-500">
-                    {text("创建一个团队后，就可以看到 Leader 和 Teammate 的多列协作界面。", "Create a team to open the multi-agent collaboration surface.")}
+                    {text("创建一个团队后，就可以看到队长和成员的多列协作界面。", "Create a team to open the multi-agent collaboration surface.")}
                   </p>
                 </div>
               </Card>

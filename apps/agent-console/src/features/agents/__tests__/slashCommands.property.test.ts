@@ -158,6 +158,11 @@ describe("filterCommandsByPrefix: case-insensitive + alias aware", () => {
     expect(filterCommandsByPrefix("compact").map((command) => command.name)).toContain("compress");
     expect(filterCommandsByPrefix("context").map((command) => command.name)).toContain("compress");
   });
+
+  it("prefix matches MCP listing command and alias", () => {
+    expect(filterCommandsByPrefix("mc").map((command) => command.name)).toContain("mcp");
+    expect(filterCommandsByPrefix("plugins").map((command) => command.name)).toContain("mcp");
+  });
 });
 
 describe("replaceSlashPrefix: retains trailing arguments", () => {

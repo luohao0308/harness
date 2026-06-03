@@ -1457,6 +1457,228 @@ def test_agent_workspace_pro_chat_mode_executes_list_files_tool_mention(
     assert db_session.execute(select(ExecutionPlan)).scalar_one_or_none() is None
 
 
+def _attach_brave_mcp_to_agent(
+    db_session: Session,
+    *,
+    agent_id: str,
+    pinned_ref: str,
+):
+    agent = _ensure_agent(db_session, agent_id=agent_id)
+    registry = CapabilityRegistry(db_session, "dev-org")
+    manifest = {
+        "name": "brave",
+        "version": "1.0.0",
+        "description": "Search the web through Brave Search.",
+        "package_type": "mcp_server",
+        "permissions": ["mcp:remote"],
+        "transport": "http",
+        "secret_refs": [],
+        "mcp_server": {
+            "registry": "smithery_mcp",
+            "qualified_name": "brave",
+            "homepage": "https://brave.com/search/api/",
+        },
+    }
+    package = registry.preflight_marketplace_package(
+        manifest=manifest,
+        source_uri="https://brave.com/search/api/",
+        pinned_ref=pinned_ref,
+        content={"marketplace": {"source": "smithery_mcp"}},
+        created_by="test",
+    )
+    approved = registry.approve_package(package_id=package.id, approved_by="test")
+    registry.attach_package_capability(
+        package_id=approved.id,
+        agent_id=agent.id,
+        attached_by="test",
+        enabled=True,
+        priority=10,
+    )
+    db_session.commit()
+    return approved
+
+
+def test_agent_workspace_chat_executes_xml_function_call_for_installed_mcp(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved = _attach_brave_mcp_to_agent(
+        db_session,
+        agent_id="brave-chat-agent",
+        pinned_ref="marketplace-sha256:brave-chat-xml",
+    )
+
+    class XmlToolCallGateway:
+        def complete(self, request_payload):
+            last_user = next(
+                (
+                    message.content
+                    for message in reversed(request_payload.messages)
+                    if message.role == "user"
+                ),
+                "",
+            )
+            if "工具已经执行完成" in last_user:
+                return ModelResponse(
+                    content=(
+                        "我刚才尝试通过 Brave 搜索来查询“MCP教程”，搜索请求已经成功发出，"
+                        "但我无法直接查看返回的具体搜索结果内容。"
+                    ),
+                    model_provider=request_payload.model_provider,
+                    model_name=request_payload.model_name,
+                    usage={"prompt_tokens": 24, "completion_tokens": 12},
+                    raw_response={"mode": "tool-answer"},
+                )
+            return ModelResponse(
+                content=(
+                    "让我为您在网络上搜索 MCP 教程的相关内容。\n"
+                    "<function_calls>\n"
+                    '<invoke name="brave_web_search">\n'
+                    '<parameter name="query">MCP教程</parameter>\n'
+                    "</invoke>\n"
+                    "</function_calls>"
+                ),
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={"prompt_tokens": 12, "completion_tokens": 18},
+                raw_response={"mode": "xml-tool-call"},
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: XmlToolCallGateway(),
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/brave-chat-agent/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "MCP教程",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-chat-brave-xml",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "<function_calls>" not in response.text
+    assert "brave_web_search" not in response.text
+    events = parse_sse_events(response.text)
+    run_created = next(payload for event, payload in events if event == "run_created")
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    result = next(payload for event, payload in events if event == "tool_call_result")
+    delta = [payload for event, payload in events if event == "delta"][-1]
+    done = next(payload for event, payload in events if event == "done")
+    tool_call = db_session.execute(
+        select(ToolCall).where(ToolCall.task_id == run_created["run_id"])
+    ).scalar_one()
+
+    assert requested["tool_name"] == "brave"
+    assert requested["status"] == "running"
+    assert requested["input_json"]["query"] == "MCP教程"
+    assert result["tool_name"] == "brave"
+    assert result["status"] == "success"
+    assert result["output_json"]["mcp_server"] == "brave"
+    assert result["output_json"]["mcp_method"] == "search"
+    assert len(result["output_json"]["result"]["items"]) == 5
+    assert "已拿到 MCP 工具返回结果" in delta["content"]
+    assert "`brave` 返回了 5 条结果" in delta["content"]
+    assert "brave MCP result 1" in delta["content"]
+    assert "MCP教程" in delta["content"]
+    assert "无法直接查看" not in delta["content"]
+    assert done["status"] == "COMPLETED"
+    assert tool_call.tool_name == "brave"
+    assert tool_call.status == "SUCCESS"
+    assert tool_call.capability_version_id == approved.capability_version_id
+
+
+def test_agent_workspace_chat_infers_installed_mcp_from_pending_search_text(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved = _attach_brave_mcp_to_agent(
+        db_session,
+        agent_id="brave-chat-implicit-agent",
+        pinned_ref="marketplace-sha256:brave-chat-implicit",
+    )
+
+    class PendingSearchGateway:
+        def complete(self, request_payload):
+            last_user = next(
+                (
+                    message.content
+                    for message in reversed(request_payload.messages)
+                    if message.role == "user"
+                ),
+                "",
+            )
+            if "工具已经执行完成" in last_user:
+                return ModelResponse(
+                    content="已经搜索完成，下面给出结果摘要。",
+                    model_provider=request_payload.model_provider,
+                    model_name=request_payload.model_name,
+                    usage={"prompt_tokens": 20, "completion_tokens": 10},
+                    raw_response={"mode": "tool-answer"},
+                )
+            return ModelResponse(
+                content="正在搜索“MCP教程”，请稍等。",
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={"prompt_tokens": 10, "completion_tokens": 8},
+                raw_response={"mode": "implicit-search"},
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda provider, *, timeout_seconds=30: PendingSearchGateway(),
+    )
+
+    response = TestClient(app).post(
+        "/api/agents/brave-chat-implicit-agent/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "goal": "MCP教程",
+            "messages": [],
+            "active_leaf_id": "root",
+            "active_branch_id": "branch-chat-brave-implicit",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    event_names = [event for event, _payload in events]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    requested = next(payload for event, payload in events if event == "tool_call_requested")
+    result = next(payload for event, payload in events if event == "tool_call_result")
+    delta = [payload for event, payload in events if event == "delta"][-1]
+    done = next(payload for event, payload in events if event == "done")
+    tool_call = db_session.execute(
+        select(ToolCall).where(ToolCall.task_id == run_created["run_id"])
+    ).scalar_one()
+
+    assert event_names.index("tool_call_requested") < event_names.index("tool_call_result")
+    assert event_names.index("tool_call_result") < event_names.index("delta")
+    assert event_names.index("delta") < event_names.index("done")
+    assert requested["tool_name"] == "brave"
+    assert requested["source"] == "model_implicit_search"
+    assert requested["input_json"]["query"] == "MCP教程"
+    assert result["tool_name"] == "brave"
+    assert result["status"] == "success"
+    assert "正在搜索" not in delta["content"]
+    assert "已拿到 MCP 工具返回结果" in delta["content"]
+    assert "brave MCP result 1" in delta["content"]
+    assert done["status"] == "COMPLETED"
+    assert tool_call.tool_name == "brave"
+    assert tool_call.status == "SUCCESS"
+    assert tool_call.capability_version_id == approved.capability_version_id
+
+
 def test_agent_workspace_pro_chat_mode_keeps_side_effect_tool_pending_approval(
     db_session: Session,
 ) -> None:

@@ -159,7 +159,7 @@ export function ExecutionPlanPanel({
               {plan.quality_score}
             </Badge>
             <span>
-              <TermHint description="提示词">Prompt</TermHint> 版本 {plan.planner_prompt_version}
+              <TermHint description="提示词">提示词</TermHint> 版本 {plan.planner_prompt_version}
             </span>
             {Object.entries(plan.quality_gates).map(([gate, passed]) => (
               <Badge key={gate} tone={passed ? "success" : "warning"}>

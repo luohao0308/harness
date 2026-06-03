@@ -18,8 +18,8 @@ function jsonResponse(payload: unknown, status = 200) {
 function agent() {
   return {
     id: "default",
-    name: "Default Agent",
-    description: "Default entry agent",
+    name: "默认智能体",
+    description: "默认入口智能体",
     role: "planner",
     status: "ACTIVE",
     model_provider: "default",
@@ -105,8 +105,8 @@ describe("AgentListPage Studio controls", () => {
       if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
       if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
       if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
-      if (path === "/api/agents" && init?.method === "POST") return jsonResponse({ ...agent(), id: "research-agent", name: "Research Agent" });
-      if (path === "/api/agents/default/clone" && init?.method === "POST") return jsonResponse({ ...agent(), id: "default-clone", name: "Default Clone" });
+      if (path === "/api/agents" && init?.method === "POST") return jsonResponse({ ...agent(), id: "research-agent", name: "研究智能体" });
+      if (path === "/api/agents/default/clone" && init?.method === "POST") return jsonResponse({ ...agent(), id: "default-clone", name: "默认智能体克隆副本" });
       if (path === "/api/agents/default/capabilities/attachments" && init?.method === "POST") return jsonResponse({ status: "attached" });
       if (path === "/api/agents/default/token-optimizer" && init?.method === "POST") {
         return jsonResponse({
@@ -124,23 +124,29 @@ describe("AgentListPage Studio controls", () => {
 
     renderPage(fetchMock);
 
-    expect(await screen.findByText("Default Agent")).toBeInTheDocument();
+    expect((await screen.findAllByText("默认智能体")).length).toBeGreaterThan(0);
     expect(screen.getByText("能力附件与就绪检查")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /均衡/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /关闭/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /保守省 Token/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /强力省 Token/ })).toBeInTheDocument();
     expect(screen.queryByLabelText("能力名称")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /创建 Agent|Create Agent/ }));
+    await user.click(screen.getByRole("button", { name: /创建智能体|Create Agent/ }));
+    expect(await screen.findByText("智能体创建成功")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /克隆当前智能体|Clone selected Agent/ }));
+    expect(await screen.findByText("智能体克隆成功")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /配置能力附件|Configure attachment/ }));
     const capabilityDialog = await screen.findByRole("dialog", { name: "配置能力附件" });
     expect(within(capabilityDialog).getByLabelText("能力名称")).toBeInTheDocument();
-    await user.click(within(capabilityDialog).getByRole("button", { name: /附加到当前 Agent|Attach to selected Agent/ }));
+    await user.click(within(capabilityDialog).getByRole("button", { name: /附加到当前智能体|Attach to selected Agent/ }));
+    expect(await screen.findByText("能力附件已保存")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /强力省 Token/ }));
+    expect(await screen.findByText("Token 方案已切换")).toBeInTheDocument();
 
     await waitFor(() => {
       const paths = fetchMock.mock.calls.map(([input]) => String(input));
       expect(paths).toContain("/api/agents");
+      expect(paths).toContain("/api/agents/default/clone");
       expect(paths).toContain("/api/agents/default/capabilities/attachments");
       expect(paths).toContain("/api/agents/default/token-optimizer");
     });
@@ -177,7 +183,7 @@ describe("AgentListPage Studio controls", () => {
 
     renderPage(fetchMock);
 
-    expect(await screen.findByText("Default Agent")).toBeInTheDocument();
+    expect((await screen.findAllByText("默认智能体")).length).toBeGreaterThan(0);
     expect(await screen.findByText(/没有已索引知识源|No indexed knowledge source/)).toBeInTheDocument();
     expect(screen.getByText(/待配置|Needs setup/)).toBeInTheDocument();
   });

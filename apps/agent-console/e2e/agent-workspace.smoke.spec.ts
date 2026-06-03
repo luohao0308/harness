@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from "@playwright/t
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
-  /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
+  /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/agents\/default\/runs\/chat\/stream/;
 
 const now = "2026-05-13T00:00:00.000Z";
 
@@ -81,6 +81,42 @@ const toolRegistry = {
   sources: ["builtin", "mcp"],
 };
 
+const createdTeam = {
+  id: "team-created",
+  organization_id: "dev-org",
+  name: "Default Agent 团队",
+  status: "ACTIVE",
+  workspace: "/tmp/harness-team-created",
+  workspace_mode: "shared",
+  leader_slot_id: "leader",
+  created_by: "dev-user",
+  agents: [
+    {
+      id: "created-leader-agent",
+      team_id: "team-created",
+      slot_id: "leader",
+      agent_id: "default",
+      role: "leader",
+      agent_name: "Default Agent",
+      status: "idle",
+      model_provider: "deepseek-flash",
+      model_name: "deepseek-v4-flash",
+      conversation_id: "created-leader-session",
+      session_id: "created-leader-session",
+      session_messages: [],
+      metadata_json: {},
+      created_at: now,
+      updated_at: now,
+    },
+  ],
+  messages: [],
+  tasks: [],
+  unread_counts: {},
+  team_tools: ["team_send_message", "team_task_create"],
+  created_at: now,
+  updated_at: now,
+};
+
 test.describe("Agent Workspace browser smoke", () => {
   test.beforeEach(async ({ page }) => {
     await routeWorkspaceApis(page);
@@ -111,6 +147,7 @@ test.describe("Agent Workspace browser smoke", () => {
     await page.getByRole("button", { name: /工具\/MCP（模型上下文协议）: 2 个可用/ }).click();
     const toolsDialog = page.getByRole("dialog", { name: "工具" });
     await expect(toolsDialog).toBeVisible();
+    await expect(toolsDialog.getByText("工具快捷插入")).toBeVisible();
     await expect(toolsDialog.getByRole("button", { name: /@read_file/ })).toBeVisible();
     await expect(toolsDialog.getByText("插件 / MCP")).toHaveCount(0);
     await expect(toolsDialog.getByText("github.search")).toHaveCount(0);
@@ -120,13 +157,13 @@ test.describe("Agent Workspace browser smoke", () => {
     await openComposerSettings(page);
     const settingsDialog = page.getByRole("dialog", { name: "输入设置" });
     await expect(settingsDialog).toBeVisible();
-    await expect(settingsDialog.getByText("输入设置")).toHaveCount(0);
+    await expect(settingsDialog.getByText("输入设置")).toBeVisible();
     await expect(
       settingsDialog.getByRole("button", { name: "添加照片和文件" }),
     ).toBeVisible();
     await expect(settingsDialog.getByRole("switch", { name: "计划模式" })).toBeVisible();
     await expect(settingsDialog.getByRole("button", { name: "插件 / MCP" })).toBeVisible();
-    await expect(settingsDialog.getByRole("button", { name: /close/i })).toHaveCount(0);
+    await expect(settingsDialog.getByRole("button", { name: "关闭输入设置" })).toBeVisible();
     await page.mouse.click(20, 20);
     await expect(settingsDialog).toBeHidden();
 
@@ -134,6 +171,21 @@ test.describe("Agent Workspace browser smoke", () => {
     await page.getByRole("button", { name: "插件 / MCP" }).click();
     await expect(page.getByText("github.search")).toBeVisible();
     await page.getByRole("button", { name: /@github_search/ }).click();
+    await expect(composer(page)).toHaveValue("@github_search ");
+
+    await composer(page).fill("/mc");
+    const commandMenu = page.getByRole("listbox", { name: "命令菜单" });
+    await expect(commandMenu).toBeVisible();
+    await expect(commandMenu.getByText("/mcp")).toBeVisible();
+    await expect(commandMenu.getByText("列出当前可用 MCP")).toBeVisible();
+    await composer(page).fill("/mcp ");
+    await composer(page).press("Enter");
+    const mcpDialog = page.getByRole("dialog", { name: "可用 MCP" });
+    await expect(mcpDialog).toBeVisible();
+    await expect(mcpDialog.getByText("插件 / MCP")).toBeVisible();
+    await expect(mcpDialog.getByText("github.search")).toBeVisible();
+    await expect(page.getByRole("status").getByText("MCP 列表已打开")).toBeVisible();
+    await mcpDialog.getByRole("button", { name: /@github_search/ }).click();
     await expect(composer(page)).toHaveValue("@github_search ");
 
     await composer(page).fill("/model ");
@@ -194,12 +246,39 @@ test.describe("Agent Workspace browser smoke", () => {
     await composer(page).fill("mobile smoke");
     await expect(composer(page)).toHaveValue("mobile smoke");
   });
+
+  test("workspace overlays and create-team action show visible feedback", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openWorkspace(page);
+
+    await page.getByRole("button", { name: "新建对话" }).click();
+    await expect(page.getByRole("status").getByText("已新建会话")).toBeVisible();
+
+    await page.locator("body").click();
+    await page.keyboard.press("Control+K");
+    const searchDialog = page.getByRole("dialog", { name: "搜索会话" });
+    await expect(searchDialog).toBeVisible();
+    await searchDialog.getByRole("button", { name: "关闭搜索" }).click();
+    await expect(searchDialog).toBeHidden();
+
+    await page.keyboard.press("?");
+    const shortcutDialog = page.getByRole("dialog", { name: "键盘快捷键" });
+    await expect(shortcutDialog).toBeVisible();
+    await shortcutDialog.getByRole("button", { name: "关闭快捷键帮助" }).click();
+    await expect(shortcutDialog).toBeHidden();
+
+    await page.getByRole("button", { name: "新开团队模式" }).click();
+    await expect(page.getByRole("status").getByText("团队已创建")).toBeVisible();
+    await expect(page).toHaveURL(/\/teams\/team-created$/);
+  });
 });
 
 async function routeWorkspaceApis(page: Page): Promise<void> {
+  const teams = [createdTeam];
   await page.route(API_RE, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    const method = route.request().method();
 
     if (CHAT_STREAM_RE.test(route.request().url())) {
       await route.abort("failed");
@@ -211,13 +290,55 @@ async function routeWorkspaceApis(page: Page): Promise<void> {
       return;
     }
 
+    if (path === "/api/agents" && method === "GET") {
+      await fulfillJson(route, { items: [agent], next_cursor: null });
+      return;
+    }
+
     if (path === "/api/settings/models") {
       await fulfillJson(route, modelSettings);
       return;
     }
 
     if (path === "/api/tools/registry") {
+      if (url.searchParams.get("agent_id") !== "default") {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "missing expected agent_id=default" }),
+        });
+        return;
+      }
       await fulfillJson(route, toolRegistry);
+      return;
+    }
+
+    if (path === "/api/teams" && method === "GET") {
+      await fulfillJson(route, { items: teams, next_cursor: null });
+      return;
+    }
+
+    if (path === "/api/teams" && method === "POST") {
+      await fulfillJson(route, createdTeam, 201);
+      return;
+    }
+
+    if (path === "/api/teams/team-created" && method === "GET") {
+      await fulfillJson(route, createdTeam);
+      return;
+    }
+
+    if (path === "/api/teams/team-created/stream" && method === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream; charset=utf-8",
+        body: "",
+      });
+      return;
+    }
+
+    if (path === "/api/teams/team-created/events" && method === "GET") {
+      await fulfillJson(route, []);
       return;
     }
 

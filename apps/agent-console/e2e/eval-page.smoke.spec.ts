@@ -114,6 +114,27 @@ const regressionFixture = {
   grounding_sample_count: 2,
 };
 
+const createdDatasetFixture = {
+  id: "ds-003",
+  name: "新手回归集",
+  description: "浏览器 smoke 新建的数据集",
+  case_count: 0,
+  baseline_run_id: null,
+  created_at: "2026-05-13T12:30:00.000Z",
+};
+
+const agentsFixture = {
+  items: [
+    {
+      id: "default",
+      name: "默认智能体",
+      status: "ACTIVE",
+      capability_attachments: [],
+    },
+  ],
+  next_cursor: null,
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -145,11 +166,13 @@ test.describe("Eval Harness page mocked smoke tests", () => {
 
     // Wait for cases to load
     await expect(page.getByText("用例队列")).toBeVisible();
+    await expect(page.getByRole("button", { name: "选择评测智能体：默认智能体" })).toBeVisible();
 
     // Source run links visible (truncated IDs — source_task_id.slice(0, 8))
     await expect(page.getByText("run-sour").first()).toBeVisible();
     await expect(page.getByText("手动录入").first()).toBeVisible();
     await expect(page.getByText("自定义").first()).toBeVisible();
+    await expect(page.getByText("已完成").first()).toBeVisible();
   });
 
   test("Eval Run results display with regression delta", async ({ page }) => {
@@ -157,7 +180,7 @@ test.describe("Eval Harness page mocked smoke tests", () => {
 
     // Latest eval run section
     await expect(page.getByText("最近评测运行").first()).toBeVisible();
-    await expect(page.getByText("COMPLETED").first()).toBeVisible();
+    await expect(page.getByText("已完成").first()).toBeVisible();
 
     // Regression delta section — Chinese: "回归对比"
     await expect(page.getByText("回归对比")).toBeVisible();
@@ -173,6 +196,27 @@ test.describe("Eval Harness page mocked smoke tests", () => {
     await expect(page.getByText("新增失败")).toBeVisible();
     await expect(page.getByText("手动录入").first()).toBeVisible();
     await expect(page.getByText("未知评分器")).toBeVisible();
+    await expect(page.getByText("通过").first()).toBeVisible();
+    await expect(page.getByText("失败").first()).toBeVisible();
+  });
+
+  test("dataset, case, run, and baseline actions all show visible feedback", async ({
+    page,
+  }) => {
+    await page.goto("/evals");
+
+    await page.getByRole("button", { name: "创建数据集" }).click();
+    await expect(page.getByRole("status").getByText("数据集已创建")).toBeVisible();
+
+    await page.getByPlaceholder("运行 ID").fill("run-manual-001");
+    await page.getByRole("button", { name: "保存为评测用例" }).click();
+    await expect(page.getByRole("status").getByText("评测用例已保存")).toBeVisible();
+
+    await page.getByRole("button", { name: "运行评测" }).click();
+    await expect(page.getByRole("status").getByText("评测运行已启动")).toBeVisible();
+
+    await page.getByRole("button", { name: "设为基线" }).click();
+    await expect(page.getByRole("status").getByText("基线已更新")).toBeVisible();
   });
 });
 
@@ -186,9 +230,19 @@ async function routeEvalApis(page: Page): Promise<void> {
     const path = url.pathname;
     const method = route.request().method();
 
+    if (path === "/api/agents" && method === "GET") {
+      await fulfillJson(route, agentsFixture);
+      return;
+    }
+
     // Dataset list
     if (path === "/api/evals/datasets" && method === "GET") {
       await fulfillJson(route, datasetsFixture);
+      return;
+    }
+
+    if (path === "/api/evals/datasets" && method === "POST") {
+      await fulfillJson(route, createdDatasetFixture);
       return;
     }
 
@@ -198,6 +252,22 @@ async function routeEvalApis(page: Page): Promise<void> {
       method === "GET"
     ) {
       await fulfillJson(route, casesFixture);
+      return;
+    }
+
+    if (
+      path.match(/^\/api\/evals\/datasets\/[^/]+\/cases\/from-run\/[^/]+$/) &&
+      method === "POST"
+    ) {
+      await fulfillJson(route, {
+        id: "case-003",
+        dataset_id: "ds-003",
+        source_task_id: "run-manual-001",
+        input_json: { goal: "Manual smoke" },
+        expected_json: { status: "COMPLETED" },
+        tags_json: ["regression", "saved-run"],
+        created_at: "2026-05-13T12:31:00.000Z",
+      });
       return;
     }
 
@@ -222,6 +292,17 @@ async function routeEvalApis(page: Page): Promise<void> {
       method === "POST"
     ) {
       await fulfillJson(route, evalRunsFixture.items[0]);
+      return;
+    }
+
+    if (
+      path.match(/^\/api\/evals\/datasets\/[^/]+\/baseline$/) &&
+      method === "PATCH"
+    ) {
+      await fulfillJson(route, {
+        ...createdDatasetFixture,
+        baseline_run_id: "eval-run-001",
+      });
       return;
     }
 

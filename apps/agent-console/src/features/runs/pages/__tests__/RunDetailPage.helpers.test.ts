@@ -4,6 +4,7 @@ import type { AgentRunWorkspace, ToolApproval, ToolCall } from "../../../tasks/a
 import {
   mergeApprovalPage,
   optimisticApprovalDecision,
+  runDetailValueLabel,
   shortCapability,
   toolOutputSummary,
 } from "../RunDetailPage";
@@ -56,6 +57,9 @@ describe("RunDetailPage helpers", () => {
     expect(shortCapability("abcdef1234567890fedcba")).toBe("abcdef1234567890fe");
     expect(toolOutputSummary({ status: "APPROVED" } as ToolCall)).toBe("已批准，等待执行");
     expect(toolOutputSummary({ status: "PENDING_APPROVAL" } as ToolCall)).toBe("等待审批");
+    expect(runDetailValueLabel("local_knowledge")).toBe("本地知识库");
+    expect(runDetailValueLabel("seed_fixture_local_evidence")).toBe("演示夹具本地证据");
+    expect(runDetailValueLabel("recomputable_v2")).toBe("可复算 v2");
   });
 
   it("optimistically updates approval and tool call state", () => {

@@ -15,6 +15,7 @@ import { TeamListPage } from "../features/teams/pages/TeamListPage";
 import { TeamPage } from "../features/teams/pages/TeamPage";
 import { RunDetailPage } from "../features/runs/pages/RunDetailPage";
 import { RunHistoryPage } from "../features/runs/pages/RunHistoryPage";
+import { ToolConfigurationPage } from "../features/tools/pages/ToolConfigurationPage";
 import { ToolRegistryPage } from "../features/tools/pages/ToolRegistryPage";
 
 export const router = createBrowserRouter([
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
       { path: "observability", element: <ObservabilityPage /> },
       { path: "token-savings", element: <TokenSavingsPage /> },
       { path: "tools", element: <ToolRegistryPage /> },
+      { path: "tools/config", element: <ToolConfigurationPage /> },
       { path: "knowledge", element: <KnowledgePage /> },
       { path: "evals", element: <EvalHarnessPage /> },
       { path: "settings/models", element: <ModelSettingsPage /> },

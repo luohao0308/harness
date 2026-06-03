@@ -3,9 +3,10 @@ import { Play } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
-import { Input } from "../../../components/ui/input";
+import { MenuSelect, type MenuSelectOption } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import type { EvalCase } from "../../tasks/api";
 
@@ -14,6 +15,7 @@ interface EvalCaseListProps {
   isLoading: boolean;
   agentId: string;
   onAgentIdChange: (value: string) => void;
+  agentOptions: MenuSelectOption[];
   canRunEval: boolean;
   onRunEval: () => void;
 }
@@ -23,6 +25,7 @@ export function EvalCaseList({
   isLoading,
   agentId,
   onAgentIdChange,
+  agentOptions,
   canRunEval,
   onRunEval,
 }: EvalCaseListProps) {
@@ -43,10 +46,14 @@ export function EvalCaseList({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Input
+          <MenuSelect
+            ariaLabel={text("选择评测智能体", "Select eval agent")}
             value={agentId}
-            onChange={(event) => onAgentIdChange(event.target.value)}
-            className="h-8 w-28"
+            onChange={onAgentIdChange}
+            options={agentOptions}
+            placeholder={text("选择智能体", "Select agent")}
+            size="compact"
+            className="w-44"
           />
           <Button
             variant="primary"
@@ -86,7 +93,7 @@ export function EvalCaseList({
                 )}
               </Td>
               <Td className="font-mono text-slate-600">
-                <Badge>{String(item.expected_json.status ?? "自定义")}</Badge>
+                <Badge>{statusLabel(String(item.expected_json.status ?? "自定义"))}</Badge>
               </Td>
               <Td>{item.tags_json.join(", ")}</Td>
               <Td className="font-mono text-slate-500">{formatShortDate(item.created_at)}</Td>

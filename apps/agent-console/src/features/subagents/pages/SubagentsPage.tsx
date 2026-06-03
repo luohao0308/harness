@@ -7,6 +7,7 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
@@ -70,8 +71,21 @@ export function SubagentsPage() {
   const bulkCancel = useMutation({
     mutationFn: () => bulkCancelSubagents(selectedIds),
     onSuccess: () => {
+      const cancelledCount = selectedIds.length;
       setSelectedIds([]);
+      notifyFeedback({
+        tone: "success",
+        title: text("批量取消已提交", "Bulk cancel submitted"),
+        description: text(`已提交 ${cancelledCount} 个子代理的取消请求。`, `${cancelledCount} subagent cancel request(s) submitted.`),
+      });
       void queryClient.invalidateQueries({ queryKey: ["subagents"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("批量取消失败", "Bulk cancel failed"),
+        description: feedbackErrorMessage(error, text("请检查子代理状态或稍后重试。", "Check the subagent state and retry.")),
+      });
     },
   });
   const toggleSelected = (id: string) => {
@@ -221,7 +235,7 @@ export function SubagentsPage() {
                   </Td>
                   <Td>
                     <Link
-                      to={`/runs//subagents`}
+                      to={`/runs/${subagent.task_id}/subagents`}
                       className="text-xs text-slate-900 hover:text-slate-950"
                     >
                       {subagent.task_title}

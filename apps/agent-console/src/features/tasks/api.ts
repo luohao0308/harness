@@ -1613,6 +1613,46 @@ export type CapabilityTestInvocationPayload = {
   input_json: Record<string, unknown>;
 };
 
+export type CapabilityRuntimeConfigUpdatePayload = {
+  agent_id: string;
+  tool_name: string;
+  transport: "stdio" | "http" | "sse";
+  endpoint_url?: string | null;
+  command?: string | null;
+  args?: string[];
+  secret_ref?: string | null;
+  secret_value?: string | null;
+  timeout_seconds?: number | null;
+};
+
+export type CapabilityRuntimeConfig = {
+  agent_id: string;
+  tool_name: string;
+  tool_description: string;
+  source: string;
+  capability_id: string;
+  capability_version_id: string;
+  capability_config_sha256: string;
+  attachment_id: string;
+  attachment_enabled: boolean;
+  configured: boolean;
+  missing_fields: string[];
+  transport: "stdio" | "http" | "sse" | string;
+  endpoint_url: string | null;
+  command: string | null;
+  args: string[];
+  secret_ref: string | null;
+  secret_configured: boolean;
+  timeout_seconds: number;
+  config_json: Record<string, unknown>;
+  registry_visible: boolean;
+  test_input_json: Record<string, unknown>;
+};
+
+export type CapabilityRuntimeConfigPage = {
+  items: CapabilityRuntimeConfig[];
+};
+
 export type CapabilityPackage = {
   id: string;
   organization_id: string | null;
@@ -1642,6 +1682,11 @@ export type CapabilityPackagePage = {
 export type CapabilityPackageStagePayload = {
   manifest: Record<string, unknown>;
   content?: Record<string, unknown>;
+};
+
+export type CapabilityMarketplacePreflightPayload = CapabilitySimpleInstallPayload & {
+  marketplace_source?: string;
+  marketplace_item_id?: string;
 };
 
 export type CapabilityPublicPackageStagePayload = CapabilityPackageStagePayload & {
@@ -1694,6 +1739,56 @@ export type CapabilityPackageAttachment = {
   capability_version_id: string;
   enabled: boolean;
   priority: number;
+};
+
+export type CapabilityMarketplaceItem = {
+  id: string;
+  kind: "mcp" | "skill";
+  source: string;
+  source_label: string;
+  name: string;
+  display_name: string;
+  description: string;
+  categories: string[];
+  verified: boolean;
+  stars: number | null;
+  use_count: number | null;
+  quality_score: number | null;
+  latest_version: string | null;
+  updated_at: string | null;
+  homepage_url: string;
+  repository_url: string;
+  remote_url: string;
+  package_type: CapabilitySimpleInstallPayload["package_type"];
+  install_mode:
+    | "attach_existing"
+    | "trusted_install"
+    | "public_preflight"
+    | "marketplace_preflight"
+    | "upload_install";
+  install_label: string;
+  install_payload: CapabilityMarketplacePreflightPayload & {
+    capability_id?: string;
+    enabled?: boolean;
+    priority?: number;
+  };
+  badges: string[];
+  risk_notes: string[];
+  metadata: Record<string, unknown>;
+};
+
+export type CapabilityMarketplaceResponse = {
+  kind: "all" | "mcp" | "skill";
+  query: string;
+  items: CapabilityMarketplaceItem[];
+  sources: Array<{
+    id: string;
+    label: string;
+    status: string;
+    item_count: number;
+    url: string;
+  }>;
+  errors: Array<{ source: string; message: string }>;
 };
 
 export type AgentUpsertPayload = {
@@ -2652,8 +2747,14 @@ export async function executeTaskTool(taskId: string, payload: ToolExecutePayloa
   });
 }
 
-export async function getToolRegistry() {
-  return request<ToolRegistry>("/api/tools/registry");
+export async function getToolRegistry(
+  agentId?: string | { queryKey?: readonly unknown[] },
+) {
+  const normalizedAgentId = typeof agentId === "string" ? agentId.trim() : "";
+  const searchParams = new URLSearchParams();
+  if (normalizedAgentId) searchParams.set("agent_id", normalizedAgentId);
+  const suffix = searchParams.toString();
+  return request<ToolRegistry>(`/api/tools/registry${suffix ? `?${suffix}` : ""}`);
 }
 
 export async function validateCapabilityPackage(payload: CapabilityValidationRequest) {
@@ -2665,6 +2766,21 @@ export async function validateCapabilityPackage(payload: CapabilityValidationReq
 
 export async function listCapabilityPackages() {
   return request<CapabilityPackagePage>("/api/tools/capabilities/packages");
+}
+
+export async function listCapabilityMarketplace(params?: {
+  kind?: "all" | "mcp" | "skill";
+  query?: string;
+  limit?: number;
+}) {
+  const searchParams = new URLSearchParams();
+  if (params?.kind) searchParams.set("kind", params.kind);
+  if (params?.query) searchParams.set("query", params.query);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const suffix = searchParams.toString();
+  return request<CapabilityMarketplaceResponse>(
+    `/api/tools/capabilities/marketplace${suffix ? `?${suffix}` : ""}`,
+  );
 }
 
 export async function stagePrivateCapabilityPackage(payload: CapabilityPackageStagePayload) {
@@ -2736,6 +2852,13 @@ export async function preflightPublicUrlCapability(payload: CapabilitySimpleInst
   });
 }
 
+export async function preflightMarketplaceCapability(payload: CapabilityMarketplacePreflightPayload) {
+  return request<CapabilitySimpleInstallResponse>("/api/tools/capabilities/preflight/marketplace", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function installUploadedCapability(payload: CapabilitySimpleInstallPayload) {
   return request<CapabilitySimpleInstallResponse>("/api/tools/capabilities/install/upload", {
     method: "POST",
@@ -2745,6 +2868,27 @@ export async function installUploadedCapability(payload: CapabilitySimpleInstall
 
 export async function capabilityDependencyPreflight() {
   return request<Record<string, unknown>>("/api/tools/capabilities/dependency-preflight");
+}
+
+export async function listCapabilityRuntimeConfigs(agentId: string) {
+  const searchParams = new URLSearchParams({ agent_id: agentId });
+  return request<CapabilityRuntimeConfigPage>(
+    `/api/tools/capabilities/runtime-configs?${searchParams.toString()}`,
+  );
+}
+
+export async function getCapabilityRuntimeConfig(agentId: string, toolName: string) {
+  const searchParams = new URLSearchParams({ agent_id: agentId, tool_name: toolName });
+  return request<CapabilityRuntimeConfig>(
+    `/api/tools/capabilities/runtime-config?${searchParams.toString()}`,
+  );
+}
+
+export async function updateCapabilityRuntimeConfig(payload: CapabilityRuntimeConfigUpdatePayload) {
+  return request<CapabilityRuntimeConfig>("/api/tools/capabilities/runtime-config", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function testInvokeCapability(payload: CapabilityTestInvocationPayload) {

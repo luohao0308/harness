@@ -16,8 +16,8 @@
  * second row while keeping each row thin so the overall toolbar stays
  * compact.
  *
- * `onClearConversation` is fired directly — the parent is responsible for
- * the `window.confirm` gate (Req 12.5).
+ * `onClearConversation` is fired directly; the parent owns the confirmation
+ * and final interaction feedback flow (Req 12.5).
  */
 
 import { useRef, useState, type JSX, type RefObject } from "react";

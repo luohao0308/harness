@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Plus, X } from "lucide-react";
+import { Bot, Plus } from "lucide-react";
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Card } from "../../../components/ui/card";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { useI18n } from "../../../lib/i18n";
@@ -91,48 +92,39 @@ export function TeamCreateModal({
       setTeamName(null);
       setLeaderAgentId(null);
       setWorkspace("");
+      notifyFeedback({
+        tone: "success",
+        title: text("团队创建成功", "Team created"),
+        description: text(`团队 ${team.name} 已创建，现在可以继续添加成员。`, `${team.name} is ready for more members.`),
+      });
       onCreated(team);
       onClose();
     },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("团队创建失败", "Team creation failed"),
+        description: feedbackErrorMessage(error, text("请检查团队名称、队长智能体和网络状态。", "Check the team name, leader Agent, and network status.")),
+      });
+    },
   });
 
-  if (!open) {
-    return null;
-  }
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4">
-      <Card
-        role="dialog"
-        aria-modal="true"
-        aria-label={text("创建团队", "Create Team")}
-        className="w-full max-w-xl overflow-hidden rounded-xl p-0 shadow-xl"
-      >
-        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
-          <div>
-            <div className="text-lg font-medium text-slate-950">{text("创建团队", "Create Team")}</div>
-            <div className="mt-1 text-xs text-slate-500">
-              {text("Leader 接收指令、拆解任务，并协调团队成员。", "The leader receives instructions, breaks down work, and coordinates teammates.")}
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label={text("关闭", "Close")}
-            onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="space-y-4 px-6 py-5">
+    <ConfigDialog
+      open={open}
+      title={text("创建团队", "Create Team")}
+      description={text("队长接收指令、拆解任务，并协调团队成员。", "The leader receives instructions, breaks down work, and coordinates teammates.")}
+      onClose={onClose}
+      className="max-w-xl"
+    >
+        <div className="space-y-4">
           <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-600">
             {text("团队名称", "Team name")}
             <Input value={teamName ?? suggestedTeamName} onChange={(event) => setTeamName(event.target.value)} />
           </label>
           <div className="space-y-1.5 text-xs font-medium text-slate-600">
             <div className="flex items-center justify-between gap-2">
-              <span>{text("Leader Agent", "Leader Agent")}</span>
+              <span>{text("队长智能体", "Leader Agent")}</span>
               <Badge tone={leaderAgent ? "success" : queryErrorMessage ? "failed" : "neutral"}>
                 {leaderAgent
                   ? text("已选择", "Selected")
@@ -143,14 +135,14 @@ export function TeamCreateModal({
             </div>
             {agents.length === 0 ? (
               <div className="flex items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50/70 px-4 py-5 text-xs text-slate-500">
-                {text("没有可用的 leader agent", "No supported agents installed")}
+                {text("没有可用的队长智能体", "No supported agents installed")}
               </div>
             ) : (
               <MenuSelect
-                ariaLabel={text("Leader Agent", "Leader Agent")}
+                ariaLabel={text("队长智能体", "Leader Agent")}
                 value={leaderAgentId ?? ""}
                 onChange={setLeaderAgentId}
-                placeholder={text("选择团队 Leader", "Select team leader")}
+                placeholder={text("选择队长智能体", "Select team leader")}
                 options={agentOptions}
                 buttonClassName="rounded-md border-slate-200 px-3 py-2 shadow-none"
                 menuClassName="max-h-72"
@@ -170,7 +162,7 @@ export function TeamCreateModal({
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-1.5 font-medium text-slate-700">
                   <Bot className="h-3.5 w-3.5" />
-                  <span>{text("Leader Agent 定义", "Leader agent definition")}</span>
+                  <span>{text("队长智能体定义", "Leader agent definition")}</span>
                 </div>
                 <Badge tone="success">{text("可用", "Ready")}</Badge>
               </div>
@@ -190,7 +182,7 @@ export function TeamCreateModal({
           ) : null}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-slate-200 bg-white px-6 py-5">
+        <div className="flex justify-end gap-2 border-t border-slate-200 pt-5">
           <Button variant="secondary" onClick={onClose}>
             {text("取消", "Cancel")}
           </Button>
@@ -202,7 +194,6 @@ export function TeamCreateModal({
             {createMutation.isPending ? text("创建中", "Creating") : text("创建团队", "Create Team")}
           </Button>
         </div>
-      </Card>
-    </div>
+    </ConfigDialog>
   );
 }

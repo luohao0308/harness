@@ -63,13 +63,13 @@ export function KnowledgePage() {
               <CardHeader>
                 <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                   <Bot className="h-4 w-4" />
-                  {text("Agent 作用域", "Agent scope")}
+                  {text("智能体作用域", "Agent scope")}
                 </div>
                 <Badge tone="info">{selectedAgentId}</Badge>
               </CardHeader>
               <div className="p-3">
                 <MenuSelect
-                  ariaLabel={text("知识库 Agent", "Knowledge base agent")}
+                  ariaLabel={text("知识库智能体", "Knowledge base agent")}
                   value={selectedAgentId}
                   onChange={setSelectedAgentId}
                   placeholder={selectedAgent?.name ?? selectedAgentId}

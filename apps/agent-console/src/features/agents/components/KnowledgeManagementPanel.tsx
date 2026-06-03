@@ -16,12 +16,14 @@ import {
   Shield,
   Trash2,
   Upload,
-  X,
 } from "lucide-react";
 
 import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
+import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input, Textarea } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { useI18n } from "../../../lib/i18n";
@@ -437,8 +439,40 @@ function KnowledgeCreateDialog({
       });
     },
     onSuccess: async (source) => {
+      notifyFeedback({
+        tone: "success",
+        title:
+          mode === "connector"
+            ? text("外部知识库配置已保存", "External knowledge connector saved")
+            : text("知识源已创建", "Knowledge source created"),
+        description:
+          mode === "connector"
+            ? text(
+                `知识源“${source.name}”已经保存，可继续用于预检或运行时检索。`,
+                `${source.name} is saved and ready for preflight or runtime retrieval.`,
+              )
+            : text(
+                `知识源“${source.name}”已经创建并开始建立索引。`,
+                `${source.name} has been created and indexing has started.`,
+              ),
+      });
       await onCreated(source);
       onClose();
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title:
+          mode === "connector"
+            ? text("外部知识库配置保存失败", "External knowledge connector save failed")
+            : text("知识源创建失败", "Knowledge source creation failed"),
+        description: feedbackErrorMessage(
+          error,
+          mode === "connector"
+            ? text("请检查 API 地址、密钥引用和数据集 ID。", "Check the API endpoint, secret reference, and dataset ID.")
+            : text("请检查知识源名称、内容或文件格式。", "Check the source name, content, or file format."),
+        ),
+      });
     },
   });
 
@@ -951,8 +985,31 @@ function KnowledgeSourceEditDialog({
       return updateAgentKnowledgeSource(agentId, source.id, payload, { admin: source.scope === "org" });
     },
     onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: isConnector
+          ? text("外部知识库配置已更新", "External knowledge connector updated")
+          : text("知识源已更新", "Knowledge source updated"),
+        description: isConnector
+          ? text("新的 API 接入配置已经生效。", "The updated connector settings are now active.")
+          : text(`知识源“${source.name}”的信息已经保存。`, `${source.name} has been updated.`),
+      });
       await onChanged();
       onClose();
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: isConnector
+          ? text("外部知识库配置更新失败", "External knowledge connector update failed")
+          : text("知识源更新失败", "Knowledge source update failed"),
+        description: feedbackErrorMessage(
+          error,
+          isConnector
+            ? text("请检查 API 地址、密钥引用或数据集 ID。", "Check the API endpoint, secret reference, or dataset ID.")
+            : text("请检查知识源名称和说明。", "Check the source name and description."),
+        ),
+      });
     },
   });
   const canSave =
@@ -1172,8 +1229,10 @@ function KnowledgeSourceActions({
   onDeleted: () => Promise<void>;
 }) {
   const { text } = useI18n();
+  const { confirm, confirmDialog } = useConfirmDialog();
   const requiresAdmin = source.scope === "org";
   const canUseAdminControls = KNOWLEDGE_ADMIN_CONTROLS_ENABLED;
+  const nextScopeLabel = source.scope === "org" ? "智能体" : "组织";
   const disableSource = useMutation({
     mutationFn: () =>
       disableAgentKnowledgeSource(
@@ -1182,7 +1241,14 @@ function KnowledgeSourceActions({
         { reason: "studio" },
         { admin: requiresAdmin },
       ),
-    onSuccess: onChanged,
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "warning",
+        title: "知识源已停用",
+        description: "停用后该知识源不会再参与检索。",
+      });
+      await onChanged();
+    },
   });
   const enableSource = useMutation({
     mutationFn: () =>
@@ -1192,7 +1258,14 @@ function KnowledgeSourceActions({
         { reason: "studio" },
         { admin: requiresAdmin },
       ),
-    onSuccess: onChanged,
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: "知识源已启用",
+        description: "该知识源已恢复参与检索。",
+      });
+      await onChanged();
+    },
   });
   const archiveSource = useMutation({
     mutationFn: () =>
@@ -1202,14 +1275,28 @@ function KnowledgeSourceActions({
         { reason: "studio" },
         { admin: requiresAdmin },
       ),
-    onSuccess: onChanged,
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "warning",
+        title: "知识源已归档",
+        description: "归档后的知识源会保留历史记录，但不会继续被检索。",
+      });
+      await onChanged();
+    },
   });
   const deleteSource = useMutation({
     mutationFn: () =>
       deleteAgentKnowledgeSource(agentId, source.id, {
         admin: requiresAdmin,
       }),
-    onSuccess: onDeleted,
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "warning",
+        title: "知识源已删除",
+        description: `已删除知识源“${source.name}”。`,
+      });
+      await onDeleted();
+    },
   });
   const scopeChange = useMutation({
     mutationFn: () =>
@@ -1217,21 +1304,47 @@ function KnowledgeSourceActions({
         scope: source.scope === "org" ? "agent" : "org",
         reason: "studio",
       }),
-    onSuccess: onChanged,
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "info",
+        title: "知识源作用域已更新",
+        description: `当前作用域已切换为${nextScopeLabel}。`,
+      });
+      await onChanged();
+    },
   });
 
-  const confirmArchive = () => {
-    if (window.confirm(text("归档后不会被检索。", "Archived sources are not retrieved."))) {
+  const confirmArchive = async () => {
+    const confirmed = await confirm({
+      title: "归档知识源",
+      description: "归档后该知识源不会再参与检索，但历史记录会保留。",
+      confirmText: "确认归档",
+      variant: "danger",
+    });
+    if (confirmed) {
       archiveSource.mutate();
     }
   };
-  const confirmDelete = () => {
-    if (window.confirm(text("确定永久删除该知识源？此操作不可撤销。", "Permanently delete this knowledge source? This cannot be undone."))) {
+  const confirmDelete = async () => {
+    const confirmed = await confirm({
+      title: "永久删除知识源",
+      description: `将永久删除“${source.name}”，此操作不可撤销。`,
+      confirmText: "确认删除",
+      variant: "danger",
+    });
+    if (confirmed) {
       deleteSource.mutate();
     }
   };
-  const confirmScopeChange = () => {
-    if (window.confirm(text("作用域会改变可见范围。", "Scope changes alter visibility."))) {
+  const confirmScopeChange = async () => {
+    const nextScope = source.scope === "org" ? "agent" : "org";
+    const nextScopeText = nextScope === "org" ? "组织作用域" : "智能体作用域";
+    const confirmed = await confirm({
+      title: "切换知识源作用域",
+      description: `作用域会改变知识源的可见范围。确认切换为${nextScopeText}吗？`,
+      confirmText: "确认切换",
+    });
+    if (confirmed) {
       scopeChange.mutate();
     }
   };
@@ -1264,7 +1377,7 @@ function KnowledgeSourceActions({
         disabled={source.status === "ARCHIVED" || scopeChange.isPending || !canUseAdminControls}
       >
         <Shield className="h-3.5 w-3.5" />
-        {source.scope === "org" ? "agent" : "org"}
+        {source.scope === "org" ? "切到智能体" : "切到组织"}
       </Button>
       <Button
         type="button"
@@ -1297,6 +1410,7 @@ function KnowledgeSourceActions({
           ?? scopeChange.error
         }
       />
+      {confirmDialog}
     </div>
   );
 }
@@ -1327,7 +1441,7 @@ function KnowledgeDocumentList({
             </Badge>
           </div>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-slate-500">
-            <span>{document.chunk_count} chunks</span>
+            <span>{document.chunk_count} 个分块</span>
             <span>{formatDateTime(document.indexed_at)}</span>
             <span className="font-mono">{document.content_sha256.slice(0, 10)}</span>
           </div>
@@ -1385,8 +1499,26 @@ function KnowledgeDocumentIngestDialog({
       });
     },
     onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("文档已添加", "Document added"),
+        description: text(
+          `知识源“${source.name}”已收到新文档并开始索引。`,
+          `A new document was added to ${source.name} and indexing has started.`,
+        ),
+      });
       await onChanged();
       setOpen(false);
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("文档添加失败", "Document add failed"),
+        description: feedbackErrorMessage(
+          error,
+          text("请检查文档标题、内容或导入文件格式。", "Check the title, content, or imported file format."),
+        ),
+      });
     },
   });
 
@@ -1498,6 +1630,7 @@ function KnowledgeDocumentVersionHistory({
   const [mimeType, setMimeType] = useState<"text/plain" | "text/markdown">("text/markdown");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const { confirm, confirmDialog } = useConfirmDialog();
 
   useEffect(() => {
     if (!open) {
@@ -1543,14 +1676,37 @@ function KnowledgeDocumentVersionHistory({
       });
     },
     onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("文档新版本已创建", "Document version created"),
+        description: text(
+          `知识源“${source.name}”的重新导入已完成。`,
+          `Reingest completed for ${source.name}.`,
+        ),
+      });
       await onChanged();
       setOpen(false);
     },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("重新导入失败", "Reingest failed"),
+        description: feedbackErrorMessage(
+          error,
+          text("请检查文档选择、标题、内容或导入文件。", "Check the selected document, title, content, or imported file."),
+        ),
+      });
+    },
   });
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (window.confirm(text("重新导入会创建新版本。", "Reingest creates a new version."))) {
+    const confirmed = await confirm({
+      title: "重新导入文档",
+      description: "重新导入会创建新版本，并保留旧版本历史。",
+      confirmText: "确认创建版本",
+    });
+    if (confirmed) {
       reingestDocument.mutate();
     }
   };
@@ -1661,6 +1817,7 @@ function KnowledgeDocumentVersionHistory({
           </form>
         </KnowledgeModal>
       ) : null}
+      {confirmDialog}
     </>
   );
 }
@@ -1668,42 +1825,20 @@ function KnowledgeDocumentVersionHistory({
 function KnowledgeModal({
   title,
   description,
+  open = true,
   onClose,
   children,
 }: {
   title: string;
   description?: string;
+  open?: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
-  const { text } = useI18n();
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/30 p-4 pt-[8vh]">
-      <Card
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className="w-full max-w-2xl overflow-hidden rounded-xl p-0 shadow-xl"
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5">
-          <div className="min-w-0">
-            <div className="text-lg font-medium text-slate-950">{title}</div>
-            {description ? (
-              <div className="mt-1 text-xs leading-5 text-slate-500">{description}</div>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            aria-label={text("关闭", "Close")}
-            onClick={onClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="px-6 py-5">{children}</div>
-      </Card>
-    </div>
+    <ConfigDialog open={open} title={title} description={description} onClose={onClose} className="max-w-2xl">
+      {children}
+    </ConfigDialog>
   );
 }
 
@@ -1720,33 +1855,52 @@ function ReadOnlyField({
     <div className="min-w-0">
       <div className="text-[11px] font-medium text-slate-400">{label}</div>
       <div className={`mt-1 truncate text-xs font-medium text-slate-700 ${mono ? "font-mono" : ""}`}>
-        {value || "n/a"}
+        {value || "未提供"}
       </div>
     </div>
   );
 }
 
 function KnowledgeStatusBadge({ status }: { status: string }) {
+  const { text } = useI18n();
   const tone: BadgeTone =
     status === "ACTIVE" ? "success" : status === "ARCHIVED" ? "neutral" : "warning";
-  return <Badge tone={tone}>{status}</Badge>;
+  const label =
+    status === "ACTIVE"
+      ? text("已启用", "Active")
+      : status === "ARCHIVED"
+        ? text("已归档", "Archived")
+        : status === "DISABLED"
+          ? text("已停用", "Disabled")
+          : status;
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
 function KnowledgeHealthBadge({ source }: { source: KnowledgeSource }) {
+  const { text } = useI18n();
   const tone: BadgeTone =
     source.health_status === "HEALTHY"
       ? "success"
       : source.health_status === "ERROR"
         ? "failed"
         : "warning";
-  return <Badge tone={tone}>{source.health_status}</Badge>;
+  const label =
+    source.health_status === "HEALTHY"
+      ? text("健康", "Healthy")
+      : source.health_status === "ERROR"
+        ? text("异常", "Error")
+        : source.health_status === "DEGRADED"
+          ? text("降级", "Degraded")
+          : source.health_status;
+  return <Badge tone={tone}>{label}</Badge>;
 }
 
 function KnowledgeScopeBadge({ source }: { source: KnowledgeSource }) {
+  const { text } = useI18n();
   return (
     <Badge tone={source.scope === "org" ? "purple" : "info"}>
       {source.scope === "org" ? <Lock className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
-      {source.scope}
+      {source.scope === "org" ? text("组织", "Org") : text("智能体", "Agent")}
     </Badge>
   );
 }

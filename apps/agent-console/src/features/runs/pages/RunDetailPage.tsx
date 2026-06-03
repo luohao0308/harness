@@ -7,11 +7,13 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
+import { eventLabel, executionModeLabel, riskLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import {
   approveToolApproval,
@@ -65,15 +67,57 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("计划已开始执行", "Plan execution started"),
+        description: text("运行详情会继续自动刷新。", "Run detail will continue refreshing automatically."),
+      });
+      await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("计划执行失败", "Plan execution failed"),
+        description: feedbackErrorMessage(error, text("请检查当前运行状态或稍后重试。", "Check the run state and retry.")),
+      });
+    },
   });
   const orchestrate = useMutation({
     mutationFn: () => orchestrateAgentRun(runId!),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("多智能体编排已启动", "Orchestration started"),
+        description: text("团队与事件状态会继续同步到当前页面。", "Team and event updates will keep streaming into this page."),
+      });
+      await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("多智能体编排失败", "Orchestration failed"),
+        description: feedbackErrorMessage(error, text("请检查运行状态、模型设置或稍后重试。", "Check the run state, model settings, or retry.")),
+      });
+    },
   });
   const replay = useMutation({
     mutationFn: () => replayTask(runId!, parseReplaySequence(replaySequence)),
-    onSuccess: (result) => setReplayResult(result),
+    onSuccess: (result) => {
+      setReplayResult(result);
+      notifyFeedback({
+        tone: "success",
+        title: text("回放完成", "Replay completed"),
+        description: text(`已回放到序列 ${result.sequence}。`, `Replayed through sequence ${result.sequence}.`),
+      });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("回放失败", "Replay failed"),
+        description: feedbackErrorMessage(error, text("请检查回放序列号或稍后重试。", "Check the replay sequence and retry.")),
+      });
+    },
   });
   const approve = useMutation({
     mutationFn: (approvalId: string) => approveToolApproval(runId!, approvalId, "Approved from Agent Run Detail"),
@@ -86,14 +130,24 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       );
       return { previous };
     },
-    onError: (_error, _approvalId, context) => {
+    onError: (error, _approvalId, context) => {
       if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+      notifyFeedback({
+        tone: "error",
+        title: text("审批通过失败", "Approval failed"),
+        description: feedbackErrorMessage(error, text("请刷新后重试审批操作。", "Refresh and retry the approval action.")),
+      });
     },
     onSuccess: (result) => {
       queryClient.setQueryData<AgentRunWorkspace>(
         workspaceQueryKey,
         mergeApprovalPage(queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey), result.items),
       );
+      notifyFeedback({
+        tone: "success",
+        title: text("审批已通过", "Approval accepted"),
+        description: text("工具审批状态已更新。", "The tool approval state has been updated."),
+      });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: workspaceQueryKey, refetchType: "active" });
@@ -111,14 +165,24 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       );
       return { previous };
     },
-    onError: (_error, _approvalId, context) => {
+    onError: (error, _approvalId, context) => {
       if (context?.previous) queryClient.setQueryData(workspaceQueryKey, context.previous);
+      notifyFeedback({
+        tone: "error",
+        title: text("审批拒绝失败", "Rejection failed"),
+        description: feedbackErrorMessage(error, text("请刷新后重试拒绝操作。", "Refresh and retry the reject action.")),
+      });
     },
     onSuccess: (result) => {
       queryClient.setQueryData<AgentRunWorkspace>(
         workspaceQueryKey,
         mergeApprovalPage(queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey), result.items),
       );
+      notifyFeedback({
+        tone: "warning",
+        title: text("审批已拒绝", "Approval rejected"),
+        description: text("工具审批状态已更新为拒绝。", "The tool approval has been marked as rejected."),
+      });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: workspaceQueryKey, refetchType: "active" });
@@ -130,8 +194,8 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       let datasetId = selectedEvalDatasetId;
       if (!datasetId || datasetId === DEFAULT_EVAL_DATASET_ID) {
         const dataset = await createEvalDataset({
-          name: "Saved Runs",
-          description: "Run Detail cases saved from completed or failed agent runs.",
+          name: "运行详情保存用例",
+          description: "从运行详情页保存的完成态或失败态运行案例。",
         });
         datasetId = dataset.id;
       }
@@ -180,6 +244,18 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       setSaveEvalSuccess(true);
       queryClient.invalidateQueries({ queryKey: ["eval-datasets"] });
       queryClient.invalidateQueries({ queryKey: ["eval-cases"] });
+      notifyFeedback({
+        tone: "success",
+        title: text("评测用例已保存", "Eval case saved"),
+        description: text("当前运行已经写入评测数据集。", "This run has been added to the eval dataset."),
+      });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("评测用例保存失败", "Eval case save failed"),
+        description: feedbackErrorMessage(error, text("请检查数据集选择和当前运行状态。", "Check the dataset selection and run state.")),
+      });
     },
   });
   const hitsById = useMemo(
@@ -228,7 +304,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 <h1 className="mt-2 text-xl font-semibold text-slate-950">{run?.title ?? text("加载运行...", "Loading Run...")}</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{run?.goal}</p>
               </div>
-              {run && <Badge tone={statusTone(run.status)}>{run.status}</Badge>}
+              {run && <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>}
             </div>
             {run && (
               <div className="mt-4 grid grid-cols-4 gap-2 text-xs">
@@ -302,29 +378,32 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   知识依据
                 </div>
                 <Badge tone={grounding.local_status === "sufficient" ? "success" : "warning"}>
-                  {grounding.local_status}
+                  {runDetailValueLabel(grounding.local_status)}
                 </Badge>
               </CardHeader>
               <div className="space-y-3 p-3 text-sm">
                 <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-3">
-                  <Metric label="向量" value={grounding.vector_capability} />
+                  <Metric label="向量" value={runDetailValueLabel(grounding.vector_capability)} />
                   <Metric label="命中" value={String(grounding.retrieval_hits.length)} />
                   <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
-                  <Metric label={<TermHint description="提供依据校验的后端或模型">Provider</TermHint>} value={grounding.grounding_provider} />
-                  <Metric label={<TermHint description="夹具证据，仅用于测试或演示">Fixture evidence</TermHint>} value={grounding.fixture_grounded ? "是" : "否"} />
-                  <Metric label={<TermHint description="答案是否绑定到真实来源">Source-bound</TermHint>} value={grounding.verified_grounded ? "是" : "否"} />
-                  <Metric label={<TermHint description="引用条数">Citation count</TermHint>} value={String(grounding.citations.length)} />
+                  <Metric
+                    label={<TermHint description="提供依据校验的后端或模型">依据来源</TermHint>}
+                    value={runDetailValueLabel(grounding.grounding_provider)}
+                  />
+                  <Metric label={<TermHint description="夹具证据，仅用于测试或演示">夹具证据</TermHint>} value={grounding.fixture_grounded ? "是" : "否"} />
+                  <Metric label={<TermHint description="答案是否绑定到真实来源">来源绑定</TermHint>} value={grounding.verified_grounded ? "是" : "否"} />
+                  <Metric label={<TermHint description="引用条数">引用数</TermHint>} value={String(grounding.citations.length)} />
                 </div>
                 <div className="truncate font-mono text-[11px] text-slate-500" title={grounding.grounding_verification_reason}>
-                  {grounding.grounding_verification_reason}
+                  {runDetailValueLabel(grounding.grounding_verification_reason)}
                 </div>
                 <p className="text-xs text-slate-500">
                   {grounding.evidence_message || grounding.evidence_summary}
                 </p>
                 {grounding.inferred_fallback && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-                    后备原因 {grounding.fallback_reason ?? "latest"} · 检索会话{" "}
-                    {grounding.selected_retrieval_session_id ?? "n/a"}
+                    后备原因 {grounding.fallback_reason ?? "最近一次"} · 检索会话{" "}
+                    {grounding.selected_retrieval_session_id ?? "未提供"}
                   </div>
                 )}
                 {grounding.prompt_manifest && (
@@ -332,17 +411,17 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <div className="text-xs font-medium text-slate-700">提示词组装审计</div>
                     <div className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
                       <div className="font-mono text-[11px] text-slate-500">
-                        manifest {grounding.prompt_manifest.id}
+                        清单 {grounding.prompt_manifest.id}
                       </div>
                       <div className="mt-1 text-slate-600">
-                        included {grounding.prompt_manifest.included_retrieval_hit_ids_json.length} · omitted{" "}
+                        已纳入 {grounding.prompt_manifest.included_retrieval_hit_ids_json.length} · 已省略{" "}
                         {grounding.prompt_manifest.omitted_candidates_json.length}
                       </div>
                       <div className="mt-1 break-all text-slate-500">
-                        correlation {grounding.prompt_manifest.grounding_correlation_id}
+                        关联 ID {grounding.prompt_manifest.grounding_correlation_id}
                       </div>
                       <div className="mt-1 break-all text-slate-500">
-                        sha256 {grounding.prompt_manifest.evidence_text_sha256}
+                        摘要 {grounding.prompt_manifest.evidence_text_sha256}
                       </div>
                     </div>
                   </div>
@@ -354,13 +433,13 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                       <div key={audit.id} className="rounded-md border border-slate-100 bg-white p-2 text-xs">
                         <div className="flex items-center justify-between gap-2">
                           <Badge tone={audit.decision === "allowed" ? "success" : "warning"}>
-                            {audit.decision}
+                            {runDetailValueLabel(audit.decision)}
                           </Badge>
                           <span className="font-mono text-[11px] text-slate-500">
-                            {audit.source_kind ?? "manifest"}
+                            {runDetailValueLabel(audit.source_kind ?? "manifest")}
                           </span>
                         </div>
-                        <div className="mt-1 text-slate-600">{audit.reason}</div>
+                        <div className="mt-1 text-slate-600">{runDetailValueLabel(audit.reason)}</div>
                         {audit.source_ref_id && (
                           <div className="mt-1 break-all text-slate-500">{audit.source_ref_id}</div>
                         )}
@@ -375,7 +454,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                       <div key={hit.id} className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono text-[11px] text-slate-500">
-                            {hit.source_kind} #{hit.rank} score={hit.score.toFixed(3)}
+                            {runDetailValueLabel(hit.source_kind)} #{hit.rank} score={hit.score.toFixed(3)}
                           </span>
                           <span className="text-slate-500">{hit.chunk_id ?? hit.web_source_id}</span>
                         </div>
@@ -393,7 +472,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                           <div className="flex items-center justify-between gap-2">
                             <Badge tone="info">{citation.citation_key}</Badge>
                             <span className="font-mono text-[11px] text-slate-500">
-                              {citation.source_kind}
+                              {runDetailValueLabel(citation.source_kind)}
                             </span>
                           </div>
                           <div className="mt-1 text-slate-600">
@@ -419,12 +498,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                         <div className="mt-1 font-medium text-slate-700">{source.title}</div>
                         <div className="mt-1 text-slate-600">{source.snippet}</div>
                         <div className="mt-1 text-slate-500">
-                          {source.status}
+                          {runDetailValueLabel(source.status)}
                           {source.error_message ? ` · ${source.error_message}` : ""}
                         </div>
                         <div className="mt-1 flex flex-wrap gap-1 text-slate-500">
                           <Badge tone={source.metadata_json.fixture ? "warning" : "info"}>
-                            {String(source.metadata_json.provider ?? "unknown")}
+                            {runDetailValueLabel(String(source.metadata_json.provider ?? "unknown"))}
                           </Badge>
                           {source.metadata_json.request_id ? (
                             <Badge tone="neutral">
@@ -432,7 +511,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                             </Badge>
                           ) : null}
                           {source.metadata_json.raw_content_available ? (
-                            <Badge tone="warning">raw</Badge>
+                            <Badge tone="warning">原始内容</Badge>
                           ) : null}
                         </div>
                       </div>
@@ -451,14 +530,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   上下文组装
                 </div>
                 <Badge tone={contextAssembly.mode === "authoritative" ? "success" : "warning"}>
-                  {contextAssembly.mode}
+                  {runDetailValueLabel(contextAssembly.mode)}
                 </Badge>
               </CardHeader>
               <div className="space-y-3 p-3 text-sm">
                 {arrayField(tokenOptimization, "optimizer_capability_version_ids").length > 0 && (
                   <div className="grid gap-2 rounded-md border border-emerald-100 bg-emerald-50 p-2 text-xs text-emerald-900 md:grid-cols-[1fr_auto]">
                     <div className="min-w-0">
-                      <div className="font-semibold">Context Optimizer</div>
+                      <div className="font-semibold">上下文优化器</div>
                       <div className="truncate font-mono">
                         {arrayField(tokenOptimization, "optimizer_capability_version_ids").join(", ")}
                       </div>
@@ -469,30 +548,30 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                       ) : null}
                     </div>
                     <Badge tone="success">
-                      {arrayField(tokenOptimization, "optimizer_decisions").length} decisions
+                      {arrayField(tokenOptimization, "optimizer_decisions").length} 条决策
                     </Badge>
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-                  <Metric label={<TermHint description="上下文组装清单">Manifest</TermHint>} value={contextAssembly.id} />
-                  <Metric label={<TermHint description="提示词组装清单">Prompt manifest</TermHint>} value={contextAssembly.prompt_manifest_id ?? "n/a"} />
-                  <Metric label={<TermHint description="已纳入上下文的引用数">Included</TermHint>} value={String(contextAssembly.included_refs_json.length)} />
-                  <Metric label={<TermHint description="因预算或策略省略的引用数">Omitted</TermHint>} value={String(contextAssembly.omitted_refs_json.length)} />
+                  <Metric label={<TermHint description="上下文组装清单">组装清单</TermHint>} value={contextAssembly.id} />
+                  <Metric label={<TermHint description="提示词组装清单">提示词清单</TermHint>} value={contextAssembly.prompt_manifest_id ?? "未提供"} />
+                  <Metric label={<TermHint description="已纳入上下文的引用数">已纳入</TermHint>} value={String(contextAssembly.included_refs_json.length)} />
+                  <Metric label={<TermHint description="因预算或策略省略的引用数">已省略</TermHint>} value={String(contextAssembly.omitted_refs_json.length)} />
                   <Metric
-                    label={<TermHint description="标记数估算器">Estimator</TermHint>}
-                    value={String(contextAssembly.token_budget_json.estimator ?? "n/a")}
+                    label={<TermHint description="标记数估算器">估算器</TermHint>}
+                    value={runDetailValueLabel(String(contextAssembly.token_budget_json.estimator ?? "未提供"))}
                   />
                   <Metric
-                    label={<TermHint description="请求的上下文标记预算">Budget</TermHint>}
-                    value={String(contextAssembly.token_budget_json.requested_max_tokens ?? "n/a")}
+                    label={<TermHint description="请求的上下文标记预算">预算</TermHint>}
+                    value={String(contextAssembly.token_budget_json.requested_max_tokens ?? "未提供")}
                   />
-                  <Metric label={<TermHint description="上下文分段数量">Sections</TermHint>} value={String(contextAssembly.sections_json.length)} />
-                  <Metric label={<TermHint description="上下文内容摘要哈希">Hash</TermHint>} value={contextAssembly.context_text_sha256.slice(0, 12)} />
+                  <Metric label={<TermHint description="上下文分段数量">分段</TermHint>} value={String(contextAssembly.sections_json.length)} />
+                  <Metric label={<TermHint description="上下文内容摘要哈希">摘要哈希</TermHint>} value={contextAssembly.context_text_sha256.slice(0, 12)} />
                 </div>
                 {contextAssembly.omitted_refs_json.length > 0 && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
                     {contextAssembly.omitted_refs_json
-                      .map((ref) => String(ref.omission_reason ?? "omitted"))
+                      .map((ref) => String(ref.omission_reason ?? "已省略"))
                       .filter((reason, index, reasons) => reasons.indexOf(reason) === index)
                       .join(", ")}
                   </div>
@@ -506,7 +585,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               <CardHeader>
                 <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                   <Gauge className="h-4 w-4" />
-                  Token 节省
+                  标记节省
                 </div>
                 <Badge tone={boolField(tokenOptimization, "pruning_applied") ? "success" : "neutral"}>
                   {boolField(tokenOptimization, "pruning_applied") ? "已剪枝" : "未剪枝"}
@@ -515,35 +594,35 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               <div className="space-y-3 p-3 text-sm">
                 <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
                   <Metric
-                    label={<TermHint description="用户请求的上下文预算">Budget</TermHint>}
+                    label={<TermHint description="用户请求的上下文预算">预算</TermHint>}
                     value={formatTokenMetric(numberField(tokenOptimization, "requested_max_tokens"))}
                   />
                   <Metric
-                    label={<TermHint description="原始候选上下文估算标记数">Baseline</TermHint>}
+                    label={<TermHint description="原始候选上下文估算标记数">原始候选</TermHint>}
                     value={formatTokenMetric(numberField(tokenOptimization, "estimated_candidate_tokens"))}
                   />
                   <Metric
-                    label={<TermHint description="实际纳入模型请求的上下文估算标记数">Optimized</TermHint>}
+                    label={<TermHint description="实际纳入模型请求的上下文估算标记数">优化后纳入</TermHint>}
                     value={formatTokenMetric(numberField(tokenOptimization, "estimated_included_tokens"))}
                   />
                   <Metric
-                    label={<TermHint description="通过预算剪枝节省的估算标记数">Saved</TermHint>}
+                    label={<TermHint description="通过预算剪枝节省的估算标记数">已省标记</TermHint>}
                     value={`${formatTokenMetric(numberField(tokenOptimization, "estimated_saved_tokens"))} · ${formatPercentMetric(numberField(tokenOptimization, "estimated_savings_percent"))}`}
                   />
                   <Metric
-                    label={<TermHint description="模型返回的实际 prompt 标记数">Actual in</TermHint>}
+                    label={<TermHint description="模型返回的实际 prompt 标记数">实际输入</TermHint>}
                     value={formatTokenMetric(numberField(tokenOptimization, "actual_prompt_tokens"))}
                   />
                   <Metric
-                    label={<TermHint description="模型返回的实际 completion 标记数">Actual out</TermHint>}
+                    label={<TermHint description="模型返回的实际 completion 标记数">实际输出</TermHint>}
                     value={formatTokenMetric(numberField(tokenOptimization, "actual_completion_tokens"))}
                   />
                   <Metric
-                    label={<TermHint description="检索缓存命中次数">Cache hit</TermHint>}
+                    label={<TermHint description="检索缓存命中次数">缓存命中</TermHint>}
                     value={formatTokenMetric(numberField(recordField(tokenOptimization, "retrieval_cache"), "hit_count"))}
                   />
                   <Metric
-                    label={<TermHint description="低成本模型路由次数">Low-cost routes</TermHint>}
+                    label={<TermHint description="低成本模型路由次数">低成本路由</TermHint>}
                     value={String(arrayField(tokenOptimization, "low_cost_routes").length)}
                   />
                 </div>
@@ -559,7 +638,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <GitBranch className="h-4 w-4" />
-                计划 <TermHint description="有向无环图，表示步骤依赖">DAG</TermHint>
+                计划 <TermHint description="有向无环图，表示步骤依赖">依赖图</TermHint>
               </div>
               <span className="text-xs text-slate-500">
                 {data?.plan ? `${data.plan.steps.length} 个步骤` : text("暂无计划", "No Plan")}
@@ -577,10 +656,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                       </div>
                       <div className="mt-1 text-sm text-slate-600">{step.description}</div>
                     </div>
-                    <Badge tone={statusTone(step.status)}>{step.status}</Badge>
+                    <Badge tone={statusTone(step.status)}>{statusLabel(step.status)}</Badge>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1">
-                    <Badge tone={step.execution_mode === "async" ? "purple" : "neutral"}>{step.execution_mode}</Badge>
+                    <Badge tone={step.execution_mode === "async" ? "purple" : "neutral"}>
+                      {executionModeLabel(step.execution_mode)}
+                    </Badge>
                     {step.requires_sandbox && <Badge tone="warning">沙箱</Badge>}
                     {step.can_spawn_subagent && <Badge tone="purple">子代理</Badge>}
                     {dependsOn.length > 0 ? (
@@ -637,7 +718,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <div key={subagent.id} className="rounded border border-slate-100 p-2">
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-xs">{subagent.id.slice(0, 8)}</span>
-                        <Badge tone={statusTone(subagent.status)}>{subagent.status}</Badge>
+                        <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
                       </div>
                       <div className="mt-1 text-[11px] text-slate-500">{subagent.agent_type}</div>
                     </div>
@@ -655,24 +736,30 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 <div key={call.id} className="rounded border border-slate-100 p-2 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-slate-900">{call.model_provider}/{call.model_name}</span>
-                    <Badge tone={statusTone(call.status)}>{call.status}</Badge>
+                    <Badge tone={statusTone(call.status)}>{statusLabel(call.status)}</Badge>
                   </div>
                   <div className="mt-1 text-slate-500">
                     {call.prompt_tokens + call.completion_tokens} 标记 · {call.duration_ms}ms
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
-                    <Metric label={<TermHint description="第几次调用尝试">Attempt</TermHint>} value={String(call.attempt_index)} />
-                    <Metric label={<TermHint description="最终状态">Terminal</TermHint>} value={call.terminal_status ?? "n/a"} />
-                    <Metric label={<TermHint description="提示词组装清单">Prompt manifest</TermHint>} value={call.prompt_manifest_id ?? "n/a"} />
-                    <Metric label={<TermHint description="上下文组装清单">Context manifest</TermHint>} value={call.context_manifest_id ?? "n/a"} />
-                    <Metric label={<TermHint description="依据链路关联 ID">Correlation</TermHint>} value={call.grounding_correlation_id ?? "n/a"} />
-                    <Metric label={<TermHint description="请求内容摘要哈希">Request hash</TermHint>} value={call.model_request_sha256 ?? "n/a"} />
-                    <Metric label={<TermHint description="哈希可复算审计状态">Hash audit</TermHint>} value={call.hash_recomputability_status} />
+                    <Metric label={<TermHint description="第几次调用尝试">尝试序号</TermHint>} value={String(call.attempt_index)} />
+                    <Metric
+                      label={<TermHint description="最终状态">终态</TermHint>}
+                      value={runDetailValueLabel(call.terminal_status)}
+                    />
+                    <Metric label={<TermHint description="提示词组装清单">提示词清单</TermHint>} value={call.prompt_manifest_id ?? "未提供"} />
+                    <Metric label={<TermHint description="上下文组装清单">上下文清单</TermHint>} value={call.context_manifest_id ?? "未提供"} />
+                    <Metric label={<TermHint description="依据链路关联 ID">关联 ID</TermHint>} value={call.grounding_correlation_id ?? "未提供"} />
+                    <Metric label={<TermHint description="请求内容摘要哈希">请求哈希</TermHint>} value={call.model_request_sha256 ?? "未提供"} />
+                    <Metric
+                      label={<TermHint description="哈希可复算审计状态">哈希审计</TermHint>}
+                      value={runDetailValueLabel(call.hash_recomputability_status)}
+                    />
                   </div>
                   <div className="mt-1 truncate font-mono text-[11px] text-slate-400" title={call.request_message_hashes_sha256 ?? undefined}>
-                    schema v{call.model_request_hash_schema_version} · messages{" "}
+                    模式 v{call.model_request_hash_schema_version} · 消息{" "}
                     {call.request_message_hashes_json.length} ·{" "}
-                    {call.request_message_hashes_sha256 ?? "n/a"}
+                    {call.request_message_hashes_sha256 ?? "未提供"}
                   </div>
                 </div>
               ))}
@@ -767,8 +854,8 @@ function ApprovalsPanel({
         {approvals.map((approval) => (
           <div key={approval.id} className="rounded border border-slate-100 p-2">
             <div className="flex items-center justify-between gap-2">
-              <Badge tone={statusTone(approval.status)}>{approval.status}</Badge>
-              <span className="font-mono text-[11px] text-slate-500">{approval.risk_level}</span>
+              <Badge tone={statusTone(approval.status)}>{statusLabel(approval.status)}</Badge>
+              <span className="font-mono text-[11px] text-slate-500">{riskLabel(approval.risk_level)}</span>
             </div>
             <div className="mt-2 text-xs text-slate-600">{approval.reason}</div>
             {approval.status === "PENDING" && (
@@ -808,13 +895,13 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
             <Th>状态</Th>
             <Th>风险</Th>
             <Th>
-              <TermHint description="工具能力版本">Capability</TermHint>
+              <TermHint description="工具能力版本">能力版本</TermHint>
             </Th>
             <Th>
-              <TermHint description="工具能力内容哈希">Content hash</TermHint>
+              <TermHint description="工具能力内容哈希">内容哈希</TermHint>
             </Th>
             <Th>
-              <TermHint description="工具能力配置哈希">Config hash</TermHint>
+              <TermHint description="工具能力配置哈希">配置哈希</TermHint>
             </Th>
             <Th>延迟</Th>
             <Th>输出摘要</Th>
@@ -824,8 +911,8 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
           {toolCalls.map((call) => (
             <tr key={call.id} className="border-t border-slate-100">
               <Td className="font-mono">{call.tool_name}</Td>
-              <Td><Badge tone={statusTone(call.status)}>{call.status}</Badge></Td>
-              <Td>{call.risk_level}</Td>
+              <Td><Badge tone={statusTone(call.status)}>{statusLabel(call.status)}</Badge></Td>
+              <Td>{riskLabel(call.risk_level)}</Td>
               <Td>
                 <div className="font-mono text-[11px] text-slate-700">
                   {shortCapability(call.capability_version_id)}
@@ -852,13 +939,46 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
 }
 
 export function shortCapability(value?: string | null) {
-  return value ? value.slice(0, 18) : "n/a";
+  return value ? value.slice(0, 18) : "未提供";
 }
 
 export function toolOutputSummary(call: ToolCall): string {
   if (call.status === "APPROVED") return "已批准，等待执行";
   if (call.status === "PENDING_APPROVAL") return "等待审批";
   return call.output_summary || "无输出";
+}
+
+const RUN_DETAIL_VALUE_LABELS: Record<string, string> = {
+  authoritative: "权威组装",
+  sufficient: "证据充足",
+  insufficient: "证据不足",
+  available: "可用",
+  unavailable: "不可用",
+  local_knowledge: "本地知识库",
+  dify_connector: "Dify 连接器",
+  coze_connector: "Coze 连接器",
+  web: "网页补充",
+  fallback: "后备检索",
+  local_evidence_sufficient: "本地证据充足",
+  seed_fixture_local_evidence: "演示夹具本地证据",
+  knowledge_chunk: "知识分块",
+  web_source: "网页来源",
+  selected_for_prompt: "已纳入提示词",
+  allowed: "已允许",
+  denied: "已拒绝",
+  redacted: "已脱敏",
+  manifest: "组装清单",
+  recomputable_v2: "可复算 v2",
+  success: "成功",
+  error: "错误",
+  chars_div_4: "字符数/4",
+  cl100k_base: "cl100k_base",
+  unknown: "未知",
+};
+
+export function runDetailValueLabel(value?: string | null): string {
+  if (!value) return "未提供";
+  return RUN_DETAIL_VALUE_LABELS[value] ?? statusLabel(value);
 }
 
 export function optimisticApprovalDecision(
@@ -920,7 +1040,7 @@ function EventRow({ event }: { event: AgentEvent }) {
     <div className="rounded-md border border-slate-100 bg-white p-2">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-xs text-slate-900">#{event.sequence}</span>
-        <Badge tone={statusTone(event.event_type)}>{event.event_type}</Badge>
+        <Badge tone={statusTone(event.event_type)}>{eventLabel(event.event_type)}</Badge>
       </div>
       <div className="mt-1 font-mono text-[11px] text-slate-500">{formatShortDate(event.created_at)}</div>
       {event.trace_id && <div className="mt-1 truncate font-mono text-[10px] text-slate-400">{event.trace_id}</div>}
@@ -964,12 +1084,12 @@ function boolField(value: Record<string, unknown>, key: string): boolean {
 }
 
 function formatTokenMetric(value: number | null): string {
-  if (value === null) return "n/a";
+  if (value === null) return "未提供";
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value);
 }
 
 function formatPercentMetric(value: number | null): string {
-  if (value === null) return "n/a";
+  if (value === null) return "未提供";
   return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(value)}%`;
 }
 

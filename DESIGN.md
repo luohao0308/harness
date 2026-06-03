@@ -1,95 +1,192 @@
 # Design
 
 ## Source of truth
-
 - Status: Active
-- Last refreshed: 2026-05-26
-- Primary product surfaces: Agent Console, Agent Workspace, Knowledge workbench, Team Mode, Tool Registry, Observability.
-- Evidence reviewed: `docs/design/design-tokens.json`, `docs/design/page-inventory.md`, `docs/ai/reference/frontend-spec.md`, `omx_wiki/workspace-demo-ready-constraints.md`, `omx_wiki/session-2026-05-13-workspace-browser-smoke.md`, `omx_wiki/session-2026-05-18-agent-knowledge-p7-release-demo-hardening.md`, existing Console components under `apps/agent-console/src`.
+- Last refreshed: 2026-05-27
+- Primary product surfaces:
+  - 全局 Console Shell 侧边栏与页面标题中文术语
+  - `/tools` MCP / Skill 商店与能力安装流程
+  - `/agents` Agent Studio 内的知识管理与能力配置弹窗
+  - `/agents/:agentId/workspace` 会话级确认操作
+  - `/teams/:teamId` 团队成员移除确认操作
+  - `/runs/:runId` 运行详情中的依据审计、上下文组装与标记节省说明
+  - `/observability` 依据质量与标记节省指标总览
+  - `/token-savings` 标记节省总览与近期运行节省证据
+- Evidence reviewed:
+  - `README.md`
+  - `docs/ai/agent-startup-context.md`
+  - `omx_wiki/session-2026-05-17-agent-knowledge-p5-capability-registry.md`
+  - `apps/agent-console/src/app/ConsoleShell.tsx`
+  - `apps/agent-console/src/styles.css`
+  - `apps/agent-console/src/components/ui/button.tsx`
+  - `apps/agent-console/src/components/ui/config-dialog.tsx`
+  - `apps/agent-console/src/features/tools/pages/ToolRegistryPage.tsx`
+  - `apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx`
+  - `apps/agent-console/src/features/agents/components/ChatSurface.tsx`
+  - `apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx`
+  - `apps/agent-console/src/features/teams/pages/TeamPage.tsx`
+  - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx`
+  - `apps/agent-console/src/features/runs/pages/RunHistoryPage.tsx`
+  - `apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx`
+  - `apps/agent-console/src/features/observability/pages/TokenSavingsPage.tsx`
 
 ## Brand
-
-- Personality: precise, operational, enterprise-ready, quiet.
-- Trust signals: real backend state, audit evidence, explicit status, clear policy boundaries.
-- Avoid: marketing-style hero sections, decorative dashboards, one-off visual gimmicks, inline forms that crowd operational pages.
+- Personality:
+  - 专业、克制、可信，优先展示运行状态和下一步动作。
+- Trust signals:
+  - 中文优先术语
+  - 明确的安装状态、审批阶段和测试结果
+  - 不依赖浏览器原生弹窗
+  - 所有状态来自后端或明确的本地交互结果
+- Avoid:
+  - 中英混排的按钮与状态
+  - “点了没反应”的静默操作
+  - 新手需要自行推断安装顺序
+  - 浏览器 `alert/confirm/prompt`
 
 ## Product goals
-
-- Goals: make Harness capabilities configurable, auditable, and easy to operate from the Console.
-- Non-goals: public marketing polish, generic chatbot UI, fake static console data.
-- Success signals: users can scan state first, then open focused configuration flows only when needed.
+- Goals:
+  - 让新手能在 `/tools` 完成 MCP / Skill 的发现、安装、审批、挂载和验证。
+  - 将所有关键交互改成中文、可解释、可回溯的反馈。
+  - 统一确认弹窗与操作成功/失败提示，降低误操作焦虑。
+- Non-goals:
+  - 不重做整套视觉系统。
+  - 不把现有页面改成营销型设计。
+  - 不在前端伪造后端尚未提供的安装事实。
+- Success signals:
+  - 用户能看懂“当前在哪一步、下一步做什么、是否成功”。
+  - 安装成功、失败、待审批、待安装、已安装一眼可辨。
+  - 所有 destructive / branching 操作都通过自定义弹窗确认。
 
 ## Personas and jobs
-
-- Primary personas: internal platform engineer, agent operator, evaluator, demo reviewer.
-- User jobs: configure agents, attach capabilities, manage knowledge, inspect evidence, run validation.
-- Key contexts of use: local private deployment, demo review, iterative internal testing.
+- Primary personas:
+  - 新手运维或内部测试人员
+  - 负责接入 MCP / Skill 的 Agent 管理员
+  - 需要验证安装链路是否可用的产品/研发同学
+- User jobs:
+  - 找到合适的能力并安装到指定 Agent
+  - 判断能力是否已安装、是否还要审批
+  - 用具体案例快速验证 MCP 或 Skill 已生效
+  - 在知识库、会话、团队页执行风险操作时获得清晰确认
+- Key contexts of use:
+  - 本地开发环境
+  - 演示环境
+  - 私有部署后的内部验证环境
 
 ## Information architecture
-
-- Primary navigation: Console sidebar owns stable product areas.
-- Core routes/screens: Agents, Teams, Knowledge, Tools, Runs, Observability, Token Savings, Eval, Policy, Models.
-- Content hierarchy: overview and status first; details second; create/edit/configure actions in dialogs or compact popovers.
+- Primary navigation:
+  - 左侧导航保持控制台结构稳定，核心操作在页面主区完成。
+- Core routes/screens:
+  - `/tools`: 商店发现 + 安装工作台 + 高级生命周期
+  - `/agents`: Agent Studio 中的知识和能力配置
+  - `/agents/:agentId/workspace`: 会话与执行入口
+  - `/teams/:teamId`: 团队编排与成员管理
+  - `/runs`: 运行列表与入口摘要
+  - `/token-savings`: 标记节省总览与近期运行证据
+- Content hierarchy:
+  - 先显示状态与结果，再显示配置输入
+  - 先给“下一步”，再给底层包信息
+  - 先给推荐测试案例，再给原始 JSON / ID
 
 ## Design principles
-
-- Principle 1: keep operational work surfaces scannable before they are editable.
-- Principle 2: configuration should be a focused modal or popover when it is not the primary page content.
-- Tradeoffs: favor compact, explicit controls over large always-visible forms; expose advanced details only when selected.
+- Principle 1:
+  - 中文优先，术语固定，减少双语噪音。
+- Principle 2:
+  - 每个高风险动作都要先确认，每个关键动作都要有结果反馈。
+- Principle 3:
+  - 新手路径优先于专家路径，专家能力保留在“高级生命周期”。
+- Tradeoffs:
+  - 保留 MCP 等必要缩写，但配合中文说明。
+  - 原始 ID 和包元数据仍然展示，但降到结果卡片与摘要层。
 
 ## Visual language
-
-- Color: restrained neutral base with status colors for state and evidence.
-- Typography: compact console typography; no viewport-scaled font sizes.
-- Spacing/layout rhythm: dense but breathable 8px-oriented spacing; avoid nested cards.
-- Shape/radius/elevation: small radius, light borders, limited elevation for dialogs/popovers.
-- Motion: minimal, functional feedback only.
-- Imagery/iconography: use lucide icons for tools/actions; no decorative imagery in console screens.
+- Color:
+  - 继续沿用现有白底、石板灰、青蓝信息态、绿色成功态、琥珀警示态、红色风险态。
+- Typography:
+  - 维持控制台现有无衬线字体与等宽 ID 展示；中文按钮和状态优先短语化。
+- Spacing/layout rhythm:
+  - 以 8px 节奏为主，商店页强调卡片分区和步骤流。
+- Shape/radius/elevation:
+  - 使用现有圆角卡片与轻阴影，不引入新材质语言。
+- Motion:
+  - 点击与加载反馈以轻量状态切换、toast、按钮忙碌文案为主。
+- Imagery/iconography:
+  - 继续使用 Lucide 图标，图标服务于状态理解，不单独承担含义。
 
 ## Components
-
-- Existing components to reuse: `ConsoleShell`, `Card`, `Button`, `Badge`, `Input`, `Textarea`, `MenuSelect`.
-- New/changed components: feature-local modal shells are acceptable when no shared dialog component exists.
-- Variants and states: all controls need loading, disabled, empty, error, and success states where applicable.
-- Token/component ownership: keep styling in Tailwind classes and existing UI primitives unless a repeated pattern justifies extraction.
+- Existing components to reuse:
+  - `Button`
+  - `Badge`
+  - `Card`
+  - `ConfigDialog`
+  - `Input`
+  - `Textarea`
+- New/changed components:
+  - 统一确认弹窗
+  - 全局操作反馈 toast/状态提示
+  - 商店安装状态徽标与步骤提示
+- Variants and states:
+  - 按钮必须体现默认、悬停、按下、忙碌、成功后反馈
+  - 弹窗必须体现说明、确认、取消、关闭
+  - 安装状态至少区分“未安装 / 待审批 / 待安装 / 已安装”
+- Token/component ownership:
+  - 继续复用 `Button`/`Badge`/`ConfigDialog` 体系，不新增第二套弹窗体系。
 
 ## Accessibility
-
-- Target standard: keyboard-operable, semantic controls, readable contrast.
-- Keyboard/focus behavior: dialogs use `role="dialog"` and `aria-modal="true"`; popovers/dialogs must have clear close paths.
-- Contrast/readability: status badges must remain legible on light backgrounds.
-- Screen-reader semantics: buttons and inputs require accessible names.
-- Reduced motion and sensory considerations: avoid nonessential animation.
+- Target standard:
+  - 保持当前控制台的键盘可达与语义弹窗基线。
+- Keyboard/focus behavior:
+  - 自定义弹窗支持 Esc 关闭、可见关闭按钮、明确焦点边界。
+- Contrast/readability:
+  - 维持当前高对比文本与状态底色。
+- Screen-reader semantics:
+  - 弹窗提供 `role="dialog"`、`aria-modal`、标题与说明关联。
+- Reduced motion and sensory considerations:
+  - 避免强动画，反馈以文字与颜色为主。
 
 ## Responsive behavior
-
-- Supported breakpoints/devices: desktop console first, narrow mobile checks for overflow regressions.
-- Layout adaptations: sidebars and panels may stack; action rows wrap instead of overflowing.
-- Touch/hover differences: do not require hover-only access to critical actions.
+- Supported breakpoints/devices:
+  - 桌面优先，同时保证移动宽度下弹窗、商店列表与安装工作台可滚动使用。
+- Layout adaptations:
+  - 宽屏采用商店列表 + 安装工作台双栏；窄屏允许堆叠。
+- Touch/hover differences:
+  - 不能依赖 hover 才能理解状态，点击后必须有显式反馈。
 
 ## Interaction states
-
-- Loading: show compact text or disabled controls.
-- Empty: describe the empty state and provide the next primary action.
-- Error: render request failures inline near the action.
-- Success: refresh server state and close modal dialogs after successful mutation.
-- Disabled: explain or visually imply unavailable actions where practical.
-- Offline/slow network, if applicable: avoid blocking page scanability while queries refresh.
+- Loading:
+  - 使用“同步中 / 安装中 / 审批中 / 测试中”等中文忙碌文案。
+- Empty:
+  - 明确说明“暂无匹配项 / 暂无可选文档 / 暂无能力包”。
+- Error:
+  - 错误信息直接显示并进入统一反馈层。
+- Success:
+  - 成功提示要告诉用户“做成了什么”和“接下来还能做什么”。
+- Disabled:
+  - 禁用按钮应保留原因提示或上下文说明。
+- Offline/slow network, if applicable:
+  - 网络或源降级时保留本地推荐，并明确说明部分源不可用。
 
 ## Content voice
-
-- Tone: Chinese-first console copy, concise and operational.
-- Terminology: preserve required technical terms such as API, MCP, RAG, JSON, Markdown, Trace, WarmPool.
-- Microcopy rules: say what the action changes; avoid feature explanations inside the main work surface.
+- Tone:
+  - 直接、稳定、说明式，不喊口号。
+- Terminology:
+  - 固定使用“运行平台、标记节省、商店、安装、审批、挂载、测试、确认、知识源、团队成员”等中文。
+- Microcopy rules:
+  - 优先告诉用户结果和下一步。
+  - 避免“Install / Approve / Enable / verified”裸英文。
+  - 缩写首次出现时补中文解释，后续可直接使用。
 
 ## Implementation constraints
-
-- Framework/styling system: React, TypeScript, TanStack Query, Tailwind classes, existing UI primitives.
-- Design-token constraints: use existing colors, radius, borders, and component sizes.
-- Performance constraints: avoid heavy client-only visual layers and unnecessary dependencies.
-- Compatibility constraints: frontend state must remain API-backed; no placeholder routes or static console data.
-- Test/screenshot expectations: pair UI changes with targeted Vitest, lint/build, and Playwright overflow/smoke evidence when layout risk is visible.
+- Framework/styling system:
+  - React 18 + TypeScript + Tailwind CSS
+- Design-token constraints:
+  - 继续沿用现有 `slate / emerald / amber / cyan / red` 语义色。
+- Performance constraints:
+  - 反馈组件保持轻量，不引入新依赖。
+- Compatibility constraints:
+  - 后端仍可能返回英文状态值，前端需做中文映射而不是改协议。
+- Test/screenshot expectations:
+  - 至少覆盖商店安装链路、确认弹窗链路、MCP 快速测试链路和核心中文文案。
 
 ## Open questions
-
-- [ ] Whether a shared Dialog primitive should replace feature-local modal shells once a second or third modal pattern repeats across product areas.
+- [ ] 是否要把整个控制台从“中文优先”升级为“纯中文唯一文案”规范；当前先落在 MCP / Skill 商店和本次修改触达页面。

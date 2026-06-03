@@ -12,8 +12,8 @@ const apiBaseUrl = "http://127.0.0.1:8000";
 function agent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
     id: "default",
-    name: "Default Agent",
-    description: "Default entry agent",
+    name: "默认智能体",
+    description: "默认入口智能体",
     role: "executor",
     status: "ACTIVE",
     model_provider: "default",
@@ -156,7 +156,7 @@ describe("KnowledgePage", () => {
         return jsonResponse({
           items: [
             agent(),
-            agent({ id: "researcher", name: "Research Agent", description: "Research scope" }),
+            agent({ id: "researcher", name: "研究智能体", description: "研究作用域" }),
           ],
           next_cursor: null,
         });
@@ -185,8 +185,8 @@ describe("KnowledgePage", () => {
     expect(screen.getAllByText("Dify 知识库").length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: /^全部 本地文档和 API 配置$/ }));
-    await user.click(screen.getByRole("button", { name: /知识库 Agent/ }));
-    await user.click(await screen.findByText("Research Agent"));
+    await user.click(screen.getByRole("button", { name: /知识库智能体/ }));
+    await user.click(await screen.findByText("研究智能体"));
     expect((await screen.findAllByText("研究资料")).length).toBeGreaterThan(0);
   });
 

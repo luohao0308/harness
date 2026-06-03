@@ -122,7 +122,7 @@ describe("WorkspaceShellBar", () => {
       "href",
       "/runs/run-123",
     );
-    expect(screen.getByText("WAITING_APPROVAL")).toBeInTheDocument();
+    expect(screen.getByText("待审批")).toBeInTheDocument();
   });
 
   it("opens tools capabilities from the lightweight proof chip", () => {
@@ -135,6 +135,7 @@ describe("WorkspaceShellBar", () => {
       }),
     );
     expect(screen.getByRole("dialog", { name: "工具" })).toBeInTheDocument();
+    expect(screen.getByText("工具快捷插入")).toBeInTheDocument();
     expect(screen.queryByText("Tool capabilities")).not.toBeInTheDocument();
     expect(screen.queryByText("Plugins / MCP")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /@read_file/ }));

@@ -16,6 +16,7 @@
 import type { ChangeEvent, JSX } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Search, X } from "lucide-react";
 
 import { useI18n } from "../../../lib/i18n";
 import type { ConversationNode } from "../../../stores/workspaceStore";
@@ -80,14 +81,33 @@ export function SearchOverlay({
       role="dialog"
       aria-modal="true"
       aria-label={text("搜索会话", "Search conversation")}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-4 pt-[8vh] backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
         ref={dialogRef}
         onClick={(event) => event.stopPropagation()}
-        className="w-[640px] max-w-[90vw] rounded-2xl bg-white shadow-xl p-4"
+        className="w-[min(42rem,100%)] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
       >
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
+              <Search className="h-4 w-4" />
+              {text("搜索会话", "Search conversation")}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              {text("输入关键词后可直接跳转到对应消息。", "Type a keyword to jump directly to a message.")}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label={text("关闭搜索", "Close search")}
+            onClick={onClose}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-950"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
         <input
           ref={inputRef}
           type="text"

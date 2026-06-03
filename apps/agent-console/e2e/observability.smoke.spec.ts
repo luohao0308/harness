@@ -161,6 +161,7 @@ test.describe("Observability page mocked smoke tests", () => {
 
     // Runtime Overview section — Chinese: "运行总览"
     await expect(page.getByText("运行总览")).toBeVisible();
+    await expect(page.getByText("依据质量", { exact: true })).toBeVisible();
 
     // Task total (formatNumber uses Intl.NumberFormat("zh-CN"))
     await expect(page.getByText("142")).toBeVisible();

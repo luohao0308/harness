@@ -2,7 +2,7 @@
  * L2 Mocked Browser Test: Run Detail Product Proof
  *
  * Proves the Run Detail page renders all Harness evidence sections:
- * summary, Plan DAG, Tool Calls, Replay, Guardrails, Event Stream,
+ * summary, Plan dependency graph, Tool Calls, Replay, Guardrails, Event Stream,
  * Subagents, and Model Calls — using typed deterministic fixtures.
  *
  * Also verifies deep-link anchors (#plan, #model-calls, #tool-runtime,
@@ -304,14 +304,14 @@ const workspaceFixture = {
       tool_call_id: "tc-detail-001",
       organization_id: null,
       requested_by: "executor",
-      decided_by: "operator",
-      status: "APPROVED",
+      decided_by: null,
+      status: "PENDING",
       risk_level: "low",
       reason: "Low-risk file read",
       request_json: {},
       decision_json: {},
       created_at: now,
-      decided_at: now,
+      decided_at: null,
     },
   ],
   assignments: [],
@@ -344,7 +344,7 @@ test.describe("Run Detail mocked product proof", () => {
     // Run summary
     await expect(page.getByText("Validate Harness Chain")).toBeVisible();
     await expect(page.getByText("Prove Model + Harness = Agent end-to-end")).toBeVisible();
-    await expect(page.getByText("COMPLETED").first()).toBeVisible();
+    await expect(page.getByText("已完成").first()).toBeVisible();
 
     // Model info
     await expect(page.getByText("deepseek-flash/deepseek-v4-flash").first()).toBeVisible();
@@ -356,13 +356,15 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("开启", { exact: true })).toBeVisible();
   });
 
-  test("Plan DAG shows steps with execution mode, tool hints, sandbox, and subagent evidence", async ({
+  test("Plan dependency graph shows steps with execution mode, tool hints, sandbox, and subagent evidence", async ({
     page,
   }) => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
-    // Plan DAG section
-    await expect(page.getByText("计划 DAG")).toBeVisible();
+    // Plan dependency graph section
+    const planSection = page.locator("#plan");
+    await expect(planSection).toContainText("计划");
+    await expect(planSection).toContainText("依赖图");
     await expect(page.getByText("2 个步骤")).toBeVisible();
 
     // Step 1
@@ -375,7 +377,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("sandbox-exec")).toBeVisible();
     await expect(page.locator("#plan").getByText("沙箱", { exact: true })).toBeVisible();
     await expect(page.locator("#plan").getByText("子代理", { exact: true })).toBeVisible();
-    await expect(page.locator("#plan").getByText("async")).toBeVisible();
+    await expect(page.locator("#plan").getByText("异步执行")).toBeVisible();
     await expect(page.locator("#plan").getByText("依赖: read-readme")).toBeVisible();
   });
 
@@ -385,7 +387,7 @@ test.describe("Run Detail mocked product proof", () => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
     // Tool Calls table
-    await expect(page.getByText("工具调用")).toBeVisible();
+    await expect(page.locator("#tool-runtime").getByText("工具调用").first()).toBeVisible();
     await expect(page.getByText("read_file").first()).toBeVisible();
     await expect(page.getByText("35ms")).toBeVisible();
 
@@ -395,8 +397,8 @@ test.describe("Run Detail mocked product proof", () => {
 
     // Event Stream
     await expect(page.getByText("事件流")).toBeVisible();
-    await expect(page.getByText("PLAN_CREATED")).toBeVisible();
-    await expect(page.getByText("STEP_COMPLETED")).toBeVisible();
+    await expect(page.getByText("计划已创建")).toBeVisible();
+    await expect(page.getByText("步骤完成")).toBeVisible();
 
     // Model Calls
     await expect(page.getByText("模型调用")).toBeVisible();
@@ -404,7 +406,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("850ms")).toBeVisible();
     await expect(page.getByText("pm-detail-001").last()).toBeVisible();
     await expect(page.getByText("request-hash-detail-001")).toBeVisible();
-    await expect(page.getByText("recomputable_v2")).toBeVisible();
+    await expect(page.getByText("可复算 v2")).toBeVisible();
   });
 
   test("Knowledge grounding shows provider and verification evidence", async ({
@@ -413,8 +415,8 @@ test.describe("Run Detail mocked product proof", () => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
     await expect(page.getByText("知识依据")).toBeVisible();
-    await expect(page.getByText("local_knowledge")).toBeVisible();
-    await expect(page.getByText("local_evidence_sufficient")).toBeVisible();
+    await expect(page.getByText("本地知识库")).toBeVisible();
+    await expect(page.getByText("本地证据充足")).toBeVisible();
     await expect(page.getByText("提示词组装审计")).toBeVisible();
     await expect(page.getByText("pm-detail-001").first()).toBeVisible();
     await expect(
@@ -433,6 +435,8 @@ test.describe("Run Detail mocked product proof", () => {
 
     // Click replay
     await page.getByRole("button", { name: "重放" }).click();
+
+    await expect(page.getByRole("status").getByText("回放完成")).toBeVisible();
 
     // Replay result
     await expect(page.getByText("已重放")).toBeVisible();
@@ -453,16 +457,53 @@ test.describe("Run Detail mocked product proof", () => {
     await page.getByRole("option", { name: "Smoke Dataset" }).click();
     await page.getByRole("button", { name: "保存为评测用例" }).click();
 
+    await expect(page.getByRole("status").getByText("评测用例已保存")).toBeVisible();
     await expect(page.getByRole("button", { name: /Saved|已保存/ })).toBeVisible();
+  });
+
+  test("top-level execute and orchestration actions show visible feedback", async ({ page }) => {
+    await page.route(`http://127.0.0.1:5177/api/agents/runs/${STABLE_RUN_ID}/workspace`, async (route) => {
+      await fulfillJson(route, {
+        ...workspaceFixture,
+        run: {
+          ...workspaceFixture.run,
+          status: "PLANNED",
+          completed_at: null,
+        },
+      });
+    });
+    await page.goto(`/runs/${STABLE_RUN_ID}`);
+
+    await page.getByRole("button", { name: "执行计划" }).click();
+    await expect(page.getByRole("status").getByText("计划已开始执行")).toBeVisible();
+
+    await page.getByRole("button", { name: "编排多智能体" }).click();
+    await expect(page.getByRole("status").getByText("多智能体编排已启动")).toBeVisible();
+  });
+
+  test("approval accept action shows visible feedback", async ({ page }) => {
+    await page.goto(`/runs/${STABLE_RUN_ID}`);
+
+    await page.getByRole("button", { name: "批准" }).click();
+
+    await expect(page.getByRole("status").getByText("审批已通过")).toBeVisible();
+  });
+
+  test("approval reject action shows visible feedback", async ({ page }) => {
+    await page.goto(`/runs/${STABLE_RUN_ID}`);
+
+    await page.getByRole("button", { name: "拒绝" }).click();
+
+    await expect(page.getByRole("status").getByText("审批已拒绝")).toBeVisible();
   });
 
   test("/runs/:runId/events shows event-focused evidence", async ({ page }) => {
     await page.goto(`/runs/${STABLE_RUN_ID}/events`);
 
     await expect(page.getByText("事件流")).toBeVisible();
-    await expect(page.getByText("PLAN_CREATED")).toBeVisible();
-    await expect(page.getByText("STEP_COMPLETED")).toBeVisible();
-    await expect(page.getByText("TOOL_CALL")).toBeVisible();
+    await expect(page.getByText("计划已创建")).toBeVisible();
+    await expect(page.getByText("步骤完成")).toBeVisible();
+    await expect(page.locator("aside").getByText("工具调用", { exact: true }).last()).toBeVisible();
   });
 
   test("/runs/:runId/subagents shows subagent-focused evidence", async ({ page }) => {
@@ -471,7 +512,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("子代理").last()).toBeVisible();
     await expect(page.getByText("sub-001".slice(0, 8))).toBeVisible();
     await expect(page.getByText("validator")).toBeVisible();
-    await expect(page.getByText("COMPLETED").first()).toBeVisible();
+    await expect(page.getByText("已完成").first()).toBeVisible();
   });
 
   test("deep-link anchors #plan, #model-calls, #tool-runtime, #approvals exist", async ({
@@ -534,6 +575,23 @@ async function routeRunDetailApis(page: Page): Promise<void> {
       return;
     }
 
+    if (path === `/api/agents/runs/${STABLE_RUN_ID}/execute` && method === "POST") {
+      await fulfillJson(route, {
+        id: STABLE_RUN_ID,
+        status: "RUNNING",
+      });
+      return;
+    }
+
+    if (path === `/api/agents/runs/${STABLE_RUN_ID}/orchestrate` && method === "POST") {
+      await fulfillJson(route, {
+        run_id: STABLE_RUN_ID,
+        status: "RUNNING",
+        message: "orchestrated",
+      });
+      return;
+    }
+
     // Eval datasets (fetched by "Save as Eval Case" button)
     if (path === "/api/evals/datasets" && method === "GET") {
       await fulfillJson(route, {
@@ -584,6 +642,42 @@ async function routeRunDetailApis(page: Page): Promise<void> {
         expected_json: requestPayload.expected_json,
         tags_json: ["saved-from-run"],
         created_at: now,
+      });
+      return;
+    }
+
+    if (
+      path === `/api/tasks/${STABLE_TASK_ID}/tool-approvals/appr-001/approve` &&
+      method === "POST"
+    ) {
+      await fulfillJson(route, {
+        items: [
+          {
+            ...workspaceFixture.approvals[0],
+            status: "APPROVED",
+            decided_by: "operator",
+            decided_at: now,
+          },
+        ],
+        next_cursor: null,
+      });
+      return;
+    }
+
+    if (
+      path === `/api/tasks/${STABLE_TASK_ID}/tool-approvals/appr-001/reject` &&
+      method === "POST"
+    ) {
+      await fulfillJson(route, {
+        items: [
+          {
+            ...workspaceFixture.approvals[0],
+            status: "DENIED",
+            decided_by: "operator",
+            decided_at: now,
+          },
+        ],
+        next_cursor: null,
       });
       return;
     }

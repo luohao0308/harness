@@ -4,6 +4,7 @@ import hashlib
 import ipaddress
 import json
 import socket
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -423,6 +424,14 @@ class ResolvedCapabilityTool:
     snapshot_json: dict
 
 
+@dataclass(frozen=True)
+class AttachedCapabilityTool:
+    attachment: AgentCapabilityAttachment
+    metadata: ToolMetadata
+    capability: Capability
+    version: CapabilityVersion
+
+
 def stable_json_sha256(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
@@ -528,6 +537,14 @@ class CapabilityRegistry:
                 .where(
                     AgentCapabilityAttachment.agent_id == agent_id,
                     AgentCapabilityAttachment.enabled.is_(True),
+                    or_(
+                        AgentCapabilityAttachment.organization_id == self.organization_id,
+                        AgentCapabilityAttachment.organization_id.is_(None),
+                    ),
+                    or_(
+                        Capability.organization_id == self.organization_id,
+                        Capability.organization_id.is_(None),
+                    ),
                     Capability.status == "active",
                     CapabilityVersion.status == "active",
                     CapabilityVersion.type.in_(EXECUTABLE_CAPABILITY_TYPES),
@@ -563,7 +580,7 @@ class CapabilityRegistry:
         tools: dict[str, ToolMetadata] = {}
         for version in versions:
             metadata = self._metadata_from_version(version)
-            tools[metadata.name] = metadata
+            tools.setdefault(metadata.name, metadata)
         snapshot = self.create_snapshot(
             agent_id=agent_id,
             task_id=None,
@@ -572,6 +589,154 @@ class CapabilityRegistry:
             persist=False,
         )
         return ToolRegistry(tools=tools), snapshot
+
+    def list_runtime_configs(self, agent_id: str) -> list[dict]:
+        self._agent(agent_id)
+        rows = list(
+            self.session.execute(
+                select(AgentCapabilityAttachment, Capability, CapabilityVersion)
+                .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+                .join(
+                    CapabilityVersion,
+                    AgentCapabilityAttachment.capability_version_id == CapabilityVersion.id,
+                )
+                .where(
+                    AgentCapabilityAttachment.agent_id == agent_id,
+                    AgentCapabilityAttachment.enabled.is_(True),
+                    or_(
+                        AgentCapabilityAttachment.organization_id == self.organization_id,
+                        AgentCapabilityAttachment.organization_id.is_(None),
+                    ),
+                    or_(
+                        Capability.organization_id == self.organization_id,
+                        Capability.organization_id.is_(None),
+                    ),
+                    Capability.status == "active",
+                    CapabilityVersion.status == "active",
+                    CapabilityVersion.type == CAPABILITY_TYPE_MCP_TOOL,
+                )
+                .order_by(
+                    AgentCapabilityAttachment.priority.asc(),
+                    AgentCapabilityAttachment.attached_at.asc(),
+                )
+            ).all()
+        )
+        records: list[dict] = []
+        seen_tool_names: set[str] = set()
+        for attachment, capability, version in rows:
+            metadata = self._metadata_from_version(version)
+            if metadata.name in seen_tool_names:
+                continue
+            seen_tool_names.add(metadata.name)
+            records.append(
+                self._runtime_config_record(
+                    agent_id=agent_id,
+                    attachment=attachment,
+                    capability=capability,
+                    version=version,
+                    metadata=metadata,
+                )
+            )
+        return records
+
+    def runtime_config_for_tool(self, *, agent_id: str, tool_name: str) -> dict:
+        row = self._attached_tool(agent_id=agent_id, tool_name=tool_name)
+        if row.version.type != CAPABILITY_TYPE_MCP_TOOL or row.metadata.source != "mcp":
+            raise CapabilityResolutionError("runtime configuration is only supported for MCP tools")
+        return self._runtime_config_record(
+            agent_id=agent_id,
+            attachment=row.attachment,
+            capability=row.capability,
+            version=row.version,
+            metadata=row.metadata,
+        )
+
+    def update_runtime_config(
+        self,
+        *,
+        agent_id: str,
+        tool_name: str,
+        runtime: dict,
+        secret_ref: str | None,
+        updated_by: str | None,
+    ) -> dict:
+        row = self._attached_tool(agent_id=agent_id, tool_name=tool_name)
+        if row.version.type != CAPABILITY_TYPE_MCP_TOOL or row.metadata.source != "mcp":
+            raise CapabilityResolutionError("runtime configuration is only supported for MCP tools")
+
+        base_config = deepcopy(
+            row.version.config_json if isinstance(row.version.config_json, dict) else {}
+        )
+        base_config["runtime"] = runtime
+        base_config["secret_ref"] = (
+            secret_ref.strip() if isinstance(secret_ref, str) and secret_ref.strip() else None
+        )
+        base_config["secret_scope"] = "mcp_runtime" if base_config["secret_ref"] else None
+        base_config["runtime_configured_by"] = updated_by
+        base_config["runtime_configured_at"] = utc_now().isoformat()
+        new_config = redact_secrets(base_config)
+        config_sha = stable_json_sha256(new_config)
+        version_id = _bounded_identifier(
+            f"{row.metadata.name}:{row.version.content_sha256[:16]}:{config_sha[:8]}",
+            fallback="runtime-config-version",
+            max_length=MAX_CAPABILITY_VERSION_ID_LENGTH,
+        )
+        next_version_number = (
+            max(
+                self.session.execute(
+                    select(CapabilityVersion.version).where(
+                        CapabilityVersion.capability_id == row.capability.id
+                    )
+                ).scalars(),
+                default=0,
+            )
+            + 1
+        )
+        new_version = self.session.get(CapabilityVersion, version_id)
+        if new_version is None:
+            new_version = CapabilityVersion(
+                id=version_id,
+                capability_id=row.capability.id,
+                version=next_version_number,
+                type=row.version.type,
+                status="active",
+                content_json=deepcopy(row.version.content_json),
+                config_json=new_config,
+                content_sha256=row.version.content_sha256,
+                config_sha256=config_sha,
+                schema_version=row.version.schema_version,
+                created_by=updated_by,
+                created_at=utc_now(),
+            )
+            self.session.add(new_version)
+            self.session.flush()
+
+        duplicate_attachment = self.session.execute(
+            select(AgentCapabilityAttachment).where(
+                AgentCapabilityAttachment.agent_id == agent_id,
+                AgentCapabilityAttachment.capability_version_id == new_version.id,
+            )
+        ).scalar_one_or_none()
+        if duplicate_attachment is not None and duplicate_attachment.id != row.attachment.id:
+            duplicate_attachment.enabled = True
+            duplicate_attachment.priority = row.attachment.priority
+            row.attachment.enabled = False
+            target_attachment = duplicate_attachment
+        else:
+            row.attachment.capability_version_id = new_version.id
+            row.attachment.enabled = True
+            target_attachment = row.attachment
+
+        row.capability.current_version_id = new_version.id
+        row.capability.updated_at = utc_now()
+        self.session.flush()
+        return self._runtime_config_record(
+            agent_id=agent_id,
+            attachment=target_attachment,
+            capability=row.capability,
+            version=new_version,
+            metadata=row.metadata,
+        )
 
     def create_snapshot(
         self,
@@ -864,6 +1029,49 @@ class CapabilityRegistry:
             self.session.flush()
         return package
 
+    def preflight_marketplace_package(
+        self,
+        *,
+        manifest: dict,
+        source_uri: str | None = None,
+        pinned_ref: str | None = None,
+        content: dict | None = None,
+        created_by: str | None = None,
+    ) -> CapabilityPackage:
+        effective_content = content or {}
+        effective_pin = pinned_ref or f"marketplace-sha256:{stable_json_sha256(effective_content)}"
+        package = self._stage_package(
+            manifest=manifest,
+            content=effective_content,
+            source_kind="marketplace_preflight",
+            source_uri=source_uri,
+            pinned_ref=effective_pin,
+            created_by=created_by,
+        )
+        package.validation_json = {
+            **package.validation_json,
+            "marketplace_preflight": True,
+            "source_resolution": "registry_metadata_only_no_url_fetch",
+            "staging_execution": "manifest_only_no_code_execution",
+        }
+        package.provenance_json = {
+            **package.provenance_json,
+            "marketplace_registry_metadata_only": True,
+        }
+        package.audit_json = {
+            **package.audit_json,
+            "marketplace_preflight": {
+                "event": "marketplace_package_registered",
+                "no_code_execution": True,
+                "no_source_download": True,
+                "requires_approval": True,
+                "requested_by": created_by,
+                "at": utc_now().isoformat(),
+            },
+        }
+        self.session.flush()
+        return package
+
     def install_uploaded_package(
         self,
         *,
@@ -1075,12 +1283,18 @@ class CapabilityRegistry:
                 or_(
                     Capability.organization_id == self.organization_id,
                     Capability.organization_id.is_(None),
-                )
+                ),
+                Capability.status == "active",
+                CapabilityVersion.status == "active",
+                CapabilityVersion.type.in_(EXECUTABLE_CAPABILITY_TYPES),
             )
         ).scalars():
-            raw = version.content_json.get("tool_metadata")
-            if isinstance(raw, dict) and raw.get("name") == tool_name:
-                return ToolMetadata.model_validate(raw)
+            try:
+                metadata = self._metadata_from_version(version)
+            except CapabilityResolutionError:
+                continue
+            if metadata.name == tool_name:
+                return metadata
         return None
 
     def _attached_versions(self, agent_id: str) -> list[CapabilityVersion]:
@@ -1095,6 +1309,14 @@ class CapabilityRegistry:
                 .where(
                     AgentCapabilityAttachment.agent_id == agent_id,
                     AgentCapabilityAttachment.enabled.is_(True),
+                    or_(
+                        AgentCapabilityAttachment.organization_id == self.organization_id,
+                        AgentCapabilityAttachment.organization_id.is_(None),
+                    ),
+                    or_(
+                        Capability.organization_id == self.organization_id,
+                        Capability.organization_id.is_(None),
+                    ),
                     Capability.status == "active",
                     CapabilityVersion.status == "active",
                     CapabilityVersion.type.in_(EXECUTABLE_CAPABILITY_TYPES),
@@ -1105,6 +1327,99 @@ class CapabilityRegistry:
                 )
             ).scalars()
         )
+
+    def _attached_tool(self, *, agent_id: str, tool_name: str) -> AttachedCapabilityTool:
+        self._agent(agent_id)
+        rows = list(
+            self.session.execute(
+                select(AgentCapabilityAttachment, Capability, CapabilityVersion)
+                .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+                .join(
+                    CapabilityVersion,
+                    AgentCapabilityAttachment.capability_version_id == CapabilityVersion.id,
+                )
+                .where(
+                    AgentCapabilityAttachment.agent_id == agent_id,
+                    AgentCapabilityAttachment.enabled.is_(True),
+                    or_(
+                        AgentCapabilityAttachment.organization_id == self.organization_id,
+                        AgentCapabilityAttachment.organization_id.is_(None),
+                    ),
+                    or_(
+                        Capability.organization_id == self.organization_id,
+                        Capability.organization_id.is_(None),
+                    ),
+                    Capability.status == "active",
+                    CapabilityVersion.status == "active",
+                    CapabilityVersion.type.in_(EXECUTABLE_CAPABILITY_TYPES),
+                )
+                .order_by(
+                    AgentCapabilityAttachment.priority.asc(),
+                    AgentCapabilityAttachment.attached_at.asc(),
+                )
+            ).all()
+        )
+        for attachment, capability, version in rows:
+            metadata = self._metadata_from_version(version)
+            if metadata.name == tool_name:
+                return AttachedCapabilityTool(
+                    attachment=attachment,
+                    metadata=metadata,
+                    capability=capability,
+                    version=version,
+                )
+        raise CapabilityResolutionError(
+            f"agent {agent_id} is not attached to capability {tool_name}"
+        )
+
+    def _runtime_config_record(
+        self,
+        *,
+        agent_id: str,
+        attachment: AgentCapabilityAttachment,
+        capability: Capability,
+        version: CapabilityVersion,
+        metadata: ToolMetadata,
+    ) -> dict:
+        config = redact_secrets(
+            version.config_json if isinstance(version.config_json, dict) else {}
+        )
+        runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
+        transport = str(
+            runtime.get("transport") or _manifest_transport(version.content_json) or "http"
+        )
+        endpoint_url = _clean_optional_string(runtime.get("endpoint_url"))
+        command = _clean_optional_string(runtime.get("command"))
+        args = runtime.get("args") if isinstance(runtime.get("args"), list) else []
+        timeout_seconds = _runtime_timeout(runtime.get("timeout_seconds"), metadata.timeout_seconds)
+        secret_ref = _clean_optional_string(config.get("secret_ref"))
+        missing_fields: list[str] = []
+        if transport in {"http", "sse"} and not endpoint_url:
+            missing_fields.append("endpoint_url")
+        if transport == "stdio" and not command:
+            missing_fields.append("command")
+        return {
+            "agent_id": agent_id,
+            "tool_name": metadata.name,
+            "tool_description": metadata.description,
+            "source": metadata.source,
+            "capability_id": capability.id,
+            "capability_version_id": version.id,
+            "capability_config_sha256": version.config_sha256,
+            "attachment_id": attachment.id,
+            "attachment_enabled": attachment.enabled,
+            "configured": not missing_fields,
+            "missing_fields": missing_fields,
+            "transport": transport,
+            "endpoint_url": endpoint_url,
+            "command": command,
+            "args": [str(item) for item in args],
+            "secret_ref": secret_ref,
+            "timeout_seconds": timeout_seconds,
+            "config_json": config,
+            "registry_visible": True,
+            "test_input_json": _suggested_mcp_test_input(metadata.name),
+        }
 
     def _agent(self, agent_id: str) -> Agent:
         agent = self.session.execute(
@@ -1155,9 +1470,36 @@ class CapabilityRegistry:
                 "pinned_ref": pinned_ref,
             }
         )
+        package_key = package_key_for_manifest(redacted_manifest)
+        existing = self.session.execute(
+            select(CapabilityPackage).where(
+                CapabilityPackage.organization_id == self.organization_id,
+                CapabilityPackage.package_key == package_key,
+                CapabilityPackage.source_sha256 == source_sha,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.validation_json = {
+                **existing.validation_json,
+                "staging_execution": "manifest_only_no_code_execution",
+                "idempotent_preflight": True,
+            }
+            existing.audit_json = {
+                **existing.audit_json,
+                "last_preflight": {
+                    "event": "package_preflight_reused",
+                    "no_code_execution": True,
+                    "requires_approval": existing.source_kind in PUBLIC_SOURCE_KINDS,
+                    "requested_by": created_by,
+                    "at": utc_now().isoformat(),
+                },
+            }
+            existing.updated_at = utc_now()
+            self.session.flush()
+            return existing
         package = CapabilityPackage(
             organization_id=self.organization_id,
-            package_key=package_key_for_manifest(redacted_manifest),
+            package_key=package_key,
             package_type=str(redacted_manifest.get("package_type")),
             source_kind=source_kind,
             source_uri=source_uri,
@@ -1327,6 +1669,8 @@ class CapabilityRegistry:
 
     def _metadata_from_version(self, version: CapabilityVersion) -> ToolMetadata:
         raw = version.content_json.get("tool_metadata")
+        if not isinstance(raw, dict):
+            raw = _synthesized_tool_metadata_from_content(version.content_json)
         if not isinstance(raw, dict):
             raise CapabilityResolutionError(f"capability version is not executable: {version.id}")
         return ToolMetadata.model_validate(raw)
@@ -1539,9 +1883,114 @@ def package_content_for_version(package: CapabilityPackage) -> dict:
             "package_manifest": manifest,
             "package_provenance": package.provenance_json,
         }
+    synthesized_metadata = _tool_metadata_from_package_manifest(manifest)
+    if synthesized_metadata is not None:
+        return {
+            "tool_metadata": synthesized_metadata,
+            "package_manifest": manifest,
+            "package_provenance": package.provenance_json,
+        }
     return {
         "package_manifest": manifest,
         "package_provenance": package.provenance_json,
+    }
+
+
+def _synthesized_tool_metadata_from_content(content: dict) -> dict | None:
+    manifest = content.get("package_manifest")
+    if not isinstance(manifest, dict):
+        return None
+    return _tool_metadata_from_package_manifest(manifest)
+
+
+def _manifest_transport(content: dict) -> str | None:
+    manifest = content.get("package_manifest") if isinstance(content, dict) else None
+    if isinstance(manifest, dict) and manifest.get("transport") in {"stdio", "http", "sse"}:
+        return str(manifest["transport"])
+    return None
+
+
+def _clean_optional_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _runtime_timeout(value: Any, fallback: int) -> int:
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, (int, float)):
+        return max(1, min(int(value), 300))
+    return fallback
+
+
+def _suggested_mcp_test_input(tool_name: str) -> dict:
+    if tool_name == "brave":
+        return {"query": "MCP 教程", "limit": 3}
+    if "context" in tool_name:
+        return {"query": "发布准备情况", "limit": 3}
+    return {"query": "OpenAI 最新动态", "limit": 3}
+
+
+def _tool_metadata_from_package_manifest(manifest: dict) -> dict | None:
+    if manifest.get("package_type") != "mcp_server":
+        return None
+    name = _bounded_identifier(
+        manifest.get("name"),
+        fallback="mcp-server",
+        max_length=MAX_CAPABILITY_KEY_LENGTH,
+    )
+    permissions = manifest.get("permissions")
+    permission_values = (
+        [str(item).lower() for item in permissions if item]
+        if isinstance(permissions, list)
+        else []
+    )
+    risk_level = str(manifest.get("risk_level") or "")
+    if not risk_level:
+        risk_level = (
+            "high"
+            if {"network", "shell", "filesystem:write"}.intersection(permission_values)
+            else "low"
+        )
+    if risk_level not in {"low", "medium", "high", "critical"}:
+        risk_level = "medium"
+    mcp_server = manifest.get("mcp_server") if isinstance(manifest.get("mcp_server"), dict) else {}
+    server_name = (
+        mcp_server.get("qualified_name")
+        or mcp_server.get("server_name")
+        or mcp_server.get("name")
+        or manifest.get("name")
+        or name
+    )
+    method = str(manifest.get("mcp_method") or "search")
+    network_policy = "restricted" if any(
+        value in {"mcp:remote", "network"} or value.startswith("network:")
+        for value in permission_values
+    ) else "none"
+    return {
+        "name": name,
+        "description": str(manifest.get("description") or f"MCP server {server_name}"),
+        "category": "mcp",
+        "source": "mcp",
+        "risk_level": risk_level,
+        "requires_sandbox": False,
+        "network_policy": network_policy,
+        "timeout_seconds": 30,
+        "allowed_roles": ["admin", "engineer"],
+        "audit_level": "elevated" if risk_level in {"high", "critical"} else "standard",
+        "idempotent": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5},
+            },
+            "required": ["query"],
+        },
+        "mcp_server": str(server_name),
+        "mcp_method": method,
     }
 
 

@@ -6,7 +6,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
-  /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
+  /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/agents\/default\/runs\/chat\/stream/;
 
 const STABLE_RUN_ID = "e2e-nav-run-00000000-0000-0000-0000-000000000099";
 const now = "2026-05-13T00:00:00.000Z";
@@ -105,11 +105,11 @@ test.describe("Navigation resilience", () => {
 
     // Wait for run_created (Run Detail link appears)
     await expect(
-      page.locator('a[aria-label="运行详情"]'),
+      page.locator('a[aria-label="运行详情"]').first(),
     ).toBeVisible({ timeout: 10_000 });
 
     // Click the Run Detail link (client-side navigation via React Router)
-    await page.locator('a[aria-label="运行详情"]').click();
+    await page.locator('a[aria-label="运行详情"]').first().click();
 
     // Verify we navigated to Run Detail
     await page.waitForURL(`**/runs/${STABLE_RUN_ID}`);
@@ -160,6 +160,11 @@ async function routeApis(page: Page): Promise<void> {
 
     if (path === "/api/tools/registry") {
       await fulfillJson(route, toolRegistry);
+      return;
+    }
+
+    if (path === "/api/teams") {
+      await fulfillJson(route, { items: [], next_cursor: null });
       return;
     }
 

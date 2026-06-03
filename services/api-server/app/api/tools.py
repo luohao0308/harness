@@ -1,15 +1,19 @@
 import shutil
 from importlib.util import find_spec
 from typing import Annotated
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from jsonschema import Draft202012Validator
 from sqlalchemy.orm import Session
 
+from app.agents.registry import ensure_default_agents
 from app.api.schemas import (
     CapabilityAdminValidationRequest,
     CapabilityAdminValidationResponse,
     CapabilityAttachmentUpdateRequest,
+    CapabilityMarketplacePreflightRequest,
+    CapabilityMarketplaceResponse,
     CapabilityPackageApproveRequest,
     CapabilityPackageAttachRequest,
     CapabilityPackageAttachResponse,
@@ -18,6 +22,9 @@ from app.api.schemas import (
     CapabilityPackageRollbackRequest,
     CapabilityPackageStageRequest,
     CapabilityPublicPackageStageRequest,
+    CapabilityRuntimeConfigPage,
+    CapabilityRuntimeConfigResponse,
+    CapabilityRuntimeConfigUpdateRequest,
     CapabilitySimpleInstallRequest,
     CapabilitySimpleInstallResponse,
     CapabilityTestInvocationRequest,
@@ -30,8 +37,14 @@ from app.core.config import get_settings
 from app.db.models import Task, utc_now
 from app.db.session import get_db_session
 from app.knowledge_connectors import connector_provider_release_matrix
+from app.knowledge_dify import (
+    resolve_connector_secret_ref,
+    secret_ref_looks_like_raw_secret,
+    store_connector_secret_ref,
+)
 from app.security.auth import Principal, require_role
 from app.tools.capabilities import CapabilityRegistry, CapabilityResolutionError
+from app.tools.marketplace import list_capability_marketplace
 from app.tools.registry import ToolRegistry
 from app.tools.runner import ToolRunner
 
@@ -49,8 +62,23 @@ def _bad_request_from_capability_error(exc: CapabilityResolutionError) -> HTTPEx
     summary="查询 Tool Registry",
     description="返回内置工具和 MCP-shaped 工具的统一注册表、风险、权限和 schema。",
 )
-def get_tool_registry(_: DbSession, principal: Principal) -> ToolRegistryResponse:
-    registry = ToolRegistry.default()
+def get_tool_registry(
+    session: DbSession,
+    principal: Principal,
+    agent_id: str | None = None,
+) -> ToolRegistryResponse:
+    if agent_id:
+        ensure_default_agents(session, principal.organization_id)
+        session.commit()
+        try:
+            registry, _snapshot = CapabilityRegistry(
+                session,
+                principal.organization_id,
+            ).tool_registry_for_agent(agent_id)
+        except CapabilityResolutionError as exc:
+            raise _bad_request_from_capability_error(exc) from exc
+    else:
+        registry = ToolRegistry.default()
     tools = [
         tool
         for tool in registry.list_tools()
@@ -93,6 +121,27 @@ def list_capability_packages(
     packages = CapabilityRegistry(session, principal.organization_id).list_packages()
     return CapabilityPackagePage(
         items=[CapabilityPackageResponse.model_validate(package) for package in packages]
+    )
+
+
+@router.get(
+    "/capabilities/marketplace",
+    response_model=CapabilityMarketplaceResponse,
+    summary="Browse MCP and Skill marketplace entries",
+    description=(
+        "Aggregates curated Harness entries, the official MCP Registry, and Smithery MCP/Skill "
+        "search results into safe Harness install/preflight payloads."
+    ),
+)
+def list_capability_marketplace_entries(
+    principal: Principal,
+    kind: str = "all",
+    query: str = "",
+    limit: int = 12,
+) -> CapabilityMarketplaceResponse:
+    require_role(principal, {"admin", "engineer"})
+    return CapabilityMarketplaceResponse(
+        **list_capability_marketplace(kind=kind, query=query, limit=limit)
     )
 
 
@@ -184,6 +233,82 @@ def _simple_install_response(
     )
 
 
+def _default_mcp_secret_ref(agent_id: str, tool_name: str) -> str:
+    normalized_agent = "".join(
+        char.lower() if char.isalnum() else "-" for char in agent_id.strip()
+    ).strip("-")
+    normalized_tool = "".join(
+        char.lower() if char.isalnum() else "-" for char in tool_name.strip()
+    ).strip("-")
+    return f"secret://mcp/{normalized_agent or 'agent'}/{normalized_tool or 'tool'}/api-key"
+
+
+def _runtime_endpoint_errors(
+    *,
+    transport: str,
+    endpoint_url: str | None,
+    command: str | None,
+) -> list[str]:
+    errors: list[str] = []
+    if transport in {"http", "sse"}:
+        if not endpoint_url:
+            errors.append("endpoint_url is required for http or sse MCP runtime")
+        else:
+            parsed = urlparse(endpoint_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                errors.append("endpoint_url must be an absolute http or https URL")
+            if parsed.username or parsed.password:
+                errors.append("endpoint_url must not contain credentials")
+    if transport == "stdio" and not command:
+        errors.append("command is required for stdio MCP runtime")
+    return errors
+
+
+def _runtime_secret_configured(
+    *,
+    session: Session,
+    organization_id: str | None,
+    tool_name: str,
+    secret_ref: str | None,
+) -> bool:
+    if not secret_ref:
+        return False
+    return bool(
+        resolve_connector_secret_ref(
+            secret_ref,
+            provider=tool_name,
+            session=session,
+            organization_id=organization_id,
+        )
+    )
+
+
+def _runtime_config_response(
+    record: dict,
+    *,
+    session: Session,
+    organization_id: str | None,
+) -> CapabilityRuntimeConfigResponse:
+    secret_ref = record.get("secret_ref")
+    secret_configured = _runtime_secret_configured(
+        session=session,
+        organization_id=organization_id,
+        tool_name=str(record.get("tool_name") or ""),
+        secret_ref=str(secret_ref) if secret_ref else None,
+    )
+    missing_fields = list(record.get("missing_fields") or [])
+    if secret_ref and not secret_configured and "secret_value" not in missing_fields:
+        missing_fields.append("secret_value")
+    return CapabilityRuntimeConfigResponse(
+        **{
+            **record,
+            "secret_configured": secret_configured,
+            "missing_fields": missing_fields,
+            "configured": bool(record.get("configured")) and not missing_fields,
+        }
+    )
+
+
 @router.post(
     "/capabilities/install/trusted-url",
     response_model=CapabilitySimpleInstallResponse,
@@ -255,6 +380,47 @@ def preflight_public_url_capability(
         package=package,
         staged_capability_id=package.id,
         next_step_label="Enable after validation",
+    )
+
+
+@router.post(
+    "/capabilities/preflight/marketplace",
+    response_model=CapabilitySimpleInstallResponse,
+    status_code=201,
+    summary="Register marketplace metadata for approval without fetching the listed URL",
+)
+def preflight_marketplace_capability(
+    request: CapabilityMarketplacePreflightRequest,
+    session: DbSession,
+    principal: Principal,
+) -> CapabilitySimpleInstallResponse:
+    require_role(principal, {"admin", "engineer"})
+    try:
+        package = CapabilityRegistry(
+            session,
+            principal.organization_id,
+        ).preflight_marketplace_package(
+            manifest=_simple_manifest(request),
+            source_uri=request.source_uri,
+            pinned_ref=request.pinned_ref,
+            content={
+                **request.content,
+                "marketplace_install": {
+                    "source": request.marketplace_source,
+                    "item_id": request.marketplace_item_id,
+                    "registry_metadata_only": True,
+                },
+            },
+            created_by=principal.user_id,
+        )
+    except CapabilityResolutionError as exc:
+        raise _bad_request_from_capability_error(exc) from exc
+    session.commit()
+    session.refresh(package)
+    return _simple_install_response(
+        package=package,
+        staged_capability_id=package.id,
+        next_step_label="Approve marketplace version",
     )
 
 
@@ -561,6 +727,143 @@ def update_capability_attachment(
         capability_version_id=attachment.capability_version_id,
         enabled=attachment.enabled,
         priority=attachment.priority,
+    )
+
+
+@router.get(
+    "/capabilities/runtime-configs",
+    response_model=CapabilityRuntimeConfigPage,
+    summary="List installed MCP runtime configuration records",
+)
+def list_runtime_configs(
+    session: DbSession,
+    principal: Principal,
+    agent_id: str = "default",
+) -> CapabilityRuntimeConfigPage:
+    require_role(principal, {"admin", "engineer"})
+    ensure_default_agents(session, principal.organization_id)
+    session.commit()
+    try:
+        records = CapabilityRegistry(
+            session,
+            principal.organization_id,
+        ).list_runtime_configs(agent_id)
+    except CapabilityResolutionError as exc:
+        raise _bad_request_from_capability_error(exc) from exc
+    return CapabilityRuntimeConfigPage(
+        items=[
+            _runtime_config_response(
+                record,
+                session=session,
+                organization_id=principal.organization_id,
+            )
+            for record in records
+        ]
+    )
+
+
+@router.get(
+    "/capabilities/runtime-config",
+    response_model=CapabilityRuntimeConfigResponse,
+    summary="Get installed MCP runtime configuration",
+)
+def get_runtime_config(
+    session: DbSession,
+    principal: Principal,
+    agent_id: str,
+    tool_name: str,
+) -> CapabilityRuntimeConfigResponse:
+    require_role(principal, {"admin", "engineer"})
+    ensure_default_agents(session, principal.organization_id)
+    session.commit()
+    try:
+        record = CapabilityRegistry(
+            session,
+            principal.organization_id,
+        ).runtime_config_for_tool(agent_id=agent_id, tool_name=tool_name)
+    except CapabilityResolutionError as exc:
+        raise _bad_request_from_capability_error(exc) from exc
+    return _runtime_config_response(
+        record,
+        session=session,
+        organization_id=principal.organization_id,
+    )
+
+
+@router.patch(
+    "/capabilities/runtime-config",
+    response_model=CapabilityRuntimeConfigResponse,
+    summary="Save installed MCP runtime configuration",
+)
+def update_runtime_config(
+    request: CapabilityRuntimeConfigUpdateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> CapabilityRuntimeConfigResponse:
+    require_role(principal, {"admin", "engineer"})
+    ensure_default_agents(session, principal.organization_id)
+    session.commit()
+    transport = request.transport
+    endpoint_url = request.endpoint_url.strip() if isinstance(request.endpoint_url, str) else None
+    command = request.command.strip() if isinstance(request.command, str) else None
+    secret_ref = (
+        request.secret_ref.strip()
+        if isinstance(request.secret_ref, str) and request.secret_ref.strip()
+        else None
+    )
+    secret_value = (
+        request.secret_value.strip()
+        if isinstance(request.secret_value, str) and request.secret_value.strip()
+        else None
+    )
+    if secret_value and not secret_ref:
+        secret_ref = _default_mcp_secret_ref(request.agent_id, request.tool_name)
+    errors = _runtime_endpoint_errors(
+        transport=transport,
+        endpoint_url=endpoint_url,
+        command=command,
+    )
+    if secret_ref and secret_ref_looks_like_raw_secret(secret_ref):
+        errors.append("secret_ref must reference a server-side secret, not a raw API key")
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    if secret_value and secret_ref:
+        try:
+            store_connector_secret_ref(
+                session,
+                organization_id=principal.organization_id,
+                actor_id=principal.user_id,
+                secret_ref=secret_ref,
+                provider=request.tool_name,
+                secret_value=secret_value,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    runtime = {
+        "transport": transport,
+        "endpoint_url": endpoint_url,
+        "command": command,
+        "args": [str(item)[:200] for item in request.args[:20]],
+        "timeout_seconds": request.timeout_seconds,
+    }
+    try:
+        record = CapabilityRegistry(
+            session,
+            principal.organization_id,
+        ).update_runtime_config(
+            agent_id=request.agent_id,
+            tool_name=request.tool_name,
+            runtime=runtime,
+            secret_ref=secret_ref,
+            updated_by=principal.user_id,
+        )
+    except CapabilityResolutionError as exc:
+        raise _bad_request_from_capability_error(exc) from exc
+    session.commit()
+    return _runtime_config_response(
+        record,
+        session=session,
+        organization_id=principal.organization_id,
     )
 
 

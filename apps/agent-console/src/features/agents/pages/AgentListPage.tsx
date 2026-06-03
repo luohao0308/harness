@@ -20,11 +20,13 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { ConfigDialog } from "../../../components/ui/config-dialog";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input, Textarea } from "../../../components/ui/input";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { cn } from "../../../lib/utils";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import {
   attachAgentCapability,
   cloneAgentDefinition,
@@ -76,16 +78,44 @@ export function AgentListPage() {
         token_budget: tokenBudget,
         template_id: "research-template",
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("智能体创建成功", "Agent created"),
+        description: text(`已创建 ${draftAgentName}，现在可以继续配置能力和知识源。`, `${draftAgentName} is ready for capabilities and knowledge sources.`),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("智能体创建失败", "Agent creation failed"),
+        description: feedbackErrorMessage(error, text("请检查智能体 ID、名称和当前后端状态。", "Check the Agent ID, name, and backend status.")),
+      });
+    },
   });
   const cloneAgentMutation = useMutation({
     mutationFn: () =>
       cloneAgentDefinition({
         source_agent_id: selectedAgentId,
         id: `${selectedAgentId}-clone`,
-        name: `${selectedAgentLabel} Clone`,
+        name: `${selectedAgentLabel} 克隆副本`,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("智能体克隆成功", "Agent cloned"),
+        description: text(`已基于 ${selectedAgentLabel} 创建克隆副本。`, `A clone of ${selectedAgentLabel} is ready.`),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("智能体克隆失败", "Agent clone failed"),
+        description: feedbackErrorMessage(error, text("请检查当前智能体选择和克隆参数。", "Check the selected Agent and clone request.")),
+      });
+    },
   });
   const attachCapabilityMutation = useMutation({
     mutationFn: () =>
@@ -95,15 +125,45 @@ export function AgentListPage() {
         enabled: true,
         priority: 10,
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setCapabilityDialogOpen(false);
-      return queryClient.invalidateQueries({ queryKey: ["agents"] });
+      notifyFeedback({
+        tone: "success",
+        title: text("能力附件已保存", "Capability attached"),
+        description: text(`已将 ${capabilityName} 附加到 ${selectedAgentLabel}。`, `${capabilityName} is now attached to ${selectedAgentLabel}.`),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("能力附件保存失败", "Capability attach failed"),
+        description: feedbackErrorMessage(error, text("请检查能力名称、类型和智能体权限。", "Check the capability name, type, and Agent permissions.")),
+      });
     },
   });
   const selectTokenOptimizerMutation = useMutation({
     mutationFn: (presetId: TokenOptimizerPresetId) =>
       selectAgentTokenOptimizer(selectedAgentId, presetId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+    onSuccess: async (_result, presetId) => {
+      const selectedPreset = tokenOptimizerPresets.data?.items.find((preset) => preset.preset_id === presetId);
+      notifyFeedback({
+        tone: "success",
+        title: text("Token 方案已切换", "Token plan updated"),
+        description: text(
+          `当前智能体已切换到 ${selectedPreset?.display_name ?? presetId}。`,
+          `${selectedPreset?.display_name ?? presetId} is now active for this Agent.`,
+        ),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("Token 方案切换失败", "Token plan update failed"),
+        description: feedbackErrorMessage(error, text("请稍后重试，或检查当前智能体是否可写。", "Please retry or verify the current Agent can be updated.")),
+      });
+    },
   });
   const selectedAgent = useMemo(
     () => agents.data?.items.find((agent) => agent.id === selectedAgentId) ?? null,
@@ -180,7 +240,7 @@ export function AgentListPage() {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <PackagePlus className="h-4 w-4" />
-                {text("创建 / 克隆 Agent", "Create / clone Agent")}
+                {text("创建 / 克隆智能体", "Create / clone Agent")}
               </div>
               <Badge tone={createAgentMutation.isSuccess || cloneAgentMutation.isSuccess ? "success" : "info"}>
                 {text("API 支撑", "API-backed")}
@@ -189,12 +249,12 @@ export function AgentListPage() {
             <div className="grid gap-3 p-3 text-xs">
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1">
-                  <span className="font-medium text-slate-600">Agent ID</span>
-                  <Input aria-label="新 Agent ID" value={draftAgentId} onChange={(event) => setDraftAgentId(event.target.value)} />
+                  <span className="font-medium text-slate-600">智能体 ID</span>
+                  <Input aria-label="新智能体 ID" value={draftAgentId} onChange={(event) => setDraftAgentId(event.target.value)} />
                 </label>
                 <label className="grid gap-1">
                   <span className="font-medium text-slate-600">{text("名称", "Name")}</span>
-                  <Input aria-label="新 Agent 名称" value={draftAgentName} onChange={(event) => setDraftAgentName(event.target.value)} />
+                  <Input aria-label="新智能体名称" value={draftAgentName} onChange={(event) => setDraftAgentName(event.target.value)} />
                 </label>
               </div>
               <label className="grid gap-1">
@@ -207,10 +267,10 @@ export function AgentListPage() {
               </label>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => createAgentMutation.mutate()} disabled={createAgentMutation.isPending}>
-                  <Bot className="h-3.5 w-3.5" /> {text("创建 Agent", "Create Agent")}
+                  <Bot className="h-3.5 w-3.5" /> {text("创建智能体", "Create Agent")}
                 </Button>
                 <Button onClick={() => cloneAgentMutation.mutate()} disabled={cloneAgentMutation.isPending}>
-                  {text("克隆当前 Agent", "Clone selected Agent")}
+                  {text("克隆当前智能体", "Clone selected Agent")}
                 </Button>
               </div>
               {(createAgentMutation.error instanceof Error || cloneAgentMutation.error instanceof Error) ? (
@@ -240,7 +300,7 @@ export function AgentListPage() {
                 </Button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <ReadinessCheck label={text("MCP / Skill / Tool", "MCP / Skill / Tool")} ok={Boolean(selectedAgent?.tools_json.length)} />
+                <ReadinessCheck label={text("MCP / 技能 / 工具", "MCP / Skill / Tool")} ok={Boolean(selectedAgent?.tools_json.length)} />
                 <ReadinessCheck label={text("知识连接器", "Knowledge connector")} ok={knowledgeConnectorReady} detail={knowledgeConnectorDetail} />
                 <ReadinessCheck label={text("Token 预算", "Token budget")} ok={tokenBudget >= 1024} detail={`${tokenBudget}`} />
                 <ReadinessCheck label={text("策略冲突", "Policy conflicts")} ok={capabilityKind !== "high_risk_unapproved"} />
@@ -307,7 +367,7 @@ export function AgentListPage() {
             subtitle={text("内置省 Token 方案", "Built-in token saving presets")}
             status={tokenOptimizerStatusLabel}
             description={text(
-              "直接为当前 Agent 选择关闭、保守、均衡或强力方案；下次运行前自动调整上下文预算。",
+              "直接为当前智能体选择关闭、保守、均衡或强力方案；下次运行前自动调整上下文预算。",
               "Choose Off, Conservative, Balanced, or Aggressive for this Agent; the next run adjusts context budget automatically.",
             )}
           />
@@ -385,7 +445,7 @@ export function AgentListPage() {
             {activeTokenOptimizerPresetId === "custom" ? (
               <div className="rounded-md border border-amber-100 bg-amber-50 p-3 text-amber-800">
                 {text(
-                  "当前 Agent 启用了高级自定义 Token 优化。选择上方任一内置方案会切换到该方案。",
+                  "当前智能体启用了高级自定义 Token 优化。选择上方任一内置方案会切换到该方案。",
                   "This Agent currently uses a custom token optimizer. Selecting a built-in plan above will switch to that plan.",
                 )}
               </div>
@@ -422,7 +482,7 @@ export function AgentListPage() {
         <ConfigDialog
           open={capabilityDialogOpen}
           title={text("配置能力附件", "Configure capability attachment")}
-          description={text("为当前 Agent 附加 MCP、Skill 或工具能力；保存后刷新就绪检查。", "Attach an MCP, Skill, or tool capability to the current Agent; readiness refreshes after save.")}
+          description={text("为当前智能体附加 MCP、技能或工具能力；保存后刷新就绪检查。", "Attach an MCP, Skill, or tool capability to the current Agent; readiness refreshes after save.")}
           onClose={() => setCapabilityDialogOpen(false)}
         >
           <div className="grid gap-3 text-xs">
@@ -432,7 +492,7 @@ export function AgentListPage() {
                 <Badge tone="neutral">{selectedAgentId}</Badge>
               </div>
               <p className="mt-2 leading-5 text-slate-500">
-                {text("附件会进入 Agent 作用域，运行时通过能力注册表和工具执行器解析。", "The attachment is scoped to this Agent and resolved through the capability registry and ToolRunner at runtime.")}
+                {text("附件会进入智能体作用域，运行时通过能力注册表和工具执行器解析。", "The attachment is scoped to this Agent and resolved through the capability registry and ToolRunner at runtime.")}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -446,7 +506,7 @@ export function AgentListPage() {
               </label>
             </div>
             <Button onClick={() => attachCapabilityMutation.mutate()} disabled={attachCapabilityMutation.isPending || !capabilityName.trim()}>
-              <Wrench className="h-3.5 w-3.5" /> {text("附加到当前 Agent", "Attach to selected Agent")}
+              <Wrench className="h-3.5 w-3.5" /> {text("附加到当前智能体", "Attach to selected Agent")}
             </Button>
             {attachCapabilityMutation.error instanceof Error ? <div className="text-red-700">{attachCapabilityMutation.error.message}</div> : null}
           </div>
@@ -461,7 +521,7 @@ function ReadinessCheck({ label, ok, detail }: { label: string; ok: boolean; det
     <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-slate-700">{label}</span>
-        <Badge tone={ok ? "success" : "warning"}>{ok ? "ready" : "warning"}</Badge>
+        <Badge tone={ok ? "success" : "warning"}>{ok ? "已就绪" : "待处理"}</Badge>
       </div>
       {detail ? <div className="mt-1 text-[11px] text-slate-500">{detail}</div> : null}
     </div>
@@ -607,7 +667,7 @@ function AgentCard({ agent }: { agent: AgentDefinition }) {
           <div className="flex items-center gap-2">
             <Bot className="h-4 w-4 text-slate-500" />
             <div className="truncate text-sm font-semibold text-slate-950">{agent.name}</div>
-            <Badge tone="success">{agent.status}</Badge>
+            <Badge tone="success">{statusLabel(agent.status)}</Badge>
           </div>
           <div className="mt-1 font-mono text-[11px] text-slate-500">{agent.id}</div>
         </div>
