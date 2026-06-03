@@ -45,7 +45,8 @@ Metrics: http://127.0.0.1:8000/metrics
 ## Evidence To Show
 
 ```text
-Backend tests: 118 passed
+Backend tests: 123 passed
+Frontend tests: 30 files / 148 tests passed
 Frontend build: passed
 Docs validation: passed
 Diff whitespace check: passed

@@ -58,6 +58,14 @@ function modelKey(option: ModelOption): string {
   return JSON.stringify([option.providerId, option.modelId]);
 }
 
+export function modelOptionDisplay(option: ModelOption): { title: string; subtitle: string } {
+  const providerLabel = option.providerLabel.trim() || option.providerId;
+  const modelLabel = option.modelLabel.trim() || option.modelId;
+  const title = providerLabel || modelLabel || option.providerId || option.modelId;
+  const subtitle = modelLabel && modelLabel !== title ? modelLabel : option.modelId || option.providerId;
+  return { title, subtitle };
+}
+
 export function ModelPicker({
   providers,
   selectedProviderId,
@@ -95,16 +103,16 @@ export function ModelPicker({
           disabled: true,
         },
       ]
-    : providers.map((option) => ({
-        value: modelKey(option),
-        label: option.modelLabel,
-        description: option.providerLabel,
-        group: option.providerLabel,
-        meta:
-          option.providerId === selectedProviderId && option.modelId === selectedModelId
-            ? text("当前", "Current")
-            : option.providerId,
-      }));
+    : providers.map((option) => {
+        const display = modelOptionDisplay(option);
+        return {
+          value: modelKey(option),
+          label: display.title,
+          description: display.subtitle,
+          group: option.providerLabel,
+          leading: <Brain aria-hidden="true" className="h-4 w-4" />,
+        };
+      });
 
   return (
     <MenuSelect

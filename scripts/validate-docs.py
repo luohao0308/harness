@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+BRIEF_ROUTE_FIXTURES = {
+    "": ["project-handoff"],
+    "startup context validation evidence": ["agent-startup-context-loop"],
+    "agent startup context index": ["agent-startup-context-loop"],
+    "RAG retrieval and Run Detail grounding": [
+        "knowledge-rag-grounding",
+        "eval-observability-groundedness",
+    ],
+    "frontend UI selector": ["frontend-ui-console"],
+    "context router memory budget": ["context-router-memory"],
+}
 
 BLOCKED_TERMS = [
     "\x4d\x56\x50",
@@ -42,15 +55,21 @@ STAGE_FILES = [
 ]
 
 REQUIRED_FILES = [
+    "AGENTS.md",
     "README.md",
     "docs/ai/README.md",
     "docs/ai/00-execution-protocol.md",
+    "docs/ai/agent-startup-context.md",
+    "docs/ai/context-index.json",
     "docs/ai/01-task-progress.md",
     "docs/ai/task-progress.yaml",
     "docs/human/10-task-progress.md",
     "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
+    "omx_wiki/index.md",
+    "omx_wiki/project-handoff-current-state.md",
     *TOP_LEVEL_SPECS,
     *STAGE_FILES,
+    "scripts/agent-context-brief.py",
 ]
 
 STAGE_SECTIONS = [
@@ -69,7 +88,7 @@ STAGE_SECTIONS = [
 
 
 def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="ignore")
+    return path.read_text(encoding="utf-8")
 
 
 def fail(message: str) -> None:
@@ -142,6 +161,143 @@ def check_progress_alignment() -> None:
         fail("human progress missing Eval Harness")
 
 
+def check_agent_context_contract() -> None:
+    agents_rel = "AGENTS.md"
+    startup_rel = "docs/ai/agent-startup-context.md"
+    index_rel = "docs/ai/context-index.json"
+    script_rel = "scripts/agent-context-brief.py"
+    agents_text = read_text(ROOT / agents_rel)
+    startup_text = read_text(ROOT / startup_rel)
+    protocol_text = read_text(ROOT / "docs/ai/00-execution-protocol.md")
+    readme_text = read_text(ROOT / "README.md")
+    wiki_index_text = read_text(ROOT / "omx_wiki/index.md")
+    yaml_text = read_text(ROOT / "docs/ai/task-progress.yaml")
+
+    required_startup_markers = [
+        "Model + Harness = Agent",
+        "docs/ai/task-progress.yaml",
+        "scripts/agent-context-brief.py",
+        "omx_wiki/project-handoff-current-state.md",
+        "Completion Write-Back",
+    ]
+    for marker in required_startup_markers:
+        if marker not in startup_text:
+            fail(f"{startup_rel} missing marker {marker}")
+
+    required_agents_markers = [
+        "docs/ai/agent-startup-context.md",
+        "docs/ai/task-progress.yaml",
+        "scripts/agent-context-brief.py",
+        "docs/ai/00-execution-protocol.md",
+        "omx_wiki/",
+    ]
+    for marker in required_agents_markers:
+        if marker not in agents_text:
+            fail(f"{agents_rel} missing marker {marker}")
+
+    for rel in [agents_rel, startup_rel, index_rel, script_rel]:
+        if rel not in protocol_text:
+            fail(f"execution protocol missing {rel}")
+        if rel not in readme_text and rel != index_rel and rel != agents_rel:
+            fail(f"README missing {rel}")
+        if rel in [startup_rel, index_rel] and rel not in wiki_index_text:
+            fail(f"wiki index missing {rel}")
+
+    if "[[project-handoff-current-state]]" not in wiki_index_text:
+        fail("wiki index missing canonical project handoff link")
+    if "docs/ai/task-progress.yaml" not in yaml_text:
+        fail("task-progress.yaml missing self-reference to machine progress source")
+
+    try:
+        context_index = json.loads(read_text(ROOT / index_rel))
+    except json.JSONDecodeError as exc:
+        fail(f"{index_rel} is not valid JSON: {exc}")
+
+    if context_index.get("entrypoint") != startup_rel:
+        fail(f"{index_rel} has wrong entrypoint")
+    if context_index.get("machine_progress") != "docs/ai/task-progress.yaml":
+        fail(f"{index_rel} has wrong machine progress source")
+
+    routes = context_index.get("routes")
+    if not isinstance(routes, list) or not routes:
+        fail(f"{index_rel} must define at least one route")
+
+    required_route_ids = {
+        "agent-startup-context-loop",
+        "project-handoff",
+        "knowledge-rag-grounding",
+        "context-router-memory",
+        "mcp-skills-capabilities",
+        "eval-observability-groundedness",
+        "release-demo-private-deploy",
+        "frontend-ui-console",
+        "local-dev-debugging",
+    }
+    route_ids = {str(route.get("id")) for route in routes if isinstance(route, dict)}
+    missing_routes = sorted(required_route_ids - route_ids)
+    if missing_routes:
+        fail(f"{index_rel} missing routes: {', '.join(missing_routes)}")
+
+    for route in routes:
+        if not isinstance(route, dict):
+            fail(f"{index_rel} route must be an object")
+        route_id = str(route.get("id", "<missing>"))
+        for field in ["summary", "keywords", "read_first", "deep_read", "progress_write_targets"]:
+            if field not in route:
+                fail(f"{index_rel} route {route_id} missing {field}")
+        if not route.get("keywords"):
+            fail(f"{index_rel} route {route_id} needs keywords")
+        if not route.get("read_first"):
+            fail(f"{index_rel} route {route_id} needs read_first paths")
+        if "docs/ai/task-progress.yaml" not in route.get("progress_write_targets", []):
+            fail(f"{index_rel} route {route_id} missing task-progress write target")
+        for field in ["read_first", "deep_read"]:
+            for rel in route.get(field, []):
+                if not (ROOT / rel).exists():
+                    fail(f"{index_rel} route {route_id} references missing path: {rel}")
+
+    session_page = ROOT / "omx_wiki/session-2026-05-23-agent-startup-context-loop.md"
+    session_text = read_text(session_page)
+    if "status: verified" in yaml_text and "Planned validation" in session_text:
+        fail("startup context session page still describes validation as planned")
+    if "Completed validation" not in session_text:
+        fail("startup context session page missing completed validation evidence")
+
+    check_agent_context_brief_fixtures()
+
+
+def check_agent_context_brief_fixtures() -> None:
+    script = ROOT / "scripts/agent-context-brief.py"
+    for task, expected_routes in BRIEF_ROUTE_FIXTURES.items():
+        command = [sys.executable, str(script)]
+        if task:
+            command.extend(["--task", task])
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            fail(f"agent context brief failed for task {task!r}: {completed.stderr.strip()}")
+        route_ids = [
+            line.split("`", 2)[1]
+            for line in completed.stdout.splitlines()
+            if line.startswith("- `")
+            and "`:" in line
+            and not line.startswith("- `docs/")
+            and not line.startswith("- `omx_wiki/")
+            and not line.startswith("- `.omx/")
+            and not line.startswith("- `scripts/")
+        ]
+        if route_ids != expected_routes:
+            fail(
+                "agent context brief route mismatch for "
+                f"{task!r}: expected {expected_routes}, got {route_ids}"
+            )
+
+
 def check_readme_links() -> None:
     readme = read_text(ROOT / "README.md")
     for rel in TOP_LEVEL_SPECS + STAGE_FILES:
@@ -156,6 +312,7 @@ def main() -> None:
     check_blocked_terms()
     check_stage_docs()
     check_progress_alignment()
+    check_agent_context_contract()
     check_readme_links()
     print("docs validation passed")
 

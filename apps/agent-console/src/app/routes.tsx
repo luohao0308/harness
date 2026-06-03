@@ -3,12 +3,16 @@ import { createBrowserRouter, isRouteErrorResponse, Navigate, useRouteError } fr
 import { AgentListPage } from "../features/agents/pages/AgentListPage";
 import { AgentWorkspacePage } from "../features/agents/pages/AgentWorkspacePage";
 import { EvalHarnessPage } from "../features/evals/pages/EvalHarnessPage";
+import { KnowledgePage } from "../features/knowledge/pages/KnowledgePage";
 import { ObservabilityPage } from "../features/observability/pages/ObservabilityPage";
+import { TokenSavingsPage } from "../features/observability/pages/TokenSavingsPage";
 import { SandboxesPage } from "../features/sandboxes/pages/SandboxesPage";
 import { ModelSettingsPage } from "../features/settings/pages/ModelSettingsPage";
 import { PolicySettingsPage } from "../features/settings/pages/PolicySettingsPage";
 import { SubagentDetailPage } from "../features/subagents/pages/SubagentDetailPage";
 import { SubagentsPage } from "../features/subagents/pages/SubagentsPage";
+import { TeamListPage } from "../features/teams/pages/TeamListPage";
+import { TeamPage } from "../features/teams/pages/TeamPage";
 import { RunDetailPage } from "../features/runs/pages/RunDetailPage";
 import { RunHistoryPage } from "../features/runs/pages/RunHistoryPage";
 import { ToolRegistryPage } from "../features/tools/pages/ToolRegistryPage";
@@ -22,6 +26,8 @@ export const router = createBrowserRouter([
       { path: "agents", element: <AgentListPage /> },
       { path: "agents/:agentId/workspace", element: <AgentWorkspacePage /> },
       { path: "agents/:agentId/chat", element: <Navigate to="/agents/default/workspace" replace /> },
+      { path: "teams", element: <TeamListPage /> },
+      { path: "teams/:teamId", element: <TeamPage /> },
       { path: "runs", element: <RunHistoryPage /> },
       { path: "runs/:runId", element: <RunDetailPage /> },
       { path: "runs/:runId/events", element: <RunDetailPage focus="events" /> },
@@ -31,7 +37,9 @@ export const router = createBrowserRouter([
       { path: "subagents/:subagentId", element: <SubagentDetailPage /> },
       { path: "sandboxes", element: <SandboxesPage /> },
       { path: "observability", element: <ObservabilityPage /> },
+      { path: "token-savings", element: <TokenSavingsPage /> },
       { path: "tools", element: <ToolRegistryPage /> },
+      { path: "knowledge", element: <KnowledgePage /> },
       { path: "evals", element: <EvalHarnessPage /> },
       { path: "settings/models", element: <ModelSettingsPage /> },
       { path: "settings/policies", element: <PolicySettingsPage /> },

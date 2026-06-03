@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Complete Agent Capability Product Task 3 Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172033;
+        --muted: #5f6f86;
+        --line: #d9e1ec;
+        --panel: #f7f9fc;
+        --ok: #0f7a4f;
+        --warn: #9a5b00;
+        --bad: #b42318;
+        --accent: #2457c5;
+      }
+      body {
+        margin: 0;
+        background: #f6f8fb;
+        color: var(--ink);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 1160px;
+        margin: 0 auto;
+        padding: 32px 24px 56px;
+      }
+      header, section {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        padding: 22px;
+        margin-bottom: 16px;
+      }
+      h1, h2, h3 { margin: 0; line-height: 1.2; }
+      h1 { font-size: 28px; }
+      h2 { font-size: 20px; margin-bottom: 10px; }
+      h3 { font-size: 15px; margin-top: 14px; }
+      p { margin: 8px 0 0; }
+      ul, ol { margin: 8px 0 0 20px; padding: 0; }
+      li { margin: 5px 0; }
+      code {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--panel);
+        padding: 1px 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      pre {
+        overflow: auto;
+        border-radius: 8px;
+        background: #111827;
+        color: #eef2ff;
+        padding: 12px;
+        font-size: 12px;
+      }
+      table { width: 100%; border-collapse: collapse; border: 1px solid var(--line); margin-top: 10px; }
+      th, td { border-top: 1px solid var(--line); padding: 9px 10px; text-align: left; vertical-align: top; }
+      th { background: var(--panel); color: var(--muted); font-size: 12px; }
+      .meta { color: var(--muted); margin-top: 8px; }
+      .status { display: inline-block; margin-top: 12px; border-radius: 999px; padding: 4px 10px; font-weight: 700; }
+      .watch { background: #fff5df; color: var(--warn); }
+      .ok { background: #e9f8f0; color: var(--ok); }
+      .bad { background: #fdecea; color: var(--bad); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-top: 12px; }
+      .card { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #fbfcfe; }
+      .finding { border-left: 4px solid var(--accent); background: #f4f7ff; border-radius: 8px; padding: 12px; margin-top: 12px; }
+      .finding.high { border-left-color: var(--bad); background: #fff7f6; }
+      .finding.medium { border-left-color: var(--warn); background: #fffaf0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Complete Agent Capability Product — Task 3 Review</h1>
+        <div class="meta">生成日期：2026-05-18 ｜ Worker：worker-3 ｜ 分支：p7-release-demo-hardening</div>
+        <div class="status watch">结论：Phase 0/0b readiness documented; implementation remains incomplete until lane workers land code and tests</div>
+        <p>
+          本报告是 Task 3 的审查与文档交付物，绑定
+          <code>.omx/plans/prd-complete-agent-capability-product.md</code> 与
+          <code>.omx/plans/test-spec-complete-agent-capability-product.md</code>。审查范围聚焦 Phase 0
+          合同审计、Phase 0b 垂直 spine gate，以及后续 marketplace、Agent Studio、knowledge connector、Workspace
+          orchestration、token/cost observability/eval、release smoke/docs 六条验收线。
+        </p>
+      </header>
+
+      <section>
+        <h2>Scope Guard</h2>
+        <div class="grid">
+          <div class="card">
+            <strong>已保留非目标</strong>
+            <p>未引入 enterprise SSO/RBAC、Kubernetes、realtime multi-user collaboration、web crawler、vector DB replacement 或 cross-tenant management。</p>
+          </div>
+          <div class="card">
+            <strong>最小写入面</strong>
+            <p>本 worker 仅新增审查报告，避免修改 implementation worker 可能正在编辑的后端、前端、OpenAPI 或共享进度文件。</p>
+          </div>
+          <div class="card">
+            <strong>完成边界</strong>
+            <p>本报告不宣称完整产品完成；它记录当前代码质量风险、验收缺口、必须锁定的文档合同和验证命令。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Current Implementation Snapshot</h2>
+        <table>
+          <thead>
+            <tr><th>Lane</th><th>Observed baseline</th><th>Readiness state</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Capability marketplace backend</td>
+              <td><code>CapabilityRegistry</code> supports builtin/MCP/skill capability versions, redaction, attachment resolution, snapshots, and admin validation; tools API exposes registry, admin validation, and Agent-scoped test invoke.</td>
+              <td><span class="status watch">partial</span> Missing package lifecycle models/APIs for staging, approval, install, rollback, uninstall, provenance, SSRF checks, and sandbox/policy-bound test invoke for high-risk packages.</td>
+            </tr>
+            <tr>
+              <td>Agent Studio and Tool Runtime UI</td>
+              <td><code>/agents</code> has API-backed model/tools/RAG/orchestration cards and disabled Templates. <code>/tools</code> is registry-display oriented with policy/sandbox/MCP tiles and disabled Triggers.</td>
+              <td><span class="status watch">partial</span> Needs real package install/approval/rollback, Agent create/template/capability attach/readiness workflows, and visible invalid/missing-secret states.</td>
+            </tr>
+            <tr>
+              <td>External/local knowledge connectors</td>
+              <td>Knowledge/RAG supports local source/document/chunk/retrieval/citation/prompt manifest/policy audit plus policy-gated web research and local upload flows.</td>
+              <td><span class="status watch">partial</span> Needs connector config/sync lifecycle, release-state matrix, Dify/RAGFlow-style usable adapters, crawler boundary tests, and no overclaiming of previews.</td>
+            </tr>
+            <tr>
+              <td>Workspace multi-agent/subagent invocation</td>
+              <td>Multi-agent orchestration, assignments, handoffs, reduce events, subagent spawn/cancel/recover/list/detail, and Subagent pages exist.</td>
+              <td><span class="status watch">partial</span> Needs Workspace controls for automatic/forced modes and one visible path proving router decision, fallback, queue/concurrency, handoffs, and inspectable subagent run detail.</td>
+            </tr>
+            <tr>
+              <td>Token/cost optimization observability/evals</td>
+              <td>Context assembly records estimated tokens, budget pruning, included/omitted refs, prompt manifest binding, and grounding/eval observability already exists.</td>
+              <td><span class="status watch">partial</span> Needs budget vs actual, before/after savings, baseline/shadow comparison, cache hit/miss, low-cost routing reason, and eval gates for pruning regressions.</td>
+            </tr>
+            <tr>
+              <td>Release smoke and docs</td>
+              <td>P7 release smoke and deterministic Knowledge demo seed are present and OMX-independent for P7 scope.</td>
+              <td><span class="status watch">partial</span> Needs expanded release smoke covering package install, Agent creation/attachment, connector sync, Workspace orchestration, Run Detail evidence, token/cost panel, and Eval save/regression.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Code Quality Findings</h2>
+        <div class="finding high">
+          <h3>1. Capability test invoke still has an unsafe default for high-risk/networked packages</h3>
+          <p>
+            <code>services/api-server/app/api/tools.py</code> creates capability test tasks with
+            <code>enable_sandbox=False</code> and <code>enable_network=False</code>. The PRD requires high-risk or networked package test invocation to be sandboxed or policy-bounded after attachment. Once public package installs exist, this path must not remain a permissive default.
+          </p>
+          <p><strong>Required follow-up:</strong> add a test proving high-risk/networked package test invoke cannot choose an unsandboxed execution path, and document the hard policy in Tool Runtime docs.</p>
+        </div>
+        <div class="finding high">
+          <h3>2. Package lifecycle contracts are not represented in persistence yet</h3>
+          <p>
+            <code>services/api-server/app/db/models.py</code> currently has <code>Capability</code>, <code>CapabilityVersion</code>, <code>AgentCapabilityAttachment</code>, and <code>CapabilitySnapshot</code>, but no staged package/install approval/rollback/provenance model. Immutable snapshot behavior is present, but activation history and package rollback semantics are not yet separated.
+          </p>
+          <p><strong>Required follow-up:</strong> model a package lifecycle state machine: staged, validated, approved, installed, disabled, rolled back, rejected, uninstalled, with audit refs and immutable historical snapshots.</p>
+        </div>
+        <div class="finding medium">
+          <h3>3. Connector completeness can be overclaimed without a release-state matrix</h3>
+          <p>
+            Existing Knowledge/RAG and web research paths are real, but the accepted plan requires connector labels of exactly <code>usable</code>, <code>configured-but-unavailable</code>, and <code>preview-not-counted</code>. Without a provider matrix, placeholder providers can be mistaken for complete usable coverage.
+          </p>
+          <p><strong>Required follow-up:</strong> add provider release-state documentation and tests proving preview/unavailable connectors do not count toward release acceptance.</p>
+        </div>
+        <div class="finding medium">
+          <h3>4. Remote MCP and skill packages need a manifest boundary independent from OMX internals</h3>
+          <p>
+            Current MCP-shaped tools reuse the ToolRunner path, which is the right foundation. The plan requires importing <code>SKILL.md</code>-style packages and remote MCP configs without coupling runtime behavior to OMX internals or storing raw secrets.
+          </p>
+          <p><strong>Required follow-up:</strong> document manifest fields for package type, transports, permissions, network policy, secret refs, sandbox/test requirements, provenance, and unsupported transport failure.</p>
+        </div>
+        <div class="finding medium">
+          <h3>5. Orchestration evidence must be stronger than assignment existence</h3>
+          <p>
+            Backend and UI already expose orchestration/subagent artifacts, but Phase 0b requires a single operator path where Workspace chat triggers multi-agent/subagent work and Run Detail shows router decision, selected agents, handoffs, reduce result, queue/concurrency, and subagent state.
+          </p>
+          <p><strong>Required follow-up:</strong> add a release smoke assertion that traverses Workspace, Subagents, and Run Detail for the same run id.</p>
+        </div>
+        <div class="finding medium">
+          <h3>6. Token savings must be quality-gated, not only smaller prompts</h3>
+          <p>
+            Context assembly records budget and included/omitted refs. The accepted product requires baseline or shadow comparison, before/after savings, low-cost route reasons, and Eval failure when pruning removes required evidence.
+          </p>
+          <p><strong>Required follow-up:</strong> make savings claims depend on baseline/shadow manifests plus groundedness/eval quality, never on raw token reduction alone.</p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Phase 0b Vertical Spine Checklist</h2>
+        <ol>
+          <li>Stage or upload one private capability package and record package audit.</li>
+          <li>Stage one public URL/Git package, reject SSRF/private-network targets, pin digest/commit/archive identity, and prove no package code execution during staging.</li>
+          <li>Create or clone an Agent from the UI/API and persist prompt/model/token-budget config.</li>
+          <li>Attach at least one MCP, one Skill, one Tool, and one <code>usable</code> knowledge connector.</li>
+          <li>Run connector sync or reindex and persist connector health, source, document, hit, citation, and policy evidence.</li>
+          <li>Open Workspace and trigger one automatic or forced multi-agent/subagent run.</li>
+          <li>Inspect Run Detail for capability snapshot, orchestration evidence, connector evidence, context manifest, and token/cost panel.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Coverage Gaps From Test Probe</h2>
+        <ul>
+          <li>Marketplace backend has no dedicated CRUD/versioning/attach-detach/rollback suite yet; current coverage lives in tool registry, runner, approvals, and agents tests.</li>
+          <li>Agent Studio and Tool Runtime have page and smoke coverage, but not the future package install, attach/detach, secret binding, or readiness detail workflows.</li>
+          <li>Knowledge and connector tests cover local RAG and web research foundations, but not connector lifecycle, release-state overclaim prevention, secret rotation, or provider health flows.</li>
+          <li>Workspace/subagent coverage exists at backend and Run Detail smoke level; missing browser evidence covers create/cancel/recover lifecycle and concurrency/fan-out behavior.</li>
+          <li>Token/cost coverage validates propagation and context manifests, but not concrete savings thresholds or latency/cost improvement deltas.</li>
+          <li>Release smoke is OMX-independent for current P7 scope, but not yet expanded to marketplace and connector-specific release gates.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Targeted Verification Map</h2>
+        <table>
+          <thead>
+            <tr><th>Claim</th><th>Minimum command or check</th><th>Expected proof</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Capability lifecycle safety</td>
+              <td><code>cd services/api-server && uv run pytest tests/test_tool_registry.py tests/test_tool_runner.py tests/test_tool_approvals.py -q</code></td>
+              <td>Package staging, approval, immutable version, disabled/rollback behavior, fail-closed ToolRunner, and policy/sandbox invoke checks pass.</td>
+            </tr>
+            <tr>
+              <td>Knowledge connector boundaries</td>
+              <td><code>cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_knowledge_connectors.py -q</code></td>
+              <td>Usable connector sync/retrieval passes; crawler and preview-overclaim paths fail closed.</td>
+            </tr>
+            <tr>
+              <td>Orchestration and subagent evidence</td>
+              <td><code>cd services/api-server && uv run pytest tests/test_agents.py tests/test_subagents.py -q</code></td>
+              <td>Router decision, fallback, handoff/reduce, forced subagent run projection, cancel/recover, and queue/concurrency evidence pass.</td>
+            </tr>
+            <tr>
+              <td>Token optimization quality</td>
+              <td><code>cd services/api-server && uv run pytest tests/test_context_router.py tests/test_evals.py tests/test_observability.py -q</code></td>
+              <td>Budget/actual, pruning manifest, baseline/shadow savings, low-cost routing reason, and eval regression gates pass.</td>
+            </tr>
+            <tr>
+              <td>Operator journey</td>
+              <td><code>cd apps/agent-console && npm run e2e:smoke:release</code></td>
+              <td>One OMX-independent browser smoke proves install → attach → connector sync → Workspace orchestration → Run Detail evidence → Eval/Observability.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Subagent Evidence Integrated</h2>
+        <ul>
+          <li>Review probe findings integrated into code-quality risks 1–6 and release smoke hazard.</li>
+          <li>Change-slice probe findings integrated into the minimal write-scope decision: add this new report artifact and avoid implementation/shared progress files.</li>
+          <li>Test probe findings integrated into the coverage map: existing tests cover registry/runner/agents/subagents/context/evals/observability and frontend page smoke, while marketplace lifecycle, connector lifecycle, attach/detach UI, subagent recovery browser flow, and cost-savings thresholds remain explicit gaps.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

@@ -2,7 +2,7 @@
  * Slash command primitives for the Workspace composer (v3 / Req 5).
  *
  * Pure, side-effect-free module. Components:
- *   - `SLASH_COMMANDS` — hard-coded command registry (9 entries at launch).
+ *   - `SLASH_COMMANDS` — hard-coded command registry.
  *   - `parseSlashCommand(draft)` — classify a composer draft into
  *     `none | matching | confirmed`. TOTAL; never throws.
  *   - `filterCommandsByPrefix(prefix)` — case-insensitive prefix match over
@@ -20,8 +20,10 @@
 
 export type SlashCommandName =
   | "plan"
-  | "codex"
+  | "run"
   | "chat"
+  | "goal"
+  | "compress"
   | "pin"
   | "clear"
   | "model"
@@ -32,7 +34,7 @@ export type SlashCommandName =
 export type SlashCommand = {
   /** Canonical command identifier. */
   name: SlashCommandName;
-  /** Alternative triggers (e.g. `"plan-md"` for `codex`). Lower-case only. */
+  /** Alternative triggers (e.g. `"codex"` for `plan`). Lower-case only. */
   aliases: string[];
   /** Whether this command expects a single textual argument (e.g. `/tool <name>`). */
   needsArgs: boolean;
@@ -46,19 +48,19 @@ export type SlashCommand = {
 export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "plan",
-    aliases: [],
+    aliases: ["codex", "plan-md"],
     needsArgs: false,
-    zh: "切换到 Plan (markdown) 模式",
-    en: "Switch to Plan (markdown) mode",
+    zh: "生成 Markdown 规划",
+    en: "Generate a markdown plan",
     trigger: "/plan",
   },
   {
-    name: "codex",
-    aliases: ["plan-md"],
+    name: "run",
+    aliases: ["act", "execute"],
     needsArgs: false,
-    zh: "切换到 Plan (markdown) 模式",
-    en: "Switch to Plan (markdown) mode",
-    trigger: "/codex",
+    zh: "创建执行运行",
+    en: "Create an executable run",
+    trigger: "/run",
   },
   {
     name: "chat",
@@ -67,6 +69,22 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     zh: "切回 Chat 模式",
     en: "Switch back to Chat mode",
     trigger: "/chat",
+  },
+  {
+    name: "goal",
+    aliases: ["pursue"],
+    needsArgs: false,
+    zh: "切换到追求目标模式",
+    en: "Switch to Goal pursuit mode",
+    trigger: "/goal",
+  },
+  {
+    name: "compress",
+    aliases: ["compact", "context"],
+    needsArgs: false,
+    zh: "压缩当前上下文",
+    en: "Compress current context",
+    trigger: "/compress",
   },
   {
     name: "pin",
@@ -172,8 +190,8 @@ function resolveExactCommand(head: string): SlashCommand | undefined {
  *     (surfaces the candidate list so the user can continue typing).
  *   - Leading `/` with head that matches a command:
  *       * If the command takes no args, classification is `confirmed` only
- *         when the user has typed a trailing space (i.e. `"/plan "` or
- *         `"/plan <extra>"`); a bare `"/plan"` remains `matching` so the
+ *         when the user has typed a trailing space (i.e. `"/run "` or
+ *         `"/run <extra>"`); a bare `"/run"` remains `matching` so the
  *         user can still navigate the menu with ArrowUp/Down. The Enter key
  *         handler in the composer explicitly dispatches the highlighted
  *         command even on `matching` results.
@@ -222,7 +240,7 @@ export function parseSlashCommand(draft: string): SlashParseResult {
         restDraft: "",
       };
     }
-    // Bare `/plan` without trailing space — keep the menu open but highlight
+    // Bare `/run` without trailing space — keep the menu open but highlight
     // this single candidate so Enter still dispatches.
     return {
       kind: "matching",
@@ -244,6 +262,7 @@ export function parseSlashCommand(draft: string): SlashParseResult {
  *
  * Examples:
  *   replaceSlashPrefix("/pl",          "plan") -> "/plan "
+ *   replaceSlashPrefix("/ru",          "run") -> "/run "
  *   replaceSlashPrefix("/pl curl",     "tool") -> "/tool curl"
  *   replaceSlashPrefix("/tool ",       "tool") -> "/tool "
  *   replaceSlashPrefix("",             "plan") -> "/plan "

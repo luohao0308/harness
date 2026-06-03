@@ -9,7 +9,10 @@ import {
   Brain,
   ChevronDown,
   FlaskConical,
+  Gauge,
+  LibraryBig,
   ListChecks,
+  Network,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -25,11 +28,14 @@ import { cn } from "../lib/utils";
 
 const navItems = [
   { to: "/agents", label: "智能体", icon: Bot },
+  { to: "/teams", label: "团队", icon: Network },
   { to: "/runs", label: "运行历史", icon: ListChecks },
   { to: "/subagents", label: "子代理", icon: Bot },
   { to: "/sandboxes", label: "沙箱", icon: Box },
   { to: "/tools", label: "工具", icon: PlugZap },
+  { to: "/knowledge", label: "知识库", icon: LibraryBig },
   { to: "/observability", label: "观测", icon: Activity },
+  { to: "/token-savings", label: "Token 节省", icon: Gauge },
   { to: "/evals", label: "评测", icon: FlaskConical },
   { to: "/settings/policies", label: "策略", icon: ShieldCheck },
   { to: "/settings/models", label: "模型", icon: Brain },
@@ -40,9 +46,10 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const location = useLocation();
   const environment = useConsoleStore((state) => state.environment);
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
+  const isTeamRoute = /^\/teams(?:\/|$)/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
   const [isNarrowShell, setIsNarrowShell] = useState(false);
-  const sidebarForceCollapsed = isWorkspaceRoute || isNarrowShell;
+  const sidebarForceCollapsed = isWorkspaceRoute || isTeamRoute || isNarrowShell;
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarForceCollapsed;
   const canToggleSidebar = !sidebarForceCollapsed;
   const sidebarToggleLabel = canToggleSidebar
@@ -52,10 +59,10 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
     : "侧边栏已收起";
 
   useEffect(() => {
-    if (isWorkspaceRoute) {
+    if (isWorkspaceRoute || isTeamRoute) {
       setSidebarCollapsed(true);
     }
-  }, [isWorkspaceRoute]);
+  }, [isTeamRoute, isWorkspaceRoute]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -75,13 +82,13 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       <aside
         className={cn(
           "flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
-          effectiveSidebarCollapsed ? "w-[64px]" : "w-[248px]",
+          effectiveSidebarCollapsed ? (isTeamRoute ? "w-[44px]" : "w-[64px]") : "w-[248px]",
         )}
       >
         <div
           className={cn(
             "flex h-14 items-center border-b border-slate-200",
-            effectiveSidebarCollapsed ? "justify-center px-2" : "gap-2 px-4",
+            effectiveSidebarCollapsed ? (isTeamRoute ? "justify-center px-1" : "justify-center px-2") : "gap-2 px-4",
           )}
         >
           <div
@@ -180,21 +187,28 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 min-w-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:gap-3 sm:px-5">
+        <header
+          className={cn(
+            "flex min-w-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:gap-3 sm:px-5",
+            isTeamRoute ? "h-0 overflow-hidden border-b-0 px-0" : "h-14",
+          )}
+        >
           <div className="flex min-w-0 items-center gap-2 text-[13px] text-slate-500">
             <span>控制台</span>
             <span className="text-slate-300">/</span>
             <span className="truncate text-slate-900">{title}</span>
           </div>
-          <div className="ml-6 hidden h-8 w-72 items-center gap-2 rounded-md border border-slate-200 bg-slate-50/70 px-2.5 lg:flex">
-            <Search className="h-3.5 w-3.5 text-slate-400" />
-            <input
-              aria-label="搜索"
-              placeholder="搜索运行、智能体、事件..."
-              className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-slate-400"
-            />
-            <span className="font-mono text-[10px] text-slate-400">⌘K</span>
-          </div>
+          {!isTeamRoute ? (
+            <div className="ml-6 hidden h-8 w-72 items-center gap-2 rounded-md border border-slate-200 bg-slate-50/70 px-2.5 lg:flex">
+              <Search className="h-3.5 w-3.5 text-slate-400" />
+              <input
+                aria-label="搜索"
+                placeholder="搜索运行、智能体、事件..."
+                className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-slate-400"
+              />
+              <span className="font-mono text-[10px] text-slate-400">⌘K</span>
+            </div>
+          ) : null}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             <Button className="hidden gap-1.5 md:inline-flex">
               环境: {environmentLabel(environment)}{" "}
@@ -203,19 +217,23 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <Button variant="ghost" className="w-8 px-0" aria-label="告警">
               <Bell className="h-4 w-4" />
             </Button>
-            <Button
-              variant="primary"
-              className="hidden sm:inline-flex"
-              onClick={() => navigate("/agents/default/workspace")}
-            >
-              <Plus className="h-3.5 w-3.5" /> 新对话
-            </Button>
+            {!isTeamRoute ? (
+              <Button
+                variant="primary"
+                className="hidden sm:inline-flex"
+                onClick={() => navigate("/agents/default/workspace")}
+              >
+                <Plus className="h-3.5 w-3.5" /> 新对话
+              </Button>
+            ) : null}
             <div className="ml-1 hidden h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700 sm:flex">
               LH
             </div>
           </div>
         </header>
-        <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+        <div className={cn("min-h-0 flex-1", isTeamRoute ? "overflow-hidden" : "overflow-auto")}>
+          {children}
+        </div>
       </main>
     </div>
   );

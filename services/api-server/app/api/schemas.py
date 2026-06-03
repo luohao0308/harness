@@ -64,6 +64,10 @@ class AgentResponse(BaseModel):
     tools_json: list[str] = Field(description="可用工具")
     routing_tags: list[str] = Field(description="路由标签")
     max_parallel_assignments: int = Field(description="最大并行分配数")
+    capability_attachments: list[dict] = Field(
+        default_factory=list,
+        description="Agent capability attachments summary",
+    )
     created_at: datetime = Field(description="创建时间")
     updated_at: datetime = Field(description="更新时间")
 
@@ -73,6 +77,73 @@ class AgentResponse(BaseModel):
 class AgentPage(BaseModel):
     items: list[AgentResponse] = Field(description="Agent 列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class AgentCreateRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=64, description="Agent ID")
+    name: str = Field(min_length=1, description="Agent 名称")
+    description: str = Field(default="", description="Agent 描述")
+    role: str = Field(default="generalist", min_length=1, max_length=64, description="Agent 角色")
+    model_provider: str = Field(default="default", description="默认模型供应商")
+    model_name: str = Field(default="default", description="默认模型名称")
+    system_prompt: str = Field(min_length=1, description="系统提示词")
+    tools_json: list[str] = Field(default_factory=list, description="可用工具")
+    routing_tags: list[str] = Field(default_factory=list, description="路由标签")
+    max_parallel_assignments: int = Field(default=1, ge=1, description="最大并行分配数")
+    token_budget: int | None = Field(default=None, ge=1, description="Agent Studio token budget")
+    template_id: str | None = Field(default=None, description="Agent Studio template ID")
+
+
+class AgentCloneRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=64, description="New Agent ID")
+    name: str = Field(min_length=1, description="New Agent name")
+
+
+class AgentCapabilityAttachmentRequest(BaseModel):
+    capability_id: str = Field(min_length=1, description="Capability ID, key, or tool name")
+    capability_version_id: str | None = Field(default=None, description="Capability version ID")
+    enabled: bool = Field(default=True, description="Enable attachment for future runs")
+    priority: int = Field(default=100, description="Attachment priority")
+
+
+class AgentCapabilityAttachmentResponse(BaseModel):
+    status: str = Field(description="Attachment status")
+    attachment_id: str = Field(description="Attachment ID")
+    agent_id: str = Field(description="Agent ID")
+    capability_id: str = Field(description="Capability ID")
+    capability_version_id: str = Field(description="Capability version ID")
+    enabled: bool = Field(description="Enabled")
+    priority: int = Field(description="Priority")
+
+
+class AgentTokenOptimizerPreset(BaseModel):
+    preset_id: Literal["off", "conservative", "balanced", "aggressive"] = Field(
+        description="Built-in Token Optimizer preset ID"
+    )
+    display_name: str = Field(description="Preset display name")
+    description: str = Field(description="Preset description")
+    enabled: bool = Field(description="Whether this preset enables optimizer attachment")
+    priority: int | None = Field(default=None, description="Attachment priority when enabled")
+
+
+class AgentTokenOptimizerPresetPage(BaseModel):
+    items: list[AgentTokenOptimizerPreset] = Field(description="Built-in presets")
+
+
+class AgentTokenOptimizerSelectRequest(BaseModel):
+    preset_id: Literal["off", "conservative", "balanced", "aggressive"] = Field(
+        description="Built-in preset to apply"
+    )
+
+
+class AgentTokenOptimizerSelectionResponse(BaseModel):
+    status: str = Field(description="Selection status")
+    preset_id: Literal["off", "conservative", "balanced", "aggressive"]
+    attachment_id: str | None = Field(default=None, description="Active attachment ID")
+    capability_id: str | None = Field(default=None, description="Capability ID")
+    capability_version_id: str | None = Field(default=None, description="Capability version ID")
+    enabled: bool = Field(description="Whether optimizer is enabled")
+    priority: int | None = Field(default=None, description="Attachment priority")
 
 
 class AgentSessionCreateRequest(BaseModel):
@@ -196,6 +267,20 @@ class CompressedContext(BaseModel):
     compression_prompt_version: str = Field(default="", description="压缩提示词版本")
     compressor_provider: str = Field(default="", description="压缩模型供应商")
     compressor_model: str = Field(default="", description="压缩模型名称")
+    estimated_original_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="压缩前覆盖内容估算 token，仅用于上下文缓存节省证据",
+    )
+    estimated_summary_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="压缩摘要估算 token，仅用于上下文缓存节省证据",
+    )
+    cache_status: Literal["accepted", "recomputed", "stale_rejected", "error"] | None = Field(
+        default=None,
+        description="前端最近一次压缩摘要 cache 状态，仅用于上下文组装证据",
+    )
 
 
 class AgentChatStreamRequest(BaseModel):
@@ -206,6 +291,13 @@ class AgentChatStreamRequest(BaseModel):
     mode: Literal["chat", "codex_plan", "plan"] = Field(
         default="chat",
         description="Workspace 输入模式",
+    )
+    orchestration_mode: Literal["auto", "none", "multi_agent", "subagent"] = Field(
+        default="auto",
+        description=(
+            "Workspace 编排模式：auto 根据请求触发，none 禁用，"
+            "multi_agent 强制具名 Agent 编排，subagent 强制派生可检查子 Agent"
+        ),
     )
     goal: str | None = Field(default=None, description="用户目标")
     model_provider: str | None = Field(default=None, description="本次请求选择的模型供应商")
@@ -573,7 +665,7 @@ class KnowledgeSourceCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120, description="知识源名称")
     description: str = Field(default="", max_length=1_000, description="知识源说明")
     scope: Literal["agent", "org"] = Field(default="agent", description="知识源作用域")
-    source_type: Literal["text", "markdown", "document"] = Field(
+    source_type: Literal["text", "markdown", "document", "connector"] = Field(
         default="text",
         description="知识源类型",
     )
@@ -588,6 +680,12 @@ class KnowledgeSourceCreateRequest(BaseModel):
     )
     idempotency_key: str | None = Field(default=None, max_length=200, description="幂等键")
     expires_at: datetime | None = Field(default=None, description="过期时间")
+    connector_settings_json: dict = Field(default_factory=dict, description="连接器设置")
+    connector_secret_value: str | None = Field(
+        default=None,
+        max_length=10_000,
+        description="连接器密钥值，仅写入服务端密钥存储，不会回显",
+    )
 
     @field_validator("mime_type")
     @classmethod
@@ -604,6 +702,15 @@ class KnowledgeSourceUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120, description="知识源名称")
     description: str | None = Field(default=None, max_length=1_000, description="知识源说明")
     expires_at: datetime | None = Field(default=None, description="过期时间")
+    connector_settings_json: dict | None = Field(
+        default=None,
+        description="连接器设置，仅 connector 知识源可更新",
+    )
+    connector_secret_value: str | None = Field(
+        default=None,
+        max_length=10_000,
+        description="连接器密钥值，仅写入服务端密钥存储，不会回显",
+    )
 
 
 class KnowledgeSourceActionRequest(BaseModel):
@@ -698,6 +805,25 @@ class KnowledgeSourceResponse(BaseModel):
     last_indexed_at: datetime | None = Field(default=None, description="最后索引时间")
     last_ingestion_error: str | None = Field(default=None, description="最后导入错误")
     health_status: str = Field(description="健康状态")
+    connector_provider: str = Field(description="连接器提供方")
+    connector_release_state: Literal[
+        "usable",
+        "configured-but-unavailable",
+        "preview-not-counted",
+    ] = Field(description="连接器发布状态")
+    connector_counts_toward_complete_usable: bool = Field(description="是否计入 complete usable")
+    connector_validation_status: Literal["ready", "configured", "preview", "invalid"] = Field(
+        default="ready",
+        description="连接器配置预检状态",
+    )
+    connector_validation_messages: list[str] = Field(
+        default_factory=list,
+        description="连接器配置预检消息",
+    )
+    connector_secret_configured: bool = Field(
+        default=False,
+        description="服务端是否已保存连接器密钥",
+    )
     settings_json: dict = Field(default_factory=dict, description="设置")
     metadata_json: dict = Field(default_factory=dict, description="元数据")
     idempotency_key: str | None = Field(default=None, description="幂等键")
@@ -930,6 +1056,7 @@ class KnowledgeGroundingResponse(BaseModel):
         description="Grounding verification reason code",
     )
     evidence_summary: str = Field(description="证据摘要")
+    evidence_message: str = Field(default="", description="证据状态摘要")
     inferred_fallback: bool = Field(default=False, description="是否使用 latest fallback")
     fallback_reason: str | None = Field(default=None, description="fallback 原因")
     selected_retrieval_session_id: str | None = Field(
@@ -1232,6 +1359,104 @@ class ObservabilitySummaryResponse(BaseModel):
     model_call_total: int = Field(description="模型调用总数")
     tool_call_total: int = Field(description="工具调用总数")
     sandbox_total: int = Field(description="沙箱总数")
+    token_optimization: dict = Field(
+        default_factory=dict, description="Token/cost optimization evidence projection"
+    )
+
+
+class CacheSourceSummary(BaseModel):
+    cache_source: str = Field(description="上下文缓存来源")
+    label: str = Field(description="用户可读缓存来源名称")
+    hit_count: int = Field(default=0, description="命中次数")
+    miss_count: int = Field(default=0, description="未命中次数")
+    stale_count: int = Field(default=0, description="失效次数")
+    estimated_saved_tokens: int = Field(default=0, description="估算节省 Token")
+    hit_rate: float = Field(default=0, description="命中率百分比")
+    reason: str | None = Field(default=None, description="最近原因")
+
+
+class TokenSavingsSummary(BaseModel):
+    actual_prompt_tokens: int = Field(default=0, description="实际 Prompt Token 数")
+    actual_completion_tokens: int = Field(default=0, description="实际 Completion Token 数")
+    actual_total_tokens: int = Field(default=0, description="实际总 Token 数")
+    estimated_candidate_tokens: int = Field(default=0, description="优化前候选上下文估算 Token")
+    estimated_included_tokens: int = Field(default=0, description="优化后保留上下文估算 Token")
+    estimated_omitted_tokens: int = Field(default=0, description="优化省略上下文估算 Token")
+    estimated_saved_tokens: int = Field(default=0, description="估算节省 Token")
+    estimated_savings_percent: float = Field(default=0, description="估算节省比例")
+    context_manifest_count: int = Field(default=0, description="上下文组装证据数")
+    pruning_manifest_count: int = Field(default=0, description="发生裁剪的上下文证据数")
+    retrieval_cache_hit_count: int = Field(default=0, description="检索缓存命中数")
+    retrieval_cache_miss_count: int = Field(default=0, description="检索缓存未命中数")
+    retrieval_cache_stale_count: int = Field(default=0, description="上下文缓存失效数")
+    cache_sources: list[CacheSourceSummary] = Field(
+        default_factory=list,
+        description="按来源聚合的上下文缓存命中证据",
+    )
+    low_cost_route_count: int = Field(default=0, description="低成本模型路由次数")
+    optimizer_capability_version_ids: list[str] = Field(
+        default_factory=list, description="生效的优化器版本 ID"
+    )
+    optimizer_labels: list[str] = Field(default_factory=list, description="生效的优化方案名称")
+    optimizer_decision_count: int = Field(default=0, description="优化器决策数")
+
+
+class TokenSavingsOmissionReason(BaseModel):
+    reason: str = Field(description="省略原因")
+    count: int = Field(description="出现次数")
+
+
+class TokenSavingsLowCostRoute(BaseModel):
+    model_call_id: str = Field(description="模型调用 ID")
+    model_name: str = Field(description="模型名称")
+    reason: str = Field(description="低成本路由原因")
+
+
+class TokenSavingsRunItem(BaseModel):
+    run_id: str = Field(description="Agent Run ID")
+    agent_id: str | None = Field(default=None, description="Agent ID")
+    title: str = Field(description="运行标题")
+    status: str = Field(description="运行状态")
+    created_at: datetime = Field(description="运行创建时间")
+    updated_at: datetime = Field(description="运行更新时间")
+    context_manifest_id: str = Field(description="上下文组装证据 ID")
+    estimated_candidate_tokens: int = Field(default=0, description="优化前候选上下文估算 Token")
+    estimated_included_tokens: int = Field(default=0, description="优化后保留上下文估算 Token")
+    estimated_omitted_tokens: int = Field(default=0, description="优化省略上下文估算 Token")
+    estimated_saved_tokens: int = Field(default=0, description="估算节省 Token")
+    estimated_savings_percent: float = Field(default=0, description="估算节省比例")
+    actual_prompt_tokens: int = Field(default=0, description="实际 Prompt Token")
+    actual_completion_tokens: int = Field(default=0, description="实际 Completion Token")
+    actual_total_tokens: int = Field(default=0, description="实际总 Token")
+    included_count: int = Field(default=0, description="保留上下文数量")
+    omitted_count: int = Field(default=0, description="省略上下文数量")
+    pruning_applied: bool = Field(default=False, description="是否发生预算裁剪")
+    retrieval_cache_hit_count: int = Field(default=0, description="检索缓存命中数")
+    retrieval_cache_miss_count: int = Field(default=0, description="检索缓存未命中数")
+    retrieval_cache_stale_count: int = Field(default=0, description="上下文缓存失效数")
+    cache_sources: list[CacheSourceSummary] = Field(
+        default_factory=list,
+        description="按来源聚合的上下文缓存命中证据",
+    )
+    low_cost_routes: list[TokenSavingsLowCostRoute] = Field(
+        default_factory=list, description="低成本路由证据"
+    )
+    optimizer_capability_version_ids: list[str] = Field(
+        default_factory=list, description="生效的优化器版本 ID"
+    )
+    optimizer_labels: list[str] = Field(default_factory=list, description="生效的优化方案名称")
+    optimizer_policy_hash: str | None = Field(default=None, description="优化策略哈希")
+    optimizer_decision_count: int = Field(default=0, description="优化器决策数")
+    omission_reasons: list[TokenSavingsOmissionReason] = Field(
+        default_factory=list, description="省略原因聚合"
+    )
+
+
+class TokenSavingsPage(BaseModel):
+    generated_at: datetime = Field(description="生成时间")
+    summary: TokenSavingsSummary = Field(description="Token 节省汇总")
+    runs: list[TokenSavingsRunItem] = Field(description="最近运行节省证据")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
 class ObservabilityGroundingQualityItem(BaseModel):
@@ -1592,7 +1817,6 @@ class ToolExecuteResponse(BaseModel):
     allowed: bool = Field(description="是否通过策略")
     output: dict = Field(description="工具输出")
 
-
 class CapabilityAdminValidationRequest(BaseModel):
     content: dict = Field(default_factory=dict, description="Capability content")
     config: dict = Field(default_factory=dict, description="Capability config")
@@ -1603,7 +1827,145 @@ class CapabilityAdminValidationResponse(BaseModel):
     schema_version: int = Field(description="Capability schema version")
     content_sha256: str = Field(description="Redacted content hash")
     config_sha256: str = Field(description="Redacted config hash")
+    errors: list[str] = Field(default_factory=list, description="Validation errors")
+    warnings: list[str] = Field(default_factory=list, description="Validation warnings")
+    risk_score: int = Field(default=0, description="Capability package risk score")
+    approval_required: bool = Field(
+        default=False,
+        description="Whether activation requires approval",
+    )
+    validation_mode: str = Field(
+        default="manifest_only_no_execution",
+        description="Validation mode",
+    )
+    source_policy: dict = Field(default_factory=dict, description="Public source policy result")
+    manifest_summary: dict = Field(default_factory=dict, description="Package manifest summary")
     redacted_payload: dict = Field(description="Redacted validation payload")
+    validation: dict = Field(default_factory=dict, description="Package manifest validation")
+
+
+class CapabilityPackageStageRequest(BaseModel):
+    manifest: dict = Field(description="Capability package manifest")
+    content: dict = Field(default_factory=dict, description="Optional manifest-adjacent content")
+
+
+class CapabilityPublicPackageStageRequest(CapabilityPackageStageRequest):
+    source_kind: Literal["public_url", "public_git"] = Field(description="Public source type")
+    source_uri: str = Field(min_length=1, description="Public source URL")
+    pinned_ref: str = Field(min_length=1, description="Digest, commit, or archive identity")
+
+
+class CapabilityPackageApproveRequest(BaseModel):
+    reason: str = Field(default="", description="Approval reason")
+
+
+class CapabilityPackageAttachRequest(BaseModel):
+    agent_id: str = Field(min_length=1, description="Agent ID")
+    enabled: bool = Field(default=True, description="Enable attachment for future runs")
+    priority: int = Field(default=100, description="Attachment priority")
+
+
+class CapabilityPackageRollbackRequest(BaseModel):
+    capability_version_id: str = Field(min_length=1, description="Target immutable version ID")
+    reason: str = Field(default="", description="Rollback reason")
+
+
+class CapabilityAttachmentUpdateRequest(BaseModel):
+    enabled: bool = Field(description="Enable or disable attachment for future runs")
+
+
+class CapabilityPackageResponse(BaseModel):
+    id: str = Field(description="Package ID")
+    organization_id: str | None = Field(default=None, description="Organization ID")
+    package_key: str = Field(description="Package key")
+    package_type: str = Field(description="Package type")
+    source_kind: str = Field(description="Source kind")
+    source_uri: str | None = Field(default=None, description="Source URI")
+    source_sha256: str = Field(description="Staged source hash")
+    pinned_ref: str | None = Field(default=None, description="Pinned source ref")
+    status: str = Field(description="Lifecycle status")
+    risk_level: str = Field(description="Risk level")
+    manifest_json: dict = Field(description="Redacted manifest")
+    validation_json: dict = Field(description="Validation evidence")
+    provenance_json: dict = Field(description="Provenance/SBOM/signature evidence")
+    audit_json: dict = Field(description="Audit evidence")
+    capability_id: str | None = Field(default=None, description="Installed capability ID")
+    capability_version_id: str | None = Field(default=None, description="Installed version ID")
+    created_at: datetime = Field(description="Created time")
+    updated_at: datetime = Field(description="Updated time")
+    approved_at: datetime | None = Field(default=None, description="Approved time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CapabilityPackagePage(BaseModel):
+    items: list[CapabilityPackageResponse] = Field(description="Capability packages")
+
+
+class CapabilityPackageAttachResponse(BaseModel):
+    attachment_id: str = Field(description="Attachment ID")
+    agent_id: str = Field(description="Agent ID")
+    capability_id: str = Field(description="Capability ID")
+    capability_version_id: str = Field(description="Capability version ID")
+    enabled: bool = Field(description="Enabled")
+    priority: int = Field(description="Priority")
+
+
+class CapabilitySimpleInstallRequest(BaseModel):
+    source_uri: str | None = Field(default=None, description="Package source URL when applicable")
+    pinned_ref: str | None = Field(
+        default=None,
+        description="Optional digest, commit, or archive pin",
+    )
+    package_type: Literal[
+        "agent_template",
+        "skill_pack",
+        "tool_definition",
+        "mcp_server",
+        "prompt_template",
+        "knowledge_connector",
+        "context_optimizer",
+    ] = Field(
+        default="skill_pack",
+        description="Package type hint",
+    )
+    display_name: str = Field(
+        default="operator-installed-capability",
+        min_length=1,
+        description="Display name",
+    )
+    description: str = Field(
+        default="Installed from the simple capability facade",
+        description="Description",
+    )
+    agent_id: str | None = Field(
+        default=None,
+        description="Optional Agent ID to attach after install",
+    )
+    permissions: list[str] = Field(default_factory=list, description="Declared package permissions")
+    secret_refs: list[str] = Field(default_factory=list, description="Declared secret refs")
+    manifest: dict | None = Field(default=None, description="Optional advanced manifest override")
+    content: dict = Field(default_factory=dict, description="Optional package content")
+
+
+class CapabilitySimpleInstallResponse(BaseModel):
+    package: CapabilityPackageResponse = Field(description="Package lifecycle record")
+    validation_summary: dict = Field(description="Validation, risk, and source summary")
+    ready_state: str = Field(description="ready, staged, invalid, or attached")
+    next_step_label: str = Field(description="Recommended next UI action")
+    staged_capability_id: str | None = Field(
+        default=None,
+        description="Public preflight staged package ID",
+    )
+    capability_id: str | None = Field(default=None, description="Installed capability ID")
+    capability_version_id: str | None = Field(
+        default=None,
+        description="Installed capability version ID",
+    )
+    attachment: CapabilityPackageAttachResponse | None = Field(
+        default=None,
+        description="Attachment created by the simple facade when agent_id is supplied",
+    )
 
 
 class CapabilityTestInvocationRequest(BaseModel):
@@ -1646,6 +2008,10 @@ class AgentRunWorkspaceResponse(BaseModel):
     context_assembly: ContextAssemblyManifestResponse | None = Field(
         default=None,
         description="Backend context assembly evidence",
+    )
+    token_optimization: dict = Field(
+        default_factory=dict,
+        description="Run-level token budget, pruning, cache, and actual usage projection",
     )
     subagents: list[SubagentResponse] = Field(default_factory=list, description="Subagent 状态")
     tool_calls: list[ToolCallResponse] = Field(default_factory=list, description="工具调用日志")

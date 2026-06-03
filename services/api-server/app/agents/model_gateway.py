@@ -1018,6 +1018,27 @@ class AuditedModelGateway:
             return {}
         return task.capability_snapshot_json
 
+    def _context_optimizer_request_metadata(self) -> dict:
+        if self.context_manifest_id is None:
+            return {}
+        manifest = self.session.get(ContextAssemblyManifest, self.context_manifest_id)
+        if manifest is None or not isinstance(manifest.token_budget_json, dict):
+            return {}
+        token_budget = manifest.token_budget_json
+        metadata: dict = {
+            "optimizer_capability_version_ids": token_budget.get(
+                "optimizer_capability_version_ids", []
+            ),
+            "optimizer_policy_hash": token_budget.get("optimizer_policy_hash"),
+        }
+        effective_strategy = token_budget.get("effective_strategy", {})
+        if isinstance(effective_strategy, dict) and effective_strategy.get("low_cost_route_hint"):
+            metadata["low_cost_route"] = True
+            metadata["low_cost_routing_reason"] = str(
+                effective_strategy["low_cost_route_hint"]
+            )
+        return {key: value for key, value in metadata.items() if value not in (None, [], {})}
+
     def _generation_parameters(self, provider: dict) -> dict:
         parameters: dict = {}
         if provider.get("max_output_tokens") is not None:
@@ -1161,6 +1182,7 @@ class AuditedModelGateway:
                 "attempt_index": attempt_index,
             },
         )
+        self.session.commit()
         try:
             ModelCircuitBreaker.check(key=circuit_key)
             ModelRateLimiter.check(
@@ -1255,6 +1277,7 @@ class AuditedModelGateway:
             "grounding_correlation_id": self.grounding_correlation_id,
             "prompt_manifest_id": self.prompt_manifest_id,
             "context_manifest_id": self.context_manifest_id,
+            **self._context_optimizer_request_metadata(),
             "prompt_manifest_version": self.prompt_manifest_version,
             "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
             "evidence_text_sha256": self.evidence_text_sha256,
@@ -1483,6 +1506,7 @@ class AuditedModelGateway:
                 "attempt_index": attempt_index,
             },
         )
+        self.session.commit()
         text_accumulator = ""
         usage: dict = {}
         raw_response: dict = {}

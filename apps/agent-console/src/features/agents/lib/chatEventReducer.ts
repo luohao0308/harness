@@ -176,6 +176,16 @@ export function applyChatEvents(
         snap = { ...snap, run_id: event.run_id };
         break;
       }
+      case "orchestration": {
+        snap = {
+          ...snap,
+          metadata: {
+            ...snap.metadata,
+            orchestration: event.payload,
+          },
+        };
+        break;
+      }
       case "tool_call_requested":
       case "tool_call_result": {
         snap = { ...snap, tool_calls: mergeToolCallEvent(snap.tool_calls, event) };

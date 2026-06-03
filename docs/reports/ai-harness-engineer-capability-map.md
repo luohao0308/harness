@@ -30,7 +30,7 @@ planning, execution, isolation, approval, audit, replay, eval, routing, and benc
 ## Proof Points
 
 ```text
-Backend test suite: 118 passed
+Backend test suite: 123 passed
 Frontend production build: passed
 Docs validation: passed
 OpenAPI export: generated from FastAPI app

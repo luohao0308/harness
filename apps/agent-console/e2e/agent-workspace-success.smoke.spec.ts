@@ -9,7 +9,7 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
   /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
 

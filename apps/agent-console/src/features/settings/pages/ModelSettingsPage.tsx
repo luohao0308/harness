@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Check, GitBranch, Plus, Save, Star, Trash2 } from "lucide-react";
+import { Brain, Check, GitBranch, Loader2, Plus, Save, Star, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -137,16 +137,22 @@ export function ModelSettingsPage() {
   );
   const [draftProvider, setDraftProvider] = useState<ProviderConfig>(emptyProvider);
   const [saveMessage, setSaveMessage] = useState("");
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   const providers = useMemo(
     () => ((settings.data?.providers ?? []) as ProviderConfig[]),
     [settings.data?.providers],
   );
   const saveMutation = useMutation({
     mutationFn: updateModelSettings,
-    onSuccess: async () => {
+    onSuccess: (saved) => {
       setSaveMessage(text("模型配置已保存", "Model settings saved"));
-      await queryClient.invalidateQueries({ queryKey: ["settings", "models"] });
-      await queryClient.invalidateQueries({ queryKey: ["settings", "models", "health"] });
+      queryClient.setQueryData(["settings", "models"], saved);
+      void queryClient.invalidateQueries({ queryKey: ["settings", "models"], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ["settings", "models", "health"], exact: true });
+      void queryClient.invalidateQueries({
+        queryKey: ["settings", "models", "fallbacks"],
+        exact: true,
+      });
     },
     onError: (error) => {
       setSaveMessage(
@@ -155,6 +161,9 @@ export function ModelSettingsPage() {
           `Save failed: ${error instanceof Error ? error.message : "unknown error"}`,
         ),
       );
+    },
+    onSettled: () => {
+      setPendingAction(null);
     },
   });
 
@@ -177,8 +186,9 @@ export function ModelSettingsPage() {
     );
   }
 
-  function save(next: ModelSettings) {
+  function save(next: ModelSettings, actionId = "save") {
     setSaveMessage("");
+    setPendingAction(actionId);
     saveMutation.mutate(next);
   }
 
@@ -194,7 +204,7 @@ export function ModelSettingsPage() {
       default_model: makeDefault ? String(normalized.model || "default") : currentSettings().default_model,
       providers: nextProviders,
     };
-    save(next);
+    save(next, `preset:${normalized.name}:${String(normalized.model || "default")}`);
   }
 
   function removeProvider(provider: ProviderConfig) {
@@ -211,7 +221,7 @@ export function ModelSettingsPage() {
           ? String(fallback?.model ?? "default")
           : currentSettings().default_model,
       providers: nextProviders,
-    });
+    }, `remove:${provider.name}:${String(provider.model ?? "default")}`);
   }
 
   function setDefaultProvider(provider: ProviderConfig) {
@@ -219,12 +229,14 @@ export function ModelSettingsPage() {
       ...currentSettings(),
       default_provider: provider.name,
       default_model: String(provider.model || currentSettings().default_model || "default"),
-    });
+    }, `default:${provider.name}:${String(provider.model || "default")}`);
   }
 
   function submitCustomProvider(event: FormEvent) {
     event.preventDefault();
-    addOrUpdateProvider(draftProvider, true);
+    const normalized = normalizeProvider(draftProvider);
+    setDraftProvider(normalized);
+    addOrUpdateProvider(normalized, true);
   }
 
   return (
@@ -299,8 +311,18 @@ export function ModelSettingsPage() {
                         disabled={saveMutation.isPending}
                         onClick={() => addOrUpdateProvider(preset, true)}
                       >
-                        {active ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                        {active ? text("已启用", "Active") : text("添加并切换", "Add & Switch")}
+                        {pendingAction === `preset:${preset.name}:${String(preset.model ?? "default")}` ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : active ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Plus className="h-3.5 w-3.5" />
+                        )}
+                        {pendingAction === `preset:${preset.name}:${String(preset.model ?? "default")}`
+                          ? text("切换中", "Switching")
+                          : active
+                            ? text("已启用", "Active")
+                            : text("添加并切换", "Add & Switch")}
                       </Button>
                     </div>
                   </div>
@@ -436,7 +458,14 @@ export function ModelSettingsPage() {
                   {text("重置", "Reset")}
                 </Button>
                 <Button type="submit" variant="primary" disabled={saveMutation.isPending}>
-                  <Save className="h-3.5 w-3.5" /> {text("保存并设为默认", "Save & Set Default")}
+                  {pendingAction?.startsWith(`preset:${normalizeProvider(draftProvider).name}:`) ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  {pendingAction?.startsWith(`preset:${normalizeProvider(draftProvider).name}:`)
+                    ? text("切换中", "Switching")
+                    : text("保存并设为默认", "Save & Set Default")}
                 </Button>
               </div>
             </form>

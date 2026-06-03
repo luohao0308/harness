@@ -37,15 +37,20 @@ export function ContextRing({
   const { text } = useI18n();
   const clamped = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
   const pct = currentTokens > 0 ? Math.max(1, Math.round(clamped * 100)) : 0;
+  const isPending = status === "pending";
   const isCritical = clamped >= 0.95;
   const isAmber = clamped >= 0.8;
   const hasCompressionSavings =
     typeof rawTokens === "number" && rawTokens > currentTokens;
 
-  const strokeColor = isCritical ? "#ef4444" : isAmber ? "#f59e0b" : "#94a3b8";
+  const strokeColor = isPending ? "#0f172a" : isCritical ? "#ef4444" : isAmber ? "#f59e0b" : "#94a3b8";
   const radius = 9;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - clamped);
+  const progressDashArray = isPending
+    ? `${circumference * 0.36} ${circumference}`
+    : String(circumference);
+  const progressDashOffset = isPending ? 0 : dashOffset;
 
   const usageLabel = text(
     `背景信息窗口：${pct}% 已用，预计发送 ${formatTokenCount(currentTokens)} 标记，共 ${formatTokenCount(limitTokens)}`,
@@ -55,8 +60,8 @@ export function ContextRing({
     onCompress === undefined
       ? ""
       : text(
-          "。点击压缩上下文",
-          ". Click to compress context",
+          isPending ? "。正在压缩上下文" : "。点击压缩上下文",
+          isPending ? ". Compressing context" : ". Click to compress context",
         );
   const label = `${usageLabel}${compressLabel}`;
 
@@ -65,11 +70,17 @@ export function ContextRing({
       type="button"
       onClick={onCompress}
       disabled={disabled || status === "pending"}
-      className="group relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-slate-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+      className="group relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-slate-600 transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-70"
       title={label}
       aria-label={label}
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" className="rotate-[-90deg]">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        className={isPending ? "animate-spin rotate-[-90deg]" : "rotate-[-90deg]"}
+        data-status={status}
+      >
         {/* Background circle */}
         <circle
           cx="12"
@@ -88,13 +99,19 @@ export function ContextRing({
           stroke={strokeColor}
           strokeWidth="2.5"
           strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
+          strokeDasharray={progressDashArray}
+          strokeDashoffset={progressDashOffset}
           className="transition-all duration-300"
         />
       </svg>
-      <span className="absolute text-[7px] font-medium text-slate-600">
-        {pct}
+      <span
+        className={
+          isPending
+            ? "absolute h-1.5 w-1.5 rounded-full bg-slate-900 shadow-[0_0_0_3px_rgba(15,23,42,0.12)]"
+            : "absolute text-[7px] font-medium text-slate-600"
+        }
+      >
+        {isPending ? <span className="sr-only">{text("压缩中", "Compressing")}</span> : pct}
       </span>
       <div className="pointer-events-none absolute bottom-full right-0 z-40 mb-1.5 hidden w-32 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-center text-[10px] text-slate-600 shadow-lg group-hover:block group-focus-visible:block">
         <div>

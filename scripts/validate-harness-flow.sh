@@ -21,6 +21,10 @@ set -euo pipefail
 REPORT_DIR=".omx/reports/complete-harness-validation-flow"
 PROFILE="${1:---local-dev}"
 TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+PHASE0B_REQUIRED=0
+if [ "$PROFILE" = "--full-infra" ]; then
+  PHASE0B_REQUIRED=1
+fi
 
 mkdir -p "$REPORT_DIR"
 
@@ -81,7 +85,29 @@ echo ""
 echo "--- L2: Mocked Browser Release Gate ---"
 
 echo "[L2] Running e2e:smoke:release..."
-(cd apps/agent-console && npm run e2e:smoke:release) > "$REPORT_DIR/l2-mocked-browser.txt" 2>&1 || { echo "FAIL: e2e:smoke:release"; FAILED=1; }
+if [ "$PHASE0B_REQUIRED" -eq 1 ]; then
+  (cd apps/agent-console && npm run e2e:smoke:release) > "$REPORT_DIR/l2-mocked-browser.txt" 2>&1 || { echo "FAIL: e2e:smoke:release"; FAILED=1; }
+else
+  (cd apps/agent-console && HARNESS_ALLOW_MISSING_PHASE0B_EVIDENCE=1 npm run e2e:smoke:release) > "$REPORT_DIR/l2-mocked-browser.txt" 2>&1 || { echo "FAIL: e2e:smoke:release"; FAILED=1; }
+fi
+
+echo ""
+echo "[L2] Preparing Phase 0b evidence template..."
+python3 scripts/check-release-spine-evidence.py --write-template "$REPORT_DIR/phase0b-release-spine-evidence.template.json" > "$REPORT_DIR/l2-phase0b-template.txt" 2>&1 || { echo "FAIL: phase0b evidence template"; FAILED=1; }
+
+if [ -f "$REPORT_DIR/phase0b-release-spine-evidence.json" ]; then
+  echo "[L2] Validating Phase 0b evidence..."
+  python3 scripts/check-release-spine-evidence.py "$REPORT_DIR/phase0b-release-spine-evidence.json" > "$REPORT_DIR/l2-phase0b-validate.txt" 2>&1 || { echo "FAIL: phase0b evidence validation"; FAILED=1; }
+else
+  if [ "$PHASE0B_REQUIRED" -eq 1 ]; then
+    echo "[L2] FAIL: No Phase 0b evidence JSON present"
+    echo "FAILED: No phase0b-release-spine-evidence.json" > "$REPORT_DIR/l2-phase0b-validate.txt"
+    FAILED=1
+  else
+    echo "[L2] SKIP: No Phase 0b evidence JSON present yet"
+    echo "SKIPPED: No phase0b-release-spine-evidence.json" > "$REPORT_DIR/l2-phase0b-validate.txt"
+  fi
+fi
 
 echo ""
 

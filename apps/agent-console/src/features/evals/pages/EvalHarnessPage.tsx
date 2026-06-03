@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { FlaskConical, GitCompare, Plus, Save, ShieldCheck, UserCheck } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -27,10 +28,11 @@ import { EvalRunResults } from "../components/EvalRunResults";
 export function EvalHarnessPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [datasetName, setDatasetName] = useState("回归数据集");
   const [datasetDescription, setDatasetDescription] = useState("保存的智能体运行轨迹");
-  const [sourceRunId, setSourceRunId] = useState("");
+  const [sourceRunId, setSourceRunId] = useState(searchParams.get("run") ?? "");
   const [expectedStatus, setExpectedStatus] = useState("COMPLETED");
   const [agentId, setAgentId] = useState("default");
 

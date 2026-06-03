@@ -2,11 +2,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.evals import _aggregate_metrics
 from app.db.models import (
     AdminAuditEvent,
     Agent,
     AgentEvent,
     EvalCase,
+    EvalResult,
     EvalRun,
     ModelCall,
     PromptAssemblyManifest,
@@ -522,3 +524,41 @@ def test_eval_run_rejects_fake_web_fallback_unless_fixture_opted_in(
     assert traces[opt_in_case.json()["id"]]["grounding_provider"] == "fake_web_fixture"
     assert traces[opt_in_case.json()["id"]]["fixture_grounded"] is True
     assert traces[opt_in_case.json()["id"]]["verified_grounded"] is False
+
+
+def test_low_cost_route_cannot_pass_without_quality_guard_metric() -> None:
+    guarded = EvalResult(
+        eval_run_id="eval-run",
+        eval_case_id="case-1",
+        task_id=None,
+        status="PASSED",
+        scores_json={"task_success": 1},
+        grader_trace_json={
+            "passed": True,
+            "grounding_failures": [],
+            "low_cost_route_used": True,
+            "low_cost_quality_guard_passed": True,
+        },
+        latency_ms=0,
+        cost_usd="0",
+    )
+    unguarded = EvalResult(
+        eval_run_id="eval-run",
+        eval_case_id="case-2",
+        task_id=None,
+        status="PASSED",
+        scores_json={"task_success": 1},
+        grader_trace_json={
+            "passed": True,
+            "grounding_failures": [],
+            "low_cost_route_used": True,
+            "low_cost_quality_guard_passed": False,
+        },
+        latency_ms=0,
+        cost_usd="0",
+    )
+
+    metrics = _aggregate_metrics([guarded, unguarded])
+
+    assert metrics["low_cost_route_guard_failure_total"] == 1
+    assert metrics["low_cost_route_guard_failure_rate"] == 0.5

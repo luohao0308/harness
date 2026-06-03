@@ -1,9 +1,11 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Agent, AgentCapabilityAttachment, AgentEvent, ToolCall
+from app.db.models import Agent, AgentCapabilityAttachment, AgentEvent, Capability, Task, ToolCall
 from app.main import app
+from app.tools import capabilities as capabilities_module
 from app.tools.capabilities import CapabilityRegistry
 from tests.conftest import AUTH_HEADERS
 
@@ -248,3 +250,720 @@ def test_legacy_tools_json_alone_does_not_authorize_or_lazy_backfill(
         ).scalar_one_or_none()
         is None
     )
+
+
+def _package_manifest(name: str = "packaged_echo", *, risk_level: str = "low") -> dict:
+    return {
+        "name": name,
+        "version": "1.0.0",
+        "description": "Packaged echo tool",
+        "package_type": "tool_definition",
+        "risk_level": risk_level,
+        "permissions": [] if risk_level == "low" else ["shell"],
+        "secret_refs": ["secret://capability/echo"] if risk_level == "high" else [],
+        "provenance": {"builder": "test"},
+        "tool_metadata": {
+            "name": name,
+            "description": "Echoes redacted input for package smoke tests.",
+            "category": "package",
+            "source": "builtin",
+            "risk_level": risk_level,
+            "requires_sandbox": risk_level == "high",
+            "network_policy": "none",
+            "timeout_seconds": 10,
+            "allowed_roles": ["admin", "engineer"],
+            "audit_level": "standard" if risk_level == "low" else "elevated",
+            "idempotent": True,
+            "input_schema": {"type": "object"},
+        },
+    }
+
+
+def _context_optimizer_manifest(name: str = "conservative-token-saver") -> dict:
+    return {
+        "name": name,
+        "version": "1.0.0",
+        "description": "Declarative Agent context optimizer",
+        "package_type": "context_optimizer",
+        "schema_version": "context-optimizer-v1",
+        "risk_level": "low",
+        "permissions": ["context:optimize"],
+        "provenance": {"builder": "test"},
+        "optimizer": {
+            "mode": "budget_overlay",
+            "max_candidate_tokens_ratio": 0.8,
+            "section_limits": {
+                "recent_window": 12,
+                "long_term_memory": 8,
+                "rag_evidence": 6,
+            },
+            "drop_order": [
+                "rag_evidence_low_relevance_first",
+                "long_term_memory_low_score_first",
+                "recent_window_oldest_first",
+            ],
+            "prefer_valid_compressed_summary": True,
+            "low_cost_route_hint": "summarization under budget",
+        },
+    }
+
+
+def _fake_downloaded_package(source_uri: str) -> capabilities_module.DownloadedPackageContent:
+    return capabilities_module.DownloadedPackageContent(
+        content={
+            "download": {
+                "source_uri": source_uri,
+                "final_url": source_uri,
+                "content_type": "text/markdown",
+                "size_bytes": 8,
+                "sha256": "downloaded-sha",
+                "redirects": [],
+            },
+            "body": "# Skill\n",
+        },
+        pinned_ref="sha256:downloaded-sha",
+        metadata={
+            "source_uri": source_uri,
+            "final_url": source_uri,
+            "sha256": "downloaded-sha",
+            "size_bytes": 8,
+            "content_type": "text/markdown",
+            "redirect_count": 0,
+            "redirects": [],
+            "fetch_client": "httpx",
+            "no_code_execution": True,
+        },
+    )
+
+
+def test_private_package_upload_approve_attach_and_test_invoke(
+    db_session: Session,
+) -> None:
+    _create_agent(db_session, agent_id="package-agent", tools=[])
+    client = TestClient(app)
+
+    staged = client.post(
+        "/api/tools/capabilities/packages/private",
+        headers=AUTH_HEADERS,
+        json={"manifest": _package_manifest(), "content": {"api_key": "clear-secret"}},
+    )
+
+    assert staged.status_code == 201
+    staged_payload = staged.json()
+    assert staged_payload["validation_json"]["errors"] == []
+    assert staged_payload["status"] == "staged"
+    assert staged_payload["validation_json"]["no_code_execution"] is True
+    assert staged_payload["validation_json"]["jsonschema_draft"] == "2020-12"
+    assert (
+        staged_payload["validation_json"]["staging_execution"]
+        == "manifest_only_no_code_execution"
+    )
+    assert staged_payload["provenance_json"]["source_sha256"] == staged_payload["source_sha256"]
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{staged_payload['id']}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "test install"},
+    )
+
+    assert approved.status_code == 200
+    approved_payload = approved.json()
+    assert approved_payload["status"] == "approved"
+    assert approved_payload["capability_version_id"] is not None
+    assert approved_payload["audit_json"]["approval"]["immutable_version"] is True
+
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{staged_payload['id']}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "package-agent", "enabled": True, "priority": 10},
+    )
+
+    assert attached.status_code == 201
+    attachment_payload = attached.json()
+    assert attachment_payload["capability_version_id"] == approved_payload["capability_version_id"]
+
+    invoked = client.post(
+        "/api/tools/capabilities/test-invoke",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "package-agent",
+            "tool_name": "packaged_echo",
+            "input_json": {"api_key": "clear-secret", "message": "hello"},
+        },
+    )
+
+    assert invoked.status_code == 202
+    invoke_payload = invoked.json()
+    assert invoke_payload["allowed"] is True
+    assert invoke_payload["tool_call"]["status"] == "SUCCESS"
+    assert invoke_payload["tool_call"]["input_json"]["api_key"] == "[REDACTED]"
+    assert invoke_payload["tool_call"]["capability_snapshot_json"]["agent_id"] == "package-agent"
+    assert invoke_payload["output"]["package_tool"] == "packaged_echo"
+    task = db_session.get(Task, invoke_payload["tool_call"]["task_id"])
+    assert task is not None
+    assert task.enable_sandbox is True
+
+
+def test_context_optimizer_package_installs_and_attaches_without_tool_execution(
+    db_session: Session,
+) -> None:
+    _create_agent(db_session, agent_id="optimizer-agent", tools=["read_file"])
+    client = TestClient(app)
+
+    staged = client.post(
+        "/api/tools/capabilities/packages/private",
+        headers=AUTH_HEADERS,
+        json={"manifest": _context_optimizer_manifest(), "content": {}},
+    )
+
+    assert staged.status_code == 201
+    staged_payload = staged.json()
+    assert staged_payload["validation_json"]["errors"] == []
+    assert staged_payload["status"] == "staged"
+    assert staged_payload["package_type"] == "context_optimizer"
+    assert staged_payload["validation_json"]["no_code_execution"] is True
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{staged_payload['id']}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "attach optimizer"},
+    )
+
+    assert approved.status_code == 200
+    approved_payload = approved.json()
+    assert approved_payload["capability_version_id"] is not None
+    capability = db_session.get(Capability, approved_payload["capability_id"])
+    assert capability is not None
+    assert capability.type == "context_optimizer"
+
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{staged_payload['id']}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "optimizer-agent", "enabled": True, "priority": 10},
+    )
+
+    assert attached.status_code == 201
+    attachment_payload = attached.json()
+    assert attachment_payload["capability_version_id"] == approved_payload["capability_version_id"]
+
+    registry, snapshot = CapabilityRegistry(db_session, "dev-org").tool_registry_for_agent(
+        "optimizer-agent"
+    )
+    assert set(registry.tools) == {"read_file"}
+    assert approved_payload["capability_version_id"] not in snapshot["capability_version_ids"]
+
+    invoked = client.post(
+        "/api/tools/capabilities/test-invoke",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "optimizer-agent",
+            "tool_name": "read_file",
+            "input_json": {"path": "pyproject.toml"},
+        },
+    )
+
+    assert invoked.status_code == 202
+    invoke_payload = invoked.json()
+    assert invoke_payload["tool_call"]["status"] in {"SUCCESS", "DENIED"}
+    assert invoke_payload["tool_call"]["capability_version_id"] != approved_payload[
+        "capability_version_id"
+    ]
+
+
+def test_context_optimizer_manifest_rejects_unknown_or_executing_fields() -> None:
+    manifest = _context_optimizer_manifest()
+    manifest["optimizer"]["unsupported"] = True
+    manifest["secret_refs"] = ["secret://not-needed"]
+    manifest["runtime"] = {"type": "python"}
+
+    validation = capabilities_module.validate_package_manifest(manifest)
+
+    assert validation["status"] == "invalid"
+    assert any("optimizer has unsupported fields" in error for error in validation["errors"])
+    assert any("manifest has unsupported fields" in error for error in validation["errors"])
+    assert any("must not require secret_refs" in error for error in validation["errors"])
+
+
+def test_simple_trusted_url_install_downloads_enables_and_attaches(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="trusted-url-agent", tools=[])
+    client = TestClient(app)
+    monkeypatch.setattr(
+        capabilities_module,
+        "download_remote_package_content",
+        _fake_downloaded_package,
+    )
+
+    response = client.post(
+        "/api/tools/capabilities/install/trusted-url",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://example.com/customer-research.skill",
+            "display_name": "customer research skill",
+            "package_type": "skill_pack",
+            "agent_id": "trusted-url-agent",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ready_state"] == "attached"
+    assert payload["package"]["status"] == "approved"
+    assert payload["package"]["source_kind"] == "trusted_url"
+    assert payload["package"]["pinned_ref"] == "sha256:downloaded-sha"
+    assert payload["package"]["validation_json"]["download"]["fetch_client"] == "httpx"
+    assert payload["capability_version_id"] is not None
+    assert payload["attachment"]["agent_id"] == "trusted-url-agent"
+
+
+def test_simple_public_url_preflight_does_not_activate(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="public-preflight-agent", tools=[])
+    client = TestClient(app)
+    monkeypatch.setattr(
+        capabilities_module,
+        "download_remote_package_content",
+        _fake_downloaded_package,
+    )
+
+    response = client.post(
+        "/api/tools/capabilities/preflight/public-url",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://example.com/public.skill",
+            "display_name": "public skill",
+            "package_type": "skill_pack",
+            "agent_id": "public-preflight-agent",
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ready_state"] == "staged"
+    assert payload["staged_capability_id"] == payload["package"]["id"]
+    assert payload["package"]["pinned_ref"] == "sha256:downloaded-sha"
+    assert payload["package"]["validation_json"]["download"]["no_code_execution"] is True
+    assert payload["capability_id"] is None
+    assert payload["capability_version_id"] is None
+    assert payload["attachment"] is None
+    assert payload["next_step_label"] == "Enable after validation"
+
+    enabled = client.post(
+        f"/api/tools/capabilities/staged/{payload['staged_capability_id']}/enable",
+        headers=AUTH_HEADERS,
+        json={"reason": "validated in v1 public preflight"},
+    )
+
+    assert enabled.status_code == 200
+    enabled_payload = enabled.json()
+    assert enabled_payload["ready_state"] == "ready"
+    assert enabled_payload["capability_version_id"] is not None
+    assert enabled_payload["next_step_label"] == "Attach to Agent"
+
+
+def test_simple_public_git_preflight_requires_pin_or_content_hash() -> None:
+    response = TestClient(app).post(
+        "/api/tools/capabilities/preflight/public-url",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "git+https://github.com/example/public-skill.git",
+            "display_name": "public skill",
+            "package_type": "skill_pack",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "pinned_ref" in response.json()["detail"]
+
+
+def test_trusted_url_install_still_rejects_unsafe_source_url() -> None:
+    response = TestClient(app).post(
+        "/api/tools/capabilities/install/trusted-url",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "http://example.com/customer-research.skill",
+            "display_name": "customer research skill",
+            "package_type": "skill_pack",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "https" in response.json()["detail"]
+
+
+def test_simple_upload_install_enables_without_manifest_editing(
+    db_session: Session,
+) -> None:
+    _create_agent(db_session, agent_id="upload-install-agent", tools=[])
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/tools/capabilities/install/upload",
+        headers=AUTH_HEADERS,
+        json={
+            "display_name": "uploaded skill",
+            "package_type": "skill_pack",
+            "agent_id": "upload-install-agent",
+            "content": {"filename": "SKILL.md", "body": "# Skill\n"},
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ready_state"] == "attached"
+    assert payload["package"]["source_kind"] == "private_upload"
+    assert payload["package"]["manifest_json"]["package_type"] == "skill_pack"
+    assert payload["attachment"]["agent_id"] == "upload-install-agent"
+
+
+def test_dependency_preflight_reports_no_container_v1_path() -> None:
+    response = TestClient(app).get(
+        "/api/tools/capabilities/dependency-preflight",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["local_release_path"] == "no-container"
+    assert payload["docker_private_smoke"] == "optional"
+    assert payload["required_v1"]["jsonschema"] == "draft-2020-12-validator-active"
+    assert "trusted_url_install" in payload["feature_flags"]
+
+
+class _FakeDownloadResponse:
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        content: bytes = b"",
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers or {}
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _FakeDownloadClient:
+    def __init__(self, responses: list[_FakeDownloadResponse]) -> None:
+        self.responses = responses
+        self.urls: list[str] = []
+
+    def __enter__(self) -> "_FakeDownloadClient":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def get(self, url: str, *, headers: dict[str, str]) -> _FakeDownloadResponse:
+        self.urls.append(url)
+        return self.responses.pop(0)
+
+
+def test_remote_package_download_records_hash_and_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(
+        capabilities_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                capabilities_module.socket.AF_INET,
+                capabilities_module.socket.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ],
+    )
+    fake_client = _FakeDownloadClient(
+        [
+            _FakeDownloadResponse(
+                200,
+                content=b"# Skill\n",
+                headers={"content-type": "text/markdown"},
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        capabilities_module.httpx,
+        "Client",
+        lambda **_kwargs: fake_client,
+    )
+
+    downloaded = capabilities_module.download_remote_package_content(
+        "https://example.com/public.skill"
+    )
+
+    assert fake_client.urls == ["https://example.com/public.skill"]
+    assert downloaded.pinned_ref.startswith("sha256:")
+    assert downloaded.content["body"] == "# Skill\n"
+    assert downloaded.metadata["fetch_client"] == "httpx"
+    assert downloaded.metadata["no_code_execution"] is True
+
+
+def test_remote_package_download_rejects_cross_host_redirect(monkeypatch) -> None:
+    monkeypatch.setattr(
+        capabilities_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                capabilities_module.socket.AF_INET,
+                capabilities_module.socket.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ],
+    )
+    fake_client = _FakeDownloadClient(
+        [
+            _FakeDownloadResponse(
+                302,
+                headers={"location": "https://other.example/public.skill"},
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        capabilities_module.httpx,
+        "Client",
+        lambda **_kwargs: fake_client,
+    )
+
+    with pytest.raises(capabilities_module.CapabilityResolutionError, match="across hosts"):
+        capabilities_module.download_remote_package_content("https://example.com/public.skill")
+
+
+def test_public_source_resolver_blocks_private_addresses(monkeypatch) -> None:
+    monkeypatch.setattr(
+        capabilities_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                capabilities_module.socket.AF_INET,
+                capabilities_module.socket.SOCK_STREAM,
+                6,
+                "",
+                ("10.0.0.10", 443),
+            )
+        ],
+    )
+
+    result = capabilities_module.validate_public_source(
+        "https://example.com/package.json",
+        pinned_ref="sha256:abc",
+    )
+
+    assert result["status"] == "invalid"
+    assert "resolver returned private" in " ".join(result["errors"])
+
+
+def test_public_url_package_blocks_private_ip_and_requires_pinned_source() -> None:
+    client = TestClient(app)
+
+    blocked = client.post(
+        "/api/tools/capabilities/packages/public",
+        headers=AUTH_HEADERS,
+        json={
+            "manifest": _package_manifest("blocked_public_package"),
+            "source_kind": "public_url",
+            "source_uri": "https://127.0.0.1/package.json",
+            "pinned_ref": "sha256:abc",
+            "content": {},
+        },
+    )
+
+    assert blocked.status_code == 400
+    assert "not publicly routable" in blocked.json()["detail"]
+
+    unpinned = client.post(
+        "/api/tools/capabilities/packages/public",
+        headers=AUTH_HEADERS,
+        json={
+            "manifest": _package_manifest("unpinned_public_package"),
+            "source_kind": "public_url",
+            "source_uri": "https://example.com/package.json",
+            "pinned_ref": "",
+            "content": {},
+        },
+    )
+
+    assert unpinned.status_code == 422
+
+
+def test_public_git_package_requires_approval_before_activation(
+    db_session: Session,
+) -> None:
+    _create_agent(db_session, agent_id="public-package-agent", tools=[])
+    client = TestClient(app)
+
+    staged = client.post(
+        "/api/tools/capabilities/packages/public",
+        headers=AUTH_HEADERS,
+        json={
+            "manifest": _package_manifest("public_packaged_echo"),
+            "source_kind": "public_git",
+            "source_uri": "git+https://github.com/example/capability.git",
+            "pinned_ref": "commit:0123456789abcdef",
+            "content": {},
+        },
+    )
+
+    assert staged.status_code == 201
+    staged_payload = staged.json()
+    assert staged_payload["status"] == "staged"
+    assert staged_payload["capability_version_id"] is None
+    assert staged_payload["validation_json"]["public_source_policy"]["status"] == "valid"
+
+    attach_before_approval = client.post(
+        f"/api/tools/capabilities/packages/{staged_payload['id']}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "public-package-agent"},
+    )
+
+    assert attach_before_approval.status_code == 400
+    assert "approved before attachment" in attach_before_approval.json()["detail"]
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{staged_payload['id']}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "trusted commit"},
+    )
+
+    assert approved.status_code == 200
+    assert approved.json()["capability_version_id"] is not None
+
+
+def test_attachment_disable_blocks_future_runtime_and_uninstall_requires_no_active_attachment(
+    db_session: Session,
+) -> None:
+    _create_agent(db_session, agent_id="toggle-package-agent", tools=[])
+    client = TestClient(app)
+    staged = client.post(
+        "/api/tools/capabilities/packages/private",
+        headers=AUTH_HEADERS,
+        json={"manifest": _package_manifest("toggle_packaged_echo"), "content": {}},
+    ).json()
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{staged['id']}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "test"},
+    ).json()
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{staged['id']}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "toggle-package-agent", "enabled": True},
+    ).json()
+
+    uninstall_blocked = client.post(
+        f"/api/tools/capabilities/packages/{staged['id']}/uninstall",
+        headers=AUTH_HEADERS,
+    )
+    assert uninstall_blocked.status_code == 400
+    assert "active attachments" in uninstall_blocked.json()["detail"]
+
+    disabled = client.patch(
+        f"/api/tools/capabilities/attachments/{attached['attachment_id']}",
+        headers=AUTH_HEADERS,
+        json={"enabled": False},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+
+    denied = client.post(
+        "/api/tools/capabilities/test-invoke",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "toggle-package-agent",
+            "tool_name": "toggle_packaged_echo",
+            "input_json": {},
+        },
+    )
+    assert denied.status_code == 202
+    assert denied.json()["allowed"] is False
+    assert "not attached" in denied.json()["tool_call"]["error_message"]
+
+    uninstalled = client.post(
+        f"/api/tools/capabilities/packages/{staged['id']}/uninstall",
+        headers=AUTH_HEADERS,
+    )
+    assert uninstalled.status_code == 200
+    assert uninstalled.json()["status"] == "uninstalled"
+    assert approved["capability_version_id"] is not None
+
+
+def test_package_manifest_rejects_raw_secret_values() -> None:
+    response = TestClient(app).post(
+        "/api/tools/capabilities/packages/private",
+        headers=AUTH_HEADERS,
+        json={
+            "manifest": {
+                **_package_manifest("raw_secret_package"),
+                "api_key": "clear-secret",
+            },
+            "content": {},
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["status"] == "invalid"
+    assert "raw secret-like values" in " ".join(payload["validation_json"]["errors"])
+
+
+def test_admin_validate_accepts_ui_commit_key_and_rejects_bad_secret_refs() -> None:
+    response = TestClient(app).post(
+        "/api/tools/capabilities/admin-validate",
+        headers=AUTH_HEADERS,
+        json={
+            "content": {
+                "package_manifest": {
+                    **_package_manifest("validate_commit_package"),
+                    "secret_refs": [{"name": "missing-ref"}],
+                }
+            },
+            "config": {
+                "source_type": "public_git",
+                "source_url": "git+https://github.com/example/capability.git",
+                "commit": "commit:0123456789abcdef",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "invalid"
+    assert "must declare secret_ref" in " ".join(payload["errors"])
+    assert payload["source_policy"]["pinned"] is True
+
+
+def test_package_capability_identifiers_are_bounded_for_postgres_columns(
+    db_session: Session,
+) -> None:
+    _create_agent(db_session, agent_id="long-package-agent", tools=[])
+    long_name = "capability-" + ("very-long-name-" * 14)
+    client = TestClient(app)
+    staged = client.post(
+        "/api/tools/capabilities/packages/private",
+        headers=AUTH_HEADERS,
+        json={"manifest": _package_manifest(long_name), "content": {}},
+    )
+    assert staged.status_code == 201
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{staged.json()['id']}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "bounded id regression"},
+    )
+
+    assert approved.status_code == 200
+    payload = approved.json()
+    assert len(payload["package_key"]) <= 128
+    assert len(payload["capability_version_id"]) <= 64
+    capability = db_session.get(Capability, payload["capability_id"])
+    assert capability is not None
+    assert len(capability.capability_key) <= 128

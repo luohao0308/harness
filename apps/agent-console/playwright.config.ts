@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const baseURL = process.env.HARNESS_PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:5177";
+
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
@@ -9,7 +11,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:5177",
+    baseURL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

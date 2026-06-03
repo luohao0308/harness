@@ -7,7 +7,7 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -118,8 +118,8 @@ test.describe("Agent Studio page mocked smoke tests", () => {
 
     // All 6 capability surfaces — uses text(zh, en) so Chinese labels
     await expect(page.getByText("模型").first()).toBeVisible();
-    await expect(page.getByText("工具 / MCP").first()).toBeVisible();
-    await expect(page.getByText("Prompt 提示词").first()).toBeVisible();
+    await expect(page.getByText("MCP（模型上下文协议）").first()).toBeVisible();
+    await expect(page.getByText("提示词").first()).toBeVisible();
     await expect(page.getByText("RAG 知识检索").first()).toBeVisible();
     // Templates in Chinese is "模板"
     await expect(page.getByText("模板").first()).toBeVisible();
@@ -138,7 +138,7 @@ test.describe("Agent Studio page mocked smoke tests", () => {
     await expect(page.getByText("Code Reviewer", { exact: true }).first()).toBeVisible();
 
     // API-backed status — Chinese: "API 已接入"
-    await expect(page.getByText("API 已接入").first()).toBeVisible();
+    await expect(page.getByText("接口已接入").first()).toBeVisible();
   });
 
   test("Templates remain disabled while RAG is API-backed", async ({ page }) => {
@@ -146,9 +146,9 @@ test.describe("Agent Studio page mocked smoke tests", () => {
 
     await expect(page.getByText("RAG 知识检索").first()).toBeVisible();
     await expect(page.getByText("模板").first()).toBeVisible();
-    await expect(page.getByText("API 已接入").first()).toBeVisible();
+    await expect(page.getByText("接口已接入").first()).toBeVisible();
     await expect(page.getByText("未启用").first()).toBeVisible();
-    await expect(page.getByText("RAG 指检索增强生成")).toBeVisible();
+    await expect(page.getByText("检索增强生成").first()).toBeVisible();
     await expect(page.getByText("模板市场保留禁用态")).toBeVisible();
   });
 

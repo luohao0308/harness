@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, Database, FlaskConical, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
+import { Bot, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -61,6 +61,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const run = data?.run;
   const grounding = data?.knowledge_grounding;
   const contextAssembly = data?.context_assembly;
+  const tokenOptimization = data?.token_optimization ?? {};
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
@@ -317,7 +318,9 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 <div className="truncate font-mono text-[11px] text-slate-500" title={grounding.grounding_verification_reason}>
                   {grounding.grounding_verification_reason}
                 </div>
-                <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
+                <p className="text-xs text-slate-500">
+                  {grounding.evidence_message || grounding.evidence_summary}
+                </p>
                 {grounding.inferred_fallback && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
                     后备原因 {grounding.fallback_reason ?? "latest"} · 检索会话{" "}
@@ -452,6 +455,24 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 </Badge>
               </CardHeader>
               <div className="space-y-3 p-3 text-sm">
+                {arrayField(tokenOptimization, "optimizer_capability_version_ids").length > 0 && (
+                  <div className="grid gap-2 rounded-md border border-emerald-100 bg-emerald-50 p-2 text-xs text-emerald-900 md:grid-cols-[1fr_auto]">
+                    <div className="min-w-0">
+                      <div className="font-semibold">Context Optimizer</div>
+                      <div className="truncate font-mono">
+                        {arrayField(tokenOptimization, "optimizer_capability_version_ids").join(", ")}
+                      </div>
+                      {stringField(tokenOptimization, "optimizer_policy_hash") ? (
+                        <div className="mt-1 truncate font-mono text-emerald-700">
+                          {stringField(tokenOptimization, "optimizer_policy_hash")?.slice(0, 16)}
+                        </div>
+                      ) : null}
+                    </div>
+                    <Badge tone="success">
+                      {arrayField(tokenOptimization, "optimizer_decisions").length} decisions
+                    </Badge>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
                   <Metric label={<TermHint description="上下文组装清单">Manifest</TermHint>} value={contextAssembly.id} />
                   <Metric label={<TermHint description="提示词组装清单">Prompt manifest</TermHint>} value={contextAssembly.prompt_manifest_id ?? "n/a"} />
@@ -476,6 +497,60 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                       .join(", ")}
                   </div>
                 )}
+              </div>
+            </Card>
+          )}
+
+          {Object.keys(tokenOptimization).length > 0 && (
+            <Card id="token-optimization">
+              <CardHeader>
+                <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Gauge className="h-4 w-4" />
+                  Token 节省
+                </div>
+                <Badge tone={boolField(tokenOptimization, "pruning_applied") ? "success" : "neutral"}>
+                  {boolField(tokenOptimization, "pruning_applied") ? "已剪枝" : "未剪枝"}
+                </Badge>
+              </CardHeader>
+              <div className="space-y-3 p-3 text-sm">
+                <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                  <Metric
+                    label={<TermHint description="用户请求的上下文预算">Budget</TermHint>}
+                    value={formatTokenMetric(numberField(tokenOptimization, "requested_max_tokens"))}
+                  />
+                  <Metric
+                    label={<TermHint description="原始候选上下文估算标记数">Baseline</TermHint>}
+                    value={formatTokenMetric(numberField(tokenOptimization, "estimated_candidate_tokens"))}
+                  />
+                  <Metric
+                    label={<TermHint description="实际纳入模型请求的上下文估算标记数">Optimized</TermHint>}
+                    value={formatTokenMetric(numberField(tokenOptimization, "estimated_included_tokens"))}
+                  />
+                  <Metric
+                    label={<TermHint description="通过预算剪枝节省的估算标记数">Saved</TermHint>}
+                    value={`${formatTokenMetric(numberField(tokenOptimization, "estimated_saved_tokens"))} · ${formatPercentMetric(numberField(tokenOptimization, "estimated_savings_percent"))}`}
+                  />
+                  <Metric
+                    label={<TermHint description="模型返回的实际 prompt 标记数">Actual in</TermHint>}
+                    value={formatTokenMetric(numberField(tokenOptimization, "actual_prompt_tokens"))}
+                  />
+                  <Metric
+                    label={<TermHint description="模型返回的实际 completion 标记数">Actual out</TermHint>}
+                    value={formatTokenMetric(numberField(tokenOptimization, "actual_completion_tokens"))}
+                  />
+                  <Metric
+                    label={<TermHint description="检索缓存命中次数">Cache hit</TermHint>}
+                    value={formatTokenMetric(numberField(recordField(tokenOptimization, "retrieval_cache"), "hit_count"))}
+                  />
+                  <Metric
+                    label={<TermHint description="低成本模型路由次数">Low-cost routes</TermHint>}
+                    value={String(arrayField(tokenOptimization, "low_cost_routes").length)}
+                  />
+                </div>
+                <div className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs text-slate-600">
+                  纳入 {formatTokenMetric(numberField(tokenOptimization, "included_count"))} 个引用，
+                  省略 {formatTokenMetric(numberField(tokenOptimization, "omitted_count"))} 个引用。节省证据来自后端上下文组装清单和模型调用实际用量。
+                </div>
               </div>
             </Card>
           )}
@@ -860,6 +935,42 @@ function Metric({ label, value }: { label: React.ReactNode; value: string }) {
       <div className="mt-1 truncate font-mono text-xs text-slate-900">{value}</div>
     </div>
   );
+}
+
+function recordField(value: Record<string, unknown>, key: string): Record<string, unknown> {
+  const field = value[key];
+  return field && typeof field === "object" && !Array.isArray(field)
+    ? (field as Record<string, unknown>)
+    : {};
+}
+
+function arrayField(value: Record<string, unknown>, key: string): unknown[] {
+  const field = value[key];
+  return Array.isArray(field) ? field : [];
+}
+
+function stringField(value: Record<string, unknown>, key: string): string | null {
+  const field = value[key];
+  return typeof field === "string" && field.trim() ? field : null;
+}
+
+function numberField(value: Record<string, unknown>, key: string): number | null {
+  const field = value[key];
+  return typeof field === "number" && Number.isFinite(field) ? field : null;
+}
+
+function boolField(value: Record<string, unknown>, key: string): boolean {
+  return value[key] === true;
+}
+
+function formatTokenMetric(value: number | null): string {
+  if (value === null) return "n/a";
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatPercentMetric(value: number | null): string {
+  if (value === null) return "n/a";
+  return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(value)}%`;
 }
 
 function parseReplaySequence(value: string) {

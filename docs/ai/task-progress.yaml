@@ -1,8 +1,9 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-18T12:17:00Z
+last_updated_at: 2026-05-26T14:25:15Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
+machine_progress_source: docs/ai/task-progress.yaml
 product: AI Harness Platform
 formula: Model + Harness = Agent
 website_policy: retained_public_shell_not_console_core
@@ -116,6 +117,785 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: dify-grounded-answer-evidence-use
+    date: 2026-05-26
+    status: verified
+    demo: Workspace chat now answers from accepted Dify connector evidence instead of asking for company context after retrieval has already returned records.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_agents.py::test_agent_workspace_chat_stream_falls_back_when_model_ignores_dify_evidence tests/test_knowledge_connectors.py::test_dify_connector_retrieval_calls_provider_when_local_evidence_is_insufficient -q
+      - cd services/api-server && uv run pytest tests/test_agents.py tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - Restarted local API in tmux session `harness-api-knowledge-edit` and confirmed `GET /health` returned 200.
+      - Live `ground_query` run `ecd15f37-7a3e-4752-a513-38aab367882e` for `公司的愿景与价值观是什么` returned `grounding_provider=dify_connector`, `hit_count=3`, `[D1]` 企业愿景, and `[D2]` 长期愿景.
+      - Live Workspace chat run `ec724c8b-c0ea-4918-8adf-1e3ba861443f` returned the Dify-backed answer with `[D1]`, `[D2]`, `[D3]` citations and evidence message `Local knowledge is insufficient; Dify connector grounded the answer.`
+      - Expanded the ignored-evidence detector for the observed `没有指明具体是哪家公司 / 补充一下公司名称` wording, reran `tests/test_agents.py tests/test_knowledge_connectors.py -q` with `93 passed`, reran Ruff, restarted local API, and live Workspace chat run `8e428b6b-42e2-4686-b066-3fb99e837b16` returned the Dify-backed answer.
+    acceptance_notes:
+      - `Knowledge evidence follows` now explicitly instructs the model to answer from retrieved evidence when it contains a direct answer, and to only state missing parts when evidence is partial.
+      - Workspace chat adds a deterministic fallback for grounded responses whose model text still asks for missing company/source context; it renders the accepted retrieval snippets with their citation keys instead of emitting a clarification question.
+      - The fallback activates only when `grounding.grounded` is true and citation records exist, so unresolved secrets, provider errors, and empty Dify/Coze results are still reported as insufficient evidence.
+      - Regression coverage simulates Dify returning company-vision records while the model asks for a company name; the final SSE content now includes the Dify records and `[D1]` / `[D2]`.
+      - The regression now covers the exact observed wording: `由于你没有指明具体是哪家公司...补充一下公司名称`.
+      - Live evidence showed Dify returned at least two records: `[D1]` `企业愿景 > 成为客户最信赖的视觉创意伙伴，用设计创造商业价值` and `[D2]` `长期愿景` with the international/design benchmark/world/social-good bullets.
+
+  - id: knowledge-connector-editable-configuration-ui
+    date: 2026-05-26
+    status: verified
+    demo: Knowledge source edit dialogs now clearly separate editable basic fields from external API connector configuration, and connector endpoint/secret_ref/dataset_id can be updated safely from the UI.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_connector_settings_can_be_updated_without_raw_secret_leak tests/test_knowledge_connectors.py::test_connector_settings_update_rejects_raw_secret_ref -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx
+      - cd apps/agent-console && npm test -- Knowledge
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - curl --noproxy '*' -sS -m 5 http://127.0.0.1:8000/health
+      - Live PATCH on `127.0.0.1:8000` updated Coze source `5c3cfe97-9b9d-40ac-9021-d9da6bbaf859` to `dataset_id=7629341424630448134`; list response confirmed `connector_validation_status=ready` and `connector_secret_configured=true`.
+    acceptance_notes:
+      - `KnowledgeSourceUpdateRequest` now accepts `connector_settings_json` for connector sources; updates reuse the existing `normalize_connector_settings` safety path for raw-secret redaction/rejection, endpoint userinfo blocking, required dataset id checks, release-state derivation, and crawler-style option rejection.
+      - The `/knowledge` / Agent Studio edit dialog now labels local versus external connector editing explicitly, splits `基础信息` from `API 接入配置`, and shows Provider, retrieval usability, secret configured state, Source ID, and Scope as read-only context.
+      - Connector editing exposes `API Endpoint`, `Secret Ref`, `数据集 / 知识库 ID`, and optional `替换 API Key`; leaving the API Key blank keeps the saved backend secret, while replacing it stores only through backend secret storage.
+      - Coze helper text now tells users to use the `/knowledge/{id}` value from the Coze URL, not the `/space/{id}` value; the user's local Coze source was repaired from `7618108220116893732` to `7629341424630448134`.
+      - Local API is running in tmux session `harness-api-knowledge-edit` on `127.0.0.1:8000` after loading the new PATCH behavior.
+
+  - id: coze-connector-runtime-retrieval
+    date: 2026-05-26
+    status: verified
+    demo: Coze knowledge connectors are now usable runtime retrieval connectors with frontend-managed API key storage and source-bound grounding evidence when local Knowledge/RAG is insufficient.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_coze_connector_retrieval_calls_provider_when_local_evidence_is_insufficient tests/test_knowledge_connectors.py::test_coze_connector_runtime_uses_frontend_stored_secret tests/test_knowledge_connectors.py::test_coze_adapter_posts_configured_dataset_retrieve_shape tests/test_knowledge_connectors.py::test_coze_adapter_reports_provider_error_body -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- Knowledge
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - curl --noproxy '*' -sS -m 5 http://127.0.0.1:8000/health
+      - Live API smoke on `127.0.0.1:8000`: create temporary Coze connector with `connector_secret_value`, response returned `connector_release_state=usable`, `connector_validation_status=ready`, `connector_secret_configured=true`, and DELETE cleanup returned 204.
+      - Live runtime smoke on `127.0.0.1:8000` with a temporary local Coze-compatible retrieval endpoint: Workspace chat returned `Local knowledge is insufficient; Coze connector grounded the answer`, Run workspace grounding showed `grounding_provider=coze_connector`, one `coze_connector` hit, `[C1]` citation, and DELETE cleanup returned 204.
+    acceptance_notes:
+      - Coze is now in the usable connector release class and counts toward complete usable knowledge sources when endpoint, secret_ref, and dataset_id are valid.
+      - Runtime grounding attempts Coze after local Knowledge/RAG is insufficient and before Dify/web fallback; accepted Coze results create `coze_connector` retrieval hits, `[C1]` citations, prompt-manifest source snapshots, and connector policy audit evidence.
+      - The `/knowledge` / Knowledge Management connector dialog stores Coze API keys through `connector_secret_value`; backend runtime resolves `secret://coze` from service-side connector secret storage before environment fallback.
+      - Raw Coze keys are not written into `KnowledgeSource.settings_json`, source responses, prompt manifests, retrieval hits, or policy audit safe metadata; responses expose only `connector_secret_configured` and the secret reference.
+      - Missing Coze secrets, raw-secret-looking `secret_ref` values, and Coze provider HTTP failures produce visible runtime evidence messages and denied connector audit rows without fabricating grounded answers.
+      - Coze connector config documents remain `connector_config_only` and `retrieval_eligible=false`; runtime grounding trusts only source-bound connector retrieval results, not the saved config text.
+      - Live runtime behavior was verified through a local Coze-compatible endpoint; external Coze provider retrieval was not run because no real Coze credential/dataset was available. The adapter uses a configurable endpoint, defaulting to `https://api.coze.cn/v1/datasets/{dataset_id}/retrieve`.
+
+  - id: coze-official-document-list-ranking-and-dify-fallback
+    date: 2026-05-26
+    status: verified
+    demo: Coze Cloud base endpoint retrieval now uses the official document-list/content path with stricter Chinese relevance filtering, so unrelated Coze hits no longer block Dify fallback.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_coze_adapter_uses_official_document_list_for_base_endpoint tests/test_knowledge_connectors.py::test_coze_document_list_rejects_weak_cjk_overlap tests/test_knowledge_connectors.py::test_coze_empty_results_fall_through_to_dify_connector tests/test_knowledge_connectors.py::test_coze_adapter_still_supports_explicit_custom_retrieve_endpoint -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - Restarted local API in tmux session `harness-api-knowledge-edit` and confirmed `GET /health` returned 200.
+      - Live adapter probe: query `公司的愿景与价值观是什么` returned 0 Coze results from saved Coze dataset `7629341424630448134`, while `厦门科技馆的主题是什么` returned 3 Coze results.
+      - Live `ground_query`: `厦门科技馆的主题是什么` returned `grounding_provider=coze_connector`; `公司的愿景与价值观是什么` returned `grounding_provider=dify_connector`, `dify_result_count=3`, and evidence message `Dify connector grounded the answer`.
+    acceptance_notes:
+      - Coze base endpoints such as `https://api.coze.cn` call `/open_api/knowledge/document/list`, coerce numeric Coze dataset ids to integers for that API, fetch the signed document content URL only in memory, split bounded text chunks, and rank them locally.
+      - Explicit custom Coze retrieval endpoints ending in `/retrieve`, `/retrieval`, or `/search` still use the configured endpoint contract and are not affected by the document-list local ranking path.
+      - The local Coze document-list ranker now requires meaningful Chinese core-term overlap and filters weak overlaps below the minimum document score; partial terms such as `价值` no longer make a science-museum document answer `公司的愿景与价值观是什么`.
+      - Runtime fallback remains local Knowledge/RAG first, Coze second, Dify third, then web fallback; when Coze returns no accepted results, Dify is attempted in the same grounding request.
+
+  - id: mcp-skill-tool-click-modal-configuration
+    date: 2026-05-26
+    status: verified
+    demo: Tool Registry and Agent Studio MCP/Skill/Tool configuration now opens from compact buttons into modal dialogs instead of exposing inline configuration forms by default.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- ToolRegistryPage AgentListPage
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+    acceptance_notes:
+      - Added shared `ConfigDialog` with `role="dialog"` and `aria-modal="true"` for feature configuration flows.
+      - Tool Registry now keeps built-in preset Agent confirmation, trusted URL install, public URL preflight, Skill upload, package lifecycle, and Agent-scoped test invoke inside click-open dialogs.
+      - Agent Studio capability attachment now shows a compact selected-capability summary and opens the MCP/Skill/Tool attach form in a modal.
+      - Tests assert configuration inputs are absent from the default page and present only after opening the relevant dialog.
+
+  - id: dify-dataset-default-retrieval-model-runtime
+    date: 2026-05-26
+    status: verified
+    demo: Harness Dify runtime retrieval now lets Dify use the dataset's own retrieval model so it matches Dify Console test retrieval.
+    verification_result: passed
+    verification_commands:
+      - Direct live Dify probe for query `公司的愿景与价值观是什么`: no `retrieval_model` returned 3 records, `semantic_search` returned 3, `hybrid_search` returned 6, while forced `keyword_search` returned 0.
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_dify_adapter_posts_official_dataset_retrieve_shape tests/test_knowledge_connectors.py::test_dify_connector_empty_results_report_disabled_documents -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - Restarted local API on `127.0.0.1:8000` with PID 42194 and confirmed `GET /health` returned 200.
+      - Live `ground_query` for `公司的愿景与价值观是什么` returned 3 `dify_connector` hits, `connector_hit_count=3`, `dify_result_count=3`, and evidence message `Dify connector grounded the answer`.
+    acceptance_notes:
+      - `DifyKnowledgeBaseAdapter` no longer forces `retrieval_model.search_method=keyword_search`; it posts only the bounded query and lets Dify apply the dataset's stored `retrieval_model_dict`.
+      - The saved Dify dataset currently reports default `hybrid_search` with reranking and available embeddings, matching the Dify Console test behavior.
+      - The previously observed empty result was caused by Harness overriding Dify's dataset retrieval configuration, not by missing connector invocation or disabled Dify documents.
+
+  - id: dify-disabled-document-empty-result-diagnostics
+    date: 2026-05-26
+    status: verified
+    demo: Dify empty retrieval diagnostics now detect when indexed Dify documents are disabled and tell the user to enable them in Dify Knowledge.
+    verification_result: passed
+    verification_commands:
+      - Live Dify dataset probe with saved source `7bca85fd-2c08-4cab-88de-8d33fb78baa6`: dataset has 4 documents, all `indexing_status=completed`, all `enabled=false`, and keyword retrieval returns HTTP 200 with 0 records.
+      - Live `ground_query` on `127.0.0.1:8000` after restart with PID 31120 produced evidence message `Dify connector returned no accepted results because all 4 indexed Dify documents are disabled`.
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_dify_adapter_reads_document_enabled_status tests/test_knowledge_connectors.py::test_dify_connector_empty_results_report_disabled_documents tests/test_knowledge_connectors.py::test_dify_adapter_posts_official_dataset_retrieve_shape -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run ruff check app tests
+    acceptance_notes:
+      - `DifyKnowledgeBaseAdapter` can now read dataset document enabled/indexing status through the Dify documents API.
+      - When Dify retrieval succeeds with 0 records, runtime grounding records `dify_document_count`, `dify_enabled_document_count`, `dify_disabled_document_count`, and `dify_completed_document_count` metadata when available.
+      - The user-facing grounding message now distinguishes generic empty retrieval from the concrete case where all indexed Dify documents are disabled.
+
+  - id: dify-connector-keyword-search-runtime
+    date: 2026-05-26
+    status: verified
+    demo: Dify runtime retrieval now uses keyword search by default so datasets without a working vector collection do not fail with `Collection not found`.
+    verification_result: passed
+    verification_commands:
+      - Live Dify probe with saved source `7bca85fd-2c08-4cab-88de-8d33fb78baa6`, dataset id `e1c4cb28-2a23-42c4-b2ab-0736f12a9720`, and saved `secret://dify`: `keyword_search` returned HTTP 200 with 0 records instead of `HTTP 400 invalid_param ... Collection not found`.
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_dify_adapter_posts_official_dataset_retrieve_shape tests/test_knowledge_connectors.py::test_dify_adapter_reports_provider_error_body -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - Restarted local API on `127.0.0.1:8000` with PID 24224 and confirmed `GET /health` returned 200.
+    acceptance_notes:
+      - `DifyKnowledgeBaseAdapter` now sends `retrieval_model.search_method=keyword_search` instead of `hybrid_search`.
+      - The live connector request no longer triggers Dify's vector collection path that produced `Collection not found`.
+      - The remaining live result is a successful empty retrieval (`record_count=0`), so user questions still need to match indexed Dify document text before Dify contributes grounding.
+
+  - id: dify-connector-user-agent-and-provider-error-diagnostics
+    date: 2026-05-26
+    status: verified
+    demo: Dify runtime retrieval now sends a stable User-Agent/Accept header so Dify Cloud reaches the provider layer instead of returning Cloudflare-style 403/1010, and provider error bodies are surfaced in diagnostics.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_dify_adapter_posts_official_dataset_retrieve_shape tests/test_knowledge_connectors.py::test_dify_adapter_reports_provider_error_body -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - Restarted local API on `127.0.0.1:8000` with PID 3366 and confirmed `GET /health` returned 200.
+      - Live Dify probe with saved source `7bca85fd-2c08-4cab-88de-8d33fb78baa6` and saved `secret://dify` value: secret resolved, request no longer returned `HTTP 403 error code: 1010`, and Dify returned a provider-layer `HTTP 400 invalid_param` diagnostic instead.
+    acceptance_notes:
+      - `DifyKnowledgeBaseAdapter` now sends `Accept: application/json` and `User-Agent: AgentHarness/0.1` on dataset retrieval calls.
+      - Dify HTTP error bodies are read, sanitized to a short message, and appended to `DifyConnectorError`, so Run Detail / grounding evidence can show provider-layer failures instead of only `HTTP 403`.
+      - Local reproduction showed the previous 403 was caused by Dify Cloud rejecting requests without a User-Agent before they reached the Dify business API.
+      - The current saved Dify connector has endpoint `https://api.dify.ai/v1`, dataset id `e1c4cb28-2a23-42c4-b2ab-0736f12a9720`, `secret://dify`, and a configured saved secret; remaining failure is Dify-side retrieval configuration/index/quota/model state, not missing local connector invocation.
+
+  - id: knowledge-source-hard-delete-and-chinese-dialog-copy
+    date: 2026-05-26
+    status: verified
+    demo: Knowledge sources can now be permanently deleted from `/knowledge` / Agent Studio, and connector dialog helper text/details are Chinese-first.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_rag.py::test_delete_source_removes_index_rows_and_keeps_historical_evidence_snapshots -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx KnowledgePage.test.tsx api.test.ts
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - Live API smoke on `127.0.0.1:8000`: create temporary source, DELETE `/api/agents/default/knowledge/sources/{source_id}` returned 204, source id no longer appeared in list response.
+    acceptance_notes:
+      - Added `DELETE /api/agents/{agent_id}/knowledge/sources/{source_id}` for permanent source deletion, with the same visibility and org-scope admin checks as lifecycle operations.
+      - Deletion writes a `knowledge_source.deleted` audit event before removing rows, deletes documents/chunks/embeddings/source rows, and preserves historical retrieval/citation evidence by nulling live foreign keys while keeping source snapshots.
+      - Active RAG retrieval cache rows are marked stale after deletion so deleted content is not reused from cache.
+      - `KnowledgeManagementPanel` now shows a dangerous `删除` action with Chinese confirmation text and handles 204 no-content responses without JSON parse errors.
+      - Connector seed/description/detail labels now use Chinese copy for the visible small helper/details that previously showed English-only wording such as Provider/Release/Usable or connector seed text.
+      - The local API was restarted on `127.0.0.1:8000` after implementation; the user's observed 405 was caused by the old backend process not yet loading the new DELETE route.
+
+  - id: dify-connector-frontend-secret-storage
+    date: 2026-05-26
+    status: verified
+    demo: Dify connector API keys can now be entered in the frontend and saved to backend secret storage while knowledge source responses only expose the secret reference and configured status.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_connector_secret_value_is_stored_server_side_and_not_returned tests/test_knowledge_connectors.py::test_dify_connector_runtime_uses_frontend_stored_secret -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py tests/test_agents.py::test_agent_workspace_chat_stream_surfaces_dify_connector_secret_failure -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx KnowledgePage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+    acceptance_notes:
+      - Added `connector_secret_value` to connector create/update requests; the backend stores it under service-side connector secret settings and never writes the raw key into `KnowledgeSource.settings_json`.
+      - Runtime Dify retrieval now resolves `secret://dify` from the saved backend secret before falling back to environment variables, so a key entered in the frontend is usable without editing `.env`.
+      - Knowledge source responses expose only `connector_secret_configured` plus the redacted/ref-only `secret_ref`; raw key values are not returned in list/detail responses, prompt manifests, or connector evidence.
+      - The connector creation dialog now separates `密钥引用` from `API Key 密钥值`, and the edit dialog can replace an existing connector key without ever showing it back.
+      - Missing-secret runtime evidence now tells users to save an API Key secret value in the knowledge connector, with environment variables remaining an optional server-side path.
+
+  - id: dify-connector-secret-ref-runtime-diagnostics
+    date: 2026-05-26
+    status: verified
+    demo: Dify runtime connector failures now surface the exact secret/provider failure instead of looking like the connector was not called.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py::test_connector_secret_ref_is_required_and_redacted tests/test_knowledge_connectors.py::test_dify_connector_missing_secret_does_not_fabricate_grounding tests/test_knowledge_connectors.py::test_dify_connector_provider_error_is_visible_without_grounding tests/test_agents.py::test_agent_workspace_chat_stream_surfaces_dify_connector_secret_failure -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py tests/test_agents.py::test_agent_workspace_chat_stream_surfaces_dify_connector_secret_failure -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx KnowledgePage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Runtime diagnostics proved the configured Dify source is discovered and attempted at chat time; the failure was `secret_ref` resolution, not connector omission.
+      - Existing Dify source `e0e9cb57-8941-45bb-8304-cb54e10a0c4f` was repaired from a raw-secret-looking value back to `secret://dify`; dataset id remains `e1c4cb28-2a23-42c4-b2ab-0736f12a9720`.
+      - Backend creation and source responses now reject or redact raw-secret-looking `secret_ref` values, and `resolve_connector_secret_ref` refuses to treat raw API keys as secret refs.
+      - `KnowledgeGroundingResponse` now carries an explicit `evidence_message`, and Run Detail prefers it so unresolved secret refs, Dify provider HTTP errors, and empty accepted results are visible to users.
+      - Frontend connector forms warn when the 密钥引用 field looks like a raw API key and preserve user edits instead of resetting `secret_ref` from preset defaults.
+      - A direct Dify provider probe with the old supplied-looking value returned HTTP 403, so actual Dify retrieval still requires a valid dataset-authorized Dify Knowledge API key in the backend environment.
+
+  - id: dify-connector-runtime-retrieval
+    date: 2026-05-26
+    status: verified
+    demo: Dify knowledge connectors now perform runtime dataset retrieval when local Knowledge/RAG evidence is insufficient, while RAGFlow/local preview connectors remain configuration/preflight only.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- Knowledge
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added a Dify runtime adapter for `POST /v1/datasets/{dataset_id}/retrieve`, parsing returned segment content into `dify_connector` retrieval hits and `[D1]`-style citations.
+      - Runtime secret resolution stays secret-ref based: `secret://dify` and related refs resolve from environment variables such as `DIFY_API_KEY`, but raw API keys are not persisted in source settings, hit snapshots, prompt manifests, or API responses.
+      - `ground_query` still excludes `source_type=connector` from local chunk retrieval; connector config documents remain `connector_config_only` and `retrieval_eligible=false`.
+      - Dify runs only after local evidence is insufficient and before web research fallback; missing secret refs or provider errors create denied connector audit evidence and do not fabricate grounded answers.
+      - RAGFlow, Local Dify, and Local RAGFlow remain non-runtime configuration/preflight connectors in this slice.
+      - `/knowledge` and the shared Knowledge Management dialog now describe Dify as runtime retrieval-capable, while preview connectors remain readiness-only.
+
+  - id: knowledge-workbench-modal-configuration-ui
+    date: 2026-05-26
+    status: verified
+    demo: `/knowledge` now keeps configuration flows in modal dialogs, and external API connector saves no longer appear stuck as document indexing when the backend is unavailable.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx KnowledgePage.test.tsx
+      - cd apps/agent-console && npm test -- api.test.ts ConsoleShell.render.test.tsx Knowledge
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - Playwright DOM check at http://127.0.0.1:5173/knowledge for zero horizontal overflow, no inline endpoint/secret inputs before opening the API dialog, and visible `新增外部 API 接入` dialog after clicking `外部 API`
+      - curl --noproxy '*' -sS -m 5 http://127.0.0.1:8000/health
+      - Live POST /api/agents/default/knowledge/sources for a temporary Dify connector returned immediately with connector_config_only=true, then POST /archive cleaned it up.
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - `KnowledgeManagementPanel` now exposes compact `本地文档` and `外部 API` actions in the source list header; source creation opens a modal with the same existing API payloads and validation rules.
+      - Source editing, adding documents, and reingesting document versions now use modal dialogs, so the workbench page stays focused on overview metrics, source list, status badges, lifecycle actions, and document/version summaries.
+      - Browser validation confirmed the `/knowledge` main page has no inline external API endpoint or secret-ref inputs before opening the dialog, the API modal contains those fields after click, document overflow is 0, and no console errors were emitted.
+      - External API connector submission now uses `保存配置` / `保存中` wording instead of `连接并索引` / `索引中`, matching the config-only contract.
+      - Connector source creation gets a 12s frontend timeout with a visible `请求超时` error, so a stalled backend releases the disabled button instead of leaving the modal indefinitely pending; local text/file knowledge creation is not capped by this timeout.
+      - Local API service was restored on `127.0.0.1:8000`; live health, knowledge-source list, connector create, and connector archive checks passed.
+
+  - id: knowledge-workbench-local-api-connectors
+    date: 2026-05-26
+    status: verified
+    demo: Console now has a standalone `/knowledge` workbench for local `.txt/.md` and manual text ingestion, runtime-capable Dify/Coze connector configuration, and preview endpoint configuration for RAGFlow, Local Dify, and Local RAGFlow.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- Knowledge
+      - cd apps/agent-console && npm test -- ConsoleShell.render.test.tsx Knowledge
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `/knowledge` route and sidebar `知识库` entry; the page has Agent selection, local/API/preview filters, source statistics, and reuses `KnowledgeManagementPanel` in workbench mode.
+      - Local file/manual text ingestion remains on the existing Knowledge/RAG API and keeps source lifecycle, document versions, scope changes, enable/disable/archive, and detail display behavior.
+      - API presets now cover Dify, Coze, RAGFlow, Local Dify, and Local RAGFlow with provider-specific release states, connector validation badges/messages, and required dataset/space id for remote API providers.
+      - Backend knowledge source responses expose derived `connector_validation_status` and `connector_validation_messages` without changing existing connector field semantics.
+      - Connector creation requires endpoint plus secret_ref where applicable, rejects raw-secret leakage through redaction, blocks endpoint userinfo credentials, and rejects crawler-style `follow_links` / `recursive` / `max_depth` configuration.
+      - Connector documents are marked `connector_config_only` and `retrieval_eligible=false`; runtime grounding excludes `source_type=connector`, so external connector configuration cannot become verified local grounding evidence.
+
+  - id: context-cache-hit-evidence
+    date: 2026-05-25
+    status: verified
+    demo: Workspace context caching now has built-in compression-summary, RAG retrieval, and long-term-memory cache evidence, and Token 节省 shows aggregate and per-source cache hit rates with saved-token estimates.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_context_router.py::test_compressed_summary_cache_status_flows_into_context_manifest tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_observability.py::test_observability_summary_projects_token_optimization_evidence tests/test_observability.py::test_token_savings_page_projects_recent_run_evidence tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py tests/test_agents.py tests/test_observability.py tests/test_knowledge_rag.py -q
+      - cd services/api-server && uv run ruff check app tests alembic/versions/20260525_0021_create_workspace_context_caches.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-cache-alembic.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Fixed the summary-cache evidence break: CompressedContext / AgentCompressedContext now carry cache_status, Workspace chat sends it back, and ContextAssemblyService records compression_summary cache metadata in included refs and context_cache manifests.
+      - Added DB-backed workspace_context_caches for restart-stable context cache payloads, with organization-scoped keys for compression summaries, RAG retrieval, and long-term-memory candidates.
+      - /context/compress now checks server-side summary cache before recomputing and writes recomputed summaries back to the cache; accepted cache hits are recorded as cache_status accepted.
+      - RAG retrieval now caches local sufficient retrieval payloads by normalized query, retrieval settings, and knowledge snapshot hash; cache hits still create fresh RetrievalSession, RetrievalHit, Citation, PromptAssemblyManifest, and audit records for each run.
+      - Long-term memory assembly now caches candidate memory section selection by org/agent/user and memory high-water evidence, while preserving system/developer, pinned context, and current goal boundaries.
+      - ContextAssemblyManifest token_budget_json keeps legacy retrieval_cache and adds context_cache.sources with per-source hit/miss/stale counts, status counts, estimated saved tokens, cache reason, key hash, and source labels.
+      - Observability token-savings responses now expose cache_sources for summaries and recent runs, while remaining compatible with old manifests that only have retrieval_cache.
+      - /token-savings now shows total cache hit rate plus 摘要缓存, RAG 检索, and 长期记忆 cards, dynamic token units, per-run cache source labels, and 0% for empty/legacy cache data instead of misleading hits.
+
+  - id: context-cache-runtime-hit-fix
+    date: 2026-05-25
+    status: verified
+    demo: Repeated Workspace /compress calls now persist and hit the server-side summary cache after request/session close, long-term memory candidate caching reuses stable org/agent/user memory across runs, and Token 节省 reflects DB-backed multi-source cache evidence.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_context_router.py::test_compressed_summary_cache_status_flows_into_context_manifest tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close tests/test_observability.py::test_observability_summary_projects_token_optimization_evidence tests/test_observability.py::test_token_savings_page_projects_recent_run_evidence tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py tests/test_observability.py tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close -q
+      - cd services/api-server && uv run ruff check app/api/agents.py app/api/observability.py tests/test_agents.py tests/test_observability.py
+      - cd services/api-server && uv run ruff check app/agents/context_router.py app/api/schemas.py tests/test_context_router.py
+      - cd services/api-server && python3 -m py_compile app/api/observability.py app/api/agents.py
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -m 10 -I http://127.0.0.1:5173/agents/default/workspace
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/api/observability/token-savings -H 'Authorization: Bearer dev-engineer-token'
+    acceptance_notes:
+      - Fixed the live cache miss root cause in /context/compress: summary-cache writes and cache hit count updates now commit before the request session closes instead of being rolled back after flush-only writes.
+      - Added regression coverage that simulates a real request boundary; the first identical compression returns recomputed, a session rollback follows, and the second identical compression still returns accepted with only one model compression call.
+      - Token-savings summary now merges active workspace_context_caches rows by organization, so pure /context/compress cache hits are visible on /token-savings even before a later chat run creates another context manifest.
+      - Fixed long-term-memory cache keys so they no longer include run_id for stable org/agent/user memory candidates; repeated runs now hit the same memory candidate cache while run-scoped memory bypasses cache reuse.
+      - Memory lifecycle changes now alter the memory snapshot key and stale cached memory ids are not reused; empty memory candidate sets no longer create misleading long_term_memory miss evidence.
+      - Chat requests now send compressed-summary estimated original and summary tokens, so context manifests can attribute estimated saved tokens to compression_summary cache hits without waiting for DB aggregate rows.
+      - Restored visible compression feedback in Agent Workspace: the summary refresh icon spins during pending compression and the composer shows a clear "正在压缩上下文..." status bar until the summary is ready.
+      - Live service restart recreated tmux session harness-dev-cache with API at http://127.0.0.1:8000 and Console at http://127.0.0.1:5173; health and Token 节省 returned 200.
+      - Live repeated compression after restart returned cache_status recomputed, then accepted for the same payload. /api/observability/token-savings then reported total cache hits 2, misses 11, and 摘要缓存 hit_rate 28.57% with 2 hits / 5 misses.
+      - Playwright browser smoke loaded /token-savings, confirmed visible cache cards for 摘要缓存, RAG 检索, and 长期记忆, rendered 缓存命中率 and 预计节省, had zero horizontal overflow, and reported no console errors.
+
+  - id: context-cache-server-authority-hardening
+    date: 2026-05-25
+    status: verified
+    demo: Workspace compression summary cache is now server-authoritative: client summaries remain compatibility hints, DB cache hits win even with stale client hints, and untrusted client summaries cannot seed accepted cache rows.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_does_not_trust_client_summary tests/test_agents.py::test_agent_workspace_context_compression_server_cache_ignores_stale_client_hint tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close tests/test_context_router.py::test_compressed_summary_cache_status_flows_into_context_manifest tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_observability.py::test_token_savings_page_projects_recent_run_evidence -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py tests/test_observability.py tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_does_not_trust_client_summary tests/test_agents.py::test_agent_workspace_context_compression_server_cache_ignores_stale_client_hint tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close -q
+      - cd services/api-server && uv run ruff check app/api/agents.py app/api/observability.py app/agents/context_router.py app/knowledge.py app/api/schemas.py app/db/models.py tests/test_agents.py tests/test_context_router.py tests/test_observability.py tests/test_knowledge_rag.py alembic/versions/20260525_0021_create_workspace_context_caches.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-cache-alembic-latest.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -m 10 -I http://127.0.0.1:5173/token-savings
+      - POST /api/agents/default/context/compress same payload twice -> cache_status recomputed then accepted
+      - POST /api/agents/default/context/compress with stale client prior_coverage_path_hash and fake existing_summary -> cache_status accepted from server cache
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/api/observability/token-savings -H 'Authorization: Bearer dev-engineer-token'
+    acceptance_notes:
+      - /context/compress no longer accepts and persists a client-supplied existing_summary as a trusted accepted cache entry.
+      - The endpoint checks DB-backed workspace_context_caches before recomputing and returns cache_status accepted from the server row even when the submitted client hint is stale or has a mismatched prior coverage hash.
+      - Added regression coverage for untrusted client summaries, stale client hints, persisted request-boundary cache hits, context manifest cache evidence, RAG cache audit duplication, and Token 节省 cache source projection.
+      - Token 节省 continues to show aggregate hit/miss/stale counts and per-source cards for 摘要缓存, RAG 检索, and 长期记忆 without relying on client-provided summaries as proof.
+      - Restarted tmux session harness-dev-cache with API on http://127.0.0.1:8000 using uvicorn --reload and Console on http://127.0.0.1:5173.
+      - Live summary-cache smoke returned recomputed then accepted for identical payloads; a stale client hint with fake existing_summary still returned the server-owned cached summary.
+      - Live /api/observability/token-savings returned total cache hits 5, misses 13, and 摘要缓存 hit_rate 41.67% after the smoke requests.
+
+  - id: context-cache-multi-level-final-verification
+    date: 2026-05-25
+    status: verified
+    demo: Built-in multi-level context cache implementation was reverified end to end for compression summary, RAG retrieval, long-term memory candidates, manifest evidence, and Token 节省 cache-source display.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_context_router.py::test_compressed_summary_cache_status_flows_into_context_manifest tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_observability.py::test_token_savings_page_projects_recent_run_evidence -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py tests/test_observability.py tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_does_not_trust_client_summary tests/test_agents.py::test_agent_workspace_context_compression_server_cache_ignores_stale_client_hint tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close -q
+      - cd services/api-server && uv run ruff check app/api/agents.py app/api/observability.py app/agents/context_router.py app/api/schemas.py app/db/models.py app/knowledge.py tests/test_agents.py tests/test_context_router.py tests/test_observability.py tests/test_knowledge_rag.py alembic/versions/20260525_0021_create_workspace_context_caches.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-cache-final-verify.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -m 10 -I http://127.0.0.1:5173/token-savings
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/api/observability/token-savings -H 'Authorization: Bearer dev-engineer-token'
+    acceptance_notes:
+      - CompressedContext / AgentCompressedContext carry cache_status, Workspace chat sends summary.cacheStatus back to the backend, and ContextAssemblyService records compression_summary cache metadata into included refs and token_budget_json.context_cache.
+      - DB-backed workspace_context_caches is the restart-stable storage layer for compression_summary, rag_retrieval, and long_term_memory cache payloads.
+      - /context/compress checks the server cache before recomputing, commits recomputed summaries, and returns accepted only for server-owned cache rows.
+      - RAG cache hits still create fresh per-run RetrievalSession, RetrievalHit, Citation, PromptAssemblyManifest, and audit records while reusing cached retrieval payloads.
+      - Long-term memory candidate cache keys are scoped by org, agent, user, and memory snapshot evidence, and run-scoped memory bypasses stable candidate reuse.
+      - Observability token-savings responses expose cache_sources for summary and recent runs; /token-savings displays total and per-source cache hit rates, saved tokens, prompt tokens, and 0% for empty sources.
+      - Live token-savings API returned total cache hits 5, misses 13, stale 0, and 摘要缓存 hit_rate 41.67% with RAG 检索 and 长期记忆 source rows present.
+
+  - id: built-in-connector-model-layout-polish
+    date: 2026-05-26
+    status: verified
+    demo: Agent Studio now offers simple built-in external knowledge API presets, Tool Registry defaults to manual built-in capability choices instead of package install flows, model Add & Switch no longer waits on slow refetches after save success, Run History uses a compact workspace action, and the cache/token-savings evidence path remains verified.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx ModelSettingsPage.test.tsx
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx RunHistoryPage.test.tsx
+      - cd apps/agent-console && npm test -- KnowledgeManagementPanel.render.test.tsx ModelSettingsPage.test.tsx ToolRegistryPage.marketplace.test.tsx TokenSavingsPage.test.tsx AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py -q
+      - cd services/api-server && uv run pytest tests/test_knowledge_connectors.py tests/test_agents.py::test_agent_studio_create_clone_and_attach_builtin_capability tests/test_agents.py::test_agent_token_optimizer_presets_are_builtin_and_manifest_free tests/test_agents.py::test_agent_token_optimizer_selects_builtin_preset_attachment -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py::test_compressed_summary_cache_status_flows_into_context_manifest tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_observability.py::test_token_savings_page_projects_recent_run_evidence -q
+      - cd services/api-server && uv run ruff check app/api/schemas.py app/knowledge.py app/knowledge_connectors.py app/api/agents.py app/api/observability.py app/agents/context_router.py app/db/models.py tests/test_knowledge_connectors.py tests/test_agents.py tests/test_context_router.py tests/test_knowledge_rag.py tests/test_observability.py
+      - cd services/api-server && uv run ruff check app/api/schemas.py app/knowledge.py app/knowledge_connectors.py app/api/agents.py app/api/tools.py app/tools/capabilities.py tests/test_knowledge_connectors.py tests/test_agents.py tests/test_tool_registry.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-cache-final-current.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - browser smoke: /agents, /settings/models, /tools, /runs, and /token-savings loaded without horizontal overflow; /tools default view hid trusted URL install/package lifecycle text; /runs no longer showed 打开智能体工作台
+    acceptance_notes:
+      - Knowledge Management now has a normal-user connector mode with built-in Dify, Coze, and RAGFlow choices instead of requiring package installation or manual manifest editing.
+      - Creating an external API connector sends source_type connector plus connector_settings_json with provider, endpoint, secret_ref, release_state, and optional dataset/space id; backend schema/tests accept the preset contract.
+      - Existing document source creation is protected from connector preset autofill; preset names/endpoints only update while the connector mode is active.
+      - Tool Registry now defaults to 常用预置能力 cards for manual one-click built-in capability attachment and keeps package install/upload/lifecycle controls inside collapsed 高级包管理; default load does not request the capability package lifecycle endpoint.
+      - Model Settings marks Add & Switch complete after the model settings save request succeeds and updates React Query cache directly, so slow health/refetch calls do not leave the UI stuck on "切换中".
+      - Run History now uses a compact toolbar and a short "工作台" action instead of the bulky open-workspace label.
+      - Browser smoke confirmed /tools does not show 可信 URL 一键安装, 安装到 Agent, or 下载、安装并启用 in the default normal-user path, while advanced management remains available when expanded.
+      - Re-ran the cache evidence tests for compressed-summary cache_status propagation, DB-backed summary cache reuse, RAG cache audit duplication, and Token 节省 cache-source projection to confirm this UX polish did not regress context caching.
+
+  - id: context-cache-current-reverification
+    date: 2026-05-26
+    status: verified
+    demo: The built-in multi-level context cache path was reverified against the current worktree and live services, with Token 节省 reporting per-source cache hit evidence from compression summary, RAG retrieval, and long-term memory.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_context_router.py::test_compressed_summary_cache_status_flows_into_context_manifest tests/test_context_router.py::test_long_term_memory_cache_reuses_candidates_across_runs tests/test_context_router.py::test_long_term_memory_cache_invalidates_after_memory_lifecycle_change tests/test_agents.py::test_agent_workspace_context_compression_uses_server_cache tests/test_agents.py::test_agent_workspace_context_compression_cache_survives_session_close tests/test_knowledge_rag.py::test_rag_cache_reuses_hits_with_new_retrieval_session tests/test_observability.py::test_token_savings_page_projects_recent_run_evidence -q
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx
+      - cd services/api-server && uv run ruff check app/api/agents.py app/api/observability.py app/agents/context_router.py app/api/schemas.py app/db/models.py app/knowledge.py tests/test_agents.py tests/test_context_router.py tests/test_observability.py tests/test_knowledge_rag.py alembic/versions/20260525_0021_create_workspace_context_caches.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-cache-current-verify.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - curl --noproxy '*' -sS -m 5 http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -m 5 -I http://127.0.0.1:5173/agents/default/workspace
+      - curl --noproxy '*' -sS -m 10 http://127.0.0.1:8000/api/observability/token-savings -H 'Authorization: Bearer dev-engineer-token'
+    acceptance_notes:
+      - Current backend regression confirms compression-summary cache_status reaches ContextAssemblyManifest evidence, long-term-memory candidates reuse stable cache keys and invalidate on lifecycle change, server-side summary cache survives request/session rollback, and RAG cache hits still create fresh audit records.
+      - Current frontend regression confirms Workspace chat sends summary.cacheStatus back to the backend and /token-savings renders aggregate plus per-source cache evidence.
+      - Ruff, frontend typecheck/lint, frontend production build, and clean SQLite Alembic upgrade through workspace_context_caches passed.
+      - Live services are running in tmux session harness-dev-cache with API at http://127.0.0.1:8000 and Console at http://127.0.0.1:5173; health and Workspace returned HTTP 200.
+      - Live /api/observability/token-savings returned actual prompt 101065, completion 59732, total 160797, estimated saved 1882, cache hits 5, misses 13, stale 0, and cache source rows for 摘要缓存, RAG 检索, 长期记忆, plus legacy compatibility.
+
+  - id: agent-context-optimizer-capability
+    date: 2026-05-25
+    status: verified
+    demo: Agent Studio now lets users manually choose built-in Token Optimizer plans, and Token 节省 shows how many tokens were saved from run evidence while the backend still uses context_optimizer capability attachments.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_observability.py tests/test_context_router.py tests/test_tool_registry.py tests/test_agents.py -q
+      - cd services/api-server && uv run pytest tests/test_observability.py tests/test_context_router.py tests/test_agents.py -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py::test_context_optimizer_ratio_limits_candidate_context_even_under_window_budget tests/test_context_router.py::test_agent_context_optimizer_records_manifest_evidence_and_protects_required_context -q
+      - cd services/api-server && uv run pytest tests/test_context_router.py tests/test_observability.py tests/test_agents.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- TokenSavingsPage.test.tsx RunDetailPage.optimizer.test.tsx AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- TokenSavingsPage.test.tsx
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx ToolRegistryPage.marketplace.test.tsx RunDetailPage.optimizer.test.tsx RunDetailPage.helpers.test.ts
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added context_optimizer as a Capability Package / CapabilityVersion / AgentCapabilityAttachment type, with simple install, private package install, approval, and attachment support kept for advanced lifecycle use.
+      - Added built-in Token Optimizer presets for Agent Studio: 关闭, 保守省 Token, 均衡, and 强力省 Token. Normal users choose a preset directly instead of installing, uploading, or editing JSON capability packages.
+      - Selecting a preset creates or reuses an internal built-in context_optimizer CapabilityVersion and enables exactly one optimizer attachment for the Agent; selecting 关闭 disables optimizer attachments.
+      - context_optimizer v1 is declarative JSON only; runtime validation rejects unknown top-level fields, unknown optimizer fields, secret refs, non-budget_overlay modes, invalid ratios, invalid section limits, unsupported drop rules, and execution-shaped runtime fields.
+      - ContextAssemblyService resolves enabled Agent optimizer attachments in priority order and conservatively overlays the default token strategy with max candidate token ratio, section limits, drop order, compressed-summary preference, and low-cost route hints.
+      - System/developer authority, pinned context, and current user goal remain protected from optimizer omission; invalid, disabled, and cross-org optimizer attachments do not affect context assembly.
+      - ContextAssemblyManifest token_budget_json now records baseline_strategy, effective_strategy, optimizer_capability_version_ids, optimizer_policy_hash, and optimizer_decisions; included/omitted refs carry optimizer metadata and omit reasons when affected.
+      - Model call request audit, Run Detail token optimization projection, and Observability token summary now expose optimizer version/hash/decision evidence, estimated savings, actual prompt tokens, and low-cost route reasons.
+      - Agent Studio shows a simple Token 省用方案 selector and current preset state; Tool Registry install/upload/preflight flows still accept context_optimizer packages for advanced users; Run Detail displays optimizer version, policy hash, and decision count.
+      - Added /api/observability/token-savings and /token-savings so normal users can see estimated saved tokens, actual prompt/total tokens, savings percent, active built-in plan names, low-cost routing evidence, and recent run omit reasons without reading raw manifests.
+      - Token 节省 is linked from the console sidebar and links each row back to Run Detail for deeper evidence.
+      - Fixed the runtime boundary so context_optimizer attachments are excluded from executable ToolRegistry/ToolRunner resolution and cannot trigger "capability version is not executable" during tool registry listing or tool execution.
+      - Fixed the zero-savings root cause for short and medium workspace chats: max_candidate_tokens_ratio now applies to the current candidate context size before comparing with the large configured context window budget.
+      - Live default workspace smoke on 2026-05-25 created run 16be7fb1-e16c-427d-90a9-a48d78fdd439 with 均衡 enabled, candidate 4014 tokens, included 3070, saved 944 tokens, savings 23.52%, and omitted_refs reason optimizer_budget.
+      - Browser smoke confirmed /agents/default/workspace loads and /token-savings shows 均衡, 944 tokens, and 预算裁剪 with no console errors.
+      - Refreshed /token-savings into a cleaner card layout with a large Total Token card, compact KPI cards for saved/prompt/savings/cache hit rate, and secondary cards for candidate context, pruned runs, cache hit/miss, and low-cost routes.
+      - Recent run rows now include per-run cache hit rate plus hit/miss counts, while retaining optimizer plan, saved tokens, prompt tokens, omit reasons, and Run Detail links.
+      - Playwright desktop 1440x900 and mobile 390x844 smoke checks confirmed /token-savings loads, shows cache hit rate and saved-token data, has zero document horizontal overflow, and reports no browser console errors.
+      - Compressed the /token-savings KPI area so the top section is about 108px high at 2048px wide, and changed token values to dynamic compact units such as 944, 19.44K, 76.78K, 126.78K, and future M/B values instead of fixed "tokens" suffixes.
+
+  - id: team-mode-aionui-parity-product-surface
+    date: 2026-05-25
+    status: verified
+    demo: Team Mode now has a durable AionUi-style Team Session product surface with backend team/mailbox/task/event state, horizontal agent columns, team tool orchestration, and mocked browser smoke coverage.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_teams.py -q
+      - cd services/api-server && uv run ruff check app/teams/service.py app/api/teams.py tests/test_teams.py
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx AgentWorkspacePage.team-launch.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5173 npx playwright test --project=chromium e2e/team-mode.smoke.spec.ts
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added Team Mode persistence for Team, TeamAgent, TeamMailboxMessage, TeamTask, and TeamEvent with organization scoping and Alembic migration 20260523_0020.
+      - Added Team API endpoints for team CRUD, member CRUD, mailbox delivery/read, task lifecycle, event streams, wake streams, and explicit team tool calls.
+      - Added Team frontend routes, list/create modal, team rail, horizontal chat columns, per-column composer, task foldout, status projection, stream placeholders, branch switching, context compression, and Agent Workspace team-launch flow.
+      - Added AionUi parity architecture note documenting Team Mode product invariants, communication contract, team tool contract, UI contract, and non-goals.
+      - Added mocked browser smoke for Team Mode creation, message dispatch, teammate columns, and desktop/mobile layout usability.
+
+  - id: capability-product-and-console-spine-polish
+    date: 2026-05-25
+    status: verified
+    demo: Capability packages, Tool Registry install flows, Agent Studio create/clone/attach actions, knowledge connector readiness, and deployment-safe API base resolution now have product and regression coverage.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py tests/test_agents.py tests/test_context_router.py tests/test_cors.py tests/test_knowledge_connectors.py tests/test_tool_runner.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx AgentListPage.studio.test.tsx api.test.ts ChatSurface.shell.test.tsx useChatStream.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added jsonschema-backed capability package validation dependency and simple install facades for trusted URL, public URL preflight, uploaded package install, staged enablement, attachment, rollback, disable, uninstall, and dependency preflight.
+      - Tool Registry now exposes one-click trusted URL install, public URL preflight without auto-enable, upload install without manual manifest editing, advanced lifecycle controls, attachment toggling, rollback, uninstall, and package inventory state.
+      - Agent Studio now supports creating Agent definitions, cloning existing Agents, attaching built-in capabilities, and showing knowledge connector readiness from indexed knowledge sources instead of a static ready placeholder.
+      - Frontend API resolution now defaults to same-origin `/api`, rewrites loopback API hosts for non-loopback pages, and falls back to relative API paths to make deployed consoles more robust.
+      - Run Detail workspace projection now includes token optimization context evidence, and context assembly defaults to enabled unless an explicit setting disables it.
+      - Release smoke now includes Team Mode and requires Phase 0b spine evidence unless explicitly overridden for partial local runs.
+      - Local runtime artifacts are ignored through .gitignore so screenshots, `.omc` state, editor settings, local databases, and generated pnpm metadata do not enter product commits.
+
+  - id: agent-team-composer-commands-and-context-polish
+    date: 2026-05-25
+    status: verified
+    demo: Agent Workspace and Team Mode now share context-compression slash commands, Team columns show generated compression summaries with the same compact summary control, and slash command names distinguish markdown planning from executable runs.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx ChatSurface.shell.test.tsx slashCommands.property.test.ts
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl --noproxy '*' -sS -m 5 http://127.0.0.1:5173/
+      - curl --noproxy '*' -sS -m 5 http://127.0.0.1:8000/health
+    acceptance_notes:
+      - Added `/compress` with `compact` and `context` aliases to the shared slash command registry.
+      - Agent Workspace dispatches `/compress` through the existing manual context compression path and clears the composer draft.
+      - `/plan` now names the markdown planning command; legacy `/codex` and `/plan-md` remain aliases for that planning behavior.
+      - Added `/run` with `act` and `execute` aliases for executable Plan-Act Run mode, avoiding the old `/plan` name collision.
+      - Team Mode reuses the existing Agent context compression endpoint for each Team column, with branch keys scoped by team id, slot id, and active leaf node.
+      - Team Mode now supports `/compress`, context-ring manual compression, and automatic compression after a completed assistant turn crosses the configured threshold.
+      - Team Mode now renders generated compression summaries with the same exported ContextSummaryManager component used by Agent Workspace, so each column header has the same compact control, hover/focus preview text, coverage count, token compression, recompress, and clear behavior.
+      - ContextRing pending state now shows a spinning progress arc and "正在压缩上下文" accessibility/title copy instead of looking idle while compression is running.
+      - Team assistant messages can create sibling branches from the previous user message and show the Agent-like branch switcher; stale branch node ids are pruned when the message list changes.
+      - Regression coverage verifies slash command parsing, Team `/plan` planning sends, legacy `/codex` compatibility, `/run` executable sends, Agent slash compression, Team summary rendering, Team slash/ring compression payloads, and Team branch switching without duplicating the anchor user message.
+
+  - id: agent-team-model-picker-popover-layout
+    date: 2026-05-25
+    status: verified
+    demo: Agent Workspace and Team Mode model switch popovers now show provider names and model ids without cramped right-side badges in the 200px compact composer panel.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TeamPages.test.tsx WorkspaceShellBar.render.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - Playwright 390x844 model-popover metrics for /agents/default/workspace and /teams/04561550-0965-4b31-bf02-2deb2a8fc020
+    acceptance_notes:
+      - Root cause was the model picker rendering provider text twice: as secondary text and as a right-side badge, which squeezed the model text column in the 200px compact popover.
+      - Model option rows now use the readable provider label as the title and the concrete model id as the subtitle.
+      - The selected/current state is expressed by row highlighting instead of a separate right-side "当前" badge, so selected and unselected rows get the same usable text width.
+      - Agent Workspace, shared MenuSelect rows, and Team Mode model panels now use the same compact row rhythm with 28px icon cells, reduced horizontal padding, and no long trailing provider badge.
+      - Playwright metrics confirmed Agent and Team model popovers stay 200px wide, document overflow remains 0, each row is 186px wide, and the text column is 128px wide on a 390px viewport.
+
+  - id: team-task-update-alias-and-current-task
+    date: 2026-05-25
+    status: verified
+    demo: Team Mode task boards now update when a worker marks completion with id/task aliases or omits task_id while they have exactly one open assigned task.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_teams.py -q
+      - cd services/api-server && uv run ruff check app/teams/service.py tests/test_teams.py
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx
+      - API http://127.0.0.1:8000/health after backend restart
+      - POST /api/teams/6c03c9e9-7fd2-4316-a9e1-dd6958c0c2b5/tools/team_task_update with {"id":"dfd23488","status":"completed"}
+      - GET /api/teams/6c03c9e9-7fd2-4316-a9e1-dd6958c0c2b5/tasks
+    acceptance_notes:
+      - Root cause was the worker emitting team_task_update args {"id":"dfd23488","status":"completed"} while the backend tool accepted only task_id, so the tool failed with "task_id is required" and the board stayed in_progress.
+      - team_task_update now accepts task_id, taskId, id, or task as task references, including existing short-id resolution.
+      - If a worker omits task_id and has exactly one pending/in_progress assigned task, team_task_update updates that current task; multiple open assigned tasks still return 422 to avoid silent wrong-task updates.
+      - Team tool protocol prompts now include a team_task_update task_id example and member workflow text explicitly points workers to the bracketed task id in "Your Assigned Tasks".
+      - Regression coverage proves id alias completion, no-id current-task completion, and multi-open-task ambiguity behavior.
+      - Live target team 6c03c9e9-7fd2-4316-a9e1-dd6958c0c2b5 recovered: task dfd23488-f9ef-41a3-983f-4421a9179f12 is now completed and a TEAM_TASK_UPDATED event was emitted.
+
+  - id: agent-team-stop-empty-placeholder-no-resume
+    date: 2026-05-25
+    status: verified
+    demo: Agent Workspace stop/pause no longer leaves an empty assistant bubble, and the bottom-right composer action never changes to a continue-generation button after a paused answer.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx ChatSurface.shell.test.tsx composerShouldSubmit.property.test.ts TeamPages.test.tsx WorkspaceShellBar.render.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+    acceptance_notes:
+      - Shared ChatComposer no longer accepts canResume/onResume props, so Agent Workspace and Team Mode composers only expose the idle send arrow and the in-flight square stop action.
+      - The composer primary button still shows "发送" after a paused assistant answer; "继续生成" is not rendered in the bottom-right composer.
+      - Stopping a stream before any assistant content, tool calls, or artifacts arrive removes the empty assistant placeholder leaf and keeps the user message selected as the active leaf.
+      - Stopping after partial assistant content preserves that assistant node as paused with its partial content.
+      - The SSE reader is cancelled on AbortSignal so stop exits pending reads instead of leaving the UI in a stuck streaming state.
+      - Frontend regression coverage now checks empty-placeholder removal, partial paused preservation, terminal-open done handling, no composer resume button, and Team composer stop behavior.
+
+  - id: team-agent-composer-stop-and-tool-describe-fix
+    date: 2026-05-25
+    status: verified
+    demo: Agent Workspace and Team Mode now expose stop generation only through the bottom-right composer action, and Team Mode describe-assistant tool calls no longer fail when the model omits custom_agent_id.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TeamPages.test.tsx WorkspaceShellBar.render.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd services/api-server && uv run pytest tests/test_teams.py -q
+      - cd services/api-server && uv run ruff check app/teams/service.py tests/test_teams.py
+      - API http://127.0.0.1:8000/health after backend restart
+      - Frontend http://127.0.0.1:5173/ after frontend restart
+      - POST /api/teams/04561550-0965-4b31-bf02-2deb2a8fc020/tools/team_describe_assistant with {}, agent_id, and name args
+      - Playwright DOM check for /agents/default/workspace and /teams/04561550-0965-4b31-bf02-2deb2a8fc020
+    acceptance_notes:
+      - Agent Workspace header no longer receives or renders a stop-generation action; the streaming badge remains informational.
+      - Shared ChatComposer is the only stop/resume surface: normal state shows the arrow-up send action, streaming state turns that same bottom-right action into a square stop button, and resume remains on the same primary control when available.
+      - Team Mode column headers no longer render a separate stop button; each team column keeps stop generation in its own composer area.
+      - TeamPages regression coverage now asserts an in-flight wake exposes exactly one Stop generation button and that it lives inside the team composer container.
+      - team_describe_assistant now accepts custom_agent_id, agent_id, agent_type, assistant, or name, and defaults to the Default Agent when args are omitted.
+      - Live API verification confirmed target team 04561550-0965-4b31-bf02-2deb2a8fc020 returns HTTP 200 for empty args, agent_id=default, and name="Default Agent" describe-assistant calls.
+      - Backend and frontend dev services were restarted on 127.0.0.1:8000 and 127.0.0.1:5173.
+
+  - id: team-mode-assigned-task-auto-wake
+    date: 2026-05-25
+    status: verified
+    demo: Team Mode task owners are now woken after team_task_create even when no separate unread message exists, so assigned tasks do not stay visually pending.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_teams.py -q
+      - cd services/api-server && uv run ruff check app/teams/service.py tests/test_teams.py
+      - API http://127.0.0.1:8000/health after backend restart
+      - Frontend http://127.0.0.1:5173/ health check
+      - Live target-team recovery for /teams/04561550-0965-4b31-bf02-2deb2a8fc020
+    acceptance_notes:
+      - Root cause was the non-streaming Team wake path executing team_task_create without carrying deferred owner wake IDs through the model-turn boundary, so tasks could be created for an owner while the owner had no unread message to trigger execution.
+      - Non-streaming Team model turns now collect deferred follow-up wake slot IDs for team_task_create and team_send_message, then wake those slots after the current agent turn settles.
+      - Tool-created teammates now defer their welcome wake during the same model tool round, so spawn + task assignment + message dispatch are committed before the new member first wakes.
+      - Assigned pending tasks are marked in_progress at the start of owner wake and included in the ## Your Assigned Tasks prompt even without unread messages.
+      - Regression coverage proves task owners auto-run after team_task_create without a separate message and that spawn + assign in one turn still works.
+      - Target team 04561550-0965-4b31-bf02-2deb2a8fc020 was recovered live: all 8 tasks are in_progress, unread_counts is {}, all agents are idle, and every wake.in_progress flag is false.
+
+  - id: team-mode-message-dedupe-and-latest-scroll
+    date: 2026-05-25
+    status: verified
+    demo: Team Mode no longer shows duplicate user messages while a reply is streaming, and opened chat records snap to the latest message.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - Playwright send-state check for /teams/04561550-0965-4b31-bf02-2deb2a8fc020
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TeamPages.test.tsx
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Root cause was the frontend treating a local SSE mailbox mirror and the backend AgentMessage as different chat nodes when they shared the same mailbox_message_id but had different message IDs.
+      - Team session messages now use mailbox_message_id as the stable frontend dedupe key and node ID when present, so sending a message displays one user turn during streaming and after completion.
+      - Team chat columns now scroll to the bottom immediately when a record/column is opened or its message list changes, while stream deltas continue to follow smoothly.
+      - Regression coverage makes the test backend return distinct session message IDs while preserving mailbox_message_id, then asserts the sent content appears once.
+      - Live Playwright verification on target team 04561550-0965-4b31-bf02-2deb2a8fc020 sent "去重滚动验证 1779689485641"; during-send count was 1, after-send count was 1, and the chat scroller distanceFromBottom was 0.
+
+  - id: composer-plugin-row-layout-polish
+    date: 2026-05-25
+    status: verified
+    demo: Agent Workspace and Team Mode composer settings keep the 插件 / MCP row and expanded MCP list aligned inside the 200px compact popover.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TeamPages.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - Playwright plugin-row metrics for /agents/default/workspace and /teams/04561550-0965-4b31-bf02-2deb2a8fc020 at 390x844
+      - cd services/api-server && uv run pytest tests/test_teams.py -k "spawn_agent"
+      - cd services/api-server && uv run ruff check app/teams/service.py tests/test_teams.py
+      - API http://127.0.0.1:8000/health after backend restart
+      - Frontend http://127.0.0.1:5173/ after frontend restart
+      - POST /api/teams/04561550-0965-4b31-bf02-2deb2a8fc020/tools/team_spawn_agent with unknown agent_type unknown_ui_test_type
+      - Playwright visible-column check for teammate 前端可见测试135554 on /teams/04561550-0965-4b31-bf02-2deb2a8fc020
+    acceptance_notes:
+      - Fixed the shared Agent Workspace composer action row so the leading icon and trailing chevron use fixed 16px slots while the label truncates only in the middle.
+      - Applied the same fixed action-row behavior to Team Mode so the compact toolbar and settings popover remain visually consistent with the Agent Workspace.
+      - Tightened the expanded MCP list indentation and minimum-width behavior so long MCP tool names truncate inside the 200px popover instead of visually squeezing the row.
+      - Playwright metrics confirmed document overflow is 0 for both Agent and Team pages, popovers remain 200px wide, the 插件 / MCP row is 186px wide, and expanded MCP lists stay within their client width.
+      - Revalidated Team tool-created visible member behavior on target team 04561550-0965-4b31-bf02-2deb2a8fc020: unknown agent_type fell back to agent_id default and rendered a visible 前端可见测试135554 tab/region.
+
+  - id: team-mode-composer-responsive-polish
+    date: 2026-05-25
+    status: verified
+    demo: Agent Workspace and Team Mode share a 200px compact composer settings popover with Plan and Goal switches, while Team composer controls stay uncluttered after removing the visible recipient pill.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TeamPages.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - Playwright composer-settings check for /agents/default/workspace and /teams/5b16955b-b4fb-49fe-9c9a-3b3f3e42ba82 at desktop and mobile viewports
+    acceptance_notes:
+      - Shared ChatComposer bottom actions now support wrapping and keep fixed-size controls, including the send button, from being squeezed in narrow hosts.
+      - ChatComposer exposes a containerClassName override so Team Mode can remove duplicated inner horizontal padding without changing the Agent workspace default.
+      - Agent Workspace hides the compact toolbar goal icon and renders 追踪目标模式 as a switch inside the composer settings popover.
+      - Team Mode hides the shared goal-mode icon from the compact composer toolbar and renders 追踪目标模式 as a switch inside the composer settings popover, directly under 计划模式.
+      - Agent and Team composer settings popovers now use the same 200px width, so the range controls, numeric input, and switches fit without the popover feeling oversized.
+      - The visible Team send-target pill was removed from the composer; direct sends now use the column default target without an extra recipient selector in the input area.
+      - View Steps · 0 条任务 remains above the composer without an extra goal-tracking button below it.
+      - Playwright layout metrics confirmed document scrollWidth stayed within clientWidth, Agent and Team popovers measured 200px with no internal overflow, and the Team composer no longer renders the send-target pill.
+
+  - id: team-mode-real-agent-window-creation
+    date: 2026-05-25
+    status: verified
+    demo: Team Mode leader tool protocol now remains present on follow-up wakes, so confirmed teammate creation must call team_spawn_agent and produce real TeamAgent chat windows.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_teams.py -q
+      - cd services/api-server && uv run ruff check app/teams/service.py tests/test_teams.py
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - API http://127.0.0.1:8000/health
+      - GET /api/teams/5b16955b-b4fb-49fe-9c9a-3b3f3e42ba82
+      - Playwright page check for http://127.0.0.1:5173/teams/5b16955b-b4fb-49fe-9c9a-3b3f3e42ba82
+    acceptance_notes:
+      - Root cause was messages-only leader wakes losing the explicit Team tool protocol; the model then claimed agents were created without emitting team_spawn_agent calls.
+      - Added a persistent system-level Team tool protocol so creating/spawning/assigning teammates requires real team tool calls on every wake, not only the first full role prompt.
+      - Added backend regression coverage proving messages-only leader wakes still include team_spawn_agent instructions and create a real TeamAgent.
+      - Added frontend regression coverage that TEAM_AGENT_SPAWNED events merge new TeamAgent records and welcome messages into the local team cache.
+      - Restarted the backend dev server on 127.0.0.1:8000 after the fix.
+      - For target team 5b16955b-b4fb-49fe-9c9a-3b3f3e42ba82, created real Research Agent, Writing Agent, and Review Agent teammates via /api/teams/{team_id}/tools/team_spawn_agent.
+      - Target team API now returns four agents: Default Agent, Writing Agent, Research Agent, and Review Agent; each added teammate has its own session_id and conversation_id.
+      - Playwright verification of the target URL found tabs Default Agent, Writing Agent, Research Agent, and Review Agent, with four rendered chat regions.
+
+  - id: agent-startup-context-loop
+    date: 2026-05-23
+    status: verified
+    demo: New agent sessions start from repository AGENTS.md, then a low-token startup context, route task-specific deep reads through a machine context index, and write completion evidence back to machine progress plus wiki.
+    verification_result: passed
+    verification_commands:
+      - find . -maxdepth 1 -name AGENTS.md -print
+      - python3 scripts/agent-context-brief.py --task "startup context validation evidence"
+      - python3 -m py_compile scripts/agent-context-brief.py scripts/validate-docs.py
+      - python3 scripts/agent-context-brief.py
+      - python3 scripts/agent-context-brief.py --task "RAG retrieval and Run Detail grounding"
+      - python3 scripts/agent-context-brief.py --task "frontend UI selector"
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - verifier subagent fresh-session acceptance for RAG, Context, and frontend tasks
+      - architect subagent token-cost and maintainability review
+      - code-reviewer and architect final code review
+    acceptance_notes:
+      - Added docs/ai/agent-startup-context.md as the low-token startup read before implementation.
+      - Added repository root AGENTS.md so new sessions have an actual automatic entrypoint before docs/ai/agent-startup-context.md.
+      - Added docs/ai/context-index.json to route task text to focused wiki, plan, and context files.
+      - Added scripts/agent-context-brief.py with standard-library-only task matching and Markdown output.
+      - Updated docs/ai/00-execution-protocol.md and README.md so new sessions use the startup path and write back to docs/ai/task-progress.yaml plus omx_wiki/.
+      - Updated omx_wiki/index.md, omx_wiki/log.md, and session-2026-05-23-agent-startup-context-loop.md with the handoff record.
+      - Extended scripts/validate-docs.py to check the startup context, context index, wiki index, route integrity, and brief script contract.
+
   - id: p7-console-chinese-selector-polish
     date: 2026-05-18
     status: ui_review_fixes_verified_and_pushed
@@ -411,5 +1191,5 @@ stage_completion_rule:
   - run_frontend_build
   - run_docs_validation
   - update_docs_ai_task_progress_yaml
-  - update_docs_task_progress_md
+  - update_omx_wiki
   - record_acceptance_result

@@ -7,7 +7,7 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
   /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
 
@@ -481,17 +481,16 @@ test.describe("P7 Knowledge demo release smoke", () => {
     await page.goto("/evals");
 
     await expect(page.getByText("P7 Demo Grounding Dataset")).toBeVisible();
-    await expect(page.getByText("Grounding 通过率")).toBeVisible();
+    await expect(page.getByText("依据校验通过率").first()).toBeVisible();
     await expect(page.getByText("引用覆盖率")).toBeVisible();
     await expect(page.getByText("grounding-trace-v1")).toBeVisible();
 
     await page.goto("/observability");
     await expect(page.getByText("Grounding Quality")).toBeVisible();
     await expect(page.getByText("100.0%").first()).toBeVisible();
-    await expect(page.getByText("clear").first()).toBeVisible();
-    await expect(
-      page.getByText(`hits ${retrievalHitId}`).first(),
-    ).toBeVisible();
+    await expect(page.getByText("禁止证据泄漏率").first()).toBeVisible();
+    await expect(page.getByText("通过").first()).toBeVisible();
+    await expect(page.getByText(retrievalHitId).first()).toBeVisible();
   });
 });
 

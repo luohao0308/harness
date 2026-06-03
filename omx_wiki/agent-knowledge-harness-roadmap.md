@@ -224,6 +224,92 @@ Verification evidence:
 Important boundary: `Agent.tools_json` remains visible as legacy registry/preset metadata and as
 deterministic backfill input only. New runtime execution must resolve from enabled attachments.
 
+2026-05-26 Knowledge connector follow-up:
+
+- `/knowledge` now treats Dify and Coze as runtime-capable knowledge connectors
+  rather than package installs or config-only cards; RAGFlow, Local Dify, and
+  Local RAGFlow remain preview endpoint configuration.
+- Coze uses the same safety boundary as Dify: frontend API Key values are saved
+  as backend connector secrets, source responses expose only `secret_ref` plus
+  configured status, connector config documents stay `connector_config_only`,
+  and grounded answers require source-bound runtime retrieval hits.
+- Coze runtime retrieval runs after local Knowledge/RAG insufficiency and before
+  Dify/web fallback, producing `coze_connector` hits, `[C1]` citations,
+  prompt-manifest source snapshots, and policy-audit evidence when the provider
+  returns accepted records.
+- Live local API smoke proved Coze configuration readiness and secret storage,
+  and a Workspace chat runtime smoke against a local Coze-compatible retrieval
+  endpoint returned `coze_connector` grounding with a `[C1]` citation. External
+  Coze retrieval still depends on a real Coze credential, dataset ID, and
+  compatible configured retrieval endpoint.
+
+2026-05-26 UI follow-up:
+
+- Tool Registry and Agent Studio MCP/Skill/Tool configuration now follows the
+  console design rule that operational pages are scannable before editable.
+- Preset capability enabling, trusted URL install, public URL preflight, Skill
+  upload, package lifecycle, Agent-scoped test invoke, and Agent Studio
+  capability attachment are opened from compact buttons into `ConfigDialog`
+  modals instead of being visible inline by default.
+- Frontend regression coverage asserts configuration fields are absent from the
+  default page and present only inside the relevant dialog.
+
+### P5/P4 Extension: Agent Context Optimizer Capability
+
+Status: verified.
+
+Goal: make token optimization pluggable at the Agent capability layer without
+creating a separate runtime configuration system.
+
+Delivered scope:
+
+- `context_optimizer` Capability Package type with install, approval, simple
+  install, and Agent attachment support for advanced lifecycle use;
+- built-in Agent Studio Token Optimizer presets (`关闭`, `保守省 Token`,
+  `均衡`, `强力省 Token`) so normal users can manually choose a plan without
+  installing, uploading, or editing JSON packages;
+- preset selection API that creates/reuses an internal built-in
+  `context_optimizer` CapabilityVersion, disables previous optimizer
+  attachments for the Agent, and enables exactly one selected preset;
+- v1 declarative JSON-only optimizer contract with no arbitrary code execution;
+- fail-closed install/runtime validation for unknown fields, secret refs,
+  execution-shaped runtime fields, invalid ratios, invalid section limits,
+  unsupported drop rules, and non-`budget_overlay` modes;
+- priority-ordered optimizer attachment resolution in backend context assembly;
+- conservative overlay merge for budget ratio and section limits;
+- protected system/developer authority, pinned context, and current user goal;
+- optimizer evidence in `ContextAssemblyManifest.token_budget_json`,
+  included/omitted refs, model-call request audit, Run Detail, and
+  Observability token summaries;
+- Agent Studio Token 省用方案 selector and current preset status, with Tool
+  Registry package-flow support retained for advanced users.
+- Token 节省 page at `/token-savings`, backed by
+  `GET /api/observability/token-savings`, so normal users can see total
+  estimated saved tokens, actual prompt/total tokens, savings rate, active
+  plan names, low-cost route evidence, cache counters, and recent run omit
+  reasons without reading manifest/package details.
+- Built-in multi-level context cache evidence for compression summaries, RAG
+  retrieval, and long-term-memory candidates, persisted in
+  `workspace_context_caches` and projected through
+  `ContextAssemblyManifest.token_budget_json.context_cache`, Run Detail, and
+  `/token-savings` per-source cache hit-rate cards.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_observability.py tests/test_context_router.py tests/test_tool_registry.py tests/test_agents.py -q` -> `116 passed`.
+- Follow-up built-in preset validation: same backend target set -> `120 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx ToolRegistryPage.marketplace.test.tsx RunDetailPage.optimizer.test.tsx RunDetailPage.helpers.test.ts` -> `7 passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Context cache follow-up: `cd services/api-server && uv run pytest tests/test_context_router.py tests/test_agents.py tests/test_observability.py tests/test_knowledge_rag.py -q` -> `144 passed`.
+- Context cache follow-up: `cd services/api-server && uv run ruff check app tests alembic/versions/20260525_0021_create_workspace_context_caches.py` -> passed.
+- Context cache follow-up: `cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-cache-alembic.sqlite uv run alembic upgrade head` -> reached `20260525_0021`.
+- Context cache follow-up: `cd apps/agent-console && npm test -- useChatStream.test.tsx TokenSavingsPage.test.tsx` -> `8 passed`.
+- Detailed session record: [[session-2026-05-25-agent-knowledge-context-optimizer]].
+
 ### P6: Groundedness Eval And Observability
 
 Status: completed and pushed through `83c8eee`.

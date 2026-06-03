@@ -62,6 +62,38 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Agent Knowledge Harness P6 groundedness Eval and Observability is completed and pushed through `83c8eee`: Eval now owns `GroundingTraceV1`, forbidden evidence leak judgment, grounding metrics, regression deltas/gates, and failure reasons; Observability has a read-only grounding-quality projection; Run Detail saves objective evidence selectors without inferring required/forbidden snippets or unsupported markers; Eval API responses scrub forbidden snippet payloads.
 - Agent Knowledge Harness P7 release and demo hardening is completed and pushed to `origin/p7-release-demo-hardening` through `c404603`: deterministic Knowledge/RAG demo seed uses public APIs only and includes an agent grounding support document for the backend `min_hits=2` threshold; service-level migration/restore smoke verifies Knowledge/RAG tables and selector continuity; release browser smoke covers Agent Studio, Workspace, Run Detail, Eval, and Observability demo projections; runbooks now distinguish local fixture evidence from optional credential-gated live provider validation.
 - Console Chinese-first selector/terminology hardening is completed and pushed on the same branch through `a5d046b`: shared `MenuSelect` now covers model, knowledge, run, and settings dropdowns with keyboard/focus behavior, grouping, disabled-option skipping, and placement support; required English terms such as MCP, RAG, API, Trace, WarmPool, JSON, Markdown, Prompt, and Provider keep their original names with adjacent small Chinese explanations.
+- Team Mode AionUi parity product surface is verified locally on 2026-05-25: Team Mode now has durable Team/TeamAgent/mailbox/task/event backend state, team CRUD/member/mailbox/task/wake/event APIs, Team frontend routes/list/create/rail/columns/composers, Agent Workspace team launch, and mocked browser smoke coverage.
+- Capability product and console spine polish is verified locally on 2026-05-25: capability package validation/install/preflight/upload/attach/rollback/uninstall APIs are wired into Tool Registry, Agent Studio can create/clone Agents and attach capabilities, knowledge connector readiness is evidence-backed, same-origin API base fallback is deployment-safe, Run Detail includes token optimization evidence, and local runtime artifacts are ignored.
+- Agent-level Token Optimizer and context cache evidence are verified locally on 2026-05-25: Agent Studio exposes built-in Token 省用方案 presets instead of requiring package install, context assembly records optimizer/cache evidence, `/token-savings` shows aggregate savings plus per-source cache hit rates, repeated `/context/compress` now persists and hits the server-side summary cache after request/session close, and live browser smoke shows `缓存命中率 2 / 11` with `摘要缓存 28.57%`.
+- Workspace summary cache trust-boundary hardening is verified locally on 2026-05-25: `/context/compress` no longer trusts client-provided `existing_summary` as an accepted cache entry, DB-backed `workspace_context_caches` hits win even when the client hint is stale, and regression coverage confirms the server recomputes or reuses only server-owned summaries.
+- Built-in multi-level context cache final verification is recorded locally on 2026-05-25: compression summary cache status now flows through chat payloads into ContextAssemblyManifest evidence, DB-backed `workspace_context_caches` covers `compression_summary`, `rag_retrieval`, and `long_term_memory`, `/token-savings` exposes total and per-source hit rates, and the live API returned total cache hits 5, misses 13, stale 0, with `摘要缓存` hit rate 41.67%.
+- Built-in connector/model/layout polish is verified locally on 2026-05-26: Agent Studio Knowledge Management offers simple Dify, Coze, and RAGFlow external API presets without package installation; Tool Registry defaults to 常用预置能力 manual one-click built-in capability choices and hides package install/upload/lifecycle controls inside collapsed 高级包管理; Model Settings Add & Switch releases immediately after save success even if health/refetch calls are slow; Run History uses a compact toolbar with a short `工作台` action; browser smoke confirmed /tools default view hides 可信 URL 一键安装, 安装到 Agent, and 下载、安装并启用 while key pages have no horizontal overflow.
+- Knowledge workbench local/API connector management is verified locally on 2026-05-26: `/knowledge` is a standalone console page with sidebar `知识库` navigation, Agent selection, local/API/preview filters, source statistics, and shared Knowledge Management detail/lifecycle controls. API presets cover runtime-capable Dify and Coze plus preview RAGFlow, Local Dify, and Local RAGFlow endpoint configuration; connector responses expose derived validation status/messages; endpoint, secret_ref, required dataset/space id for remote API providers, raw-secret redaction, endpoint-credential blocking, and crawler-style option rejection are covered; `source_type=connector` is excluded from local chunk grounding so connector configuration cannot become verified local evidence.
+- Dify connector runtime retrieval is verified locally on 2026-05-26: configured Dify knowledge sources now call the Dify dataset retrieval endpoint at runtime after local Knowledge/RAG evidence is insufficient and before web research fallback. Retrieval creates `dify_connector` hits, `[D1]` citations, source-bound prompt manifest metadata, and connector policy audit evidence; raw secrets resolve from frontend-stored `secret://dify` values or environment fallback and are not persisted in source snapshots. RAGFlow/Local Dify/Local RAGFlow remain configuration/preflight-only in this slice, and connector config documents remain `connector_config_only` / `retrieval_eligible=false`.
+- Coze connector runtime retrieval is verified locally on 2026-05-26: Coze now has usable release state, frontend-managed API key storage, runtime secret resolution for `secret://coze`, and a source-bound adapter path that runs after local insufficiency and before Dify/web fallback. Accepted results become `coze_connector` hits with `[C1]` citations, prompt-manifest snapshots, and connector policy audits; missing secrets or Coze provider errors are surfaced as runtime evidence without fabricating grounding. Live local API smoke proved Coze config readiness and backend secret storage, and a local Coze-compatible runtime smoke through Workspace chat returned `Local knowledge is insufficient; Coze connector grounded the answer` with `grounding_provider=coze_connector`, one `coze_connector` hit, and `[C1]` citation. External Coze provider retrieval was not run because no real Coze credential/dataset was available; the adapter defaults to `https://api.coze.cn/v1/datasets/{dataset_id}/retrieve` and remains endpoint-configurable.
+- Dify connector secret-ref diagnostics are verified locally on 2026-05-26: live probing showed the configured Dify source was discovered and attempted at runtime, but the stored value in `secret_ref` was raw-secret-like and could not be resolved through the backend environment. The source was repaired to `secret://dify` with dataset id `e1c4cb28-2a23-42c4-b2ab-0736f12a9720`; backend creation/responses now reject or redact raw-secret-looking refs, runtime evidence now says when a Dify secret cannot be resolved or a provider call fails, and frontend forms warn users to use `secret://dify` or `env://DIFY_API_KEY`. A direct Dify probe with the old supplied-looking value returned HTTP 403, so real retrieval still requires a valid dataset-authorized Dify Knowledge API key configured in the API server environment.
+- Dify connector frontend secret storage is verified locally on 2026-05-26: the `/knowledge` connector dialog now has separate `密钥引用` and `API Key 密钥值` fields. The backend accepts `connector_secret_value`, saves it in service-side connector secret settings keyed by `secret://dify`, and still keeps `KnowledgeSource.settings_json` / API responses / prompt manifests raw-secret-free. Runtime Dify retrieval resolves the saved frontend-provided key before environment fallback, and source responses expose only `connector_secret_configured`.
+- Dify connector 403/1010 hardening is verified locally on 2026-05-26: Dify runtime retrieval now sends `Accept: application/json` plus `User-Agent: AgentHarness/0.1`, which moves Dify Cloud responses from pre-provider `HTTP 403 error code: 1010` to provider-layer diagnostics. Dify HTTP error bodies are included as short redacted connector failure messages. Live probing of saved source `7bca85fd-2c08-4cab-88de-8d33fb78baa6` confirmed `secret://dify` resolves and the current remaining failure is Dify-side `HTTP 400 invalid_param` with Collection/embedding/quota detail, not missing local connector invocation.
+- Dify connector keyword-search runtime is verified locally on 2026-05-26: `DifyKnowledgeBaseAdapter` now uses `retrieval_model.search_method=keyword_search` instead of `hybrid_search`, avoiding Dify's vector collection path for datasets that return `Collection not found`. Live probing of source `7bca85fd-2c08-4cab-88de-8d33fb78baa6` with dataset `e1c4cb28-2a23-42c4-b2ab-0736f12a9720` and saved `secret://dify` returned HTTP 200 with 0 records instead of the previous `HTTP 400 invalid_param ... Collection not found`; remaining knowledge insufficiency means Dify returned no matching chunks for the query.
+- Dify disabled-document empty-result diagnostics are verified locally on 2026-05-26: live Dify dataset probing showed source `7bca85fd-2c08-4cab-88de-8d33fb78baa6` has 4 documents, all `indexing_status=completed` but `enabled=false`. Runtime grounding now checks Dify document enabled status when retrieval succeeds with 0 records, records document counts in retrieval metadata, and reports that all indexed Dify documents are disabled instead of the generic `Dify connector returned no accepted results` message.
+- Dify dataset-default retrieval is verified locally on 2026-05-26: after the user enabled documents in Dify, live probing showed the same query `公司的愿景与价值观是什么` returned 0 records only when Harness forced `keyword_search`; omitting `retrieval_model` let Dify apply its stored `retrieval_model_dict` and returned records, matching Dify Console test retrieval. `DifyKnowledgeBaseAdapter` now posts only the bounded query by default. After backend restart on `127.0.0.1:8000`, live `ground_query` returned 3 `dify_connector` hits and evidence message `Dify connector grounded the answer`.
+- Coze official document-list ranking and Dify fallback are verified locally on 2026-05-26: Coze base endpoints such as `https://api.coze.cn` now use `/open_api/knowledge/document/list` with numeric dataset-id coercion, signed document-content fetch, bounded in-memory chunking, and stricter Chinese core-term ranking. Live probing of saved Coze dataset `7629341424630448134` returned 0 Coze results for `公司的愿景与价值观是什么` while preserving Coze hits for `厦门科技馆的主题是什么`; live `ground_query` now routes the science-museum query to `coze_connector` and falls through to Dify for the company vision query with 3 `dify_connector` hits.
+- MCP/Skill/Tool modal configuration is verified locally on 2026-05-26: Tool Registry and Agent Studio no longer expose capability configuration forms inline by default. A shared `ConfigDialog` now hosts built-in preset Agent confirmation, trusted URL install, public URL preflight, Skill upload, package lifecycle, Agent-scoped test invoke, and Agent Studio capability attachment, with tests asserting inputs are hidden until the relevant dialog opens.
+- Knowledge connector editable configuration UI is verified locally on 2026-05-26: the knowledge source edit dialog now clearly separates `基础信息` from `API 接入配置`, shows Provider/secret/retrieval status as read-only context, and lets connector users edit API Endpoint, Secret Ref, dataset/knowledge id, and optional replacement API Key. Backend PATCH now accepts connector settings for connector sources only and reuses the existing normalization safety gates for raw-secret rejection/redaction, endpoint credentials, required dataset ids, release-state derivation, and crawler-style option rejection. The local Coze source `5c3cfe97-9b9d-40ac-9021-d9da6bbaf859` was repaired from space id `7618108220116893732` to knowledge id `7629341424630448134`; response confirmed `connector_validation_status=ready` and `connector_secret_configured=true`.
+- Knowledge workbench modal configuration UI is verified locally on 2026-05-26: `/knowledge` no longer renders long local/API configuration forms inline. Source creation, source editing, add-document, and reingest flows now open modal dialogs, while the page keeps overview metrics, source list, validation/status badges, lifecycle controls, and document-version summaries visible. External API connector creation now uses `保存配置` / `保存中` wording, adds a 12s connector-only frontend timeout that surfaces `请求超时` instead of leaving the modal indefinitely pending, and live API health plus temporary connector create/archive checks passed after restoring `127.0.0.1:8000`.
+- Knowledge source hard delete and Chinese dialog copy are verified locally on 2026-05-26: `/knowledge` and Agent Studio now expose a dangerous `删除` action that calls `DELETE /api/agents/{agent_id}/knowledge/sources/{source_id}`. The backend deletes source/document/chunk/embedding rows, preserves historical retrieval/citation evidence through snapshots with live FKs nulled, marks RAG retrieval caches stale, and writes a `knowledge_source.deleted` audit event. Connector dialog/helper detail copy is Chinese-first, and the local API was restarted on `127.0.0.1:8000`; live create/delete smoke returned 204 and confirmed the deleted id disappeared from list responses, resolving the observed 405 from the stale backend process.
+- Dify grounded answer evidence-use hardening is verified locally on 2026-05-26: live `ground_query` run `ecd15f37-7a3e-4752-a513-38aab367882e` for `公司的愿景与价值观是什么` returned `grounding_provider=dify_connector`, 3 hits, and the first two records `[D1] 企业愿景 > 成为客户最信赖的视觉创意伙伴，用设计创造商业价值` plus `[D2] 长期愿景` with international influence/design benchmark/world/social-good bullets. Workspace chat run `ec724c8b-c0ea-4918-8adf-1e3ba861443f` returned the Dify-backed answer with `[D1]`, `[D2]`, and `[D3]` instead of asking for a company name. Backend prompt evidence now tells the model to answer from retrieved evidence when direct evidence exists, and a deterministic fallback rewrites grounded-but-clarifying model output into cited retrieval snippets. The detector was expanded for the observed `没有指明具体是哪家公司 / 补充一下公司名称` wording; live Workspace chat run `8e428b6b-42e2-4686-b066-3fb99e837b16` returned the Dify-backed answer after API restart.
+- Current multi-level context cache re-verification is recorded locally on 2026-05-26: targeted backend cache tests, frontend cache-status/token-savings tests, Ruff, frontend lint/build, and Alembic upgrade passed; live services in tmux session `harness-dev-cache` responded on `127.0.0.1:8000` and `127.0.0.1:5173`; `/api/observability/token-savings` returned actual total 160797, estimated saved 1882, cache hits 5, misses 13, stale 0, and source rows for `compression_summary`, `rag_retrieval`, and `long_term_memory`.
+- Team Mode and Agent Workspace composer responsive polish is verified locally on 2026-05-25: Agent and Team share a 200px compact composer settings popover with 计划模式 and 追踪目标模式 switches, `View Steps · 0 条任务` remains visible in Team columns, the visible Team send-target pill has been removed from the composer, and Playwright layout checks found no document overflow.
+- Agent Workspace and Team Mode composer commands/context polish is verified locally on 2026-05-25: `/compress` now works through the shared slash command registry, Team columns can manually or automatically compress branch-scoped context through the existing Agent compression endpoint, Team summaries use the same compact Agent Workspace-style header control, ContextRing shows an active pending compression state, and Team assistant replies can create Agent-like sibling branches with a branch switcher.
+- Team Mode real-agent creation hardening is verified locally on 2026-05-25: the backend keeps the Team tool protocol in every model wake so follow-up confirmations still call `team_spawn_agent`, frontend SSE projection keeps `TEAM_AGENT_SPAWNED` as real chat columns, and target team `5b16955b-b4fb-49fe-9c9a-3b3f3e42ba82` now renders Default Agent plus real Writing Agent, Research Agent, and Review Agent windows.
+- Composer plugin-row layout polish is verified locally on 2026-05-25: Agent Workspace and Team Mode now keep the `插件 / MCP` row aligned inside the 200px settings popover with fixed icon/chevron slots, middle-label truncation, and a tightened expanded MCP list; Playwright metrics show zero document overflow on both pages. The newer target team `04561550-0965-4b31-bf02-2deb2a8fc020` also verified tool-created visible teammate behavior with unknown `agent_type` falling back to `agent_id: default`.
+- Team Mode message dedupe and latest-scroll polish is verified locally on 2026-05-25: Team chat now uses `mailbox_message_id` as the stable frontend dedupe key when present, preventing the temporary duplicate user turn during streaming, and chat records snap to the latest message when opened. Live Playwright on team `04561550-0965-4b31-bf02-2deb2a8fc020` confirmed sent-content counts stayed at 1 during and after send, with the scroller distance from bottom at 0.
+- Team Mode assigned-task auto-wake hardening is verified locally on 2026-05-25: the non-streaming backend wake path now carries deferred follow-up owner wake IDs for `team_task_create` / `team_send_message`, tool-spawned teammates defer their welcome wake until the same tool round commits assignments, and target team `04561550-0965-4b31-bf02-2deb2a8fc020` recovered from all-pending symptoms to 8 `in_progress` tasks, empty unread counts, idle agents, and `wake.in_progress=false` across the team.
+- Agent Workspace and Team Mode model picker popover layout is verified locally on 2026-05-25: the compact 200px model switch popover now uses provider labels as row titles, model ids as subtitles, selected-row highlighting instead of a right-side current badge, and 28px icon cells so `DeepSeek Flash`, `DeepSeek Pro`, and `openai-compatible` fit without the screenshot's text-column squeeze.
+- Team Mode task-update alias/current-task hardening is verified locally on 2026-05-25: `team_task_update` now accepts `task_id` / `taskId` / `id` / `task`, can update the caller's unique open assigned task when no task id is provided, rejects ambiguous multi-task updates, and target team `6c03c9e9-7fd2-4316-a9e1-dd6958c0c2b5` recovered task `dfd23488-f9ef-41a3-983f-4421a9179f12` from `in_progress` to `completed`.
+- Team/Agent stop-empty-placeholder hardening is verified locally on 2026-05-25: stopping before any assistant content removes the empty assistant placeholder instead of leaving a blank bubble, stopping after partial content preserves the paused partial answer, and the bottom-right shared composer no longer renders or accepts a continue-generation action after pause.
+- Team/Agent composer stop-control and describe-assistant tool hardening is verified locally on 2026-05-25: Agent Workspace and Team Mode now keep stop generation only on the bottom-right composer primary action, Team column headers no longer render a separate stop button, and `team_describe_assistant` accepts omitted args plus `agent_id` / `agent_type` / `assistant` / `name` aliases instead of failing with `custom_agent_id is required`. Target team `04561550-0965-4b31-bf02-2deb2a8fc020` returned HTTP 200 for empty, `agent_id=default`, and `name="Default Agent"` describe-assistant calls after backend restart.
 - Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
 - P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
 
@@ -104,40 +136,133 @@ The accepted next-phase goal was a privately deployable enterprise internal-test
 
 ## Most Recent Completed Work
 
-Console Chinese-first selector/terminology follow-up:
+Team Mode AionUi parity and capability product spine:
+
+```text
+services/api-server/alembic/versions/20260523_0020_create_team_mode.py
+services/api-server/app/api/teams.py
+services/api-server/app/teams/
+services/api-server/tests/test_teams.py
+apps/agent-console/src/features/teams/
+apps/agent-console/e2e/team-mode.smoke.spec.ts
+apps/agent-console/src/features/tools/pages/ToolRegistryPage.tsx
+services/api-server/app/api/tools.py
+services/api-server/app/tools/capabilities.py
+apps/agent-console/src/features/agents/pages/AgentListPage.tsx
+apps/agent-console/src/features/tasks/api.ts
+docs/architecture/team-mode-aionui-parity.md
+docs/ai/task-progress.yaml
+omx_wiki/project-handoff-current-state.md
+omx_wiki/log.md
+```
+
+Team/capability verification summary:
+
+```text
+cd services/api-server && uv run pytest tests/test_teams.py -q -> passed
+cd services/api-server && uv run pytest tests/test_tool_registry.py tests/test_agents.py tests/test_context_router.py tests/test_cors.py tests/test_knowledge_connectors.py tests/test_tool_runner.py -q -> passed
+cd services/api-server && uv run ruff check app tests -> passed
+cd apps/agent-console && npm test -- TeamPages.test.tsx AgentWorkspacePage.team-launch.test.tsx ToolRegistryPage.marketplace.test.tsx AgentListPage.studio.test.tsx api.test.ts ChatSurface.shell.test.tsx useChatStream.test.tsx -> passed
+cd apps/agent-console && npm run lint -- --pretty false -> passed
+cd apps/agent-console && npm run build -> passed
+cd apps/agent-console && HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5173 npx playwright test --project=chromium e2e/team-mode.smoke.spec.ts -> 2 passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+```
+
+Team/capability behavior:
+
+```text
+Team Mode is a durable team collaboration room, not a Run Detail variant.
+Team API owns Team, TeamAgent, TeamMailboxMessage, TeamTask, and TeamEvent state plus wake/event streams.
+Team UI exposes list/create, rail, horizontal agent columns, per-column composer, View Steps, message stream, and team launch from Agent Workspace.
+Tool Registry exposes simple trusted URL install, public URL preflight, upload install, advanced lifecycle, attach/disable, rollback, uninstall, and dependency preflight.
+Agent Studio supports create, clone, built-in capability attach, and knowledge connector readiness from indexed sources.
+Frontend API resolution uses same-origin by default and falls back from configured absolute URLs to relative paths for deployed consoles.
+```
+
+Agent Workspace and Team Mode composer commands/context polish:
+
+```text
+apps/agent-console/src/features/agents/lib/slashCommands.ts
+apps/agent-console/src/features/agents/components/ChatSurface.tsx
+apps/agent-console/src/features/agents/components/ContextRing.tsx
+apps/agent-console/src/features/agents/components/ContextSummaryManager.tsx
+apps/agent-console/src/features/teams/pages/TeamPage.tsx
+apps/agent-console/src/features/agents/__tests__/slashCommands.property.test.ts
+apps/agent-console/src/features/agents/__tests__/ChatSurface.shell.test.tsx
+apps/agent-console/src/features/teams/__tests__/TeamPages.test.tsx
+docs/ai/task-progress.yaml
+omx_wiki/project-handoff-current-state.md
+omx_wiki/log.md
+```
+
+Composer command/context verification summary:
+
+```text
+cd apps/agent-console && npm test -- TeamPages.test.tsx ChatSurface.shell.test.tsx slashCommands.property.test.ts -> 50 passed
+cd apps/agent-console && npm test -- TeamPages.test.tsx ChatSurface.shell.test.tsx -> 35 passed
+cd apps/agent-console && npm run lint -- --pretty false -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+curl --noproxy '*' -sS -m 5 http://127.0.0.1:5173/ -> HTTP 200
+curl --noproxy '*' -sS -m 5 http://127.0.0.1:8000/health -> HTTP 200
+```
+
+Composer command/context behavior:
+
+```text
+/compress, /compact, and /context resolve to the shared compress command.
+Agent Workspace dispatches /compress through the existing manual context compression path.
+Team Mode /plan switches the active column into markdown planning mode and sends the next message with mode=codex_plan.
+Legacy /codex remains a compatibility alias for /plan, but the visible command menu now uses /plan.
+/run, /act, and /execute switch the active column into executable Plan-Act mode and send the next message with mode=plan.
+Team Mode reuses POST /api/agents/{agent_id}/context/compress per Team column with team/slot/leaf scoped branch keys.
+Agent Workspace and Team Mode now import the same `ContextSummaryManager` component for generated compression summaries: inline coverage count plus recompress/clear actions, with preview text and token compression details available on hover/focus.
+Team ContextRing supports manual compression, pending animation, effective-token display, and threshold-based background compression after completed assistant turns.
+Team assistant messages can branch from the previous user prompt and switch sibling assistant replies with the Agent branch switcher.
+```
+
+Previous Agent Workspace and Team Mode model picker popover layout:
 
 ```text
 apps/agent-console/src/components/ui/menu-select.tsx
-apps/agent-console/src/components/ui/term.tsx
-apps/agent-console/src/components/ui/__tests__/menu-select.test.tsx
 apps/agent-console/src/features/agents/components/ModelPicker.tsx
-apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx
-apps/agent-console/src/features/agents/pages/AgentListPage.tsx
-apps/agent-console/src/features/runs/pages/RunDetailPage.tsx
-apps/agent-console/src/features/settings/pages/ModelSettingsPage.tsx
-apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx
-apps/agent-console/src/features/tools/pages/ToolRegistryPage.tsx
+apps/agent-console/src/features/agents/components/ChatSurface.tsx
+apps/agent-console/src/features/teams/pages/TeamPage.tsx
 docs/ai/task-progress.yaml
-docs/task-progress.md
-docs/human/10-task-progress.md
+omx_wiki/project-handoff-current-state.md
+omx_wiki/log.md
 ```
 
-Console UI verification summary:
+Model picker popover verification summary:
 
 ```text
-cd apps/agent-console && npm run lint -> passed
-cd apps/agent-console && npm test -> 30 files / 148 tests passed
-cd apps/agent-console && npm run build -> passed
-git diff --check -> passed
-frontend http://127.0.0.1:18082/ -> ok
-API http://127.0.0.1:8000/health -> ok
+cd apps/agent-console && npm test -- ChatSurface.shell.test.tsx TeamPages.test.tsx WorkspaceShellBar.render.test.tsx -> 37 passed
+cd apps/agent-console && npm run lint -- --pretty false -> passed
+Playwright 390x844 /agents/default/workspace model popover -> width 200, document overflow 0, row width 186, text column width 128
+Playwright 390x844 /teams/04561550-0965-4b31-bf02-2deb2a8fc020 model popover -> width 200, document overflow 0, row width 186, text column width 128
 ```
 
-Console UI commit pushed to `origin/p7-release-demo-hardening`:
+Model picker popover behavior:
 
 ```text
-a5d046b Make console selectors and terms usable for Chinese-first UI
+Rows show the readable provider label as the title and the concrete model id as the subtitle.
+The selected row is indicated by row highlighting, not a trailing "当前" badge that consumes width.
+Agent Workspace, shared MenuSelect, and Team Mode use the same compact 28px icon cell and reduced horizontal padding.
 ```
+
+Previous Team Mode task-update alias/current-task hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+
+Previous Team/Agent stop-empty-placeholder and no-composer-resume hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+
+Previous Team/Agent composer stop-control and describe-assistant tool hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+
+Previous Team Mode assigned-task auto-wake hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+
+Previous Team Mode message dedupe and latest-scroll polish remains recorded in `docs/ai/task-progress.yaml` and the session log.
+
+Previous console Chinese-first selector/terminology follow-up remains recorded below as pushed through `a5d046b`.
 
 P7 pushed branch work:
 

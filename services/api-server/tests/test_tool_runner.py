@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     Agent,
+    Capability,
+    CapabilityVersion,
     SandboxInstance,
     SystemSetting,
     Task,
@@ -340,3 +342,106 @@ def test_tool_runner_enforces_network_allowlist(db_session: Session) -> None:
     assert exact_subdomain_blocked.tool_call.status == "DENIED"
     assert wildcard_allowed.allowed is True
     assert wildcard_allowed.tool_call.status == "SUCCESS"
+
+
+def test_high_risk_package_test_invoke_is_policy_bounded_without_sandbox(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session, agent_id="high-risk-package-agent", tools=[])
+    registry = CapabilityRegistry(db_session, task.organization_id)
+    package = registry.stage_private_package(
+        manifest={
+            "name": "high_risk_packaged_tool",
+            "version": "1.0.0",
+            "description": "High risk packaged tool",
+            "package_type": "tool_definition",
+            "risk_level": "high",
+            "permissions": ["shell"],
+            "secret_refs": ["secret://capability/high-risk"],
+            "tool_metadata": {
+                "name": "high_risk_packaged_tool",
+                "description": "High risk packaged tool",
+                "category": "package",
+                "source": "builtin",
+                "risk_level": "high",
+                "requires_sandbox": True,
+                "network_policy": "none",
+                "timeout_seconds": 10,
+                "allowed_roles": ["admin", "engineer"],
+                "audit_level": "elevated",
+                "idempotent": False,
+                "input_schema": {"type": "object"},
+            },
+        },
+        content={},
+        created_by="test",
+    )
+    registry.approve_package(package_id=package.id, approved_by="test")
+    registry.attach_package_capability(
+        package_id=package.id,
+        agent_id=task.agent_id,
+        attached_by="test",
+    )
+
+    execution = ToolRunner(
+        session=db_session,
+        agent_id=task.agent_id,
+        capability_registry=registry,
+    ).execute(
+        task_id=task.id,
+        tool_name="high_risk_packaged_tool",
+        input_json={"command": "whoami"},
+        roles=["admin"],
+    )
+
+    assert execution.allowed is False
+    assert execution.tool_call.status == "DENIED"
+    assert execution.tool_call.requires_sandbox is True
+    assert execution.tool_call.error_message == "sandbox is required for tool"
+    assert execution.tool_call.capability_version_id == package.capability_version_id
+
+
+def test_package_capability_identifiers_fit_postgresql_string_bounds(
+    db_session: Session,
+) -> None:
+    agent_id = "long-package-agent"
+    create_task(db_session, agent_id=agent_id, tools=[])
+    registry = CapabilityRegistry(db_session, "dev-org")
+    long_name = "extremely-long-capability-package-name-" + ("segment-" * 40)
+    package = registry.stage_private_package(
+        manifest={
+            "name": long_name,
+            "version": "1.0.0",
+            "description": "Package with a name longer than PostgreSQL key columns",
+            "package_type": "tool_definition",
+            "risk_level": "low",
+            "permissions": [],
+            "secret_refs": [],
+            "tool_metadata": {
+                "name": "long_packaged_tool",
+                "description": "Long packaged tool",
+                "category": "package",
+                "source": "builtin",
+                "risk_level": "low",
+                "requires_sandbox": False,
+                "network_policy": "none",
+                "timeout_seconds": 10,
+                "allowed_roles": ["admin", "engineer"],
+                "audit_level": "standard",
+                "idempotent": True,
+                "input_schema": {"type": "object"},
+            },
+        },
+        content={},
+        created_by="test",
+    )
+
+    registry.approve_package(package_id=package.id, approved_by="test")
+    capability = db_session.get(Capability, package.capability_id)
+    version = db_session.get(CapabilityVersion, package.capability_version_id)
+
+    assert len(package.package_key) <= 128
+    assert capability is not None
+    assert len(capability.capability_key) <= 128
+    assert version is not None
+    assert len(version.id) <= 64

@@ -1271,6 +1271,13 @@ def _aggregate_metrics(results: list[EvalResult]) -> dict:
         for trace in traces
         if bool(trace.get("fallback_expected")) != bool(trace.get("fallback_observed"))
     ]
+    low_cost_guard_failures = [
+        trace
+        for trace in traces
+        if trace.get("low_cost_route_used")
+        and trace.get("passed")
+        and not trace.get("low_cost_quality_guard_passed")
+    ]
     return {
         "task_success_rate": _avg(results, "task_success"),
         "tool_selection_accuracy": _avg(results, "tool_selection_accuracy"),
@@ -1310,6 +1317,8 @@ def _aggregate_metrics(results: list[EvalResult]) -> dict:
             / total,
             4,
         ),
+        "low_cost_route_guard_failure_rate": round(len(low_cost_guard_failures) / total, 4),
+        "low_cost_route_guard_failure_total": len(low_cost_guard_failures),
         "grounding_failure_total": len(grounding_failures),
     }
 

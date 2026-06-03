@@ -24,12 +24,10 @@ import {
   ListChecks,
   Paperclip,
   PlugZap,
-  RefreshCw,
-  Trash2,
+  Target,
 } from "lucide-react";
 
 import { useI18n } from "../../../lib/i18n";
-import { TermHint } from "../../../components/ui/term";
 import { cn } from "../../../lib/utils";
 import {
   useWorkspaceStore,
@@ -43,7 +41,6 @@ import {
 } from "../../tasks/api";
 import type { ChatStreamController } from "../hooks/useChatStream";
 import { useOutsideClick } from "../hooks/useOutsideClick";
-import { canResume as canResumeQuery } from "../lib/activePathQueries";
 import { copyText } from "../lib/clipboard";
 import { stripThinkBlocks } from "../lib/copyText";
 import {
@@ -68,9 +65,10 @@ import {
 } from "./ChatComposer";
 import { ChatMessageList, type ChatMessageListHandle } from "./ChatMessageList";
 import type { UsageSummary } from "./InspectorDrawer";
-import type { ModelOption } from "./ModelPicker";
+import { modelOptionDisplay, type ModelOption } from "./ModelPicker";
 import { PlanApprovalPanel } from "./PlanApprovalPanel";
 import { ContextRing } from "./ContextRing";
+import { ContextSummaryManager } from "./ContextSummaryManager";
 import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
@@ -107,6 +105,8 @@ export type ChatSurfaceProps = {
   onRequestModelPicker: () => void;
   /** Search jump target; `seq` increments even when the same node is selected twice. */
   jumpTarget?: { nodeId: string; seq: number } | null;
+  onCreateTeamFromConversation?: () => void;
+  isCreatingTeam?: boolean;
 };
 
 export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
@@ -130,6 +130,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     onClearConversation,
     onOpenSearch,
     onOpenShortcut,
+    onCreateTeamFromConversation,
+    isCreatingTeam = false,
   } = props;
 
   const { text } = useI18n();
@@ -233,7 +235,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const contextUsageRatio = contextMaxTokens > 0 ? contextUsageCurrent / contextMaxTokens : 0;
 
   const tail = activePath.length > 0 ? activePath[activePath.length - 1] : null;
-  const canResume = canResumeQuery(activePath);
   const placeholder = composerPlaceholder(workspaceMode, text);
 
   const planGate = useMemo(
@@ -462,10 +463,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     if (goal.length === 0) return;
     if (stream.isStreaming) return;
 
-    if (workspaceMode === "plan") {
+    if (workspaceMode === "plan" || workspaceMode === "goal") {
       const message = text(
-        "确认创建规划后执行运行？此操作会触发可执行运行。",
-        "Create a Plan-Act Run? This triggers an executable run.",
+        workspaceMode === "goal"
+          ? "确认进入追求目标模式并创建可执行运行？"
+          : "确认创建规划后执行运行？此操作会触发可执行运行。",
+        workspaceMode === "goal"
+          ? "Start Goal pursuit mode and create an executable Run?"
+          : "Create a Plan-Act Run? This triggers an executable run.",
       );
       if (!window.confirm(message)) return;
     }
@@ -516,12 +521,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const handlePause = useCallback((): void => {
     stream.pause();
   }, [stream]);
-
-  const handleResume = useCallback((): void => {
-    const target = findLastResumableNode(activePath);
-    if (!target || !target.run_id) return;
-    void stream.resume(target.id);
-  }, [activePath, stream]);
 
   const handleRetry = useCallback(
     (nodeId: string): void => {
@@ -773,13 +772,22 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           onWorkspaceModeChange("codex_plan");
           setDraft("");
           return;
-        case "codex":
-          onWorkspaceModeChange("codex_plan");
+        case "run":
+          onWorkspaceModeChange("plan");
           setDraft("");
           return;
         case "chat":
           onWorkspaceModeChange("chat");
           setDraft("");
+          return;
+        case "goal":
+          onWorkspaceModeChange("goal");
+          setDraft("");
+          return;
+        case "compress":
+          setBottomPanel(null);
+          setDraft("");
+          void compressCurrentContext("manual");
           return;
         case "pin": {
           if (tail !== null) togglePinned(tail.id);
@@ -828,6 +836,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       onOpenSearch,
       onOpenShortcut,
       onWorkspaceModeChange,
+      compressCurrentContext,
       setDraft,
       tail,
       togglePinned,
@@ -849,7 +858,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         onModelChange={onModelChange}
         onInsertToolMention={handleShellToolMention}
         onOpenInspector={onOpenInspector}
-        onStop={handlePause}
+        onCreateTeamFromConversation={onCreateTeamFromConversation}
+        isCreatingTeam={isCreatingTeam}
         summaryManager={
           <ContextSummaryManager
             summary={activeCompression}
@@ -900,6 +910,16 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               onClose={handleDiscardPlan}
             />
           )}
+          {activeCompression?.status === "pending" && (
+            <div
+              className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700 shadow-sm"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.16)]" />
+              <span>{text("正在压缩上下文...", "Compressing context...")}</span>
+            </div>
+          )}
           <div className="relative">
             <BottomToolsPopover
               open={bottomPanel !== null}
@@ -945,9 +965,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               onDraftChange={setDraft}
               onSubmit={handleSubmit}
               onPause={handlePause}
-              onResume={handleResume}
               isStreaming={stream.isStreaming}
-              canResume={canResume}
               mode={workspaceMode}
               onChangeMode={onWorkspaceModeChange}
               placeholder={placeholder}
@@ -956,6 +974,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                 setBottomPanel((current) => (current === "tools" ? null : "tools"))
               }
               optionsTriggerRef={optionsTriggerRef}
+              goalModeToggleVisible={false}
               metadata={<ComposerMetadataRow usage={metadataUsage} text={text} />}
               bottomCenter={
                 <div className="flex items-center gap-2">
@@ -1006,69 +1025,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 // ---------------------------------------------------------------------------
 // Bottom tools panel helpers
 // ---------------------------------------------------------------------------
-
-function ContextSummaryManager({
-  summary,
-  onRecompress,
-  onClear,
-  text,
-}: {
-  summary: ContextCompressionSummary | null;
-  onRecompress: () => void;
-  onClear: () => void;
-  text: (zh: string, en: string) => string;
-}): JSX.Element | null {
-  if (summary === null) return null;
-  const isPending = summary.status === "pending";
-  const label =
-    summary.status === "error"
-      ? text("摘要失败", "Summary failed")
-      : isPending
-        ? text("摘要中", "Summarizing")
-        : text(
-            `${summary.coverageNodeIds.length} 条已摘要`,
-            `${summary.coverageNodeIds.length} summarized`,
-          );
-  const preview = summary.error || summary.summary || text("正在生成摘要", "Creating summary");
-  return (
-    <div
-      className="group relative inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
-      aria-label={text("上下文摘要", "Context summary")}
-    >
-      <span className="max-w-[8rem] truncate">{label}</span>
-      <button
-        type="button"
-        onClick={onRecompress}
-        disabled={isPending}
-        aria-label={text("重新压缩上下文", "Recompress context")}
-        title={text("重新压缩上下文", "Recompress context")}
-        className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-50"
-      >
-        <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
-      </button>
-      <button
-        type="button"
-        onClick={onClear}
-        disabled={isPending}
-        aria-label={text("清除上下文摘要", "Clear context summary")}
-        title={text("清除上下文摘要", "Clear context summary")}
-        className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-slate-100 disabled:opacity-50"
-      >
-        <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-      </button>
-      <div className="pointer-events-none absolute right-0 top-full z-40 mt-1.5 hidden w-64 rounded-md border border-slate-200 bg-white p-2 text-left text-[11px] leading-4 text-slate-600 shadow-lg group-hover:block group-focus-within:block">
-        <div className="mb-1 font-medium text-slate-900">
-          {text("上下文摘要", "Context summary")}
-        </div>
-        <div className="line-clamp-5 whitespace-pre-wrap">{preview}</div>
-        <div className="mt-1 font-mono text-[10px] text-slate-500">
-          {formatTokenCount(summary.estimatedOriginalTokens)} →{" "}
-          {formatTokenCount(summary.estimatedSummaryTokens)}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function AutoCompressionRatioControl({
   value,
@@ -1147,7 +1103,7 @@ function BottomToolsPopover({
       aria-modal="false"
       aria-label={title}
       className={[
-        "absolute bottom-[58px] z-30 w-[min(220px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg",
+        "absolute bottom-[58px] z-30 w-[min(200px,calc(100vw-5rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg",
         align === "right" ? "right-4" : "left-4",
       ].join(" ")}
     >
@@ -1204,15 +1160,16 @@ function ComposerSettingsPanel({
         checked={workspaceMode === "codex_plan"}
         onChange={(checked) => onWorkspaceModeChange(checked ? "codex_plan" : "chat")}
       />
+      <ToolToggleRow
+        icon={<Target aria-hidden="true" className="h-3.5 w-3.5" />}
+        label={text("追踪目标模式", "Goal pursuit mode")}
+        checked={workspaceMode === "goal"}
+        onChange={(checked) => onWorkspaceModeChange(checked ? "goal" : "chat")}
+      />
       <ToolActionRow
         icon={<PlugZap aria-hidden="true" className="h-3.5 w-3.5" />}
         ariaLabel={text("插件 / MCP（模型上下文协议）", "Plugins / MCP")}
-        label={
-          <>
-            {text("插件 / ", "Plugins / ")}
-            <TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>
-          </>
-        }
+        label={text("插件 / MCP", "Plugins / MCP")}
         trailing={
           <ChevronRight
             aria-hidden="true"
@@ -1225,7 +1182,7 @@ function ComposerSettingsPanel({
         onClick={() => setPluginsOpen((open) => !open)}
       />
       {pluginsOpen && (
-        <div className="ml-5 mt-0.5 max-h-24 overflow-y-auto border-l border-slate-200 pl-1.5">
+        <div className="ml-4 mt-0.5 max-h-24 min-w-0 overflow-y-auto border-l border-slate-200 pl-1.5 pr-0.5">
           {mcpTools.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-slate-500">
               {text("暂无外部协议功能。", "No MCP capabilities")}
@@ -1236,7 +1193,7 @@ function ComposerSettingsPanel({
                 key={`${tool.source ?? "tool"}:${tool.name}`}
                 type="button"
                 onClick={() => onInsertMention(tool.name)}
-                className="block w-full rounded-md px-1.5 py-1 text-left text-[11px] text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                className="block min-w-0 w-full rounded-md px-1.5 py-1 text-left text-[11px] text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               >
                 <span className="block truncate font-mono">@{tool.name}</span>
                 <span className="block truncate text-[11px] text-slate-500">
@@ -1332,7 +1289,7 @@ function BottomModelPanel({
             onMouseEnter={() => setActiveIndex(index)}
             aria-pressed={selected}
             className={[
-              "flex items-start gap-3 rounded-xl px-3 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+              "flex items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
               selected || active
                 ? "bg-slate-900 font-medium text-white"
                 : "text-slate-700 hover:bg-slate-50",
@@ -1340,30 +1297,41 @@ function BottomModelPanel({
           >
             <span
               className={cn(
-                "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
                 selected || active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600",
               )}
             >
               <Brain className="h-4 w-4" />
             </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold">{option.modelLabel}</span>
-              <span className={cn("block truncate text-[11px] leading-4", selected || active ? "text-slate-300" : "text-slate-500")}>
-                {option.providerLabel}
-              </span>
-            </span>
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-2 py-0.5 text-[11px]",
-                selected || active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500",
-              )}
-            >
-              {selected ? text("当前", "Current") : option.providerLabel}
-            </span>
+            <ModelOptionText option={option} active={selected || active} />
           </button>
         );
       })}
     </div>
+  );
+}
+
+function ModelOptionText({
+  option,
+  active,
+}: {
+  option: ModelOption;
+  active: boolean;
+}): JSX.Element {
+  const display = modelOptionDisplay(option);
+
+  return (
+    <span className="min-w-0 flex-1">
+      <span className="block truncate text-sm font-semibold">{display.title}</span>
+      <span
+        className={cn(
+          "block truncate text-[11px] leading-4",
+          active ? "text-slate-300" : "text-slate-500",
+        )}
+      >
+        {display.subtitle}
+      </span>
+    </span>
   );
 }
 
@@ -1398,11 +1366,17 @@ function ToolActionRow({
       type="button"
       aria-label={ariaLabel}
       onClick={onClick}
-      className="flex min-h-7 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      className="flex min-h-7 w-full items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
     >
-      <span className="text-slate-500">{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing}
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-slate-500">
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1 truncate leading-4">{label}</span>
+      {trailing ? (
+        <span className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center text-slate-400">
+          {trailing}
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -1594,27 +1568,17 @@ function composerPlaceholder(
         "描述目标，创建规划后执行运行",
         "Describe a goal; creates a Plan-Act Run",
       );
+    case "goal":
+      return text(
+        "描述目标，持续规划并推进执行",
+        "Describe a goal; plan and pursue execution",
+      );
     default: {
       const exhaustive: never = mode;
       void exhaustive;
       return "";
     }
   }
-}
-
-function findLastResumableNode(activePath: ConversationNode[]): ConversationNode | null {
-  for (let i = activePath.length - 1; i >= 0; i -= 1) {
-    const node = activePath[i];
-    if (
-      node.role === "assistant" &&
-      node.state === "paused" &&
-      typeof node.run_id === "string" &&
-      node.run_id.length > 0
-    ) {
-      return node;
-    }
-  }
-  return null;
 }
 
 function buildActivePath(
