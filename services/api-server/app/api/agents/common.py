@@ -47,6 +47,8 @@ from app.api.schemas import (
     AgentCloneRequest,
     AgentCreateRequest,
     AgentHandoffResponse,
+    AgentLocalToolEventRequest,
+    AgentLocalToolEventResponse,
     AgentMemoryActionRequest,
     AgentMemoryCreateRequest,
     AgentMemoryPage,

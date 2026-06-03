@@ -11,6 +11,8 @@ The same branch also has a follow-up console UI hardening commit through `a5d046
 
 P7 keeps the private handoff release gate current while preserving P1-P6 evidence boundaries. It adds deterministic local demo seed data through public Knowledge APIs, a service-level Knowledge/RAG migration/restore smoke, and mocked release browser coverage across Agent Studio, Workspace, Run Detail, Eval, and Observability.
 
+2026-05-31 follow-up: the Dashboard Demo load state mismatch is fixed. When `一键加载 Demo` succeeds or returns `already_loaded`, the yellow `Demo 数据未加载` banner now disappears immediately, and `/api/onboarding/state` reconciles the current user's `demo_loaded` / `demo_task_id` from existing organization-level Demo artifacts so refreshes stay consistent. This specifically fixes the dev-token split where Dashboard read the engineer onboarding state while the Demo load call used the dev-admin token.
+
 ## Delivered
 
 - Added `scripts/seed-knowledge-demo.py`:

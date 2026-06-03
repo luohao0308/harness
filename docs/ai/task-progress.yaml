@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-29T17:44:34Z
+last_updated_at: 2026-06-02T04:12:55Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,558 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: hao-agent-cli-v4.3-local Agent CLI-footer-compact-ring
+    date: 2026-06-02
+    status: verified
+    demo: hao TUI now shows a local Agent CLI-style footer with model strength, compact ring, output style, approval count, and command count, while `/compress` aliases the existing `/compact` local context summarization flow.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/main.py app/cli/hao/tui.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli_v2.py -q -k "welcome_card or compact or terminal or status_snapshot"
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_observability_tracing.py -q
+      - cd services/api-server && .venv/bin/ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && printf '/quit\n' | HAO_HOME=<tmp> .venv/bin/hao --cwd /Users/luohao/Desktop/unimportant_files
+      - cd services/api-server && printf '/help compress\n/quit\n' | HAO_HOME=<tmp> .venv/bin/hao --cwd /Users/luohao/Desktop/unimportant_files
+      - python3 scripts/check-help-content.py
+      - python3 scripts/validate-docs.py
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/
+      - curl --noproxy '*' -sS http://127.0.0.1:5173/help/getting-started/hao-cli.md | rg -n "模型强度|compact 圆环|/compress|/compact"
+      - git diff --check
+    acceptance_notes:
+      - The startup welcome card now surfaces the selected model as `provider / model · strength ...` instead of the previous generic billing line.
+      - The terminal footer now prints `provider/model · strength ...` plus compact ring, compact percentage/message count, output style, approval count, and command count in the current shell stream.
+      - Model strength is a local display label derived from the selected provider/model name; it does not change backend routing or invent pricing data.
+      - `/compress [instructions]` is now a local Agent CLI-style alias for `/compact [instructions]`; both use the existing deterministic local active-path summary and keep the latest six messages in the next payload.
+      - `/usage`, `/config`, `/status`, `/release-notes`, `docs/cli/hao.md`, Help Center page `安装并使用 hao CLI`, and `DESIGN.md` document the model-strength and compact-ring surface.
+      - Restarted the local API server at `http://127.0.0.1:8000` and the Agent Console Vite dev server at `http://127.0.0.1:5173`; `/health`, root, and Help markdown checks passed.
+  - id: hao-agent-cli-v4.2-terminal-input-startup-commands
+    date: 2026-06-02
+    status: verified
+    demo: hao TUI v4.2 now reads real terminal input through a safe byte path, avoids duplicate user echo in interactive terminals, exposes the startup-card `/init` and `/release-notes` commands, validates its synthetic context messages against the backend stream schema, and formats 401/403 stream failures as hao auth/permission hints.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/main.py app/cli/hao/tui.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli_v2.py -q -k "v42"
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_observability_tracing.py -q -k "traced_operation"
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && .venv/bin/ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && printf '<utf8-nihao>\n/quit\n' | HAO_HOME=<tmp> .venv/bin/hao --cwd /Users/luohao/Desktop/unimportant_files
+      - cd services/api-server && HAO_HOME=<tmp> .venv/bin/hao --cwd /Users/luohao/Desktop/unimportant_files --api-url http://127.0.0.1:8000 --token dev-engineer-token
+      - npm install -g /Users/luohao/Desktop/agent_workspace/harness/services/api-server
+      - cd /Users/luohao/Desktop/unimportant_files && printf '你好\n/quit\n' | hao
+      - python3 scripts/check-help-content.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Replaced `Console.input()` in the Rich terminal loop with byte-based stdin reading and UTF-8 `errors="replace"` decoding, preventing terminal-boundary `UnicodeDecodeError` crashes on Chinese input.
+      - Removed the extra user transcript print from the terminal loop, so real TTY input relies on the terminal's own echo and no longer appears twice before the assistant response.
+      - Non-TTY smoke input now terminates the prompt line before output, keeping scripted startup evidence readable.
+      - Added `/init` to create `HAO.md` in the current workspace without overwriting an existing file, and `/release-notes` / `/whats-new` to show hao v4/v4.1/v4.2 changes.
+      - The welcome card's `/init` and `/release-notes` tips now point at real slash commands covered by regression tests.
+      - The synthetic local context and compact context nodes now carry full backend-compatible conversation node fields, so the stream request parses cleanly as `AgentChatStreamRequest` instead of failing validation.
+      - 401 and 403 stream failures now render concise hao login/permission hints instead of raw httpx exception text with MDN links.
+      - The observability tracing cleanup path now tolerates context hops during stream teardown, preventing the final model call from surfacing a `stream error` after the assistant response already streamed.
+      - Updated `docs/cli/hao.md`, Help Center page `安装并使用 hao CLI`, and `DESIGN.md` for the terminal input, startup command, and auth-error output contract.
+      - Full hao CLI regression is now 127 passed, and the focused tracing regression passes.
+  - id: hao-agent-cli-v4.2-local Agent CLI-code-page
+    date: 2026-06-02
+    status: verified
+    demo: hao TUI now uses a local Agent CLI-like inline terminal page with a copied two-column welcome card, bottom `›` composer, hidden on-demand workbench drawer, inline tool/approval status, and proxy-safe localhost API calls.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/tui.py app/cli/hao/api_client.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && .venv/bin/ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && HAO_HOME=<tmp> .venv/bin/python <Textual run_test smoke>
+      - cd services/api-server && printf '/quit\n' | HAO_HOME=<tmp> .venv/bin/hao --cwd /Users/luohao/Desktop/unimportant_files
+      - python3 scripts/check-help-content.py
+      - python3 scripts/validate-docs.py
+      - cd apps/agent-console && npm run dev -- --host 127.0.0.1
+      - cd services/api-server && AUTH_JWT_SECRET=<local-dev-64-hex> .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/
+      - curl --noproxy '*' -sS http://127.0.0.1:5173/help/getting-started/hao-cli.md
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - git diff --check
+    acceptance_notes:
+      - Removed the default Textual Header/Footer, right-side split pane, and full-screen alternate-screen entry from `hao`; startup now runs through a Rich terminal loop inside the current shell.
+      - A real `/quit` startup smoke now prints the terminal-style welcome card in normal terminal output without entering the Textual editor-like screen.
+      - Reworked the startup card to copy local Agent CLI's two-column structure: `hao Code` title border, left `Welcome back!` area with icon/model/cwd, and right Tips / What's new copy.
+      - Workbench views stay hidden by default and open as a bottom drawer only through `/tools`, `/diff`, `/files`, `/approvals`, `/outputs`, `/tasks`, `/bashes`, or `/view ...`; `/clear` hides the drawer.
+      - Tool, diff, and approval events remain visible as inline transcript status when the drawer is closed, while existing `SLASH_COMMANDS`, host/sandbox routing, approval freeze, and audit fail-closed behavior remain unchanged.
+      - `HarnessApiClient` now creates httpx clients with `trust_env=False`, preventing global proxy variables from breaking local Harness API calls with missing SOCKS support.
+      - Updated `docs/cli/hao.md`, Help Center page `安装并使用 hao CLI`, and `DESIGN.md` for the v4.2 page contract.
+      - Restarted the Agent Console Vite dev server at `http://127.0.0.1:5173/` and local API server at `http://127.0.0.1:8000`; root, Help markdown, and `/health` returned expected responses.
+  - id: hao-agent-cli-v4-local Agent CLI-code-alignment-followup
+    date: 2026-06-02
+    status: verified
+    demo: hao TUI v4.1 adds more local Agent CLI-style command aliases, local context compaction, output-style hints, config/cost/task cards, and command output cards.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/tui.py
+      - cd services/api-server && .venv/bin/ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && .venv/bin/hao --help
+      - python3 scripts/check-help-content.py
+      - python3 scripts/validate-docs.py
+      - cd apps/agent-console && npm run dev -- --host 127.0.0.1
+      - cd services/api-server && AUTH_JWT_SECRET=<local-dev-64-hex> .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS http://127.0.0.1:5173/help/getting-started/hao-cli.md
+      - git diff --check
+    acceptance_notes:
+      - Added local Agent CLI-style aliases and commands: `/compact`, `/config` / `/settings`, `/cost` / `/stats`, `/allowed-tools`, `/output-style`, `/tasks` / `/bashes`, and `/todos`.
+      - `/compact [instructions]` now replaces older active-path messages in the next stream payload with a deterministic local system summary while keeping the latest six messages visible.
+      - `/output-style default|concise|explanatory|review` injects a response-style hint into the local context card sent with model turns.
+      - Status/config/usage surfaces now expose output style and compact state, and command output summaries render as terminal-like cards with status, exit code, command, stdout, and stderr.
+      - Updated `docs/cli/hao.md`, `apps/agent-console/public/help/getting-started/hao-cli.md`, and `DESIGN.md` for the v4.1 command/output surface and verified the full hao CLI regression at `121 passed`.
+      - Restarted the Agent Console Vite dev server at `http://127.0.0.1:5173/`; root returned HTTP 200 and the public Help markdown served the new slash-command documentation.
+      - Started the local API server at `http://127.0.0.1:8000` with a temporary in-process `AUTH_JWT_SECRET`; `/health` returned `{"status":"ok","service":"api-server"}`.
+  - id: hao-agent-cli-v4-local Agent CLI-code-surface
+    date: 2026-06-02
+    status: verified
+    demo: hao TUI now exposes a local Agent CLI-style slash command menu, aliases, model/permissions/context/usage/resume controls, and transcript polish.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run python -m py_compile app/cli/hao/tui.py
+      - cd services/api-server && uv run ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run hao --help
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - TUI input now shows a live slash-command hint menu with filtered results and a shared command catalog for `/help` and `/commands`.
+      - Added local Agent CLI-style aliases and controls: `/permissions` for `/mode`, direct workbench view commands, `/model`, `/context`, `/usage`, and in-place `/resume <session_id>`.
+      - Transcript rendering now uses compact `>` / `hao` role labels while preserving raw model-visible tool messages, backend audit, and approval safety semantics.
+      - Updated `docs/cli/hao.md` to document the v4 command surface and verified the full hao CLI regression at `120 passed`.
+  - id: hao-agent-cli-v2-step-1a-session-tree
+    date: 2026-05-31
+    status: verified
+    demo: hao v2 Step 1A persists local session trees and resumes only the active path.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_hao_cli_v2.py tests/test_hao_cli.py -q
+      - cd services/api-server && uv run ruff check app/cli/hao tests/test_hao_cli_v2.py tests/test_hao_cli.py
+      - cd services/api-server && uv run hao --help
+      - cd services/api-server && HAO_HOME=/tmp/hao-test-home uv run hao doctor
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - `SessionStore` now persists `sessions.active_leaf_id` plus message `parent_id`, `branch_id`, `source_message_id`, and `tool_event_id`.
+      - `append_message()` appends under the current active leaf by default and supports explicit-parent sibling branches for historical resend/edit flows.
+      - `list_messages()` returns real parent/children edges and `list_active_path()` reconstructs the current branch from the active leaf.
+      - `hao resume` now loads the active path instead of the whole session tree, avoiding sibling-branch context bleed.
+      - Existing v1 `~/.hao/hao.db` files receive additive SQLite columns with linear-history backfill.
+  - id: hao-agent-cli-v2-step-1b-workflow-router
+    date: 2026-06-01
+    status: verified
+    demo: hao v2 Step 1B preserves chat/plan/act workflow metadata across stream payloads, local messages, local tool audit, and pending-tool approvals.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run ruff check app/cli/hao app/api/agents/agent_cli.py app/api/schemas.py tests/test_hao_cli_v2.py tests/test_hao_cli.py
+    acceptance_notes:
+      - `/chat` and `/act` now send backend `mode=cli_agent`, while `/plan` sends `mode=markdown_plan`.
+      - Stream payloads, local user/assistant/tool message metadata, and local-tool audit payloads now carry `interaction_mode`; `/act` also carries explicit `act_intent`.
+      - Backend local-tool-events persist workflow metadata to `ToolCall.capability_snapshot_json` and matching `AgentEvent.payload_json`.
+      - Pending local tools freeze workflow metadata, target, and permission mode at request time, so approving after switching `/chat`, `/target`, or `/mode` cannot mislabel or reroute the tool.
+      - Step 1B received two independent subagent review approvals after the pending approval and host/sandbox routing regressions were added.
+  - id: hao-agent-cli-v2-step-2-command-lifecycle
+    date: 2026-06-01
+    status: verified
+    demo: hao v2 Step 2 persists shell/test/git command lifecycle records with streaming output, cancellation, retry, and tool-event linkage.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run python -m py_compile app/cli/hao/local_tools.py app/cli/hao/session_store.py app/cli/hao/tui.py
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+    acceptance_notes:
+      - `SessionStore` command lifecycle APIs now reject duplicate terminal transitions and late output after terminal status.
+      - `execute_local_command_tool()` records pending -> running -> success/failed/timeout/cancelled with stdout/stderr JSONL events and truncation flags.
+      - Command output events are byte-capped with explicit `output_truncated` markers, startup failures become failed command records, and retry is restricted to terminal commands.
+      - `run_shell`, `run_tests`, and `git` execution returns `command_id`, `command_status`, timestamps, exit code, stdout/stderr, timeout/cancel errors, and status-mapped tool results.
+      - `retry_command()` preserves the original command row and creates a new pending command linked by `retry_of_id`.
+      - TUI host command execution now uses lifecycle storage, exposes `/cancel <command_id>` and `/retry <command_id>`, shows command counts/view, and links command rows to local `tool_events`.
+  - id: hao-agent-cli-v2-step-3-diff-first-approval
+    date: 2026-06-01
+    status: verified
+    demo: hao v2 Step 3 turns host file writes and patches into diff-first pending changes with hash-guarded approve/reject.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - `SessionStore` now persists pending changes in SQLite plus `pending-changes/<change_id>.json` snapshots, with target paths, before/after hashes, diff, proposed content or patch, frozen metadata, and pending/committed/rejected/stale/failed status.
+      - Host `write_file` and `apply_patch` requests now create diff-first pending changes instead of mutating the workspace directly when session context is available.
+      - `commit_write_file` and `commit_apply_patch` accept only `change_id`, verify session/tool/status and `before_hashes`, mark stale on external edits, and leave stale files untouched.
+      - `/approve <id>` supports both `tool-` pending tools and `change-` pending changes; pending tool ids are normalized with a `tool-` prefix to avoid change-id collisions.
+      - `/reject <change_id>` marks the pending change rejected, records a local `DENIED` tool event, and leaves the workspace unchanged.
+      - Pending changes freeze workflow, target, permission mode, and risk metadata so later TUI state changes cannot relabel or reroute approval results.
+      - `PermissionEngine` now treats preview tools as non-mutating allowed operations and commit tools as write approvals under the selected mode.
+      - Step 3 received two independent subagent review approvals after fixing the permission coverage and pending-tool bypass test gaps.
+  - id: hao-agent-cli-v2-step-4-tui-workbench
+    date: 2026-06-01
+    status: verified
+    demo: hao v2 Step 4 upgrades the TUI workbench with workflow views, active-branch status, command/output panels, command-handler coverage, and audit fail-closed behavior.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run ruff check app/cli/hao tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - TUI status snapshots now expose workflow/view, active leaf and branch, pending tool/change approvals, command counts, model, target, permission mode, run, session, and cwd.
+      - Right-side workbench views now include `tools`, `diff`, `files`, `approvals`, `commands`, `plan`, and `outputs`, with slash command coverage for view switching.
+      - `/chat`, `/plan`, `/act`, `/continue`, `/branch`, `/retry`, `/approve`, `/reject`, and `/sessions` are covered at the command-handler layer, including active-path continuation and branch switching.
+      - Plan view only collects assistant messages from `interaction_mode=plan`; outputs view summarizes persisted `tool_events`, command rows, and output artifacts.
+      - Sandbox target coverage now proves `run_shell`, `write_file`, and `apply_patch` do not call the local runner or create local pending changes.
+      - Host local-tool audit failure now records a local `AUDIT_FAILED` event, does not create a tool message, and cannot auto-continue the agent loop.
+      - Step 4 received two independent subagent review approvals after fixing audit fail-closed behavior and command/sandbox coverage gaps.
+  - id: hao-agent-cli-v2-step-5-backend-protocol-audit
+    date: 2026-06-01
+    status: verified
+    demo: hao v2 Step 5 closes out backend protocol and audit evidence for cli_agent host tools, markdown_plan planning, workflow metadata, and local audit fail-closed behavior.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run pytest -q
+      - cd services/api-server && uv run ruff check app/cli/hao app/api/agents/agent_cli.py app/api/schemas.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - `AgentChatStreamRequest` and `AgentLocalToolEventRequest` carry `interaction_mode` and optional `act_intent` for chat, plan, and act workflow attribution.
+      - Backend local-tool audit persists workflow metadata to `ToolCall.capability_snapshot_json` and matching `AgentEvent.payload_json` for called, denied, result, failed, and timeout outcomes.
+      - `markdown_plan` streams remain plan-only from the CLI perspective; even if a tool request appears in a plan stream, host and sandbox local execution are suppressed.
+      - Host local-tool results are written back as `tool` messages only after backend audit succeeds; audit failure records local `AUDIT_FAILED` evidence and does not continue the agent loop.
+      - Existing Workspace context assembly keeps `tool` role messages visible to the next stream instead of converting them into system text.
+      - Full backend regression passes with `637 passed, 2 warnings`.
+      - Step 5 received two independent subagent review approvals; both concluded the remaining work was progress/wiki writeback plus final validation.
+  - id: hao-agent-cli-v3-Harness Agent-alignment-step-4
+    date: 2026-06-01
+    status: verified
+    demo: hao CLI v3 Harness Agent-alignment Step 4 completes approval/workbench polish with headless and TUI safety hardening.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run ruff check app/cli/hao/main.py app/cli/hao/tui.py tests/test_hao_cli_v2.py
+      - cd services/api-server && uv run pytest tests/test_hao_cli_v2.py -q -k 'v3'
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - python3 scripts/validate-docs.py
+    acceptance_notes:
+      - TUI auto-continuation now stops when either pending tools or pending changes exist, and the current stream stops as soon as a new approval is created.
+      - TUI audit failure now records a local `AUDIT_FAILED` event, suppresses model-visible tool messages, marks write preview pending changes failed, and stops the current stream before later tool requests execute.
+      - TUI and headless full-auto/approval commit paths apply already-audited pending changes locally without a second backend audit after workspace mutation.
+      - The approvals view lists both pending tools and pending changes, and headless local context reports pending change approvals.
+      - Two independent subagents approved the final Step 4 implementation after reviewing the safety and test coverage fixes.
+  - id: hao-agent-cli-npm-package
+    date: 2026-06-01
+    status: verified
+    demo: hao can be installed as the npm package `@harness/hao`, exposing a global `hao` command that launches the existing Python CLI through `uv`.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && npm test
+      - cd services/api-server && node --check bin/hao.cjs
+      - cd services/api-server && node bin/hao.cjs --help
+      - cd services/api-server && node bin/hao.cjs --version
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -k 'version or login or logout or config'
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q
+      - cd services/api-server && uv run ruff check app/cli/hao/main.py app/cli/hao/config.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && HAO_HOME=<tmp> uv run hao -v plus uv run hao version plus hao login/status/logout smoke
+      - npm uninstall -g hao then npm install -g /Users/luohao/Desktop/agent_workspace/harness/services/api-server
+      - command -v hao plus realpath verification plus npm ls -g --depth=0 @harness/hao
+      - hao -v plus hao -V plus hao version plus HAO_HOME=<tmp> hao login/status/logout smoke
+      - HAO_HOME=<tmp> hao bare start smoke stays running before controlled kill
+      - cd services/api-server && HAO_PYTHON_PROJECT=/tmp/hao-definitely-missing-project node bin/hao.cjs --help exits 1
+      - cd services/api-server && npm pack --json --dry-run
+      - cd services/api-server && npm pack plus npm install -g --prefix <tmp> ./harness-hao-0.1.0.tgz plus <tmp>/bin/hao --help
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `services/api-server/package.json` for npm package `@harness/hao` with bin `hao -> bin/hao.cjs`.
+      - Added a dependency-free Node launcher that forwards all arguments to `uv run --project <package-root> hao ...`, preserves the caller cwd, supports `HAO_UV_BIN` and `HAO_PYTHON_PROJECT`, and exits non-zero with actionable errors when `uv` or the Python project is missing.
+      - `hao --version` now prints the Python package version from the shared CLI entrypoint, so the npm wrapper and the repo-installed CLI report the same version string.
+      - `hao -v`, `hao -V`, `hao --version`, and `hao version` now report the same shared CLI version string.
+      - `hao login`, `hao status`, and `hao logout` now provide top-level auth ergonomics; logout clears only the persisted token, keeps the persisted API URL, preserves environment override behavior, and does not remove local session data.
+      - Bare `hao` now starts the installed TUI entrypoint from the global package instead of running the old same-name package no-op path.
+      - The local global `hao@0.2.9` package conflict was removed and the global bin now resolves to `@harness/hao` under `services/api-server/bin/hao.cjs`.
+      - README and `docs/cli/hao.md` document the recovery path for the old same-name npm package that shows `install / uninstall / list / version`.
+      - `chat`, `plan`, and `act` accept shared run flags after the subcommand, so documented forms such as `hao plan --cwd /path "goal"` parse correctly.
+      - The npm package file list is restricted to `package.json`, the launcher, README, `pyproject.toml`, `uv.lock`, minimal `app` package markers, and `app/cli/hao` Python source files; Python `__pycache__` files are not packed.
+      - Added Node launcher tests for argument forwarding, caller cwd/env preservation, child exit-code propagation, missing-project entrypoint failure, and `uv` spawn-failure reporting while keeping the existing Python `uv run hao` development path intact.
+      - A real npm tarball installed into a temporary global prefix and executed `<tmp>/bin/hao --help`, creating an isolated `uv` environment under the installed package and printing the expected hao CLI help.
+  - id: hao-agent-cli-help-tutorial
+    date: 2026-06-01
+    status: verified
+    demo: In-app Help Center now includes a Chinese-first hao CLI tutorial covering install, version, login, TUI launch, and old-package recovery.
+    verification_result: passed
+    verification_commands:
+      - python3 scripts/check-help-content.py
+      - python3 scripts/validate-docs.py
+      - cd apps/agent-console && npm test -- HelpCenter.test.tsx --run
+      - git diff --check
+    acceptance_notes:
+      - Added `apps/agent-console/public/help/getting-started/hao-cli.md` and registered it in `apps/agent-console/public/help/index.json` under `快速开始`.
+      - The tutorial explains local repo install, published `@harness/hao` install, `hao -v` / `hao -V` / `hao --version` / `hao version`, `hao login` / `hao status` / `hao logout`, bare `hao` TUI launch, and the old same-name npm package conflict.
+      - The article keeps `uv` in the runtime prerequisite path and reserves `EEXIST` for npm install-time file conflicts.
+      - Validation passed help-content checks, docs validation, HelpCenter unit tests, and diff whitespace checks.
+  - id: hao-agent-cli-v1
+    date: 2026-05-31
+    status: verified
+    demo: hao is a Python CLI for local agent execution, session recovery, and backend audit on the Harness workspace path.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_hao_cli.py -q
+      - cd services/api-server && uv run pytest
+      - cd services/api-server && uv run ruff check app/cli/hao app/api/agents/agent_cli.py tests/test_hao_cli.py app/api/agents/agent_chat/streaming.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/agents/model_gateway.py
+      - cd services/api-server && uv run hao --help
+      - cd services/api-server && HAO_HOME=/tmp/hao-test-home uv run hao doctor
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added the `hao` console script in `services/api-server/pyproject.toml` and the `app/cli/hao` package for host and sandbox agent execution.
+      - Host target execution stays inside the CLI process; the backend receives only audit evidence through the local-tool-events endpoint and existing ToolCall and AgentEvent rows.
+      - Permission modes cover confirm, auto-edit, and full-auto, with hard blocks for dangerous shell commands and workspace escape attempts.
+      - Local sessions now persist message, tool, stream, diff, and command output artifacts under `~/.hao` and `hao resume` restores the most recent local session when no session id is supplied.
+      - `cli_agent` stream mode emits local tool requests as `pending_local` so the CLI can execute or reject them before sending audit evidence back to the backend.
+      - Full backend regression passes with `569 passed, 2 warnings`; `test_hao_cli.py` now covers 8 focused CLI/backend cases.
+      - Placeholder model API keys `""` and `"replace-me"` continue to use the local mock gateway, preserving no-credential smoke and regression behavior.
+      - Added `docs/cli/hao.md` for install, auth, modes, targets, session recovery, and backend audit flow.
+  - id: model-settings-key-gated-switch-dialog
+    date: 2026-05-31
+    status: verified
+    demo: Model Settings no longer lets users switch to preset providers without a configured API key; unconfigured presets open a configuration dialog, and custom model creation is launched from the bottom-right quick action instead of living inline on the page.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/model-pricing.enterprise.spec.ts
+      - Live Playwright smoke on http://127.0.0.1:5177/settings/models confirming no inline custom form, unconfigured preset config dialog, bottom-right custom-model dialog, and no document overflow
+      - git diff --check
+    acceptance_notes:
+      - Built-in presets with empty or placeholder `api_key` values now render `需配置密钥` / `未配置` and open the shared `ConfigDialog` through `配置并启用` instead of directly becoming the default provider.
+      - The same key gate applies when the current default provider itself lacks a usable API key: it remains clickable as `配置并启用` and opens the configuration dialog instead of showing a dead `已启用` state.
+      - Built-in presets with a real stored API key still render the direct `切换` action and can be set as the default provider.
+      - The provider table's default action follows the same key gate: providers without keys open the configuration dialog before enabling.
+      - Custom model fields are no longer rendered inline on `/settings/models`; the `/settings/models` quick action menu exposes `添加自定义模型`, opens the same configuration dialog, and saves the custom provider from there.
+      - Browser smoke with an active default provider missing `api_key` confirmed both preset and custom dialogs open on the live dev page, the old inline custom form is absent, and the page has no horizontal document overflow; three known stale resource 404 console messages were ignored after interaction assertions passed.
+
+  - id: model-settings-pricing-fallback-usable
+    date: 2026-05-31
+    status: verified
+    demo: Model Settings remains usable when the pricing-source API returns 404 by falling back to the bundled official pricing JSON and rendering the built-in pricing table instead of the unavailable warning.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/model-pricing.enterprise.spec.ts
+      - Live Playwright smoke on http://127.0.0.1:5177/settings/models with /api/settings/models/pricing-sources returning 404 and /model_pricing_sources.json returning 200
+      - git diff --check
+    acceptance_notes:
+      - `getModelPricingSources()` now retries with bundled `/model_pricing_sources.json` only when the API returns 404, so real backend failures still surface.
+      - The bundled JSON is copied from the backend official-source dataset and keeps the pricing table usable even when a stale local backend has not mounted the new route.
+      - Browser smoke on the live dev server confirmed the pricing API returned 404, the bundled JSON returned 200, the table rendered DeepSeek Flash / OpenAI GPT-5.5 / Kimi K2.6 / Z.AI GLM-5.1 rows, and there was no unavailable warning or document overflow.
+  - id: model-settings-layout-polish
+    date: 2026-05-31
+    status: verified
+    demo: Model Settings uses a compact model-gateway summary, responsive switch/custom configuration cards, horizontally-contained observability tables, and a localized pricing-source unavailable state instead of exposing raw 404 text.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npx playwright test --project=chromium e2e/model-pricing.enterprise.spec.ts
+      - Playwright Chromium screenshot check on /settings/models at 1440x1200 success state and 390x844 pricing-source-404 state
+      - python3 scripts/validate-docs.py
+    acceptance_notes:
+      - Reworked `/settings/models` so the top card separates current default model/provider identity from six operational metrics, avoiding sparse metric-grid whitespace.
+      - Model switch and custom provider cards now stack or split responsively, with preset URLs truncated inside stable rows and bottom padding to avoid the quick-action floating button.
+      - Built-in pricing sources now render a Chinese `成本来源暂不可用` warning when the pricing endpoint returns 404, while preserving model switching and custom-provider saves.
+      - Fallback and provider observability tables are contained in horizontal table shells with explicit action headers, preventing document-level overflow.
+      - Browser screenshot checks showed no document-level horizontal overflow and no raw `404: Not Found` text in the mobile pricing-source error state.
+
+  - id: dashboard-demo-load-state-sync
+    date: 2026-05-31
+    status: verified
+    demo: Dashboard hides the yellow `Demo 数据未加载` banner immediately after `一键加载 Demo` succeeds or reports `already_loaded`, and refreshed onboarding state reflects existing org-level demo data for the current user.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_demo_load.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_onboarding.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/onboarding.py app/demo/seed_data.py tests/test_demo_load.py
+      - cd apps/agent-console && npm test -- DashboardPage.test.tsx --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+    acceptance_notes:
+      - Fixed the screenshot state mismatch where `/api/demo/load` returned `Demo 数据已存在` while Dashboard still rendered `Demo 数据未加载`.
+      - Dashboard now optimistically updates the current `["onboarding", "state"]` query cache from the successful Demo load response before invalidating agents, runs, and onboarding queries.
+      - Backend Demo loading now treats existing organization-level demo artifacts as authoritative, marks the current user's onboarding state loaded, and avoids reseeding duplicate Demo rows when another user or dev-admin token already loaded the org demo.
+      - `/api/onboarding/state` now reconciles the current user's `demo_loaded` / `demo_task_id` from existing org Demo artifacts, so a page refresh no longer reverts the banner to unloaded.
+      - Demo reset clears `demo_loaded` and `demo_task_id` for all onboarding states in the organization.
+
+  - id: full-console-interaction-audit
+    date: 2026-05-31
+    status: verified
+    demo: Playwright Chromium clicked the Agent Console shell controls plus every visible page-level control across all static and sampled dynamic console routes, including nested dialogs and popovers, with no observed functional breakage.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npx playwright test --project=chromium e2e/full-console-interactions.audit.spec.ts --list
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/full-console-interactions.audit.spec.ts -g "shell"
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/full-console-interactions.audit.spec.ts -g "shell|/tools$|/observability$|/evals$|/teams/team-enterprise$"
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/full-console-interactions.audit.spec.ts
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+    acceptance_notes:
+      - Added `apps/agent-console/e2e/full-console-interactions.audit.spec.ts` as a full interaction audit with 38 Chromium tests: one shell/global control audit plus 37 static and dynamic route page-control audits.
+      - The audit re-finds controls by stable visible signatures, clicks visible buttons/links/menu items/tabs/switches/inputs/select-like controls and nested dialog/popover controls, then asserts no route error, blank body, document overflow, console error, page error, request failure, or unhandled fixture API 404.
+      - Expanded `apps/agent-console/e2e/fixtures/enterpriseHarness.ts` so Tool Registry dialogs, MCP discovery, adapter health/schema payloads, Team context compression, and Eval created-dataset routes are covered by deterministic browser fixtures.
+      - Full run passed `38 passed (24.5m)` under Playwright Chromium; targeted shell and slow-route checks also passed, including `/teams/team-enterprise` after the page-audit timeout was raised to 180s.
+      - The audit intentionally skips raw operational hrefs such as `/metrics` and `/api/*` when they would navigate out of the Agent Console UI, while still validating the Observability page controls around those links.
+      - ChromeDevTools MCP tooling was not exposed in this runtime, so validation used the repository Playwright Chromium browser automation path instead of MCP-backed ChromeDevTools commands.
+
+  - id: workspace-viewport-subagent-invocation
+    date: 2026-05-30
+    status: verified
+    demo: Workspace opens on the local console without document-level page scroll at compact desktop height, and Chinese subagent invocation requests route into auto orchestration instead of falling back to local knowledge.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- useChatStream.test.tsx --run
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py -k "force_subagent or auto_subagent" -q
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/_workspace_chat_helpers.py tests/test_agents.py
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test e2e/agent-workspace.smoke.spec.ts --project=chromium
+      - Browser DOM metrics check on http://127.0.0.1:15173/agents/default/workspace at 1640x768
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Workspace shell now uses viewport-bounded `h-screen` / `h-full` / `min-h-0` layout and hides collapsed sidebar labels so invisible text cannot increase document height.
+      - Workspace route content disables outer document scrolling while preserving internal chat scrolling.
+      - Browser metrics on the live `15173` page showed `rootScrollHeight=768`, `rootClientHeight=768`, `bodyScrollHeight=768`, `bodyClientHeight=768`, `noDocumentVerticalOverflow=true`, and `noHorizontalOverflow=true`.
+      - Backend and frontend orchestration inference now normalize Chinese spacing and variants such as `子 Agent`, `子代理`, `子智能体`, and follow-up `你现在调用一下` when recent context mentions subagents or multi-agent work.
+      - Regression coverage asserts explicit spaced Chinese subagent requests and follow-up invocation requests send or resolve `orchestration_mode=auto`.
+
+  - id: enterprise-left-sidebar-functional-test-plan
+    date: 2026-05-30
+    status: planned
+    demo: Created an enterprise delivery test plan for every Agent Console left-sidebar function, cross-feature Harness chains, subagent invocation from Agent Workspace and Team Mode, and official-source model pricing verification.
+    verification_result: passed
+    verification_commands:
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `.omx/plans/enterprise-left-sidebar-functional-test-plan.md`.
+      - Plan covers all 21 sidebar entries from `ConsoleShell.tsx`, dynamic route samples from `routes.tsx`, and release-grade L0-L4 test layers.
+      - Required cross-feature chains include Models-to-Cost/Eval, Agent Tools-to-Audit, Knowledge grounding, Workspace subagent orchestration, Team Mode `team_spawn_agent` and specialist/subagent evidence, Policy approvals, and Data lifecycle.
+      - Model pricing plan requires official URL, retrieval timestamp, unit, currency, tier/region/mode, source hash, validity window, and conversion into backend per-1k cost rows before enterprise release.
+      - Current target excludes the previously listed legacy provider preset by user direction; source-backed pricing now targets DeepSeek, OpenAI Developers pricing, Kimi, Moonshot, and Z.AI rows with URL, retrieval time, unit, currency, source hash, validity window, and verification status.
+
+  - id: enterprise-sidebar-audit-repair-plans
+    date: 2026-05-30
+    status: audit_complete_with_blockers
+    demo: Audited the enterprise left-sidebar test plan against current coverage and wrote focused repair plans for missing enterprise tests, official-source model pricing gates, Team Mode subagent evidence, and release-smoke regressions.
+    verification_result: audit_complete_with_blockers
+    verification_commands:
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_settings.py tests/test_model_gateway.py tests/test_observability_cost_rollup.py tests/test_evals.py::test_eval_run_grades_cost_contract_with_model_pricing tests/test_evals.py::test_eval_run_cost_missing_pricing_records_zero_cost_and_misses tests/test_teams.py tests/test_agents.py -q
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && HARNESS_ALLOW_MISSING_PHASE0B_EVIDENCE=1 npm run e2e:smoke:release
+      - curl -L --max-time 15 -I https://api-docs.deepseek.com/quick_start/pricing
+      - curl -L --max-time 15 -I https://developers.openai.com/api/docs/pricing
+      - curl -L --max-time 15 -I https://platform.kimi.com/docs/pricing/chat-v1
+    acceptance_notes:
+      - Added `.omx/plans/repair-enterprise-sidebar-test-coverage-plan.md`.
+      - Added `.omx/plans/repair-model-pricing-official-source-cost-gate-plan.md`.
+      - Added `.omx/plans/repair-team-subagent-and-release-smoke-regressions-plan.md`.
+      - Current green baseline remains insufficient for enterprise delivery because all planned enterprise sidebar test files and `model_pricing_sources` are absent.
+      - Release smoke is red with 16 failed and 33 passed; blockers include missing shell mocks for auth and alert events, Knowledge demo pointer interception, Run Detail fixture and anchor drift, and an MCP strict selector collision.
+      - Team Mode currently enforces `team_spawn_agent` for teammate claims but `_tool_spawn_agent` creates TeamAgent state without durable subagent run, output, specialist, Run Detail, and Observability evidence.
+      - Model pricing repair plan records refreshed official-source findings and keeps enterprise readiness blocked until built-in presets have source URL, retrieval time, unit, currency, tier/region/mode, source hash, validity window, and verification status.
+      - This audit entry is superseded by `enterprise-sidebar-repair-plans-executed`, which executed the three repair plans, removed the deprecated provider preset from the target surface, and verified the release smoke as green.
+
+  - id: enterprise-sidebar-repair-plans-executed
+    date: 2026-05-30
+    status: verified
+    demo: Executed the three enterprise sidebar repair plans, removed the deprecated provider preset from the target surface, added official-source model pricing gates, projected Team Mode tasks into subagent evidence, and restored enterprise/release smoke coverage.
+    verification_result: passed_after_code_review_fixes
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_pricing_sources.py tests/test_observability_cost_rollup.py tests/test_team_subagent_enterprise_flow.py tests/test_enterprise_harness_chains.py tests/test_workspace_subagent_enterprise_flow.py tests/test_evals.py::test_eval_run_enterprise_cost_gate_blocks_unresolved_pricing tests/test_evals.py::test_eval_run_cost_missing_pricing_records_zero_cost_and_misses tests/test_evals.py::test_eval_run_grades_cost_contract_with_model_pricing tests/test_evals.py::test_eval_run_cost_contract_allows_custom_model_with_org_pricing tests/test_evals.py::test_eval_run_cost_contract_blocks_builtin_source_model_from_fallback_pricing -q
+      - cd services/api-server && .venv/bin/python -m ruff check app/settings/model_pricing_sources.py app/teams/service.py app/api/settings.py app/api/evals/graders/cost.py app/observability/cost_rollup.py tests/test_model_pricing_sources.py tests/test_observability_cost_rollup.py tests/test_evals.py tests/test_team_subagent_enterprise_flow.py tests/test_enterprise_harness_chains.py tests/test_workspace_subagent_enterprise_flow.py alembic/versions/20260606_0033_seed_builtin_model_pricing_sources.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-pricing-0033.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min .venv/bin/python -m alembic upgrade head
+      - python3 scripts/check-migration-ids.py services/api-server/alembic/versions/
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx routeInventory.test.tsx --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npx playwright test --project=chromium e2e/model-pricing.enterprise.spec.ts e2e/enterprise-harness-chains.spec.ts
+      - cd apps/agent-console && HARNESS_ALLOW_MISSING_PHASE0B_EVIDENCE=1 npm run e2e:smoke:release
+      - cd apps/agent-console && npx playwright test --project=chromium e2e/sidebar-enterprise.smoke.spec.ts
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added enterprise sidebar browser coverage, cross-feature Harness chain coverage, route inventory coverage, backend enterprise chain coverage, workspace subagent enterprise flow coverage, and Team subagent enterprise flow coverage.
+      - Added `services/api-server/app/settings/model_pricing_sources.json` and migration seed `20260606_0033_seed_builtin_model_pricing_sources.py`; source hashes are bound to captured excerpts and verified seed rows must exactly match the official-source contract.
+      - Built-in pricing source rows now cover DeepSeek Flash/Pro, OpenAI `gpt-5.5` only, Kimi `kimi-k2.6`, Moonshot `moonshot-v1-8k`, and Z.AI `glm-5.1` / `glm-5-turbo`; older OpenAI variants are removed from the current target surface.
+      - The deprecated provider preset is removed from target app/test paths and must not be re-added as a blocked pricing row.
+      - Observability and Eval cost paths require exact pricing rows for official-source models; fallback/default pricing remains allowed only for custom models without official-source rows.
+      - Team Mode assigned work now creates durable subagent projection evidence with AdminAuditEvent records and lifecycle coverage for completion, owner removal, reassignment, and deletion.
+      - Enterprise browser fixtures fail closed with structured unhandled API records containing method, path, query, and caller page URL.
+      - Code review found and fixed the Team projection reactivation risk after cancellation, official-source fallback-pricing risk, source-to-seed drift risk, stale OpenAI seed cleanup, and generated bytecode cleanup.
+      - Final review also fixed OpenAI preset context windows to match the official `<272K context length` pricing rows instead of mixing 400K presets with short-context prices.
+      - Final review also fixed `team_task_update` tool owner reassignment after adding the explicit owner-update guard, with a regression test covering `owner_slot_id`.
+      - Latest targeted backend verification passed `23 passed`; frontend model/route inventory tests passed `7 passed`; enterprise Playwright passed `46 passed`; release smoke passed `49 passed`; clean Alembic upgrade reached `20260606_0033`.
+
+  - id: openai55-only-chinese-help-docs
+    date: 2026-05-30
+    status: verified
+    demo: Model Settings now presents OpenAI by the model name `OpenAI GPT-5.5` instead of the internal provider key, exposes one OpenAI built-in preset, and the in-app Help Center index plus all 25 Markdown help documents are Chinese-first.
+    verification_result: passed_after_code_review_fixes
+    verification_commands:
+      - rg -n "\b(Agent Console|Agent Studio|Agent Workspace|Agent Run|Run Detail|Prompt Manifest|Run Manifest|Context Manifest|Tool Call|Demo Run|Demo Task|Team Mode|Help Center|Quickstart|Troubleshooting|Specialist routing|Retention, export|Cost dashboard|Trace explorer)\b" apps/agent-console/public/help apps/agent-console/src/features/help apps/agent-console/src/features/dashboard/pages/DashboardPage.tsx apps/agent-console/src/features/onboarding/pages/OnboardingWizardPage.tsx
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx HelpCenter.test.tsx --run --pool forks --poolOptions.forks.singleFork
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_pricing_sources.py tests/test_observability_cost_rollup.py tests/test_evals.py::test_eval_run_cost_contract_blocks_builtin_source_model_from_fallback_pricing tests/test_settings.py -q
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && .venv/bin/python -m ruff check app/settings/model_pricing_sources.py app/agents/model_gateway.py app/api/settings.py tests/test_model_pricing_sources.py tests/test_observability_cost_rollup.py tests/test_evals.py tests/test_settings.py
+      - python3 scripts/check-help-content.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - OpenAI built-in preset display uses `OpenAI GPT-5.5` as the primary title and keeps `gpt-5.5` as the model id; the internal `openai-compatible` provider key is no longer used as a user-facing card title.
+      - Final code review fixed the Model Settings cost table so pricing mode `openai-compatible` is rendered as Chinese user-facing copy, while the internal provider key remains only in backend/source-contract internals.
+      - Current OpenAI official-source target keeps only the internal `openai-compatible` provider mapped to `gpt-5.5`; stale OpenAI variants and removed provider-family target rows are not reintroduced.
+      - Help Center fixed UI text, index categories/titles/keywords, 25 Markdown documents, 51 troubleshooting cases, dashboard/onboarding help-entry copy, and common product phrases into Chinese-first wording, while necessary technical terms such as API, Docker, Eval, Trace, RBAC, JWT, SSE, Postgres, Redis, MCP, RAG, USD, SKU, JSON, and command/path identifiers remain as technical terms.
+      - `scripts/check-help-content.py` now gates Chinese categories, Chinese titles/keywords, minimum Chinese body content, 51 troubleshooting cases, expert/subagent search corpus coverage, and old English help/product phrases such as `Run Detail`, `Prompt Manifest`, `Demo Task`, and `Team Mode`.
+
+  - id: console-page-availability-audit
+    date: 2026-05-30
+    status: verified
+    demo: Manual browser audit verified all Agent Console routes against a live local API after fixing built-in capability version registration for changed seed metadata.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_registry.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - Playwright Chromium route audit on http://127.0.0.1:15173 against http://127.0.0.1:18000
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Fixed `CapabilityRegistry._get_or_create_tool_version()` so changed built-in tool metadata checks existing hash matches and otherwise assigns `max(version)+1` instead of reusing version `1`.
+      - Regression test covers legacy seeded `mcp_artifact_put` metadata version `1` registering current metadata as version `2`.
+      - Local API health, `POST /api/demo/load`, and `GET /api/agents?limit=20` returned successfully after rebuilding the temporary SQLite audit database.
+      - Browser audit covered 40 routes including auth, dashboard/onboarding, Agents workspace/chat redirect, Teams detail, Runs detail/events/subagents, Subagents list/detail, Specialists/detail, Marketplace/detail, Sandboxes, Observability, Tools/config, Knowledge, Evals, Help, and Settings pages.
+      - Browser audit failed on zero routes: no console errors, page errors, request failures, API 5xx responses, route error boundaries, Vite/internal error pages, or blank body states were observed.
+      - Dynamic samples used real local records: run `5adbf206-d3de-429f-a8a7-31e244f76994`, team `75916344-d261-4e78-a9ef-ba9b2b76435a`, subagent `79ef163d-0598-416e-834c-bc98f9311c36`, specialist `system-specialist-code-reviewer`, and marketplace listing `abce2dd6-cd18-444c-81d9-e50e0c5fa229`.
+
   - id: production-critical-hardening-v2
     date: 2026-05-30
     status: verified

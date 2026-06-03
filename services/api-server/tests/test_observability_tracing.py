@@ -1,3 +1,4 @@
+from contextvars import copy_context
 from datetime import timedelta
 
 from fastapi.testclient import TestClient
@@ -214,6 +215,79 @@ def test_traced_operation_links_nested_parent_span(db_session: Session) -> None:
         ).scalars()
     }
     assert spans["inner"].parent_span_id == spans["outer"].span_id
+
+
+def test_traced_operation_can_exit_in_a_different_context_without_failing(
+    db_session: Session,
+) -> None:
+    task = Task(
+        id="trace-cross-context-task",
+        organization_id="dev-org",
+        agent_id="default",
+        created_by="dev-engineer",
+        title="Cross-context trace",
+        goal="Keep cleanup stable",
+        status="COMPLETED",
+        model_provider="deepseek-flash",
+        model_name="deepseek-v4-flash",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+
+    cm = traced_operation(db_session, "cross-context", task_id=task.id)
+    cm.__enter__()
+    cm.__exit__(None, None, None)
+    db_session.flush()
+
+    span = db_session.execute(
+        select(OtelSpan).where(OtelSpan.trace_id == task.id)
+    ).scalar_one_or_none()
+    assert span is not None
+    assert span.name == "cross-context"
+    assert span.status == "OK"
+
+
+def test_traced_operation_cleanup_tolerates_context_handoff(db_session: Session) -> None:
+    task = Task(
+        id="trace-context-handoff-task",
+        organization_id="dev-org",
+        agent_id="default",
+        created_by="dev-engineer",
+        title="Context handoff trace",
+        goal="Do not fail stream cleanup",
+        status="COMPLETED",
+        model_provider="deepseek-flash",
+        model_name="deepseek-v4-flash",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+
+    manager = traced_operation(db_session, "handoff", task_id=task.id)
+    attrs = copy_context().run(manager.__enter__)
+    attrs["streaming"] = True
+    manager.__exit__(None, None, None)
+    db_session.flush()
+
+    span = db_session.execute(
+        select(OtelSpan).where(
+            OtelSpan.trace_id == task.id,
+            OtelSpan.name == "handoff",
+        )
+    ).scalar_one()
+    assert span.status == "OK"
+    assert span.attributes_json["streaming"] is True
 
 
 def test_local_trace_detail_does_not_leak_same_trace_id_across_orgs(

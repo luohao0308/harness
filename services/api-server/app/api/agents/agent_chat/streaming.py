@@ -84,6 +84,7 @@ def stream_agent_chat_run(
         run_created_message: str,
         done_message: str,
         enable_knowledge_grounding: bool = False,
+        defer_local_tools: bool = False,
     ) -> Iterator[str]:
         grounding: KnowledgeGroundingResult | None = None
         context_manifest: ContextAssemblyManifest | None = None
@@ -198,6 +199,7 @@ def stream_agent_chat_run(
         usage: dict = {}
         first_delta_at: float | None = None
         stream_iter = None
+        local_tools_requested = False
         try:
             gateway = AuditedModelGateway(
                 session=session,
@@ -270,7 +272,7 @@ def stream_agent_chat_run(
             content = _require_normal_chat_content(content_accumulator)
             function_tool_mentions = (
                 _extract_function_call_tool_mentions(content)
-                if enable_knowledge_grounding
+                if enable_knowledge_grounding or defer_local_tools
                 else []
             )
             if enable_knowledge_grounding and not function_tool_mentions:
@@ -284,7 +286,32 @@ def stream_agent_chat_run(
                     registry=registry,
                 )
             tool_summaries: list[dict] = []
-            if function_tool_mentions:
+            if defer_local_tools and function_tool_mentions:
+                local_tools_requested = True
+                static_registry = ToolRegistry.default()
+                for index, mention in enumerate(function_tool_mentions):
+                    metadata = static_registry.tools.get(mention.name)
+                    input_json = _normalize_tool_mention_payload(
+                        mention.name,
+                        mention.payload,
+                        query_goal,
+                    )
+                    yield sse(
+                        "tool_call_requested",
+                        {
+                            "tool_call_id": f"hao-local-{run.id}-{index}",
+                            "tool_name": mention.name,
+                            "source": mention.source or "model_function_call",
+                            "input_json": input_json,
+                            "status": "pending_local",
+                            "risk": metadata.risk_level if metadata else "unknown",
+                            "sandbox": "host",
+                            "approval_id": None,
+                        },
+                    )
+                content = FUNCTION_CALLS_BLOCK_RE.sub("", content).strip()
+                content_accumulator = content
+            elif function_tool_mentions:
                 yield from tool_events.workspace_tool_mention_events(
                     run_id=run.id,
                     goal=query_goal,
@@ -331,8 +358,9 @@ def stream_agent_chat_run(
                 if first_delta_at is None:
                     first_delta_at = time.monotonic()
                 yield sse("delta", {"content": content})
-            run.status = "COMPLETED"
-            run.completed_at = utc_now()
+            run.status = "WAITING_APPROVAL" if local_tools_requested else "COMPLETED"
+            if not local_tools_requested:
+                run.completed_at = utc_now()
             run.updated_at = utc_now()
             session.commit()
             ttfb_source = first_delta_at if first_delta_at is not None else first_byte_at
@@ -358,7 +386,11 @@ def stream_agent_chat_run(
                     "continue_from_node_id": request.continue_from_node_id,
                     "status": run.status,
                     "step_count": 0,
-                    "message": done_message,
+                    "message": (
+                        "Local CLI tool execution is pending."
+                        if local_tools_requested
+                        else done_message
+                    ),
                     "knowledge_grounding": grounding.evidence_message if grounding else None,
                 },
             )
@@ -412,12 +444,35 @@ def stream_agent_chat_run(
                         goal=goal,
                         session=session,
                         principal=principal,
-                        mode="chat" if request.mode == "chat" else "markdown_plan",
+                        mode=(
+                            "cli_agent"
+                            if request.mode == "cli_agent"
+                            else "chat"
+                            if request.mode == "chat"
+                            else "markdown_plan"
+                        ),
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
                     )
                 )
+                if request.mode == "cli_agent":
+                    yield from workspace_text_events(
+                        run=run,
+                        messages=_workspace_cli_agent_messages(
+                            agent_id=agent_id,
+                            goal=goal,
+                            request=request,
+                        ),
+                        query_goal=goal,
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                        run_created_message="hao CLI agent run started.",
+                        done_message="hao CLI agent response completed.",
+                        enable_knowledge_grounding=False,
+                        defer_local_tools=True,
+                    )
+                    return
                 if request.tool_mentions:
                     yield from tool_events.workspace_tool_only_events(
                         run=run,
@@ -483,6 +538,33 @@ def stream_agent_chat_run(
                         },
                     )
                     planned = plan_with_agent(request=payload, session=session, principal=principal)
+                elif request.mode == "cli_agent":
+                    run = _create_workspace_chat_run(
+                        agent_id=agent_id,
+                        goal=goal,
+                        session=session,
+                        principal=principal,
+                        mode="cli_agent",
+                        model_provider=request.model_provider,
+                        model_name=request.model_name,
+                        max_subagents=_workspace_max_subagents(request),
+                    )
+                    yield from workspace_text_events(
+                        run=run,
+                        messages=_workspace_cli_agent_messages(
+                            agent_id=agent_id,
+                            goal=goal,
+                            request=request,
+                        ),
+                        query_goal=goal,
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                        run_created_message="hao CLI agent run started.",
+                        done_message="hao CLI agent response completed.",
+                        enable_knowledge_grounding=False,
+                        defer_local_tools=True,
+                    )
+                    return
                 elif request.mode == "markdown_plan":
                     run = _create_workspace_chat_run(
                         agent_id=agent_id,
