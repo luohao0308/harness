@@ -121,6 +121,7 @@ def replay_events_to_state(
         "agent_handoffs": {},
         "agent_reduce": {},
         "sandboxes": {},
+        "langgraph_events": [],
         "failure_point": None,
         "last_sequence": 0,
     }
@@ -135,6 +136,7 @@ def replay_events_to_state(
         state["agent_handoffs"] = dict(initial_state.get("agent_handoffs", {}))
         state["agent_reduce"] = dict(initial_state.get("agent_reduce", {}))
         state["sandboxes"] = dict(initial_state.get("sandboxes", {}))
+        state["langgraph_events"] = list(initial_state.get("langgraph_events", []))
 
     for event in events:
         state["last_sequence"] = event.sequence
@@ -156,6 +158,9 @@ def replay_events_to_state(
             EventType.TOOL_FAILED.value,
             EventType.MODEL_CALL_FAILED.value,
             EventType.TOOL_DENIED_BY_POLICY.value,
+            EventType.LANGGRAPH_WORKFLOW_FAILED.value,
+            EventType.LANGGRAPH_NODE_FAILED.value,
+            EventType.LANGGRAPH_TOOL_NODE_DENIED.value,
         }:
             state["status"] = "FAILED"
             state["failure_point"] = {
@@ -210,6 +215,18 @@ def replay_events_to_state(
             tool_call_id = payload.get("tool_call_id")
             if tool_call_id is not None and tool_call_id not in state["tool_calls"]:
                 state["tool_calls"].append(tool_call_id)
+        if event.event_type.startswith("LANGGRAPH_"):
+            state["langgraph_events"].append(
+                {
+                    "sequence": event.sequence,
+                    "event_type": event.event_type,
+                    "step_key": payload.get("step_key"),
+                    "node_key": payload.get("node_key"),
+                    "graph_id": payload.get("graph_id"),
+                    "status": payload.get("status"),
+                    "payload": payload,
+                }
+            )
         if event.event_type in {
             EventType.SUBAGENT_SPAWNED.value,
             EventType.SUBAGENT_STARTED.value,

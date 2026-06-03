@@ -7,6 +7,8 @@ export type ToolConfigDialog =
   | "test-invoke"
   | "mcp-servers"
   | "code-interpreter"
+  | "langgraph-workflow"
+  | "langchain-adapter"
   | null;
 
 export type MarketplaceFilter = "all" | "mcp" | "skill";

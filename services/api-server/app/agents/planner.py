@@ -14,6 +14,7 @@ from app.tools.registry import ToolRegistry
 PLANNER_PROMPT_VERSION = "1.1.0"
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 ALLOWED_FANOUT_AGGREGATIONS = {"synthesizer_chain", "concat", "first_success"}
+ALLOWED_EXECUTION_MODES = {"sync", "async", "langgraph_node"}
 
 
 class DeterministicPlanner:
@@ -167,7 +168,7 @@ class DeterministicPlanner:
             if not isinstance(raw_step, dict):
                 continue
             mode = str(raw_step.get("execution_mode") or raw_step.get("mode") or "sync").lower()
-            execution_mode = "async" if mode == "async" else "sync"
+            execution_mode = mode if mode in ALLOWED_EXECUTION_MODES else "sync"
             key = str(raw_step.get("key") or raw_step.get("step_key") or f"step_{index}")
             key = self._normalize_step_key(key, index)
             key = self._deduplicate_step_key(key=key, seen_keys=seen_keys)
@@ -175,6 +176,8 @@ class DeterministicPlanner:
             can_spawn_subagent = bool(raw_step.get("can_spawn_subagent"))
             if execution_mode == "async":
                 can_spawn_subagent = True
+            if execution_mode == "langgraph_node":
+                can_spawn_subagent = False
             recommended_specialist_slug = raw_step.get("recommended_specialist_slug")
             if not isinstance(recommended_specialist_slug, str):
                 recommended_specialist_slug = raw_step.get("specialist_slug")
@@ -253,6 +256,7 @@ class DeterministicPlanner:
         steps = plan.steps
         step_count = len(steps)
         async_steps = [step for step in steps if step.execution_mode == "async"]
+        langgraph_steps = [step for step in steps if step.execution_mode == "langgraph_node"]
         tool_steps = [step for step in steps if step.tool_hints]
         high_risk_without_sandbox = [
             step.key
@@ -280,6 +284,10 @@ class DeterministicPlanner:
             warnings.append("计划未声明工具意图，Executor 审计细节会减少。")
         if not async_steps:
             warnings.append("计划未包含异步步骤，长任务并发能力未被使用。")
+        if langgraph_steps:
+            warnings.append(
+                "计划包含 LangGraph workflow 节点，执行将受 Harness capability gate 约束。"
+            )
         if high_risk_without_sandbox:
             warnings.append("高风险步骤缺少沙箱约束：" + "、".join(high_risk_without_sandbox))
         if missing_acceptance:

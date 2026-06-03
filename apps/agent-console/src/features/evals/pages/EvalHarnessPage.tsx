@@ -17,13 +17,16 @@ import { formatShortDate } from "../../../lib/utils";
 import {
   createEvalCaseFromRun,
   createEvalDataset,
+  createEvalExperiment,
   createEvalRun,
   getEvalRunRegression,
   listAgents,
   listEvalCases,
   listEvalDatasets,
+  listEvalExperiments,
   listEvalRuns,
   setEvalBaseline,
+  type EvalExperiment,
   type RegressionDelta,
 } from "../../tasks/api";
 import { EvalCaseList } from "../components/EvalCaseList";
@@ -57,6 +60,8 @@ export function EvalHarnessPage() {
   const [sourceRunId, setSourceRunId] = useState(searchParams.get("run") ?? "");
   const [expectedStatus, setExpectedStatus] = useState("COMPLETED");
   const [agentId, setAgentId] = useState("default");
+  const [nativeEvalRunId, setNativeEvalRunId] = useState("");
+  const [langGraphEvalRunId, setLangGraphEvalRunId] = useState("");
   const [contractJsonText, setContractJsonText] = useState("");
   const [contractError, setContractError] = useState<string | null>(null);
 
@@ -81,6 +86,24 @@ export function EvalHarnessPage() {
   });
   const runsQuery = useQuery({ queryKey: ["eval-runs"], queryFn: listEvalRuns });
   const latestRun = runsQuery.data?.items[0] ?? null;
+  const experimentsQuery = useQuery({
+    queryKey: ["eval-experiments", activeDatasetId],
+    queryFn: () => listEvalExperiments({ dataset_id: activeDatasetId ?? "", limit: 10 }),
+    enabled: Boolean(activeDatasetId),
+  });
+  const datasetRuns = useMemo(
+    () => (runsQuery.data?.items ?? []).filter((run) => run.dataset_id === activeDatasetId),
+    [activeDatasetId, runsQuery.data?.items],
+  );
+  const evalRunOptions = useMemo(
+    () =>
+      datasetRuns.map((run) => ({
+        value: run.id,
+        label: `${run.id.slice(0, 8)} · ${statusLabel(run.status)}`,
+        description: `${metricNumber(run.metrics_json.case_total)} 用例 · ${formatShortDate(run.created_at)}`,
+      })),
+    [datasetRuns],
+  );
 
   const regressionQuery = useQuery({
     queryKey: ["eval-regression", latestRun?.id],
@@ -191,9 +214,54 @@ export function EvalHarnessPage() {
       });
     },
   });
+  const createExperimentMutation = useMutation({
+    mutationFn: () =>
+      createEvalExperiment(activeDatasetId ?? "", {
+        name: "LangGraph vs Native Harness",
+        description: "Console-created contrast experiment over normal Harness EvalRun rows.",
+        metadata_json: {
+          experiment_kind: "langgraph_vs_native_harness",
+          console_created: true,
+          regression_delta_replaced: false,
+        },
+        arms: [
+          {
+            name: "native",
+            arm_type: "baseline",
+            eval_run_id: nativeEvalRunId,
+          },
+          {
+            name: "langgraph",
+            arm_type: "candidate",
+            eval_run_id: langGraphEvalRunId,
+          },
+        ],
+      }),
+    onSuccess: (experiment) => {
+      notifyFeedback({
+        tone: "success",
+        title: text("对照实验已创建", "Contrast experiment created"),
+        description: `${experiment.name} · ${experiment.arms.length} arms`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["eval-experiments", activeDatasetId] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("对照实验创建失败", "Contrast experiment creation failed"),
+        description: feedbackErrorMessage(error, text("请确认两个 Eval Run 属于同一数据集。", "Confirm both Eval Runs belong to the same dataset.")),
+      });
+    },
+  });
 
   const canSaveCase = Boolean(activeDatasetId && sourceRunId.trim());
   const canRunEval = Boolean(activeDatasetId && (casesQuery.data?.items.length ?? 0) > 0);
+  const canCreateExperiment = Boolean(
+    activeDatasetId &&
+      nativeEvalRunId &&
+      langGraphEvalRunId &&
+      nativeEvalRunId !== langGraphEvalRunId,
+  );
 
   function handleCreateDataset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -343,8 +411,7 @@ export function EvalHarnessPage() {
               <EvalReadiness
                 icon={<GitCompare className="h-3.5 w-3.5" />}
                 label={<TermHint description="双版本对比评测">双版本对比</TermHint>}
-                status={text("未启用", "Disabled")}
-                disabled
+                status={text("已接入", "API-backed")}
               />
               <EvalReadiness
                 icon={<UserCheck className="h-3.5 w-3.5" />}
@@ -354,6 +421,18 @@ export function EvalHarnessPage() {
               />
             </div>
           </Card>
+          <LangGraphExperimentPanel
+            evalRunOptions={evalRunOptions}
+            nativeEvalRunId={nativeEvalRunId}
+            onNativeEvalRunIdChange={setNativeEvalRunId}
+            langGraphEvalRunId={langGraphEvalRunId}
+            onLangGraphEvalRunIdChange={setLangGraphEvalRunId}
+            canCreate={canCreateExperiment}
+            creating={createExperimentMutation.isPending}
+            onCreate={() => createExperimentMutation.mutate()}
+            experiments={experimentsQuery.data?.items ?? []}
+            isLoading={experimentsQuery.isLoading}
+          />
           <Card>
             <CardHeader>
               <div className="text-sm font-semibold text-slate-900">
@@ -430,8 +509,114 @@ function EvalReadiness({
   );
 }
 
+function LangGraphExperimentPanel({
+  evalRunOptions,
+  nativeEvalRunId,
+  onNativeEvalRunIdChange,
+  langGraphEvalRunId,
+  onLangGraphEvalRunIdChange,
+  canCreate,
+  creating,
+  onCreate,
+  experiments,
+  isLoading,
+}: {
+  evalRunOptions: Array<{ value: string; label: string; description: string }>;
+  nativeEvalRunId: string;
+  onNativeEvalRunIdChange: (value: string) => void;
+  langGraphEvalRunId: string;
+  onLangGraphEvalRunIdChange: (value: string) => void;
+  canCreate: boolean;
+  creating: boolean;
+  onCreate: () => void;
+  experiments: EvalExperiment[];
+  isLoading: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <GitCompare className="h-4 w-4" />
+          LangGraph vs Native
+        </div>
+        <Badge tone="info">Eval Experiment</Badge>
+      </CardHeader>
+      <div className="space-y-3 p-3 text-xs">
+        <div className="rounded-md border border-cyan-100 bg-cyan-50 p-2 leading-5 text-cyan-950">
+          对照实验只投影已有 EvalRun/EvalResult；RegressionDelta 仍保留 baseline/current 回归语义。
+        </div>
+        <MenuSelect
+          ariaLabel="选择 Native Harness Eval Run"
+          value={nativeEvalRunId}
+          onChange={onNativeEvalRunIdChange}
+          options={evalRunOptions}
+          placeholder="选择 native Harness run"
+          size="compact"
+        />
+        <MenuSelect
+          ariaLabel="选择 LangGraph Workflow Eval Run"
+          value={langGraphEvalRunId}
+          onChange={onLangGraphEvalRunIdChange}
+          options={evalRunOptions}
+          placeholder="选择 LangGraph workflow run"
+          size="compact"
+        />
+        <Button className="w-full" disabled={!canCreate || creating} onClick={onCreate}>
+          <GitCompare className="h-3.5 w-3.5" />
+          {creating ? "创建中" : "创建对照实验"}
+        </Button>
+        <div className="space-y-2 border-t border-slate-100 pt-3">
+          {experiments.map((experiment) => (
+            <div key={experiment.id} className="rounded-md border border-slate-200 bg-white p-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate font-semibold text-slate-900">{experiment.name}</div>
+                  <div className="mt-0.5 font-mono text-[10px] text-slate-400">{experiment.id.slice(0, 13)}</div>
+                </div>
+                <Badge tone={statusTone(experiment.status)}>{statusLabel(experiment.status)}</Badge>
+              </div>
+              <div className="mt-2 grid gap-1.5">
+                {experiment.arms.map((arm) => (
+                  <div key={arm.id} className="rounded border border-slate-100 bg-slate-50 px-2 py-1.5">
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-mono text-slate-800" title={`${arm.name} · ${arm.eval_run_id}`}>
+                        {arm.name} · {arm.eval_run_id.slice(0, 8)}
+                      </span>
+                      <Badge tone={statusTone(arm.status)}>{statusLabel(arm.status)}</Badge>
+                    </div>
+                    <div className="mt-1 grid grid-cols-2 gap-1 text-[10px] text-slate-500">
+                      <span>通过 {metricNumber(arm.metrics_json.passed_total)}</span>
+                      <span>用例 {metricNumber(arm.metrics_json.case_total)}</span>
+                      <span className="col-span-2 truncate" title={capabilityHashSummary(arm.capability_hashes_json)}>
+                        hashes {capabilityHashSummary(arm.capability_hashes_json)}
+                      </span>
+                    </div>
+                    {arm.error_message ? (
+                      <div className="mt-1 text-[10px] text-red-700">{arm.error_message}</div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {!isLoading && experiments.length === 0 ? (
+            <div className="py-4 text-center text-slate-500">暂无 LangGraph 对照实验。</div>
+          ) : null}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function metricNumber(value: unknown) {
   return typeof value === "number" ? value : 0;
+}
+
+function capabilityHashSummary(value: Record<string, unknown>) {
+  const content = Array.isArray(value.content_sha256_values) ? value.content_sha256_values.map(String) : [];
+  const versions = Array.isArray(value.capability_version_ids) ? value.capability_version_ids.map(String) : [];
+  const combined = [...versions, ...content].filter(Boolean);
+  return combined.length ? combined.map((item) => item.slice(0, 10)).join(", ") : "未提供";
 }
 
 const CONTRACT_PRESETS: Array<{ label: string; description: string; value: string }> = [

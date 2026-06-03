@@ -12,6 +12,7 @@ from app.agents.dag_scheduler import (
 from app.agents.dag_scheduler import (
     StepResult as DAGStepResult,
 )
+from app.agents.langgraph_runner import LangGraphRunnerAdapter
 from app.agents.model_gateway import (
     AuditedModelGateway,
     ModelGatewayError,
@@ -63,6 +64,8 @@ Planning rules:
 - Use stable snake_case step keys.
 - Mark short inspection, summarization, and read-only work as sync.
 - Mark long-running, parallel, broad research, or independently verifiable work as async.
+- Mark imported LangGraph workflow nodes as langgraph_node only when the run should
+  execute an approved immutable LangGraph workflow through Harness.
 - Set can_spawn_subagent=true only for async work.
 - Choose tool_hints from: read_file, list_files, write_file, run_shell, run_tests,
   network_request, git_command.
@@ -83,7 +86,7 @@ Required JSON schema:
     {{
       "key": "snake_case_string",
       "description": "string",
-      "execution_mode": "sync|async",
+      "execution_mode": "sync|async|langgraph_node",
       "requires_sandbox": true,
       "can_spawn_subagent": false,
       "depends_on": ["step_key_1"],
@@ -733,6 +736,10 @@ class Executor:
         )
 
         # Subagent delegation: only when execution_mode=async AND can_spawn_subagent=true
+        if step.execution_mode == "langgraph_node":
+            return self._execute_langgraph_step(task, plan_row, step, step_row)
+
+        # Subagent delegation: only when execution_mode=async AND can_spawn_subagent=true
         if step.execution_mode == "async" and step.can_spawn_subagent:
             return self._execute_subagent_step(task, plan_row, step, step_row)
 
@@ -884,6 +891,57 @@ class Executor:
                     f"耗时 {execution.tool_call.duration_ms}ms"
                 ),
                 "react_trace": trace.model_dump(),
+            },
+        )
+        self.session.flush()
+        return result
+
+    def _execute_langgraph_step(
+        self,
+        task: Task,
+        plan_row: ExecutionPlanModel,
+        step: PlanStep,
+        step_row: TaskStep,
+    ) -> StepResult:
+        result = LangGraphRunnerAdapter(
+            session=self.session,
+            event_store=self.event_store,
+        ).execute(
+            task=task,
+            plan=plan_row,
+            step=step,
+        )
+        if result.status == "STEP_COMPLETED":
+            step_row.status = result.status
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_COMPLETED,
+                payload_json={
+                    "step_id": step_row.id,
+                    "step_key": step.key,
+                    "summary": result.summary,
+                    "execution_mode": step.execution_mode,
+                    "duration_ms": result.duration_ms,
+                    "next_action": result.next_action,
+                    "trace_summary": f"LangGraph workflow node {step.key} completed",
+                },
+            )
+            self.session.flush()
+            return result
+        step_row.status = "STEP_FAILED"
+        step_row.error_message = result.summary
+        step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.STEP_FAILED,
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "summary": result.summary,
+                "execution_mode": step.execution_mode,
+                "permission_boundary": "langgraph_workflow_execution",
+                "next_action": result.next_action,
             },
         )
         self.session.flush()

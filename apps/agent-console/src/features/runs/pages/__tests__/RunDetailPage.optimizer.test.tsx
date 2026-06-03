@@ -84,6 +84,90 @@ function workspacePayload() {
   };
 }
 
+function langGraphWorkspacePayload() {
+  const base = workspacePayload();
+  return {
+    ...base,
+    plan: {
+      id: "plan-1",
+      task_id: "run-1",
+      version: 1,
+      status: "COMPLETED",
+      summary: "LangGraph workflow plan",
+      planner_source: "llm",
+      planner_attempts: 1,
+      planner_prompt_version: "planner-v1",
+      quality_score: 1,
+      validation_warnings: [],
+      quality_gates: {},
+      plan_json: {},
+      created_at: "2026-05-25T00:00:00Z",
+      steps: [
+        {
+          step_key: "graph_step",
+          description: "Run approved LangGraph workflow node",
+          depends_on: [],
+          execution_mode: "langgraph_node",
+          requires_sandbox: true,
+          can_spawn_subagent: false,
+          recommended_specialist_slug: null,
+          fanout_specialist_slugs: [],
+          fanout_aggregation: "none",
+          tool_hints: [],
+          acceptance_criteria: [],
+          risk_level: "medium",
+          artifact_expectations: [],
+          quality_notes: [],
+          status: "COMPLETED",
+          assigned_agent_id: null,
+          error_message: null,
+          trace_summary: null,
+          last_event_sequence: 3,
+          execution_trace: [],
+        },
+      ],
+    },
+    events: [
+      {
+        id: "event-1",
+        task_id: "run-1",
+        agent_run_id: "run-1",
+        sequence: 1,
+        event_type: "LANGGRAPH_WORKFLOW_STARTED",
+        payload_json: { workflow_name: "support-flow", graph_id: "triage" },
+        actor_type: "system",
+        actor_id: null,
+        trace_id: "trace-1",
+        created_at: "2026-05-25T00:00:00Z",
+      },
+      {
+        id: "event-2",
+        task_id: "run-1",
+        agent_run_id: "run-1",
+        sequence: 2,
+        event_type: "LANGGRAPH_NODE_COMPLETED",
+        payload_json: { graph_id: "triage", node_id: "classify" },
+        actor_type: "system",
+        actor_id: null,
+        trace_id: "trace-1",
+        created_at: "2026-05-25T00:00:01Z",
+      },
+      {
+        id: "event-3",
+        task_id: "run-1",
+        agent_run_id: "run-1",
+        sequence: 3,
+        event_type: "LANGGRAPH_TOOL_NODE_DENIED",
+        payload_json: { graph_id: "triage", node_id: "lookup", tool_name: "raw_network", denial_code: "bridge_required" },
+        actor_type: "system",
+        actor_id: null,
+        trace_id: "trace-1",
+        created_at: "2026-05-25T00:00:02Z",
+      },
+    ],
+  };
+}
+
 function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
   vi.stubGlobal("fetch", fetchMock);
   const queryClient = new QueryClient({
@@ -122,5 +206,24 @@ describe("RunDetailPage token optimizer evidence", () => {
     expect(screen.getByText("optimizer-version-1")).toBeInTheDocument();
     expect(screen.getByText("abcdef1234567890")).toBeInTheDocument();
     expect(screen.getByText("1 条决策")).toBeInTheDocument();
+  });
+
+  it("renders LangGraph plan mode and EventStore evidence in Run Detail", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents/runs/run-1/workspace") return jsonResponse(langGraphWorkspacePayload());
+      if (path === "/api/evals/datasets") return jsonResponse({ items: [], next_cursor: null });
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("LangGraph 证据")).toBeInTheDocument();
+    expect(await screen.findByText("LangGraph 节点")).toBeInTheDocument();
+    expect((await screen.findAllByText("LangGraph 工具节点拒绝")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/graph: triage/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/tool: raw_network/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/denial: bridge_required/).length).toBeGreaterThan(0);
   });
 });

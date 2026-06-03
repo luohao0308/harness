@@ -1397,6 +1397,15 @@ def _step_events_by_key(*, task_id: str, session: Session) -> dict[str, list[dic
                     EventType.STEP_FAILED.value,
                     EventType.STEP_RETRIED.value,
                     EventType.STEP_SKIPPED.value,
+                    EventType.LANGGRAPH_WORKFLOW_STARTED.value,
+                    EventType.LANGGRAPH_WORKFLOW_COMPLETED.value,
+                    EventType.LANGGRAPH_WORKFLOW_FAILED.value,
+                    EventType.LANGGRAPH_NODE_STARTED.value,
+                    EventType.LANGGRAPH_NODE_COMPLETED.value,
+                    EventType.LANGGRAPH_NODE_FAILED.value,
+                    EventType.LANGGRAPH_TOOL_NODE_REQUESTED.value,
+                    EventType.LANGGRAPH_TOOL_NODE_DENIED.value,
+                    EventType.LANGGRAPH_TOOL_NODE_COMPLETED.value,
                 ]
             ),
         )

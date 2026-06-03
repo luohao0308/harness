@@ -81,6 +81,15 @@ const eventLabels: Record<string, string> = {
   SECRET_ACCESSED: "密钥访问",
   USER_ACTION: "用户操作",
   ADMIN_ACTION: "管理员操作",
+  LANGGRAPH_WORKFLOW_STARTED: "LangGraph Workflow 启动",
+  LANGGRAPH_WORKFLOW_COMPLETED: "LangGraph Workflow 完成",
+  LANGGRAPH_WORKFLOW_FAILED: "LangGraph Workflow 失败",
+  LANGGRAPH_NODE_STARTED: "LangGraph 节点开始",
+  LANGGRAPH_NODE_COMPLETED: "LangGraph 节点完成",
+  LANGGRAPH_NODE_FAILED: "LangGraph 节点失败",
+  LANGGRAPH_TOOL_NODE_REQUESTED: "LangGraph 工具节点请求",
+  LANGGRAPH_TOOL_NODE_DENIED: "LangGraph 工具节点拒绝",
+  LANGGRAPH_TOOL_NODE_COMPLETED: "LangGraph 工具节点完成",
 };
 
 const actorLabels: Record<string, string> = {
@@ -136,6 +145,7 @@ const settingsKeyLabels: Record<string, string> = {
 const executionModeLabels: Record<string, string> = {
   sync: "同步执行",
   async: "异步执行",
+  langgraph_node: "LangGraph 节点",
 };
 
 const plannerSourceLabels: Record<string, string> = {

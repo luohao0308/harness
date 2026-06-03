@@ -30,6 +30,7 @@ _LOCAL_USABLE_PROVIDERS = {
 }
 _USABLE_EXTERNAL_PROVIDERS = {"coze", "dify"}
 _CONFIGURED_BUT_UNAVAILABLE_PROVIDERS = {
+    "langchain",
     "volcengine",
     "notion",
     "postgres",
@@ -55,6 +56,7 @@ _REFERENCE_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
 CONNECTOR_PROVIDER_LABELS = {
     "coze": "Coze API",
     "dify": "Dify API",
+    "langchain": "LangChain Retriever",
     "ragflow": "RAGFlow API",
     "volcengine": "Volcengine Knowledge API",
     "local_dify": "Local Dify endpoint",

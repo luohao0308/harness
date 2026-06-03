@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class PlanStep(BaseModel):
     key: str = Field(min_length=1, pattern=r"^[a-z0-9_]+$")
     description: str = Field(min_length=1)
-    execution_mode: Literal["sync", "async"]
+    execution_mode: Literal["sync", "async", "langgraph_node"]
     requires_sandbox: bool
     can_spawn_subagent: bool
     recommended_specialist_slug: str | None = None

@@ -36,6 +36,7 @@ import {
   API_BASE_URL,
   downloadObservabilityExport,
   getObservabilityGroundingQuality,
+  getRuntimeArchitecture,
   getObservabilityServicesHealth,
   getObservabilitySummary,
   getObservabilityTrace,
@@ -87,6 +88,10 @@ export function ObservabilityPage() {
         failure_type: cleanFilter(groundingFilters.failure_type),
         limit: 20,
       }),
+  });
+  const architecture = useQuery({
+    queryKey: ["observability", "runtime-architecture"],
+    queryFn: getRuntimeArchitecture,
   });
   const health = useQuery({
     queryKey: ["observability", "services-health"],
@@ -334,6 +339,32 @@ export function ObservabilityPage() {
             />
           </div>
           <StatusLine isLoading={summary.isLoading} error={summary.error} />
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <GitBranch className="h-4 w-4" />
+              Planner / Executor / LangGraph
+            </div>
+            <Badge tone={architecture.data?.planner_executor.status === "active" ? "success" : "neutral"}>
+              {architecture.data?.planner_executor.status ?? text("读取中", "Loading")}
+            </Badge>
+          </CardHeader>
+          <div className="grid grid-cols-2 gap-3 p-3 text-xs md:grid-cols-5">
+            <Metric label={text("计划", "Plans")} value={formatNumber(architecture.data?.planner_executor.plan_total)} />
+            <Metric label={text("同步步骤", "Sync steps")} value={formatNumber(architecture.data?.planner_executor.sync_step_total)} />
+            <Metric label={text("异步步骤", "Async steps")} value={formatNumber(architecture.data?.planner_executor.async_step_total)} />
+            <Metric
+              label={<TermHint description="LangGraph workflow node 作为一等执行模式记录的步骤数量">LangGraph 节点</TermHint>}
+              value={formatNumber(architecture.data?.planner_executor.langgraph_step_total)}
+            />
+            <Metric label={text("事件序号", "Last event")} value={formatNumber(architecture.data?.event_sourcing.last_sequence)} />
+          </div>
+          <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+            LangGraph 节点只统计执行模式，不把 workflow 作为 ToolRunner 工具计数。
+          </div>
+          <StatusLine isLoading={architecture.isLoading} error={architecture.error} />
         </Card>
 
         <Card>

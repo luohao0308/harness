@@ -23,6 +23,7 @@ from app.db.models import (
     EvalDataset,
     EvalResult,
     EvalRun,
+    ExecutionPlan,
     ModelCall,
     ObservabilityExportRecord,
     SandboxInstance,
@@ -214,6 +215,71 @@ def test_observability_summary_aggregates_current_organization(db_session: Sessi
     assert payload["subagent_queue"]["capacity"] == 0
     assert payload["assignment_queue"]["queued"] == 1
     assert payload["assignment_queue"]["active_total"] == 1
+
+
+def test_runtime_architecture_counts_langgraph_steps(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="LangGraph architecture",
+        goal="Count LangGraph workflow nodes",
+        status="CREATED",
+        model_provider="default",
+        model_name="default",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    other = Task(
+        organization_id="other-org",
+        created_by="other",
+        title="Other architecture",
+        goal="Should not count",
+        status="CREATED",
+        model_provider="default",
+        model_name="default",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add_all([task, other])
+    db_session.flush()
+    db_session.add_all(
+        [
+            ExecutionPlan(
+                task_id=task.id,
+                version=1,
+                status="GENERATED",
+                plan_json={
+                    "summary": "LangGraph plan",
+                    "steps": [
+                        {"key": "inspect", "execution_mode": "sync"},
+                        {"key": "workflow", "execution_mode": "langgraph_node"},
+                        {"key": "review", "execution_mode": "async"},
+                    ],
+                },
+                created_at=utc_now(),
+            ),
+            ExecutionPlan(
+                task_id=other.id,
+                version=1,
+                status="GENERATED",
+                plan_json={
+                    "summary": "Other plan",
+                    "steps": [{"key": "other_workflow", "execution_mode": "langgraph_node"}],
+                },
+                created_at=utc_now(),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = TestClient(app).get("/api/observability/architecture", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    planner_executor = response.json()["planner_executor"]
+    assert planner_executor["plan_total"] == 1
+    assert planner_executor["sync_step_total"] == 1
+    assert planner_executor["async_step_total"] == 1
+    assert planner_executor["langgraph_step_total"] == 1
 
 
 def test_grounding_quality_projects_eval_owned_trace_without_forbidden_snippets(

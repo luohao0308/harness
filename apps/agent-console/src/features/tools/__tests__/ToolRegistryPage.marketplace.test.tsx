@@ -710,4 +710,158 @@ describe("ToolRegistryPage marketplace controls", () => {
     expect(within(marketplaceDialog).getAllByText("已验证").length).toBeGreaterThan(0);
     expect(within(marketplaceDialog).getAllByText("远程").length).toBeGreaterThan(0);
   });
+
+  it("surfaces LangGraph workflow import and LangChain adapter paths without making workflows test-invoke tools", async () => {
+    const user = userEvent.setup();
+    let packagePayload: Record<string, unknown> | null = null;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path.startsWith("/api/tools/registry") && !init?.method) return jsonResponse(registryPayload());
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
+      }
+      if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
+        return jsonResponse(emptyMarketplacePayload());
+      }
+      if (path === "/api/tools/capabilities/packages" && !init?.method) {
+        return jsonResponse({ items: packagePayload ? [packagePayload] : [] });
+      }
+      if (path === "/api/tools/capabilities/dependency-preflight" && !init?.method) {
+        return jsonResponse({ local_release_path: "no-container" });
+      }
+      if (path === "/api/tools/capabilities/admin-validate" && init?.method === "POST") {
+        return jsonResponse({
+          status: "valid",
+          schema_version: 1,
+          content_sha256: "langgraphcontenthash",
+          config_sha256: "langgraphconfighash",
+          redacted_payload: {},
+          validation_mode: "manifest_only_no_execution",
+          errors: [],
+          warnings: [],
+        });
+      }
+      if (path === "/api/tools/capabilities/packages/private" && init?.method === "POST") {
+        packagePayload = {
+          id: "pkg-langgraph-1",
+          organization_id: "dev-org",
+          package_key: "demo-langgraph-workflow",
+          package_type: "langgraph_workflow",
+          source_kind: "private_upload",
+          source_uri: null,
+          source_sha256: "sha256-langgraph",
+          pinned_ref: null,
+          status: "staged",
+          risk_level: "medium",
+          manifest_json: { package_type: "langgraph_workflow" },
+          validation_json: {},
+          provenance_json: {},
+          audit_json: {},
+          capability_id: null,
+          capability_version_id: null,
+          created_at: "2026-06-02T00:00:00Z",
+          updated_at: "2026-06-02T00:00:00Z",
+          approved_at: null,
+        };
+        return jsonResponse(packagePayload, 201);
+      }
+      if (path === "/api/tools/capabilities/packages/pkg-langgraph-1/approve" && init?.method === "POST") {
+        packagePayload = {
+          ...(packagePayload ?? {}),
+          id: "pkg-langgraph-1",
+          status: "approved",
+          capability_id: "cap-langgraph-1",
+          capability_version_id: "version-langgraph-1",
+          approved_at: "2026-06-02T00:01:00Z",
+        };
+        return jsonResponse(packagePayload);
+      }
+      if (path === "/api/tools/capabilities/packages/pkg-langgraph-1/attachments" && init?.method === "POST") {
+        return jsonResponse({
+          attachment_id: "attach-langgraph-1",
+          agent_id: "default",
+          capability_id: "cap-langgraph-1",
+          capability_version_id: "version-langgraph-1",
+          enabled: true,
+          priority: 20,
+        }, 201);
+      }
+      if (path === "/api/tools/capabilities/test-invoke" && init?.method === "POST") {
+        return jsonResponse({
+          allowed: true,
+          output: { result: { status: "success" }, metadata: { source: "mcp" } },
+          tool_call: {
+            id: "tool-call-langchain-1",
+            tool_name: "langchain.invoke_tool",
+            status: "SUCCESS",
+            risk_level: "low",
+            requires_sandbox: false,
+            duration_ms: 3,
+            output_kind: "json",
+            output_summary: "ok",
+            created_at: "2026-06-02T00:00:00Z",
+          },
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await user.click(await screen.findByRole("button", { name: /LangGraph Workflow/ }));
+    const langGraphDialog = await screen.findByRole("dialog", { name: "LangGraph Workflow" });
+    expect(within(langGraphDialog).getByText(/非 ToolRunner 能力/)).toBeInTheDocument();
+
+    await user.click(within(langGraphDialog).getByRole("button", { name: /仅校验|Validate only/ }));
+    await waitFor(() => {
+      const validationCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/admin-validate"));
+      expect(validationCall).toBeDefined();
+      expect(JSON.parse(String(validationCall?.[1]?.body))).toMatchObject({
+        content: {
+          package_manifest: { package_type: "langgraph_workflow" },
+          langgraph_json: { graphs: { main: "./agent.py:graph" } },
+        },
+        config: { package_type: "langgraph_workflow" },
+      });
+    });
+    await user.click(within(langGraphDialog).getByRole("button", { name: /暂存 Workflow/ }));
+    expect(await within(langGraphDialog).findByText(/pkg-langgraph-1/)).toBeInTheDocument();
+    const stageCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/packages/private"));
+    expect(JSON.parse(String(stageCall?.[1]?.body))).toMatchObject({
+      manifest: { package_type: "langgraph_workflow" },
+      content: { langgraph_json: { graphs: { main: "./agent.py:graph" } } },
+    });
+    await user.click(within(langGraphDialog).getByRole("button", { name: /审批版本|Approve version/ }));
+    expect(await within(langGraphDialog).findByText(/version-langgraph-1/)).toBeInTheDocument();
+    await user.click(within(langGraphDialog).getByRole("button", { name: /挂载到智能体|Attach to Agent/ }));
+    await waitFor(() => {
+      const attachCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/pkg-langgraph-1/attachments"));
+      expect(JSON.parse(String(attachCall?.[1]?.body))).toMatchObject({
+        agent_id: "default",
+        enabled: true,
+        priority: 20,
+      });
+    });
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/test-invoke")).length).toBe(0);
+
+    await user.click(within(langGraphDialog).getByRole("button", { name: "关闭" }));
+    await user.click(screen.getByRole("button", { name: /LangChain Adapter/ }));
+    const langChainDialog = await screen.findByRole("dialog", { name: "LangChain Adapter" });
+    expect(within(langChainDialog).getByText(/ToolMetadata\(source="mcp"\)/)).toBeInTheDocument();
+    await user.click(within(langChainDialog).getByRole("button", { name: /通过 ToolRunner 测试/ }));
+    expect(await within(langChainDialog).findByText(/"source": "mcp"/)).toBeInTheDocument();
+    await waitFor(() => {
+      const testCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/test-invoke"));
+      expect(testCall).toBeDefined();
+      expect(JSON.parse(String(testCall?.[1]?.body))).toMatchObject({
+        agent_id: "default",
+        tool_name: "langchain.invoke_tool",
+        input_json: {
+          tool_name: "example_tool",
+          arguments: { query: "release readiness" },
+        },
+      });
+    });
+  });
 });

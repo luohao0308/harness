@@ -180,7 +180,7 @@ describe("KnowledgePage", () => {
     expect((await screen.findAllByText("Dify 知识库")).length).toBeGreaterThan(0);
     expect(screen.getByText("API 配置")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /^API Coze \/ Dify \/ RAGFlow$/ }));
+    await user.click(screen.getByRole("button", { name: /^API Coze \/ Dify \/ LangChain \/ RAGFlow$/ }));
     expect(screen.queryByText("本地手册")).not.toBeInTheDocument();
     expect(screen.getAllByText("Dify 知识库").length).toBeGreaterThan(0);
 
@@ -252,5 +252,72 @@ describe("KnowledgePage", () => {
     });
     expect((await screen.findAllByText("Local RAGFlow 知识库")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("preview").length).toBeGreaterThan(0);
+  });
+
+  it("creates a LangChain Retriever grounding connector with source_kind evidence settings", async () => {
+    const user = userEvent.setup();
+    let created = false;
+    const createdSource = source({
+      id: "langchain-retriever-1",
+      name: "LangChain Retriever 知识库",
+      source_type: "connector",
+      connector_provider: "langchain",
+      connector_release_state: "configured-but-unavailable",
+      connector_counts_toward_complete_usable: false,
+      connector_validation_status: "configured",
+      connector_validation_messages: ["configured_but_unavailable"],
+      settings_json: {
+        provider: "langchain",
+        source_kind: "langchain_connector",
+        release_state: "configured-but-unavailable",
+        endpoint: "langchain://retriever/default",
+        secret_ref: "secret://langchain",
+      },
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({ items: [agent()], next_cursor: null });
+      }
+      if (path === "/api/agents/default/knowledge/sources" && !init?.method) {
+        return jsonResponse({ items: created ? [createdSource] : [], next_cursor: null });
+      }
+      if (path === "/api/agents/default/knowledge/sources" && init?.method === "POST") {
+        created = true;
+        return jsonResponse(createdSource, 201);
+      }
+      if (path === "/api/agents/default/knowledge/sources/langchain-retriever-1/documents" && !init?.method) {
+        return jsonResponse([]);
+      }
+      return jsonResponse({ detail: `unexpected request ${path}` }, 404);
+    });
+    renderPage(fetchMock);
+
+    await screen.findByText("暂无知识源。");
+    await user.click(screen.getByRole("button", { name: "外部 API" }));
+    await user.click(screen.getByRole("button", { name: /LangChain Retriever/ }));
+    await user.click(screen.getByRole("button", { name: /保存配置/ }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/default/knowledge/sources" && init?.method === "POST",
+      );
+      expect(createCall).toBeDefined();
+      expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+        name: "LangChain Retriever 知识库",
+        source_type: "connector",
+        uri: "langchain://retriever/default",
+        connector_settings_json: {
+          provider: "langchain",
+          source_kind: "langchain_connector",
+          endpoint: "langchain://retriever/default",
+          secret_ref: "secret://langchain",
+          release_state: "configured-but-unavailable",
+        },
+      });
+    });
+    expect((await screen.findAllByText("LangChain Retriever 知识库")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("configured").length).toBeGreaterThan(0);
   });
 });

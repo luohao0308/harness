@@ -14,6 +14,7 @@ from jsonschema import Draft202012Validator
 from sqlalchemy import event, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.config import feature_enabled
 from app.db.models import (
     Agent,
     AgentCapabilityAttachment,
@@ -31,6 +32,7 @@ CAPABILITY_TYPE_MCP_TOOL = "mcp_tool"
 CAPABILITY_TYPE_SKILL = "skill"
 CAPABILITY_TYPE_KNOWLEDGE_CONNECTOR = "knowledge_connector"
 CAPABILITY_TYPE_CONTEXT_OPTIMIZER = "context_optimizer"
+CAPABILITY_TYPE_LANGGRAPH_WORKFLOW = "langgraph_workflow"
 EXECUTABLE_CAPABILITY_TYPES = {CAPABILITY_TYPE_BUILTIN_TOOL, CAPABILITY_TYPE_MCP_TOOL}
 
 SECRET_KEY_PARTS = ("token", "password", "credential", "authorization", "api_key", "apikey")
@@ -47,6 +49,7 @@ ALLOWED_PACKAGE_TYPES = {
     "prompt_template",
     "knowledge_connector",
     "context_optimizer",
+    "langgraph_workflow",
 }
 PACKAGE_TYPES = ALLOWED_PACKAGE_TYPES
 PACKAGE_MANIFEST_SCHEMA: dict[str, Any] = {
@@ -81,6 +84,8 @@ PACKAGE_MANIFEST_SCHEMA: dict[str, Any] = {
         "transport": {"enum": ["stdio", "http", "sse"]},
         "auth_required": {"type": "boolean"},
         "optimizer": {"type": "object"},
+        "graphs": {"type": "object"},
+        "langgraph": {"type": "object"},
     },
     "additionalProperties": True,
 }
@@ -337,6 +342,15 @@ class CapabilityResolutionError(RuntimeError):
     pass
 
 
+def _langgraph_import_feature_errors() -> list[str]:
+    if feature_enabled("langgraph_workflow_import_enabled"):
+        return []
+    return [
+        "langgraph_workflow import is disabled by feature flag "
+        "langgraph_workflow_import_enabled"
+    ]
+
+
 def _manifest_secret_value_errors(value: Any, path: str = "manifest") -> list[str]:
     errors: list[str] = []
     if isinstance(value, dict):
@@ -430,6 +444,15 @@ class AttachedCapabilityTool:
     metadata: ToolMetadata
     capability: Capability
     version: CapabilityVersion
+
+
+@dataclass(frozen=True)
+class AttachedLangGraphWorkflow:
+    attachment: AgentCapabilityAttachment
+    capability: Capability
+    version: CapabilityVersion
+    langgraph_json: dict
+    graph_id: str
 
 
 def stable_json_sha256(value: Any) -> str:
@@ -638,6 +661,57 @@ class CapabilityRegistry:
                 )
             )
         return records
+
+    def attached_langgraph_workflows(self, agent_id: str) -> list[AttachedLangGraphWorkflow]:
+        self._agent(agent_id)
+        rows = list(
+            self.session.execute(
+                select(AgentCapabilityAttachment, Capability, CapabilityVersion)
+                .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+                .join(
+                    CapabilityVersion,
+                    AgentCapabilityAttachment.capability_version_id == CapabilityVersion.id,
+                )
+                .where(
+                    AgentCapabilityAttachment.agent_id == agent_id,
+                    AgentCapabilityAttachment.enabled.is_(True),
+                    or_(
+                        AgentCapabilityAttachment.organization_id == self.organization_id,
+                        AgentCapabilityAttachment.organization_id.is_(None),
+                    ),
+                    or_(
+                        Capability.organization_id == self.organization_id,
+                        Capability.organization_id.is_(None),
+                    ),
+                    Capability.status == "active",
+                    CapabilityVersion.status == "active",
+                    CapabilityVersion.type == CAPABILITY_TYPE_LANGGRAPH_WORKFLOW,
+                )
+                .order_by(
+                    AgentCapabilityAttachment.priority.asc(),
+                    AgentCapabilityAttachment.attached_at.asc(),
+                )
+            ).all()
+        )
+        workflows: list[AttachedLangGraphWorkflow] = []
+        for attachment, capability, version in rows:
+            langgraph_json = _langgraph_json_from_content(version.content_json)
+            if not isinstance(langgraph_json, dict):
+                continue
+            graph_id = _selected_langgraph_graph_id(
+                version.content_json,
+                langgraph_json=langgraph_json,
+            )
+            workflows.append(
+                AttachedLangGraphWorkflow(
+                    attachment=attachment,
+                    capability=capability,
+                    version=version,
+                    langgraph_json=langgraph_json,
+                    graph_id=graph_id,
+                )
+            )
+        return workflows
 
     def runtime_config_for_tool(self, *, agent_id: str, tool_name: str) -> dict:
         row = self._attached_tool(agent_id=agent_id, tool_name=tool_name)
@@ -951,8 +1025,16 @@ class CapabilityRegistry:
             errors.extend(_validate_public_source_url(source.get("source_url")))
             if not source.get("digest") and not source.get("commit"):
                 errors.append("public package source must be pinned by digest or commit")
+            if package_type == "langgraph_workflow" and not source.get("digest"):
+                errors.append("public LangGraph workflow source must include a content digest")
         errors.extend(_secret_refs_shape_errors(source.get("secret_refs")))
         errors.extend(_manifest_secret_value_errors(source.get("secret_refs")))
+        if package_type == "langgraph_workflow":
+            errors.extend(_langgraph_import_feature_errors())
+            content = redacted.get("content") if isinstance(redacted.get("content"), dict) else {}
+            langgraph_validation = validate_langgraph_workflow_package(manifest, content)
+            errors.extend(langgraph_validation["errors"])
+            warnings.extend(langgraph_validation.get("warnings", []))
 
         has_provenance = any(provenance.get(key) for key in ("signature", "sbom", "attestation"))
         if not has_provenance:
@@ -1029,6 +1111,14 @@ class CapabilityRegistry:
         source_policy = validate_public_source(source_uri, pinned_ref=pinned_ref)
         if source_policy["status"] != "valid":
             raise CapabilityResolutionError(source_policy["errors"][0])
+        if manifest.get("package_type") == "langgraph_workflow":
+            public_hash_errors = _public_content_hash_errors(
+                source_kind=source_kind,
+                pinned_ref=pinned_ref,
+                content=content or {},
+            )
+            if public_hash_errors:
+                raise CapabilityResolutionError("; ".join(public_hash_errors))
         package = self._stage_package(
             manifest=manifest,
             content=content or {},
@@ -1235,6 +1325,16 @@ class CapabilityRegistry:
         if package.status not in {"staged", "rejected"}:
             return package
         validation = validate_package_manifest(package.manifest_json)
+        if package.package_type == "langgraph_workflow":
+            feature_errors = _langgraph_import_feature_errors()
+            if feature_errors:
+                raise CapabilityResolutionError("; ".join(feature_errors))
+            langgraph_validation = validate_langgraph_workflow_package(
+                package.manifest_json,
+                package.content_json if isinstance(package.content_json, dict) else {},
+            )
+            if langgraph_validation["status"] != "valid":
+                raise CapabilityResolutionError("; ".join(langgraph_validation["errors"]))
         if validation["status"] != "valid":
             raise CapabilityResolutionError("; ".join(validation["errors"]))
         if package.source_kind in PUBLIC_SOURCE_KINDS:
@@ -1590,6 +1690,40 @@ class CapabilityRegistry:
         redacted_manifest = redact_secrets(manifest)
         redacted_content = redact_secrets(content)
         validation = validate_package_manifest(redacted_manifest)
+        if redacted_manifest.get("package_type") == "langgraph_workflow":
+            feature_errors = _langgraph_import_feature_errors()
+            langgraph_validation = validate_langgraph_workflow_package(
+                redacted_manifest,
+                redacted_content,
+            )
+            validation = {
+                **validation,
+                "errors": [
+                    *validation.get("errors", []),
+                    *feature_errors,
+                    *langgraph_validation["errors"],
+                ],
+                "langgraph_validation": langgraph_validation,
+                "risk_level": "high"
+                if feature_errors or langgraph_validation["errors"]
+                else validation.get("risk_level", "medium"),
+            }
+            validation["status"] = "invalid" if validation["errors"] else "valid"
+        if (
+            source_kind in PUBLIC_SOURCE_KINDS
+            and redacted_manifest.get("package_type") == "langgraph_workflow"
+        ):
+            public_hash_errors = _public_content_hash_errors(
+                source_kind=source_kind,
+                pinned_ref=pinned_ref,
+                content=redacted_content,
+            )
+            if public_hash_errors:
+                validation = {
+                    **validation,
+                    "status": "invalid",
+                    "errors": [*validation.get("errors", []), *public_hash_errors],
+                }
         source_sha = stable_json_sha256(
             {
                 "manifest": redacted_manifest,
@@ -1638,6 +1772,7 @@ class CapabilityRegistry:
                 redacted_manifest.get("risk_level", validation.get("risk_level", "medium"))
             ),
             manifest_json=redacted_manifest,
+            content_json=redacted_content,
             validation_json={
                 **validation,
                 "staging_execution": "manifest_only_no_code_execution",
@@ -1706,6 +1841,15 @@ class CapabilityRegistry:
             "pinned_ref": package.pinned_ref,
             "package_id": package.id,
         }
+        if package.package_type == "langgraph_workflow":
+            config = {
+                **config,
+                "runtime": {
+                    "execution_authority": "harness",
+                    "checkpoint_store_authoritative": False,
+                    "external_effects": "harness_bridges_only",
+                },
+            }
         content_sha = stable_json_sha256(content)
         config_sha = stable_json_sha256(config)
         existing_count = self.session.execute(
@@ -2095,6 +2239,14 @@ def _normalized_host(source_uri: str) -> str:
 
 def package_content_for_version(package: CapabilityPackage) -> dict:
     manifest = package.manifest_json
+    content = package.content_json if isinstance(package.content_json, dict) else {}
+    if manifest.get("package_type") == "langgraph_workflow":
+        return {
+            "package_manifest": manifest,
+            "package_provenance": package.provenance_json,
+            "langgraph_json": _langgraph_json_from_content(content),
+            "workflow_content": content,
+        }
     if isinstance(manifest.get("tool_metadata"), dict):
         return {
             "tool_metadata": manifest["tool_metadata"],
@@ -2126,6 +2278,241 @@ def _manifest_transport(content: dict) -> str | None:
     if isinstance(manifest, dict) and manifest.get("transport") in {"stdio", "http", "sse"}:
         return str(manifest["transport"])
     return None
+
+
+def _langgraph_json_from_content(content: dict) -> dict | None:
+    if not isinstance(content, dict):
+        return None
+    candidates = [
+        content.get("langgraph_json"),
+        content.get("langgraph.json"),
+    ]
+    if isinstance(content.get("json"), dict):
+        candidates.append(content["json"])
+    files = content.get("files") if isinstance(content.get("files"), dict) else {}
+    candidates.append(files.get("langgraph.json"))
+    workflow = (
+        content.get("workflow_content")
+        if isinstance(content.get("workflow_content"), dict)
+        else {}
+    )
+    candidates.append(workflow.get("langgraph_json"))
+    candidates.append(workflow.get("langgraph.json"))
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return candidate
+        if isinstance(candidate, str):
+            try:
+                parsed = json.loads(
+                    candidate,
+                    object_pairs_hook=_json_object_with_duplicate_markers,
+                )
+            except json.JSONDecodeError:
+                return {"__invalid_json__": True, "error": "langgraph.json is invalid JSON"}
+            if isinstance(parsed, dict):
+                graphs = parsed.get("graphs")
+                if isinstance(graphs, dict) and graphs.get("__duplicate_keys__"):
+                    parsed["__duplicate_graph_ids__"] = graphs["__duplicate_keys__"]
+                return parsed
+            return {"__invalid_json__": True, "error": "langgraph.json must be an object"}
+    return None
+
+
+def _json_object_with_duplicate_markers(pairs: list[tuple[str, Any]]) -> dict:
+    obj: dict[str, Any] = {}
+    seen: set[str] = set()
+    duplicate_keys: list[str] = []
+    for key, value in pairs:
+        normalized_key = str(key)
+        if normalized_key in seen:
+            duplicate_keys.append(normalized_key)
+        seen.add(normalized_key)
+        obj[normalized_key] = value
+    if duplicate_keys:
+        obj["__duplicate_keys__"] = duplicate_keys
+    return obj
+
+
+def _selected_langgraph_graph_id(content: dict, *, langgraph_json: dict) -> str:
+    graph_id = str(content.get("graph_id") or content.get("selected_graph") or "").strip()
+    graphs = _langgraph_graph_items(langgraph_json)
+    graph_ids = [item[0] for item in graphs]
+    if graph_id and graph_id in graph_ids:
+        return graph_id
+    return graph_ids[0] if graph_ids else "default"
+
+
+def validate_langgraph_workflow_package(manifest: dict, content: dict) -> dict:
+    errors: list[str] = []
+    warnings: list[str] = []
+    langgraph_json = _langgraph_json_from_content(content)
+    if langgraph_json is None:
+        errors.append(
+            "langgraph_workflow requires content.langgraph_json or content['langgraph.json']"
+        )
+        return {"status": "invalid", "errors": errors, "warnings": warnings}
+    if langgraph_json.get("__invalid_json__"):
+        errors.append(str(langgraph_json.get("error") or "langgraph.json is invalid JSON"))
+        return {"status": "invalid", "errors": errors, "warnings": warnings}
+    graphs = _langgraph_graph_items(langgraph_json)
+    if not graphs:
+        errors.append("langgraph.json requires non-empty graphs")
+    graph_ids = [graph_id for graph_id, _spec in graphs]
+    if len(graph_ids) != len(set(graph_ids)) or langgraph_json.get("__duplicate_graph_ids__"):
+        errors.append("langgraph.json graph ids must be unique")
+    dependencies = _langgraph_dependencies(langgraph_json)
+    for graph_id, graph_spec in graphs:
+        path = _langgraph_graph_path(graph_spec)
+        if not path:
+            errors.append(f"langgraph graph {graph_id} must declare a module path")
+            continue
+        if _path_escapes(path):
+            errors.append(f"langgraph graph {graph_id} path must not escape package root")
+        if _local_graph_path_needs_dependency(path, dependencies):
+            errors.append(f"langgraph graph {graph_id} path is not covered by dependencies")
+    for dependency in dependencies:
+        if _path_escapes(dependency):
+            errors.append("langgraph dependency paths must not escape package root")
+    errors.extend(_langgraph_env_secret_errors(langgraph_json.get("env")))
+    errors.extend(
+        _manifest_secret_value_errors(manifest.get("langgraph", {}), "manifest.langgraph")
+    )
+    if manifest.get("permissions"):
+        warnings.append(
+            "LangGraph workflow permissions are advisory; Harness bridges enforce effects"
+        )
+    return {
+        "status": "invalid" if errors else "valid",
+        "errors": errors,
+        "warnings": warnings,
+        "graph_count": len(graphs),
+        "dependency_count": len(dependencies),
+        "no_code_execution": True,
+    }
+
+
+def _langgraph_graph_items(langgraph_json: dict) -> list[tuple[str, Any]]:
+    graphs = langgraph_json.get("graphs")
+    if isinstance(graphs, dict):
+        return [(str(key), value) for key, value in graphs.items() if not str(key).startswith("__")]
+    if isinstance(graphs, list):
+        items: list[tuple[str, Any]] = []
+        for index, item in enumerate(graphs):
+            if not isinstance(item, dict):
+                continue
+            graph_id = str(item.get("id") or item.get("name") or f"graph_{index + 1}")
+            spec = item.get("path") or item.get("import") or item.get("spec") or item
+            items.append((graph_id, spec))
+        return items
+    return []
+
+
+def _langgraph_dependencies(langgraph_json: dict) -> list[str]:
+    dependencies = langgraph_json.get("dependencies", [])
+    if not isinstance(dependencies, list):
+        return []
+    return [str(item).strip() for item in dependencies if str(item).strip()]
+
+
+def _langgraph_graph_path(graph_spec: Any) -> str:
+    if isinstance(graph_spec, str):
+        return graph_spec.rsplit(":", 1)[0]
+    if isinstance(graph_spec, dict):
+        value = graph_spec.get("path") or graph_spec.get("import") or graph_spec.get("module")
+        return str(value or "").rsplit(":", 1)[0]
+    return ""
+
+
+def _path_escapes(path: str) -> bool:
+    normalized = path.replace("\\", "/").strip()
+    if not normalized:
+        return False
+    if len(normalized) >= 2 and normalized[1] == ":" and normalized[0].isalpha():
+        return True
+    if normalized.startswith(("/", "~")):
+        return True
+    return any(part == ".." for part in normalized.split("/"))
+
+
+def _local_graph_path_needs_dependency(path: str, dependencies: list[str]) -> bool:
+    normalized = path.replace("\\", "/").strip()
+    if not normalized.startswith("."):
+        return False
+    if "." in dependencies or "./" in dependencies:
+        return False
+    graph_root = normalized.removeprefix("./").split("/", 1)[0]
+    declared_roots = {
+        dep.removeprefix("./").split("/", 1)[0]
+        for dep in dependencies
+        if dep.startswith(".") and not _path_escapes(dep)
+    }
+    return graph_root not in declared_roots
+
+
+def _langgraph_env_secret_errors(env: Any) -> list[str]:
+    if env in (None, "", [], {}):
+        return []
+    errors: list[str] = []
+    if isinstance(env, str):
+        if _looks_like_raw_secret(env):
+            errors.append("langgraph env must reference env files or secret refs, not raw secrets")
+        elif _path_escapes(env):
+            errors.append("langgraph env paths must not escape package root")
+        return errors
+    if isinstance(env, list):
+        for index, item in enumerate(env):
+            if not isinstance(item, str) or _looks_like_raw_secret(item):
+                errors.append(f"langgraph env[{index}] must be an env path or secret ref")
+            elif _path_escapes(item):
+                errors.append(f"langgraph env[{index}] path must not escape package root")
+        return errors
+    if isinstance(env, dict):
+        for key, value in env.items():
+            normalized = str(key).lower().replace("-", "_")
+            if any(part in normalized for part in SECRET_KEY_PARTS):
+                if not (
+                    isinstance(value, str)
+                    and value.startswith(("secret://", "vault://", "env:"))
+                ):
+                    errors.append(f"langgraph env {key} must use a secret ref")
+            elif isinstance(value, str) and _looks_like_raw_secret(value):
+                errors.append(f"langgraph env {key} must not contain raw secret material")
+        return errors
+    errors.append("langgraph env must be a string, array, or object")
+    return errors
+
+
+def _looks_like_raw_secret(value: str) -> bool:
+    text = value.strip()
+    if not text or text.startswith(("secret://", "vault://", "env:", "$")):
+        return False
+    lowered = text.lower()
+    return (
+        any(marker in lowered for marker in ("sk-", "api_key=", "token=", "password="))
+        or len(text) >= 32
+        and any(char.isdigit() for char in text)
+        and any(char.isalpha() for char in text)
+    )
+
+
+def _public_content_hash_errors(
+    *,
+    source_kind: str,
+    pinned_ref: str | None,
+    content: dict,
+) -> list[str]:
+    if source_kind not in PUBLIC_SOURCE_KINDS:
+        return []
+    if not pinned_ref:
+        return ["public package source must include pinned_ref"]
+    if not pinned_ref.startswith("sha256:"):
+        return ["public package source must include sha256 content hash in v1"]
+    expected = pinned_ref.removeprefix("sha256:")
+    download = content.get("download") if isinstance(content.get("download"), dict) else {}
+    actual = str(download.get("sha256") or "").strip() or stable_json_sha256(content)
+    if expected != actual:
+        return ["public package source hash mismatch"]
+    return []
 
 
 def _clean_optional_string(value: Any) -> str | None:
@@ -2265,6 +2652,8 @@ def _capability_type_for_package(package_type: str, manifest: dict) -> str:
         return CAPABILITY_TYPE_KNOWLEDGE_CONNECTOR
     if package_type == "context_optimizer":
         return CAPABILITY_TYPE_CONTEXT_OPTIMIZER
+    if package_type == "langgraph_workflow":
+        return CAPABILITY_TYPE_LANGGRAPH_WORKFLOW
     if package_type == "tool_definition":
         metadata = manifest.get("tool_metadata")
         if isinstance(metadata, dict) and metadata.get("source") == "mcp":

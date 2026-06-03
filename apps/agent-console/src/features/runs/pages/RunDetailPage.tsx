@@ -65,6 +65,10 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const grounding = data?.knowledge_grounding;
   const contextAssembly = data?.context_assembly;
   const tokenOptimization = data?.token_optimization ?? {};
+  const langGraphEvents = useMemo(
+    () => (data?.events ?? []).filter((event) => isLangGraphEvent(event.event_type)),
+    [data?.events],
+  );
   const specialistEvidence = useMemo(() => collectSpecialistEvidence(data?.subagents ?? []), [data?.subagents]);
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
@@ -674,7 +678,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <Badge tone={statusTone(step.status)}>{statusLabel(step.status)}</Badge>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1">
-                    <Badge tone={step.execution_mode === "async" ? "purple" : "neutral"}>
+                    <Badge tone={step.execution_mode === "langgraph_node" ? "info" : step.execution_mode === "async" ? "purple" : "neutral"}>
                       {executionModeLabel(step.execution_mode)}
                     </Badge>
                     {step.requires_sandbox && <Badge tone="warning">沙箱</Badge>}
@@ -721,6 +725,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             onSequenceChange={setReplaySequence}
             onReplay={() => replay.mutate()}
           />
+          <LangGraphEvidencePanel events={langGraphEvents} />
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -916,6 +921,44 @@ function ReplayPanel({
                 {JSON.stringify(replayResult.failure_point, null, 2)}
               </pre>
             )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function LangGraphEvidencePanel({ events }: { events: AgentEvent[] }) {
+  const latest = events[events.length - 1] ?? null;
+  const workflowTotal = events.filter((event) => event.event_type.startsWith("LANGGRAPH_WORKFLOW_")).length;
+  const nodeTotal = events.filter((event) => event.event_type.startsWith("LANGGRAPH_NODE_")).length;
+  const toolNodeTotal = events.filter((event) => event.event_type.startsWith("LANGGRAPH_TOOL_NODE_")).length;
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <GitBranch className="h-4 w-4" />
+          LangGraph 证据
+        </div>
+        <Badge tone={events.length ? "info" : "neutral"}>{events.length}</Badge>
+      </CardHeader>
+      <div className="space-y-3 p-3 text-xs">
+        <div className="grid grid-cols-3 gap-2">
+          <Metric label="Workflow" value={String(workflowTotal)} />
+          <Metric label="Node" value={String(nodeTotal)} />
+          <Metric label="Tool node" value={String(toolNodeTotal)} />
+        </div>
+        {latest ? (
+          <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-slate-900">#{latest.sequence}</span>
+              <Badge tone={langGraphEventTone(latest.event_type)}>{eventLabel(latest.event_type)}</Badge>
+            </div>
+            <div className="mt-1 text-slate-500">{langGraphEventPayloadSummary(latest.payload_json)}</div>
+          </div>
+        ) : (
+          <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-slate-500">
+            当前运行没有 LangGraph workflow/node/tool-node 事件。
           </div>
         )}
       </div>
@@ -1163,9 +1206,16 @@ function EventRow({ event }: { event: AgentEvent }) {
     <div className="rounded-md border border-slate-100 bg-white p-2">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-xs text-slate-900">#{event.sequence}</span>
-        <Badge tone={statusTone(event.event_type)}>{eventLabel(event.event_type)}</Badge>
+        <Badge tone={isLangGraphEvent(event.event_type) ? langGraphEventTone(event.event_type) : statusTone(event.event_type)}>
+          {eventLabel(event.event_type)}
+        </Badge>
       </div>
       <div className="mt-1 font-mono text-[11px] text-slate-500">{formatShortDate(event.created_at)}</div>
+      {isLangGraphEvent(event.event_type) ? (
+        <div className="mt-1 line-clamp-2 text-[11px] text-slate-600">
+          {langGraphEventPayloadSummary(event.payload_json)}
+        </div>
+      ) : null}
       {event.trace_id && (
         <Link
           to={`/observability/trace?trace_id=${encodeURIComponent(event.trace_id)}`}
@@ -1176,6 +1226,29 @@ function EventRow({ event }: { event: AgentEvent }) {
       )}
     </div>
   );
+}
+
+function isLangGraphEvent(eventType: string) {
+  return eventType.startsWith("LANGGRAPH_");
+}
+
+function langGraphEventTone(eventType: string) {
+  if (eventType.endsWith("_FAILED") || eventType.endsWith("_DENIED")) return "failed" as const;
+  if (eventType.endsWith("_COMPLETED")) return "success" as const;
+  return "info" as const;
+}
+
+function langGraphEventPayloadSummary(payload: Record<string, unknown>) {
+  const fields = [
+    ["workflow", payload.workflow_name ?? payload.workflow_id ?? payload.capability_id],
+    ["graph", payload.graph_id],
+    ["node", payload.node_id ?? payload.node_name ?? payload.step_key],
+    ["tool", payload.tool_name],
+    ["denial", payload.denial_code ?? payload.error_code],
+  ]
+    .filter(([, value]) => typeof value === "string" && value.trim())
+    .map(([label, value]) => `${label}: ${String(value)}`);
+  return fields.length ? fields.join(" · ") : "LangGraph event payload 已写入 EventStore";
 }
 
 function Metric({ label, value }: { label: React.ReactNode; value: string }) {

@@ -68,6 +68,29 @@ class TestDAGSchedulerValidate:
         assert valid is True
         assert error is None
 
+    def test_langgraph_node_steps_are_valid_dag_nodes(self):
+        """LangGraph workflow nodes participate in the DAG like sync/async steps."""
+        steps = [
+            _make_step("prepare"),
+            _make_step(
+                "workflow",
+                depends_on=["prepare"],
+                execution_mode="langgraph_node",
+                tool_hints=["langgraph:main"],
+            ),
+            _make_step("summarize", depends_on=["workflow"]),
+        ]
+        plan = _make_plan(steps)
+        scheduler = DAGScheduler()
+
+        valid, error = scheduler.validate(plan)
+        groups = scheduler.resolve(plan)
+
+        assert valid is True
+        assert error is None
+        assert [group.steps[0].key for group in groups] == ["prepare", "workflow", "summarize"]
+        assert groups[1].steps[0].execution_mode == "langgraph_node"
+
     def test_simple_cycle_detected(self):
         """A→B→A cycle."""
         steps = [

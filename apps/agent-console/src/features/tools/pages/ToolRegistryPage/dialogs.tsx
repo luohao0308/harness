@@ -1,10 +1,12 @@
 import {
   CheckCircle2,
   PackagePlus,
+  PlugZap,
   RotateCcw,
   Search,
   ShieldCheck,
   Timer,
+  Workflow,
 } from "lucide-react";
 
 import { Badge } from "../../../../components/ui/badge";
@@ -169,6 +171,35 @@ type ToolRegistryDialogsProps = {
   testInvokeData?: ToolExecuteResult;
   testInvokeError: unknown;
   onTestInvoke: () => void;
+
+  langGraphAgentId: string;
+  onLangGraphAgentIdChange: (value: string) => void;
+  langGraphManifest: string;
+  onLangGraphManifestChange: (value: string) => void;
+  langGraphJson: string;
+  onLangGraphJsonChange: (value: string) => void;
+  latestLangGraphPackage: CapabilityPackage | null;
+  langGraphValidationData?: CapabilityValidationResponse;
+  langGraphValidationPending: boolean;
+  onValidateLangGraph: () => void;
+  langGraphStagePending: boolean;
+  onStageLangGraph: () => void;
+  langGraphApprovePending: boolean;
+  onApproveLangGraph: () => void;
+  langGraphAttachPending: boolean;
+  onAttachLangGraph: () => void;
+  langGraphError: unknown;
+
+  langChainAgentId: string;
+  onLangChainAgentIdChange: (value: string) => void;
+  langChainToolName: string;
+  onLangChainToolNameChange: (value: string) => void;
+  langChainInvokeInput: string;
+  onLangChainInvokeInputChange: (value: string) => void;
+  langChainInvokePending: boolean;
+  langChainInvokeData?: ToolExecuteResult;
+  langChainInvokeError: unknown;
+  onLangChainInvoke: () => void;
 };
 
 export function ToolRegistryDialogs(props: ToolRegistryDialogsProps) {
@@ -527,6 +558,159 @@ export function ToolRegistryDialogs(props: ToolRegistryDialogsProps) {
             </div>
           ) : null}
           <MutationError error={props.lifecycleError ?? props.packagesError} />
+        </div>
+      </ConfigDialog>
+
+      <ConfigDialog
+        open={activeConfigDialog === "langgraph-workflow"}
+        title="LangGraph Workflow"
+        description={text("导入 immutable LangGraph workflow capability package；workflow 不进入工具注册表或 /test-invoke。", "Import an immutable LangGraph workflow capability package; workflows never enter the tool registry or /test-invoke.")}
+        onClose={onClose}
+        className="max-w-5xl"
+      >
+        <div className="grid gap-4 text-xs">
+          <div className="grid gap-3 rounded-md border border-cyan-100 bg-cyan-50 p-3 text-cyan-950 md:grid-cols-3">
+            <div>
+              <div className="font-semibold">Harness 权威证据</div>
+              <div className="mt-1 leading-5">运行证据仍写入 Task / Step / Event / Replay / Observability。</div>
+            </div>
+            <div>
+              <div className="font-semibold">非 ToolRunner 能力</div>
+              <div className="mt-1 leading-5">不会出现在工具注册表、MCP discovery 或测试调用目标里。</div>
+            </div>
+            <div>
+              <div className="font-semibold">执行开关隔离</div>
+              <div className="mt-1 leading-5">生产默认执行关闭，导入和校验可先完成。</div>
+            </div>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">Capability manifest</span>
+              <Textarea
+                aria-label="LangGraph capability manifest"
+                value={props.langGraphManifest}
+                onChange={(event) => props.onLangGraphManifestChange(event.target.value)}
+                className="min-h-80 font-mono text-xs"
+              />
+            </label>
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">langgraph.json</span>
+              <Textarea
+                aria-label="LangGraph JSON"
+                value={props.langGraphJson}
+                onChange={(event) => props.onLangGraphJsonChange(event.target.value)}
+                className="min-h-80 font-mono text-xs"
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">目标智能体</span>
+              <MenuSelect
+                ariaLabel="LangGraph workflow 目标智能体"
+                value={props.langGraphAgentId}
+                onChange={props.onLangGraphAgentIdChange}
+                options={agentOptions}
+                placeholder={text("选择目标智能体", "Select target agent")}
+                size="compact"
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={props.onValidateLangGraph} disabled={props.langGraphValidationPending}>
+                <ShieldCheck className="h-3.5 w-3.5" /> {text("仅校验", "Validate only")}
+              </Button>
+              <Button onClick={props.onStageLangGraph} disabled={props.langGraphStagePending}>
+                <PackagePlus className="h-3.5 w-3.5" /> {text("暂存 Workflow", "Stage workflow")}
+              </Button>
+              <Button
+                onClick={props.onApproveLangGraph}
+                disabled={!props.latestLangGraphPackage || props.latestLangGraphPackage.status !== "staged" || props.langGraphApprovePending}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" /> {text("审批版本", "Approve version")}
+              </Button>
+              <Button
+                onClick={props.onAttachLangGraph}
+                disabled={!props.latestLangGraphPackage || props.latestLangGraphPackage.status !== "approved" || props.langGraphAttachPending}
+              >
+                <Workflow className="h-3.5 w-3.5" /> {text("挂载到智能体", "Attach to Agent")}
+              </Button>
+            </div>
+          </div>
+          {props.langGraphValidationData ? (
+            <div className="rounded-md border border-slate-100 bg-slate-50 p-2 font-mono text-[11px] text-slate-600">
+              {text("校验状态", "Validation")} {capabilityValidationStatusLabel(props.langGraphValidationData.status)} ·{" "}
+              {capabilityValidationModeLabel(props.langGraphValidationData.validation_mode ?? "manifest_only_no_execution")}
+              <br />
+              content {props.langGraphValidationData.content_sha256.slice(0, 12)} / config {props.langGraphValidationData.config_sha256.slice(0, 12)}
+              {props.langGraphValidationData.errors?.length ? (
+                <div className="mt-1 text-red-700">{props.langGraphValidationData.errors.join("; ")}</div>
+              ) : null}
+              {props.langGraphValidationData.warnings?.length ? (
+                <div className="mt-1 text-amber-700">{props.langGraphValidationData.warnings.join("; ")}</div>
+              ) : null}
+            </div>
+          ) : null}
+          {props.latestLangGraphPackage ? (
+            <PackageLifecycleSummary pkg={props.latestLangGraphPackage} />
+          ) : (
+            <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-slate-500">
+              {text("暂无已暂存的 LangGraph workflow 包。", "No staged LangGraph workflow package yet.")}
+            </div>
+          )}
+          <MutationError error={props.langGraphError} />
+        </div>
+      </ConfigDialog>
+
+      <ConfigDialog
+        open={activeConfigDialog === "langchain-adapter"}
+        title="LangChain Adapter"
+        description={text("LangChain tools 只作为 MCP-shaped ToolMetadata(source=\"mcp\") 进入 Harness ToolRunner。", "LangChain tools enter Harness ToolRunner only as MCP-shaped ToolMetadata(source=\"mcp\").")}
+        onClose={onClose}
+        className="max-w-3xl"
+      >
+        <div className="grid gap-3 text-xs">
+          <div className="rounded-md border border-cyan-100 bg-cyan-50 p-3 leading-5 text-cyan-950">
+            LangChain Adapter 不新增 source=&quot;langchain&quot;，也不绕过策略、审批、沙箱、ToolCall 和 EventStore。Retriever grounding 请在知识库的 LangChain Retriever 连接器中配置。
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">目标智能体</span>
+              <MenuSelect
+                ariaLabel="LangChain adapter 目标智能体"
+                value={props.langChainAgentId}
+                onChange={props.onLangChainAgentIdChange}
+                options={agentOptions}
+                placeholder={text("选择目标智能体", "Select target agent")}
+                size="compact"
+              />
+            </label>
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">{text("MCP-shaped 工具名", "MCP-shaped tool name")}</span>
+              <Input
+                aria-label="LangChain adapter tool name"
+                value={props.langChainToolName}
+                onChange={(event) => props.onLangChainToolNameChange(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">调用输入 JSON</span>
+            <Textarea
+              aria-label="LangChain adapter input JSON"
+              value={props.langChainInvokeInput}
+              onChange={(event) => props.onLangChainInvokeInputChange(event.target.value)}
+              className="min-h-44 font-mono text-xs"
+            />
+          </label>
+          <Button onClick={props.onLangChainInvoke} disabled={props.langChainInvokePending || !props.langChainToolName.trim()}>
+            <PlugZap className="h-3.5 w-3.5" /> {text("通过 ToolRunner 测试", "Test through ToolRunner")}
+          </Button>
+          {props.langChainInvokeData ? (
+            <pre className="max-h-40 overflow-auto rounded border border-slate-100 bg-slate-50 p-2 font-mono text-[10px] text-slate-600">
+              {JSON.stringify(props.langChainInvokeData.output, null, 2)}
+            </pre>
+          ) : null}
+          <MutationError error={props.langChainInvokeError} />
         </div>
       </ConfigDialog>
 

@@ -198,12 +198,20 @@ export function ToolRegistryOverview({
                 <PlugZap className="h-3.5 w-3.5" />
                 {text("测试调用", "Test invoke")}
               </Button>
+              <Button type="button" variant="secondary" className="col-span-2" onClick={() => onOpenDialog("langgraph-workflow")}>
+                <Workflow className="h-3.5 w-3.5" />
+                LangGraph Workflow
+              </Button>
+              <Button type="button" variant="secondary" className="col-span-2" onClick={() => onOpenDialog("langchain-adapter")}>
+                <PlugZap className="h-3.5 w-3.5" />
+                LangChain Adapter
+              </Button>
             </div>
           </div>
         </Card>
       </section>
 
-      <section className="grid grid-cols-5 gap-3">
+      <section className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <HarnessTile
           icon={<PlugZap className="h-4 w-4" />}
           title={text("工具注册表", "Tool Registry")}
@@ -226,7 +234,13 @@ export function ToolRegistryOverview({
           icon={<GitBranch className="h-4 w-4" />}
           title={<TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>}
           status={`${mcpCount} ${text("已注册", "registered")}`}
-          description={text("外部协议形态工具复用同一工具执行器、策略、工具调用审计和事件路径。", "MCP-shaped tools reuse the same ToolRunner, Policy, ToolCall, and Event path.")}
+          description={text("MCP-shaped 工具复用同一工具执行器；LangChain tools 也只作为 MCP-shaped adapter 进入这里。", "MCP-shaped tools reuse ToolRunner; LangChain tools enter only through this MCP-shaped adapter path.")}
+        />
+        <HarnessTile
+          icon={<Workflow className="h-4 w-4" />}
+          title="LangGraph Workflow"
+          status={text("非工具能力包", "Non-tool package")}
+          description={text("Workflow 通过不可变能力包导入、审批和挂载；运行证据写入 Task/Step/Event。", "Workflows are imported, approved, and attached as immutable packages; runtime evidence stays in Task/Step/Event.")}
         />
         <HarnessTile
           icon={<Workflow className="h-4 w-4" />}

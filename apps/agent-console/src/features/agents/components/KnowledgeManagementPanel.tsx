@@ -61,7 +61,7 @@ const knowledgeFileAccept = ".txt,.md,text/plain,text/markdown";
 const knowledgeFileMaxBytes = 120_000;
 
 type KnowledgeCreateMode = "document" | "connector";
-type ConnectorPresetId = "dify" | "coze" | "ragflow" | "local_dify" | "local_ragflow";
+type ConnectorPresetId = "dify" | "coze" | "langchain" | "ragflow" | "local_dify" | "local_ragflow";
 export type KnowledgeSourceFilter = "all" | "local" | "api" | "preview";
 
 function useCanManageOrgKnowledge() {
@@ -111,6 +111,15 @@ const connectorPresets: Array<{
     helper: "预览",
     releaseState: "preview-not-counted",
     referenceRequired: true,
+  },
+  {
+    id: "langchain",
+    label: "LangChain Retriever",
+    placeholder: "langchain://retriever/default",
+    secretPlaceholder: "secret://langchain",
+    helper: "Retriever grounding",
+    releaseState: "configured-but-unavailable",
+    referenceRequired: false,
   },
   {
     id: "local_dify",
@@ -180,7 +189,7 @@ function connectorSeedContent(providerLabel: string, endpoint: string, datasetId
   if (datasetId.trim()) {
     rows.push(`数据集：${datasetId.trim()}`);
   }
-  rows.push("", "该知识源保存外部知识库接入配置，用于预检或运行时检索。");
+  rows.push("", "该知识源保存外部知识库接入配置，用于预检、运行时检索或 Harness grounding adapter。");
   return rows.join("\n");
 }
 
@@ -426,6 +435,7 @@ function KnowledgeCreateDialog({
           connector_secret_value: secretValue.trim() || null,
           connector_settings_json: {
             provider: connectorPreset,
+            ...(connectorPreset === "langchain" ? { source_kind: "langchain_connector" } : {}),
             release_state: preset?.releaseState,
             endpoint: endpoint.trim(),
             secret_ref: secretRef.trim(),
@@ -523,7 +533,7 @@ function KnowledgeCreateDialog({
       title={mode === "connector" ? text("新增外部 API 接入", "Add External API") : text("新增本地知识", "Add Local Knowledge")}
       description={
         mode === "connector"
-          ? text("Dify 和 Coze 保存配置后可用于运行时检索；RAGFlow 和本地端点仍仅保存配置和预检状态。", "Dify and Coze can be used for runtime retrieval after saving; RAGFlow and local endpoints store configuration and readiness only.")
+          ? text("Dify 和 Coze 可用于运行时检索；LangChain Retriever 保存为 grounding adapter 配置；RAGFlow 和本地端点仍仅保存配置和预检状态。", "Dify and Coze can be used for runtime retrieval; LangChain Retriever is stored as grounding adapter config; RAGFlow and local endpoints store configuration and readiness only.")
           : text("上传 .txt/.md 或直接写入手动文本。", "Upload .txt/.md files or paste manual text.")
       }
       onClose={onClose}
@@ -886,7 +896,7 @@ function KnowledgeSourceSummary({
           <div>
             <div className="text-[11px] text-slate-400">{text("提供方", "Provider")}</div>
             <div className="mt-1 font-medium text-slate-700">
-              {source.connector_provider ?? connectorProviderFromSettings(source)}
+              {connectorProviderLabel(source.connector_provider ?? connectorProviderFromSettings(source))}
             </div>
           </div>
           <div>
@@ -1934,7 +1944,7 @@ function KnowledgeConnectorBadge({ source }: { source: KnowledgeSource }) {
   return (
     <Badge tone={tone}>
       <Cable className="h-3 w-3" />
-      {provider}
+      {connectorProviderLabel(provider)}
     </Badge>
   );
 }
@@ -1980,6 +1990,7 @@ function connectorProviderLabel(provider: string) {
   const labels: Record<string, string> = {
     coze: "Coze",
     dify: "Dify",
+    langchain: "LangChain Retriever",
     ragflow: "RAGFlow",
     local_dify: "Local Dify",
     local_ragflow: "Local RAGFlow",

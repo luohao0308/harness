@@ -60,6 +60,48 @@ import {
 import { ToolRegistryOverview, ToolRegistryTable } from "./sections";
 import type { MarketplaceFilter, ToolConfigDialog } from "./types";
 
+const DEFAULT_LANGGRAPH_MANIFEST = JSON.stringify(
+  {
+    name: "demo-langgraph-workflow",
+    version: "1.0.0",
+    description: "LangGraph workflow imported as an immutable Harness capability package",
+    package_type: "langgraph_workflow",
+    permissions: ["langgraph:invoke"],
+    secret_refs: [],
+    langgraph: {
+      default_graph: "main",
+      execution_authority: "harness",
+    },
+  },
+  null,
+  2,
+);
+
+const DEFAULT_LANGGRAPH_JSON = JSON.stringify(
+  {
+    dependencies: ["."],
+    graphs: {
+      main: "./agent.py:graph",
+    },
+    env: {
+      OPENAI_API_KEY: "secret://openai",
+    },
+  },
+  null,
+  2,
+);
+
+const DEFAULT_LANGCHAIN_INVOKE_INPUT = JSON.stringify(
+  {
+    tool_name: "example_tool",
+    arguments: {
+      query: "release readiness",
+    },
+  },
+  null,
+  2,
+);
+
 export function ToolRegistryPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
@@ -107,6 +149,12 @@ export function ToolRegistryPage() {
   const [testAgentId, setTestAgentId] = useState("default");
   const [testToolName, setTestToolName] = useState("mcp_context_search");
   const [invokeInput, setInvokeInput] = useState(`{ "query": "release readiness", "limit": 2 }`);
+  const [langGraphManifest, setLangGraphManifest] = useState(DEFAULT_LANGGRAPH_MANIFEST);
+  const [langGraphJson, setLangGraphJson] = useState(DEFAULT_LANGGRAPH_JSON);
+  const [langGraphAgentId, setLangGraphAgentId] = useState("default");
+  const [langChainAgentId, setLangChainAgentId] = useState("default");
+  const [langChainToolName, setLangChainToolName] = useState("langchain.invoke_tool");
+  const [langChainInvokeInput, setLangChainInvokeInput] = useState(DEFAULT_LANGCHAIN_INVOKE_INPUT);
   const [marketplaceQuickQuery, setMarketplaceQuickQuery] = useState("发布准备情况");
   const [schemaAdapterSlug, setSchemaAdapterSlug] = useState<string | null>(null);
   const [codeInput, setCodeInput] = useState('print("hello from sandbox")');
@@ -135,10 +183,15 @@ export function ToolRegistryPage() {
   const packagesQuery = useQuery({
     queryKey: ["capability-packages"],
     queryFn: listCapabilityPackages,
-    enabled: activeConfigDialog === "lifecycle" || activeConfigDialog === "marketplace",
+    enabled:
+      activeConfigDialog === "lifecycle" ||
+      activeConfigDialog === "marketplace" ||
+      activeConfigDialog === "langgraph-workflow",
   });
   const dependencyPreflightQuery = useQuery({ queryKey: ["capability-dependency-preflight"], queryFn: capabilityDependencyPreflight });
   const latestPackage = packagesQuery.data?.items[0] ?? null;
+  const latestLangGraphPackage =
+    packagesQuery.data?.items.find((pkg) => pkg.package_type === "langgraph_workflow") ?? null;
   const selectedRollbackVersion = rollbackVersionId.trim() || latestPackage?.capability_version_id || "";
   const marketplaceItems = marketplaceQuery.data?.items ?? [];
   const selectedMarketplaceItem =
@@ -159,6 +212,7 @@ export function ToolRegistryPage() {
   const selectedAgentAttachments = selectedAgent?.capability_attachments ?? [];
   const selectedAgentDisplayLabel = agentTargetLabel(simpleAgentId, agentsQuery.data?.items ?? []);
   const packageAgentDisplayLabel = agentTargetLabel(packageAgentId, agentsQuery.data?.items ?? []);
+  const langGraphAgentDisplayLabel = agentTargetLabel(langGraphAgentId, agentsQuery.data?.items ?? []);
   const refreshPackages = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["capability-packages"] }),
@@ -194,6 +248,86 @@ export function ToolRegistryPage() {
       });
     },
     onError: (error) => notifyMutationError("能力包校验失败", error, "请检查清单 JSON、来源地址或固定引用。"),
+  });
+  const langGraphValidationMutation = useMutation({
+    mutationFn: () => {
+      const manifest = JSON.parse(langGraphManifest) as Record<string, unknown>;
+      const langgraphJson = JSON.parse(langGraphJson) as Record<string, unknown>;
+      return validateCapabilityPackage({
+        content: {
+          package_manifest: manifest,
+          langgraph_json: langgraphJson,
+        },
+        config: {
+          source_type: "private_upload",
+          package_type: "langgraph_workflow",
+          execution_authority: "harness",
+        },
+      });
+    },
+    onSuccess: (result) => {
+      notifyFeedback({
+        tone: result.status === "valid" ? "success" : "warning",
+        title: result.status === "valid" ? "LangGraph Workflow 校验通过" : "LangGraph Workflow 校验完成",
+        description: `${capabilityValidationModeLabel(result.validation_mode ?? "manifest_only_no_execution")} · ${result.content_sha256.slice(0, 12)}`,
+      });
+    },
+    onError: (error) =>
+      notifyMutationError("LangGraph Workflow 校验失败", error, "请检查 manifest、langgraph.json 和 feature flag。"),
+  });
+  const stageLangGraphMutation = useMutation({
+    mutationFn: () => {
+      const manifest = JSON.parse(langGraphManifest) as Record<string, unknown>;
+      const langgraphJson = JSON.parse(langGraphJson) as Record<string, unknown>;
+      return stagePrivateCapabilityPackage({
+        manifest,
+        content: { langgraph_json: langgraphJson },
+      });
+    },
+    onSuccess: async (pkg) => {
+      setRollbackVersionId(pkg.capability_version_id ?? "");
+      notifyFeedback({
+        tone: "info",
+        title: "LangGraph Workflow 已暂存",
+        description: `${capabilityPackageStatusLabel(pkg.status)} · ${pkg.source_sha256.slice(0, 12)}`,
+      });
+      await refreshPackages();
+    },
+    onError: (error) =>
+      notifyMutationError("LangGraph Workflow 暂存失败", error, "请确认导入开关已启用，且 langgraph.json 未包含不安全路径或原始密钥。"),
+  });
+  const approveLangGraphMutation = useMutation({
+    mutationFn: (pkg: CapabilityPackage) =>
+      approveCapabilityPackage(pkg.id, "console LangGraph workflow approval"),
+    onSuccess: async (pkg) => {
+      notifyFeedback({
+        tone: "success",
+        title: "LangGraph Workflow 审批通过",
+        description: `版本 ${pkg.capability_version_id ?? "待生成"} 已可挂载到智能体。`,
+      });
+      await refreshPackages();
+    },
+    onError: (error) =>
+      notifyMutationError("LangGraph Workflow 审批失败", error, "请检查包状态、权限和校验结果。"),
+  });
+  const attachLangGraphMutation = useMutation({
+    mutationFn: (pkg: CapabilityPackage) =>
+      attachCapabilityPackage(pkg.id, { agent_id: langGraphAgentId, enabled: true, priority: 20 }),
+    onSuccess: async (attachment) => {
+      setLatestAttachmentId(attachment.attachment_id);
+      notifyFeedback({
+        tone: "success",
+        title: "LangGraph Workflow 已挂载",
+        description: `${langGraphAgentDisplayLabel} 的 workflow 附件 ${attachment.attachment_id} 已启用；运行仍受执行开关控制。`,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        queryClient.invalidateQueries({ queryKey: ["tool-registry"] }),
+        queryClient.invalidateQueries({ queryKey: ["capability-packages"] }),
+      ]);
+    },
+    onError: (error) =>
+      notifyMutationError("LangGraph Workflow 挂载失败", error, "请确认版本已审批且目标智能体存在。"),
   });
   const trustedInstallMutation = useMutation({
     mutationFn: () =>
@@ -495,6 +629,23 @@ export function ToolRegistryPage() {
     },
     onError: (error) => notifyMutationError("测试调用失败", error, "请检查工具名、输入 JSON 和智能体附件状态。"),
   });
+  const langChainTestInvokeMutation = useMutation({
+    mutationFn: () =>
+      testInvokeCapability({
+        agent_id: langChainAgentId,
+        tool_name: langChainToolName,
+        input_json: JSON.parse(langChainInvokeInput) as Record<string, unknown>,
+      }),
+    onSuccess: (result) => {
+      notifyFeedback({
+        tone: result.allowed ? "success" : "warning",
+        title: result.allowed ? "LangChain Adapter 调用成功" : "LangChain Adapter 返回受控结果",
+        description: `${result.tool_call.tool_name} · ${result.tool_call.status} · ${result.tool_call.duration_ms}ms`,
+      });
+    },
+    onError: (error) =>
+      notifyMutationError("LangChain Adapter 调用失败", error, "请确认 adapter 已启用、工具以 MCP-shaped 元数据注册，并检查 JSON 输入。"),
+  });
   const discoverMCPMutation = useMutation({
     mutationFn: (toolName: string) => discoverMCPServer(simpleAgentId, toolName),
     onSuccess: async (result) => {
@@ -766,6 +917,38 @@ export function ToolRegistryPage() {
           testInvokeData={testInvokeMutation.data}
           testInvokeError={testInvokeMutation.error}
           onTestInvoke={() => testInvokeMutation.mutate()}
+          langGraphAgentId={langGraphAgentId}
+          onLangGraphAgentIdChange={setLangGraphAgentId}
+          langGraphManifest={langGraphManifest}
+          onLangGraphManifestChange={setLangGraphManifest}
+          langGraphJson={langGraphJson}
+          onLangGraphJsonChange={setLangGraphJson}
+          latestLangGraphPackage={latestLangGraphPackage}
+          langGraphValidationData={langGraphValidationMutation.data}
+          langGraphValidationPending={langGraphValidationMutation.isPending}
+          onValidateLangGraph={() => langGraphValidationMutation.mutate()}
+          langGraphStagePending={stageLangGraphMutation.isPending}
+          onStageLangGraph={() => stageLangGraphMutation.mutate()}
+          langGraphApprovePending={approveLangGraphMutation.isPending}
+          onApproveLangGraph={() => latestLangGraphPackage && approveLangGraphMutation.mutate(latestLangGraphPackage)}
+          langGraphAttachPending={attachLangGraphMutation.isPending}
+          onAttachLangGraph={() => latestLangGraphPackage && attachLangGraphMutation.mutate(latestLangGraphPackage)}
+          langGraphError={
+            langGraphValidationMutation.error ??
+            stageLangGraphMutation.error ??
+            approveLangGraphMutation.error ??
+            attachLangGraphMutation.error
+          }
+          langChainAgentId={langChainAgentId}
+          onLangChainAgentIdChange={setLangChainAgentId}
+          langChainToolName={langChainToolName}
+          onLangChainToolNameChange={setLangChainToolName}
+          langChainInvokeInput={langChainInvokeInput}
+          onLangChainInvokeInputChange={setLangChainInvokeInput}
+          langChainInvokePending={langChainTestInvokeMutation.isPending}
+          langChainInvokeData={langChainTestInvokeMutation.data}
+          langChainInvokeError={langChainTestInvokeMutation.error}
+          onLangChainInvoke={() => langChainTestInvokeMutation.mutate()}
         />
 
         {activeConfigDialog === "mcp-servers" ? (

@@ -22,7 +22,7 @@ const filterOptions: Array<{
 }> = [
   { id: "all", label: "全部", description: "本地文档和 API 配置" },
   { id: "local", label: "本地", description: ".txt / .md / 手动文本" },
-  { id: "api", label: "API", description: "Coze / Dify / RAGFlow" },
+  { id: "api", label: "API", description: "Coze / Dify / LangChain / RAGFlow" },
   { id: "preview", label: "预览", description: "未计入可运行的连接器" },
 ];
 
@@ -53,8 +53,8 @@ export function KnowledgePage() {
             </h1>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
               {text(
-                "集中管理本地文档索引和外部知识库 API 配置。Dify 和 Coze 可在本地证据不足时参与运行时检索，RAGFlow 和本地端点仍为配置和预检状态。",
-                "Manage local document indexes and external knowledge API configuration. Dify and Coze can participate in runtime retrieval when local evidence is insufficient; RAGFlow and local endpoints remain configuration and readiness only.",
+                "集中管理本地文档索引和外部知识库 API 配置。Dify 和 Coze 可在本地证据不足时参与运行时检索，LangChain Retriever 保存 grounding adapter 配置，RAGFlow 和本地端点仍为配置和预检状态。",
+                "Manage local document indexes and external knowledge API configuration. Dify and Coze can participate in runtime retrieval, LangChain Retriever stores grounding adapter config, and RAGFlow/local endpoints remain configuration and readiness only.",
               )}
             </p>
           </div>
