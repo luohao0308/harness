@@ -11,14 +11,76 @@ def _workspace_max_subagents(request: AgentChatStreamRequest) -> int:
 def _workspace_auto_orchestration_mode(*, goal: str, request: AgentChatStreamRequest) -> str:
     if request.orchestration_mode != "auto":
         return request.orchestration_mode
-    normalized = goal.lower()
-    subagent_terms = ("subagent", "sub-agent", "子agent", "子代理")
-    multi_agent_terms = ("multi-agent", "multi agent", "多agent", "多代理", "多智能体")
-    if any(term in normalized for term in subagent_terms):
+    normalized_goal = _normalize_orchestration_text(goal)
+    recent_context = _normalize_orchestration_text(
+        " ".join(
+            node.content
+            for node in request.messages[-6:]
+            if node.role in {"user", "assistant"}
+        )
+    )
+    if _mentions_subagent(normalized_goal):
         return "subagent"
-    if any(term in normalized for term in multi_agent_terms):
+    if _mentions_multi_agent(normalized_goal):
         return "multi_agent"
+    if _asks_to_invoke_agent(normalized_goal):
+        if _mentions_subagent(recent_context):
+            return "subagent"
+        if _mentions_multi_agent(recent_context):
+            return "multi_agent"
     return "none"
+
+
+def _normalize_orchestration_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).lower()
+    return re.sub(r"\s+", "", normalized)
+
+
+def _mentions_subagent(value: str) -> bool:
+    return any(
+        term in value
+        for term in (
+            "subagent",
+            "sub-agent",
+            "子agent",
+            "子代理",
+            "子智能体",
+            "派生代理",
+            "派生智能体",
+        )
+    )
+
+
+def _mentions_multi_agent(value: str) -> bool:
+    return any(
+        term in value
+        for term in (
+            "multi-agent",
+            "multiagent",
+            "多agent",
+            "多代理",
+            "多智能体",
+            "多智能体协作",
+        )
+    )
+
+
+def _asks_to_invoke_agent(value: str) -> bool:
+    return any(
+        term in value
+        for term in (
+            "调用",
+            "调用一下",
+            "委托",
+            "派发",
+            "派生",
+            "启动",
+            "开一下",
+            "spawn",
+            "delegate",
+            "invoke",
+        )
+    )
 
 
 def _apply_workspace_orchestration(
@@ -99,7 +161,7 @@ def _create_workspace_chat_run(
     goal: str,
     session: Session,
     principal: Principal,
-    mode: Literal["chat", "codex_plan", "context_compression"] = "chat",
+    mode: Literal["chat", "codex_plan", "context_compression", "cli_agent"] = "chat",
     model_provider: str | None = None,
     model_name: str | None = None,
     max_subagents: int = 0,
@@ -197,6 +259,36 @@ def _workspace_codex_plan_messages(
     return messages
 
 
+def _workspace_cli_agent_messages(
+    *,
+    agent_id: str,
+    goal: str,
+    request: AgentChatStreamRequest,
+) -> list[ModelMessage]:
+    messages = [
+        ModelMessage(
+            role="system",
+            content=(
+                "You are the hao CLI coding agent inside AI Harness. "
+                "Help the user by inspecting and changing the local workspace through tool calls. "
+                "When you need a tool, emit exactly one XML block in this format and wait for the "
+                "CLI to return results:\n"
+                "<function_calls><invoke name=\"read_file\"><parameter name=\"path\">"
+                "relative/path.py</parameter></invoke></function_calls>\n"
+                "Available host tools are read_file, list_files, search_files, write_file, "
+                "apply_patch, run_shell, run_tests, and git. Use only relative workspace paths. "
+                "Do not claim that a file was edited or a shell command ran until the CLI returns "
+                "a local tool result. Keep ordinary answers concise. "
+                f"Current agent id: {agent_id}."
+            ),
+        )
+    ]
+    messages.extend(_workspace_context_messages(request))
+    if not messages or messages[-1].role != "user" or messages[-1].content.strip() != goal:
+        messages.append(ModelMessage(role="user", content=goal))
+    return messages
+
+
 def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMessage]:
     pinned_ids = set(request.pinned_node_ids)
     coverage_ids = (
@@ -207,14 +299,14 @@ def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMe
     carried = [
         node
         for node in request.messages[-request.context_window_turns :]
-        if node.role in {"user", "assistant", "system"}
+        if node.role in {"user", "assistant", "system", "tool"}
         and node.id not in pinned_ids
         and node.id not in coverage_ids
     ]
     pinned = [
         node
         for node in request.messages
-        if node.id in pinned_ids and node.role in {"user", "assistant", "system"}
+        if node.id in pinned_ids and node.role in {"user", "assistant", "system", "tool"}
     ]
     messages: list[ModelMessage] = []
     attachment_context = _workspace_attachment_context(request)
@@ -240,7 +332,7 @@ def _workspace_context_messages(request: AgentChatStreamRequest) -> list[ModelMe
                 )
             )
     for node in [*pinned, *carried]:
-        role = node.role if node.role in {"user", "assistant", "system"} else "user"
+        role = node.role if node.role in {"user", "assistant", "system", "tool"} else "user"
         content = node.content.strip()
         if content:
             messages.append(ModelMessage(role=role, content=content))

@@ -1,0 +1,25 @@
+{
+  "name": "@harness/hao",
+  "version": "0.1.0",
+  "description": "npm launcher for the hao local Agent CLI.",
+  "bin": {
+    "hao": "bin/hao.cjs"
+  },
+  "files": [
+    "app/__init__.py",
+    "app/cli/__init__.py",
+    "app/cli/hao/*.py",
+    "bin/hao.cjs",
+    "pyproject.toml",
+    "uv.lock",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/hao-launcher.test.cjs",
+    "pack:dry-run": "npm pack --json --dry-run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}

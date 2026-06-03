@@ -288,10 +288,15 @@ class AgentChatStreamRequest(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    mode: Literal["chat", "codex_plan", "plan"] = Field(
+    mode: Literal["chat", "codex_plan", "plan", "cli_agent"] = Field(
         default="chat",
         description="Workspace 输入模式",
     )
+    interaction_mode: Literal["chat", "plan", "act"] = Field(
+        default="chat",
+        description="CLI 工作流模式",
+    )
+    act_intent: dict | None = Field(default=None, description="act 工作流意图元数据")
     orchestration_mode: Literal["auto", "none", "multi_agent", "subagent"] = Field(
         default="auto",
         description=(
@@ -1957,6 +1962,8 @@ class CostRollupBreakdownItem(BaseModel):
     tokens_out: int = Field(description="输出 Token")
     run_count: int = Field(description="运行数量")
     share: float = Field(description="成本占比")
+    pricing_status: str = Field(default="verified", description="价格来源状态")
+    pricing_blocking: bool = Field(default=False, description="是否阻塞企业成本门禁")
 
 
 class CostRollupSeriesPoint(BaseModel):
@@ -1980,6 +1987,10 @@ class CostRollupResponse(BaseModel):
     average_run_cost_usd: float = Field(description="平均运行成本")
     breakdown: list[CostRollupBreakdownItem] = Field(description="Top breakdown")
     series: list[CostRollupSeriesPoint] = Field(description="时间序列")
+    pricing_statuses: list[dict] = Field(
+        default_factory=list,
+        description="模型价格来源状态和企业门禁阻塞详情",
+    )
 
 
 class AlertRuleCreateRequest(BaseModel):
@@ -2304,6 +2315,47 @@ class ModelFallbackSummaryResponse(BaseModel):
     recent_events: list[ModelFallbackEventItem] = Field(description="最近 fallback 事件")
 
 
+class ModelPricingSourceItem(BaseModel):
+    provider: str = Field(description="供应商")
+    model: str = Field(description="模型")
+    mapped_provider: str = Field(description="内部供应商映射")
+    mapped_model: str = Field(description="内部模型映射")
+    display_name: str = Field(description="展示名称")
+    official_url: str = Field(description="官方来源 URL")
+    retrieved_at: datetime = Field(description="来源抓取时间")
+    unit: str = Field(description="计价单位")
+    currency: str = Field(description="币种")
+    input_per_1m: str | None = Field(default=None, description="每 1M 输入 token 价格")
+    cached_input_per_1m: str | None = Field(default=None, description="每 1M 缓存输入 token 价格")
+    output_per_1m: str | None = Field(default=None, description="每 1M 输出 token 价格")
+    prompt_per_1k_usd: str | None = Field(default=None, description="每 1K 输入 token USD 价格")
+    cache_prompt_per_1k_usd: str | None = Field(
+        default=None,
+        description="每 1K 缓存输入 token USD 价格",
+    )
+    completion_per_1k_usd: str | None = Field(default=None, description="每 1K 输出 token USD 价格")
+    verification_status: str = Field(description="价格来源校验状态")
+    valid_from: datetime | None = Field(default=None, description="有效开始时间")
+    valid_until: datetime | None = Field(default=None, description="有效结束时间")
+    region: str | None = Field(default=None, description="区域")
+    token_tier: str | None = Field(default=None, description="token 档位")
+    mode: str | None = Field(default=None, description="计费模式")
+    context_window_tokens: int | None = Field(default=None, description="上下文窗口")
+    max_output_tokens: int | None = Field(default=None, description="最大输出 token")
+    source_hash: str = Field(description="来源摘录 hash")
+    source_excerpt: str = Field(description="来源摘录")
+    notes: str | None = Field(default=None, description="备注")
+    blocks_usd_rollup: bool = Field(description="是否阻塞 USD 成本汇总")
+
+
+class ModelPricingSourcePage(BaseModel):
+    schema_version: str = Field(description="来源契约版本")
+    retrieved_at: datetime = Field(description="来源文档抓取时间")
+    parser_version: str = Field(description="来源解析版本")
+    items: list[ModelPricingSourceItem] = Field(description="模型价格来源列表")
+    blocking_statuses: list[str] = Field(description="阻塞企业成本门禁的状态")
+
+
 class ToolCallResponse(BaseModel):
     id: str = Field(description="工具调用 ID")
     task_id: str = Field(description="任务 ID")
@@ -2353,6 +2405,47 @@ class ToolExecuteResponse(BaseModel):
     tool_call: ToolCallResponse = Field(description="工具调用审计记录")
     allowed: bool = Field(description="是否通过策略")
     output: dict = Field(description="工具输出")
+
+
+class AgentLocalToolEventRequest(BaseModel):
+    tool_name: str = Field(min_length=1, description="本地执行的工具名称")
+    input_json: dict = Field(default_factory=dict, description="工具输入")
+    output_json: dict = Field(default_factory=dict, description="工具输出")
+    interaction_mode: Literal["chat", "plan", "act"] = Field(
+        default="chat",
+        description="CLI 工作流模式",
+    )
+    act_intent: dict | None = Field(default=None, description="act 工作流意图元数据")
+    status: Literal["SUCCESS", "FAILED", "TIMEOUT", "DENIED"] = Field(
+        default="SUCCESS",
+        description="本地执行结果状态",
+    )
+    risk_level: Literal["low", "medium", "high", "critical", "unknown"] = Field(
+        default="high",
+        description="CLI 侧权限引擎判定的风险等级",
+    )
+    requires_sandbox: bool = Field(
+        default=False,
+        description="本次工具是否要求沙箱；host target 的本地执行应为 false",
+    )
+    sandbox_id: str | None = Field(default=None, description="关联沙箱 ID")
+    duration_ms: int = Field(default=0, ge=0, description="本地执行耗时")
+    error_message: str | None = Field(default=None, description="错误信息")
+    execution_target: Literal["host", "sandbox"] = Field(
+        default="host",
+        description="执行位置",
+    )
+    permission_mode: Literal["confirm", "auto-edit", "full-auto"] = Field(
+        default="confirm",
+        description="CLI 权限模式",
+    )
+    local_session_id: str | None = Field(default=None, description="hao 本地会话 ID")
+    cwd: str | None = Field(default=None, description="hao 本地工作区")
+
+
+class AgentLocalToolEventResponse(BaseModel):
+    tool_call: ToolCallResponse = Field(description="写入的工具调用审计记录")
+    event_sequence: int = Field(description="结果事件序号")
 
 
 class AdapterMetadataResponse(BaseModel):

@@ -45,51 +45,55 @@ def traced_operation(
         attr.setdefault("agent_run_id", agent_run_id)
     tracer = trace.get_tracer("api-server")
     span_kind = _span_kind(kind)
-    with tracer.start_as_current_span(name, kind=span_kind) as otel_span:
-        span_id = _span_id_from_context(otel_span.get_span_context()) or secrets.token_hex(8)
-        token = _local_span_stack.set((*_local_span_stack.get(), span_id))
-        otel_span.set_attribute("harness.trace_id", trace_id)
-        otel_span.set_attribute("harness.span_id", span_id)
-        for key, value in attr.items():
-            if isinstance(value, (str, int, float, bool)):
-                otel_span.set_attribute(key, value)
-        status = "OK"
+    otel_span = tracer.start_span(name, kind=span_kind)
+    span_id = _span_id_from_context(otel_span.get_span_context()) or secrets.token_hex(8)
+    parent_stack = _local_span_stack.get()
+    _local_span_stack.set((*parent_stack, span_id))
+    otel_span.set_attribute("harness.trace_id", trace_id)
+    otel_span.set_attribute("harness.span_id", span_id)
+    for key, value in attr.items():
+        if isinstance(value, (str, int, float, bool)):
+            otel_span.set_attribute(key, value)
+    status = "OK"
+    try:
         try:
-            try:
-                yield attr
-            except Exception as exc:
-                status = "ERROR"
-                otel_span.record_exception(exc)
-                otel_span.set_status(Status(StatusCode.ERROR, str(exc)))
-                raise
-            finally:
-                ended = utc_now()
-                duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1000))
-                for key, value in attr.items():
-                    if isinstance(value, (str, int, float, bool)):
-                        otel_span.set_attribute(key, value)
-                try:
-                    persist_span(
-                        session=session,
-                        trace_id=trace_id,
-                        span_id=span_id,
-                        parent_span_id=parent_span_id,
-                        name=name,
-                        kind=kind,
-                        start_time=started,
-                        end_time=ended,
-                        duration_ms=duration_ms,
-                        attributes=attr,
-                        status=status,
-                        task_id=task_id,
-                        agent_run_id=agent_run_id,
-                        organization_id=organization_id,
-                    )
-                except Exception:
-                    if not best_effort:
-                        raise
+            yield attr
+        except Exception as exc:
+            status = "ERROR"
+            otel_span.record_exception(exc)
+            otel_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
         finally:
-            _local_span_stack.reset(token)
+            ended = utc_now()
+            duration_ms = max(0, int((time.monotonic() - started_monotonic) * 1000))
+            for key, value in attr.items():
+                if isinstance(value, (str, int, float, bool)):
+                    otel_span.set_attribute(key, value)
+            try:
+                persist_span(
+                    session=session,
+                    trace_id=trace_id,
+                    span_id=span_id,
+                    parent_span_id=parent_span_id,
+                    name=name,
+                    kind=kind,
+                    start_time=started,
+                    end_time=ended,
+                    duration_ms=duration_ms,
+                    attributes=attr,
+                    status=status,
+                    task_id=task_id,
+                    agent_run_id=agent_run_id,
+                    organization_id=organization_id,
+                )
+            except Exception:
+                if not best_effort:
+                    raise
+    finally:
+        stack = _local_span_stack.get()
+        if stack and stack[-1] == span_id:
+            _local_span_stack.set(parent_stack)
+        otel_span.end()
 
 
 def persist_span(
