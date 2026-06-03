@@ -690,14 +690,16 @@ def execute_task_tool(
     principal: Principal,
 ) -> ToolExecuteResponse:
     task = get_owned_task(task_id, session, principal.organization_id)
+    workspace_root = Path(__file__).resolve().parents[2]
     sandbox = _resolve_tool_sandbox(
         task=task,
         request=request,
         session=session,
+        workspace_root=workspace_root,
     )
     execution = ToolRunner(
         session=session,
-        workspace_root=Path(__file__).resolve().parents[2],
+        workspace_root=workspace_root,
         agent_id=task.agent_id or "__missing_agent__",
     ).execute(
         task_id=task.id,
@@ -951,12 +953,17 @@ def _execute_approved_tool_call(
     principal,
 ) -> None:
     sandbox = None
+    workspace_root = Path(__file__).resolve().parents[2]
     if tool_call.requires_sandbox and task.enable_sandbox:
-        sandbox = DockerManager().create_sandbox(session=session, task_id=task.id)
+        sandbox = DockerManager().create_sandbox(
+            session=session,
+            task_id=task.id,
+            workspace_root=str(workspace_root),
+        )
         session.flush()
     execution = ToolRunner(
         session=session,
-        workspace_root=Path(__file__).resolve().parents[2],
+        workspace_root=workspace_root,
         agent_id=task.agent_id,
         capability_registry=CapabilityRegistry(session, task.organization_id),
     ).execute_approved_call(tool_call=tool_call, sandbox=sandbox)
@@ -1647,11 +1654,16 @@ def _resolve_tool_sandbox(
     task: Task,
     request: ToolExecuteRequest,
     session: Session,
+    workspace_root: Path,
 ) -> SandboxInstance | None:
     if request.sandbox_id is None:
         if not request.create_sandbox:
             return None
-        sandbox = DockerManager().create_sandbox(session=session, task_id=task.id)
+        sandbox = DockerManager().create_sandbox(
+            session=session,
+            task_id=task.id,
+            workspace_root=str(workspace_root),
+        )
         session.flush()
         return sandbox
     sandbox = session.execute(

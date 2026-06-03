@@ -14,6 +14,8 @@ from app.events.event_types import EventType
 from app.knowledge_dify import resolve_connector_secret_ref
 from app.sandbox.docker_manager import SandboxCommandTimeoutError
 from app.sandbox.policies import PolicyEngine, SandboxPolicyDecision
+from app.tools.adapter_registry import REGISTRY, adapter_snapshot
+from app.tools.adapters import ensure_builtin_adapters_registered
 from app.tools.capabilities import (
     CapabilityRegistry,
     CapabilityResolutionError,
@@ -97,6 +99,10 @@ class ToolRunner:
                 requires_sandbox=metadata.requires_sandbox,
             )
         metadata = resolved.metadata if resolved is not None else self._metadata(tool_name)
+        capability_snapshot_json = self._capability_snapshot_json(
+            resolved=resolved,
+            metadata=metadata,
+        )
         stored_input_json = redact_secrets(input_json)
         role_names = roles or ["engineer"]
         decision = self._check_policy(
@@ -165,7 +171,7 @@ class ToolRunner:
             capability_schema_version=resolved.version.schema_version
             if resolved is not None
             else None,
-            capability_snapshot_json=resolved.snapshot_json if resolved is not None else {},
+            capability_snapshot_json=capability_snapshot_json,
             requires_sandbox=requires_sandbox,
             sandbox_id=sandbox.id if sandbox is not None else None,
             duration_ms=0,
@@ -272,6 +278,10 @@ class ToolRunner:
                 requires_sandbox=metadata.requires_sandbox,
             )
         metadata = resolved.metadata if resolved is not None else self._metadata(tool_name)
+        capability_snapshot_json = self._capability_snapshot_json(
+            resolved=resolved,
+            metadata=metadata,
+        )
         decision = SandboxPolicyDecision(
             allowed=False,
             reason=reason or "workspace side-effect tool requires approval",
@@ -287,6 +297,7 @@ class ToolRunner:
             decision=decision,
             requires_sandbox=metadata.requires_sandbox,
             resolved=resolved,
+            capability_snapshot_json=capability_snapshot_json,
         )
 
     def execute_approved_call(
@@ -358,6 +369,8 @@ class ToolRunner:
 
         task = self.session.get(Task, tool_call.task_id)
         capability_config = self._capability_config_for_existing_call(tool_call)
+        capability_snapshot_json = self._snapshot_for_existing_call(tool_call, metadata)
+        tool_call.capability_snapshot_json = capability_snapshot_json
         try:
             output = self._execute_allowed(
                 metadata,
@@ -478,7 +491,13 @@ class ToolRunner:
         decision: SandboxPolicyDecision,
         requires_sandbox: bool,
         resolved: ResolvedCapabilityTool | None = None,
+        capability_snapshot_json: dict | None = None,
     ) -> ToolExecution:
+        snapshot_json = (
+            capability_snapshot_json
+            if isinstance(capability_snapshot_json, dict)
+            else self._capability_snapshot_json(resolved=resolved, metadata=metadata)
+        )
         tool_call = ToolCall(
             task_id=task_id,
             agent_run_id=agent_run_id,
@@ -497,7 +516,7 @@ class ToolRunner:
             capability_schema_version=resolved.version.schema_version
             if resolved is not None
             else None,
-            capability_snapshot_json=resolved.snapshot_json if resolved is not None else {},
+            capability_snapshot_json=snapshot_json,
             requires_sandbox=requires_sandbox,
             duration_ms=0,
             input_json=input_json,
@@ -547,7 +566,13 @@ class ToolRunner:
         decision: SandboxPolicyDecision,
         requires_sandbox: bool,
         resolved: ResolvedCapabilityTool | None = None,
+        capability_snapshot_json: dict | None = None,
     ) -> ToolExecution:
+        snapshot_json = (
+            capability_snapshot_json
+            if isinstance(capability_snapshot_json, dict)
+            else self._capability_snapshot_json(resolved=resolved, metadata=metadata)
+        )
         task = self.session.get(Task, task_id)
         tool_call = ToolCall(
             task_id=task_id,
@@ -567,7 +592,7 @@ class ToolRunner:
             capability_schema_version=resolved.version.schema_version
             if resolved is not None
             else None,
-            capability_snapshot_json=resolved.snapshot_json if resolved is not None else {},
+            capability_snapshot_json=snapshot_json,
             requires_sandbox=requires_sandbox,
             duration_ms=0,
             input_json=input_json,
@@ -655,6 +680,7 @@ class ToolRunner:
                 input_json=input_json,
                 config_json=config,
                 secret_value=secret_value,
+                sandbox_workspace_root=self.workspace_root if sandbox is not None else None,
             )
             return {
                 "mcp_server": result.server,
@@ -752,6 +778,32 @@ class ToolRunner:
                 return result
             return {**parsed, "duration_ms": result["duration_ms"]}
         raise ValueError(f"tool implementation is not wired: {metadata.name}")
+
+    def _capability_snapshot_json(
+        self,
+        *,
+        resolved: ResolvedCapabilityTool | None,
+        metadata: ToolMetadata,
+    ) -> dict:
+        snapshot = dict(resolved.snapshot_json) if resolved is not None else {}
+        ensure_builtin_adapters_registered(REGISTRY)
+        adapter = REGISTRY.get(metadata.name)
+        if adapter is not None:
+            snapshot = {
+                **snapshot,
+                "adapter": adapter_snapshot(adapter),
+            }
+        return snapshot
+
+    def _snapshot_for_existing_call(self, tool_call: ToolCall, metadata: ToolMetadata) -> dict:
+        snapshot = tool_call.capability_snapshot_json
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        ensure_builtin_adapters_registered(REGISTRY)
+        adapter = REGISTRY.get(metadata.name)
+        if adapter is not None:
+            snapshot = {**snapshot, "adapter": adapter_snapshot(adapter)}
+        return snapshot
 
     def _run_shell_like(
         self,

@@ -482,6 +482,37 @@ Verification evidence:
 - `git diff --check` -> passed.
 - Detailed session record: [[session-2026-05-28-subagent-specialists-v2]].
 
+### P8.5: Real Tool Adapters v1
+
+Status: verified locally on `p7-release-demo-hardening`.
+
+Goal: turn the Tool Registry and MCP-shaped runtime from marketplace smoke output into a real adapter boundary for common production collaboration tools.
+
+Delivered scope:
+
+- registry-backed adapter dispatch through `AdapterRegistry` and `MCPAdapter`;
+- real read-only GitHub adapters for issues, pull requests, changed files, and code search;
+- real read-only Slack adapters for message search, channel listing, and thread retrieval;
+- sandbox file browser adapters for read/list/write/delete with workspace confinement and high-risk approval gates for writes/deletes;
+- adapter introspection and rate-limited health endpoints;
+- ToolCall capability snapshots with adapter version/module/source hash and input/output schema hashes;
+- Tool Registry, Tool Configuration, and Run Detail UI evidence for health, schema, try-it execution, and adapter hashes.
+
+Verification evidence:
+
+- `cd services/api-server && .venv/bin/python -m pytest tests/test_adapter_registry.py tests/test_adapters_github.py tests/test_adapters_slack.py tests/test_adapters_sandbox_file.py tests/test_mcp_adapter.py tests/test_tool_runner.py tests/test_sandbox.py tests/test_warm_pool.py tests/test_tool_registry.py -q` -> `73 passed`.
+- `cd services/api-server && .venv/bin/python -m pytest tests -q` -> `456 passed`.
+- `cd services/api-server && .venv/bin/python -m ruff check app tests` -> passed.
+- `cd apps/agent-console && npm test -- AdapterHealthBadge AdapterSchemaDrawer ToolRegistryPage ToolConfigurationPage RunDetailPage` -> `13 passed`.
+- `cd apps/agent-console && npm test -- --run` -> `46 files / 219 tests passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-28-real-tool-adapters-v1]].
+
+Important boundary: no migration files, new tables, or new dependencies were added. Real MCP protocol transports, OAuth, write-capable GitHub/Slack operations, Code Interpreter, and additional SaaS adapters remain future lanes.
+
 ## Boundaries
 
 - Do not reopen Stage 07. It is a completed foundation.
@@ -500,3 +531,4 @@ Verification evidence:
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]]
 - [[session-2026-05-28-subagent-specialists-v1]]
 - [[session-2026-05-28-subagent-specialists-v2]]
+- [[session-2026-05-28-real-tool-adapters-v1]]

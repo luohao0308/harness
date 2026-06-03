@@ -766,7 +766,11 @@ class Executor:
             )
         try:
             if step.requires_sandbox and task.enable_sandbox:
-                sandbox = WarmPoolManager().acquire(session=self.session, task_id=task.id)
+                sandbox = WarmPoolManager().acquire(
+                    session=self.session,
+                    task_id=task.id,
+                    workspace_root=str(self.workspace_root),
+                )
             execution = ToolRunner(
                 session=self.session,
                 workspace_root=self.workspace_root,

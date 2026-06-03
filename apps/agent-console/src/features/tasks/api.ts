@@ -1713,6 +1713,31 @@ export type ToolRegistry = {
   sources: string[];
 };
 
+export type AdapterMetadata = {
+  slug: string;
+  server_label: string;
+  method: string;
+  description: string;
+  version: string;
+  adapter_module: string;
+  adapter_sha256: string;
+  input_schema_sha256: string;
+  output_schema_sha256: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  requires_secret: boolean;
+  risk_level: string;
+};
+
+export type AdapterHealth = {
+  slug: string;
+  ok: boolean;
+  latency_ms: number;
+  message: string;
+  sample: Record<string, unknown>;
+  last_checked_at: string;
+};
+
 export type CapabilityValidationRequest = {
   content: Record<string, unknown>;
   config: Record<string, unknown>;
@@ -2942,6 +2967,23 @@ export async function getToolRegistry(
   if (normalizedAgentId) searchParams.set("agent_id", normalizedAgentId);
   const suffix = searchParams.toString();
   return request<ToolRegistry>(`/api/tools/registry${suffix ? `?${suffix}` : ""}`);
+}
+
+export async function listAdapters() {
+  return request<{ items: AdapterMetadata[] }>("/api/tools/adapters");
+}
+
+export async function getAdapterHealth(slug: string, agentId = "default") {
+  const searchParams = new URLSearchParams();
+  if (agentId.trim()) searchParams.set("agent_id", agentId.trim());
+  const suffix = searchParams.toString();
+  return request<AdapterHealth>(
+    `/api/tools/adapters/${encodeURIComponent(slug)}/health${suffix ? `?${suffix}` : ""}`,
+  );
+}
+
+export async function tryAdapter(payload: CapabilityTestInvocationPayload) {
+  return testInvokeCapability(payload);
 }
 
 export async function validateCapabilityPackage(payload: CapabilityValidationRequest) {

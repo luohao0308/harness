@@ -19,6 +19,8 @@ from app.api.tools import router as tools_router
 from app.core.config import get_settings
 from app.core.logging import configure_json_logging
 from app.core.tracing import OpenTelemetryTraceMiddleware
+from app.tools.adapter_registry import REGISTRY
+from app.tools.adapters import ensure_builtin_adapters_registered
 
 configure_json_logging()
 settings = get_settings()
@@ -69,6 +71,11 @@ app = FastAPI(
     version="0.1.0",
     description="用于企业级 AI Agent Harness 平台的任务、事件、沙箱、审计和设置 API。",
 )
+
+
+@app.on_event("startup")
+def register_tool_adapters() -> None:
+    ensure_builtin_adapters_registered(REGISTRY)
 
 app.add_middleware(
     CORSMiddleware,

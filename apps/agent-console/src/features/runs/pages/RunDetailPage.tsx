@@ -980,6 +980,7 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
             <Th>
               <TermHint description="工具能力配置哈希">配置哈希</TermHint>
             </Th>
+            <Th>Adapter</Th>
             <Th>延迟</Th>
             <Th>输出摘要</Th>
           </tr>
@@ -1001,6 +1002,9 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
               <Td className="font-mono text-[11px] text-slate-500">
                 {shortCapability(call.capability_config_sha256)}
               </Td>
+              <Td>
+                <AdapterSnapshotBadge call={call} />
+              </Td>
               <Td className="font-mono">{call.duration_ms}ms</Td>
               <Td className="max-w-72 text-slate-500">
                 <div className="truncate" title={call.output_summary}>
@@ -1013,6 +1017,31 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
       </Table>
     </Card>
   );
+}
+
+function AdapterSnapshotBadge({ call }: { call: ToolCall }) {
+  const adapter = adapterSnapshot(call);
+  if (!adapter) return <span className="text-xs text-slate-400">未提供</span>;
+  return (
+    <span title={`${adapter.slug} · ${adapter.sha}`}>
+      <Badge tone="info" className="font-mono">
+        {adapter.sha.slice(0, 8)}
+      </Badge>
+    </span>
+  );
+}
+
+function adapterSnapshot(call: ToolCall): { slug: string; sha: string } | null {
+  const snapshot = call.capability_snapshot_json;
+  const adapter = snapshot?.adapter;
+  if (!adapter || typeof adapter !== "object") return null;
+  const record = adapter as Record<string, unknown>;
+  const sha = typeof record.adapter_sha256 === "string" ? record.adapter_sha256 : "";
+  if (!sha) return null;
+  return {
+    slug: typeof record.slug === "string" ? record.slug : call.tool_name,
+    sha,
+  };
 }
 
 export function shortCapability(value?: string | null) {
