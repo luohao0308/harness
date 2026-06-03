@@ -19,7 +19,65 @@ The website remains present as a public information shell. Console execution foc
 
 - Stage: `07-private-deployable-harness-chain`
 - Status: `completed`
-- Updated at: `2026-05-18`
+- Updated at: `2026-06-02`
+
+## Completed: User Scoped Encrypted Secret Vault V1
+
+Date: 2026-06-03
+
+Status: `verified`
+
+Changes:
+- Added encrypted `stored_secrets` storage for business integration secrets with user-private and organization-shared scopes.
+- Added Secrets API list/upsert/delete and admin-only env import without returning raw values.
+- Updated model provider keys, Dify/Coze/RAGFlow connector secrets, MCP runtime secrets, Tavily/web research, and notification channel secret fields to resolve through the vault.
+- Added Agent Console `/settings/secrets` and Model Settings configured/source display.
+- Kept startup-level secrets in env and platform API keys hash-only.
+
+Verification:
+```text
+services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_secrets.py services/api-server/tests/test_settings.py services/api-server/tests/test_knowledge_connectors.py services/api-server/tests/test_tool_registry.py services/api-server/tests/test_observability.py -q -> 102 passed
+services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests -> passed
+cd services/api-server && rm -f /tmp/harness-secret-vault.sqlite && DATABASE_URL=sqlite:////tmp/harness-secret-vault.sqlite .venv/bin/alembic upgrade head -> passed through 20260608_0035
+cd apps/agent-console && npm test -- SecretVaultPage.test.tsx ModelSettingsPage.test.tsx -> 10 passed
+cd apps/agent-console && npm run lint -- --pretty false -> passed
+cd apps/agent-console && npm run build -> passed
+frontend/test/security subagents -> PASS after fixes
+```
+
+## Completed: LangGraph/LangChain Compatibility Harness V1
+
+Date: 2026-06-02
+
+Status: `verified`
+
+Changes:
+- Added PRD and test spec artifacts for LangGraph workflow import, LangChain tool/retriever adapters, and LangGraph-vs-native Eval contrast experiments.
+- Added immutable `langgraph_workflow` capability packages that can be staged/approved/attached without entering ToolRunner, tool registry, MCP discovery, workspace implicit tool inference, or `/test-invoke`.
+- Added `langgraph_node` plan execution support, LangGraph workflow/node/tool-node EventStore evidence, replay/run-detail visibility, and observability step counts.
+- Added bridge-gated `LangGraphRunnerAdapter` execution: production remains fail-closed by default, while enabled execution requires optional `langgraph` plus a Harness sandbox bridge and emits completed Harness evidence.
+- Added LangChain MCP-shaped tool adapter, LangChain retriever grounding connector evidence, and Eval experiment projection APIs linked to existing EvalRun/EvalResult rows.
+
+Verification:
+```text
+cd services/api-server && .venv/bin/python -m pytest tests/test_tool_registry.py tests/test_planner_executor.py tests/test_executor_multistep.py tests/test_observability.py::test_runtime_architecture_counts_langgraph_steps tests/test_dag_scheduler.py tests/test_langgraph_langchain_compat.py tests/test_eval_experiments.py -q -> 122 passed
+cd services/api-server && .venv/bin/python -m pytest tests/test_langgraph_langchain_compat.py tests/test_eval_experiments.py -q -> 37 passed
+cd services/api-server && .venv/bin/python -m ruff check app tests -> passed
+cd services/api-server && rm -f /tmp/harness-langgraph-audit.sqlite && DATABASE_URL=sqlite:////tmp/harness-langgraph-audit.sqlite .venv/bin/alembic upgrade head -> passed through 20260607_0034
+cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx KnowledgePage.test.tsx RunDetailPage.optimizer.test.tsx ObservabilityV1Pages.test.tsx EvalHarnessPage.langgraph.test.tsx -> 5 files / 14 tests passed
+cd apps/agent-console && npm run lint -- --pretty false -> passed
+cd apps/agent-console && npm run build -> passed
+cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npm run e2e:smoke -> 21 passed
+API restarted in tmux session harness-api-langgraph; GET http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+Agent Console restarted in tmux session harness-console-langgraph; HEAD http://127.0.0.1:5173/ -> HTTP 200
+Temporary Playwright Vite session harness-console-playwright; HEAD http://127.0.0.1:5177/ -> HTTP 200
+git diff --check -> passed
+architect/code-reviewer/test-engineer/frontend-design/verifier subagents -> PASS after fixes
+```
+
+Latest review fix:
+- Closed the final code-review finding by rejecting Windows drive-letter absolute paths such as `C:\...` and `C:/...` in LangGraph graph specs, env string/list entries, and dependencies.
+- Added one-page visual summary: `docs/reports/langgraph-langchain-visual-summary-2026-06-03.html`.
 
 ## Completed: P7 Console Chinese Selector Polish
 

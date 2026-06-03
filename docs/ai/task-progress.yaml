@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-02T04:12:55Z
+last_updated_at: 2026-06-03T15:05:28Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,243 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: model-settings-manual-health-refresh-official-status
+    date: 2026-06-03
+    status: verified
+    demo: Model Settings now has a manual model-status refresh button, a compact Harness probe status panel, and an official provider-status reference panel for OpenAI and DeepSeek.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_settings.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/settings.py app/api/schemas.py tests/test_settings.py
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/settings/models
+      - curl --noproxy '*' -sS -H 'Authorization: Bearer dev-admin-token' http://127.0.0.1:8000/api/settings/models/official-status
+      - curl --noproxy '*' -sS -H 'Authorization: Bearer dev-admin-token' http://127.0.0.1:8000/api/settings/models/health
+    acceptance_notes:
+      - Model Gateway now exposes a visible `刷新状态` action; clicking it manually calls the existing Harness `/api/settings/models/health` probe path and refreshes the persisted model-settings summary.
+      - The health panel renders configured/built-in provider rows as compact status strips, using refreshed probe evidence when available and existing `last_health`/provider state before a manual refresh.
+      - Added `GET /api/settings/models/official-status` as a read-only external-status projection. OpenAI uses its official Statuspage JSON endpoint; DeepSeek is shown as an official status-page reference because its official page does not expose the same `/api/v2/status.json` contract.
+      - Official provider status is displayed beside Harness probe evidence and is not treated as runtime authority for model-call availability.
+      - Added frontend regression coverage that `/models/health` and `/models/official-status` are not called on initial render and are called only after the manual refresh action.
+      - Added backend coverage for the official-status projection shape and provider boundary.
+      - Local dev services were restarted in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`; API `/health`, Console `/settings/models`, official-status, and Harness health smoke checks passed.
+  - id: model-settings-supplier-link-cleanup
+    date: 2026-06-03
+    status: verified
+    demo: Model Settings hides long endpoint URLs from top model switch cards, uses a switch icon instead of the star icon, shows preset suppliers in the provider table, and removes deprecated Moonshot V1 8K / Z.AI GLM-5-Turbo built-in pricing sources.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_model_pricing_sources.py -q
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-pricing-0037.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min HARNESS_SECRET_ENCRYPTION_KEY=<test-key> .venv/bin/alembic upgrade head
+      - python3 scripts/check-migration-ids.py services/api-server/alembic/versions/
+      - cd services/api-server && .venv/bin/python -m ruff check app/settings/model_pricing_sources.py tests/test_model_pricing_sources.py alembic/versions/20260606_0033_seed_builtin_model_pricing_sources.py alembic/versions/20260610_0037_remove_deprecated_model_pricing_sources.py
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Top model switch cards now show only model id, model kind, and the switch/configure action; long endpoint URLs and provider/protocol subtitles are no longer displayed in that card area.
+      - The configured-model switch action now uses `ArrowRightLeft` instead of the star icon.
+      - The provider table merges built-in presets with configured providers, so Kimi and Z.AI appear as supplier rows even before their keys are configured.
+      - Provider endpoints and official pricing source hashes render as clickable external links where URLs remain visible.
+      - Provider-row actions are text-first and no delete action is exposed from the provider table.
+      - Built-in pricing source JSON and DB seed rows now keep only DeepSeek Flash/Pro, OpenAI `gpt-5.5`, Kimi `kimi-k2.6`, and Z.AI `glm-5.1`.
+      - Added Alembic revision `20260610_0037` so existing deployments that already ran the previous seed migration also remove deprecated official-source rows.
+  - id: model-settings-provider-model-kind-polish
+    date: 2026-06-03
+    status: verified
+    demo: Model Settings now groups configured rows by real provider, lists existing models inside each provider row, and uses model ids plus model-kind badges in the model switcher.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - The provider table now groups configured models by vendor so DeepSeek appears as one supplier row while listing both `deepseek-v4-flash` and `deepseek-v4-pro` as existing models.
+      - Model switch cards use the model id as the title and display model-kind badges such as `文本模型` and `推理模型` without provider/protocol subtitles.
+      - Model Gateway configured-provider count now uses grouped provider count instead of raw model count.
+      - Stored model secret metadata remains redacted while configured providers still show source badges such as `用户密钥` or `组织密钥`.
+      - Added Model Settings regression coverage for model-id switch titles, OpenAI single-preset behavior, DeepSeek grouped provider rows, partial per-model key state, model-kind normalization, accessible provider-row actions, and hidden provider-row deletion.
+  - id: model-settings-clean-provider-table-deepseek-pro-pricing
+    date: 2026-06-03
+    status: verified
+    demo: Model Settings removes provider/protocol subtitles from model switch cards, simplifies provider model rows, hides provider deletion, and keeps DeepSeek Pro pricing verified with the current official source row.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_model_pricing_sources.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app/settings/model_pricing_sources.py tests/test_model_pricing_sources.py alembic/versions/20260610_0037_remove_deprecated_model_pricing_sources.py
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl -L --max-time 15 -sS https://api-docs.deepseek.com/quick_start/pricing | rg -n "deepseek-v4-pro|0\\.003625|0\\.435|0\\.87" -C 2
+    acceptance_notes:
+      - Top model switch cards no longer render `DeepSeek · openai` / `OpenAI · openai` style subtitles; they show model id, model kind, and the action button only.
+      - The provider table now uses the cleaner columns `供应商 / 现有模型 / 密钥 / 限流 / 操作`; the `现有模型` cell contains only model id plus model kind.
+      - Provider-row delete actions are removed; row actions are limited to configure/current/switch behavior.
+      - DeepSeek Pro official-source metadata now has `valid_until: null`, `token_tier: all`, and the refreshed source hash/excerpt for the current official `deepseek-v4-pro` prices, so it is not shown as `已过期`.
+      - Added regression coverage that DeepSeek Pro remains `verified` at future dates and does not block USD rollup.
+  - id: model-settings-ui-24h-polish
+    date: 2026-06-03
+    status: verified
+    demo: Model Settings now starts with model switching, shows a tighter Model Gateway summary, softens non-rollup pricing rows, and renders frontend timestamps in 24-hour time.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- ModelSettingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Moved the Model Switch card above Model Gateway so model selection is the first visible action on `/settings/models`.
+      - Tightened the Model Gateway card with smaller labels, compact metric tiles, and a shorter default-model summary so it visually matches the settings tables.
+      - Replaced the heavy `USD 汇总已阻塞` row copy with the muted `不计入汇总` marker while keeping stale/source status evidence visible.
+      - `formatShortDate` now formats with `hour12: false` and `zh-CN`, removing AM/PM from shared Console timestamp surfaces.
+      - Local non-shared timestamp formatters in chat run summaries, Team run links, and knowledge management now explicitly use 24-hour time.
+      - Added Model Settings regression coverage for card order, softened pricing-row copy, and 24-hour timestamp rendering.
+  - id: user-avatar-db-persistence
+    date: 2026-06-03
+    status: verified
+    demo: Login/register accounts remain database-backed and JWT sessions can upload a user avatar that is stored on the users table and returned through `/api/auth/me`.
+    verification_result: passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_auth_rbac_api_keys.py services/api-server/tests/test_auth_env_gate.py services/api-server/tests/test_first_admin_bootstrap.py -q
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/api/auth.py services/api-server/app/api/schemas.py services/api-server/app/db/models.py services/api-server/tests/test_auth_rbac_api_keys.py services/api-server/alembic/versions/20260609_0036_add_user_avatar.py
+      - cd services/api-server && rm -f /tmp/harness-avatar.sqlite && DATABASE_URL=sqlite:////tmp/harness-avatar.sqlite .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm test -- api.test.ts ConsoleShell.render.test.tsx LoginPage.test.tsx RegisterPage.test.tsx routes.auth.test.tsx
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_auth_rbac_api_keys.py -q
+      - cd apps/agent-console && npm test -- avatarUpload.test.tsx ConsoleShell.render.test.tsx api.test.ts
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/api/auth.py services/api-server/tests/test_auth_rbac_api_keys.py
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && .venv/bin/alembic upgrade head
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/login
+      - live API register/avatar upload smoke returned avatar_smoke=passed without printing JWTs
+      - live API 600 KiB avatar upload smoke returned avatar_smoke_600k=passed without printing JWTs
+    acceptance_notes:
+      - Registration persists `User`, `Organization`, and `OrganizationMember` rows; login updates `User.last_login_at`; access/refresh JWTs remain client-held session tokens and are not stored as DB session rows.
+      - Added user avatar columns: `avatar_mime_type`, `avatar_content`, `avatar_sha256`, and `avatar_updated_at`.
+      - Added `POST /api/auth/me/avatar` for JWT database-backed users only; dev-token pseudo users, legacy dev user rows, and API key principals are rejected before any profile write.
+      - Avatar uploads accept PNG/JPEG/WEBP/GIF, cap image content at 2 MiB, preflight the multipart body with a 2 MiB + 128 KiB request cap, validate declared MIME against file magic bytes, store bytes in the database, and return the updated `AuthMeResponse`.
+      - `/api/auth/me` now returns `avatar_data_url` for the current user so the Console avatar menu can render the saved image after refresh.
+      - Agent Console avatar menu now exposes "上传头像" for real JWT sessions; image selections are compressed to a 512px JPEG before upload when browser canvas support is available, the file input is cleared after save, and dev-token sessions do not show the upload action.
+      - Avatar multipart parsing is handled through bounded `Request.stream()` parsing, so this slice does not add `python-multipart` or rely on FastAPI pre-parsing large uploads.
+      - Frontend multipart, JSON, team stream, wake stream, plan stream, and chat stream paths now share refresh retry handling; multipart retry uses the refreshed JWT when the explicit token was the stale stored access token.
+      - Added backend coverage for avatar DB storage, `/me` data URL projection, dev-token rejection with a legacy dev user row, API key rejection, invalid MIME rejection, medium-size avatar acceptance, oversize rejection, and MIME/magic mismatch rejection.
+      - Added frontend coverage for avatar menu upload, upload pre-processing, and multipart refresh retry, including explicit-token retry for organization-scoped file upload.
+      - Independent reviewer rechecked the JWT-only profile write boundary and stream-parsed multipart limit; final review PASS.
+      - Local Postgres upgraded to `20260609_0036`; restarted local dev services in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`; API `/health`, Console `/login`, live register/avatar upload smoke, and live 600 KiB avatar upload smoke passed.
+  - id: frontend-login-runtime-secret-generation
+    date: 2026-06-03
+    status: verified
+    demo: Agent Console now has protected login/register flow, production-closed registration by default, avatar-menu logout, and deployment-side generation/configuration for AUTH_JWT_SECRET plus HARNESS_SECRET_ENCRYPTION_KEY.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- LoginPage.test.tsx RegisterPage.test.tsx ConsoleShell.render.test.tsx routes.auth.test.tsx api.test.ts
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_auth_env_gate.py services/api-server/tests/test_first_admin_bootstrap.py services/api-server/tests/test_auth_rbac_api_keys.py services/api-server/tests/test_secrets.py -q
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/core/config.py services/api-server/app/api/auth.py services/api-server/app/api/schemas.py services/api-server/tests/test_auth_rbac_api_keys.py services/api-server/tests/test_auth_env_gate.py services/api-server/tests/test_first_admin_bootstrap.py
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - bash scripts/check-env.sh
+      - python3 scripts/generate-runtime-secrets.py --key-id test-key-v1
+      - python3 -m py_compile scripts/generate-runtime-secrets.py
+      - AUTH_JWT_SECRET=<example> HARNESS_SECRET_ENCRYPTION_KEY=<example> POSTGRES_PASSWORD=example REDIS_PASSWORD=example HARNESS_DOMAIN=localhost CADDY_DOMAIN=localhost DEEPSEEK_API_KEY= docker compose -f compose.production.yml config
+      - AUTH_JWT_SECRET=<example> HARNESS_SECRET_ENCRYPTION_KEY=<example> DEEPSEEK_API_KEY= docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config
+      - helm template harness deploy/helm/harness
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/login
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/
+      - live API register/login smoke returned register=201 and login=200 without printing JWTs
+    acceptance_notes:
+      - Added protected Console route guard: production users without a current user redirect to `/login?next=...`; `/login`, `/register`, and `/oauth/callback` remain public.
+      - Existing email/password login and registration pages now become the real frontend entry path for protected Console routes.
+      - Added `.omx/plans/prd-login-registration-runtime-secrets-v1.md` and `.omx/plans/test-spec-login-registration-runtime-secrets-v1.md` for the full login/register/runtime-secret plan and acceptance coverage.
+      - Added `GET /api/auth/config` and `AUTH_PUBLIC_REGISTRATION_ENABLED`; public registration defaults to enabled in development/test and disabled in production, with `/api/auth/register` returning 403 when closed.
+      - Login/Register pages now hide self-service registration and OAuth entry points unless the backend auth config explicitly enables them.
+      - Console top-right auth entry is now an avatar menu showing name, email, organization, role, and dev-token state. JWT sessions expose `退出登录`; dev-token sessions show `开发令牌会话` and `使用账号登录`.
+      - Frontend API client now prefers stored JWTs over dev bearer tokens for normal requests, admin requests, multipart uploads, and chat stream requests; dev tokens remain a development-only fallback when no JWT is stored.
+      - Added regression tests for auth guard loading/redirect/allow states, auth config driven Login/Register behavior, avatar menu logout/dev-token states, refresh-failure token clearing, and JWT-over-dev-token precedence.
+      - Added `scripts/generate-runtime-secrets.py` to generate `AUTH_JWT_SECRET`, `HARNESS_SECRET_ENCRYPTION_KEY`, and `HARNESS_SECRET_ENCRYPTION_KEY_ID`.
+      - Production startup validation now rejects missing, placeholder, short, or `dev-only-*` `HARNESS_SECRET_ENCRYPTION_KEY` values.
+      - Updated env examples, production/private Compose, Helm Secret/Deployment/Job templates, README, and first-run/deployment runbooks. `HARNESS_SECRET_ENCRYPTION_KEY` is generated server/deployment-side and never in the frontend.
+      - Independent code-reviewer found and rechecked the refresh-failure logout gap; final review PASS after token clearing/event notification fix.
+      - Restarted local dev services in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`; API `/health`, `/api/auth/config`, Console `/login`, Console `/register`, and live register/login smoke passed.
+  - id: user-scoped-encrypted-secret-vault-v1
+    date: 2026-06-03
+    status: verified
+    demo: Business integration secrets now use an encrypted user/org scoped StoredSecret vault with user-private precedence, org fallback, and legacy env fallback only for compatibility.
+    verification_result: passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_secrets.py services/api-server/tests/test_settings.py services/api-server/tests/test_knowledge_connectors.py services/api-server/tests/test_tool_registry.py services/api-server/tests/test_observability.py -q
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app services/api-server/tests
+      - cd services/api-server && rm -f /tmp/harness-secret-vault.sqlite && DATABASE_URL=sqlite:////tmp/harness-secret-vault.sqlite .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm test -- SecretVaultPage.test.tsx ModelSettingsPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && .venv/bin/alembic upgrade head
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/
+      - curl --noproxy '*' -sS -H 'Authorization: Bearer dev-engineer-token' http://127.0.0.1:8000/api/secrets
+      - local legacy/env secret ownership migration for makerhao wrote 4 user-scoped stored secrets without printing raw values
+      - local JWT-backed `GET /api/secrets` for makerhao returned 4 redacted user-scoped active secrets
+    acceptance_notes:
+      - Added `stored_secrets` storage, encryption helpers, secret resolution, and `/api/secrets` list/upsert/delete/import-env APIs.
+      - Scope is fixed to user-private and org-shared. Resolution order is current user active secret, organization active secret, then legacy env fallback when enabled.
+      - Model Settings now stores raw provider API keys in `StoredSecret`, strips `providers[*].api_key` from persisted settings, and returns configured/source/id metadata instead of the raw key.
+      - Knowledge connector, MCP runtime, Tavily/web research, and notification-channel secret paths resolve through the secret vault while preserving legacy fallback compatibility.
+      - Agent Console adds `/settings/secrets` with "my secrets" and "organization shared" views, one-time secret inputs, admin-only env import/org editing, delete/disable, and source/status display without value echo.
+      - Secret responses, audit payloads, model/tool/event payloads, and notification config paths avoid returning raw secret values.
+      - Local existing DeepSeek env key plus legacy Dify/Coze connector keys were imported into `makerhao` / `2429260713@qq.com` as user-scoped active StoredSecret rows: `deepseek-flash`, `deepseek-pro`, `dify`, and `coze`; raw values were not printed, and legacy/env sources were left in place for compatibility.
+      - Added regression coverage for encrypted storage, user-over-org precedence, list filtering, delete/disable fallback, import-env admin-only behavior, model secret scope/source/id, connector storage/runtime, MCP runtime, observability redaction, and frontend configured-secret display.
+      - Fixed `/api/tools/capabilities/test-invoke` to pass the same backend workspace root as other ToolRunner paths, restoring read-file SUCCESS/DENIED behavior.
+      - Independent reviews passed after fixes: frontend PASS, test coverage PASS, security PASS.
+      - Restarted local dev services in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`; local Postgres Alembic reached `20260608_0035`, API `/health` returned ok, Agent Console root returned HTTP 200, and `GET /api/secrets` returned an empty redacted list for the dev engineer token.
+  - id: langgraph-langchain-compatibility-harness-v1
+    date: 2026-06-02
+    status: verified
+    demo: Harness now imports immutable LangGraph workflow capability packages, adapts LangChain tools/retrievers through Harness-owned runtime evidence paths, and exposes LangGraph-vs-native Eval contrast experiment projections.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_registry.py tests/test_planner_executor.py tests/test_executor_multistep.py tests/test_observability.py::test_runtime_architecture_counts_langgraph_steps tests/test_dag_scheduler.py tests/test_langgraph_langchain_compat.py tests/test_eval_experiments.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_langgraph_langchain_compat.py tests/test_eval_experiments.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && rm -f /tmp/harness-langgraph-audit.sqlite && DATABASE_URL=sqlite:////tmp/harness-langgraph-audit.sqlite .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx KnowledgePage.test.tsx RunDetailPage.optimizer.test.tsx ObservabilityV1Pages.test.tsx EvalHarnessPage.langgraph.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npm run e2e:smoke
+      - curl --noproxy '*' -sS http://127.0.0.1:8000/health
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5173/
+      - curl --noproxy '*' -sS -I http://127.0.0.1:5177/
+      - git diff --check
+      - python3 scripts/validate-docs.py
+    acceptance_notes:
+      - Added `.omx/plans/prd-langgraph-langchain-compatibility-harness-v1.md` and `.omx/plans/test-spec-langgraph-langchain-compatibility-harness-v1.md` as the planning/test artifacts for LangGraph workflow import, LangChain adapters, and Eval contrast experiments.
+      - `langgraph_workflow` is an allowed immutable capability package type but remains outside executable ToolRunner/tool registry paths, `/test-invoke`, MCP discovery, and workspace implicit tool inference.
+      - LangGraph workflow staging stores `langgraph.json` in `content_json`, validates graph/path/env/dependency/hash safety, rejects unsafe public hashes, and preserves immutable content hashes/version reuse.
+      - LangGraph path validation now rejects POSIX escapes, raw env secrets, duplicate graph ids, and Windows drive-letter absolute paths for graph specs, env string/list entries, and dependencies.
+      - `langgraph_node` is first-class across `PlanStep`, planner normalization, persisted `TaskStep.execution_mode`, DAG execution, task plan traces, replay, EventStore, and observability step counts.
+      - `LangGraphRunnerAdapter` defaults to execution-disabled fail-closed evidence; when execution is enabled, optional `langgraph` is present, and a Harness sandbox bridge is configured, fake compiled-graph execution emits workflow/node/tool-node completed events without creating `ToolCall` rows.
+      - LangChain tool adaptation uses the existing `ToolAdapter` protocol and only exposes MCP-shaped metadata with `source="mcp"`; LangChain retriever grounding writes `RetrievalHit`, `CitationRecord`, and `PromptAssemblyManifest` with `source_kind="langchain_connector"`.
+      - Eval contrast experiments add `eval_experiments` / `eval_experiment_arms` projection APIs over existing `EvalRun` rows, validate arm shape/dataset matches, isolate failed arms, snapshot capability hashes, and leave `RegressionDelta` authoritative for baseline/current comparisons.
+      - Agent Console productizes the flow in Tool Registry, Knowledge, Eval Harness, Run Detail, and Observability, including a LangGraph workflow import dialog, LangChain adapter dialog, LangChain retriever connector preset, LangGraph-vs-native experiment form, and LangGraph event/step evidence.
+      - Frontend targeted Vitest coverage passed across 5 files / 14 tests, lint/build passed, and Playwright smoke passed 21 checks against the local Vite route set.
+      - Latest backend compatibility/eval subset passed 37 tests and the affected backend regression passed 122 tests after the Windows absolute-path fix.
+      - Independent reviews passed after fixes: architect PASS, code-reviewer PASS, test-engineer PASS, frontend/design PASS, verifier PASS.
+      - Restarted local dev services in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`; API `/health` returned ok and Agent Console root returned HTTP 200. A temporary `harness-console-playwright` Vite session on port 5177 served the Playwright smoke suite.
+      - Added one-page visual summary HTML at `docs/reports/langgraph-langchain-visual-summary-2026-06-03.html` for a low-text overview of new LangGraph/LangChain capabilities, Console surfaces, evidence paths, guardrails, and validation counts.
   - id: hao-agent-cli-v4.3-local Agent CLI-footer-compact-ring
     date: 2026-06-02
     status: verified
@@ -616,7 +853,7 @@ post_stage_hardening:
     acceptance_notes:
       - Added enterprise sidebar browser coverage, cross-feature Harness chain coverage, route inventory coverage, backend enterprise chain coverage, workspace subagent enterprise flow coverage, and Team subagent enterprise flow coverage.
       - Added `services/api-server/app/settings/model_pricing_sources.json` and migration seed `20260606_0033_seed_builtin_model_pricing_sources.py`; source hashes are bound to captured excerpts and verified seed rows must exactly match the official-source contract.
-      - Built-in pricing source rows now cover DeepSeek Flash/Pro, OpenAI `gpt-5.5` only, Kimi `kimi-k2.6`, Moonshot `moonshot-v1-8k`, and Z.AI `glm-5.1` / `glm-5-turbo`; older OpenAI variants are removed from the current target surface.
+      - Built-in pricing source rows now cover DeepSeek Flash/Pro, OpenAI `gpt-5.5` only, Kimi `kimi-k2.6`, and Z.AI `glm-5.1`; older OpenAI variants plus deprecated Moonshot V1 8K and Z.AI GLM-5-Turbo rows are removed from the current target surface.
       - The deprecated provider preset is removed from target app/test paths and must not be re-added as a blocked pricing row.
       - Observability and Eval cost paths require exact pricing rows for official-source models; fallback/default pricing remains allowed only for custom models without official-source rows.
       - Team Mode assigned work now creates durable subagent projection evidence with AdminAuditEvent records and lifecycle coverage for completion, owner removal, reassignment, and deletion.
