@@ -264,6 +264,7 @@ export function useTeamComposerActions({
           const lastAssistant = findLastAssistantEntry(entries);
           const pendingBranch =
             lastAssistant &&
+            lastAssistant.node.state !== "streaming" &&
             !workingGroup.branchNodeIds.includes(lastAssistant.node.id) &&
             previousUserEntry(entries, lastAssistant.node.id)?.node.content === workingGroup.anchorContent;
           if (!pendingBranch) continue;

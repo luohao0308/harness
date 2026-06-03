@@ -39,16 +39,46 @@ export function resolveApiBaseUrl(
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
-const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
+const DEV_BEARER_TOKEN =
+  import.meta.env.VITE_DEV_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-engineer-token" : "");
 const DEV_ADMIN_BEARER_TOKEN =
-  import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? "dev-admin-token";
+  import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-admin-token" : "");
+const AUTH_ACCESS_TOKEN_KEY = "harness.auth.access_token";
+const AUTH_REFRESH_TOKEN_KEY = "harness.auth.refresh_token";
 export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
 const KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS = 12_000;
 
-function authHeaders(token = DEV_BEARER_TOKEN): HeadersInit {
-  return {
-    Authorization: `Bearer ${token}`,
-  };
+function browserStorage() {
+  return typeof window === "undefined" ? null : window.localStorage;
+}
+
+export function getStoredAccessToken() {
+  return browserStorage()?.getItem(AUTH_ACCESS_TOKEN_KEY) ?? "";
+}
+
+export function getStoredRefreshToken() {
+  return browserStorage()?.getItem(AUTH_REFRESH_TOKEN_KEY) ?? "";
+}
+
+export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
+  const storage = browserStorage();
+  storage?.setItem(AUTH_ACCESS_TOKEN_KEY, tokens.access_token);
+  storage?.setItem(AUTH_REFRESH_TOKEN_KEY, tokens.refresh_token);
+}
+
+export function clearAuthTokens() {
+  const storage = browserStorage();
+  storage?.removeItem(AUTH_ACCESS_TOKEN_KEY);
+  storage?.removeItem(AUTH_REFRESH_TOKEN_KEY);
+}
+
+function authToken(token?: string) {
+  return token?.trim() || getStoredAccessToken().trim() || DEV_BEARER_TOKEN.trim();
+}
+
+function authHeaders(token?: string): HeadersInit {
+  const bearer = authToken(token);
+  return bearer ? { Authorization: `Bearer ${bearer}` } : {};
 }
 
 function apiRequestUrls(path: string) {
@@ -102,6 +132,127 @@ export type Task = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+};
+
+export type AuthTokenResponse = {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+};
+
+export type OrganizationSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  role: string;
+};
+
+export type AuthMeResponse = {
+  user_id: string;
+  email: string;
+  name: string;
+  organization_id: string;
+  role: string;
+  permissions: string[];
+  organizations: OrganizationSummary[];
+};
+
+export type ApiKeyResponse = {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  name: string;
+  key_prefix: string;
+  scope_json: string[];
+  expires_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+};
+
+export type ApiKeyCreateResponse = ApiKeyResponse & {
+  key: string;
+};
+
+export type UserMember = {
+  membership_id: string;
+  user_id: string;
+  email: string;
+  name: string;
+  role: string;
+  invited_at: string | null;
+  accepted_at: string | null;
+  status: string;
+};
+
+export type AuditEvent = {
+  id: string;
+  organization_id: string | null;
+  actor_id: string | null;
+  event_type: string;
+  resource_type: string;
+  resource_id: string;
+  action: string;
+  payload_json: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AuditEventPage = {
+  items: AuditEvent[];
+  next_cursor: string | null;
+};
+
+export type RetentionPolicy = {
+  id: string;
+  organization_id: string | null;
+  entity_type: string;
+  action: string;
+  retention_days: number | null;
+  delete_after_days: number | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RetentionRun = {
+  id: string;
+  policy_id: string | null;
+  organization_id: string | null;
+  entity_type: string;
+  action: string;
+  deleted_count: number;
+  archived_count: number;
+  started_at: string;
+  finished_at: string | null;
+  error_message: string | null;
+};
+
+export type DataExport = {
+  id: string;
+  organization_id: string;
+  requested_by: string;
+  status: string;
+  requested_at: string;
+  completed_at: string | null;
+  file_path: string | null;
+  file_sha256: string | null;
+  size_bytes: number;
+  expires_at: string | null;
+  error_message: string | null;
+};
+
+export type OrganizationDeletionPreview = {
+  organization_id: string;
+  organization_name: string;
+  counts: Record<string, number>;
+  confirmation_name: string;
+};
+
+export type OrganizationDeletionResponse = {
+  organization_id: string;
+  status: string;
+  deleted_counts_json: Record<string, number>;
 };
 
 export type TaskCreatePayload = {
@@ -341,6 +492,83 @@ export type TeamTaskUpdatePayload = {
   description?: string | null;
   blockedBy?: string[];
   blocked_by?: string[];
+};
+
+export type NotificationChannelKind = "slack" | "email" | "webhook";
+
+export type NotificationChannel = {
+  id: string;
+  organization_id: string;
+  name: string;
+  kind: NotificationChannelKind;
+  config_json: Record<string, unknown>;
+  verified: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NotificationChannelPayload = {
+  name: string;
+  kind: NotificationChannelKind;
+  config_json: Record<string, unknown>;
+  verified: boolean;
+};
+
+export type OnboardingState = {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  current_step: number;
+  completed: boolean;
+  skipped: boolean;
+  demo_loaded: boolean;
+  provider_json: Record<string, unknown>;
+  agent_id: string | null;
+  demo_task_id: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type OnboardingStateUpdate = {
+  current_step?: number;
+  skipped?: boolean;
+  provider_json?: Record<string, unknown>;
+  agent_id?: string | null;
+  demo_task_id?: string | null;
+};
+
+export type DemoLoadResponse = {
+  status: "loaded" | "already_loaded" | "reset";
+  agent_ids: string[];
+  knowledge_source_ids: string[];
+  dataset_id: string | null;
+  task_id: string | null;
+  specialist_ids: string[];
+  demo_loaded: boolean;
+};
+
+export type FrontendErrorPayload = {
+  url: string;
+  error_message: string;
+  stack: string | null;
+  browser: string;
+  metadata_json: Record<string, unknown>;
+};
+
+export type FrontendErrorItem = FrontendErrorPayload & {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  created_at: string;
+};
+
+export type FrontendErrorSummaryItem = {
+  error_message: string;
+  count: number;
+  affected_users: number;
+  last_seen_at: string | null;
 };
 
 export type AgentSession = {
@@ -605,6 +833,56 @@ export type ModelFallbackSummary = {
   primary_failure_total: number;
   providers: CountItem[];
   recent_events: ModelFallbackEvent[];
+};
+
+export type ModelPricingSourceItem = {
+  provider: string;
+  model: string;
+  mapped_provider: string;
+  mapped_model: string;
+  display_name: string;
+  official_url: string;
+  retrieved_at: string;
+  unit: string;
+  currency: string;
+  input_per_1m: string | null;
+  cached_input_per_1m: string | null;
+  output_per_1m: string | null;
+  prompt_per_1k_usd: string | null;
+  cache_prompt_per_1k_usd: string | null;
+  completion_per_1k_usd: string | null;
+  verification_status: string;
+  valid_from: string | null;
+  valid_until: string | null;
+  region: string | null;
+  token_tier: string | null;
+  mode: string | null;
+  context_window_tokens: number | null;
+  max_output_tokens: number | null;
+  source_hash: string;
+  source_excerpt: string;
+  notes: string | null;
+  blocks_usd_rollup: boolean;
+};
+
+export type ModelPricingSourcePage = {
+  schema_version: string;
+  retrieved_at: string;
+  parser_version: string;
+  items: ModelPricingSourceItem[];
+  blocking_statuses: string[];
+};
+
+type ModelPricingSourceDocumentRow = Omit<ModelPricingSourceItem, "blocks_usd_rollup"> & {
+  blocks_usd_rollup?: boolean;
+};
+
+type ModelPricingSourceDocument = {
+  schema_version?: string;
+  retrieved_at?: string;
+  parser_version?: string;
+  rows?: ModelPricingSourceDocumentRow[];
+  blocking_statuses?: string[];
 };
 
 export type ModelHealth = {
@@ -925,6 +1203,8 @@ export type CostRollupBreakdownItem = {
   tokens_out: number;
   run_count: number;
   share: number;
+  pricing_status: string;
+  pricing_blocking: boolean;
 };
 
 export type CostRollupSeriesPoint = {
@@ -946,6 +1226,11 @@ export type CostRollup = {
   average_run_cost_usd: number;
   breakdown: CostRollupBreakdownItem[];
   series: CostRollupSeriesPoint[];
+  pricing_statuses: Array<{
+    model: string;
+    status: string;
+    blocking: boolean;
+  }>;
 };
 
 export type AlertRule = {
@@ -2241,9 +2526,9 @@ export type EvalRun = {
 
 async function request<T>(
   path: string,
-  init?: RequestInit & { timeoutMs?: number },
+  init?: RequestInit & { timeoutMs?: number; skipRefresh?: boolean },
 ): Promise<T> {
-  const { timeoutMs = 0, signal, headers, ...requestInit } = init ?? {};
+  const { timeoutMs = 0, signal, headers, skipRefresh = false, ...requestInit } = init ?? {};
   const controller =
     timeoutMs > 0 && !signal ? new AbortController() : null;
   const timeout =
@@ -2268,6 +2553,11 @@ async function request<T>(
     }
   }
   if (!response.ok) {
+    if (response.status === 401 && !skipRefresh && getStoredRefreshToken()) {
+      const refreshed = await refreshAuthToken(getStoredRefreshToken());
+      setAuthTokens(refreshed);
+      return request<T>(path, { ...init, skipRefresh: true });
+    }
     let detail = "";
     try {
       const payload = (await response.json()) as { detail?: string };
@@ -2331,8 +2621,209 @@ function knowledgeFileFormData(
   return body;
 }
 
+export async function register(payload: {
+  email: string;
+  password: string;
+  name: string;
+  organization_name?: string | null;
+}) {
+  return request<AuthTokenResponse>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    skipRefresh: true,
+  });
+}
+
+export async function login(payload: {
+  email: string;
+  password: string;
+  organization_id?: string | null;
+}) {
+  return request<AuthTokenResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    skipRefresh: true,
+  });
+}
+
+export async function refreshAuthToken(refreshToken: string, organizationId?: string | null) {
+  return request<AuthTokenResponse>("/api/auth/refresh", {
+    method: "POST",
+    body: JSON.stringify({ refresh_token: refreshToken, organization_id: organizationId }),
+    skipRefresh: true,
+  });
+}
+
+export async function logout() {
+  return request<void>("/api/auth/logout", {
+    method: "POST",
+    skipRefresh: true,
+  });
+}
+
+export async function getMe() {
+  return request<AuthMeResponse>("/api/auth/me");
+}
+
+export async function startOAuth(provider: "github" | "google") {
+  return request<{ provider: string; authorization_url: string; state: string }>(
+    `/api/auth/oauth/${provider}/start`,
+    { skipRefresh: true },
+  );
+}
+
+export async function listApiKeys() {
+  return request<ApiKeyResponse[]>("/api/api-keys");
+}
+
+export async function createApiKey(payload: {
+  name: string;
+  scopes?: string[];
+  expires_at?: string | null;
+}) {
+  return request<ApiKeyCreateResponse>("/api/api-keys", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function revokeApiKey(keyId: string) {
+  return request<void>(`/api/api-keys/${encodeURIComponent(keyId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listOrganizationUsers() {
+  return request<UserMember[]>("/api/users");
+}
+
+export async function inviteOrganizationUser(payload: {
+  email: string;
+  name?: string | null;
+  role: "admin" | "member" | "viewer";
+}) {
+  return request<UserMember>("/api/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateOrganizationUserRole(
+  userId: string,
+  role: "admin" | "member" | "viewer",
+) {
+  return request<UserMember>(`/api/users/${encodeURIComponent(userId)}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeOrganizationUser(userId: string) {
+  return request<void>(`/api/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listAuditEvents(params?: {
+  actor_id?: string;
+  action?: string;
+  resource_type?: string;
+  limit?: number;
+}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<AuditEventPage>(`/api/audit${suffix}`);
+}
+
+export async function downloadAuditCsv() {
+  const response = await fetchApi("/api/audit/export.csv", {
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`请求失败 ${response.status}`);
+  }
+  return {
+    blob: await response.blob(),
+    filename: contentDispositionFilename(response.headers.get("content-disposition") ?? "")
+      ?? "audit-events.csv",
+  };
+}
+
+export async function listRetentionPolicies() {
+  return request<{ items: RetentionPolicy[] }>("/api/retention/policies");
+}
+
+export async function updateRetentionPolicy(
+  policyId: string,
+  payload: { retention_days?: number; delete_after_days?: number; enabled?: boolean },
+) {
+  return request<RetentionPolicy>(`/api/retention/policies/${encodeURIComponent(policyId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function runRetentionNow() {
+  return request<{ items: RetentionRun[] }>("/api/retention/run", {
+    method: "POST",
+  });
+}
+
+export async function listRetentionRuns() {
+  return request<{ items: RetentionRun[] }>("/api/retention/runs");
+}
+
+export async function createOrganizationExport(orgId: string) {
+  return request<DataExport>(`/api/organizations/${encodeURIComponent(orgId)}/export`, {
+    method: "POST",
+  });
+}
+
+export async function listOrganizationExports(orgId: string) {
+  return request<{ items: DataExport[] }>(
+    `/api/organizations/${encodeURIComponent(orgId)}/exports`,
+  );
+}
+
+export async function previewOrganizationDeletion(orgId: string) {
+  return request<OrganizationDeletionPreview>(
+    `/api/organizations/${encodeURIComponent(orgId)}/dry-run`,
+    { method: "DELETE" },
+  );
+}
+
+export async function deleteOrganization(orgId: string, confirmationName: string) {
+  return request<OrganizationDeletionResponse>(`/api/organizations/${encodeURIComponent(orgId)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ confirmation_name: confirmationName }),
+  });
+}
+
+function withCursor(path: string, cursor?: string | null, limit?: number) {
+  const params = new URLSearchParams();
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 export async function listTasks() {
-  return request<{ items: Task[]; next_cursor: string | null }>("/api/tasks");
+  return listTasksPage();
+}
+
+export async function listTasksPage(options: { cursor?: string | null; limit?: number } = {}) {
+  return request<{ items: Task[]; next_cursor: string | null }>(
+    withCursor("/api/tasks", options.cursor, options.limit),
+  );
 }
 
 export async function createTask(payload: TaskCreatePayload) {
@@ -2343,7 +2834,13 @@ export async function createTask(payload: TaskCreatePayload) {
 }
 
 export async function listAgents() {
-  return request<{ items: AgentDefinition[]; next_cursor: string | null }>("/api/agents");
+  return listAgentsPage();
+}
+
+export async function listAgentsPage(options: { cursor?: string | null; limit?: number } = {}) {
+  return request<{ items: AgentDefinition[]; next_cursor: string | null }>(
+    withCursor("/api/agents", options.cursor, options.limit),
+  );
 }
 
 export async function listTokenOptimizerPresets() {
@@ -2461,6 +2958,59 @@ export async function updateTeamTask(teamId: string, taskId: string, payload: Te
 export async function listTeamEvents(teamId: string, afterSequence?: number) {
   const suffix = afterSequence !== undefined ? `?after_sequence=${afterSequence}` : "";
   return request<TeamEvent[]>(`/api/teams/${teamId}/events${suffix}`);
+}
+
+export async function getOnboardingState() {
+  return request<OnboardingState>("/api/onboarding/state");
+}
+
+export async function updateOnboardingState(payload: OnboardingStateUpdate) {
+  return request<OnboardingState>("/api/onboarding/state", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function completeOnboarding(payload: { agent_id?: string | null; demo_task_id?: string | null } = {}) {
+  return request<OnboardingState>("/api/onboarding/complete", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function loadDemoData() {
+  return request<DemoLoadResponse>("/api/demo/load", {
+    method: "POST",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+  });
+}
+
+export async function resetDemoData(confirmToken = "reset-demo-data") {
+  return request<DemoLoadResponse>("/api/demo/reset", {
+    method: "POST",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    body: JSON.stringify({ confirm_token: confirmToken }),
+  });
+}
+
+export async function createFrontendError(payload: FrontendErrorPayload) {
+  return request<FrontendErrorItem>("/api/frontend-errors", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listFrontendErrors(limit = 100) {
+  return request<{ items: FrontendErrorItem[]; next_cursor: string | null }>(
+    `/api/frontend-errors?limit=${limit}`,
+    { headers: authHeaders(DEV_ADMIN_BEARER_TOKEN) },
+  );
+}
+
+export async function summarizeFrontendErrors() {
+  return request<{ items: FrontendErrorSummaryItem[] }>("/api/frontend-errors/summary", {
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+  });
 }
 
 function parseTeamSseFrame(frame: string): TeamEvent | null {
@@ -2881,7 +3431,13 @@ export async function streamAgentChatRun(
 }
 
 export async function listRuns() {
-  return request<{ items: Task[]; next_cursor: string | null }>("/api/agents/runs");
+  return listRunsPage();
+}
+
+export async function listRunsPage(options: { cursor?: string | null; limit?: number } = {}) {
+  return request<{ items: Task[]; next_cursor: string | null }>(
+    withCursor("/api/agents/runs", options.cursor, options.limit),
+  );
 }
 
 export async function getAgentRunWorkspace(
@@ -3572,7 +4128,15 @@ export async function getEvalRunRegression(evalRunId: string) {
 }
 
 export function taskEventStreamUrl(taskId: string) {
-  const params = new URLSearchParams({ access_token: DEV_BEARER_TOKEN });
+  const params = new URLSearchParams({ access_token: authToken() });
+  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+}
+
+export function taskEventReconnectStreamUrl(taskId: string, lastEventId: string | null) {
+  const params = new URLSearchParams({ access_token: authToken() });
+  if (lastEventId) {
+    params.set("after_sequence", lastEventId);
+  }
   return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
 }
 
@@ -3762,6 +4326,76 @@ export async function getModelFallbackSummary(limit = 20) {
   return request<ModelFallbackSummary>(`/api/settings/models/fallbacks?limit=${limit}`);
 }
 
+const MODEL_PRICING_SOURCE_FALLBACK_URL = "/model_pricing_sources.json";
+const MODEL_PRICING_SOURCE_BLOCKING_STATUSES = [
+  "missing_pricing",
+  "price_unverified",
+  "sku_ambiguous",
+  "currency_conversion_required",
+  "stale",
+  "invalid_pricing",
+];
+
+function isNotFoundError(error: unknown) {
+  return error instanceof Error && /\b404\b/.test(error.message);
+}
+
+function currentModelPricingStatus(row: ModelPricingSourceDocumentRow) {
+  if (row.verification_status !== "verified" || !row.valid_until) {
+    return row.verification_status;
+  }
+  const validUntil = Date.parse(row.valid_until);
+  if (Number.isFinite(validUntil) && validUntil <= Date.now()) {
+    return "stale";
+  }
+  return row.verification_status;
+}
+
+function normalizeBundledPricingRow(row: ModelPricingSourceDocumentRow): ModelPricingSourceItem {
+  const verificationStatus = currentModelPricingStatus(row);
+  return {
+    ...row,
+    verification_status: verificationStatus,
+    blocks_usd_rollup: verificationStatus !== "verified" || String(row.currency).toUpperCase() !== "USD",
+  };
+}
+
+async function getBundledModelPricingSources() {
+  let response: Response;
+  try {
+    response = await fetch(MODEL_PRICING_SOURCE_FALLBACK_URL, {
+      headers: { Accept: "application/json" },
+    });
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : apiConnectionError(error, [MODEL_PRICING_SOURCE_FALLBACK_URL]);
+  }
+  if (!response.ok) {
+    throw new Error(`请求失败 ${response.status}`);
+  }
+  const document = (await response.json()) as ModelPricingSourceDocument;
+  return {
+    schema_version: document.schema_version ?? "model_pricing_sources.v1",
+    retrieved_at: document.retrieved_at ?? new Date().toISOString(),
+    parser_version: document.parser_version ?? "bundled-official-source",
+    blocking_statuses: document.blocking_statuses ?? MODEL_PRICING_SOURCE_BLOCKING_STATUSES,
+    items: (document.rows ?? []).map(normalizeBundledPricingRow),
+  };
+}
+
+export async function getModelPricingSources() {
+  try {
+    return await request<ModelPricingSourcePage>("/api/settings/models/pricing-sources");
+  } catch (error) {
+    // Keep the page usable when an already-running/stale local API predates the pricing route.
+    if (isNotFoundError(error)) {
+      return getBundledModelPricingSources();
+    }
+    throw error;
+  }
+}
+
 export async function getPolicySettings() {
   return request<PolicySettings>("/api/settings/policies");
 }
@@ -3924,6 +4558,39 @@ export async function listAlertEvents(params?: { since?: string; limit?: number 
   }
   const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
   return request<AlertEventPage>(`/api/observability/alert-events${suffix}`);
+}
+
+export async function listNotificationChannels() {
+  return request<{ items: NotificationChannel[]; next_cursor: string | null }>(
+    "/api/observability/notification-channels",
+    { headers: authHeaders(DEV_ADMIN_BEARER_TOKEN) },
+  );
+}
+
+export async function createNotificationChannel(payload: NotificationChannelPayload) {
+  return request<NotificationChannel>("/api/observability/notification-channels", {
+    method: "POST",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateNotificationChannel(
+  channelId: string,
+  payload: Partial<NotificationChannelPayload>,
+) {
+  return request<NotificationChannel>(`/api/observability/notification-channels/${channelId}`, {
+    method: "PATCH",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteNotificationChannel(channelId: string) {
+  return request<void>(`/api/observability/notification-channels/${channelId}`, {
+    method: "DELETE",
+    headers: authHeaders(DEV_ADMIN_BEARER_TOKEN),
+  });
 }
 
 export async function listGrafanaDashboards() {

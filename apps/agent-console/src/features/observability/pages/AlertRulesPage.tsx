@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { Bell, Pencil, Play, Plus, Send, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -13,15 +13,22 @@ import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/fee
 import { Input } from "../../../components/ui/input";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { formatShortDate } from "../../../lib/utils";
+import { NotificationChannelForm } from "../components/NotificationChannelForm";
 import {
+  createNotificationChannel,
   createAlertRule,
   deleteAlertRule,
+  deleteNotificationChannel,
   evaluateAlertRules,
   listAlertEvents,
   listAlertRules,
+  listNotificationChannels,
+  updateNotificationChannel,
   updateAlertRule,
   type AlertRule,
   type AlertRulePayload,
+  type NotificationChannel,
+  type NotificationChannelPayload,
 } from "../../tasks/api";
 
 const METRICS = [
@@ -48,8 +55,14 @@ export function AlertRulesPage() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<AlertRule | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<NotificationChannel | null>(null);
+  const [channelDialogOpen, setChannelDialogOpen] = useState(false);
   const [form, setForm] = useState<AlertRulePayload>(DEFAULT_FORM);
   const rules = useQuery({ queryKey: ["observability", "alert-rules"], queryFn: listAlertRules });
+  const channels = useQuery({
+    queryKey: ["observability", "notification-channels"],
+    queryFn: listNotificationChannels,
+  });
   const events = useQuery({
     queryKey: ["observability", "alert-events"],
     queryFn: () => listAlertEvents({ limit: 80 }),
@@ -76,6 +89,31 @@ export function AlertRulesPage() {
     },
     onError: (error) => {
       notifyFeedback({ tone: "error", title: "删除失败", description: feedbackErrorMessage(error, "系统默认规则需要先保存为组织规则。") });
+    },
+  });
+  const saveChannel = useMutation({
+    mutationFn: (payload: NotificationChannelPayload) =>
+      editingChannel
+        ? updateNotificationChannel(editingChannel.id, payload)
+        : createNotificationChannel(payload),
+    onSuccess: async () => {
+      setChannelDialogOpen(false);
+      setEditingChannel(null);
+      notifyFeedback({ tone: "success", title: "通知通道已保存" });
+      await queryClient.invalidateQueries({ queryKey: ["observability", "notification-channels"] });
+    },
+    onError: (error) => {
+      notifyFeedback({ tone: "error", title: "通道保存失败", description: feedbackErrorMessage(error, "请检查通道配置。") });
+    },
+  });
+  const removeChannel = useMutation({
+    mutationFn: deleteNotificationChannel,
+    onSuccess: async () => {
+      notifyFeedback({ tone: "success", title: "通知通道已删除" });
+      await queryClient.invalidateQueries({ queryKey: ["observability", "notification-channels"] });
+    },
+    onError: (error) => {
+      notifyFeedback({ tone: "error", title: "通道删除失败", description: feedbackErrorMessage(error, "请稍后重试。") });
     },
   });
   const evaluate = useMutation({
@@ -110,6 +148,7 @@ export function AlertRulesPage() {
     setDialogOpen(true);
   };
   const activeAlerts = events.data?.items.filter((event) => event.status === "active") ?? [];
+  const channelItems = channels.data?.items ?? [];
 
   return (
     <ConsoleShell title="告警规则">
@@ -180,6 +219,65 @@ export function AlertRulesPage() {
 
         <Card>
           <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Send className="h-4 w-4" /> 外部通知通道
+            </div>
+            <Button
+              onClick={() => {
+                setEditingChannel(null);
+                setChannelDialogOpen(true);
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" /> 新通道
+            </Button>
+          </CardHeader>
+          <div className="divide-y divide-slate-100">
+            {channelItems.map((channel) => (
+              <div key={channel.id} className="grid grid-cols-[1fr_auto] gap-3 px-3 py-3 text-xs">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-slate-900">{channel.name}</span>
+                    <Badge tone={channel.verified ? "success" : "warning"}>
+                      {channel.verified ? "已验证" : "未验证"}
+                    </Badge>
+                    <Badge tone="info">{channel.kind}</Badge>
+                  </div>
+                  <div className="mt-1 font-mono text-[10px] text-slate-400">
+                    selector: {channelSelector(channel)}
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    className="w-8 px-0"
+                    aria-label="编辑通道"
+                    onClick={() => {
+                      setEditingChannel(channel);
+                      setChannelDialogOpen(true);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="danger"
+                    className="w-8 px-0"
+                    aria-label="删除通道"
+                    onClick={() => removeChannel.mutate(channel.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {!channels.isLoading && channelItems.length === 0 ? (
+              <div className="p-10 text-center text-xs text-slate-500">
+                暂无外部通知通道；告警仍会通过 in_app 记录。
+              </div>
+            ) : null}
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <div className="text-sm font-semibold text-slate-900">告警事件</div>
             <span className="text-xs text-slate-500">最近 {events.data?.items.length ?? 0} 条</span>
           </CardHeader>
@@ -224,14 +322,62 @@ export function AlertRulesPage() {
               <input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /> 启用
             </label>
           </div>
+          <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
+            <div className="mb-2 text-xs font-semibold text-slate-700">通知通道</div>
+            <div className="grid gap-2 text-xs text-slate-700">
+              {["in_app", ...channelItems.map(channelSelector)].map((selector) => (
+                <label key={selector} className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.notification_channels_json.includes(selector)}
+                    onChange={(event) => {
+                      const selected = new Set(form.notification_channels_json);
+                      if (event.target.checked) {
+                        selected.add(selector);
+                      } else {
+                        selected.delete(selector);
+                      }
+                      setForm({
+                        ...form,
+                        notification_channels_json: selected.size ? Array.from(selected) : ["in_app"],
+                      });
+                    }}
+                  />
+                  <span className="font-mono">{selector}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setDialogOpen(false)}>取消</Button>
             <Button variant="primary" disabled={!form.name.trim() || saveRule.isPending} onClick={() => saveRule.mutate()}>保存</Button>
           </div>
         </div>
       </ConfigDialog>
+      <ConfigDialog
+        open={channelDialogOpen}
+        title={editingChannel ? "编辑通知通道" : "新建通知通道"}
+        onClose={() => setChannelDialogOpen(false)}
+      >
+        <NotificationChannelForm
+          initial={editingChannel}
+          pending={saveChannel.isPending}
+          onCancel={() => setChannelDialogOpen(false)}
+          onSubmit={(payload) => saveChannel.mutate(payload)}
+        />
+      </ConfigDialog>
     </ConsoleShell>
   );
+}
+
+function channelSelector(channel: NotificationChannel) {
+  if (channel.kind === "email") {
+    return `email:${String(channel.config_json.to ?? "*")}`;
+  }
+  if (channel.kind === "slack") {
+    return `slack:${String(channel.config_json.channel ?? channel.name)}`;
+  }
+  return `webhook:${channel.name}`;
 }
 
 function Label({ title, children }: { title: string; children: ReactNode }) {

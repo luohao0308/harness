@@ -31,7 +31,7 @@ import type {
   AgentChatStreamPayload,
   ToolMetadata,
 } from "../../tasks/api";
-import { API_BASE_URL, parseChatSseFrame } from "../../tasks/api";
+import { API_BASE_URL, getStoredAccessToken, parseChatSseFrame } from "../../tasks/api";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { ConversationArtifact, ConversationNode } from "../../../stores/workspaceStore";
 import { mergeToolCallEvent } from "../streamEvents";
@@ -54,7 +54,8 @@ import {
 import type { WorkspaceMode } from "../lib/types";
 import { useStreamFlush } from "./useStreamFlush";
 
-const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
+const DEV_BEARER_TOKEN =
+  import.meta.env.VITE_DEV_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-engineer-token" : "");
 
 /** 10 seconds — no server byte within this window aborts the stream. */
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -361,6 +362,11 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       const toolMentions = extractToolMentions(input.goal, tools);
       const mode = toolAwareWorkspaceMode(input.mode, toolMentions.length);
       const backendMode = backendWorkspaceMode(mode);
+      const orchestrationMode = inferWorkspaceOrchestrationMode({
+        mode,
+        goal: input.goal,
+        activePath,
+      });
       const branchKey = contextCompressionBranchKey(
         store.currentConversationId,
         store.activeLeafId,
@@ -375,7 +381,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       });
       return {
         mode: backendMode,
-        orchestration_mode: mode === "goal" ? "auto" : undefined,
+        orchestration_mode: orchestrationMode,
         goal: input.goal,
         model_provider: selectedProviderId,
         model_name: selectedModelId,
@@ -601,6 +607,68 @@ function backendWorkspaceMode(mode: WorkspaceMode): AgentChatStreamPayload["mode
   return mode === "goal" ? "plan" : mode;
 }
 
+function inferWorkspaceOrchestrationMode({
+  mode,
+  goal,
+  activePath,
+}: {
+  mode: WorkspaceMode;
+  goal: string;
+  activePath: ConversationNode[];
+}): AgentChatStreamPayload["orchestration_mode"] | undefined {
+  if (mode === "goal") return "auto";
+
+  const normalizedGoal = normalizeOrchestrationText(goal);
+  const recentContext = normalizeOrchestrationText(
+    activePath
+      .slice(-8)
+      .map((node) => node.content)
+      .join(" "),
+  );
+
+  if (mentionsDelegationTarget(normalizedGoal)) return "auto";
+  if (asksToInvokeAgent(normalizedGoal) && mentionsDelegationTarget(recentContext)) {
+    return "auto";
+  }
+  return undefined;
+}
+
+function normalizeOrchestrationText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+}
+
+function mentionsDelegationTarget(value: string): boolean {
+  return [
+    "subagent",
+    "sub-agent",
+    "子agent",
+    "子代理",
+    "子智能体",
+    "派生代理",
+    "派生智能体",
+    "multi-agent",
+    "multiagent",
+    "多agent",
+    "多代理",
+    "多智能体",
+  ].some((term) => value.includes(term));
+}
+
+function asksToInvokeAgent(value: string): boolean {
+  return [
+    "调用",
+    "调用一下",
+    "委托",
+    "派发",
+    "派生",
+    "启动",
+    "开一下",
+    "spawn",
+    "delegate",
+    "invoke",
+  ].some((term) => value.includes(term));
+}
+
 /**
  * Fetch + SSE pump. Throws `SseError` for every classified failure (HTTP
  * non-2xx, Content-Type mismatch, reader closed before `done`). Network
@@ -621,14 +689,16 @@ async function runStream(opts: {
    */
   onDiagnostic?: (kind: "possible_buffering") => void;
 }): Promise<void> {
+  const bearerToken = (getStoredAccessToken() || DEV_BEARER_TOKEN).trim();
+  const requestHeaders: HeadersInit = { "Content-Type": "application/json" };
+  if (bearerToken) {
+    requestHeaders.Authorization = `Bearer ${bearerToken}`;
+  }
   const response = await opts.fetchImpl(
     `${API_BASE_URL}/api/agents/${opts.agentId}/runs/chat/stream`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${DEV_BEARER_TOKEN}`,
-      },
+      headers: requestHeaders,
       body: JSON.stringify(opts.payload),
       signal: opts.signal,
     },

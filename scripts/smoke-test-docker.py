@@ -21,8 +21,15 @@ PROMETHEUS_BASE_URL = os.environ.get("HARNESS_PROMETHEUS_BASE_URL", "http://127.
 GRAFANA_BASE_URL = os.environ.get("HARNESS_GRAFANA_BASE_URL", "http://127.0.0.1:3001")
 LOKI_BASE_URL = os.environ.get("HARNESS_LOKI_BASE_URL", "http://127.0.0.1:3100")
 TEMPO_BASE_URL = os.environ.get("HARNESS_TEMPO_BASE_URL", "http://127.0.0.1:3200")
-AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
-OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
+
+
+def _bearer_headers(env_name: str, default_token: str) -> dict[str, str]:
+    token = os.environ.get(env_name, "").strip() or default_token
+    return {"Authorization": f"Bearer {token}"}
+
+
+AUTH_HEADERS = _bearer_headers("HARNESS_AUTH_TOKEN", "dev-engineer-token")
+OPERATOR_HEADERS = _bearer_headers("HARNESS_OPERATOR_TOKEN", "dev-operator-token")
 
 
 @dataclass

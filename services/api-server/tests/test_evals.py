@@ -957,11 +957,11 @@ def test_eval_run_grades_cost_contract_with_model_pricing(db_session: Session) -
         ModelPricing(
             id="pricing-test-deepseek-chat",
             organization_id=None,
-            provider="deepseek",
-            model="deepseek-chat",
-            prompt_per_1k_usd="0.001000",
-            completion_per_1k_usd="0.002000",
-            cache_prompt_per_1k_usd="0",
+            provider="deepseek-flash",
+            model="deepseek-v4-flash",
+            prompt_per_1k_usd="0.00014",
+            completion_per_1k_usd="0.00028",
+            cache_prompt_per_1k_usd="0.0000028",
             currency="USD",
             active=True,
             source="test_seed",
@@ -972,8 +972,18 @@ def test_eval_run_grades_cost_contract_with_model_pricing(db_session: Session) -
     run_id = _traced_completed_run(
         db_session,
         model_calls=[
-            {"prompt_tokens": 1000, "completion_tokens": 500},
-            {"prompt_tokens": 2000, "completion_tokens": 1000},
+            {
+                "model_provider": "deepseek-flash",
+                "model_name": "deepseek-v4-flash",
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+            },
+            {
+                "model_provider": "deepseek-flash",
+                "model_name": "deepseek-v4-flash",
+                "prompt_tokens": 2000,
+                "completion_tokens": 1000,
+            },
         ],
     )
     dataset = client.post(
@@ -981,10 +991,8 @@ def test_eval_run_grades_cost_contract_with_model_pricing(db_session: Session) -
         headers=AUTH_HEADERS,
         json={"name": "Cost Contract Dataset", "description": "P8 cost contract"},
     ).json()
-    expected_cost = (
-        (3000 / 1000) * 0.001000 + (1500 / 1000) * 0.002000
-    )
-    assert abs(expected_cost - 0.006) < 1e-9
+    expected_cost = (3000 / 1000) * 0.00014 + (1500 / 1000) * 0.00028
+    assert abs(expected_cost - 0.00084) < 1e-9
 
     passing = client.post(
         f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
@@ -1009,7 +1017,7 @@ def test_eval_run_grades_cost_contract_with_model_pricing(db_session: Session) -
         json={
             "expected_json": {
                 "status": "COMPLETED",
-                "cost_contract": {"max_cost_usd": "0.001"},
+                "cost_contract": {"max_cost_usd": "0.0001"},
             },
             "tags_json": ["cost-contract", "negative"],
         },
@@ -1039,9 +1047,11 @@ def test_eval_run_grades_cost_contract_with_model_pricing(db_session: Session) -
 
     passing_trace = results[passing.json()["id"]]["grader_trace_json"]["cost_contract"]
     assert passing_trace["passed"] is True
-    assert passing_trace["actual_cost_usd"] == "0.006000"
+    assert passing_trace["actual_cost_usd"] == "0.000840"
     assert passing_trace["prompt_tokens"] == 3000
     assert passing_trace["completion_tokens"] == 1500
+    assert passing_trace["pricing_statuses"] == {"deepseek-flash/deepseek-v4-flash": "verified"}
+    assert passing_trace["pricing_blocking_statuses"] == []
 
     over_budget_trace = results[over_budget.json()["id"]]["grader_trace_json"]["cost_contract"]
     assert "max_cost_usd" in over_budget_trace["limit_exceeded"]
@@ -1054,8 +1064,130 @@ def test_eval_run_grades_cost_contract_with_model_pricing(db_session: Session) -
     assert metrics["cost_contract_pass_rate"] == round(1 / 3, 4)
     assert metrics["total_prompt_tokens"] == 9000
     assert metrics["total_completion_tokens"] == 4500
-    assert metrics["total_cost_usd"] == "0.018000"
-    assert metrics["avg_cost_usd"] == "0.006000"
+    assert metrics["total_cost_usd"] == "0.002520"
+    assert metrics["avg_cost_usd"] == "0.000840"
+    assert metrics["pricing_blocking_statuses"] == []
+
+
+def test_eval_run_cost_contract_allows_custom_model_with_org_pricing(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        ModelPricing(
+            id="pricing-custom-provider-model",
+            organization_id="dev-org",
+            provider="custom-provider",
+            model="custom-model",
+            prompt_per_1k_usd="0.010000",
+            completion_per_1k_usd="0.020000",
+            cache_prompt_per_1k_usd="0",
+            currency="USD",
+            active=True,
+            source="org_override",
+        )
+    )
+    db_session.flush()
+    client = TestClient(app)
+    run_id = _traced_completed_run(
+        db_session,
+        model_calls=[
+            {
+                "model_provider": "custom-provider",
+                "model_name": "custom-model",
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+            }
+        ],
+    )
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "Custom Model Cost", "description": ""},
+    ).json()
+    case = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "cost_contract": {"max_cost_usd": "1", "enterprise_gate": True},
+            }
+        },
+    )
+    assert case.status_code == 201
+    run_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/runs",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+
+    result = run_response.json()["results"][0]
+    trace = result["grader_trace_json"]["cost_contract"]
+    assert result["status"] == "PASSED"
+    assert trace["actual_cost_usd"] == "0.020000"
+    assert trace["pricing_statuses"] == {"custom-provider/custom-model": "verified"}
+    assert trace["pricing_blocking_statuses"] == []
+
+
+def test_eval_run_cost_contract_blocks_builtin_source_model_from_fallback_pricing(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        ModelPricing(
+            id="pricing-openai-compatible-default-only",
+            organization_id=None,
+            provider="openai-compatible",
+            model="default",
+            prompt_per_1k_usd="0.00015",
+            completion_per_1k_usd="0.00060",
+            cache_prompt_per_1k_usd="0",
+            currency="USD",
+            active=True,
+            source="default_seed",
+        )
+    )
+    db_session.flush()
+    client = TestClient(app)
+    run_id = _traced_completed_run(
+        db_session,
+        model_calls=[
+            {
+                "model_provider": "openai-compatible",
+                "model_name": "gpt-5.5",
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+            }
+        ],
+    )
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "Builtin Source Fallback Gate", "description": ""},
+    ).json()
+    case = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "cost_contract": {"max_cost_usd": "1", "enterprise_gate": True},
+            }
+        },
+    )
+    assert case.status_code == 201
+    run_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/runs",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+
+    result = run_response.json()["results"][0]
+    trace = result["grader_trace_json"]["cost_contract"]
+    assert result["status"] == "FAILED"
+    assert trace["actual_cost_usd"] == "0.000000"
+    assert trace["pricing_statuses"] == {"openai-compatible/gpt-5.5": "missing_pricing"}
+    assert trace["pricing_blocking_statuses"] == ["missing_pricing"]
+    assert "pricing_status_blocked:missing_pricing" in trace["failures"]
 
 
 def test_eval_run_grades_refusal_contract_outcomes(db_session: Session) -> None:
@@ -1450,8 +1582,56 @@ def test_eval_run_cost_missing_pricing_records_zero_cost_and_misses(
     trace = result["grader_trace_json"]["cost_contract"]
     assert trace["actual_cost_usd"] == "0.000000"
     assert "unknown-provider/unknown-model" in trace["missing_pricing"]
+    assert trace["pricing_statuses"] == {"unknown-provider/unknown-model": "missing_pricing"}
+    assert trace["pricing_blocking_statuses"] == ["missing_pricing"]
     metrics = run_response.json()["metrics_json"]
     assert "unknown-provider/unknown-model" in metrics["missing_pricing_models"]
+    assert metrics["pricing_blocking_statuses"] == ["missing_pricing"]
+
+
+def test_eval_run_enterprise_cost_gate_blocks_unresolved_pricing(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    run_id = _traced_completed_run(
+        db_session,
+        model_calls=[
+            {
+                "model_provider": "unknown-provider",
+                "model_name": "unknown-model",
+                "prompt_tokens": 500,
+                "completion_tokens": 200,
+            }
+        ],
+    )
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "Enterprise Cost Gate", "description": ""},
+    ).json()
+    case = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "cost_contract": {"max_cost_usd": "10", "enterprise_gate": True},
+            }
+        },
+    )
+    assert case.status_code == 201
+    run_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/runs",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+    result = run_response.json()["results"][0]
+    trace = result["grader_trace_json"]["cost_contract"]
+    assert result["status"] == "FAILED"
+    assert trace["actual_cost_usd"] == "0.000000"
+    assert trace["pricing_statuses"] == {"unknown-provider/unknown-model": "missing_pricing"}
+    assert trace["pricing_blocking_statuses"] == ["missing_pricing"]
+    assert "pricing_status_blocked:missing_pricing" in trace["failures"]
 
 
 def test_eval_run_grades_specialist_contract_outputs_budget_and_fanout(

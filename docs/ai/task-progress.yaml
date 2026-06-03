@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-29T05:51:06Z
+last_updated_at: 2026-05-29T17:44:34Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,118 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: production-critical-hardening-v2
+    date: 2026-05-30
+    status: verified
+    demo: Production-critical auth and first-run deployment hardening are implemented with review fixes for frontend production auth, test CORS compatibility, Helm migration secrets, and legacy seed downgrade safety.
+    verification_result: passed_with_environment_gaps
+    verification_commands:
+      - python3 scripts/check-migration-ids.py services/api-server/alembic/versions/
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_cors.py tests/test_auth_env_gate.py tests/test_first_admin_bootstrap.py tests/test_migration_id_lint.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests ../../scripts/check-migration-ids.py ../../scripts/create-admin.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-prod-critical-v2.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min .venv/bin/python -m alembic upgrade head
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-prod-critical-v2-downgrade.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min .venv/bin/python -m alembic upgrade 20260604_0031 && DATABASE_URL=sqlite:////tmp/harness-prod-critical-v2-downgrade.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min .venv/bin/python -m alembic upgrade head && DATABASE_URL=sqlite:////tmp/harness-prod-critical-v2-downgrade.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min .venv/bin/python -m alembic downgrade 20260604_0031
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm run build && ../../scripts/check-bundle-size.sh dist
+      - AUTH_JWT_SECRET=example-secret-32-characters-minimum-123 POSTGRES_PASSWORD=example REDIS_PASSWORD=example HARNESS_DOMAIN=localhost CADDY_DOMAIN=localhost docker compose -f compose.production.yml config
+      - AUTH_JWT_SECRET=example-secret-32-characters-minimum-123 docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config
+      - helm version --short
+      - helm lint deploy/helm/harness
+      - helm template harness deploy/helm/harness
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Dev bearer tokens now resolve only when `APP_ENV` is `development` or `test`; production/staging reject `dev-admin-token` while test/development preserve local workflow.
+      - `AUTH_JWT_SECRET` has no dev default, startup and JWT signing reject missing, placeholder, short, and production `dev-only-*` secrets, and production compose/Helm envs require or carry the secret.
+      - Empty-database first-run admin bootstrap creates one active owner from `HARNESS_INITIAL_ADMIN_EMAIL/PASSWORD`; repeated startup and concurrent-create races are covered, and `scripts/create-admin.py` / `python -m app.cli.create_admin` provide a fallback.
+      - Patch migration `20260605_0032_remove_legacy_admin_seed.py` removes only the original legacy `dev-admin` / `dev-engineer` seed rows when the original hash still matches; downgrade now restores missing legacy rows without clobbering preserved users.
+      - Migration id lint and CI job now prevent seed ids from exceeding migration-created `id` column widths; docs capture migration width conventions.
+      - Code review found and fixed production auth frontend issues: production console builds no longer embed dev tokens, chat/SSE paths use stored JWTs, empty dev-token build args do not create `Authorization: Bearer ` headers, and org knowledge controls work for owner/admin JWT users.
+      - Code review also fixed a TypeScript name collision in `useChatStream`, preserved test-mode dev-console CORS behavior, and passed `538` backend tests with `2` existing deprecation warnings plus `49` frontend test files / `224` tests.
+      - Helm was installed locally via Homebrew and `helm lint deploy/helm/harness` plus `helm template harness deploy/helm/harness` passed on Helm `v4.2.0`; Docker image build/push, live production smoke, and GitHub Actions execution were not run locally.
+
+  - id: p4-p8-docs-help-performance-scale
+    date: 2026-05-29
+    status: verified
+    demo: Documentation Help Center and performance/scale foundations are implemented with review fixes for signed cursors, cache invalidation, and cache-safe semantics.
+    verification_result: passed_with_environment_gaps
+    verification_commands:
+      - cd services/api-server && .venv/bin/pytest tests/test_query_cache.py tests/test_pagination.py tests/test_n_plus_one.py -q
+      - cd services/api-server && .venv/bin/ruff check app tests
+      - cd services/api-server && .venv/bin/pytest tests -q
+      - cd apps/agent-console && npm test -- HelpCenter.test.tsx RunHistoryPage.test.tsx ConsoleShell.render.test.tsx --run
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build && ../../scripts/check-bundle-size.sh dist
+      - python3 scripts/check-help-content.py
+      - python3 scripts/generate-api-docs.py
+      - python3 scripts/validate-docs.py
+      - bash -n scripts/upload-assets-to-s3.sh
+      - POSTGRES_PASSWORD=example REDIS_PASSWORD=example SECRET_KEY=example HARNESS_DOMAIN=localhost CADDY_DOMAIN=localhost docker compose -f compose.production.yml config
+      - git diff --check
+    acceptance_notes:
+      - P4 added a README rewrite, in-app Help Center routes, 25 public help docs, 51 troubleshooting cases, glossary/tooltips, Dashboard walkthrough affordances, OpenAPI metadata, generated API reference docs, and a docs CI workflow gate.
+      - P8 added organization-scoped query caching with Redis-first memory fallback, entity-version invalidation, HMAC-signed cursor pagination, backend list endpoint coverage, N+1 query detection instrumentation, lazy frontend routes, Run History cursor loading, CDN/static asset configuration, k6 baseline/spike/soak scripts, and a performance runbook.
+      - Code review found and fixed merge-blocking issues before completion: pagination cursors are now signed and tamper-tested, Agent list caches invalidate after Token Optimizer/capability attachment changes, backend tests clear query cache state between cases, specialist calibration avoids unsafe caching, and cost-rollup cache/rate-limit semantics are regression-tested.
+      - Full backend regression passed with `527 passed, 2 warnings`; full frontend Vitest passed with `49 files / 224 tests`; frontend lint and production build passed.
+      - Bundle gate passed with largest JavaScript chunk `479206` bytes under the `512000` byte limit, and docs/help/API generation/compose/static checks passed.
+      - Live k6 load tests, live S3 or CloudFront upload, Docker image build/push, and live CDN/browser smoke were not run in this local environment.
+
+  - id: p3-p6-p7-auth-retention-cicd
+    date: 2026-05-29
+    status: verified
+    demo: Auth/RBAC, data lifecycle retention/export/delete, and CI/CD release engineering are implemented with review fixes for stale-token authorization, export redaction, and CI health gates.
+    verification_result: passed_with_environment_gaps
+    verification_commands:
+      - cd services/api-server && .venv/bin/pytest tests/test_auth.py tests/test_auth_rbac_api_keys.py tests/test_retention_data_management.py -q
+      - cd services/api-server && .venv/bin/ruff check app tests
+      - cd services/api-server && .venv/bin/pytest tests -q
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-p3-p6-p7-review.sqlite .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm run build && ../../scripts/check-bundle-size.sh dist
+      - docker compose -f compose.ci.yml config
+      - bash -n scripts/check-bundle-size.sh scripts/changelog-from-tags.sh scripts/release.sh
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - P3 added real user registration/login/refresh/OAuth stubs, JWT/API-key authentication, organization-scoped RBAC, admin user management, API key lifecycle, audit log APIs, and authenticated console settings/workspace routing while preserving dev-token compatibility.
+      - P6 added retention policy APIs/workers, archived record storage, organization export ZIP generation, dry-run deletion counts, confirmed organization deletion, and data-management console surfaces.
+      - P7 added PR/main/release/security GitHub Actions workflows, Dependabot, production Dockerfiles, CI compose smoke stack, release/bundle/changelog scripts, Helm canary values/template, deployment smoke coverage, and CI/CD runbooks.
+      - Code review found and fixed security issues before completion: JWT principals now require a current active user and accepted membership, API-key principals now require a current active user and accepted membership, and organization exports redact `users.password_hash` plus `api_keys.key_hash`.
+      - Code review also fixed release-engineering risks: PR whitespace checks now fetch full history before diffing against the base branch, and the API production Dockerfile healthcheck no longer depends on Dockerfile here-doc parsing.
+      - Targeted backend auth/retention tests passed with `11 passed`; full backend regression passed with `518 passed, 2 warnings`.
+      - Full frontend Vitest passed in single-fork mode with `48 files / 223 tests passed`; production build passed with largest JS chunk `476410` bytes under the `512000` byte gate.
+      - SQLite Alembic upgrade reached `20260604_0031`; CI compose static config and shell script syntax checks passed.
+      - `helm template` was not run because Helm is not installed in this environment; Docker image build/push and GitHub Actions execution were not run locally.
+
+  - id: p1-p2-p5-production-onboarding-frontend-polish
+    date: 2026-05-29
+    status: verified
+    demo: Production deployment hardening, first-run onboarding, Dashboard, Demo loading, and frontend resilience/polish are implemented for private deployable Harness demos.
+    verification_result: passed_with_environment_gaps
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_health_probes.py tests/test_notification_dispatcher.py tests/test_onboarding.py tests/test_demo_load.py tests/test_frontend_errors.py tests/test_events_stream.py tests/test_observability_alerts.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && .venv/bin/python -m pytest tests -q
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-p1-p2-p5-validation.sqlite .venv/bin/python -m alembic upgrade head
+      - cd apps/agent-console && npm test -- --pool=threads
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - POSTGRES_PASSWORD=example REDIS_PASSWORD=example SECRET_KEY=example HARNESS_DOMAIN=localhost CADDY_DOMAIN=localhost docker compose -f compose.production.yml config
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - P1 added production compose, Caddy reverse proxy config, Postgres/Redis hardening, readiness/liveness probes, graceful shutdown hook, backup/restore scripts, Helm chart scaffolding, and external notification channels for Slack/email/webhook alert dispatch.
+      - P2 added per-user onboarding state, first-run wizard, Dashboard default route, Demo load/reset APIs, seeded demo Agents/Knowledge/Eval/task evidence, EmptyState/Skeleton/QuickAction surfaces, and Dashboard demo loading.
+      - P5 added global/route ErrorBoundary, frontend error reporting and admin error page, reconnecting SSE client with Last-Event-ID support, localized error feedback, and Run History virtualized list with test-friendly small-list rendering.
+      - Code review found and fixed two real issues before completion: notification channels now validate verified Slack/Webhook URLs as absolute HTTP(S) URLs, and Caddy now preserves the `/api` prefix when proxying to FastAPI.
+      - TeamPages default-parallel Vitest branch switching is stable after excluding transient streaming placeholders from persisted branch groups; `npm test -- --pool=threads` passed with 48 files and 223 tests.
+      - Full backend regression passed with `509 passed, 2 warnings`; full frontend build emitted the expected split assets including `feature-workspace` and `vendor-*` chunks.
+      - `helm template harness deploy/helm/harness` was not run because `helm` is not installed in this environment; Caddy container validation was not run because Docker daemon is unavailable. Compose static config passed locally.
+
   - id: post-audit-hardening-v1
     date: 2026-05-29
     status: verified

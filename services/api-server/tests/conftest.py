@@ -8,8 +8,11 @@ from sqlalchemy.pool import StaticPool
 
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["APP_ENV"] = "test"
+os.environ["AUTH_JWT_SECRET"] = "test-harness-jwt-secret-32-characters-min"
 
 from app.agents.model_gateway import ModelCircuitBreaker, ModelRateLimiter  # noqa: E402
+from app.cache.query_cache import query_cache  # noqa: E402
 from app.db.models import Base  # noqa: E402
 from app.db.session import get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -37,6 +40,9 @@ def db_session() -> Generator[Session, None, None]:
 def override_db_session(db_session: Session) -> Generator[None, None, None]:
     ModelCircuitBreaker.clear()
     ModelRateLimiter.clear()
+    query_cache.clear_memory()
+    query_cache._redis = None
+    query_cache._redis_failed = True
 
     def _get_db_session() -> Generator[Session, None, None]:
         yield db_session
@@ -47,4 +53,7 @@ def override_db_session(db_session: Session) -> Generator[None, None, None]:
     finally:
         ModelCircuitBreaker.clear()
         ModelRateLimiter.clear()
+        query_cache.clear_memory()
+        query_cache._redis = None
+        query_cache._redis_failed = True
         app.dependency_overrides.clear()

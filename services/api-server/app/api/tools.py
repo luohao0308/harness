@@ -41,6 +41,8 @@ from app.api.schemas import (
     ToolRegistryResponse,
 )
 from app.api.tasks import _to_tool_call_response
+from app.cache.invalidation import bump_entity_version, entity_version
+from app.cache.query_cache import query_cache
 from app.core.config import get_settings
 from app.db.models import Task, utc_now
 from app.db.session import get_db_session
@@ -76,6 +78,16 @@ STDIO_ARG_BLOCKED_CHARS = {"\n", "\r", "\x00"}
 
 def _bad_request_from_capability_error(exc: CapabilityResolutionError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _bump_capability_cache_versions(session: Session, principal: Principal) -> None:
+    for entity in ("capabilities", "agents"):
+        bump_entity_version(
+            session,
+            organization_id=principal.organization_id,
+            entity=entity,
+            updated_by=principal.user_id,
+        )
 
 
 @router.get(
@@ -370,10 +382,21 @@ def list_capability_packages(
     principal: Principal,
 ) -> CapabilityPackagePage:
     require_role(principal, {"admin", "engineer"})
+    version = entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="capabilities",
+    )
+    cache_key = f"capabilities:v{version}:{principal.organization_id}:packages"
+    cached = query_cache.get_with_metrics(cache_key, entity="capabilities")
+    if cached is not None:
+        return CapabilityPackagePage.model_validate(cached)
     packages = CapabilityRegistry(session, principal.organization_id).list_packages()
-    return CapabilityPackagePage(
+    response = CapabilityPackagePage(
         items=[CapabilityPackageResponse.model_validate(package) for package in packages]
     )
+    query_cache.set(cache_key, response, ttl_seconds=600)
+    return response
 
 
 @router.get(
@@ -605,6 +628,7 @@ def install_trusted_url_capability(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return _simple_install_response(
@@ -641,6 +665,7 @@ def preflight_public_url_capability(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return _simple_install_response(
@@ -682,6 +707,7 @@ def preflight_marketplace_capability(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return _simple_install_response(
@@ -715,6 +741,7 @@ def install_uploaded_capability(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return _simple_install_response(
@@ -791,6 +818,7 @@ def stage_private_capability_package(
         content=request.content,
         created_by=principal.user_id,
     )
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return CapabilityPackageResponse.model_validate(package)
@@ -819,6 +847,7 @@ def stage_public_capability_package(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return CapabilityPackageResponse.model_validate(package)
@@ -847,6 +876,7 @@ def approve_capability_package(
         **package.audit_json,
         "approval_reason": request.reason,
     }
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return CapabilityPackageResponse.model_validate(package)
@@ -875,6 +905,7 @@ def enable_staged_capability(
         **package.audit_json,
         "enable_reason": request.reason,
     }
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return _simple_install_response(
@@ -909,6 +940,7 @@ def attach_capability_package(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     return CapabilityPackageAttachResponse(
         attachment_id=attachment.id,
@@ -939,6 +971,7 @@ def rollback_capability_package(
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
     package.audit_json = {**package.audit_json, "rollback_reason": request.reason}
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return CapabilityPackageResponse.model_validate(package)
@@ -962,6 +995,7 @@ def uninstall_capability_package(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     session.refresh(package)
     return CapabilityPackageResponse.model_validate(package)
@@ -986,6 +1020,7 @@ def update_capability_attachment(
         )
     except CapabilityResolutionError as exc:
         raise _bad_request_from_capability_error(exc) from exc
+    _bump_capability_cache_versions(session, principal)
     session.commit()
     return CapabilityPackageAttachResponse(
         attachment_id=attachment.id,

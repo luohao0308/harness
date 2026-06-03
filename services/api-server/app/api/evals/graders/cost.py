@@ -2,6 +2,12 @@
 
 # ruff: noqa: F401,F403,F405,I001,UP037
 from ..common import *
+from app.settings.model_pricing_sources import (
+    BLOCKING_PRICING_STATUSES,
+    lookup_model_pricing_source,
+    pricing_row_matches_source,
+    source_status_for_model,
+)
 
 def _grade_cost_contract(
     *,
@@ -17,6 +23,10 @@ def _grade_cost_contract(
     limit_exceeded: list[str] = []
     if configured:
         assert isinstance(contract, dict)
+        enterprise_gate = bool(contract.get("enterprise_gate"))
+        if enterprise_gate:
+            for status in aggregate["pricing_blocking_statuses"]:
+                failures.append(f"pricing_status_blocked:{status}")
         max_cost = contract.get("max_cost_usd")
         if max_cost is not None:
             try:
@@ -53,6 +63,8 @@ def _grade_cost_contract(
         "completion_tokens": aggregate["completion_tokens"],
         "model_call_count": len(model_calls),
         "missing_pricing": aggregate["missing_pricing"],
+        "pricing_statuses": aggregate["pricing_statuses"],
+        "pricing_blocking_statuses": aggregate["pricing_blocking_statuses"],
         "pricing_breakdown": aggregate["pricing_breakdown"],
     }
 
@@ -66,6 +78,7 @@ def _aggregate_cost(
     prompt_tokens_total = 0
     completion_tokens_total = 0
     missing_pricing: list[str] = []
+    pricing_statuses: dict[str, str] = {}
     pricing_breakdown: dict[str, dict[str, object]] = {}
     pricing_cache: dict[tuple[str, str], ModelPricing | None] = {}
     for call in model_calls:
@@ -75,25 +88,50 @@ def _aggregate_cost(
         completion_tokens_total += completion_tokens
         provider = (call.model_provider or "default").strip() or "default"
         model = (call.model_name or "default").strip() or "default"
-        cache_key = (provider, model)
-        if cache_key not in pricing_cache:
-            pricing_cache[cache_key] = _lookup_pricing(session, organization_id, provider, model)
-        pricing = pricing_cache[cache_key]
+        bucket_key = f"{provider}/{model}"
+        source_row = lookup_model_pricing_source(provider, model)
+        if source_row is not None:
+            source_status = source_status_for_model(provider, model)
+            if source_status.status != "verified":
+                pricing_statuses[bucket_key] = source_status.status
+                continue
+            pricing = _lookup_exact_pricing(session, organization_id, provider, model)
+            if pricing is None:
+                pricing_statuses[bucket_key] = "missing_pricing"
+                missing_pricing.append(bucket_key)
+                continue
+            if not pricing_row_matches_source(pricing, source_row):
+                pricing_statuses[bucket_key] = "price_unverified"
+                continue
+        else:
+            cache_key = (provider, model)
+            if cache_key not in pricing_cache:
+                pricing_cache[cache_key] = _lookup_pricing(
+                    session,
+                    organization_id,
+                    provider,
+                    model,
+                )
+            pricing = pricing_cache[cache_key]
         if pricing is None:
-            missing_pricing.append(f"{provider}/{model}")
+            pricing_statuses[bucket_key] = "missing_pricing"
+            missing_pricing.append(bucket_key)
             continue
         try:
             prompt_per_1k = Decimal(pricing.prompt_per_1k_usd or "0")
             completion_per_1k = Decimal(pricing.completion_per_1k_usd or "0")
         except (InvalidOperation, ValueError):
-            missing_pricing.append(f"{provider}/{model}")
+            pricing_statuses[bucket_key] = "invalid_pricing"
             continue
+        if (pricing.currency or "USD").upper() != "USD":
+            pricing_statuses[bucket_key] = "currency_conversion_required"
+            continue
+        pricing_statuses[bucket_key] = "verified"
         line_cost = (
             (Decimal(prompt_tokens) / Decimal(1000)) * prompt_per_1k
             + (Decimal(completion_tokens) / Decimal(1000)) * completion_per_1k
         )
         total_cost += line_cost
-        bucket_key = f"{provider}/{model}"
         bucket = pricing_breakdown.setdefault(
             bucket_key,
             {
@@ -115,6 +153,14 @@ def _aggregate_cost(
         "prompt_tokens": prompt_tokens_total,
         "completion_tokens": completion_tokens_total,
         "missing_pricing": sorted(set(missing_pricing)),
+        "pricing_statuses": dict(sorted(pricing_statuses.items())),
+        "pricing_blocking_statuses": sorted(
+            {
+                status
+                for status in pricing_statuses.values()
+                if status in BLOCKING_PRICING_STATUSES
+            }
+        ),
         "pricing_breakdown": pricing_breakdown,
     }
 
@@ -142,6 +188,30 @@ def _lookup_pricing(
                 org_predicate,
                 ModelPricing.provider == prov,
                 ModelPricing.model == mdl,
+                ModelPricing.active.is_(True),
+            )
+        ).scalar_one_or_none()
+        if row is not None:
+            return row
+    return None
+
+
+def _lookup_exact_pricing(
+    session: Session,
+    organization_id: str | None,
+    provider: str,
+    model: str,
+) -> ModelPricing | None:
+    for org_id in (organization_id, None) if organization_id else (None,):
+        if org_id is None:
+            org_predicate = ModelPricing.organization_id.is_(None)
+        else:
+            org_predicate = ModelPricing.organization_id == org_id
+        row = session.execute(
+            select(ModelPricing).where(
+                org_predicate,
+                ModelPricing.provider == provider,
+                ModelPricing.model == model,
                 ModelPricing.active.is_(True),
             )
         ).scalar_one_or_none()

@@ -274,7 +274,7 @@ test.describe("Tools page mocked smoke tests", () => {
 
     await expect(page.getByText("MCP").first()).toBeVisible();
     await expect(page.getByText("2 已注册")).toBeVisible();
-    await expect(page.getByRole("button", { name: "mcp" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "MCP Servers" })).toBeVisible();
     await expect(page.getByText("web-tools.search")).toBeVisible();
     await expect(page.getByText("db-adapter.query")).toBeVisible();
   });

@@ -3,6 +3,9 @@ from functools import lru_cache
 from pydantic import AnyHttpUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+AUTH_JWT_SECRET_PLACEHOLDER = "replace-with-openssl-rand-hex-32"
+AUTH_SECRET_DOCS_URL = "docs/runbooks/first-run-admin.md"
+
 
 class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
@@ -47,6 +50,11 @@ class Settings(BaseSettings):
         default="/tmp/agent-harness/exports",
         alias="OBSERVABILITY_EXPORT_DIR",
     )
+    auth_jwt_secret: str = Field(default="", alias="AUTH_JWT_SECRET")
+    auth_access_token_minutes: int = Field(default=60, alias="AUTH_ACCESS_TOKEN_MINUTES")
+    auth_refresh_token_days: int = Field(default=30, alias="AUTH_REFRESH_TOKEN_DAYS")
+    harness_initial_admin_email: str = Field(default="", alias="HARNESS_INITIAL_ADMIN_EMAIL")
+    harness_initial_admin_password: str = Field(default="", alias="HARNESS_INITIAL_ADMIN_PASSWORD")
     context_manifest_retention_days: int = Field(
         default=90,
         alias="CONTEXT_MANIFEST_RETENTION_DAYS",
@@ -74,3 +82,31 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_auth_jwt_secret(settings: Settings) -> None:
+    secret = settings.auth_jwt_secret.strip()
+    if not secret:
+        raise RuntimeError(
+            "AUTH_JWT_SECRET is required. Generate one with `openssl rand -hex 32`; "
+            f"see {AUTH_SECRET_DOCS_URL}."
+        )
+    if secret == AUTH_JWT_SECRET_PLACEHOLDER:
+        raise RuntimeError(
+            "AUTH_JWT_SECRET still uses the example placeholder. Generate one with "
+            f"`openssl rand -hex 32`; see {AUTH_SECRET_DOCS_URL}."
+        )
+    if len(secret) < 32:
+        raise RuntimeError(
+            "AUTH_JWT_SECRET must be at least 32 characters. Generate one with "
+            f"`openssl rand -hex 32`; see {AUTH_SECRET_DOCS_URL}."
+        )
+    if settings.app_env.strip().lower() == "production" and secret.startswith("dev-only-"):
+        raise RuntimeError(
+            "AUTH_JWT_SECRET must not use a dev-only value in production. Generate one with "
+            f"`openssl rand -hex 32`; see {AUTH_SECRET_DOCS_URL}."
+        )
+
+
+def validate_startup_settings(settings: Settings | None = None) -> None:
+    validate_auth_jwt_secret(settings or get_settings())

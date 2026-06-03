@@ -13,6 +13,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        working-directory: services/api-server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
       - name: Check required AI docs
         run: |
           test -f docs/ai/README.md
@@ -36,3 +47,12 @@ jobs:
 
       - name: Run Spec Mode docs validation
         run: python3 scripts/validate-docs.py
+
+      - name: Check Help Center content
+        run: python3 scripts/check-help-content.py
+
+      - name: Generate API reference
+        run: python3 scripts/generate-api-docs.py
+
+      - name: Check generated API reference is current
+        run: git diff --exit-code docs/api-reference

@@ -10,6 +10,16 @@ from ._session_helpers import *
 from ._tool_helpers import *
 from ._workspace_chat_helpers import *
 from ._workspace_response_helpers import *
+from app.cache.invalidation import bump_entity_version
+
+
+def _bump_agent_cache_version(session: DbSession, principal: Principal) -> None:
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="agents",
+        updated_by=principal.user_id,
+    )
 
 @router.get(
     "/token-optimizer/presets",
@@ -51,6 +61,7 @@ def select_agent_token_optimizer(
             session=session,
         )
         agent.updated_at = utc_now()
+        _bump_agent_cache_version(session, principal)
         session.commit()
         return AgentTokenOptimizerSelectionResponse(
             status="disabled",
@@ -75,6 +86,7 @@ def select_agent_token_optimizer(
         principal=principal,
     )
     agent.updated_at = utc_now()
+    _bump_agent_cache_version(session, principal)
     session.commit()
     return AgentTokenOptimizerSelectionResponse(
         status="selected",

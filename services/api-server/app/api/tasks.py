@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.context_router import RunContextRouter
 from app.agents.executor import Executor
+from app.api.pagination import cursor_paginate
 from app.api.schemas import (
     ModelCallPage,
     ReplayRequest,
@@ -138,13 +139,19 @@ def list_tasks(
     principal: Principal,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
 ) -> TaskPage:
     statement = select(Task).where(Task.organization_id == principal.organization_id)
     if status_filter is not None:
         statement = statement.where(Task.status == status_filter)
-    statement = statement.order_by(Task.created_at.desc()).limit(limit)
-    tasks = list(session.execute(statement).scalars())
-    return TaskPage(items=tasks)
+    page = cursor_paginate(
+        session=session,
+        statement=statement,
+        model=Task,
+        cursor=cursor,
+        limit=limit,
+    )
+    return TaskPage(items=page.items, next_cursor=page.next_cursor)
 
 
 @router.get(

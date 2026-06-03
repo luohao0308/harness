@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, CreditCard, Hash, Layers3, RefreshCw } from "lucide-react";
+import { Activity, CreditCard, Hash, Layers3, RefreshCw, TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -36,6 +36,7 @@ export function CostDashboardPage() {
     retry: false,
   });
   const data = rollup.data;
+  const blockingPricing = (data?.pricing_statuses ?? []).filter((item) => item.blocking);
 
   return (
     <ConsoleShell title="成本观测">
@@ -57,6 +58,20 @@ export function CostDashboardPage() {
           <KpiCard className="col-span-6 lg:col-span-3" label="总运行" value={formatNumber(data?.total_runs)} icon={<Activity className="h-4 w-4" />} />
           <KpiCard className="col-span-6 lg:col-span-3" label="平均运行成本" value={formatUsd(data?.average_run_cost_usd)} icon={<Layers3 className="h-4 w-4" />} />
         </section>
+
+        {blockingPricing.length > 0 ? (
+          <div className="flex flex-wrap items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-medium">模型价格来源存在企业门禁阻塞</div>
+              <div className="mt-1">
+                {blockingPricing
+                  .map((item) => `${item.model}: ${pricingStatusLabel(item.status)}`)
+                  .join(" / ")}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <Card>
           <CardHeader>
@@ -84,6 +99,7 @@ export function CostDashboardPage() {
                     <Th>维度</Th>
                     <Th>成本</Th>
                     <Th>Token</Th>
+                    <Th>价格状态</Th>
                     <Th>占比</Th>
                   </tr>
                 </thead>
@@ -96,12 +112,17 @@ export function CostDashboardPage() {
                       </Td>
                       <Td className="font-mono">{formatUsd(item.cost_usd)}</Td>
                       <Td className="font-mono">{formatNumber(item.tokens_in + item.tokens_out)}</Td>
+                      <Td>
+                        <Badge tone={item.pricing_blocking ? "warning" : "success"}>
+                          {pricingStatusLabel(item.pricing_status)}
+                        </Badge>
+                      </Td>
                       <Td>{Math.round(item.share * 100)}%</Td>
                     </tr>
                   ))}
                   {!rollup.isLoading && !data?.breakdown.length ? (
                     <tr>
-                      <Td colSpan={4} className="py-10 text-center text-slate-500">暂无成本数据</Td>
+                      <Td colSpan={5} className="py-10 text-center text-slate-500">暂无成本数据</Td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -150,4 +171,17 @@ function formatNumber(value: number | undefined) {
 
 function formatUsd(value: number | undefined) {
   return `$${(value ?? 0).toFixed(6)}`;
+}
+
+function pricingStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    verified: "已验证",
+    missing_pricing: "缺失价格",
+    price_unverified: "价格未验证",
+    sku_ambiguous: "SKU 模糊",
+    currency_conversion_required: "需要汇率",
+    stale: "已过期",
+    invalid_pricing: "价格无效",
+  };
+  return labels[status] ?? status;
 }

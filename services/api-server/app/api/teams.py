@@ -670,7 +670,10 @@ def update_team_task(
         team_id=team_id,
         task_id=task_id,
         status_value=request.status,
-        owner_slot_id=request.owner_slot_id,
+        owner_slot_id=(
+            request.owner_slot_id if "owner_slot_id" in request.model_fields_set else None
+        ),
+        update_owner="owner_slot_id" in request.model_fields_set,
         description=request.description,
         blocked_by=request.blocked_by,
     )

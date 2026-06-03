@@ -131,9 +131,19 @@ DEFAULT_MODEL_SETTINGS = {
         DEEPSEEK_PRO_PROVIDER,
         {
             "name": "openai-compatible",
+            "label": "OpenAI GPT-5.5",
+            "model": "gpt-5.5",
+            "api_format": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "",
+            "api_key_env": "OPENAI_API_KEY",
+            "model_context_window_tokens": 272000,
+            "max_output_tokens": 128000,
             "status": "healthy",
             "rate_limit_rpm": 600,
             "rate_limit_tpm": 120000,
+            "timeout_seconds": 30,
+            "health_timeout_seconds": 5,
             "circuit_breaker": {
                 "failure_threshold": 3,
                 "cooldown_seconds": 60,
@@ -449,7 +459,7 @@ class OpenAICompatibleModelGateway:
         )
 
     def _uses_local_mock(self) -> bool:
-        return self.api_key == "replace-me" or self.base_url.endswith("/mock-model")
+        return self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
 
     def _extract_content(self, raw: dict) -> str:
         choices = raw.get("choices", [])

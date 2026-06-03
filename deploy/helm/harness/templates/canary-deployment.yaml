@@ -1,0 +1,118 @@
+{{- if .Values.canary.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harness-api-canary
+  labels:
+    app: harness-api
+    track: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harness-api
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: harness-api
+        track: canary
+    spec:
+      containers:
+        - name: api
+          image: {{ .Values.canary.image.api | default .Values.image.api }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "30"]
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: harness-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: redis-url
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: auth-jwt-secret
+            - name: HARNESS_INITIAL_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: initial-admin-email
+            - name: HARNESS_INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: initial-admin-password
+            - name: MODEL_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: model-gateway-api-key
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: deepseek-api-key
+          readinessProbe:
+            httpGet:
+              path: /api/health/readiness
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+{{ toYaml .Values.resources.api | indent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: harness-api-canary
+  labels:
+    app: harness-api
+    track: canary
+spec:
+  selector:
+    app: harness-api
+    track: canary
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: harness-canary
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: {{ .Values.canary.weight | quote }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tlsSecretName | quote }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: harness-api-canary
+                port:
+                  number: 8000
+{{- end }}

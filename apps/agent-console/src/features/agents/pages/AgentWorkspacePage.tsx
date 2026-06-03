@@ -477,7 +477,7 @@ export function AgentWorkspacePage() {
 
   return (
     <ConsoleShell title={text("智能体工作台", "Agent Workspace")}>
-      <div className="relative flex h-full min-h-[calc(100vh-3.5rem)] w-full min-w-0 bg-white">
+      <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-white">
         <ConversationHistoryPanel
           collapsed={historyCollapsed}
           conversations={conversations}

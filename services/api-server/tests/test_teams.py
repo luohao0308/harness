@@ -1407,6 +1407,13 @@ def test_team_task_update_tool_accepts_id_alias_and_current_assigned_task() -> N
     )
     assert writer.status_code == 201, writer.text
     writer_slot_id = writer.json()["slot_id"]
+    reviewer = client.post(
+        f"/api/teams/{team_id}/agents",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "agent_name": "审阅助手", "role": "teammate"},
+    )
+    assert reviewer.status_code == 201, reviewer.text
+    reviewer_slot_id = reviewer.json()["slot_id"]
 
     first = client.post(
         f"/api/teams/{team_id}/tools/team_task_create",
@@ -1458,6 +1465,37 @@ def test_team_task_update_tool_accepts_id_alias_and_current_assigned_task() -> N
         task for task in tasks_after_current if task["subject"] == "润色短篇小说"
     )
     assert second_after_current["status"] == "completed"
+
+    owner_task_response = client.post(
+        f"/api/teams/{team_id}/tools/team_task_create",
+        headers=AUTH_HEADERS,
+        json={
+            "from_agent_slot_id": "leader",
+            "args": {"subject": "审阅短篇小说", "owner": writer_slot_id},
+        },
+    )
+    assert owner_task_response.status_code == 200, owner_task_response.text
+    owner_task = next(
+        task
+        for task in client.get(f"/api/teams/{team_id}/tasks", headers=AUTH_HEADERS).json()
+        if task["subject"] == "审阅短篇小说"
+    )
+    reassigned = client.post(
+        f"/api/teams/{team_id}/tools/team_task_update",
+        headers=AUTH_HEADERS,
+        json={
+            "from_agent_slot_id": "leader",
+            "args": {"task_id": owner_task["id"][:8], "owner_slot_id": reviewer_slot_id},
+        },
+    )
+    assert reassigned.status_code == 200, reassigned.text
+    assert f"Owner: {reviewer_slot_id}" in reassigned.json()["result"]
+    owner_task_after = next(
+        task
+        for task in client.get(f"/api/teams/{team_id}/tasks", headers=AUTH_HEADERS).json()
+        if task["id"] == owner_task["id"]
+    )
+    assert owner_task_after["owner_slot_id"] == reviewer_slot_id
 
     for subject in ("任务 A", "任务 B"):
         created = client.post(

@@ -6,6 +6,7 @@ from .aggregations import *
 from .graders import *
 from .helpers import *
 from .regression import *
+from app.api.pagination import cursor_paginate
 
 
 @router.post(
@@ -113,16 +114,19 @@ def list_eval_runs(
     session: DbSession,
     principal: Principal,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: str | None = None,
 ) -> EvalRunPage:
-    runs = list(
-        session.execute(
-            select(EvalRun)
-            .where(EvalRun.organization_id == principal.organization_id)
-            .order_by(EvalRun.created_at.desc())
-            .limit(limit)
-        ).scalars()
+    page = cursor_paginate(
+        session=session,
+        statement=select(EvalRun).where(EvalRun.organization_id == principal.organization_id),
+        model=EvalRun,
+        cursor=cursor,
+        limit=limit,
     )
-    return EvalRunPage(items=[_eval_run_response(run, []) for run in runs])
+    return EvalRunPage(
+        items=[_eval_run_response(run, []) for run in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.get(

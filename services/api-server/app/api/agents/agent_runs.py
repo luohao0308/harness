@@ -10,6 +10,7 @@ from ._session_helpers import *
 from ._tool_helpers import *
 from ._workspace_chat_helpers import *
 from ._workspace_response_helpers import *
+from app.api.pagination import cursor_paginate
 
 @router.post(
     "/{agent_id}/runs",
@@ -312,17 +313,18 @@ def auto_with_agent(
 def list_agent_runs(
     session: DbSession,
     principal: Principal,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
 ) -> TaskPage:
     require_role(principal, {"admin", "engineer", "operator"})
-    runs = list(
-        session.execute(
-            select(Task)
-            .where(Task.organization_id == principal.organization_id)
-            .order_by(Task.created_at.desc())
-            .limit(100)
-        ).scalars()
+    page = cursor_paginate(
+        session=session,
+        statement=select(Task).where(Task.organization_id == principal.organization_id),
+        model=Task,
+        cursor=cursor,
+        limit=limit,
     )
-    return TaskPage(items=runs)
+    return TaskPage(items=page.items, next_cursor=page.next_cursor)
 
 @router.post(
     "/runs/{run_id}/execute",

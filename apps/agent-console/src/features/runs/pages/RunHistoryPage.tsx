@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Bot, History } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -6,18 +6,26 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { EmptyState } from "../../../components/ui/EmptyState";
+import { SkeletonTable } from "../../../components/ui/Skeleton";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
+import { VirtualList } from "../../../components/ui/VirtualList";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { getObservabilitySummary, listRuns, type Task } from "../../tasks/api";
+import { getObservabilitySummary, listRunsPage, type Task } from "../../tasks/api";
 
 export function RunHistoryPage() {
   const { text } = useI18n();
-  const runs = useQuery({ queryKey: ["agent-runs"], queryFn: listRuns });
+  const runs = useInfiniteQuery({
+    queryKey: ["agent-runs", "cursor"],
+    queryFn: ({ pageParam }) => listRunsPage({ cursor: pageParam, limit: 50 }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+  });
   const summary = useQuery({ queryKey: ["observability-summary"], queryFn: getObservabilitySummary });
-  const items = runs.data?.items ?? [];
+  const items = runs.data?.pages.flatMap((page) => page.items) ?? [];
   const running =
     summary.data?.tasks_by_status.find((item) => item.name === "RUNNING")?.count ?? 0;
   const failed = summary.data?.failed_task_total ?? 0;
@@ -54,41 +62,74 @@ export function RunHistoryPage() {
             <div className="text-sm font-semibold text-slate-900">
               {text("运行列表", "Run List")}
             </div>
-            <div className="text-xs text-slate-500">
-              {runs.isLoading
-                ? text("加载中...", "Loading...")
-                : text(`${items.length} 个运行`, `${items.length} runs`)}
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>
+                {runs.isLoading
+                  ? text("加载中...", "Loading...")
+                  : text(`${items.length} 个运行`, `${items.length} runs`)}
+              </span>
+              {runs.hasNextPage ? (
+                <button
+                  type="button"
+                  className="rounded-md border border-slate-200 px-2 py-1 text-slate-600 hover:bg-slate-50"
+                  onClick={() => runs.fetchNextPage()}
+                  disabled={runs.isFetchingNextPage}
+                >
+                  {runs.isFetchingNextPage ? text("加载中", "Loading") : text("加载更多", "Load more")}
+                </button>
+              ) : null}
             </div>
           </CardHeader>
-          <Table>
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <Th>运行</Th>
-                <Th>{text("状态", "Status")}</Th>
-                <Th>{text("模型", "Model")}</Th>
-                <Th>
-                  <TermHint description="智能体运行平台">运行平台</TermHint>
-                </Th>
-                <Th>{text("更新时间", "Updated")}</Th>
-                <Th />
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((run) => (
-                <RunRow key={run.id} run={run} />
-              ))}
-              {!runs.isLoading && items.length === 0 && (
-                <tr>
-                  <Td colSpan={6} className="py-12 text-center text-slate-500">
-                    {text(
-                      "暂无智能体运行。请从智能体工作台输入目标并生成计划。",
-                      "No Agent Runs yet. Start from Agent Workspace and generate a Plan.",
-                    )}
-                  </Td>
-                </tr>
-              )}
-            </tbody>
-          </Table>
+          {runs.isLoading ? (
+            <SkeletonTable rows={7} columns={6} />
+          ) : items.length === 0 ? (
+            <div className="p-3">
+              <EmptyState
+                icon={<History className="h-5 w-5" />}
+                title={text("暂无智能体运行", "No Agent Runs yet")}
+                description={text(
+                  "从智能体工作台输入目标并生成计划后，运行历史会在这里按更新时间展示。",
+                  "Start from Agent Workspace and generate a Plan to populate run history.",
+                )}
+                actions={[
+                  {
+                    label: text("打开工作台", "Open Workspace"),
+                    href: "/agents/default/workspace",
+                    primary: true,
+                  },
+                ]}
+              />
+            </div>
+          ) : (
+            <div className="min-w-[860px]">
+              <Table>
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <Th>运行</Th>
+                    <Th>{text("状态", "Status")}</Th>
+                    <Th>{text("模型", "Model")}</Th>
+                    <Th>
+                      <TermHint description="智能体运行平台">运行平台</TermHint>
+                    </Th>
+                    <Th>{text("更新时间", "Updated")}</Th>
+                    <Th />
+                  </tr>
+                </thead>
+              </Table>
+              <VirtualList
+                items={items}
+                estimateSize={64}
+                height={Math.min(620, Math.max(260, items.length * 64))}
+                renderItem={(run) => (
+                  <Table>
+                    <tbody>
+                      <RunRow run={run} />
+                    </tbody>
+                  </Table>
+                )}
+              />
+            </div>
+          )}
         </Card>
       </div>
     </ConsoleShell>

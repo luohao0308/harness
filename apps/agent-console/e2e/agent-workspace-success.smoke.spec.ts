@@ -82,6 +82,23 @@ const toolRegistry = {
   sources: ["builtin", "mcp"],
 };
 
+const authUser = {
+  user_id: "user-e2e-success",
+  email: "operator@example.com",
+  name: "E2E Operator",
+  organization_id: "org-e2e",
+  role: "admin",
+  permissions: ["*"],
+  organizations: [
+    {
+      id: "org-e2e",
+      name: "E2E Organization",
+      slug: "e2e",
+      role: "admin",
+    },
+  ],
+};
+
 /**
  * Build a valid SSE frame string from event type and JSON data.
  * The frontend parser expects: event: <type>\ndata: <json>\n\n
@@ -271,6 +288,16 @@ async function routeSuccessApis(page: Page): Promise<void> {
 
     if (path === "/api/agents/default") {
       await fulfillJson(route, agent);
+      return;
+    }
+
+    if (path === "/api/auth/me") {
+      await fulfillJson(route, authUser);
+      return;
+    }
+
+    if (path === "/api/observability/alert-events") {
+      await fulfillJson(route, { items: [], next_cursor: null });
       return;
     }
 

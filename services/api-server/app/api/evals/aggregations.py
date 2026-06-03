@@ -95,6 +95,7 @@ def _aggregate_metrics(results: list[EvalResult]) -> dict:
         "specialist_role_distribution": specialist_aggregate["specialist_role_distribution"],
         "total_specialist_cost_usd": specialist_aggregate["total_specialist_cost_usd"],
         "missing_pricing_models": sorted(cost_aggregate["missing_pricing_models"]),
+        "pricing_blocking_statuses": sorted(cost_aggregate["pricing_blocking_statuses"]),
         "grounding_pass_rate": round(
             sum(1 for trace in traces if bool(trace.get("passed"))) / total,
             4,
@@ -262,6 +263,7 @@ def _cost_aggregate_from_results(results: list[EvalResult]) -> dict:
     prompt_total = 0
     completion_total = 0
     missing_pricing_models: set[str] = set()
+    pricing_blocking_statuses: set[str] = set()
     for result in results:
         trace = _trace_contract(result, "cost_contract")
         cost_value = trace.get("actual_cost_usd")
@@ -275,11 +277,14 @@ def _cost_aggregate_from_results(results: list[EvalResult]) -> dict:
         completion_total += int(trace.get("completion_tokens") or 0)
         for entry in trace.get("missing_pricing") or []:
             missing_pricing_models.add(str(entry))
+        for entry in trace.get("pricing_blocking_statuses") or []:
+            pricing_blocking_statuses.add(str(entry))
     return {
         "total_cost_decimal": total_cost,
         "total_prompt_tokens": prompt_total,
         "total_completion_tokens": completion_total,
         "missing_pricing_models": missing_pricing_models,
+        "pricing_blocking_statuses": pricing_blocking_statuses,
     }
 
 

@@ -19,6 +19,12 @@ from app.db.models import (
     ToolCall,
     utc_now,
 )
+from app.settings.model_pricing_sources import (
+    BLOCKING_PRICING_STATUSES,
+    lookup_model_pricing_source,
+    pricing_row_matches_source,
+    source_status_for_model,
+)
 
 CostWindow = Literal["24h", "7d", "30d", "all"]
 CostGroupBy = Literal["agent", "provider", "specialist", "adapter"]
@@ -39,6 +45,8 @@ class CostEntry:
     tokens_out: int
     run_id: str
     timestamp: object
+    model_key: str | None = None
+    pricing_status: str = "verified"
 
 
 def build_cost_rollup(
@@ -69,7 +77,7 @@ def build_cost_rollup(
     entries: list[CostEntry] = []
     model_cost_by_agent_run: dict[str, Decimal] = {}
     for call, task, _agent_run, specialist in model_rows:
-        cost = _model_call_cost(
+        cost, pricing_status = _model_call_cost(
             call=call,
             organization_id=organization_id,
             pricing_index=pricing_index,
@@ -84,6 +92,8 @@ def build_cost_rollup(
             call=call,
             specialist=specialist,
         )
+        provider = (call.model_provider or "default").strip() or "default"
+        model_name = (call.model_name or "default").strip() or "default"
         entries.append(
             CostEntry(
                 key=key,
@@ -93,6 +103,8 @@ def build_cost_rollup(
                 tokens_out=max(0, int(call.completion_tokens or 0)),
                 run_id=task.id,
                 timestamp=call.created_at,
+                model_key=f"{provider}/{model_name}",
+                pricing_status=pricing_status,
             )
         )
     if group_by == "specialist":
@@ -146,17 +158,15 @@ def cost_for_window(
         ).scalars()
     )
     pricing_index = _pricing_index(pricing_rows)
-    return sum(
-        (
-            _model_call_cost(
-                call=call,
-                organization_id=organization_id,
-                pricing_index=pricing_index,
-            )
-            for call, _task in rows
-        ),
-        Decimal("0"),
-    )
+    total = Decimal("0")
+    for call, _task in rows:
+        cost, _pricing_status = _model_call_cost(
+            call=call,
+            organization_id=organization_id,
+            pricing_index=pricing_index,
+        )
+        total += cost
+    return total
 
 
 def _model_call_rows(*, session: Session, organization_id: str, since):
@@ -186,25 +196,44 @@ def _model_call_cost(
     call: ModelCall,
     organization_id: str | None,
     pricing_index: dict[tuple[str | None, str, str], ModelPricing],
-) -> Decimal:
+) -> tuple[Decimal, str]:
     provider = (call.model_provider or "default").strip() or "default"
     model = (call.model_name or "default").strip() or "default"
-    pricing = _lookup_pricing(
-        pricing_index=pricing_index,
-        organization_id=organization_id,
-        provider=provider,
-        model=model,
-    )
+    source_row = lookup_model_pricing_source(provider, model)
+    if source_row is not None:
+        source_status = source_status_for_model(provider, model)
+        if source_status.status != "verified":
+            return Decimal("0"), source_status.status
+        pricing = _lookup_exact_pricing(
+            pricing_index=pricing_index,
+            organization_id=organization_id,
+            provider=provider,
+            model=model,
+        )
+        if pricing is None:
+            return Decimal("0"), "missing_pricing"
+        if not pricing_row_matches_source(pricing, source_row):
+            return Decimal("0"), "price_unverified"
+    else:
+        pricing = _lookup_pricing(
+            pricing_index=pricing_index,
+            organization_id=organization_id,
+            provider=provider,
+            model=model,
+        )
     if pricing is None:
-        return Decimal("0")
+        return Decimal("0"), "missing_pricing"
     try:
         prompt_per_1k = Decimal(pricing.prompt_per_1k_usd or "0")
         completion_per_1k = Decimal(pricing.completion_per_1k_usd or "0")
     except (InvalidOperation, ValueError):
-        return Decimal("0")
+        return Decimal("0"), "invalid_pricing"
+    if (pricing.currency or "USD").upper() != "USD":
+        return Decimal("0"), "currency_conversion_required"
     return (
         Decimal(max(0, int(call.prompt_tokens or 0))) / Decimal(1000) * prompt_per_1k
-        + Decimal(max(0, int(call.completion_tokens or 0))) / Decimal(1000) * completion_per_1k
+        + Decimal(max(0, int(call.completion_tokens or 0))) / Decimal(1000) * completion_per_1k,
+        "verified",
     )
 
 
@@ -235,6 +264,20 @@ def _lookup_pricing(
         if row is not None:
             return row
     return None
+
+
+def _lookup_exact_pricing(
+    *,
+    pricing_index: dict[tuple[str | None, str, str], ModelPricing],
+    organization_id: str | None,
+    provider: str,
+    model: str,
+) -> ModelPricing | None:
+    if organization_id:
+        row = pricing_index.get((organization_id, provider, model))
+        if row is not None:
+            return row
+    return pricing_index.get((None, provider, model))
 
 
 def _model_group_key(
@@ -367,6 +410,7 @@ def _rollup_response(
 ) -> CostRollupResponse:
     totals: dict[str, dict[str, object]] = {}
     series: dict[tuple[str, str], dict[str, object]] = {}
+    pricing_status_by_model: dict[str, str] = {}
     total_cost = Decimal("0")
     total_tokens = 0
     run_ids: set[str] = set()
@@ -374,6 +418,11 @@ def _rollup_response(
         total_cost += entry.cost_usd
         total_tokens += entry.tokens_in + entry.tokens_out
         run_ids.add(entry.run_id)
+        if entry.model_key:
+            pricing_status_by_model[entry.model_key] = _merge_pricing_status(
+                pricing_status_by_model.get(entry.model_key),
+                entry.pricing_status,
+            )
         bucket = totals.setdefault(
             entry.key,
             {
@@ -382,12 +431,17 @@ def _rollup_response(
                 "tokens_in": 0,
                 "tokens_out": 0,
                 "run_ids": set(),
+                "pricing_status": "verified",
             },
         )
         bucket["cost_usd"] = bucket["cost_usd"] + entry.cost_usd  # type: ignore[operator]
         bucket["tokens_in"] = int(bucket["tokens_in"]) + entry.tokens_in
         bucket["tokens_out"] = int(bucket["tokens_out"]) + entry.tokens_out
         bucket["run_ids"].add(entry.run_id)  # type: ignore[union-attr]
+        bucket["pricing_status"] = _merge_pricing_status(
+            str(bucket["pricing_status"]),
+            entry.pricing_status,
+        )
         series_key = (_series_bucket(entry.timestamp, window), entry.key)
         point = series.setdefault(
             series_key,
@@ -412,6 +466,8 @@ def _rollup_response(
             tokens_out=int(values["tokens_out"]),
             run_count=len(values["run_ids"]),
             share=_share(values["cost_usd"], total_cost),
+            pricing_status=str(values["pricing_status"]),
+            pricing_blocking=str(values["pricing_status"]) in BLOCKING_PRICING_STATUSES,
         )
         for key, values in totals.items()
     ]
@@ -438,7 +494,25 @@ def _rollup_response(
         average_run_cost_usd=_float_cost(total_cost / Decimal(len(run_ids))) if run_ids else 0.0,
         breakdown=breakdown[:10],
         series=series_points,
+        pricing_statuses=[
+            {
+                "model": model,
+                "status": status,
+                "blocking": status in BLOCKING_PRICING_STATUSES,
+            }
+            for model, status in sorted(pricing_status_by_model.items())
+        ],
     )
+
+
+def _merge_pricing_status(current: str | None, incoming: str) -> str:
+    if not current or current == "verified":
+        return incoming
+    if incoming == "verified":
+        return current
+    if current == incoming:
+        return current
+    return "invalid_pricing"
 
 
 def _series_bucket(timestamp, window: CostWindow) -> str:

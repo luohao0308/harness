@@ -21,6 +21,7 @@ required_root_vars=(
   "MODEL_GATEWAY_BASE_URL"
   "MODEL_GATEWAY_API_KEY"
   "DOCKER_HOST"
+  "AUTH_JWT_SECRET"
 )
 
 for file in "${required_files[@]}"; do

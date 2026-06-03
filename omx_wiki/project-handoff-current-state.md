@@ -42,6 +42,8 @@ Read these first:
 16. [[session-2026-05-17-agent-knowledge-p4-context-assembly]] and `.omx/plans/ralplan-agent-knowledge-harness-p4-memory-context-router-v2.md` if the next work touches backend context assembly, long-term memory records, context manifests, token budgeting, pinned context, or model-call context binding.
 17. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
 18. [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] if the next work touches deterministic demo seeds, Knowledge/RAG migration/restore smoke, release browser smoke, local fixture versus live provider evidence boundaries, Chinese-first console wording, or shared selector UI.
+19. [[session-2026-05-29-auth-retention-cicd]] if the next work touches AuthN/AuthZ/RBAC, API keys, org membership, audit logs, data retention/export/delete, CI/CD workflows, production Dockerfiles, or release engineering.
+20. [[session-2026-05-29-docs-help-performance-scale]] if the next work touches Help Center docs, troubleshooting, generated API docs, query caching, cursor pagination, lazy frontend routes, CDN/static assets, load tests, or performance runbooks.
 
 ## Current State
 
@@ -68,6 +70,9 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Large File Refactor v1 is verified locally on 2026-05-28: the oversized Agent API, Knowledge/RAG, Eval API, TeamPage, and ToolRegistryPage review surfaces were split in five independent pure-refactor commits while preserving public import paths and route/component exports. Validation passed backend target tests (`169 passed`), Ruff, frontend lint/build, TeamPage + ToolRegistryPage tests (`22 passed`), docs validation, whitespace checks, and the split-module line-count gate. See [[session-2026-05-28-large-file-refactor-v1]].
 - Agent Knowledge Harness P7 release and demo hardening is completed and pushed to `origin/p7-release-demo-hardening` through `c404603`: deterministic Knowledge/RAG demo seed uses public APIs only and includes an agent grounding support document for the backend `min_hits=2` threshold; service-level migration/restore smoke verifies Knowledge/RAG tables and selector continuity; release browser smoke covers Agent Studio, Workspace, Run Detail, Eval, and Observability demo projections; runbooks now distinguish local fixture evidence from optional credential-gated live provider validation.
 - Console Chinese-first selector/terminology hardening is completed and pushed on the same branch through `a5d046b`: shared `MenuSelect` now covers model, knowledge, run, and settings dropdowns with keyboard/focus behavior, grouping, disabled-option skipping, and placement support; required English terms such as MCP, RAG, API, Trace, WarmPool, JSON, Markdown, Prompt, and Provider keep their original names with adjacent small Chinese explanations.
+- P3/P6/P7 AuthN/AuthZ, data lifecycle, and CI/CD release engineering is verified locally on 2026-05-29: real JWT/API-key auth, org-scoped RBAC, user/API-key/audit settings, retention/export/delete management, GitHub Actions release gates, Dependabot, production Dockerfiles, CI compose smoke, release scripts, Helm canary values, and runbooks are implemented. Code review fixed stale JWT/API-key authorization after user or membership removal, export leakage of `password_hash` / `key_hash`, PR whitespace fetch depth, and API Docker healthcheck parsing. Validation passed full backend regression (`518 passed, 2 warnings`), Ruff, Alembic upgrade to `20260604_0031`, frontend lint, single-fork full frontend Vitest (`48 files / 223 tests`), production build plus bundle gate, docs validation, compose config, shell syntax checks, and whitespace checks. See [[session-2026-05-29-auth-retention-cicd]].
+- P4/P8 Documentation Help Center and performance/scale foundations are verified locally on 2026-05-29: README, in-app Help Center, 25 help docs, 51 troubleshooting cases, OpenAPI generation, docs CI gate, Redis-first query cache, entity-version invalidation, HMAC-signed cursor pagination, list endpoint coverage, N+1 query instrumentation, lazy routes, cursor Run History, CDN/static asset config, k6 scripts, and performance runbook are implemented. Code review fixed unsigned cursors, stale Agent list cache snapshots after Token Optimizer/capability writes, backend test cache leakage, unsafe specialist calibration caching, and cost-rollup cache/rate-limit semantics. Validation passed full backend regression (`527 passed, 2 warnings`), Ruff, single-fork full frontend Vitest (`49 files / 224 tests`), frontend lint/build/bundle gate, docs/help/API generation, compose config, shell syntax, and whitespace checks. See [[session-2026-05-29-docs-help-performance-scale]].
+- Production Critical Hardening v2 is verified locally on 2026-05-30: dev bearer tokens are gated to development/test, `AUTH_JWT_SECRET` is required and placeholder-checked, first-run admin bootstrap plus CLI fallback are implemented, the original legacy dev-admin/dev-engineer seed rows are removed by patch migration, migration id lint is in CI, and production console builds no longer embed dev tokens. Code review fixed frontend JWT/SSE auth gaps, a TypeScript header-name collision, test-mode CORS compatibility, Helm migration Job secret propagation, and legacy seed downgrade safety. Validation passed full backend regression (`538 passed, 2 warnings`), Ruff, Alembic upgrade and downgrade checks, frontend lint, single-fork full frontend Vitest (`49 files / 224 tests`), production build plus bundle gate, compose configs, Helm lint/template on Helm `v4.2.0`, docs validation, and whitespace checks. See [[session-2026-05-30-production-critical-hardening-v2]].
 - Team Mode AionUi parity product surface is verified locally on 2026-05-25: Team Mode now has durable Team/TeamAgent/mailbox/task/event backend state, team CRUD/member/mailbox/task/wake/event APIs, Team frontend routes/list/create/rail/columns/composers, Agent Workspace team launch, and mocked browser smoke coverage.
 - Capability product and console spine polish is verified locally on 2026-05-25: capability package validation/install/preflight/upload/attach/rollback/uninstall APIs are wired into Tool Registry, Agent Studio can create/clone Agents and attach capabilities, knowledge connector readiness is evidence-backed, same-origin API base fallback is deployment-safe, Run Detail includes token optimization evidence, and local runtime artifacts are ignored.
 - Agent-level Token Optimizer and context cache evidence are verified locally on 2026-05-25: Agent Studio exposes built-in Token 省用方案 presets instead of requiring package install, context assembly records optimizer/cache evidence, `/token-savings` shows aggregate savings plus per-source cache hit rates, repeated `/context/compress` now persists and hits the server-side summary cache after request/session close, and live browser smoke shows `缓存命中率 2 / 11` with `摘要缓存 28.57%`.
@@ -413,7 +418,7 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed Agent Knowledge Harness lane is **P7 Release And Demo Hardening**, with a follow-up console Chinese-first selector/terminology hardening commit pushed to `origin/p7-release-demo-hardening` through `a5d046b`.
+The latest completed post-stage lane is **Production Critical Hardening v2**, with review fixes and validation recorded in [[session-2026-05-30-production-critical-hardening-v2]].
 
 Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
@@ -421,6 +426,10 @@ Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 - keep Docker Compose release and demo validation current.
 - keep deterministic local P7 seed separate from optional credential-gated Tavily/live provider validation.
 - keep the shared `MenuSelect` keyboard/focus contract and adjacent small Chinese explanations when adding new selectors or required English terms.
+- keep JWT/API-key principal resolution tied to current active users and accepted memberships; do not rely on stale token claims for org authorization.
+- keep organization exports redacting credential verifier fields such as `password_hash` and `key_hash`.
+- keep cursor tokens signed, query-cache keys organization-scoped and entity-versioned, and Help Center/API docs regenerated when public API surfaces change.
+- keep production auth smoke tests on real JWTs and avoid reintroducing production build defaults for dev bearer tokens.
 
 Useful follow-up rules:
 
@@ -450,3 +459,5 @@ Do not treat legacy `/api/tasks/*` as the primary product proof. Agent Run is th
 - [[local-dev-eval-dataset-migration]]
 - [[session-2026-05-14-workspace-execution-evidence]]
 - [[session-2026-05-17-agent-knowledge-p3-web-research]]
+- [[session-2026-05-29-auth-retention-cicd]]
+- [[session-2026-05-29-docs-help-performance-scale]]
