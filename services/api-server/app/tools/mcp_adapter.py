@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
 
+from app.tools.adapter_registry import REGISTRY
+from app.tools.adapters import ensure_builtin_adapters_registered
 from app.tools.registry import ToolMetadata
 
 
@@ -29,10 +32,26 @@ class MCPAdapter:
         input_json: dict,
         config_json: dict | None = None,
         secret_value: str | None = None,
+        sandbox_workspace_root: Path | None = None,
     ) -> MCPToolResult:
         server = metadata.mcp_server or "local"
         method = metadata.mcp_method or metadata.name
         config = config_json if isinstance(config_json, dict) else {}
+        ensure_builtin_adapters_registered(REGISTRY)
+        adapter = REGISTRY.get(metadata.name)
+        if adapter is not None:
+            result = adapter.execute(
+                metadata=metadata,
+                input_json=input_json,
+                config_json=config,
+                secret_value=secret_value,
+                sandbox_workspace_root=sandbox_workspace_root,
+            )
+            return MCPToolResult(
+                server=adapter.server_label,
+                method=adapter.method,
+                output_json=result.output_json,
+            )
         runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
         runtime_evidence = _runtime_evidence(runtime=runtime, secret_ref=config.get("secret_ref"))
         if metadata.name == "mcp_context_search":

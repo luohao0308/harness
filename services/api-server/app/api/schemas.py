@@ -1986,6 +1986,36 @@ class ToolExecuteResponse(BaseModel):
     allowed: bool = Field(description="是否通过策略")
     output: dict = Field(description="工具输出")
 
+
+class AdapterMetadataResponse(BaseModel):
+    slug: str = Field(description="Adapter slug")
+    server_label: str = Field(description="Adapter server label")
+    method: str = Field(description="Adapter method")
+    description: str = Field(description="Adapter description")
+    version: str = Field(description="Adapter version")
+    adapter_module: str = Field(description="Python module path")
+    adapter_sha256: str = Field(description="Adapter source SHA256")
+    input_schema_sha256: str = Field(description="Input schema SHA256")
+    output_schema_sha256: str = Field(description="Output schema SHA256")
+    input_schema: dict = Field(description="Input JSON schema")
+    output_schema: dict = Field(description="Output JSON schema")
+    requires_secret: bool = Field(description="Whether execution requires a secret")
+    risk_level: str = Field(description="Risk level")
+
+
+class AdapterMetadataPage(BaseModel):
+    items: list[AdapterMetadataResponse] = Field(description="Registered adapters")
+
+
+class AdapterHealthResponse(BaseModel):
+    slug: str = Field(description="Adapter slug")
+    ok: bool = Field(description="Health status")
+    latency_ms: int = Field(description="Probe latency")
+    message: str = Field(description="Probe message")
+    sample: dict = Field(default_factory=dict, description="Bounded probe sample")
+    last_checked_at: datetime = Field(description="Probe timestamp")
+
+
 class CapabilityAdminValidationRequest(BaseModel):
     content: dict = Field(default_factory=dict, description="Capability content")
     config: dict = Field(default_factory=dict, description="Capability config")

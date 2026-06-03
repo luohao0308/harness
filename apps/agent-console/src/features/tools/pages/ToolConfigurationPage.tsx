@@ -20,9 +20,13 @@ import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/fee
 import { Input, Textarea } from "../../../components/ui/input";
 import { MenuSelect, type MenuSelectOption } from "../../../components/ui/menu-select";
 import { cn } from "../../../lib/utils";
+import { AdapterHealthBadge } from "../components/AdapterHealthBadge";
+import { AdapterSchemaDrawer } from "../components/AdapterSchemaDrawer";
 import {
   type CapabilityRuntimeConfig,
+  type AdapterMetadata,
   type ToolExecuteResult,
+  listAdapters,
   listAgents,
   listCapabilityRuntimeConfigs,
   testInvokeCapability,
@@ -45,13 +49,20 @@ export function ToolConfigurationPage() {
   const [secretValue, setSecretValue] = useState("");
   const [timeoutSeconds, setTimeoutSeconds] = useState("30");
   const [testQuery, setTestQuery] = useState("MCP 教程");
+  const [schemaAdapterSlug, setSchemaAdapterSlug] = useState<string | null>(null);
 
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const adaptersQuery = useQuery({ queryKey: ["tool-adapters"], queryFn: listAdapters });
   const configsQuery = useQuery({
     queryKey: ["capability-runtime-configs", agentId],
     queryFn: () => listCapabilityRuntimeConfigs(agentId),
   });
   const configs = configsQuery.data?.items ?? [];
+  const adapterBySlug = useMemo(
+    () => new Map((adaptersQuery.data?.items ?? []).map((adapter) => [adapter.slug, adapter])),
+    [adaptersQuery.data?.items],
+  );
+  const selectedSchemaAdapter = schemaAdapterSlug ? adapterBySlug.get(schemaAdapterSlug) ?? null : null;
   const selectedConfig = configs.find((item) => item.attachment_id === selectedAttachmentId) ?? configs[0] ?? null;
 
   const agentOptions = useMemo<MenuSelectOption[]>(
@@ -240,15 +251,18 @@ export function ToolConfigurationPage() {
                     </div>
                     <RuntimeStatusBadge config={config} />
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    <Badge tone="info">{transportLabel(config.transport)}</Badge>
-                    <Badge tone={config.registry_visible ? "success" : "warning"}>
-                      {config.registry_visible ? "注册表可见" : "注册表不可见"}
-                    </Badge>
-                    <Badge tone={config.secret_configured ? "success" : "neutral"}>
-                      {config.secret_configured ? "密钥已保存" : "密钥未保存"}
-                    </Badge>
-                  </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <Badge tone="info">{transportLabel(config.transport)}</Badge>
+                      <Badge tone={config.registry_visible ? "success" : "warning"}>
+                        {config.registry_visible ? "注册表可见" : "注册表不可见"}
+                      </Badge>
+                      <Badge tone={config.secret_configured ? "success" : "neutral"}>
+                        {config.secret_configured ? "密钥已保存" : "密钥未保存"}
+                      </Badge>
+                      {adapterBySlug.has(config.tool_name) ? (
+                        <AdapterHealthBadge slug={config.tool_name} agentId={agentId} compact />
+                      ) : null}
+                    </div>
                 </button>
               ))}
               {!configsQuery.isLoading && configs.length === 0 ? (
@@ -273,8 +287,8 @@ export function ToolConfigurationPage() {
               </div>
               {selectedConfig ? <RuntimeStatusBadge config={selectedConfig} /> : <Badge tone="neutral">未选择</Badge>}
             </CardHeader>
-            {selectedConfig ? (
-              <div className="grid gap-4 p-4 text-xs">
+              {selectedConfig ? (
+                <div className="grid gap-4 p-4 text-xs">
                 <div className="rounded-md border border-cyan-100 bg-cyan-50 p-3 leading-5 text-cyan-900">
                   <div className="font-semibold">新手提示</div>
                   <div className="mt-1">
@@ -283,6 +297,13 @@ export function ToolConfigurationPage() {
                 </div>
 
                 <RuntimePurposeGuide config={selectedConfig} />
+                {adapterBySlug.has(selectedConfig.tool_name) ? (
+                  <AdapterRuntimePanel
+                    adapter={adapterBySlug.get(selectedConfig.tool_name)!}
+                    agentId={agentId}
+                    onOpen={() => setSchemaAdapterSlug(selectedConfig.tool_name)}
+                  />
+                ) : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="grid gap-1">
@@ -448,6 +469,12 @@ export function ToolConfigurationPage() {
           </Card>
         </section>
       </div>
+      <AdapterSchemaDrawer
+        adapter={selectedSchemaAdapter}
+        agentId={agentId}
+        open={selectedSchemaAdapter !== null}
+        onClose={() => setSchemaAdapterSlug(null)}
+      />
     </ConsoleShell>
   );
 }
@@ -466,6 +493,30 @@ function Metric({ label, value, tone = "neutral" }: { label: string; value: numb
 function RuntimeStatusBadge({ config }: { config: CapabilityRuntimeConfig }) {
   const status = runtimeConfigStatus(config);
   return <Badge tone={status.tone}>{status.label}</Badge>;
+}
+
+function AdapterRuntimePanel({
+  adapter,
+  agentId,
+  onOpen,
+}: {
+  adapter: AdapterMetadata;
+  agentId: string;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-cyan-100 bg-cyan-50 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <AdapterHealthBadge slug={adapter.slug} agentId={agentId} />
+        <Badge tone="info">{adapter.server_label}.{adapter.method}</Badge>
+        <Badge tone="neutral">sha {adapter.adapter_sha256.slice(0, 8)}</Badge>
+      </div>
+      <Button type="button" variant="secondary" onClick={onOpen}>
+        <KeyRound className="h-3.5 w-3.5" />
+        查看 Schema
+      </Button>
+    </div>
+  );
 }
 
 function RuntimePurposeGuide({ config }: { config: CapabilityRuntimeConfig }) {

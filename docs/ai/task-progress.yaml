@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-28T04:47:26Z
+last_updated_at: 2026-05-28T07:00:38Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -481,6 +481,33 @@ post_stage_hardening:
       - Agent Console shows success-rate/invocation stats, specialist detail performance windows, fanout filters, batch columns, sibling links, fanout badges, Run Detail fanout evidence grouping, and Eval specialist contract metrics/preset.
       - No migration files or new DB tables were added; v2 reuses `agent_runs.context_json`, `subagent_outputs.output_json`, `eval_cases.expected_json`, and Eval result JSON columns.
       - Full backend regression passed `435 passed`; full frontend Vitest rerun passed `44 files / 214 tests`; frontend lint/build passed with the existing Vite large-chunk warning.
+
+  - id: agent-knowledge-harness-real-tool-adapters-v1
+    date: 2026-05-28
+    status: verified
+    demo: Tool Registry now dispatches real GitHub, Slack, and sandbox file adapters through a registry-backed MCP adapter path with health/schema UI and capability snapshot hashes.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_adapter_registry.py tests/test_adapters_github.py tests/test_adapters_slack.py tests/test_adapters_sandbox_file.py tests/test_mcp_adapter.py tests/test_tool_runner.py tests/test_sandbox.py tests/test_warm_pool.py tests/test_tool_registry.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm test -- AdapterHealthBadge AdapterSchemaDrawer ToolRegistryPage ToolConfigurationPage RunDetailPage
+      - cd apps/agent-console && npm test -- --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npm test -- TeamPages
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `AdapterRegistry` plus built-in GitHub, Slack, and sandbox file adapters; `MCPAdapter` dispatches registered adapters first and keeps the existing `brave`, `mcp_context_search`, and `mcp_artifact_put` fallback behavior.
+      - GitHub v1 covers `list_issues`, `get_issue`, `list_pulls`, `get_pull`, and `search_code` with PAT auth, configurable endpoint, bounded previews, and structured rate-limit/API errors.
+      - Slack v1 covers `search_messages`, `list_channels`, and `get_thread` with bot-token auth, configurable endpoint, bounded output, mrkdwn simplification, user-name caching, and structured API errors.
+      - Sandbox file v1 covers `read_file`, `list_files`, `write_file`, and `delete_file`; it fails closed without a run sandbox workspace, blocks absolute/path-traversal input, limits file size/list depth, and keeps write/delete behind high-risk approval.
+      - `/api/tools/adapters` and `/api/tools/adapters/{slug}/health` expose adapter introspection and rate-limited health probes for admin/engineer users; health probes resolve Agent runtime config secrets when present.
+      - ToolCall capability snapshots now include adapter version/module/source hash plus input/output schema hashes, and Run Detail shows the adapter hash for audited tool calls.
+      - Agent Console Tool Registry and Tool Configuration show adapter health/schema/try-it surfaces backed by the new adapter endpoints and existing Agent-scoped test invocation.
+      - No migration files, new tables, or new dependencies were added; sandbox workspace root remains a runtime mount/ToolRunner parameter rather than persisted database state.
+      - Targeted backend adapter tests passed `73 passed`; full backend regression passed `456 passed`; full frontend Vitest rerun passed `46 files / 219 tests`; frontend lint/build passed with the existing Vite large-chunk warning.
 
   - id: agent-console-chinese-team-knowledge-follow-up
     date: 2026-05-27

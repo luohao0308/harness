@@ -1,4 +1,5 @@
 import shutil
+import time
 from importlib.util import find_spec
 from typing import Annotated
 from urllib.parse import urlparse
@@ -9,6 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import ensure_default_agents
 from app.api.schemas import (
+    AdapterHealthResponse,
+    AdapterMetadataPage,
+    AdapterMetadataResponse,
     CapabilityAdminValidationRequest,
     CapabilityAdminValidationResponse,
     CapabilityAttachmentUpdateRequest,
@@ -43,6 +47,8 @@ from app.knowledge_dify import (
     store_connector_secret_ref,
 )
 from app.security.auth import Principal, require_role
+from app.tools.adapter_registry import REGISTRY, adapter_metadata
+from app.tools.adapters import ensure_builtin_adapters_registered
 from app.tools.capabilities import CapabilityRegistry, CapabilityResolutionError
 from app.tools.marketplace import list_capability_marketplace
 from app.tools.registry import ToolRegistry
@@ -50,6 +56,8 @@ from app.tools.runner import ToolRunner
 
 router = APIRouter(prefix="/tools", tags=["tools"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+_ADAPTER_HEALTH_LIMITS: dict[str, list[float]] = {}
+ADAPTER_HEALTH_MAX_PER_MINUTE = 10
 
 
 def _bad_request_from_capability_error(exc: CapabilityResolutionError) -> HTTPException:
@@ -89,6 +97,79 @@ def get_tool_registry(
         categories=sorted({tool.category for tool in tools}),
         sources=sorted({tool.source for tool in tools}),
     )
+
+
+@router.get(
+    "/adapters",
+    response_model=AdapterMetadataPage,
+    summary="List registered real tool adapters",
+)
+def list_tool_adapters(principal: Principal) -> AdapterMetadataPage:
+    require_role(principal, {"admin", "engineer"})
+    ensure_builtin_adapters_registered(REGISTRY)
+    return AdapterMetadataPage(
+        items=[
+            AdapterMetadataResponse(**adapter_metadata(adapter))
+            for adapter in REGISTRY.list_all()
+        ]
+    )
+
+
+@router.get(
+    "/adapters/{slug}/health",
+    response_model=AdapterHealthResponse,
+    summary="Probe a registered tool adapter",
+)
+def get_tool_adapter_health(
+    slug: str,
+    session: DbSession,
+    principal: Principal,
+    agent_id: str = "default",
+) -> AdapterHealthResponse:
+    require_role(principal, {"admin", "engineer"})
+    ensure_builtin_adapters_registered(REGISTRY)
+    adapter = REGISTRY.get(slug)
+    if adapter is None:
+        raise HTTPException(status_code=404, detail="adapter not found")
+    _enforce_adapter_health_rate_limit(principal.organization_id, slug)
+    config: dict = {}
+    secret_value = ""
+    try:
+        record = CapabilityRegistry(
+            session,
+            principal.organization_id,
+        ).runtime_config_for_tool(agent_id=agent_id, tool_name=slug)
+        config = record.get("config_json") if isinstance(record.get("config_json"), dict) else {}
+        secret_ref = str(config.get("secret_ref") or "").strip()
+        if secret_ref:
+            secret_value = resolve_connector_secret_ref(
+                secret_ref,
+                provider=slug,
+                session=session,
+                organization_id=principal.organization_id,
+            )
+    except CapabilityResolutionError:
+        config = {}
+        secret_value = ""
+    result = adapter.health_check(config_json=config, secret_value=secret_value)
+    return AdapterHealthResponse(
+        slug=slug,
+        ok=bool(result.get("ok")),
+        latency_ms=int(result.get("latency_ms") or 0),
+        message=str(result.get("message") or ""),
+        sample=result.get("sample") if isinstance(result.get("sample"), dict) else {},
+        last_checked_at=utc_now(),
+    )
+
+
+def _enforce_adapter_health_rate_limit(organization_id: str | None, slug: str) -> None:
+    key = f"{organization_id or 'global'}:{slug}"
+    now = time.monotonic()
+    recent = [stamp for stamp in _ADAPTER_HEALTH_LIMITS.get(key, []) if now - stamp < 60]
+    if len(recent) >= ADAPTER_HEALTH_MAX_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="adapter health rate limit exceeded")
+    recent.append(now)
+    _ADAPTER_HEALTH_LIMITS[key] = recent
 
 
 @router.post(

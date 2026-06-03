@@ -31,6 +31,8 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { booleanLabel, riskLabel, statusLabel, toolSourceLabel } from "../../../lib/labels";
+import { AdapterHealthBadge } from "../components/AdapterHealthBadge";
+import { AdapterSchemaDrawer } from "../components/AdapterSchemaDrawer";
 import {
   localizedCapabilityDescription,
   mcpConfigHint,
@@ -48,6 +50,7 @@ import {
   installTrustedUrlCapability,
   installUploadedCapability,
   listAgents,
+  listAdapters,
   listCapabilityMarketplace,
   listCapabilityPackages,
   preflightMarketplaceCapability,
@@ -65,6 +68,7 @@ import {
   type CapabilitySimpleInstallResponse,
   type CapabilitySimpleInstallPayload,
   type AgentCapabilityAttachmentSummary,
+  type AdapterMetadata,
   type ToolExecuteResult,
 } from "../../tasks/api";
 
@@ -128,6 +132,7 @@ export function ToolRegistryPage() {
   const [testToolName, setTestToolName] = useState("mcp_context_search");
   const [invokeInput, setInvokeInput] = useState(`{ "query": "release readiness", "limit": 2 }`);
   const [marketplaceQuickQuery, setMarketplaceQuickQuery] = useState("发布准备情况");
+  const [schemaAdapterSlug, setSchemaAdapterSlug] = useState<string | null>(null);
   const [lastDirectAttachedMarketplaceItemId, setLastDirectAttachedMarketplaceItemId] = useState<string | null>(null);
   const [lastAttachedMarketplacePackageId, setLastAttachedMarketplacePackageId] = useState<string | null>(null);
   const registryQuery = useQuery({
@@ -135,6 +140,7 @@ export function ToolRegistryPage() {
     queryFn: () => getToolRegistry(simpleAgentId),
   });
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const adaptersQuery = useQuery({ queryKey: ["tool-adapters"], queryFn: listAdapters });
   const marketplaceQuery = useQuery({
     queryKey: ["capability-marketplace", marketplaceFilter, marketplaceSearch],
     queryFn: () =>
@@ -524,6 +530,11 @@ export function ToolRegistryPage() {
     onError: (error) => notifyMutationError("商店案例测试失败", error, "请先完成安装或启用，再检查查询词和工具权限。"),
   });
   const tools = registryQuery.data?.items ?? [];
+  const adapterBySlug = useMemo(
+    () => new Map((adaptersQuery.data?.items ?? []).map((adapter) => [adapter.slug, adapter])),
+    [adaptersQuery.data?.items],
+  );
+  const selectedSchemaAdapter = schemaAdapterSlug ? adapterBySlug.get(schemaAdapterSlug) ?? null : null;
   const filteredTools = useMemo(
     () => tools.filter((tool) => sourceFilter === "all" || tool.source === sourceFilter),
     [sourceFilter, tools],
@@ -746,6 +757,7 @@ export function ToolRegistryPage() {
                 <Th>
                   <TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>
                 </Th>
+                <Th>Adapter</Th>
                 <Th>
                   <TermHint description="结构说明，描述工具入参格式">结构说明</TermHint>
                 </Th>
@@ -804,6 +816,17 @@ export function ToolRegistryPage() {
                     {tool.mcp_server ? `${tool.mcp_server}.${tool.mcp_method}` : "--"}
                   </Td>
                   <Td>
+                    {adapterBySlug.get(tool.name) ? (
+                      <AdapterCell
+                        adapter={adapterBySlug.get(tool.name)!}
+                        agentId={simpleAgentId}
+                        onOpen={() => setSchemaAdapterSlug(tool.name)}
+                      />
+                    ) : (
+                      <span className="text-xs text-slate-400">--</span>
+                    )}
+                  </Td>
+                  <Td>
                     <pre className="max-h-24 max-w-[280px] overflow-auto rounded border border-slate-100 bg-slate-50 p-2 font-mono text-[10px] text-slate-600">
                       {JSON.stringify(tool.input_schema, null, 2)}
                     </pre>
@@ -812,7 +835,7 @@ export function ToolRegistryPage() {
               ))}
               {!registryQuery.isLoading && filteredTools.length === 0 && (
                 <tr>
-                  <Td colSpan={7} className="py-10 text-center text-slate-500">
+                  <Td colSpan={8} className="py-10 text-center text-slate-500">
                     {text("没有符合筛选的工具", "No tools match the filter")}
                   </Td>
                 </tr>
@@ -820,6 +843,13 @@ export function ToolRegistryPage() {
             </tbody>
           </Table>
         </Card>
+
+        <AdapterSchemaDrawer
+          adapter={selectedSchemaAdapter}
+          agentId={simpleAgentId}
+          open={selectedSchemaAdapter !== null}
+          onClose={() => setSchemaAdapterSlug(null)}
+        />
 
         <ConfigDialog
           open={activeConfigDialog === "marketplace"}
@@ -1259,6 +1289,26 @@ function Metric({ label, value }: { label: ReactNode; value: number }) {
       <div className="text-[11px] text-slate-500">{label}</div>
       <div className="mt-1 font-mono text-2xl text-slate-900">{value}</div>
     </Card>
+  );
+}
+
+function AdapterCell({
+  adapter,
+  agentId,
+  onOpen,
+}: {
+  adapter: AdapterMetadata;
+  agentId: string;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <AdapterHealthBadge slug={adapter.slug} agentId={agentId} compact />
+      <Button type="button" variant="ghost" className="h-7 px-2" onClick={onOpen}>
+        <FileCheck2 className="h-3.5 w-3.5" />
+        Schema
+      </Button>
+    </div>
   );
 }
 

@@ -88,6 +88,7 @@ class WarmPoolManager:
         session: Session,
         task_id: str,
         agent_run_id: str | None = None,
+        workspace_root: str | None = None,
     ) -> SandboxInstance:
         self._prune_expired(session)
         runtime_policy = SandboxPolicyResolver(session).runtime_for_task(task_id)
@@ -98,6 +99,7 @@ class WarmPoolManager:
                 session=session,
                 task_id=task_id,
                 agent_run_id=agent_run_id,
+                workspace_root=workspace_root,
             )
         pooled = self._next_idle(session)
         if pooled is not None:
@@ -117,6 +119,7 @@ class WarmPoolManager:
                 image=pooled.image,
                 warm_pool_reused=True,
                 runtime_policy=runtime_policy,
+                workspace_root=workspace_root,
             )
             pooled.sandbox_id = sandbox.id
             pooled.updated_at = utc_now()
@@ -129,6 +132,7 @@ class WarmPoolManager:
             session=session,
             task_id=task_id,
             agent_run_id=agent_run_id,
+            workspace_root=workspace_root,
         )
         return sandbox
 

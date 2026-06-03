@@ -100,6 +100,42 @@ def test_tool_runner_executes_read_file_and_writes_audit(
     ]
 
 
+def test_tool_runner_records_adapter_snapshot_for_real_adapter(db_session: Session) -> None:
+    task = create_task(db_session, tools=["github.list_issues"])
+
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
+        task_id=task.id,
+        tool_name="github.list_issues",
+        input_json={"repo": "acme/repo"},
+        roles=["engineer"],
+    )
+
+    assert execution.allowed is True
+    assert execution.output["result"]["error"] == "missing_secret"
+    snapshot = execution.tool_call.capability_snapshot_json
+    assert snapshot["adapter"]["slug"] == "github.list_issues"
+    assert len(snapshot["adapter"]["adapter_sha256"]) == 64
+    assert len(snapshot["adapter"]["input_schema_sha256"]) == 64
+
+
+def test_tool_runner_requests_approval_for_sandbox_file_write(db_session: Session) -> None:
+    task = create_task(db_session, tools=["sandbox.write_file"])
+
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
+        task_id=task.id,
+        tool_name="sandbox.write_file",
+        input_json={"path": "result.txt", "content": "hello"},
+        roles=["engineer"],
+    )
+
+    assert execution.allowed is False
+    assert execution.tool_call.status == "PENDING_APPROVAL"
+    assert execution.tool_call.requires_sandbox is True
+    assert execution.tool_call.capability_snapshot_json["adapter"]["slug"] == "sandbox.write_file"
+    approval = db_session.execute(select(ToolApproval)).scalar_one()
+    assert approval.tool_call_id == execution.tool_call.id
+
+
 def test_tool_runner_denies_sandbox_tool_without_sandbox(db_session: Session) -> None:
     task = create_task(db_session)
 

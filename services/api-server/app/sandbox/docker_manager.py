@@ -130,6 +130,7 @@ class DockerManager:
             image=image,
             warm_pool_reused=False,
             runtime_policy=runtime_policy,
+            workspace_root=workspace_root,
         )
         return sandbox
 
@@ -143,6 +144,7 @@ class DockerManager:
         image: str = DEFAULT_SANDBOX_IMAGE,
         warm_pool_reused: bool,
         runtime_policy: SandboxRuntimePolicy | None = None,
+        workspace_root: str | None = None,
     ) -> SandboxInstance:
         event_store = EventStore(session)
         policy = runtime_policy or SandboxPolicyResolver(session).runtime_for_task(task_id)
