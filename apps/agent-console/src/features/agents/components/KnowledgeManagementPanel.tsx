@@ -27,6 +27,7 @@ import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/fee
 import { Input, Textarea } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { useI18n } from "../../../lib/i18n";
+import { useOptionalAuth } from "../../auth/AuthProvider";
 import {
   archiveAgentKnowledgeSource,
   changeAgentKnowledgeSourceScope,
@@ -62,6 +63,18 @@ const knowledgeFileMaxBytes = 120_000;
 type KnowledgeCreateMode = "document" | "connector";
 type ConnectorPresetId = "dify" | "coze" | "ragflow" | "local_dify" | "local_ragflow";
 export type KnowledgeSourceFilter = "all" | "local" | "api" | "preview";
+
+function useCanManageOrgKnowledge() {
+  const auth = useOptionalAuth();
+  const role = auth?.user?.role;
+  const permissions = auth?.user?.permissions ?? [];
+  return (
+    KNOWLEDGE_ADMIN_CONTROLS_ENABLED
+    || role === "owner"
+    || role === "admin"
+    || permissions.includes("org:manage")
+  );
+}
 
 const connectorPresets: Array<{
   id: ConnectorPresetId;
@@ -349,7 +362,7 @@ function KnowledgeCreateDialog({
   const [mimeType, setMimeType] = useState<"text/plain" | "text/markdown">("text/markdown");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
-  const canCreateOrgScope = KNOWLEDGE_ADMIN_CONTROLS_ENABLED;
+  const canCreateOrgScope = useCanManageOrgKnowledge();
 
   useEffect(() => {
     if (!open) {
@@ -1231,7 +1244,7 @@ function KnowledgeSourceActions({
   const { text } = useI18n();
   const { confirm, confirmDialog } = useConfirmDialog();
   const requiresAdmin = source.scope === "org";
-  const canUseAdminControls = KNOWLEDGE_ADMIN_CONTROLS_ENABLED;
+  const canUseAdminControls = useCanManageOrgKnowledge();
   const nextScopeLabel = source.scope === "org" ? "智能体" : "组织";
   const disableSource = useMutation({
     mutationFn: () =>

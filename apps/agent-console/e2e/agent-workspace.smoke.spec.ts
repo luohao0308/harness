@@ -130,6 +130,7 @@ test.describe("Agent Workspace browser smoke", () => {
     await expect(page.getByText("Default Agent").first()).toBeVisible();
     await expect(composer(page)).toBeVisible();
     await expect(page.getByLabel("运行未创建")).toBeVisible();
+    expect(await hasNoDocumentVerticalOverflow(page)).toBe(true);
 
     await expect(
       page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
@@ -207,6 +208,20 @@ test.describe("Agent Workspace browser smoke", () => {
     await sendButton(page).click();
     await expect(page.getByRole("alert")).toContainText("无法连接 Harness 后端");
     await expect(composer(page)).toBeVisible();
+    expect(await hasNoDocumentVerticalOverflow(page)).toBe(true);
+  });
+
+  test("workspace locks page-level scrolling on compact desktop viewports", async ({ page }) => {
+    await page.setViewportSize({ width: 1640, height: 768 });
+    await openWorkspace(page);
+
+    expect(await hasNoDocumentVerticalOverflow(page)).toBe(true);
+
+    await composer(page).fill("请调用子 Agent 检查当前发布清单");
+    await sendButton(page).click();
+    await expect(page.getByRole("alert")).toContainText("无法连接 Harness 后端");
+    await expect(composer(page)).toBeVisible();
+    expect(await hasNoDocumentVerticalOverflow(page)).toBe(true);
   });
 
   test("narrow workspace keeps compact popovers inside the viewport", async ({ page }) => {
@@ -379,6 +394,17 @@ async function hasNoHorizontalOverflow(page: Page): Promise<boolean> {
   return page.evaluate(
     () => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
   );
+}
+
+async function hasNoDocumentVerticalOverflow(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const root = document.documentElement;
+    const body = document.body;
+    return (
+      root.scrollHeight <= root.clientHeight + 1 &&
+      body.scrollHeight <= window.innerHeight + 1
+    );
+  });
 }
 
 async function locatorInsideViewport(page: Page, locator: Locator): Promise<boolean> {

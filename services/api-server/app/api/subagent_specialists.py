@@ -28,6 +28,7 @@ from app.api.schemas import (
     SubagentSpecialistStats,
     SubagentSpecialistUpdateRequest,
 )
+from app.cache.query_cache import query_cache
 from app.db.models import AgentRun, SpecialistSelectionDecision, SubagentSpecialist, utc_now
 from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
@@ -128,7 +129,7 @@ def get_specialist_calibration(
             ),
             4,
         )
-    return SpecialistCalibrationReport(
+    response = SpecialistCalibrationReport(
         organization_id=principal.organization_id,
         window=window,  # type: ignore[arg-type]
         decision_count=decision_count,
@@ -136,6 +137,7 @@ def get_specialist_calibration(
         ece=ece,
         buckets=buckets,
     )
+    return response
 
 
 @router.get(
@@ -166,11 +168,15 @@ def get_subagent_specialist_stats(
 ) -> SubagentSpecialistStats:
     ensure_system_specialists(session)
     _get_visible_specialist(specialist_id, session, principal.organization_id)
+    cache_key = f"specialist_stats:{principal.organization_id}:{specialist_id}:{window}"
+    cached = query_cache.get_with_metrics(cache_key, entity="specialist_stats")
+    if cached is not None:
+        return SubagentSpecialistStats.model_validate(cached)
     try:
         stats = compute_specialist_stats(session, specialist_id, window)
     except SpecialistValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return SubagentSpecialistStats(
+    response = SubagentSpecialistStats(
         specialist_id=stats.specialist_id,
         slug=stats.slug,
         window=stats.window,  # type: ignore[arg-type]
@@ -188,6 +194,8 @@ def get_subagent_specialist_stats(
         avg_output_size_bytes=stats.avg_output_size_bytes,
         recent_failure_reasons=stats.recent_failure_reasons,
     )
+    query_cache.set(cache_key, response, ttl_seconds=60)
+    return response
 
 
 @router.patch(

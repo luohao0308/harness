@@ -1909,6 +1909,95 @@ def test_agent_workspace_chat_force_subagent_persists_inspectable_agent_run(
     assert any(event["event_type"] == "SUBAGENT_SPAWNED" for event in payload["events"])
 
 
+def test_agent_workspace_chat_auto_subagent_handles_spaced_chinese_label(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "orchestration_mode": "auto",
+            "goal": "请调用子 Agent 检查发布清单",
+            "messages": [
+                {
+                    "id": "user-auto-subagent",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "请调用子 Agent 检查发布清单",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-auto-subagent",
+            "active_branch_id": "branch-auto-subagent",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    orchestration = next(payload for event, payload in events if event == "orchestration")
+    assert orchestration["mode"] == "subagent"
+    subagent = db_session.get(AgentRun, orchestration["subagent_id"])
+    assert subagent is not None
+    assert subagent.context_json["source"] == "workspace_chat"
+
+
+def test_agent_workspace_chat_auto_subagent_uses_recent_context_for_follow_up(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "orchestration_mode": "auto",
+            "goal": "你现在调用一下",
+            "messages": [
+                {
+                    "id": "assistant-subagent-context",
+                    "parent_id": None,
+                    "children_ids": ["user-follow-up"],
+                    "role": "assistant",
+                    "content": "当前没有可供调用的子Agent。",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                },
+                {
+                    "id": "user-follow-up",
+                    "parent_id": "assistant-subagent-context",
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "你现在调用一下",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                },
+            ],
+            "active_leaf_id": "user-follow-up",
+            "active_branch_id": "branch-follow-up-subagent",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    orchestration = next(payload for event, payload in events if event == "orchestration")
+    assert orchestration["mode"] == "subagent"
+    subagent = db_session.get(AgentRun, orchestration["subagent_id"])
+    assert subagent is not None
+    assert subagent.context_json["goal"] == "你现在调用一下"
+
+
 def test_agent_workspace_pro_chat_stream_plan_mode_forces_plan_act(
     db_session: Session,
 ) -> None:

@@ -34,6 +34,189 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("email", name="users_email_uidx"),
+        Index("ix_users_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+    __table_args__ = (
+        UniqueConstraint("slug", name="organizations_slug_uidx"),
+        Index("ix_organizations_owner_user_id", "owner_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False, default="free")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class OrganizationMember(Base):
+    __tablename__ = "organization_members"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id", name="organization_members_org_user_uidx"),
+        Index("ix_organization_members_user_org", "user_id", "organization_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="member", index=True)
+    invited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OAuthAccount(Base):
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_user_id",
+            name="oauth_accounts_provider_user_uidx",
+        ),
+        Index("ix_oauth_accounts_user_provider", "user_id", "provider"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    provider_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    raw_profile_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        Index("ix_api_keys_org_prefix", "organization_id", "key_prefix"),
+        Index("ix_api_keys_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    scope_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RetentionPolicy(Base):
+    __tablename__ = "retention_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "entity_type",
+            "action",
+            name="retention_policies_scope_action_uidx",
+        ),
+        Index("ix_retention_policies_org_enabled", "organization_id", "enabled"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False, default="delete", index=True)
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    delete_after_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RetentionRun(Base):
+    __tablename__ = "retention_runs"
+    __table_args__ = (
+        Index("ix_retention_runs_policy_started", "policy_id", "started_at"),
+        Index("ix_retention_runs_org_started", "organization_id", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    policy_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    deleted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    archived_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ArchivedRecord(Base):
+    __tablename__ = "archived_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "entity_type",
+            "original_id",
+            name="archived_records_org_entity_original_uidx",
+        ),
+        Index(
+            "ix_archived_records_org_entity_archived",
+            "organization_id",
+            "entity_type",
+            "archived_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    original_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class DataExport(Base):
+    __tablename__ = "data_exports"
+    __table_args__ = (Index("ix_data_exports_org_requested", "organization_id", "requested_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    requested_by: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class OrganizationDeletionLog(Base):
+    __tablename__ = "organization_deletion_logs"
+    __table_args__ = (Index("ix_org_deletion_logs_org_deleted", "organization_id", "deleted_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    deleted_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    deleted_counts_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -1527,6 +1710,71 @@ class AlertEvent(Base):
     context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NotificationChannel(Base):
+    __tablename__ = "notification_channels"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('slack', 'email', 'webhook')",
+            name="notification_channels_kind_chk",
+        ),
+        Index("ix_notification_channels_org_kind", "organization_id", "kind"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class UserOnboardingState(Base):
+    __tablename__ = "user_onboarding_state"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "user_id",
+            name="user_onboarding_state_org_user_uidx",
+        ),
+        Index("ix_user_onboarding_state_org_completed", "organization_id", "completed"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    skipped: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    demo_loaded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provider_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True)
+    demo_task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FrontendError(Base):
+    __tablename__ = "frontend_errors"
+    __table_args__ = (
+        Index("ix_frontend_errors_org_created", "organization_id", "created_at"),
+        Index("ix_frontend_errors_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    stack: Mapped[str | None] = mapped_column(Text, nullable=True)
+    browser: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class SystemSetting(Base):

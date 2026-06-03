@@ -660,6 +660,8 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             <div className="grid gap-2 p-3">
               {(data?.plan?.steps ?? []).map((step, index) => {
                 const dependsOn = step.depends_on ?? [];
+                const toolHints = step.tool_hints ?? [];
+                const fanoutSpecialistSlugs = step.fanout_specialist_slugs ?? [];
                 return (
                 <div key={step.step_key} className="rounded-md border border-slate-100 bg-white p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -680,9 +682,9 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     {step.recommended_specialist_slug ? (
                       <Badge tone="purple">专家: {step.recommended_specialist_slug}</Badge>
                     ) : null}
-                    {step.fanout_specialist_slugs.length > 1 ? (
+                    {fanoutSpecialistSlugs.length > 1 ? (
                       <Badge tone="info">
-                        并行: {step.fanout_specialist_slugs.length} · {step.fanout_aggregation}
+                        并行: {fanoutSpecialistSlugs.length} · {step.fanout_aggregation ?? "consensus"}
                       </Badge>
                     ) : null}
                     {dependsOn.length > 0 ? (
@@ -690,7 +692,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     ) : (
                       <Badge tone="neutral">依赖: 无</Badge>
                     )}
-                    {step.tool_hints.map((tool) => (
+                    {toolHints.map((tool) => (
                       <Badge key={tool} tone="info">{tool}</Badge>
                     ))}
                   </div>
@@ -797,7 +799,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 ? (data?.subagents ?? []).map((subagent) => (
                     <div key={subagent.id} className="rounded border border-slate-100 p-2">
                       <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs">{subagent.id.slice(0, 8)}</span>
+                        <span className="min-w-0 break-all font-mono text-xs">{subagent.id}</span>
                         <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
@@ -826,6 +828,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     <span className="font-mono text-slate-900">{call.model_provider}/{call.model_name}</span>
                     <Badge tone={statusTone(call.status)}>{statusLabel(call.status)}</Badge>
                   </div>
+                  <div className="mt-1 break-all font-mono text-[11px] text-slate-500">{call.id}</div>
                   <div className="mt-1 text-slate-500">
                     {call.prompt_tokens + call.completion_tokens} 标记 · {call.duration_ms}ms
                   </div>
@@ -999,7 +1002,10 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
         <tbody>
           {toolCalls.map((call) => (
             <tr key={call.id} className="border-t border-slate-100">
-              <Td className="font-mono">{call.tool_name}</Td>
+              <Td className="font-mono">
+                <div>{call.tool_name}</div>
+                <div className="mt-1 max-w-40 break-all text-[11px] text-slate-500">{call.id}</div>
+              </Td>
               <Td><Badge tone={statusTone(call.status)}>{statusLabel(call.status)}</Badge></Td>
               <Td>{riskLabel(call.risk_level)}</Td>
               <Td>

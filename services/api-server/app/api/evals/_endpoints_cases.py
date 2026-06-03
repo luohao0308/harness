@@ -6,6 +6,9 @@ from .aggregations import *
 from .graders import *
 from .helpers import *
 from .regression import *
+from app.api.pagination import cursor_paginate
+from app.cache.invalidation import bump_entity_version, entity_version
+from app.cache.query_cache import query_cache
 
 
 @router.post(
@@ -30,6 +33,12 @@ def create_eval_dataset(
         updated_at=utc_now(),
     )
     session.add(dataset)
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="eval_datasets",
+        updated_by=principal.user_id,
+    )
     session.flush()
     _audit(
         session,
@@ -55,21 +64,39 @@ def list_eval_datasets(
     session: DbSession,
     principal: Principal,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
 ) -> EvalDatasetPage:
-    datasets = list(
-        session.execute(
-            select(EvalDataset)
-            .where(EvalDataset.organization_id == principal.organization_id)
-            .order_by(EvalDataset.created_at.desc())
-            .limit(limit)
-        ).scalars()
+    version = entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="eval_datasets",
     )
+    cache_key = (
+        f"eval_datasets:v{version}:{principal.organization_id}:"
+        f"list:{limit}:{cursor or 'first'}"
+    )
+    cached = query_cache.get_with_metrics(cache_key, entity="eval_datasets")
+    if cached is not None:
+        return EvalDatasetPage.model_validate(cached)
+    page = cursor_paginate(
+        session=session,
+        statement=select(EvalDataset).where(
+            EvalDataset.organization_id == principal.organization_id
+        ),
+        model=EvalDataset,
+        cursor=cursor,
+        limit=limit,
+    )
+    datasets = page.items
     counts = _case_counts(session, [dataset.id for dataset in datasets])
-    return EvalDatasetPage(
+    response = EvalDatasetPage(
         items=[
             _dataset_response(dataset, case_count=counts.get(dataset.id, 0)) for dataset in datasets
-        ]
+        ],
+        next_cursor=page.next_cursor,
     )
+    query_cache.set(cache_key, response, ttl_seconds=60)
+    return response
 
 
 @router.post(
@@ -97,6 +124,12 @@ def create_eval_case(
     )
     session.add(eval_case)
     dataset.updated_at = utc_now()
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="eval_datasets",
+        updated_by=principal.user_id,
+    )
     session.flush()
     _audit(
         session,
@@ -179,6 +212,12 @@ def create_eval_case_from_run(
     )
     session.add(eval_case)
     dataset.updated_at = utc_now()
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="eval_datasets",
+        updated_by=principal.user_id,
+    )
     session.flush()
     EventStore(session).append(
         task_id=task.id,

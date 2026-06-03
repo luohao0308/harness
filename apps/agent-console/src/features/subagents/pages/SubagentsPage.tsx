@@ -304,9 +304,9 @@ export function SubagentsPage() {
                   <Td>
                     <Link
                       to={`/subagents/${subagent.id}`}
-                      className="font-mono text-xs text-slate-900 hover:text-slate-950"
+                      className="break-all font-mono text-xs text-slate-900 hover:text-slate-950"
                     >
-                      {subagent.id.slice(0, 8)}
+                      {subagent.id}
                     </Link>
                     <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-slate-500">
                       {contextSummary(subagent.context_json)}

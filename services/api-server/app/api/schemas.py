@@ -2062,6 +2062,111 @@ class AlertEventPage(BaseModel):
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
+class NotificationChannelCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128, description="通道名称")
+    kind: Literal["slack", "email", "webhook"] = Field(description="通道类型")
+    config_json: dict = Field(default_factory=dict, description="通道配置")
+    verified: bool = Field(default=False, description="是否已验证")
+
+
+class NotificationChannelUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128, description="通道名称")
+    kind: Literal["slack", "email", "webhook"] | None = Field(default=None, description="通道类型")
+    config_json: dict | None = Field(default=None, description="通道配置")
+    verified: bool | None = Field(default=None, description="是否已验证")
+
+
+class NotificationChannelResponse(BaseModel):
+    id: str = Field(description="通道 ID")
+    organization_id: str = Field(description="组织 ID")
+    name: str = Field(description="通道名称")
+    kind: str = Field(description="通道类型")
+    config_json: dict = Field(description="脱敏后的通道配置")
+    verified: bool = Field(description="是否已验证")
+    created_by: str | None = Field(default=None, description="创建者")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationChannelPage(BaseModel):
+    items: list[NotificationChannelResponse] = Field(description="通知通道")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class OnboardingStateResponse(BaseModel):
+    id: str = Field(description="状态 ID")
+    organization_id: str = Field(description="组织 ID")
+    user_id: str = Field(description="用户 ID")
+    current_step: int = Field(description="当前步骤")
+    completed: bool = Field(description="是否完成")
+    skipped: bool = Field(description="是否跳过")
+    demo_loaded: bool = Field(description="Demo 是否已加载")
+    provider_json: dict = Field(description="供应商配置摘要")
+    agent_id: str | None = Field(default=None, description="首个 Agent ID")
+    demo_task_id: str | None = Field(default=None, description="Demo Run ID")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OnboardingStateUpdateRequest(BaseModel):
+    current_step: int | None = Field(default=None, ge=1, le=4, description="当前步骤")
+    skipped: bool | None = Field(default=None, description="是否跳过")
+    provider_json: dict | None = Field(default=None, description="供应商配置摘要")
+    agent_id: str | None = Field(default=None, description="首个 Agent ID")
+    demo_task_id: str | None = Field(default=None, description="Demo Run ID")
+
+
+class OnboardingCompleteRequest(BaseModel):
+    agent_id: str | None = Field(default=None, description="首个 Agent ID")
+    demo_task_id: str | None = Field(default=None, description="Demo Run ID")
+
+
+class DemoLoadResponse(BaseModel):
+    status: Literal["loaded", "already_loaded", "reset"] = Field(description="Demo 操作状态")
+    agent_ids: list[str] = Field(default_factory=list, description="Demo Agent ID")
+    knowledge_source_ids: list[str] = Field(default_factory=list, description="Demo 知识源 ID")
+    dataset_id: str | None = Field(default=None, description="Demo Eval Dataset ID")
+    task_id: str | None = Field(default=None, description="Demo Run ID")
+    specialist_ids: list[str] = Field(default_factory=list, description="Demo 专家 ID")
+    demo_loaded: bool = Field(description="Demo 是否已加载")
+
+
+class DemoResetRequest(BaseModel):
+    confirm_token: str = Field(description="确认 token，必须是 reset-demo-data")
+
+
+class FrontendErrorCreateRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048, description="前端 URL")
+    error_message: str = Field(min_length=1, max_length=4000, description="错误信息")
+    stack: str | None = Field(default=None, max_length=12000, description="错误堆栈")
+    browser: str = Field(default="", max_length=1000, description="浏览器 UA")
+    metadata_json: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class FrontendErrorResponse(BaseModel):
+    id: str = Field(description="错误 ID")
+    organization_id: str = Field(description="组织 ID")
+    user_id: str = Field(description="用户 ID")
+    url: str = Field(description="前端 URL")
+    error_message: str = Field(description="错误信息")
+    stack: str | None = Field(default=None, description="错误堆栈")
+    browser: str = Field(description="浏览器 UA")
+    metadata_json: dict = Field(description="附加元数据")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FrontendErrorPage(BaseModel):
+    items: list[FrontendErrorResponse] = Field(description="前端错误")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
 class GrafanaDashboardResponse(BaseModel):
     uid: str = Field(description="Dashboard UID")
     title: str = Field(description="Dashboard 标题")
@@ -2395,6 +2500,7 @@ class CapabilityPackageResponse(BaseModel):
 
 class CapabilityPackagePage(BaseModel):
     items: list[CapabilityPackageResponse] = Field(description="Capability packages")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
 class CapabilityPackageAttachResponse(BaseModel):
@@ -2877,3 +2983,196 @@ class PolicySettingsResponse(BaseModel):
         default=False,
         description="Enable authoritative backend context assembly v2",
     )
+
+
+class AuthRegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320, description="Email")
+    password: str = Field(min_length=8, description="Password")
+    name: str = Field(min_length=1, description="Display name")
+    organization_name: str | None = Field(default=None, description="Personal org name")
+
+
+class AuthLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320, description="Email")
+    password: str = Field(min_length=1, description="Password")
+    organization_id: str | None = Field(default=None, description="Optional org selector")
+
+
+class AuthRefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, description="Refresh token")
+    organization_id: str | None = Field(default=None, description="Optional target org selector")
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str = Field(description="JWT access token")
+    refresh_token: str = Field(description="JWT refresh token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(description="Access token TTL seconds")
+
+
+class OrganizationSummary(BaseModel):
+    id: str = Field(description="Organization ID")
+    name: str = Field(description="Organization name")
+    slug: str = Field(description="Organization slug")
+    role: str = Field(description="Current user role")
+
+
+class AuthMeResponse(BaseModel):
+    user_id: str = Field(description="User ID")
+    email: str = Field(description="Email")
+    name: str = Field(description="Display name")
+    organization_id: str = Field(description="Current organization ID")
+    role: str = Field(description="Current RBAC role")
+    permissions: list[str] = Field(description="Granted permissions")
+    organizations: list[OrganizationSummary] = Field(description="User workspaces")
+
+
+class OAuthStartResponse(BaseModel):
+    provider: str = Field(description="OAuth provider")
+    authorization_url: str = Field(description="Provider authorization URL")
+    state: str = Field(description="Opaque state value")
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, description="API key name")
+    scopes: list[str] = Field(default_factory=list, description="Permission scopes")
+    expires_at: datetime | None = Field(default=None, description="Expiration time")
+
+
+class ApiKeyResponse(BaseModel):
+    id: str = Field(description="API key ID")
+    organization_id: str = Field(description="Organization ID")
+    user_id: str = Field(description="Creator user ID")
+    name: str = Field(description="API key name")
+    key_prefix: str = Field(description="Visible key prefix")
+    scope_json: list[str] = Field(description="Permission scopes")
+    expires_at: datetime | None = Field(default=None, description="Expiration time")
+    last_used_at: datetime | None = Field(default=None, description="Last used time")
+    created_at: datetime = Field(description="Created time")
+    revoked_at: datetime | None = Field(default=None, description="Revoked time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ApiKeyCreateResponse(ApiKeyResponse):
+    key: str = Field(description="Plaintext key shown once")
+
+
+class UserMemberResponse(BaseModel):
+    membership_id: str = Field(description="Membership ID")
+    user_id: str = Field(description="User ID")
+    email: str = Field(description="Email")
+    name: str = Field(description="Display name")
+    role: str = Field(description="Org role")
+    invited_at: datetime | None = Field(default=None, description="Invited time")
+    accepted_at: datetime | None = Field(default=None, description="Accepted time")
+    status: str = Field(description="User status")
+
+
+class UserInviteRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320, description="Invitee email")
+    name: str | None = Field(default=None, description="Invitee display name")
+    role: Literal["admin", "member", "viewer"] = Field(default="member")
+
+
+class UserRoleUpdateRequest(BaseModel):
+    role: Literal["admin", "member", "viewer"] = Field(description="New role")
+
+
+class AuditEventResponse(BaseModel):
+    id: str = Field(description="Audit event ID")
+    organization_id: str | None = Field(default=None, description="Organization ID")
+    actor_id: str | None = Field(default=None, description="Actor ID")
+    event_type: str = Field(description="Event type")
+    resource_type: str = Field(description="Resource type")
+    resource_id: str = Field(description="Resource ID")
+    action: str = Field(description="Action")
+    payload_json: dict = Field(description="Payload")
+    created_at: datetime = Field(description="Created time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AuditEventPage(BaseModel):
+    items: list[AuditEventResponse] = Field(description="Audit events")
+    next_cursor: str | None = Field(default=None, description="Next cursor")
+
+
+class RetentionPolicyResponse(BaseModel):
+    id: str = Field(description="Policy ID")
+    organization_id: str | None = Field(default=None, description="Organization ID")
+    entity_type: str = Field(description="Entity type")
+    action: str = Field(description="Retention action")
+    retention_days: int | None = Field(default=None, description="Retention days")
+    delete_after_days: int | None = Field(default=None, description="Archive delete-after days")
+    enabled: bool = Field(description="Enabled")
+    created_at: datetime = Field(description="Created time")
+    updated_at: datetime = Field(description="Updated time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RetentionPolicyPage(BaseModel):
+    items: list[RetentionPolicyResponse] = Field(description="Retention policies")
+
+
+class RetentionPolicyUpdateRequest(BaseModel):
+    retention_days: int | None = Field(default=None, ge=1, le=3650)
+    delete_after_days: int | None = Field(default=None, ge=1, le=3650)
+    enabled: bool | None = Field(default=None)
+
+
+class RetentionRunResponse(BaseModel):
+    id: str = Field(description="Retention run ID")
+    policy_id: str | None = Field(default=None, description="Policy ID")
+    organization_id: str | None = Field(default=None, description="Organization ID")
+    entity_type: str = Field(description="Entity type")
+    action: str = Field(description="Action")
+    deleted_count: int = Field(description="Deleted count")
+    archived_count: int = Field(description="Archived count")
+    started_at: datetime = Field(description="Started time")
+    finished_at: datetime | None = Field(default=None, description="Finished time")
+    error_message: str | None = Field(default=None, description="Error")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RetentionRunPage(BaseModel):
+    items: list[RetentionRunResponse] = Field(description="Retention runs")
+
+
+class DataExportResponse(BaseModel):
+    id: str = Field(description="Export ID")
+    organization_id: str = Field(description="Organization ID")
+    requested_by: str = Field(description="Requester")
+    status: str = Field(description="Status")
+    requested_at: datetime = Field(description="Requested time")
+    completed_at: datetime | None = Field(default=None, description="Completed time")
+    file_path: str | None = Field(default=None, description="Local file path")
+    file_sha256: str | None = Field(default=None, description="File SHA256")
+    size_bytes: int = Field(description="File size")
+    expires_at: datetime | None = Field(default=None, description="Expiration")
+    error_message: str | None = Field(default=None, description="Error")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DataExportPage(BaseModel):
+    items: list[DataExportResponse] = Field(description="Data exports")
+
+
+class OrganizationDeletionPreviewResponse(BaseModel):
+    organization_id: str = Field(description="Organization ID")
+    organization_name: str = Field(description="Organization name")
+    counts: dict[str, int] = Field(description="Affected row counts")
+    confirmation_name: str = Field(description="Name required for confirmation")
+
+
+class OrganizationDeleteRequest(BaseModel):
+    confirmation_name: str = Field(min_length=1, description="Organization name confirmation")
+
+
+class OrganizationDeletionResponse(BaseModel):
+    organization_id: str = Field(description="Organization ID")
+    status: str = Field(description="Deletion status")
+    deleted_counts_json: dict[str, int] = Field(description="Deleted counts")

@@ -10,6 +10,9 @@ from ._session_helpers import *
 from ._tool_helpers import *
 from ._workspace_chat_helpers import *
 from ._workspace_response_helpers import *
+from app.api.pagination import cursor_paginate
+from app.cache.invalidation import bump_entity_version, entity_version
+from app.cache.query_cache import query_cache
 
 @router.get(
     "",
@@ -17,12 +20,36 @@ from ._workspace_response_helpers import *
     summary="查询 Agent 注册表",
     description="返回组织内可用的具名 Agent。默认 preset 会自动初始化。",
 )
-def list_agents(session: DbSession, principal: Principal) -> AgentPage:
+def list_agents(
+    session: DbSession,
+    principal: Principal,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
+) -> AgentPage:
     require_role(principal, {"admin", "engineer", "operator"})
     ensure_default_agents(session, principal.organization_id)
     session.commit()
-    agents = list(session.execute(select(Agent).order_by(Agent.id.asc())).scalars())
-    return AgentPage(items=[_agent_response(agent, session=session) for agent in agents])
+    version = entity_version(session, organization_id=principal.organization_id, entity="agents")
+    cache_key = f"agents:v{version}:{principal.organization_id}:list:{limit}:{cursor or 'first'}"
+    cached = query_cache.get_with_metrics(cache_key, entity="agents")
+    if cached is not None:
+        return AgentPage.model_validate(cached)
+    page = cursor_paginate(
+        session=session,
+        statement=select(Agent).where(
+            or_(Agent.organization_id == principal.organization_id, Agent.organization_id.is_(None))
+        ),
+        model=Agent,
+        cursor=cursor,
+        limit=limit,
+        descending=False,
+    )
+    response = AgentPage(
+        items=[_agent_response(agent, session=session) for agent in page.items],
+        next_cursor=page.next_cursor,
+    )
+    query_cache.set(cache_key, response, ttl_seconds=300)
+    return response
 
 
 @router.post(
@@ -58,6 +85,12 @@ def create_agent_definition(
         updated_at=now,
     )
     session.add(agent)
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="agents",
+        updated_by=principal.user_id,
+    )
     session.commit()
     session.refresh(agent)
     return _agent_response(agent, session=session)
@@ -97,6 +130,12 @@ def clone_agent_definition(
         updated_at=now,
     )
     session.add(clone)
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="agents",
+        updated_by=principal.user_id,
+    )
     session.commit()
     session.refresh(clone)
     return _agent_response(clone, session=session)
@@ -147,6 +186,12 @@ def attach_agent_capability(
     if legacy_tool_name and legacy_tool_name not in agent.tools_json:
         agent.tools_json = [*agent.tools_json, legacy_tool_name]
     agent.updated_at = utc_now()
+    bump_entity_version(
+        session,
+        organization_id=principal.organization_id,
+        entity="agents",
+        updated_by=principal.user_id,
+    )
     session.commit()
     return AgentCapabilityAttachmentResponse(
         status="attached",

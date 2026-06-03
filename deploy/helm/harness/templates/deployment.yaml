@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harness-api
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: harness-api
+  template:
+    metadata:
+      labels:
+        app: harness-api
+    spec:
+      containers:
+        - name: api
+          image: {{ .Values.image.api }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "30"]
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: harness-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: redis-url
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: auth-jwt-secret
+            - name: HARNESS_INITIAL_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: initial-admin-email
+            - name: HARNESS_INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: initial-admin-password
+            - name: MODEL_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: model-gateway-api-key
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: deepseek-api-key
+          livenessProbe:
+            httpGet:
+              path: /api/health/liveness
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health/readiness
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+{{ toYaml .Values.resources.api | indent 12 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harness-console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harness-console
+  template:
+    metadata:
+      labels:
+        app: harness-console
+    spec:
+      containers:
+        - name: console
+          image: {{ .Values.image.console }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 80

@@ -111,3 +111,14 @@ model_fallback_total = Counter(
     "Model fallback attempts.",
     ["primary_provider", "fallback_provider"],
 )
+
+query_cache_hit_total = Counter(
+    "query_cache_hit_total",
+    "Query result cache hits.",
+    ["entity"],
+)
+query_cache_miss_total = Counter(
+    "query_cache_miss_total",
+    "Query result cache misses.",
+    ["entity"],
+)

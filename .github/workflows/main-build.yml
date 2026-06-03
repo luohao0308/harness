@@ -1,0 +1,108 @@
+name: Main Build
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/harness
+
+jobs:
+  build-image-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/api-server
+          file: services/api-server/Dockerfile.production
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-api:sha-${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-api:latest
+
+  build-image-console:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push console image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/agent-console
+          file: apps/agent-console/Dockerfile.production
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-console:sha-${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-console:latest
+
+  helm-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Package chart
+        run: |
+          helm lint deploy/helm/harness
+          helm package deploy/helm/harness --destination dist/helm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harness-helm-chart
+          path: dist/helm/*.tgz
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs:
+      - build-image-api
+      - build-image-console
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose config
+        run: docker compose -f compose.ci.yml config
+      - name: Build and boot CI stack
+        run: |
+          docker compose -f compose.ci.yml up --build -d
+          timeout 120 bash -c 'until curl -fsS http://127.0.0.1:18080/api/health/readiness; do sleep 3; done'
+          curl -fsS http://127.0.0.1:18081/ >/dev/null
+      - name: Cleanup
+        if: always()
+        run: docker compose -f compose.ci.yml down -v
+
+  notify-slack:
+    runs-on: ubuntu-latest
+    needs:
+      - build-image-api
+      - build-image-console
+      - helm-package
+      - smoke-test
+    if: always() && secrets.SLACK_WEBHOOK_URL != ''
+    steps:
+      - name: Notify Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RESULT: ${{ needs.smoke-test.result }}
+          SHA: ${{ github.sha }}
+        run: |
+          curl -fsS -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'content-type: application/json' \
+            -d "{\"text\":\"Harness main build ${RESULT} for ${SHA}\"}"

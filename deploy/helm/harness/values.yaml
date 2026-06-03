@@ -1,0 +1,67 @@
+replicaCount: 2
+
+image:
+  api: agent-harness-api-server:latest
+  console: agent-harness-console:latest
+  pullPolicy: IfNotPresent
+
+canary:
+  enabled: false
+  weight: 5
+  image:
+    api: agent-harness-api-server:latest
+    console: agent-harness-console:latest
+
+ingress:
+  enabled: true
+  host: harness.local
+  className: nginx
+  tlsSecretName: harness-tls
+
+env:
+  appEnv: production
+  apiBaseUrl: https://harness.local
+  consoleBaseUrl: https://harness.local
+  websiteBaseUrl: https://harness.local
+  modelGatewayBaseUrl: http://harness-api:8000/mock-model
+  modelGatewayApiKey: replace-me
+  deepseekApiKey: ""
+  postgresUser: agent
+  postgresPassword: agent
+  postgresDb: agent_harness
+  redisPassword: agent-redis
+
+auth:
+  # Generate with: openssl rand -hex 32
+  jwtSecret: replace-with-openssl-rand-hex-32
+  initialAdmin:
+    # Used only when the users table is empty; remove after first successful boot.
+    email: ""
+    password: ""
+
+postgres:
+  host: postgres
+  port: 5432
+
+redis:
+  host: redis
+  port: 6379
+
+resources:
+  api:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  cpuAverageUtilization: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1

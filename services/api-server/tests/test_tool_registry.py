@@ -111,6 +111,75 @@ def test_tool_registry_exposes_builtin_and_mcp_tools() -> None:
     assert mcp_tool["mcp_method"] == "context.search"
 
 
+def test_builtin_capability_registration_versions_changed_seed_metadata(
+    db_session: Session,
+) -> None:
+    old_metadata = {
+        "name": "mcp_artifact_put",
+        "description": "通过 MCP Adapter 写入任务 Artifact 记录。",
+        "category": "mcp",
+        "source": "mcp",
+        "risk_level": "medium",
+        "requires_sandbox": False,
+        "network_policy": "none",
+        "timeout_seconds": 30,
+        "allowed_roles": ["admin", "engineer"],
+        "audit_level": "elevated",
+        "idempotent": False,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["name", "content"],
+        },
+        "mcp_server": "local-artifacts",
+        "mcp_method": "artifact.put",
+    }
+    old_content = {"tool_metadata": old_metadata}
+    old_config = {"secret_ref": None, "secret_scope": None, "source": "mcp"}
+    old_content_sha = capabilities_module.stable_json_sha256(old_content)
+    old_config_sha = capabilities_module.stable_json_sha256(old_config)
+    capability = Capability(
+        organization_id=None,
+        capability_key="tool:mcp_artifact_put",
+        type="mcp_tool",
+        status="active",
+        schema_version=1,
+    )
+    db_session.add(capability)
+    db_session.flush()
+    old_version = CapabilityVersion(
+        id="mcp_artifact_put:legacy-seed",
+        capability_id=capability.id,
+        version=1,
+        type="mcp_tool",
+        status="active",
+        content_json=old_content,
+        config_json=old_config,
+        content_sha256=old_content_sha,
+        config_sha256=old_config_sha,
+        schema_version=1,
+    )
+    db_session.add(old_version)
+    db_session.flush()
+    capability.current_version_id = old_version.id
+    db_session.flush()
+
+    version = CapabilityRegistry(db_session, None).ensure_builtin_capabilities()[
+        "mcp_artifact_put"
+    ]
+
+    versions = db_session.execute(
+        select(CapabilityVersion).where(CapabilityVersion.capability_id == capability.id)
+    ).scalars().all()
+    assert len(versions) == 2
+    assert version.version == 2
+    assert version.id != old_version.id
+    assert db_session.get(Capability, capability.id).current_version_id == version.id
+
+
 def test_agent_scoped_tool_registry_reflects_attached_marketplace_mcp(
     db_session: Session,
     monkeypatch,

@@ -5,11 +5,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.agents import router as agents_router
+from app.api.api_keys import router as api_keys_router
+from app.api.audit import router as audit_router
+from app.api.auth import router as auth_router
+from app.api.data_management import router as data_management_router
+from app.api.demo import router as demo_router
 from app.api.evals import router as evals_router
 from app.api.events import router as events_router
+from app.api.frontend_errors import router as frontend_errors_router
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.observability import router as observability_router
+from app.api.onboarding import router as onboarding_router
+from app.api.retention import router as retention_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.settings import router as settings_router
 from app.api.subagent_marketplace import router as subagent_marketplace_router
@@ -18,9 +26,13 @@ from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
 from app.api.teams import router as teams_router
 from app.api.tools import router as tools_router
-from app.core.config import get_settings
+from app.api.users import router as users_router
+from app.bootstrap.first_admin import bootstrap_first_admin
+from app.core.config import get_settings, validate_startup_settings
 from app.core.logging import configure_json_logging
 from app.core.tracing import OpenTelemetryTraceMiddleware
+from app.db.session import SessionLocal
+from app.security.auth import log_dev_token_status
 from app.tools.adapter_registry import REGISTRY
 from app.tools.adapters import ensure_builtin_adapters_registered
 
@@ -28,6 +40,7 @@ configure_json_logging()
 settings = get_settings()
 
 DEV_CONSOLE_PORTS = tuple(range(5173, 5180)) + (15174,)
+DEV_CORS_ENVIRONMENTS = {"development", "test"}
 
 
 def build_cors_origins() -> list[str]:
@@ -46,7 +59,7 @@ def build_cors_origins() -> list[str]:
         netloc = parsed.netloc.replace(parsed.hostname or "", alias, 1)
         origins.add(urlunsplit((parsed.scheme, netloc, "", "", "")))
 
-    if settings.app_env == "development":
+    if settings.app_env in DEV_CORS_ENVIRONMENTS:
         for host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]"):
             for port in DEV_CONSOLE_PORTS:
                 origins.add(f"http://{host}:{port}")
@@ -55,7 +68,7 @@ def build_cors_origins() -> list[str]:
 
 
 def build_cors_origin_regex() -> str | None:
-    if settings.app_env != "development":
+    if settings.app_env not in DEV_CORS_ENVIRONMENTS:
         return None
 
     ports = "|".join(str(port) for port in DEV_CONSOLE_PORTS)
@@ -70,14 +83,68 @@ def build_cors_origin_regex() -> str | None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    startup_settings = get_settings()
+    validate_startup_settings(startup_settings)
+    log_dev_token_status(startup_settings)
     ensure_builtin_adapters_registered(REGISTRY)
-    yield
+    with SessionLocal() as session:
+        bootstrap_first_admin(session, settings=startup_settings)
+    try:
+        yield
+    finally:
+        _app.state.accepting_sse = False
 
 
 app = FastAPI(
-    title="企业级 AI Agent Harness API",
+    title="Harness API",
     version="0.1.0",
-    description="用于企业级 AI Agent Harness 平台的任务、事件、沙箱、审计和设置 API。",
+    summary="AI Harness Platform API",
+    description=(
+        "AI Harness Platform - Model + Harness = Agent. "
+        "This API powers Agent configuration, Workspace runs, tools, MCP, knowledge, "
+        "Eval, Observability, RBAC, retention, and deployment operations."
+    ),
+    contact={
+        "name": "Harness Platform Maintainers",
+        "url": "https://github.com/example/harness",
+    },
+    license_info={"name": "MIT"},
+    openapi_tags=[
+        {
+            "name": "agents",
+            "description": "Agent Studio, Workspace, memory, runs, and manifests.",
+        },
+        {
+            "name": "tools",
+            "description": "Tool Registry, MCP, adapters, capabilities, and approvals.",
+        },
+        {
+            "name": "evals",
+            "description": "Datasets, Eval Runs, contracts, regression gates, and graders.",
+        },
+        {
+            "name": "observability",
+            "description": "Cost, traces, alerts, logs, exports, and service health.",
+        },
+        {
+            "name": "auth",
+            "description": "Authentication, OAuth entrypoints, and current principal.",
+        },
+        {"name": "users", "description": "Organization user and role management."},
+        {"name": "api-keys", "description": "API key lifecycle for automation clients."},
+        {"name": "audit", "description": "Organization audit log and export surfaces."},
+        {"name": "data-management", "description": "Retention, export, and deletion operations."},
+        {"name": "sandboxes", "description": "Sandbox, WarmPool, quota, and runtime isolation."},
+        {"name": "teams", "description": "Team Mode rooms, agents, mailbox, tasks, and events."},
+        {
+            "name": "subagent-specialists",
+            "description": "Specialist templates, stats, and calibration.",
+        },
+        {
+            "name": "subagent-marketplace",
+            "description": "Signed specialist sharing and installation.",
+        },
+    ],
     lifespan=lifespan,
 )
 
@@ -106,8 +173,17 @@ except ImportError:
 
 app.include_router(health_router)
 app.include_router(metrics_router)
+app.include_router(auth_router, prefix="/api")
+app.include_router(api_keys_router, prefix="/api")
+app.include_router(audit_router, prefix="/api")
+app.include_router(data_management_router, prefix="/api")
+app.include_router(retention_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
 app.include_router(agents_router, prefix="/api")
 app.include_router(evals_router, prefix="/api")
+app.include_router(demo_router, prefix="/api")
+app.include_router(frontend_errors_router, prefix="/api")
+app.include_router(onboarding_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")

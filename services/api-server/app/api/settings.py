@@ -16,6 +16,8 @@ from app.api.schemas import (
     ModelFallbackEventItem,
     ModelFallbackSummaryResponse,
     ModelHealthPage,
+    ModelPricingSourceItem,
+    ModelPricingSourcePage,
     ModelSettingsResponse,
     PolicySettingsResponse,
 )
@@ -23,6 +25,11 @@ from app.db.models import AdminAuditEvent, AgentEvent, ModelCall, SystemSetting,
 from app.db.session import get_db_session
 from app.events.event_types import EventType
 from app.security.auth import AuthenticatedPrincipal, Principal, require_role
+from app.settings.model_pricing_sources import (
+    SOURCE_BLOCKING_STATUSES,
+    list_model_pricing_sources,
+    load_model_pricing_source_document,
+)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -243,6 +250,30 @@ def get_model_fallbacks(
         ],
         recent_events=[
             _model_fallback_event_item(event) for event in fallback_events[:capped_limit]
+        ],
+    )
+
+
+@router.get(
+    "/models/pricing-sources",
+    response_model=ModelPricingSourcePage,
+    summary="查询内置模型价格官方来源",
+    description="返回内置模型价格、官方来源、校验状态和企业成本门禁状态。",
+)
+def get_model_pricing_sources(principal: Principal) -> ModelPricingSourcePage:
+    document = load_model_pricing_source_document()
+    rows = list_model_pricing_sources()
+    return ModelPricingSourcePage(
+        schema_version=document.schema_version,
+        retrieved_at=document.retrieved_at,
+        parser_version=document.parser_version,
+        blocking_statuses=sorted(SOURCE_BLOCKING_STATUSES),
+        items=[
+            ModelPricingSourceItem(
+                **row.model_dump(),
+                blocks_usd_rollup=row.blocks_usd_rollup(),
+            )
+            for row in rows
         ],
     )
 

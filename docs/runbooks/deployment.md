@@ -23,6 +23,20 @@ Use the compose-specific env template for private handoff:
 cp deploy/docker-compose/.env.example deploy/docker-compose/.env
 ```
 
+Before starting any API container, replace the example auth secret:
+
+```bash
+AUTH_JWT_SECRET="$(openssl rand -hex 32)"
+```
+
+Write that value to `deploy/docker-compose/.env`. The placeholder
+`replace-with-openssl-rand-hex-32` is intentionally rejected at API startup.
+For an empty database, set `HARNESS_INITIAL_ADMIN_EMAIL` and
+`HARNESS_INITIAL_ADMIN_PASSWORD` for the first boot only. Remove or clear those
+two bootstrap variables after the first successful login and restart the API.
+Details and the CLI fallback live in
+[First-Run Admin Runbook](./first-run-admin.md).
+
 Key defaults:
 
 ```text
@@ -36,7 +50,10 @@ Loki: http://127.0.0.1:3100
 Tempo: http://127.0.0.1:3200
 ```
 
-`DEEPSEEK_API_KEY` may stay empty for local mock-model fallback validation. Use a real key only when validating real model-provider behavior.
+`APP_ENV` defaults to `production` for the compose handoff so dev bearer tokens
+are rejected. Set `APP_ENV=development` only for local development diagnostics.
+`DEEPSEEK_API_KEY` may stay empty for local mock-model fallback validation. Use
+a real key only when validating real model-provider behavior.
 
 If a default host port is already occupied, override the matching `*_HTTP_PORT` and public URL values in `deploy/docker-compose/.env` before building. Example:
 
@@ -78,6 +95,15 @@ This command is the first gate. Do not start the stack until it exits 0.
 Before deploying a branch with new Alembic migrations, run the full migration
 chain against PostgreSQL. SQLite is not a sufficient pre-flight for production
 schema changes because it can miss type-width issues.
+
+Run the migration id lint before the PostgreSQL pre-flight:
+
+```bash
+python3 scripts/check-migration-ids.py services/api-server/alembic/versions
+```
+
+Identifier-width rules are documented in
+[Migration Conventions](./migration-conventions.md).
 
 One-command local check:
 
@@ -139,12 +165,27 @@ When using overrides, the same rule applies to the overridden values: Console on
 
 ### Prove The Harness Chain
 
+Log in and export real JWTs for production-mode smoke tests:
+
+```bash
+LOGIN_JSON="$(curl --noproxy '*' -sS http://127.0.0.1:8000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@example.com","password":"replace-with-bootstrap-password"}')"
+export HARNESS_AUTH_TOKEN="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$LOGIN_JSON")"
+export HARNESS_ADMIN_TOKEN="$HARNESS_AUTH_TOKEN"
+export HARNESS_OPERATOR_TOKEN="$HARNESS_AUTH_TOKEN"
+```
+
 ```bash
 python3 scripts/smoke-test-docker.py
 python3 scripts/smoke-test-agent-run.py
 ```
 
-`scripts/smoke-test-docker.py` validates the compose-level service chain. `scripts/smoke-test-agent-run.py` is the canonical product smoke: it must prove the Agent Run path and required run/task/event/tool/sandbox/subagent/eval/observability correlation.
+`scripts/smoke-test-docker.py` validates the compose-level service chain.
+`scripts/smoke-test-agent-run.py` is the canonical product smoke: it must prove
+the Agent Run path and required run/task/event/tool/sandbox/subagent/eval/
+observability correlation. In `APP_ENV=development` only, these scripts fall
+back to the legacy dev tokens when `HARNESS_*_TOKEN` variables are absent.
 
 ### P7 Knowledge Demo And Restore Smoke
 
@@ -157,7 +198,7 @@ python3 scripts/seed-knowledge-demo.py --print-plan
 
 HARNESS_API_BASE_URL=http://127.0.0.1:8000 \
 HARNESS_DEMO_AGENT_ID=default \
-HARNESS_ADMIN_TOKEN=dev-admin-token \
+HARNESS_ADMIN_TOKEN="$HARNESS_ADMIN_TOKEN" \
 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent
 ```
 
@@ -177,6 +218,23 @@ python3 scripts/smoke-test-knowledge-migration-restore.py --allow-service-db-mut
 ```
 
 This smoke checks the Knowledge/RAG migration surface and selector continuity for retrieval hits and citations after engine reopen. It does not require full Docker Compose. Full Compose startup remains the private handoff path above, and a full Compose migration/restore profile should stay manual or nightly unless a later release plan changes that boundary.
+
+### P1 Production Deployment Hardening
+
+P1 adds the first production deployment profile without changing the product boundary:
+
+- `compose.production.yml` wraps the API behind Caddy with HTTPS and long-lived SSE proxying.
+- `GET /api/health/liveness` is the process-only probe.
+- `GET /api/health/readiness` checks Postgres, Redis, and LLM provider health.
+- `scripts/backup-postgres.sh` and `scripts/restore-postgres.sh` cover daily backup and restore.
+- `deploy/helm/harness/` provides a minimal Helm chart with ingress, migration job, HPA, and PDB.
+
+The production profile expects explicit secrets for `POSTGRES_PASSWORD`,
+`REDIS_PASSWORD`, `AUTH_JWT_SECRET`, and `HARNESS_DOMAIN`. It is intentionally
+narrower than the dev compose path and keeps graceful shutdown plus frontend
+reconnect as the user-facing fallback for SSE interruption. Console production
+builds do not embed dev bearer tokens unless `CONSOLE_DEV_TOKEN` or
+`CONSOLE_DEV_ADMIN_TOKEN` is explicitly set for a development-only diagnostic.
 
 The browser release gate includes a mocked P7 Knowledge demo projection:
 
@@ -262,6 +320,10 @@ Environment:
 ```bash
 cp .env.example /opt/agent-harness/shared/.env
 ```
+
+Replace `AUTH_JWT_SECRET` and, for an empty database, set the first-run admin
+bootstrap variables in `/opt/agent-harness/shared/.env` before startup. The API
+will reject the placeholder secret.
 
 Start:
 

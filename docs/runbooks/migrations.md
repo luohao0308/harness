@@ -23,6 +23,15 @@ downgrade exists
 indexes exist
 foreign keys exist
 event table mutation rules preserved
+migration id lint passes
+```
+
+Identifier width rules live in
+[Migration Conventions](./migration-conventions.md). Run the lint before any
+PostgreSQL migration pre-flight:
+
+```bash
+python3 scripts/check-migration-ids.py services/api-server/alembic/versions
 ```
 
 ## Apply Migration

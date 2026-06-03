@@ -29,7 +29,8 @@ services:
       context: ../../apps/agent-console
       args:
         VITE_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
-        VITE_DEV_BEARER_TOKEN: dev-engineer-token
+        VITE_DEV_BEARER_TOKEN: ${CONSOLE_DEV_TOKEN:-}
+        VITE_DEV_ADMIN_BEARER_TOKEN: ${CONSOLE_DEV_ADMIN_TOKEN:-}
     depends_on:
       api-server:
         condition: service_started
@@ -51,12 +52,15 @@ services:
       tempo:
         condition: service_started
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       APP_BASE_URL: ${PUBLIC_WEBSITE_BASE_URL:-http://127.0.0.1:3000}
       CONSOLE_BASE_URL: ${PUBLIC_CONSOLE_BASE_URL:-http://127.0.0.1:5173}
       API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
+      HARNESS_INITIAL_ADMIN_EMAIL: ${HARNESS_INITIAL_ADMIN_EMAIL:-}
+      HARNESS_INITIAL_ADMIN_PASSWORD: ${HARNESS_INITIAL_ADMIN_PASSWORD:-}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -85,8 +89,10 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   agent-runtime-image:
@@ -106,8 +112,10 @@ services:
         condition: service_started
     command: python -m dramatiq app.workers.subagent_worker
     environment:
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
@@ -124,8 +132,10 @@ services:
         condition: service_started
     command: python -m dramatiq app.workers.agent_assignment_worker --queues agent_assignments
     environment:
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
@@ -142,8 +152,10 @@ services:
         condition: service_started
     command: python -m app.workers.subagent_recovery_worker
     environment:
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       SUBAGENT_RECOVERY_METRICS_PORT: 9102
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
@@ -163,8 +175,10 @@ services:
         condition: service_healthy
     command: python -m app.workers.warm_pool_service
     environment:
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
       DOCKER_HOST: unix:///var/run/docker.sock
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
@@ -184,8 +198,10 @@ services:
         condition: service_healthy
     command: python -m dramatiq app.workers.subagent_worker --queues subagents
     environment:
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
       REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
       DOCKER_HOST: unix:///var/run/docker.sock
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}

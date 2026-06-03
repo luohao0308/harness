@@ -423,4 +423,101 @@ describe("useChatStream run lifecycle callbacks", () => {
     expect(assistantNode?.metadata.workspace_mode).toBe("chat");
     expect(assistantNode?.tool_calls).toHaveLength(1);
   });
+
+  it("marks explicit subagent requests for backend auto orchestration", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      streamResponse(
+        [
+          sseFrame("run_created", {
+            run_id: "run-subagent",
+            status: "RUNNING",
+            step_count: 0,
+            message: "started",
+          }),
+          sseFrame("orchestration", {
+            mode: "subagent",
+            run_id: "run-subagent",
+            subagent_id: "subagent-1",
+          }),
+          sseFrame("done", {
+            run_id: "run-subagent",
+            active_branch_id: "branch",
+            status: "COMPLETED",
+            step_count: 0,
+            message: "done",
+          }),
+        ].join(""),
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatStream({
+        agentId: "default",
+        workspaceMode: "chat",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.start({ goal: "请调用子 Agent 检查发布清单", mode: "chat" });
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.orchestration_mode).toBe("auto");
+    const assistantNode = Object.values(useWorkspaceStore.getState().nodesById).find(
+      (node) => node.role === "assistant",
+    );
+    expect(assistantNode?.metadata.orchestration).toMatchObject({
+      mode: "subagent",
+      subagent_id: "subagent-1",
+    });
+  });
+
+  it("keeps follow-up invocation requests on the subagent orchestration path", async () => {
+    useWorkspaceStore.getState().appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "我想让子 Agent 处理这个检查",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      streamResponse(
+        [
+          sseFrame("run_created", {
+            run_id: "run-follow-up-subagent",
+            status: "RUNNING",
+            step_count: 0,
+            message: "started",
+          }),
+          sseFrame("done", {
+            run_id: "run-follow-up-subagent",
+            active_branch_id: "branch",
+            status: "COMPLETED",
+            step_count: 0,
+            message: "done",
+          }),
+        ].join(""),
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatStream({
+        agentId: "default",
+        workspaceMode: "chat",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.start({ goal: "你现在调用一下", mode: "chat" });
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.orchestration_mode).toBe("auto");
+  });
 });

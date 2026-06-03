@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import AlertEvent, AlertRule, EvalRun, SubagentOutput, Task, ToolCall, utc_now
 from app.observability.cost_rollup import cost_for_window
+from app.observability.notification_dispatcher import dispatch_alert_event
 
 ALLOWED_ALERT_METRICS = {
     "eval_regression_triggered",
@@ -72,6 +73,11 @@ def evaluate_alert_rules(
             )
             session.add(event)
             session.flush()
+            dispatch_alert_event(
+                session=session,
+                event=event,
+                channel_selectors=list(rule.notification_channels_json or ["in_app"]),
+            )
             event_id = event.id
         results.append(
             AlertEvaluation(

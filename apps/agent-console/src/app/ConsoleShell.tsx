@@ -3,15 +3,21 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  ClipboardList,
   Bot,
   Box,
   Brain,
   BrainCircuit,
   ChevronDown,
+  CircleHelp,
+  Database,
   FlaskConical,
   Gauge,
+  KeyRound,
+  LayoutDashboard,
   LibraryBig,
   ListChecks,
+  LogOut,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -21,37 +27,58 @@ import {
   Settings2,
   ShieldCheck,
   Store,
+  UserRound,
+  Users,
 } from "lucide-react";
 
 import { Button } from "../components/ui/button";
 import { FeedbackToastViewport } from "../components/ui/feedback-toast";
+import { QuickActionFAB } from "../components/ui/QuickActionFAB";
+import { WorkspaceSwitcher } from "../components/WorkspaceSwitcher";
+import { useOptionalAuth } from "../features/auth/AuthProvider";
 import { AlertBell } from "../features/observability/components/AlertBell";
 import { useConsoleStore } from "../stores/consoleStore";
 import { environmentLabel } from "../lib/labels";
 import { cn } from "../lib/utils";
+import { consoleNavEntries } from "./consoleNav";
 
-const navItems = [
-  { to: "/agents", label: "智能体", icon: Bot },
-  { to: "/teams", label: "团队", icon: Network },
-  { to: "/runs", label: "运行历史", icon: ListChecks },
-  { to: "/subagents", label: "子代理", icon: Bot },
-  { to: "/subagent-specialists", label: "专家库", icon: BrainCircuit },
-  { to: "/subagent-marketplace", label: "专家市场", icon: Store },
-  { to: "/sandboxes", label: "沙箱", icon: Box },
-  { to: "/tools", label: "工具", icon: PlugZap },
-  { to: "/tools/config", label: "工具配置", icon: Settings2 },
-  { to: "/knowledge", label: "知识库", icon: LibraryBig },
-  { to: "/observability", label: "观测", icon: Activity },
-  { to: "/token-savings", label: "标记节省", icon: Gauge },
-  { to: "/evals", label: "评测", icon: FlaskConical },
-  { to: "/settings/policies", label: "策略", icon: ShieldCheck },
-  { to: "/settings/models", label: "模型", icon: Brain },
-];
+const navIconByKey = {
+  activity: Activity,
+  audit: ClipboardList,
+  bot: Bot,
+  box: Box,
+  brain: Brain,
+  brainCircuit: BrainCircuit,
+  dashboard: LayoutDashboard,
+  database: Database,
+  evals: FlaskConical,
+  gauge: Gauge,
+  help: CircleHelp,
+  key: KeyRound,
+  knowledge: LibraryBig,
+  network: Network,
+  runs: ListChecks,
+  settings: Settings2,
+  shield: ShieldCheck,
+  store: Store,
+  tools: PlugZap,
+  users: Users,
+} as const;
+
+export const consoleNavItems = consoleNavEntries.map((item) => ({
+  to: item.to,
+  label: item.label,
+  icon: navIconByKey[item.iconKey],
+}));
 
 export function ConsoleShell({ children, title }: { children: ReactNode; title: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const environment = useConsoleStore((state) => state.environment);
+  const auth = useOptionalAuth();
+  const isUsingDevToken = auth?.isUsingDevToken ?? true;
+  const logoutCurrentUser = auth?.logoutCurrentUser;
+  const user = auth?.user ?? null;
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const isTeamRoute = /^\/teams(?:\/|$)/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
@@ -82,14 +109,15 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
 
   return (
     <div
-      className="flex min-h-screen bg-page text-slate-800"
+      className="flex h-screen overflow-hidden bg-page text-slate-800"
       lang="zh-CN"
       translate="no"
     >
       <FeedbackToastViewport />
+      <QuickActionFAB />
       <aside
         className={cn(
-          "flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
+          "flex h-screen min-h-0 shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
           effectiveSidebarCollapsed ? (isTeamRoute ? "w-[44px]" : "w-[64px]") : "w-[248px]",
         )}
       >
@@ -102,7 +130,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
           <div
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-900 transition-opacity",
-              effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
+              effectiveSidebarCollapsed && "hidden",
             )}
           >
             <div className="h-3 w-3 border border-b-0 border-r-0 border-white" />
@@ -110,7 +138,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
           <div
             className={cn(
               "min-w-0 transition-opacity",
-              effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
+              effectiveSidebarCollapsed && "hidden",
             )}
           >
             <div className="text-sm font-semibold tracking-tight text-slate-900">运行平台</div>
@@ -135,8 +163,8 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <PanelLeftClose className={cn("h-4 w-4", effectiveSidebarCollapsed && "hidden")} />
           </Button>
         </div>
-        <nav className="flex-1 p-2">
-          {navItems.map((item) => {
+        <nav className="min-h-0 flex-1 overflow-y-auto p-2">
+          {consoleNavItems.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink
@@ -157,7 +185,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 <span
                   className={cn(
                     "flex-1 truncate transition-opacity",
-                    effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
+                    effectiveSidebarCollapsed && "hidden",
                   )}
                 >
                   {item.label}
@@ -177,7 +205,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <span
               className={cn(
                 "transition-opacity",
-                effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
+                effectiveSidebarCollapsed && "hidden",
               )}
             >
               系统运行正常
@@ -186,7 +214,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
           <div
             className={cn(
               "font-mono transition-opacity",
-              effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
+              effectiveSidebarCollapsed && "hidden",
             )}
           >
             api 0.1.0 · console 0.1.0
@@ -194,7 +222,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
         </div>
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header
           className={cn(
             "flex min-w-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:gap-3 sm:px-5",
@@ -218,11 +246,23 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             </div>
           ) : null}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <WorkspaceSwitcher />
             <Button className="hidden gap-1.5 md:inline-flex">
               环境: {environmentLabel(environment)}{" "}
               <ChevronDown className="h-3 w-3" />
             </Button>
             <AlertBell />
+            {!isTeamRoute ? (
+              <Button
+                variant="ghost"
+                className="h-7 w-7 px-0"
+                title="帮助中心"
+                aria-label="帮助中心"
+                onClick={() => navigate("/help")}
+              >
+                <CircleHelp className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
             {!isTeamRoute ? (
               <Button
                 variant="primary"
@@ -232,12 +272,34 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 <Plus className="h-3.5 w-3.5" /> 新对话
               </Button>
             ) : null}
-            <div className="ml-1 hidden h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] text-slate-700 sm:flex">
-              LH
+            <div
+              className="ml-1 hidden max-w-40 items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-700 sm:flex"
+              title={user?.email ?? "dev-token"}
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200">
+                <UserRound className="h-3 w-3" />
+              </span>
+              <span className="truncate">{user?.name ?? "Dev User"}</span>
+              {isUsingDevToken ? <span className="font-mono text-[10px] text-slate-400">dev</span> : null}
             </div>
+            {!isUsingDevToken ? (
+              <Button
+                variant="ghost"
+                className="h-7 w-7 px-0"
+                title="退出登录"
+                onClick={() => void logoutCurrentUser?.()}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
           </div>
         </header>
-        <div className={cn("min-h-0 flex-1", isTeamRoute ? "overflow-hidden" : "overflow-auto")}>
+        <div
+          className={cn(
+            "min-h-0 flex-1",
+            isWorkspaceRoute || isTeamRoute ? "overflow-hidden" : "overflow-auto",
+          )}
+        >
           {children}
         </div>
       </main>

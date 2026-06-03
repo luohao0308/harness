@@ -17,10 +17,21 @@ from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelMessage, ModelResponse
 from app.agents.registry import ensure_default_agents
+from app.agents.specialists import (
+    SubagentSpecialistRegistry,
+    ensure_system_specialists,
+    make_default_output,
+    normalize_budget,
+    output_schema_sha256,
+)
+from app.agents.subagent_manager import SubagentManager
 from app.db.models import (
+    AdminAuditEvent,
     Agent,
     AgentMessage,
+    AgentRun,
     AgentSession,
+    Task,
     Team,
     TeamAgent,
     TeamEvent,
@@ -28,6 +39,8 @@ from app.db.models import (
     TeamTask,
     utc_now,
 )
+from app.events.event_store import EventStore
+from app.events.event_types import EventType
 from app.teams.model_runtime import GatewayTeamModelRuntime, TeamModelRuntime
 
 TEAM_TOOL_NAMES = {
@@ -1656,6 +1669,7 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
         self.session.add(task)
         team.updated_at = task.updated_at
         self.session.flush()
+        self._ensure_enterprise_task_projection(team=team, task=task)
         self._sync_task_blocks(team_id=team.id)
         self.append_event(
             team_id=team.id,
@@ -1672,6 +1686,7 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
         task_id: str,
         status_value: str | None = None,
         owner_slot_id: str | None = None,
+        update_owner: bool = False,
         description: str | None = None,
         blocked_by: list[str] | None = None,
     ) -> TeamTask:
@@ -1683,7 +1698,7 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="任务状态无效"
                 )
             task.status = status_value
-        if owner_slot_id is not None:
+        if update_owner:
             if owner_slot_id:
                 self.get_agent(team.id, owner_slot_id)
             task.owner_slot_id = owner_slot_id or None
@@ -1697,6 +1712,7 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
             )
         task.updated_at = utc_now()
         team.updated_at = task.updated_at
+        self._sync_enterprise_task_projection(team=team, task=task)
         if task.status == "completed":
             self._remove_completed_from_blockers(team.id, task.id)
         self._sync_task_blocks(team_id=team.id)
@@ -1707,6 +1723,394 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
             actor_type="user",
         )
         return task
+
+    def _ensure_enterprise_task_projection(
+        self,
+        *,
+        team: Team,
+        task: TeamTask,
+    ) -> dict | None:
+        if not task.owner_slot_id or task.status == "deleted":
+            return None
+        owner = self.get_agent(team.id, task.owner_slot_id)
+        metadata = dict(task.metadata_json or {})
+        existing = metadata.get("enterprise_projection")
+        if isinstance(existing, dict):
+            projection_task_id = str(existing.get("run_id") or existing.get("task_id") or "")
+            subagent_id = str(existing.get("subagent_id") or "")
+            projection_task = self.session.get(Task, projection_task_id) if projection_task_id else None
+            agent_run = self.session.get(AgentRun, subagent_id) if subagent_id else None
+            projection_cancelled = (
+                existing.get("projection_status") == "cancelled"
+                or (projection_task is not None and projection_task.status == "CANCELLED")
+                or (agent_run is not None and agent_run.status == "CANCELLED")
+            )
+            if projection_task is not None and agent_run is not None and not projection_cancelled:
+                self._refresh_enterprise_projection_context(
+                    team=team,
+                    task=task,
+                    owner=owner,
+                    projection_task=projection_task,
+                    agent_run=agent_run,
+                )
+                return dict(task.metadata_json.get("enterprise_projection") or existing)
+
+        ensure_default_agents(self.session, self.organization_id)
+        ensure_system_specialists(self.session)
+        registry = SubagentSpecialistRegistry(self.session, self.organization_id)
+        specialist, _trace = registry.match_by_keywords_with_trace(
+            " ".join(
+                [
+                    owner.agent_name,
+                    owner.agent_id,
+                    task.subject,
+                    task.description,
+                ]
+            )
+        )
+        if specialist is None:
+            specialist = registry.get_by_slug("synthesizer")
+        if specialist is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="默认子 Agent 专家模板缺失",
+            )
+
+        now = utc_now()
+        projection_task = Task(
+            organization_id=self.organization_id,
+            agent_id=owner.agent_id,
+            created_by=self.actor_id,
+            title=f"Team: {team.name} / {task.subject}",
+            goal=task.description or task.subject,
+            status=self._team_task_projection_status(task.status),
+            model_provider=owner.model_provider or "default",
+            model_name=owner.model_name or "default",
+            max_runtime_seconds=900,
+            max_subagents=0,
+            enable_sandbox=False,
+            enable_network=False,
+            capability_snapshot_json={
+                "source": "team_mode_enterprise_projection",
+                "team_id": team.id,
+                "team_task_id": task.id,
+                "team_agent_slot_id": owner.slot_id,
+            },
+            created_at=now,
+            updated_at=now,
+            completed_at=now if task.status == "completed" else None,
+        )
+        self.session.add(projection_task)
+        self.session.flush()
+        EventStore(self.session).append(
+            task_id=projection_task.id,
+            event_type=EventType.TASK_CREATED,
+            payload_json={
+                "task_id": projection_task.id,
+                "title": projection_task.title,
+                "goal": projection_task.goal,
+                "source": "team_mode_enterprise_projection",
+                "team_id": team.id,
+                "team_task_id": task.id,
+                "team_agent_slot_id": owner.slot_id,
+            },
+            actor_type="system",
+            actor_id=self.actor_id,
+        )
+
+        schema = specialist.output_schema_json if isinstance(specialist.output_schema_json, dict) else {}
+        agent_run = AgentRun(
+            task_id=projection_task.id,
+            parent_agent_id=None,
+            agent_type="subagent",
+            status=self._team_task_subagent_status(task.status),
+            specialist_id=specialist.id,
+            context_json={
+                "source": "team_mode_enterprise_projection",
+                "team_id": team.id,
+                "team_name": team.name,
+                "team_task_id": task.id,
+                "team_task_subject": task.subject,
+                "team_task_status": task.status,
+                "team_agent_slot_id": owner.slot_id,
+                "team_agent_name": owner.agent_name,
+                "agent_id": owner.agent_id,
+                "specialist_id": specialist.id,
+                "specialist_slug": specialist.slug,
+                "specialist_role": specialist.role,
+                "system_prompt_override": specialist.system_prompt,
+                "capability_whitelist": list(specialist.capability_slugs_json or []),
+                "output_schema": schema,
+                "output_schema_sha256": output_schema_sha256(schema),
+                "budget": normalize_budget(specialist.budget_json),
+            },
+            capability_snapshot_json=projection_task.capability_snapshot_json,
+            started_at=now if task.status in {"in_progress", "completed"} else None,
+            completed_at=now if task.status == "completed" else None,
+        )
+        self.session.add(agent_run)
+        self.session.flush()
+        EventStore(self.session).append(
+            task_id=projection_task.id,
+            agent_run_id=agent_run.id,
+            event_type=EventType.SUBAGENT_SPAWNED,
+            payload_json={
+                "agent_run_id": agent_run.id,
+                "source": "team_mode_enterprise_projection",
+                "team_id": team.id,
+                "team_task_id": task.id,
+                "team_agent_slot_id": owner.slot_id,
+                "specialist": {
+                    "id": specialist.id,
+                    "slug": specialist.slug,
+                    "role": specialist.role,
+                },
+            },
+            actor_type="system",
+            actor_id=self.actor_id,
+        )
+        projection = {
+            "source": "team_mode_enterprise_projection",
+            "run_id": projection_task.id,
+            "task_id": projection_task.id,
+            "subagent_id": agent_run.id,
+            "specialist_id": specialist.id,
+            "specialist_slug": specialist.slug,
+            "team_id": team.id,
+            "team_task_id": task.id,
+            "team_agent_slot_id": owner.slot_id,
+            "created_at": now.isoformat(),
+        }
+        task.metadata_json = {**metadata, "enterprise_projection": projection}
+        self.session.flush()
+        self._write_enterprise_projection_audit(
+            action="team.subagent.projected",
+            team=team,
+            task=task,
+            owner=owner,
+            projection=projection,
+        )
+        if task.status == "completed":
+            self._finalize_enterprise_projection_output(
+                team=team,
+                task=task,
+                owner=owner,
+                agent_run=agent_run,
+            )
+        return projection
+
+    def _sync_enterprise_task_projection(self, *, team: Team, task: TeamTask) -> None:
+        if not task.owner_slot_id or task.status == "deleted":
+            self._cancel_enterprise_task_projection(team=team, task=task)
+            return
+        projection = self._ensure_enterprise_task_projection(team=team, task=task)
+        if not projection:
+            return
+        projection_task = self.session.get(Task, str(projection["run_id"]))
+        agent_run = self.session.get(AgentRun, str(projection["subagent_id"]))
+        if projection_task is None or agent_run is None:
+            return
+        owner = self.get_agent(team.id, task.owner_slot_id) if task.owner_slot_id else None
+        if owner is not None:
+            self._refresh_enterprise_projection_context(
+                team=team,
+                task=task,
+                owner=owner,
+                projection_task=projection_task,
+                agent_run=agent_run,
+            )
+        projection_task.status = self._team_task_projection_status(task.status)
+        projection_task.updated_at = utc_now()
+        if task.status == "completed":
+            projection_task.completed_at = projection_task.completed_at or utc_now()
+        elif task.status in {"pending", "in_progress"}:
+            projection_task.completed_at = None
+        if task.status == "pending":
+            agent_run.status = "PENDING"
+            agent_run.completed_at = None
+        if task.status == "in_progress":
+            agent_run.status = "RUNNING"
+            agent_run.started_at = agent_run.started_at or utc_now()
+            agent_run.completed_at = None
+        if task.status == "completed" and owner is not None:
+            self._finalize_enterprise_projection_output(
+                team=team,
+                task=task,
+                owner=owner,
+                agent_run=agent_run,
+            )
+        self.session.flush()
+
+    def _cancel_enterprise_task_projection(self, *, team: Team, task: TeamTask) -> None:
+        metadata = dict(task.metadata_json or {})
+        projection = dict(metadata.get("enterprise_projection") or {})
+        if not projection:
+            return
+        projection_task_id = str(projection.get("run_id") or projection.get("task_id") or "")
+        subagent_id = str(projection.get("subagent_id") or "")
+        now = utc_now()
+        projection_task = self.session.get(Task, projection_task_id) if projection_task_id else None
+        if projection_task is not None:
+            projection_task.status = "CANCELLED"
+            projection_task.updated_at = now
+            projection_task.completed_at = projection_task.completed_at or now
+        agent_run = self.session.get(AgentRun, subagent_id) if subagent_id else None
+        if agent_run is not None:
+            context = dict(agent_run.context_json or {})
+            agent_run.context_json = {
+                **context,
+                "source": "team_mode_enterprise_projection",
+                "team_id": team.id,
+                "team_name": team.name,
+                "team_task_id": task.id,
+                "team_task_subject": task.subject,
+                "team_task_status": task.status,
+                "team_agent_slot_id": task.owner_slot_id,
+                "projection_cancelled": True,
+            }
+            agent_run.status = "CANCELLED"
+            agent_run.completed_at = agent_run.completed_at or now
+        projection.update(
+            {
+                "cancelled_at": now.isoformat(),
+                "projection_status": "cancelled",
+                "team_agent_slot_id": task.owner_slot_id,
+            }
+        )
+        task.metadata_json = {**metadata, "enterprise_projection": projection}
+        self.session.flush()
+        self._write_enterprise_projection_audit(
+            action="team.subagent.projection_cancelled",
+            team=team,
+            task=task,
+            owner=None,
+            projection=projection,
+        )
+
+    def _refresh_enterprise_projection_context(
+        self,
+        *,
+        team: Team,
+        task: TeamTask,
+        owner: TeamAgent,
+        projection_task: Task,
+        agent_run: AgentRun,
+    ) -> None:
+        projection_task.agent_id = owner.agent_id
+        projection_task.title = f"Team: {team.name} / {task.subject}"
+        projection_task.goal = task.description or task.subject
+        projection_task.model_provider = owner.model_provider or "default"
+        projection_task.model_name = owner.model_name or "default"
+        context = dict(agent_run.context_json or {})
+        agent_run.context_json = {
+            **context,
+            "source": "team_mode_enterprise_projection",
+            "team_id": team.id,
+            "team_name": team.name,
+            "team_task_id": task.id,
+            "team_task_subject": task.subject,
+            "team_task_status": task.status,
+            "team_agent_slot_id": owner.slot_id,
+            "team_agent_name": owner.agent_name,
+            "agent_id": owner.agent_id,
+        }
+        metadata = dict(task.metadata_json or {})
+        projection = dict(metadata.get("enterprise_projection") or {})
+        if projection:
+            projection.update(
+                {
+                    "team_agent_slot_id": owner.slot_id,
+                    "team_task_id": task.id,
+                    "team_id": team.id,
+                }
+            )
+            task.metadata_json = {**metadata, "enterprise_projection": projection}
+
+    def _write_enterprise_projection_audit(
+        self,
+        *,
+        action: str,
+        team: Team,
+        task: TeamTask,
+        owner: TeamAgent | None,
+        projection: dict,
+    ) -> None:
+        payload = {
+            "source": "team_mode_enterprise_projection",
+            "team_id": team.id,
+            "team_task_id": task.id,
+            "team_agent_slot_id": owner.slot_id if owner is not None else task.owner_slot_id,
+            "team_agent_id": owner.agent_id if owner is not None else None,
+            "team_agent_name": owner.agent_name if owner is not None else None,
+            "run_id": projection.get("run_id") or projection.get("task_id"),
+            "subagent_id": projection.get("subagent_id"),
+            "specialist_id": projection.get("specialist_id"),
+            "specialist_slug": projection.get("specialist_slug"),
+        }
+        self.session.add(
+            AdminAuditEvent(
+                organization_id=self.organization_id,
+                actor_id=self.actor_id,
+                event_type=EventType.ADMIN_ACTION,
+                resource_type="team",
+                resource_id=team.id,
+                action=action,
+                payload_json=payload,
+                created_at=utc_now(),
+            )
+        )
+
+    def _finalize_enterprise_projection_output(
+        self,
+        *,
+        team: Team,
+        task: TeamTask,
+        owner: TeamAgent,
+        agent_run: AgentRun,
+    ) -> None:
+        if agent_run.subagent_output is not None:
+            return
+        if agent_run.specialist is None:
+            return
+        summary = (
+            f"Team task '{task.subject}' completed by {owner.agent_name} "
+            f"in team '{team.name}'."
+        )
+        SubagentManager(self.session).finalize_with_output(
+            agent_run=agent_run,
+            raw_output_dict=make_default_output(
+                specialist=agent_run.specialist,
+                summary=summary,
+            ),
+            budget_consumed={
+                "runtime_seconds": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "tool_calls": 0,
+                "cost_usd": "0",
+            },
+            budget_exceeded=[],
+        )
+
+    @staticmethod
+    def _team_task_projection_status(team_task_status: str) -> str:
+        if team_task_status == "completed":
+            return "COMPLETED"
+        if team_task_status == "deleted":
+            return "CANCELLED"
+        if team_task_status == "in_progress":
+            return "RUNNING"
+        return "CREATED"
+
+    @staticmethod
+    def _team_task_subagent_status(team_task_status: str) -> str:
+        if team_task_status == "completed":
+            return "SUCCESS"
+        if team_task_status == "deleted":
+            return "CANCELLED"
+        if team_task_status == "in_progress":
+            return "RUNNING"
+        return "PENDING"
 
     def list_tasks(self, team_id: str) -> list[TeamTask]:
         team = self.get_team(team_id)
@@ -2518,6 +2922,7 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
             task_id=task_id,
             status_value=status_value,
             owner_slot_id=owner_slot_id,
+            update_owner=owner_ref is not None,
             description=str(args["description"]) if args.get("description") is not None else None,
             blocked_by=(
                 self._task_dependency_arg(args)

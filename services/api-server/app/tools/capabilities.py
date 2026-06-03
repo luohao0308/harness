@@ -1801,10 +1801,30 @@ class CapabilityRegistry:
         version = self.session.get(CapabilityVersion, version_id)
         if version is not None:
             return version
+        version = self.session.execute(
+            select(CapabilityVersion).where(
+                CapabilityVersion.capability_id == capability.id,
+                CapabilityVersion.content_sha256 == content_sha,
+                CapabilityVersion.config_sha256 == config_sha,
+            )
+        ).scalar_one_or_none()
+        if version is not None:
+            return version
+        next_version_number = (
+            max(
+                self.session.execute(
+                    select(CapabilityVersion.version).where(
+                        CapabilityVersion.capability_id == capability.id
+                    )
+                ).scalars(),
+                default=0,
+            )
+            + 1
+        )
         version = CapabilityVersion(
             id=version_id,
             capability_id=capability.id,
-            version=1,
+            version=next_version_number,
             type=capability.type,
             status="active",
             content_json=content,

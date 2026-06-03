@@ -31,6 +31,10 @@ from app.api.schemas import (
     GrafanaDashboardPage,
     GrafanaDashboardResponse,
     MultiAgentArchitectureResponse,
+    NotificationChannelCreateRequest,
+    NotificationChannelPage,
+    NotificationChannelResponse,
+    NotificationChannelUpdateRequest,
     ObservabilityExportHistoryItem,
     ObservabilityExportHistoryPage,
     ObservabilityExportItem,
@@ -60,6 +64,7 @@ from app.api.schemas import (
     WarmPoolArchitectureResponse,
     WarmPoolResponse,
 )
+from app.cache.query_cache import query_cache
 from app.core.config import Settings, get_settings
 from app.db.models import (
     Agent,
@@ -74,6 +79,7 @@ from app.db.models import (
     EvalRun,
     ExecutionPlan,
     ModelCall,
+    NotificationChannel,
     ObservabilityExportRecord,
     OtelSpan,
     SandboxInstance,
@@ -86,6 +92,10 @@ from app.db.session import get_db_session
 from app.events.event_store import SNAPSHOT_FREQUENCY_EVENTS
 from app.observability.alert_evaluator import evaluate_alert_rules, validate_alert_rule_fields
 from app.observability.cost_rollup import build_cost_rollup
+from app.observability.notification_dispatcher import (
+    redact_channel_config,
+    validate_channel_config,
+)
 from app.sandbox.warm_pool import WarmPoolManager
 from app.security.auth import Principal, require_role
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
@@ -113,13 +123,19 @@ def get_cost_rollup(
             raise ValueError("window must be one of 24h, 7d, 30d, all")
         if group_by not in {"agent", "provider", "specialist", "adapter"}:
             raise ValueError("group_by must be one of agent, provider, specialist, adapter")
+        cache_key = f"cost_rollup:{principal.organization_id}:{window}:{group_by}"
+        cached = query_cache.get_with_metrics(cache_key, entity="cost_rollup")
+        if cached is not None:
+            return CostRollupResponse.model_validate(cached)
         _check_cost_rollup_rate_limit(principal.organization_id)
-        return build_cost_rollup(
+        response = build_cost_rollup(
             session=session,
             organization_id=principal.organization_id,
             window=window,  # type: ignore[arg-type]
             group_by=group_by,  # type: ignore[arg-type]
         )
+        query_cache.set(cache_key, response, ttl_seconds=60)
+        return response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -282,6 +298,116 @@ def list_alert_events(
         items=[AlertEventResponse.model_validate(event) for event in events],
         next_cursor=None,
     )
+
+
+@router.get(
+    "/notification-channels",
+    response_model=NotificationChannelPage,
+    summary="查询外部通知通道",
+    description="返回当前组织可用于告警派发的 Slack、Email 或 Webhook 通道。",
+)
+def list_notification_channels(session: DbSession, principal: Principal) -> NotificationChannelPage:
+    require_role(principal, {"admin", "operator"})
+    rows = session.execute(
+        select(NotificationChannel)
+        .where(NotificationChannel.organization_id == principal.organization_id)
+        .order_by(NotificationChannel.created_at.asc(), NotificationChannel.name.asc())
+    ).scalars()
+    return NotificationChannelPage(
+        items=[_notification_channel_response(row) for row in rows],
+        next_cursor=None,
+    )
+
+
+@router.post(
+    "/notification-channels",
+    response_model=NotificationChannelResponse,
+    status_code=201,
+    summary="创建外部通知通道",
+    description="创建组织级告警通知通道。密钥类字段会保存但不会回显。",
+)
+def create_notification_channel(
+    payload: NotificationChannelCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> NotificationChannelResponse:
+    require_role(principal, {"admin"})
+    _validate_notification_channel_config(
+        kind=payload.kind,
+        config=payload.config_json,
+        verified=payload.verified,
+    )
+    channel = NotificationChannel(
+        organization_id=principal.organization_id,
+        name=payload.name,
+        kind=payload.kind,
+        config_json=dict(payload.config_json),
+        verified=payload.verified,
+        created_by=principal.user_id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    session.add(channel)
+    session.commit()
+    session.refresh(channel)
+    return _notification_channel_response(channel)
+
+
+@router.patch(
+    "/notification-channels/{channel_id}",
+    response_model=NotificationChannelResponse,
+    summary="更新外部通知通道",
+    description="更新当前组织的告警通知通道。",
+)
+def update_notification_channel(
+    channel_id: str,
+    payload: NotificationChannelUpdateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> NotificationChannelResponse:
+    require_role(principal, {"admin"})
+    channel = _owned_notification_channel(
+        session=session,
+        principal=principal,
+        channel_id=channel_id,
+    )
+    next_kind = payload.kind if payload.kind is not None else channel.kind
+    next_config = payload.config_json if payload.config_json is not None else channel.config_json
+    next_verified = payload.verified if payload.verified is not None else channel.verified
+    _validate_notification_channel_config(
+        kind=next_kind,
+        config=next_config,
+        verified=next_verified,
+    )
+    updates = payload.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(channel, key, value)
+    channel.updated_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(channel)
+    return _notification_channel_response(channel)
+
+
+@router.delete(
+    "/notification-channels/{channel_id}",
+    status_code=204,
+    summary="删除外部通知通道",
+    description="删除当前组织的告警通知通道。",
+)
+def delete_notification_channel(
+    channel_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> Response:
+    require_role(principal, {"admin"})
+    channel = _owned_notification_channel(
+        session=session,
+        principal=principal,
+        channel_id=channel_id,
+    )
+    session.delete(channel)
+    session.commit()
+    return Response(status_code=204)
 
 
 @router.get(
@@ -1734,8 +1860,25 @@ def _validate_alert_payload(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     channels = getattr(payload, "notification_channels_json", None)
-    if channels is not None and any(channel != "in_app" for channel in channels):
-        raise HTTPException(status_code=400, detail="v1 only supports in_app notifications")
+    if channels is not None:
+        invalid = [
+            channel
+            for channel in channels
+            if not (
+                channel == "in_app"
+                or channel.startswith("slack:")
+                or channel.startswith("email:")
+                or channel.startswith("webhook:")
+            )
+        ]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "notification channels must be in_app, slack:<name>, "
+                    "email:<address>, or webhook:<name>"
+                ),
+            )
 
 
 def _owned_alert_rule(*, session: Session, principal: Principal, rule_id: str) -> AlertRule:
@@ -1769,6 +1912,44 @@ def _editable_alert_rule(*, session: Session, principal: Principal, rule_id: str
     session.add(clone)
     session.flush()
     return clone
+
+
+def _owned_notification_channel(
+    *,
+    session: Session,
+    principal: Principal,
+    channel_id: str,
+) -> NotificationChannel:
+    channel = session.get(NotificationChannel, channel_id)
+    if channel is None or channel.organization_id != principal.organization_id:
+        raise HTTPException(status_code=404, detail="通知通道不存在")
+    return channel
+
+
+def _notification_channel_response(channel: NotificationChannel) -> NotificationChannelResponse:
+    return NotificationChannelResponse(
+        id=channel.id,
+        organization_id=channel.organization_id,
+        name=channel.name,
+        kind=channel.kind,
+        config_json=redact_channel_config(channel.config_json),
+        verified=channel.verified,
+        created_by=channel.created_by,
+        created_at=channel.created_at,
+        updated_at=channel.updated_at,
+    )
+
+
+def _validate_notification_channel_config(
+    *,
+    kind: str,
+    config: dict | None,
+    verified: bool,
+) -> None:
+    try:
+        validate_channel_config(kind=kind, config=config, verified=verified)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _count_items(session: Session, statement) -> list[CountItem]:

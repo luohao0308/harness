@@ -327,6 +327,23 @@ const replayFixture = {
   requires_manual_review: false,
 };
 
+const authUser = {
+  user_id: "user-e2e-run-detail",
+  email: "operator@example.com",
+  name: "E2E Operator",
+  organization_id: "org-e2e",
+  role: "admin",
+  permissions: ["*"],
+  organizations: [
+    {
+      id: "org-e2e",
+      name: "E2E Organization",
+      slug: "e2e",
+      role: "admin",
+    },
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -566,6 +583,16 @@ async function routeRunDetailApis(page: Page): Promise<void> {
     // Workspace projection for Run Detail
     if (path === `/api/agents/runs/${STABLE_RUN_ID}/workspace`) {
       await fulfillJson(route, workspaceFixture);
+      return;
+    }
+
+    if (path === "/api/auth/me") {
+      await fulfillJson(route, authUser);
+      return;
+    }
+
+    if (path === "/api/observability/alert-events") {
+      await fulfillJson(route, { items: [], next_cursor: null });
       return;
     }
 

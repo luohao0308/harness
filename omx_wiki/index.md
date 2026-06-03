@@ -42,6 +42,10 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-28-large-file-refactor-v1]] - Large File Refactor v1 split of Agent API, Knowledge/RAG, Eval API, TeamPage, and ToolRegistryPage review surfaces with validation evidence.
 - [[session-2026-05-29-agent-knowledge-observability-v1]] - Observability v1 cost rollups, local OpenTelemetry trace UI, in-app Alert/SLO rules, review fixes, drift boundaries, and validation evidence.
 - [[session-2026-05-29-post-audit-hardening-v1]] - Post-audit hardening for marketplace migration width, FastAPI lifespan, Vite chunks, backend file splits, adapter bootstrap, PostgreSQL migration preflight, review fixes, and validation evidence.
+- [[session-2026-05-29-production-onboarding-frontend-polish]] - P1/P2/P5 production deployment, onboarding, Dashboard, demo load/reset, ErrorBoundary, reconnecting SSE, frontend error tracking, review fixes, and validation evidence.
+- [[session-2026-05-29-auth-retention-cicd]] - P3/P6/P7 AuthN/AuthZ/RBAC, data lifecycle retention/export/delete, CI/CD release engineering, code-review security fixes, and validation evidence.
+- [[session-2026-05-29-docs-help-performance-scale]] - P4/P8 documentation Help Center, generated API docs, query cache, signed cursor pagination, lazy routes, CDN asset config, k6 scripts, review fixes, and validation evidence.
+- [[session-2026-05-30-production-critical-hardening-v2]] - Production-critical hardening v2 for env-gated dev tokens, required JWT secrets, first-run admin bootstrap, migration id lint, production frontend auth, code-review fixes, and validation evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories
@@ -111,3 +115,22 @@ Persistent project knowledge for the AI Harness Platform.
 - `notion`
 - `linear`
 - `post-audit-hardening`
+- `production`
+- `deployment`
+- `onboarding`
+- `frontend-polish`
+- `auth`
+- `rbac`
+- `data-lifecycle`
+- `cicd`
+- `documentation`
+- `help-center`
+- `performance`
+- `scale`
+- `pagination`
+- `query-cache`
+- `cdn`
+- `load-test`
+- `jwt`
+- `first-run-admin`
+- `production-critical-hardening`

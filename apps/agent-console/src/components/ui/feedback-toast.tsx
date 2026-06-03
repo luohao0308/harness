@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Info, TriangleAlert, XCircle } from "lucide-react";
 
+import { localizeError } from "../../lib/error-localization";
 import { cn } from "../../lib/utils";
 
 type FeedbackTone = "success" | "error" | "info" | "warning";
@@ -27,7 +28,7 @@ function emitToasts() {
 function dismissToast(id: string) {
   const timer = dismissTimers.get(id);
   if (timer !== undefined) {
-    window.clearTimeout(timer);
+    globalThis.clearTimeout(timer);
     dismissTimers.delete(id);
   }
   currentToasts = currentToasts.filter((item) => item.id !== id);
@@ -39,15 +40,12 @@ export function notifyFeedback({ title, description, tone }: FeedbackToastInput)
   const item: FeedbackToastItem = { id, title, description, tone };
   currentToasts = [...currentToasts.slice(-3), item];
   emitToasts();
-  const timer = window.setTimeout(() => dismissToast(id), 4200);
+  const timer = globalThis.setTimeout(() => dismissToast(id), 4200);
   dismissTimers.set(id, timer);
 }
 
 export function feedbackErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-  return fallback;
+  return localizeError(error, fallback).message;
 }
 
 export function FeedbackToastViewport() {

@@ -11,10 +11,17 @@ from urllib import error, request
 
 
 API_BASE_URL = os.environ.get("HARNESS_API_BASE_URL", "http://127.0.0.1:8000")
-AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
-ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
-OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
 HTTP_TIMEOUT_SECONDS = 120
+
+
+def _bearer_headers(env_name: str, default_token: str) -> dict[str, str]:
+    token = os.environ.get(env_name, "").strip() or default_token
+    return {"Authorization": f"Bearer {token}"}
+
+
+AUTH_HEADERS = _bearer_headers("HARNESS_AUTH_TOKEN", "dev-engineer-token")
+ADMIN_HEADERS = _bearer_headers("HARNESS_ADMIN_TOKEN", "dev-admin-token")
+OPERATOR_HEADERS = _bearer_headers("HARNESS_OPERATOR_TOKEN", "dev-operator-token")
 
 REQUIRED_EVENT_CATEGORIES = {
     "planning": {"PLAN_REQUESTED", "PLAN_GENERATED"},
