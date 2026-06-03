@@ -1,21 +1,25 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { FlaskConical, GitCompare, Plus, Save, ShieldCheck, UserCheck } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
-import { Badge } from "../../../components/ui/badge";
+import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
+import { MenuSelect } from "../../../components/ui/menu-select";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import {
   createEvalCaseFromRun,
   createEvalDataset,
   createEvalRun,
   getEvalRunRegression,
+  listAgents,
   listEvalCases,
   listEvalDatasets,
   listEvalRuns,
@@ -24,6 +28,24 @@ import {
 } from "../../tasks/api";
 import { EvalCaseList } from "../components/EvalCaseList";
 import { EvalRunResults } from "../components/EvalRunResults";
+
+const expectedStatusOptions = [
+  {
+    value: "COMPLETED",
+    label: "已完成",
+    description: "运行成功结束，适合大多数回归样例",
+  },
+  {
+    value: "FAILED",
+    label: "失败",
+    description: "运行应明确失败，用于错误路径回归",
+  },
+  {
+    value: "CANCELLED",
+    label: "已取消",
+    description: "运行被取消，适合人工中断或保护策略场景",
+  },
+];
 
 export function EvalHarnessPage() {
   const { text } = useI18n();
@@ -36,7 +58,17 @@ export function EvalHarnessPage() {
   const [expectedStatus, setExpectedStatus] = useState("COMPLETED");
   const [agentId, setAgentId] = useState("default");
 
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
+  const agentOptions = useMemo(
+    () =>
+      (agentsQuery.data?.items ?? []).map((agent) => ({
+        value: agent.id,
+        label: agent.name,
+        description: `${agent.id} · ${statusLabel(agent.status)}`,
+      })),
+    [agentsQuery.data?.items],
+  );
   const datasets = datasetsQuery.data?.items ?? [];
   const activeDatasetId = selectedDatasetId ?? datasets[0]?.id ?? null;
   const activeDataset = datasets.find((d) => d.id === activeDatasetId) ?? null;
@@ -59,7 +91,19 @@ export function EvalHarnessPage() {
     mutationFn: () => createEvalDataset({ name: datasetName, description: datasetDescription }),
     onSuccess: (dataset) => {
       setSelectedDatasetId(dataset.id);
+      notifyFeedback({
+        tone: "success",
+        title: text("数据集已创建", "Dataset created"),
+        description: text(`评测数据集 ${dataset.name} 已可使用。`, `${dataset.name} is ready for evaluation.`),
+      });
       queryClient.invalidateQueries({ queryKey: ["eval-datasets"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("数据集创建失败", "Dataset creation failed"),
+        description: feedbackErrorMessage(error, text("请检查数据集名称或稍后重试。", "Check the dataset name and retry.")),
+      });
     },
   });
   const saveCaseMutation = useMutation({
@@ -70,22 +114,58 @@ export function EvalHarnessPage() {
       }),
     onSuccess: () => {
       setSourceRunId("");
+      notifyFeedback({
+        tone: "success",
+        title: text("评测用例已保存", "Eval case saved"),
+        description: text("当前运行已经加入所选数据集。", "The run has been added to the selected dataset."),
+      });
       queryClient.invalidateQueries({ queryKey: ["eval-datasets"] });
       queryClient.invalidateQueries({ queryKey: ["eval-cases", activeDatasetId] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("评测用例保存失败", "Eval case save failed"),
+        description: feedbackErrorMessage(error, text("请检查运行 ID 和数据集选择。", "Check the run ID and dataset selection.")),
+      });
     },
   });
   const runEvalMutation = useMutation({
     mutationFn: () => createEvalRun(activeDatasetId ?? "", { agent_id: agentId || null }),
     onSuccess: () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("评测运行已启动", "Eval run started"),
+        description: text("新的回归结果会出现在右侧结果区。", "The new regression result will appear in the results panel."),
+      });
       queryClient.invalidateQueries({ queryKey: ["eval-runs"] });
       queryClient.invalidateQueries({ queryKey: ["eval-regression"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("评测运行启动失败", "Eval run start failed"),
+        description: feedbackErrorMessage(error, text("请检查当前数据集是否已有用例。", "Check whether the current dataset has cases.")),
+      });
     },
   });
   const setBaselineMutation = useMutation({
     mutationFn: (evalRunId: string) => setEvalBaseline(activeDatasetId ?? "", evalRunId),
     onSuccess: () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("基线已更新", "Baseline updated"),
+        description: text("后续回归对比会基于这个运行。", "Future regression comparisons will use this run as baseline."),
+      });
       queryClient.invalidateQueries({ queryKey: ["eval-datasets"] });
       queryClient.invalidateQueries({ queryKey: ["eval-regression"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("基线更新失败", "Baseline update failed"),
+        description: feedbackErrorMessage(error, text("请检查评测运行状态或稍后重试。", "Check the eval run state and retry.")),
+      });
     },
   });
 
@@ -171,11 +251,20 @@ export function EvalHarnessPage() {
                 onChange={(event) => setSourceRunId(event.target.value)}
                 placeholder={text("运行 ID", "Run ID")}
               />
-              <Input
+              <MenuSelect
+                ariaLabel={text("选择期望状态", "Select expected status")}
                 value={expectedStatus}
-                onChange={(event) => setExpectedStatus(event.target.value)}
-                placeholder="COMPLETED"
+                onChange={setExpectedStatus}
+                options={expectedStatusOptions}
+                placeholder={text("选择期望状态", "Select expected status")}
+                size="compact"
               />
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                {text(
+                  `当前保存的期望结果：${statusLabel(expectedStatus)}`,
+                  `Current expected status: ${expectedStatus}`,
+                )}
+              </div>
               <Button type="submit" disabled={!canSaveCase} className="w-full gap-1.5">
                 <Save className="h-3.5 w-3.5" />
                 {text("保存为评测用例", "Save Eval Case")}
@@ -190,6 +279,7 @@ export function EvalHarnessPage() {
             isLoading={casesQuery.isLoading}
             agentId={agentId}
             onAgentIdChange={setAgentId}
+            agentOptions={agentOptions}
             canRunEval={canRunEval}
             onRunEval={() => runEvalMutation.mutate()}
           />
@@ -221,7 +311,7 @@ export function EvalHarnessPage() {
               />
               <EvalReadiness
                 icon={<GitCompare className="h-3.5 w-3.5" />}
-                label={<TermHint description="双版本对比评测">A/B</TermHint>}
+                label={<TermHint description="双版本对比评测">双版本对比</TermHint>}
                 status={text("未启用", "Disabled")}
                 disabled
               />
@@ -244,12 +334,18 @@ export function EvalHarnessPage() {
                 <div key={run.id} className="mb-2 rounded-md border border-slate-200 p-2 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="font-mono text-slate-500">{run.id.slice(0, 8)}</span>
-                    <Badge>{run.status}</Badge>
+                    <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
                     <span>用例: {run.metrics_json.case_total ?? 0}</span>
                     <span>通过: {run.metrics_json.passed_total ?? 0}</span>
-                    <span>智能体: {run.agent_id ?? "default"}</span>
+                    <span>
+                      智能体:{" "}
+                      {evalAgentLabel(
+                        run.agent_id ?? "default",
+                        agentsQuery.data?.items?.map((agent) => ({ id: agent.id, name: agent.name })) ?? [],
+                      )}
+                    </span>
                     <span>{formatShortDate(run.created_at)}</span>
                   </div>
                 </div>
@@ -265,6 +361,20 @@ export function EvalHarnessPage() {
       </div>
     </ConsoleShell>
   );
+}
+
+function evalAgentLabel(
+  agentId: string,
+  agents: Array<{ id: string; name: string }>,
+) {
+  const matched = agents.find((agent) => agent.id === agentId);
+  if (matched?.name?.trim()) {
+    return matched.name === agentId ? matched.name : `${matched.name}（${agentId}）`;
+  }
+  if (agentId === "default") {
+    return "默认智能体（default）";
+  }
+  return agentId;
 }
 
 function EvalReadiness({

@@ -9,11 +9,13 @@ import {
   MessageSquareText,
   Sparkles,
   Wrench,
+  X,
 } from "lucide-react";
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import type { ToolMetadata } from "../../tasks/api";
 import { useOutsideClick } from "../hooks/useOutsideClick";
 import type { InspectorSection } from "../lib/types";
@@ -57,6 +59,7 @@ export function WorkspaceShellBar({
   const runLabel = activeRunId
     ? text("运行详情", "Run Detail")
     : text("运行未创建", "No run yet");
+  const runStatusText = runStatus ? statusLabel(runStatus) : text("已创建", "Created");
   const toolsChipLabel = text(
     `工具/MCP（模型上下文协议）: ${tools.length} 个可用`,
     `Tools/MCP: ${tools.length} available`,
@@ -131,8 +134,29 @@ export function WorkspaceShellBar({
                 role="dialog"
                 aria-modal="false"
                 aria-label={text("工具", "Tools")}
-                className="absolute left-0 top-full z-40 mt-1.5 w-[min(240px,calc(100vw-2rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg sm:left-auto sm:right-0"
+                className="absolute right-0 top-full z-40 mt-1.5 w-[min(280px,calc(100vw-1rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
               >
+                <div className="mb-2 flex items-start justify-between gap-2 border-b border-slate-100 px-1 pb-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-slate-900">
+                      {text("工具快捷插入", "Quick tool insert")}
+                    </div>
+                    <div className="mt-0.5 text-[11px] leading-4 text-slate-500">
+                      {text(
+                        "点击任一能力名，立即把 @工具 名称写入输入框。",
+                        "Click a capability to insert its @mention into the composer.",
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={text("关闭工具列表", "Close tool list")}
+                    onClick={() => setToolsOpen(false)}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                  >
+                    <X aria-hidden="true" className="h-4 w-4" />
+                  </button>
+                </div>
                 <div className="max-h-44 overflow-y-auto">
                   {tools.length === 0 ? (
                     <p className="px-2 py-1.5 text-xs text-slate-500">
@@ -177,7 +201,7 @@ export function WorkspaceShellBar({
             >
               <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
               <span className="hidden text-slate-500 lg:inline">运行</span>
-              <span>{runStatus ?? text("已创建", "Created")}</span>
+              <span>{runStatusText}</span>
             </Link>
           ) : (
             <span

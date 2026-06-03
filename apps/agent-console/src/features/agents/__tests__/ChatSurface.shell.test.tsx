@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type JSX } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -190,7 +190,8 @@ describe("ChatSurface Workspace shell integration", () => {
     await user.click(screen.getByRole("button", { name: "打开输入设置" }));
     const settingsPanel = screen.getByRole("dialog", { name: "输入设置" });
     expect(settingsPanel).toBeInTheDocument();
-    expect(settingsPanel).not.toHaveTextContent("输入设置");
+    expect(settingsPanel).toHaveTextContent("输入设置");
+    expect(screen.getByRole("button", { name: "关闭输入设置" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Options" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "添加照片和文件" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Include IDE context" })).not.toBeInTheDocument();
@@ -253,6 +254,7 @@ describe("ChatSurface Workspace shell integration", () => {
       }),
     );
     expect(screen.getByRole("dialog", { name: "工具" })).toBeInTheDocument();
+    expect(screen.getByText("工具快捷插入")).toBeInTheDocument();
     expect(screen.queryByText("Tool capabilities")).not.toBeInTheDocument();
     expect(screen.queryByText("插件 / MCP")).not.toBeInTheDocument();
     expect(screen.queryByText("github.search")).not.toBeInTheDocument();
@@ -386,7 +388,6 @@ describe("ChatSurface Workspace shell integration", () => {
   it("uses goal pursuit mode from the compact settings switch", async () => {
     const user = userEvent.setup();
     const stream = streamController();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const props = renderSurface({ stream });
 
     await user.click(screen.getByRole("button", { name: "打开输入设置" }));
@@ -400,6 +401,9 @@ describe("ChatSurface Workspace shell integration", () => {
       "ship the goal",
     );
     await user.keyboard("{Enter}");
+    const confirmDialog = await screen.findByRole("dialog", { name: "进入追求目标模式" });
+    expect(confirmDialog).toBeInTheDocument();
+    await user.click(within(confirmDialog).getByRole("button", { name: "确认进入" }));
 
     expect(stream.start).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -407,8 +411,6 @@ describe("ChatSurface Workspace shell integration", () => {
         mode: "goal",
       }),
     );
-    expect(confirmSpy).toHaveBeenCalledWith("确认进入追求目标模式并创建可执行运行？");
-    confirmSpy.mockRestore();
   });
 
   it("opens a working model picker from slash /model", async () => {
@@ -424,6 +426,22 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(props.onRequestModelPicker).not.toHaveBeenCalled();
     expect(props.onModelChange).toHaveBeenCalledWith("deepseek-pro", "deepseek-v4-pro");
     expect(screen.queryByRole("dialog", { name: "切换模型" })).not.toBeInTheDocument();
+  });
+
+  it("lists available MCP tools from slash /mcp", async () => {
+    const user = userEvent.setup();
+    renderSurface();
+
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "/mcp ");
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("dialog", { name: "可用 MCP" })).toBeInTheDocument();
+    expect(screen.getByText("github.search")).toBeInTheDocument();
+
+    const githubButtons = screen.getAllByRole("button", { name: /@github_search/ });
+    await user.click(githubButtons[githubButtons.length - 1]);
+
+    expect(screen.getByPlaceholderText("直接与智能体对话")).toHaveValue("@github_search ");
   });
 
   it("dispatches slash commands when menu items are clicked with the mouse", async () => {

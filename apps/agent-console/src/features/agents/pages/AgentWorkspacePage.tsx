@@ -18,6 +18,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
+import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
+import { notifyFeedback } from "../../../components/ui/feedback-toast";
 import { useI18n } from "../../../lib/i18n";
 import {
   useWorkspaceStore,
@@ -69,6 +71,7 @@ import {
 
 export function AgentWorkspacePage() {
   const { text } = useI18n();
+  const { confirm, confirmDialog } = useConfirmDialog();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { agentId = "default" } = useParams();
@@ -89,7 +92,10 @@ export function AgentWorkspacePage() {
 
   const agent = useQuery({ queryKey: ["agents", agentId], queryFn: () => getAgent(agentId) });
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
-  const toolsQuery = useQuery({ queryKey: ["tools", "registry"], queryFn: getToolRegistry });
+  const toolsQuery = useQuery({
+    queryKey: ["tools", "registry", agentId],
+    queryFn: () => getToolRegistry(agentId),
+  });
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams });
 
   const workspace = useQuery({
@@ -148,14 +154,32 @@ export function AgentWorkspacePage() {
       return createTeam({
         name: nextAvailableTeamName(teams, `${agent.data?.name ?? agentId} 团队`),
         leader_agent_id: agentId,
-        leader_name: agent.data?.name ?? "Leader",
+        leader_name: agent.data?.name ?? "队长",
         workspace_mode: "shared",
         seed_messages: buildTeamSeedMessagesFromPath(activePath, agentId),
       });
     },
     onSuccess: async (team) => {
+      notifyFeedback({
+        tone: "success",
+        title: text("团队已创建", "Team created"),
+        description: text(
+          `已根据当前会话创建“${team.name}”，正在进入团队模式。`,
+          `${team.name} was created from the current conversation. Opening Team Mode now.`,
+        ),
+      });
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
       navigate(`/teams/${team.id}`);
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("团队创建失败", "Team creation failed"),
+        description:
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : text("请检查当前会话状态或稍后重试。", "Check the current conversation state and retry."),
+      });
     },
   });
 
@@ -350,17 +374,24 @@ export function AgentWorkspacePage() {
     }
   }, []);
 
-  const handleClearConversation = useCallback(() => {
-    const message = text(
-      "确定清空当前会话？此操作不可撤销。",
-      "Clear the current conversation? This cannot be undone.",
-    );
-    if (!window.confirm(message)) return;
+  const handleClearConversation = useCallback(async () => {
+    const confirmed = await confirm({
+      title: "清空当前会话",
+      description: "这会重置当前会话内容，但不会删除历史会话列表。此操作不可撤销。",
+      confirmText: "确认清空",
+      variant: "danger",
+    });
+    if (!confirmed) return;
     // v3: clearing only resets the current conversation's runtime fields;
     // the conversations list itself is unchanged. Persistence subscribe
     // will write the empty state back to the active conversation.
     useWorkspaceStore.getState().reset();
-  }, [text]);
+    notifyFeedback({
+      tone: "warning",
+      title: "当前会话已清空",
+      description: "当前对话内容已重置，历史会话列表仍然保留。",
+    });
+  }, [confirm]);
 
   const handleModelChange = useCallback((providerId: string, modelId: string) => {
     setSelectedProviderId(providerId);
@@ -395,6 +426,11 @@ export function AgentWorkspacePage() {
   // v3 conversation history handlers
   const handleNewConversation = useCallback(() => {
     newConversation();
+    notifyFeedback({
+      tone: "info",
+      title: "已新建会话",
+      description: "现在可以从空白工作台开始新的问题、安装验证或演示流程。",
+    });
     if (historyNarrow) setHistoryOverlayOpen(false);
   }, [historyNarrow, newConversation]);
 
@@ -407,17 +443,24 @@ export function AgentWorkspacePage() {
   );
 
   const handleDeleteConversation = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const current = useWorkspaceStore.getState().conversations.find((c) => c.id === id);
       const title = current?.title ?? "";
-      const message = text(
-        `确定删除对话"${title}"？此操作不可撤销。`,
-        `Delete conversation "${title}"? This cannot be undone.`,
-      );
-      if (!window.confirm(message)) return;
+      const confirmed = await confirm({
+        title: "删除对话",
+        description: `将删除对话“${title || "未命名对话"}”。此操作不可撤销。`,
+        confirmText: "确认删除",
+        variant: "danger",
+      });
+      if (!confirmed) return;
       deleteConversation(id);
+      notifyFeedback({
+        tone: "warning",
+        title: "对话已删除",
+        description: title ? `已删除“${title}”。` : "已删除当前对话。",
+      });
     },
-    [deleteConversation, text],
+    [confirm, deleteConversation],
   );
 
   const handleToggleHistoryCollapsed = useCallback(() => {
@@ -488,6 +531,7 @@ export function AgentWorkspacePage() {
         onJumpToNode={handleJumpToNode}
       />
       <ShortcutOverlay open={shortcutOpen} onClose={() => setShortcutOpen(false)} />
+      {confirmDialog}
     </ConsoleShell>
   );
 }

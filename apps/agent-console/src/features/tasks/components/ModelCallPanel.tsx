@@ -105,7 +105,7 @@ export function ModelCallPanel({
                     to={`/observability?trace_id=${encodeURIComponent(call.trace_id)}`}
                     className="mt-0.5 block text-[10px] text-slate-500 hover:text-slate-900"
                   >
-                    <TermHint description="跨服务追踪标识">Trace</TermHint> {call.trace_id.slice(0, 8)}
+                    <TermHint description="跨服务追踪标识">追踪</TermHint> {call.trace_id.slice(0, 8)}
                   </Link>
                 ) : null}
               </Td>
@@ -126,7 +126,7 @@ export function ModelCallPanel({
                   <span>{text("风险", "Risk")} {call.risk_level}</span>
                   {call.timeout_category && <span>{timeoutCategoryLabel(call.timeout_category)}</span>}
                   {call.task_id && (
-                    <Link to={`/runs//events`} className="hover:text-slate-900">
+                    <Link to={`/runs/${call.task_id}/events`} className="hover:text-slate-900">
                       {text("事件深链", "Events")}
                     </Link>
                   )}
@@ -135,7 +135,7 @@ export function ModelCallPanel({
                       to={`/observability?trace_id=${encodeURIComponent(call.trace_id)}`}
                       className="hover:text-slate-900"
                     >
-                      <TermHint description="跨服务追踪标识">Trace</TermHint> {call.trace_id.slice(0, 8)}
+                      <TermHint description="跨服务追踪标识">追踪</TermHint> {call.trace_id.slice(0, 8)}
                     </Link>
                   )}
                 </div>

@@ -5,6 +5,7 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
@@ -33,8 +34,20 @@ export function SandboxesPage() {
   const runBenchmark = useMutation({
     mutationFn: () => runWarmPoolBenchmark(),
     onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("基准测试已启动", "Benchmark started"),
+        description: text("WarmPool 基准结果会在当前页自动刷新。", "WarmPool benchmark results will refresh on this page."),
+      });
       await queryClient.invalidateQueries({ queryKey: ["warm-pool-benchmarks"] });
       await queryClient.invalidateQueries({ queryKey: ["warm-pool"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("基准测试启动失败", "Benchmark start failed"),
+        description: feedbackErrorMessage(error, text("请检查沙箱服务状态或稍后重试。", "Check the sandbox service and retry.")),
+      });
     },
   });
   const latestBenchmark = runBenchmark.data ?? benchmarks.data?.items[0] ?? null;

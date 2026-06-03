@@ -116,9 +116,11 @@ describe("RunDetailPage token optimizer evidence", () => {
 
     renderPage(fetchMock);
 
-    expect(await screen.findByText("Context Optimizer")).toBeInTheDocument();
+    expect(await screen.findByText("上下文优化器")).toBeInTheDocument();
+    expect(screen.getByText("权威组装")).toBeInTheDocument();
+    expect(screen.getByText("字符数/4")).toBeInTheDocument();
     expect(screen.getByText("optimizer-version-1")).toBeInTheDocument();
     expect(screen.getByText("abcdef1234567890")).toBeInTheDocument();
-    expect(screen.getByText("1 decisions")).toBeInTheDocument();
+    expect(screen.getByText("1 条决策")).toBeInTheDocument();
   });
 });

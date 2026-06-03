@@ -42,8 +42,8 @@ function jsonResponse(payload: unknown, status = 200) {
 function agentDefinition(): AgentDefinition {
   return {
     id: "default",
-    name: "Default Agent",
-    description: "Team Mode leader",
+    name: "默认智能体",
+    description: "团队模式队长",
     role: "planner",
     status: "ACTIVE",
     model_provider: "default",
@@ -162,7 +162,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
     id: "leader-agent",
     slot_id: "leader",
     role: "leader",
-    agent_name: "Leader",
+    agent_name: "队长",
   });
   const product = teamAgent({
     id: "product-agent",
@@ -203,7 +203,7 @@ function createdTeamFixture(payload: Record<string, unknown>): Team {
     : "Aion 协作团队";
   const leaderName = typeof payload.leader_name === "string" && payload.leader_name.trim().length > 0
     ? payload.leader_name.trim()
-    : "Leader";
+    : "队长";
   const leaderAgentId = typeof payload.leader_agent_id === "string" && payload.leader_agent_id.trim().length > 0
     ? payload.leader_agent_id.trim()
     : "default";
@@ -268,6 +268,15 @@ function routeTeamApis(state: TeamState) {
 
     if (path === "/api/agents" && method === "GET") {
       await json(route, { items: [agentDefinition()], next_cursor: null });
+      return;
+    }
+
+    if (path === "/api/tools/registry" && method === "GET") {
+      if (url.searchParams.get("agent_id") !== "default") {
+        await json(route, { detail: "missing expected agent_id=default" }, 400);
+        return;
+      }
+      await json(route, { items: [], categories: [], sources: [] });
       return;
     }
 
@@ -505,7 +514,7 @@ async function hasNoHorizontalOverflow(page: Page): Promise<boolean> {
 }
 
 test.describe("Team Mode browser smoke", () => {
-  test("creates a team, sends through Leader, and opens extra columns on desktop", async ({ page }) => {
+  test("creates a team, sends through the leader, and opens extra columns on desktop", async ({ page }) => {
     test.setTimeout(45_000);
     const state = stateFixture();
     await fulfillTeamApis(page, state);
@@ -514,7 +523,7 @@ test.describe("Team Mode browser smoke", () => {
     await page.goto("/teams");
     await expect(page.getByText("团队模式")).toBeVisible();
     await expect(page.getByText("Aion 协作团队").first()).toBeVisible();
-    await expect(page.getByText("Leader").first()).toBeVisible();
+    await expect(page.getByText("队长").first()).toBeVisible();
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
     await page.getByRole("button", { name: /创建团队/ }).click();
@@ -531,25 +540,26 @@ test.describe("Team Mode browser smoke", () => {
       workspace_mode: "shared",
       leader_agent_id: "default",
     });
+    await expect(page.getByText("团队创建成功")).toBeVisible();
 
-    const leaderColumn = page.getByRole("region", { name: /Leader Leader 列/ });
+    const leaderColumn = page.getByRole("region", { name: /队长 队长 列/ });
     await expect(leaderColumn).toBeVisible();
-    await leaderColumn.getByRole("textbox").fill("同步 Leader 状态");
+    await leaderColumn.getByRole("textbox").fill("同步队长状态");
     await leaderColumn.getByRole("button", { name: "发送", exact: true }).click();
 
     await expect.poll(() => state.lastMessagePayload).toMatchObject({
       target: "leader",
-      content: "同步 Leader 状态",
+      content: "同步队长状态",
       from_agent_slot_id: "user",
       type: "message",
     });
     await expect(
-      leaderColumn.getByText("同步 Leader 状态"),
+      leaderColumn.getByText("同步队长状态"),
     ).toBeVisible();
     await page.getByRole("button", { name: "添加成员" }).click();
     const addMemberDialog = page.getByRole("dialog", { name: "添加成员" });
     await expect(addMemberDialog.getByText("已选择")).toBeVisible();
-    await expect(addMemberDialog.getByRole("button", { name: /Agent 定义/ })).toContainText("Default Agent");
+    await expect(addMemberDialog.getByRole("button", { name: /智能体定义/ })).toContainText("默认智能体");
     await addMemberDialog.getByLabel("成员名称").fill("浏览器测试工程师");
     await addMemberDialog.getByRole("button", { name: "添加成员" }).click();
     await expect.poll(() => state.lastAddAgentPayload).toMatchObject({
@@ -557,6 +567,7 @@ test.describe("Team Mode browser smoke", () => {
       agent_name: "浏览器测试工程师",
       role: "teammate",
     });
+    await expect(page.getByText("团队成员已添加")).toBeVisible();
     await expect(page.getByRole("tab", { name: /浏览器测试工程师/ })).toBeVisible();
 
     const team = state.teams.find((candidate) => candidate.id === "team-created");
@@ -584,7 +595,7 @@ test.describe("Team Mode browser smoke", () => {
     await page.reload();
     await page.waitForURL(/\/teams\/team-created$/);
 
-    const productColumn = page.getByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = page.getByRole("region", { name: /产品经理 成员 列/ });
     await expect(productColumn).toBeVisible();
     await page.getByRole("button", { name: "任务板" }).click();
     const taskBoard = page.getByRole("dialog", { name: "团队任务板" });
@@ -627,7 +638,7 @@ test.describe("Team Mode browser smoke", () => {
     await productColumn.getByRole("button", { name: "切换全屏列" }).click();
     await expect(productColumn).toBeVisible();
     await expect(leaderColumn).not.toBeVisible();
-    await expect(page.getByRole("region", { name: /设计 Teammate 列/ })).not.toBeVisible();
+    await expect(page.getByRole("region", { name: /设计 成员 列/ })).not.toBeVisible();
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
     await productColumn.getByRole("button", { name: "切换全屏列" }).click();
     await expect(leaderColumn).toBeVisible();
@@ -646,12 +657,12 @@ test.describe("Team Mode browser smoke", () => {
     await expect(page.getByRole("tab", { name: /产品经理/ })).toBeVisible();
 
     await page.getByRole("tab", { name: /产品经理/ }).click();
-    const productColumn = page.getByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = page.getByRole("region", { name: /产品经理 成员 列/ });
     await expect(productColumn).toBeVisible();
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
-    await page.getByRole("tab", { name: /Leader/ }).click();
-    const leaderColumn = page.getByRole("region", { name: /Leader Leader 列/ });
+    await page.getByRole("tab", { name: /队长/ }).click();
+    const leaderColumn = page.getByRole("region", { name: /队长 队长 列/ });
     await leaderColumn.getByRole("textbox").fill("移动端验证");
     await leaderColumn.getByRole("button", { name: "发送", exact: true }).click();
 

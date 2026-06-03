@@ -25,8 +25,11 @@ import {
   Paperclip,
   PlugZap,
   Target,
+  X,
 } from "lucide-react";
 
+import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
+import { notifyFeedback } from "../../../components/ui/feedback-toast";
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
 import {
@@ -135,6 +138,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   } = props;
 
   const { text } = useI18n();
+  const { confirm, confirmDialog } = useConfirmDialog();
   const draft = useWorkspaceStore((state) => state.draft);
   const setDraft = useWorkspaceStore((state) => state.setDraft);
   const nodesById = useWorkspaceStore((state) => state.nodesById);
@@ -249,7 +253,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [planSubmitting, setPlanSubmitting] = useState(false);
-  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | null>(null);
+  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | "mcp" | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -327,14 +331,38 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         store.currentConversationId,
         store.activeLeafId,
       );
-      if (compressionInFlightRef.current !== null) return null;
+      if (compressionInFlightRef.current !== null) {
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "info",
+            title: text("上下文仍在压缩", "Context compression is still running"),
+            description: text(
+              "请稍候，当前工作台已经在生成摘要。",
+              "Please wait while the workspace finishes generating the current summary.",
+            ),
+          });
+        }
+        return null;
+      }
       const eligible = path.filter(
         (node) =>
           (node.role === "user" || node.role === "assistant" || node.role === "system") &&
           !store.pinnedNodeIds.includes(node.id) &&
           node.content.trim().length > 0,
       );
-      if (eligible.length === 0) return null;
+      if (eligible.length === 0) {
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "warning",
+            title: text("暂无可压缩内容", "Nothing to compress yet"),
+            description: text(
+              "至少需要一段未固定的会话内容后，才能生成上下文摘要。",
+              "Add some unpinned conversation content before generating a context summary.",
+            ),
+          });
+        }
+        return null;
+      }
 
       const existing =
         reason === "manual" ? null : store.contextCompressions[branchKey] ?? null;
@@ -375,7 +403,22 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           compressor_provider: existing?.compressorProvider ?? selectedProviderId,
           compressor_model: existing?.compressorModel ?? selectedModelId,
         });
-        return commitCompressionResponse(branchKey, response);
+        const summary = commitCompressionResponse(branchKey, response);
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "success",
+            title: text("上下文已压缩", "Context compressed"),
+            description: text(
+              `已为 ${response.coverage_node_ids.length} 条消息生成摘要，预计从 ${Math.round(
+                response.estimated_original_tokens,
+              )} 标记压缩到 ${Math.round(response.estimated_summary_tokens)} 标记。`,
+              `Summarized ${response.coverage_node_ids.length} messages, reducing the estimated prompt from ${Math.round(
+                response.estimated_original_tokens,
+              )} to ${Math.round(response.estimated_summary_tokens)} tokens.`,
+            ),
+          });
+        }
+        return summary;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const now = new Date().toISOString();
@@ -400,6 +443,13 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           error: message,
           updatedAt: now,
         });
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "error",
+            title: text("上下文压缩失败", "Context compression failed"),
+            description: message || text("请稍后重试。", "Please try again shortly."),
+          });
+        }
         return null;
       } finally {
         if (compressionInFlightRef.current === branchKey) {
@@ -413,6 +463,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       selectedModelId,
       selectedProviderId,
       setContextCompression,
+      text,
     ],
   );
 
@@ -464,15 +515,15 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     if (stream.isStreaming) return;
 
     if (workspaceMode === "plan" || workspaceMode === "goal") {
-      const message = text(
-        workspaceMode === "goal"
-          ? "确认进入追求目标模式并创建可执行运行？"
-          : "确认创建规划后执行运行？此操作会触发可执行运行。",
-        workspaceMode === "goal"
-          ? "Start Goal pursuit mode and create an executable Run?"
-          : "Create a Plan-Act Run? This triggers an executable run.",
-      );
-      if (!window.confirm(message)) return;
+      const confirmed = await confirm({
+        title: workspaceMode === "goal" ? "进入追求目标模式" : "创建规划后执行运行",
+        description:
+          workspaceMode === "goal"
+            ? "这会进入追求目标模式，并立即创建可执行运行。"
+            : "这会创建规划后执行运行，并立即触发可执行执行链路。",
+        confirmText: workspaceMode === "goal" ? "确认进入" : "确认创建",
+      });
+      if (!confirmed) return;
     }
 
     if (contextUsageRatio >= autoCompressionRatio) {
@@ -586,9 +637,20 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     async (nodeId: string): Promise<boolean> => {
       const node = useWorkspaceStore.getState().nodesById[nodeId];
       if (!node) return false;
-      return copyText(stripThinkBlocks(node.content));
+      const copied = await copyText(stripThinkBlocks(node.content));
+      if (!copied) {
+        notifyFeedback({
+          tone: "error",
+          title: text("复制失败", "Copy failed"),
+          description: text(
+            "当前浏览器未允许写入剪贴板，请检查权限后重试。",
+            "The browser could not write to the clipboard. Check permissions and retry.",
+          ),
+        });
+      }
+      return copied;
     },
-    [],
+    [text],
   );
 
   const handleStartEdit = useCallback((nodeId: string) => {
@@ -764,6 +826,18 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [handleInsertMention],
   );
 
+  const handleClearContextSummary = useCallback(() => {
+    clearContextCompression(compressionBranchKey);
+    notifyFeedback({
+      tone: "info",
+      title: text("摘要已清除", "Context summary cleared"),
+      description: text(
+        "后续发送将重新携带原始上下文内容。",
+        "The next send will include the original conversation context again.",
+      ),
+    });
+  }, [clearContextCompression, compressionBranchKey, text]);
+
   // ─── Slash command dispatcher (v3 / Req 5) ─────────────────────────────
   const handleSlashDispatch = useCallback(
     (cmd: SlashCommand, args: string): void => {
@@ -802,6 +876,26 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           setBottomPanel("model");
           setDraft("");
           return;
+        case "mcp": {
+          const mcpCount = tools.filter(isMcpTool).length;
+          setBottomPanel("mcp");
+          setDraft("");
+          notifyFeedback({
+            tone: mcpCount > 0 ? "success" : "info",
+            title: mcpCount > 0 ? text("MCP 列表已打开", "MCP list opened") : text("暂无可用 MCP", "No MCP tools available"),
+            description:
+              mcpCount > 0
+                ? text(
+                    `当前智能体有 ${mcpCount} 个可用 MCP。点击条目可插入 @工具名。`,
+                    `This agent has ${mcpCount} available MCP tools. Select one to insert its @mention.`,
+                  )
+                : text(
+                    "已打开 MCP 列表。可以先到 MCP / 技能商店安装并挂载能力。",
+                    "The MCP list is open. Install and attach capabilities from the MCP / Skill marketplace first.",
+                  ),
+          });
+          return;
+        }
         case "tool":
           if (args.length > 0) {
             // Strip any leading '@' to tolerate `/tool @curl`.
@@ -839,6 +933,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       compressCurrentContext,
       setDraft,
       tail,
+      text,
+      tools,
       togglePinned,
     ],
   );
@@ -866,7 +962,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             onRecompress={() => {
               void compressCurrentContext("manual");
             }}
-            onClear={() => clearContextCompression(compressionBranchKey)}
+            onClear={handleClearContextSummary}
             text={text}
           />
         }
@@ -928,6 +1024,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               title={
                 bottomPanel === "model"
                   ? text("切换模型", "Switch model")
+                  : bottomPanel === "mcp"
+                    ? text("可用 MCP", "Available MCP")
                   : text("输入设置", "Composer settings")
               }
             >
@@ -956,6 +1054,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                   onContextMaxTokensChange={setContextMaxTokens}
                   autoCompressionRatio={autoCompressionRatio}
                   onAutoCompressionRatioChange={setAutoCompressionRatio}
+                  pluginsInitiallyOpen={bottomPanel === "mcp"}
                 />
               )}
             </BottomToolsPopover>
@@ -971,7 +1070,9 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               placeholder={placeholder}
               optionsOpen={bottomPanel !== null}
               onOptionsToggle={() =>
-                setBottomPanel((current) => (current === "tools" ? null : "tools"))
+                setBottomPanel((current) =>
+                  current === "tools" || current === "mcp" ? null : "tools",
+                )
               }
               optionsTriggerRef={optionsTriggerRef}
               goalModeToggleVisible={false}
@@ -1018,6 +1119,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             : text(`工作台 ${agentId}`, `Workspace for ${agentId}`)}
         </p>
       </footer>
+      {confirmDialog}
     </div>
   );
 }
@@ -1076,6 +1178,7 @@ type ToolsPanelProps = {
   onContextMaxTokensChange?: (value: number) => void;
   autoCompressionRatio?: number;
   onAutoCompressionRatioChange?: (value: number) => void;
+  pluginsInitiallyOpen?: boolean;
 };
 
 function BottomToolsPopover({
@@ -1102,11 +1205,24 @@ function BottomToolsPopover({
       role="dialog"
       aria-modal="false"
       aria-label={title}
-      className={[
-        "absolute bottom-[58px] z-30 w-[min(200px,calc(100vw-5rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg",
-        align === "right" ? "right-4" : "left-4",
-      ].join(" ")}
+      className={cn(
+        "absolute bottom-[58px] left-4 right-4 z-30 max-h-[min(70vh,480px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl",
+        align === "right"
+          ? "sm:left-auto sm:right-4 sm:w-[280px]"
+          : "sm:left-4 sm:right-auto sm:w-[280px]",
+      )}
     >
+      <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-100 px-1 pb-2">
+        <div className="text-xs font-semibold text-slate-900">{title}</div>
+        <button
+          type="button"
+          aria-label={`关闭${title}`}
+          onClick={onClose}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        >
+          <X aria-hidden="true" className="h-4 w-4" />
+        </button>
+      </div>
       {children}
     </div>
   );
@@ -1124,9 +1240,14 @@ function ComposerSettingsPanel({
   onContextMaxTokensChange,
   autoCompressionRatio,
   onAutoCompressionRatioChange,
+  pluginsInitiallyOpen = false,
 }: ToolsPanelProps): JSX.Element {
-  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(pluginsInitiallyOpen);
   const mcpTools = tools.filter(isMcpTool);
+
+  useEffect(() => {
+    if (pluginsInitiallyOpen) setPluginsOpen(true);
+  }, [pluginsInitiallyOpen]);
 
   return (
     <div className="flex flex-col text-xs text-slate-800">

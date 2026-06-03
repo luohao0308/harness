@@ -7,6 +7,7 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
@@ -146,6 +147,11 @@ export function ModelSettingsPage() {
     mutationFn: updateModelSettings,
     onSuccess: (saved) => {
       setSaveMessage(text("模型配置已保存", "Model settings saved"));
+      notifyFeedback({
+        tone: "success",
+        title: text("模型配置已保存", "Model settings saved"),
+        description: text("当前默认模型和提供商列表已经更新。", "The default model and provider list have been updated."),
+      });
       queryClient.setQueryData(["settings", "models"], saved);
       void queryClient.invalidateQueries({ queryKey: ["settings", "models"], exact: true });
       void queryClient.invalidateQueries({ queryKey: ["settings", "models", "health"], exact: true });
@@ -161,6 +167,11 @@ export function ModelSettingsPage() {
           `Save failed: ${error instanceof Error ? error.message : "unknown error"}`,
         ),
       );
+      notifyFeedback({
+        tone: "error",
+        title: text("模型配置保存失败", "Model settings save failed"),
+        description: feedbackErrorMessage(error, text("请检查模型配置项并稍后重试。", "Check the model settings and retry.")),
+      });
     },
     onSettled: () => {
       setPendingAction(null);

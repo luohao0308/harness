@@ -109,7 +109,7 @@ describe("ModelSettingsPage", () => {
     await screen.findByText("DeepSeek Flash");
     await user.click(screen.getAllByRole("button", { name: /添加并切换/ })[0]);
 
-    expect(await screen.findByText("模型配置已保存")).toBeInTheDocument();
+    expect((await screen.findAllByText("模型配置已保存")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /已启用/ })).toBeInTheDocument();
     expect(screen.queryByText("切换中")).not.toBeInTheDocument();
     await waitFor(() => {

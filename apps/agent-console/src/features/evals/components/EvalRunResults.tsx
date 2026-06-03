@@ -1,12 +1,13 @@
 import { Check } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Badge } from "../../../components/ui/badge";
+import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import type { EvalRun, RegressionDelta } from "../../tasks/api";
 
 const metricLabels: Record<string, string> = {
@@ -52,7 +53,9 @@ export function EvalRunResults({
           <div className="text-sm font-semibold text-slate-900">
             {text("最近评测运行", "Latest Eval Run")}
           </div>
-          {latestRun && <Badge>{latestRun.status}</Badge>}
+          {latestRun && (
+            <Badge tone={statusTone(latestRun.status)}>{statusLabel(latestRun.status)}</Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {latestRun && latestRun.status === "COMPLETED" && (
@@ -80,7 +83,7 @@ export function EvalRunResults({
               isPercentage
             />
             <DeltaMetric
-              label={<TermHint description="依据校验通过率">Grounding</TermHint>}
+              label={<TermHint description="依据校验通过率">依据校验</TermHint>}
               delta={regressionDelta.grounding_pass_rate_delta}
               isPercentage
             />
@@ -90,13 +93,13 @@ export function EvalRunResults({
               isPercentage
             />
             <DeltaMetric
-              label={<TermHint description="禁止证据泄漏率">Forbidden leak</TermHint>}
+              label={<TermHint description="禁止证据泄漏率">禁止证据泄漏</TermHint>}
               delta={regressionDelta.forbidden_evidence_leak_rate_delta}
               isPercentage
               invertColor
             />
             <DeltaMetric
-              label={<TermHint description="不支持标记率">Unsupported</TermHint>}
+              label={<TermHint description="不支持标记率">不支持标记</TermHint>}
               delta={regressionDelta.unsupported_marker_rate_delta}
               isPercentage
               invertColor
@@ -114,7 +117,7 @@ export function EvalRunResults({
               className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700"
             >
               {text(
-                "回归检测：Eval gate 已触发",
+                "回归检测：评测门禁已触发",
                 "Regression detected: Eval gate triggered",
               )}
             </div>
@@ -187,10 +190,10 @@ export function EvalRunResults({
             <Th>{text("任务", "Task")}</Th>
             <Th>{text("分数", "Score")}</Th>
             <Th>
-              <TermHint description="链路评分器">Trace 评分器</TermHint>
+              <TermHint description="链路评分器">轨迹评分器</TermHint>
             </Th>
             <Th>
-              <TermHint description="依据校验结果">Grounding</TermHint>
+              <TermHint description="依据校验结果">依据校验</TermHint>
             </Th>
           </tr>
         </thead>
@@ -202,7 +205,7 @@ export function EvalRunResults({
               <tr key={result.id} className="border-t border-slate-100">
                 <Td className="font-mono text-slate-500">{result.id.slice(0, 8)}</Td>
                 <Td>
-                  <Badge>{result.status}</Badge>
+                  <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
                 </Td>
                 <Td className="font-mono text-slate-600">
                   {result.task_id?.slice(0, 8) ?? "手动录入"}

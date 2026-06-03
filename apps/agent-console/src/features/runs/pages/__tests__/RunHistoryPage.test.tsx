@@ -75,7 +75,9 @@ describe("RunHistoryPage", () => {
     renderPage(fetchMock);
 
     expect(await screen.findByText("Cache evidence run")).toBeInTheDocument();
+    expect(screen.getByText("已完成")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^工作台$/ })).toBeInTheDocument();
     expect(screen.queryByText("打开智能体工作台")).not.toBeInTheDocument();
+    expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
   });
 });

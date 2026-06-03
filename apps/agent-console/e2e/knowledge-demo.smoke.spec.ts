@@ -9,7 +9,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
-  /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
+  /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/agents\/default\/runs\/chat\/stream/;
 
 const now = "2026-05-18T00:00:00.000Z";
 const runId = "p7-demo-run-00000000-0000-4000-8000-000000000001";
@@ -421,21 +421,27 @@ test.describe("P7 Knowledge demo release smoke", () => {
 
     await expect(page.getByText("P7 Demo Agent Runbook").first()).toBeVisible();
     await expect(page.getByText("P7 Demo Org Handoff").first()).toBeVisible();
-    await expect(page.getByLabel("编辑知识源说明")).toHaveValue(
-      /Fixture evidence only/,
-    );
     await expect(
       page.getByRole("button", {
-        name: /P7 Demo Agent Runbook.*agent.*HEALTHY/,
+        name: /P7 Demo Agent Runbook.*智能体.*健康/,
       }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /P7 Demo Org Handoff.*org.*HEALTHY/ }),
+      page.getByRole("button", { name: /P7 Demo Org Handoff.*组织.*健康/ }),
     ).toBeVisible();
-    await expect(page.getByText("2 chunks").first()).toBeVisible();
-    await page.getByRole("button", { name: /P7 Demo Org Handoff.*org.*HEALTHY/ }).click();
+    await expect(page.getByText("2 个分块").first()).toBeVisible();
+    await expect(page.getByText(/Fixture evidence only/).first()).toBeVisible();
+
+    await page.getByRole("button", { name: "编辑" }).click();
+    const editDialog = page.getByRole("dialog", { name: "编辑本地知识源" });
+    await expect(editDialog.getByLabel("编辑知识源说明")).toHaveValue(
+      /Fixture evidence only/,
+    );
+    await editDialog.getByRole("button", { name: "取消" }).click();
+
+    await page.getByRole("button", { name: /P7 Demo Org Handoff.*组织.*健康/ }).click();
     await expect(page.getByText("P7 Demo Org Handoff").first()).toBeVisible();
-    await expect(page.getByText("1 chunks").first()).toBeVisible();
+    await expect(page.getByText("1 个分块").first()).toBeVisible();
   });
 
   test("Workspace projects local fixture grounding indicator", async ({
@@ -453,7 +459,9 @@ test.describe("P7 Knowledge demo release smoke", () => {
       page.getByText("Local fixture knowledge grounded the P7 demo answer."),
     ).toBeVisible();
     await expect(page.getByText("The answer is grounded in")).toBeVisible();
-    await expect(page.locator('a[aria-label="运行详情"]')).toBeVisible();
+    await expect(
+      page.locator('a[aria-label="运行详情"]').first(),
+    ).toBeVisible();
   });
 
   test("Run Detail projects retrieval, citation, and prompt manifest evidence", async ({
@@ -462,8 +470,8 @@ test.describe("P7 Knowledge demo release smoke", () => {
     await page.goto(`/runs/${runId}`);
 
     await expect(page.getByText("知识依据")).toBeVisible();
-    await expect(page.getByText("local_knowledge")).toBeVisible();
-    await expect(page.getByText("seed_fixture_local_evidence")).toBeVisible();
+    await expect(page.getByText("本地知识库")).toBeVisible();
+    await expect(page.getByText("演示夹具本地证据")).toBeVisible();
     await expect(page.getByText(promptManifestId).first()).toBeVisible();
     await expect(page.getByText(retrievalHitId).first()).toBeVisible();
     await expect(
@@ -486,7 +494,7 @@ test.describe("P7 Knowledge demo release smoke", () => {
     await expect(page.getByText("grounding-trace-v1")).toBeVisible();
 
     await page.goto("/observability");
-    await expect(page.getByText("Grounding Quality")).toBeVisible();
+    await expect(page.getByText("依据质量", { exact: true })).toBeVisible();
     await expect(page.getByText("100.0%").first()).toBeVisible();
     await expect(page.getByText("禁止证据泄漏率").first()).toBeVisible();
     await expect(page.getByText("通过").first()).toBeVisible();
@@ -535,6 +543,23 @@ async function routeKnowledgeDemoApis(page: Page): Promise<void> {
 
     if (path === "/api/tools/registry" && method === "GET") {
       await fulfillJson(route, { items: [], categories: [], sources: [] });
+      return;
+    }
+
+    if (path === "/api/teams" && method === "GET") {
+      await fulfillJson(route, { items: [], next_cursor: null });
+      return;
+    }
+
+    if (path === "/api/agents/token-optimizer/presets" && method === "GET") {
+      await fulfillJson(route, {
+        items: [
+          { preset_id: "off", display_name: "关闭", description: "不启用额外 Token Optimizer。", enabled: false, priority: null },
+          { preset_id: "conservative", display_name: "保守省 Token", description: "轻量裁剪低相关证据。", enabled: true, priority: 5 },
+          { preset_id: "balanced", display_name: "均衡", description: "推荐默认方案。", enabled: true, priority: 5 },
+          { preset_id: "aggressive", display_name: "强力省 Token", description: "更积极限制候选上下文。", enabled: true, priority: 5 },
+        ],
+      });
       return;
     }
 

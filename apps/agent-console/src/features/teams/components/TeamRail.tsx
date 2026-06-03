@@ -25,12 +25,12 @@ export function TeamRail({
         "hidden w-[144px] shrink-0 flex-col border-r border-slate-200 bg-white md:flex xl:w-[152px]",
         className,
       )}
-      aria-label="Team rail"
+      aria-label="团队侧栏"
     >
       <div className="flex h-10 items-center justify-between border-b border-slate-200 px-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <Network className="h-4 w-4 shrink-0 text-slate-700" />
-          <span className="truncate text-[13px] font-semibold text-slate-950">Team</span>
+          <span className="truncate text-[13px] font-semibold text-slate-950">团队</span>
         </div>
         <Button
           variant="ghost"

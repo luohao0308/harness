@@ -18,10 +18,12 @@ import {
   Plus,
   PlugZap,
   Search,
+  Settings2,
   ShieldCheck,
 } from "lucide-react";
 
 import { Button } from "../components/ui/button";
+import { FeedbackToastViewport } from "../components/ui/feedback-toast";
 import { useConsoleStore } from "../stores/consoleStore";
 import { environmentLabel } from "../lib/labels";
 import { cn } from "../lib/utils";
@@ -33,9 +35,10 @@ const navItems = [
   { to: "/subagents", label: "子代理", icon: Bot },
   { to: "/sandboxes", label: "沙箱", icon: Box },
   { to: "/tools", label: "工具", icon: PlugZap },
+  { to: "/tools/config", label: "工具配置", icon: Settings2 },
   { to: "/knowledge", label: "知识库", icon: LibraryBig },
   { to: "/observability", label: "观测", icon: Activity },
-  { to: "/token-savings", label: "Token 节省", icon: Gauge },
+  { to: "/token-savings", label: "标记节省", icon: Gauge },
   { to: "/evals", label: "评测", icon: FlaskConical },
   { to: "/settings/policies", label: "策略", icon: ShieldCheck },
   { to: "/settings/models", label: "模型", icon: Brain },
@@ -79,6 +82,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       lang="zh-CN"
       translate="no"
     >
+      <FeedbackToastViewport />
       <aside
         className={cn(
           "flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
@@ -105,7 +109,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
               effectiveSidebarCollapsed && "pointer-events-none absolute opacity-0",
             )}
           >
-            <div className="text-sm font-semibold tracking-tight text-slate-900">Harness</div>
+            <div className="text-sm font-semibold tracking-tight text-slate-900">运行平台</div>
             <div className="-mt-0.5 text-[10px] text-slate-500">智能体运行平台 · acme-prod · vpc-east</div>
           </div>
           <Button

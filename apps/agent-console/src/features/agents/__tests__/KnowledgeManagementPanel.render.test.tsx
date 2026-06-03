@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -126,9 +126,9 @@ describe("KnowledgeManagementPanel", () => {
     renderPanel(setupFetch());
 
     expect(await screen.findByText("Team Knowledge")).toBeInTheDocument();
-    expect(screen.getAllByText("ACTIVE").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("HEALTHY").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("agent").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已启用").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("健康").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("智能体").length).toBeGreaterThan(0);
     await screen.findAllByText("Engineering Manual");
     expect(screen.getAllByText("Engineering Manual").length).toBeGreaterThan(0);
     expect(await screen.findByText("v1 · INDEXED", { selector: "span" })).toBeInTheDocument();
@@ -138,13 +138,15 @@ describe("KnowledgeManagementPanel", () => {
   it("confirms archive and scope changes before calling lifecycle APIs", async () => {
     const user = userEvent.setup();
     const fetchMock = setupFetch();
-    const confirm = vi.fn(() => true);
-    vi.stubGlobal("confirm", confirm);
     renderPanel(fetchMock);
 
     await screen.findByText("Team Knowledge");
     await user.click(screen.getByRole("button", { name: /归档/ }));
-    await user.click(screen.getByRole("button", { name: "org" }));
+    const archiveDialog = await screen.findByRole("dialog", { name: "归档知识源" });
+    await user.click(within(archiveDialog).getByRole("button", { name: "确认归档" }));
+    await user.click(screen.getByRole("button", { name: "切到组织" }));
+    const scopeDialog = await screen.findByRole("dialog", { name: "切换知识源作用域" });
+    await user.click(within(scopeDialog).getByRole("button", { name: "确认切换" }));
 
     await waitFor(() => {
       const requestedPaths = fetchMock.mock.calls.map(([input]) => requestPath(input));
@@ -155,7 +157,6 @@ describe("KnowledgeManagementPanel", () => {
         "/api/agents/default/knowledge/sources/source-1/scope",
       );
     });
-    expect(confirm).toHaveBeenCalledTimes(2);
     const scopeCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/scope"));
     expect(JSON.parse(String(scopeCall?.[1]?.body))).toMatchObject({ scope: "org" });
     expect(scopeCall?.[1]?.headers).toMatchObject({
@@ -166,8 +167,6 @@ describe("KnowledgeManagementPanel", () => {
   it("confirms permanent deletion before removing a knowledge source", async () => {
     const user = userEvent.setup();
     let deleted = false;
-    const confirm = vi.fn(() => true);
-    vi.stubGlobal("confirm", confirm);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
       if (path === "/api/agents/default/knowledge/sources" && !init?.method) {
@@ -189,6 +188,8 @@ describe("KnowledgeManagementPanel", () => {
 
     await screen.findByText("Team Knowledge");
     await user.click(screen.getByRole("button", { name: "删除" }));
+    const deleteDialog = await screen.findByRole("dialog", { name: "永久删除知识源" });
+    await user.click(within(deleteDialog).getByRole("button", { name: "确认删除" }));
 
     await waitFor(() => {
       const deleteCall = fetchMock.mock.calls.find(
@@ -198,7 +199,6 @@ describe("KnowledgeManagementPanel", () => {
       );
       expect(deleteCall).toBeDefined();
     });
-    expect(confirm).toHaveBeenCalledWith("确定永久删除该知识源？此操作不可撤销。");
     await waitFor(() => {
       expect(screen.getAllByText("暂无知识源。").length).toBeGreaterThan(0);
     });
@@ -207,7 +207,6 @@ describe("KnowledgeManagementPanel", () => {
   it("posts add-document and document-version requests from the management surface", async () => {
     const user = userEvent.setup();
     const fetchMock = setupFetch();
-    vi.stubGlobal("confirm", vi.fn(() => true));
     renderPanel(fetchMock);
 
     await screen.findByText("Team Knowledge");
@@ -218,6 +217,8 @@ describe("KnowledgeManagementPanel", () => {
     await user.click(screen.getByRole("button", { name: /重新导入/ }));
     await user.type(screen.getByLabelText("重新导入内容"), "Updated manual v2");
     await user.click(screen.getByRole("button", { name: /创建版本/ }));
+    const reingestDialog = await screen.findByRole("dialog", { name: "重新导入文档" });
+    await user.click(within(reingestDialog).getByRole("button", { name: "确认创建版本" }));
 
     await waitFor(() => {
       const requestedPaths = fetchMock.mock.calls.map(([input]) => requestPath(input));

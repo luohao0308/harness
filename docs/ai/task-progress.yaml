@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-26T14:25:15Z
+last_updated_at: 2026-05-27T08:05:09Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -208,19 +208,244 @@ post_stage_hardening:
   - id: mcp-skill-tool-click-modal-configuration
     date: 2026-05-26
     status: verified
-    demo: Tool Registry and Agent Studio MCP/Skill/Tool configuration now opens from compact buttons into modal dialogs instead of exposing inline configuration forms by default.
+    demo: Tool Registry and Agent Studio MCP/Skill/Tool configuration now opens from compact buttons into modal dialogs, and Tool Registry has a searchable MCP / Skill marketplace panel backed by Harness-safe install/preflight gates.
     verification_result: passed
     verification_commands:
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py::test_capability_marketplace_aggregates_mcp_and_skill_sources tests/test_tool_registry.py::test_marketplace_preflight_registers_metadata_without_public_source_resolution -q
+      - cd services/api-server && uv run ruff check app tests
       - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx
       - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
       - cd apps/agent-console && npm test -- ToolRegistryPage AgentListPage
       - cd apps/agent-console && npm run lint -- --pretty false
       - cd apps/agent-console && npm run build
+      - HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5174 HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts
+      - python3 scripts/validate-docs.py
+      - Local dev server on `http://127.0.0.1:5174/tools`; Playwright smoke confirmed marketplace heading/search visible and document overflow 0.
+      - Restarted local API on `127.0.0.1:8000` after stale-process 404; direct backend and Vite proxy marketplace requests now return HTTP 200.
+      - Restarted local API again after idempotent preflight fix; repeated live Brave Search marketplace preflight returned HTTP 201 twice and reused staged package `eb7766ea-806c-45ef-b591-e1c39c480d75`.
+      - cd services/api-server && uv run ruff check app/tools/capabilities.py app/tools/marketplace.py app/api/tools.py tests/test_tool_registry.py
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py::test_marketplace_mcp_package_can_be_attached_and_test_invoked -q
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd services/api-server && uv run ruff check app/tools/capabilities.py app/tools/mcp_adapter.py tests/test_tool_registry.py
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - git diff --check
+      - Restarted local API and live-smoked `POST /api/tools/capabilities/preflight/marketplace` with `source_uri=https://localhost/internal-mcp`; response was HTTP 201 with `source_kind=marketplace_preflight`, `source_resolution=registry_metadata_only_no_url_fetch`, and `no_source_download=true`; the smoke package was then uninstalled.
+      - Restarted local API on `127.0.0.1:8000` and live-smoked installed Brave Search with `POST /api/tools/capabilities/test-invoke`; response was HTTP 202, `tool_call.status=SUCCESS`, `tool_name=brave`, and `capability_version_id=brave-9693b089e19e2135-3e429fc2`.
     acceptance_notes:
       - Added shared `ConfigDialog` with `role="dialog"` and `aria-modal="true"` for feature configuration flows.
       - Tool Registry now keeps built-in preset Agent confirmation, trusted URL install, public URL preflight, Skill upload, package lifecycle, and Agent-scoped test invoke inside click-open dialogs.
       - Agent Studio capability attachment now shows a compact selected-capability summary and opens the MCP/Skill/Tool attach form in a modal.
+  - id: mcp-skill-store-chinese-first-ui-polish
+    date: 2026-05-27
+    status: verified
+    demo: MCP / 技能商店现在面向新手提供全中文安装向导、明确安装状态、自定义弹窗和 toast 反馈，并用浏览器级案例覆盖 MCP 与 Skill 的安装验证路径。
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx src/features/agents/__tests__/KnowledgeManagementPanel.render.test.tsx src/features/agents/__tests__/ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm test -- src/features/agents/__tests__/AgentListPage.studio.test.tsx src/features/teams/__tests__/TeamPages.test.tsx src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts e2e/agent-studio-feedback.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts e2e/team-mode.smoke.spec.ts e2e/agent-studio-feedback.smoke.spec.ts e2e/run-detail.smoke.spec.ts e2e/sandboxes-page.smoke.spec.ts e2e/eval-page.smoke.spec.ts e2e/subagents-feedback.smoke.spec.ts
+      - cd apps/agent-console && npm test -- src/features/agents/__tests__/KnowledgeManagementPanel.render.test.tsx src/features/agents/__tests__/AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && npm test -- src/features/runs/pages/__tests__/RunDetailPage.helpers.test.ts src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx
+      - cd apps/agent-console && npm test -- src/features/observability/pages/__tests__/TokenSavingsPage.test.tsx
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium --headed e2e/run-detail.smoke.spec.ts
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd apps/agent-console && npm test -- src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium --headed e2e/tools-page.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts e2e/run-detail.smoke.spec.ts e2e/observability.smoke.spec.ts e2e/knowledge-demo.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts e2e/agent-workspace-success.smoke.spec.ts e2e/agent-studio.smoke.spec.ts e2e/agent-studio-feedback.smoke.spec.ts e2e/team-mode.smoke.spec.ts e2e/tools-page.smoke.spec.ts e2e/run-detail.smoke.spec.ts e2e/sandboxes-page.smoke.spec.ts e2e/eval-page.smoke.spec.ts e2e/subagents-feedback.smoke.spec.ts e2e/observability.smoke.spec.ts e2e/knowledge-demo.smoke.spec.ts e2e/nav-resilience.spec.ts
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd services/api-server && uv run ruff check app/tools/capabilities.py app/tools/mcp_adapter.py app/tools/marketplace.py app/api/tools.py app/api/schemas.py tests/test_tool_registry.py
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5177 HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5177 HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/agent-studio-feedback.smoke.spec.ts e2e/subagents-feedback.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5177 HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-live-marketplace.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5177 HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/tools-live-marketplace.spec.ts e2e/tools-page.smoke.spec.ts e2e/agent-studio-feedback.smoke.spec.ts e2e/subagents-feedback.smoke.spec.ts e2e/team-mode.smoke.spec.ts e2e/run-detail.smoke.spec.ts e2e/sandboxes-page.smoke.spec.ts e2e/eval-page.smoke.spec.ts e2e/observability.smoke.spec.ts e2e/knowledge-demo.smoke.spec.ts
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx TeamPages.test.tsx
+      - cd apps/agent-console && npm run build
+      - Live API MCP case: `POST /api/tools/capabilities/test-invoke` with `tool_name=mcp_context_search`, query `发布准备情况`, limit 2 returned `SUCCESS` and 2 `Context match` rows.
+      - Live API MCP case: `POST /api/tools/capabilities/test-invoke` with `tool_name=brave`, query `OpenAI 最新动态`, limit 3 returned `SUCCESS` and 3 `brave MCP result` rows.
+      - Live marketplace source check: `GET /api/tools/capabilities/marketplace?kind=all&limit=5` returned four ready Chinese-labeled sources, including the platform curated source, official MCP registry, Smithery MCP library, and Smithery skill library.
+      - Live Skill case: Workspace Chat run `85a1227c-cbc5-47c6-ac08-6269d5774460` with low context budget produced context manifest `a4ca6f42-ef41-4101-b505-fa97b01e107a`; `conservative-token-saver-c43094e1d97c9126-2ec8d5c3` recorded `optimizer_applied`, `pruning_applied=true`, and `estimated_saved_tokens=1382`.
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5177 npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5177 npx playwright test --project=chromium e2e/tools-live-marketplace.spec.ts
+      - Live API registry case: `GET /api/tools/registry?agent_id=default` returned installed `brave` and `gmail` MCP rows after API restart; `dev-other-org-token` did not see those org-scoped attachments.
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - 商店主弹窗、安装工作台、状态标签、下一步提示、按钮文案和测试案例提示已统一为中文优先表达。
+      - 商店工作台明确显示 `未安装 / 待审批 / 待安装 / 已安装`，并按当前状态给出下一步操作。
+      - `apps/agent-console/src` 内的浏览器原生 `confirm/alert/prompt` 已移除，工具、知识、Agent、Team 相关确认交互统一改为自定义弹窗。
+      - 主要按钮已补充按压/聚焦反馈；安装、审批、启用、归档、删除、测试调用等动作统一给出成功或失败 toast。
+      - 浏览器级验证覆盖可信 URL、公网预检、上传技能、商店内置 MCP 直接启用、外部 MCP 登记预检到审批安装与案例测试、外部 Skill 登记预检到审批安装与验证指引。
+      - 这轮继续补齐了 Agent Studio、Team、Run Detail、Eval、Sandboxes、Subagents 的点击反馈与弹窗链路，关键成功/失败提示均落在自定义 toast / dialog，而不是浏览器原生弹窗。
+      - 这轮继续补齐了 Knowledge Management 的知识源创建/编辑/新增文档/重新导入反馈、Agent Workspace 的“新开团队模式”成功反馈，以及 Team 消息发送失败反馈。
+      - Agent Workspace 的搜索弹窗、快捷键弹窗已对齐到统一遮罩/关闭体验；工作台底部工具 / 输入设置 / 切换模型浮层在窄屏下改为贴合当前内容列自适应宽度，避免越界到视口外。
+      - Team Mode 浏览器冒烟已对齐中文领队命名：创建团队后的领队列按 `队长 队长 列` 验证，默认夹具仍保留 `Leader 队长 列`，桌面与移动链路都稳定通过。
+      - Agent Studio 与知识管理继续收尾中文标签：`Agent ID` 改为 `智能体 ID`，`创建 Agent / 克隆当前 Agent` 改为 `创建智能体 / 克隆当前智能体`，Team rail 标题改为 `团队`，知识状态/健康/作用域/分块数分别显示为 `已启用 / 健康 / 智能体或组织 / N 个分块`。
+      - 这轮继续补齐运行详情与观测页的高可见度中文标签：运行详情现在显示 `依据来源 / 夹具证据 / 来源绑定 / 引用数 / 上下文优化器 / 组装清单 / 提示词清单 / 预算 / 已省标记 / 实际输入 / 实际输出 / 缓存命中 / 哈希审计`，观测页现在显示 `依据质量 / 已省标记 / 实际标记 / 低成本路由 / 依据校验通过率 / 后备不一致率 / 不支持标记率`。
+      - 这轮继续把运行详情中的原始英文状态值、事件值和依据枚举值收口到中文映射：例如 `COMPLETED / PLAN_CREATED / TOOL_CALL / local_knowledge / local_evidence_sufficient / knowledge_chunk / selected_for_prompt / recomputable_v2 / authoritative / available / sufficient` 现在分别显示为 `已完成 / 计划已创建 / 工具调用 / 本地知识库 / 本地证据充足 / 知识分块 / 已纳入提示词 / 可复算 v2 / 权威组装 / 可用 / 证据充足`。
+      - 全局壳子和运行入口继续收尾中文术语：Console Shell 顶部 `Harness` 改为 `运行平台`，左侧导航与页面标题 `Token 节省` 改为 `标记节省`，运行列表中的 `Harness` 表头也改为 `运行平台`。
+      - Tool Registry 继续收尾 `Agent` 混排：市场与高级生命周期统一显示 `目标智能体 / 安装到智能体 / 已启用到目标智能体 / 已安装到目标智能体`，并把 `Smithery MCP` 徽标改成更清晰的 `Smithery MCP 服务库`。
+      - 这轮继续把商店源标签和风险说明改成中文唯一展示：商店来源现在统一显示为 `平台内置源 / 官方 MCP 注册表 / Smithery 技能库 / Smithery MCP 服务库 / 平台预检`，本地内置条目中的 `Agent / Skill` 混排描述也已同步替换为 `智能体 / 技能` 中文表达。
+      - 这轮把旧的浏览器 smoke 全部对齐到当前产品交互：工作台成功流、知识 Demo、导航韧性改用同源 SSE mock 与现有 `运行详情`/`查看运行详情` 双链接结构；Agent Studio 知识管理 smoke 改为验证“按钮打开弹窗”而不是已删除的内联表单。
+      - 当前非 live Chromium 浏览器回归共 53 条全部通过，覆盖工作台、工作台成功流、Agent Studio、知识 Demo、团队模式、工具商店、运行详情、观测、沙箱、评测、子代理与导航韧性。
+      - 浏览器级 smoke 现已覆盖工作台弹窗与建团队链路、商店、团队模式、Agent Studio 反馈、Knowledge Management 反馈、Run Detail 动作反馈、Sandboxes 基准测试、Eval 数据集/用例/运行/基线反馈，以及 Subagents 批量/单个取消反馈，共 38 条 Chromium 用例全部通过。
+      - 目标单测 31 项全部通过；`KnowledgeManagementPanel.render.test.tsx` 仍有既有 React `act(...)` warning，但不影响功能结果。
       - Tests assert configuration inputs are absent from the default page and present only after opening the relevant dialog.
+      - Added `GET /api/tools/capabilities/marketplace` as a backend aggregation facade for Harness curated entries, the official MCP Registry, Smithery MCP servers, and Smithery prompt-based Skills.
+      - External marketplace entries produce Harness `install_payload` records for metadata-only marketplace preflight or local install; they do not bypass capability package validation, approval, immutable versions, Agent attachments, or ToolRunner policy.
+      - The default Tool Registry page now shows a compact marketplace summary and opens the full MCP / Skill market in a dialog; the market dialog has Chinese-first search and MCP/Skill filters, source health badges, a left-side entry list, and a right-side install workbench.
+      - Marketplace install no longer opens a second install dialog. Users select an entry, then complete direct enable or `登记预检 -> 审批版本 -> 安装到智能体` in the side workbench.
+      - Marketplace preflight uses `POST /api/tools/capabilities/preflight/marketplace`, registers registry metadata only, does not fetch or DNS-resolve homepage/remote URLs, and therefore avoids the previous `public source resolver returned private, loopback, link-local, or metadata address` 400 while keeping strict public URL download validation unchanged.
+      - Backend tests cover successful aggregation and degraded external-source fallback; frontend tests cover market listing, local direct attach, external preflight import, and advanced lifecycle/test dialogs.
+      - External source facts verified on 2026-05-26: the official MCP Registry exposes `/v0/servers` / `/v0.1/servers` with `search`, `version=latest`, cursor, and limit parameters; Smithery exposes `/servers` for public MCP servers and `/skills` for reusable prompt-based skills.
+      - Marketplace HTTP aggregation now uses `trust_env=False`, so local SOCKS proxy environment variables cannot crash the API when `socksio` is absent; external source failures still degrade to local curated entries plus source errors.
+      - Repeated public preflight for the same marketplace package is idempotent: the backend reuses the existing `(organization_id, package_key, source_sha256)` package, records `idempotent_preflight`, and avoids the duplicate-key 500.
+      - After an external market entry is preflighted, the market dialog keeps the next actions in the right-side install workbench beside the results: approve the staged version, then install it to the selected agent.
+      - Marketplace `mcp_server` packages now synthesize executable MCP `tool_metadata` from the approved manifest when the registry entry does not provide explicit tool metadata, so installed entries such as Brave can be resolved by ToolRunner after Agent attachment.
+      - Generic marketplace MCP test invoke returns deterministic Harness smoke output through `mcp-marketplace-adapter`; this verifies the capability install/attachment/policy/tool-call chain, while live Brave provider results still require a configured external MCP/Smithery runtime and credentials.
+      - The market dialog right-side install workbench now includes a direct MCP quick-test area after enable/attach, so operators can enter a query and run `test-invoke` for the selected marketplace MCP without leaving the dialog or manually typing the tool name.
+      - Latest live browser verification uses the real backend on `127.0.0.1:8000` and Vite on `127.0.0.1:5177`; it completes MCP context-search quick test, Brave quick test, local Skill install feedback, and mobile dialog overflow checks.
+      - Latest mocked browser verification covers default tool install paths plus marketplace MCP `直接启用`, external MCP `登记预检 -> 审批版本 -> 安装到智能体 -> 一键测试`, and marketplace Skill install guidance with visible toast feedback.
+      - Installed-state detection now handles legacy/partial Agent attachments safely, including attachments whose `capability_version_id` is null, so a successful direct enable cannot crash the page before the success toast renders.
+      - Direct Skill validation is runtime-based: the installed `conservative-token-saver` context optimizer is verified through Workspace Chat context assembly and Run Detail token-optimization evidence, not only through a static installed badge.
+      - Final completion audit reran 45 Chromium browser cases across Tools live marketplace, Tools mocked store, Agent Studio feedback, Team, Run Detail, Sandboxes, Eval, Observability, Knowledge Demo, and Subagents; all 45 passed on `http://127.0.0.1:5177`.
+      - Final component audit reran `ToolRegistryPage.marketplace.test.tsx` and `TeamPages.test.tsx`; all 22 tests passed. Existing React `act(...)` warnings remain in Team tests but do not fail the suite.
+      - Final direct API MCP cases used the correct `input_json` request field; `mcp_context_search` echoed `发布准备情况` in 2 snippets and installed `brave` echoed `OpenAI 最新动态` in 3 deterministic smoke rows.
+      - Native browser dialog audit still shows only shared custom confirm helper callsites, not `window.alert`, `window.confirm`, or `window.prompt`.
+      - Unified Tool Registry now accepts `agent_id` and builds rows through `CapabilityRegistry.tool_registry_for_agent`, so installed marketplace MCP attachments show in the registry for the selected target agent instead of only in test-invoke.
+      - Tool Registry page now queries `["tool-registry", simpleAgentId]`, explains that the table is the current target agent's enabled tools, and refetches after attach/install success.
+      - Capability attachment listing and runtime resolution now filter both attachment organization and capability organization, so org-scoped marketplace MCP installed on a global default agent is not exposed to a different organization.
+      - Regression coverage now proves the original failure mode: before attach `brave` is absent from `/api/tools/registry?agent_id=...`; after marketplace preflight, approval, and attachment, `brave` appears in the unified registry and remains org-scoped.
+      - Runtime configuration listing now deduplicates same-name MCP attachments by priority/order and the page selection state uses `attachment_id`, preventing duplicate Brave installs from making the config list unstable.
+
+  - id: agent-console-slash-mcp-command
+    date: 2026-05-27
+    status: verified
+    demo: Agent Workspace and Team Mode now expose `/mcp` in the slash command menu, listing the current Agent's available MCP tools in a Chinese `可用 MCP` popover.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && ./node_modules/.bin/vitest run src/features/agents/__tests__/slashCommands.property.test.ts src/features/agents/__tests__/ChatSurface.shell.test.tsx --pool=threads --poolOptions.threads.singleThread=true
+      - cd apps/agent-console && ./node_modules/.bin/playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts -g "desktop workspace controls stay distinct and usable"
+      - cd apps/agent-console && ./node_modules/.bin/playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts
+      - cd apps/agent-console && ./node_modules/.bin/playwright test --project=chromium e2e/team-mode.smoke.spec.ts
+      - pnpm --filter agent-console lint
+      - pnpm --filter agent-console build
+      - git diff --check
+    acceptance_notes:
+      - Shared slash command registry now includes `/mcp` with alias `plugins` and Chinese description `列出当前可用 MCP`.
+      - Agent Workspace fetches `GET /api/tools/registry?agent_id=<agentId>` and `/mcp` opens the existing input popover as `可用 MCP`, auto-expands `插件 / MCP`, shows a success/empty-state toast, and lets users click a tool to insert `@工具名`.
+      - Team Mode now fetches tool registries per member `agent_id` and passes each column its own MCP list, so team columns do not fall back to the global registry.
+      - Browser smoke fixtures reject `/api/tools/registry` calls without `agent_id=default`, proving the UI uses the selected Agent-scoped registry.
+      - Focused Vitest coverage passed with 33 tests; Chromium browser coverage passed for Agent Workspace `/mcp` menu/popover/tool-insert flow and Team Mode desktop/mobile smoke.
+      - Direct `pnpm exec vitest` is blocked locally by pnpm's ignored-build-script approval check for `esbuild`; validation used the already-installed local Vitest binary instead.
+
+  - id: mcp-runtime-configuration-page
+    date: 2026-05-27
+    status: verified
+    demo: Installed MCP tools now have a dedicated Chinese `/tools/config` runtime configuration page for endpoint, transport, server-side secret reference, one-time API Key storage, and visible case testing.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py::test_mcp_runtime_config_creates_new_version_and_live_brave_test -q
+      - cd services/api-server && uv run pytest tests/test_tool_registry.py -q
+      - cd services/api-server && uv run ruff check app/api/tools.py app/api/schemas.py app/tools/capabilities.py app/tools/mcp_adapter.py app/tools/runner.py tests/test_tool_registry.py
+      - cd apps/agent-console && npm test -- src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx src/features/tools/__tests__/ToolConfigurationPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npx playwright test --project=chromium e2e/tools-page.smoke.spec.ts
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Sidebar now includes `工具配置`; `/tools` also links to `运行配置`, so operators can configure installed MCPs beside the marketplace instead of hunting through package lifecycle controls.
+      - `/tools/config` lists Agent-scoped installed MCPs with visible `已配置 / 未配置 / 缺少密钥`, `注册表可见 / 注册表不可见`, and `密钥已保存 / 密钥未保存` badges.
+      - Runtime config supports HTTP, SSE, and stdio fields; Brave Search defaults the endpoint to `https://api.search.brave.com/res/v1/web/search` and explains that API Key values are one-time inputs.
+      - Saving runtime config creates a new immutable `CapabilityVersion`, repoints the active Agent attachment, stores raw API Keys only through server-side secret storage, and never returns the raw secret value to the frontend.
+      - ToolRunner now passes version `config_json` plus resolved server-side secret to `MCPAdapter`; configured Brave calls the real Brave Search API with `X-Subscription-Token`, while unconfigured marketplace MCPs still return explicit Harness smoke output.
+      - The configuration page includes a visible `运行案例测试` result panel with result rows and a `真实 Brave API` badge when the output source is `brave-search-api`.
+
+  - id: workspace-xml-function-call-mcp-execution
+    date: 2026-05-27
+    status: verified
+    demo: Workspace Chat now converts model-emitted XML-style `<function_calls>` and pending search text such as `正在搜索“MCP教程”，请稍等。` into Agent-scoped MCP tool execution, and successful MCP results are forced into the visible final answer before the run is marked complete.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_agents.py::test_agent_workspace_chat_executes_xml_function_call_for_installed_mcp -q
+      - cd services/api-server && uv run pytest tests/test_agents.py::test_agent_workspace_chat_infers_installed_mcp_from_pending_search_text -q
+      - cd services/api-server && uv run pytest tests/test_agents.py::test_agent_workspace_chat_executes_xml_function_call_for_installed_mcp tests/test_agents.py::test_agent_workspace_chat_infers_installed_mcp_from_pending_search_text -q
+      - cd services/api-server && uv run pytest tests/test_agents.py::test_agent_workspace_pro_chat_mode_executes_list_files_tool_mention tests/test_agents.py::test_agent_workspace_chat_executes_xml_function_call_for_installed_mcp tests/test_agents.py::test_agent_workspace_chat_infers_installed_mcp_from_pending_search_text tests/test_agents.py::test_agent_workspace_pro_chat_mode_keeps_side_effect_tool_pending_approval tests/test_tool_registry.py::test_marketplace_mcp_package_can_be_attached_and_test_invoked -q
+      - cd services/api-server && uv run ruff check app/api/agents.py tests/test_agents.py app/tools/mcp_adapter.py tests/test_tool_registry.py
+      - python3 -m py_compile services/api-server/app/api/agents.py services/api-server/tests/test_agents.py
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - Restarted local API in tmux session `harness-api-mcp-restart`; `GET /health` returned `{"status":"ok","service":"api-server"}`.
+      - Live `GET /api/tools/registry?agent_id=default` returned installed `brave`, `gmail`, and `exa` MCP rows for `dev-engineer-token`.
+      - Live Workspace Chat explicit Brave MCP smoke run `ddb08a1d-9748-4222-a325-f17cdcc9ebb8` emitted `run_created -> tool_call_requested(running) -> tool_call_result(success) -> delta -> done`.
+    acceptance_notes:
+      - Workspace Chat now detects `<function_calls><invoke name="...">` blocks in normal chat model output, strips them from user-visible assistant text, and executes parsed tool calls through the existing Agent-scoped `CapabilityRegistry -> ToolRunner` path.
+      - XML parameters such as `<parameter name="query">MCP教程</parameter>` are parsed into structured tool input, with default query/limit normalization for marketplace MCP search tools.
+      - Model tool aliases such as `brave_web_search` and `*_search` resolve only against the current Agent's enabled tool registry; installed `brave` resolves and executes, while unknown or unattached tools still fail through the normal tool feedback path.
+      - Successful XML-triggered MCP execution emits `tool_call_requested` and `tool_call_result` SSE events, then asks the model for a final natural-language answer based on the tool result; if that follow-up model call fails, Workspace falls back to a Chinese tool-result summary.
+      - Follow-up hardening now detects evasive model follow-up text such as `无法直接查看返回的具体搜索结果内容` and replaces it with a backend-built MCP result summary containing the returned result titles/snippets.
+      - Pending search hardening now detects intermediate text such as `正在搜索“MCP教程”，请稍等。` when no XML tool-call block is present, selects the current Agent's low-risk idempotent search MCP such as installed `brave`, emits `tool_call_requested` / `tool_call_result`, and only then sends final `delta` plus `done`.
+      - Regression coverage installs and attaches a marketplace Brave MCP package to a test Agent, makes the model emit the exact observed XML style for `brave_web_search` with query `MCP教程`, verifies the ToolCall is recorded as `brave` `SUCCESS`, verifies the MCP adapter returns 5 results, verifies the final SSE response contains `brave MCP result 1`, and verifies the raw XML plus the `无法直接查看` failure wording are absent.
+      - The pending-search regression verifies event order `tool_call_requested -> tool_call_result -> delta -> done`, so the UI send button stays in the running state until the MCP result has been returned and rendered.
+      - Runtime restart verification on `127.0.0.1:8000` confirms the selected Agent registry includes `brave`, and an explicit Workspace Brave tool mention now keeps the run active until the tool result is rendered before `done`.
+
+  - id: agent-console-chinese-team-knowledge-follow-up
+    date: 2026-05-27
+    status: verified
+    demo: Agent Studio、Knowledge、Team 继续完成中文优先收口，剩余 Agent/Leader 混排改为中文提示，状态徽标不再直接暴露 `ACTIVE`，浏览器级交互反馈链路保持稳定可用。
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- src/features/agents/__tests__/AgentListPage.studio.test.tsx src/features/knowledge/pages/__tests__/KnowledgePage.test.tsx src/features/teams/__tests__/TeamPages.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium --headed e2e/agent-studio-feedback.smoke.spec.ts e2e/team-mode.smoke.spec.ts e2e/knowledge-demo.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts e2e/agent-workspace-success.smoke.spec.ts e2e/agent-studio.smoke.spec.ts e2e/agent-studio-feedback.smoke.spec.ts e2e/team-mode.smoke.spec.ts e2e/tools-page.smoke.spec.ts e2e/run-detail.smoke.spec.ts e2e/sandboxes-page.smoke.spec.ts e2e/eval-page.smoke.spec.ts e2e/subagents-feedback.smoke.spec.ts e2e/observability.smoke.spec.ts e2e/knowledge-demo.smoke.spec.ts e2e/nav-resilience.spec.ts
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Agent Studio 的成功/失败反馈继续收口到中文：`智能体创建成功/失败`、`智能体克隆成功/失败`、`附加到当前智能体`、`MCP / 技能 / 工具`、`当前智能体已切换到 ...` 等高频操作文案已统一。
+      - `/knowledge` 现在显示 `智能体作用域` 与 `知识库智能体`；Team 创建与添加成员弹窗改为 `队长智能体`、`队长智能体定义`、`智能体定义`、`选择智能体`、`没有可用的智能体` 等中文唯一表述。
+      - Team 列表、Team 顶栏、Agent 卡片与成员添加预览中的原始状态值不再直接显示 `ACTIVE`，统一映射为 `活跃中`；Team 列表中的固定角色标签改为 `队长`。
+      - 这轮手写浏览器案例也同步改成中文夹具命名：`默认智能体`、`研究智能体`、`队长` 等 mock 数据不再把测试页重新带回英文混排。
+      - 可视化 Chromium 浏览器验证已覆盖 Agent Studio 反馈、Knowledge Demo、Team 桌面与移动布局；随后同一套环境上又跑完 53 条非 live Chromium 回归并全部通过。
+
+  - id: agent-console-subagents-eval-runhistory-follow-up
+    date: 2026-05-27
+    status: verified
+    demo: Subagents 真链接、RunHistory 状态、Eval 状态与保存用例流程继续完成中文优先收口，新手能直接看懂状态并完成浏览器级验证。
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- src/features/runs/pages/__tests__/RunHistoryPage.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium --headed e2e/subagents-feedback.smoke.spec.ts e2e/eval-page.smoke.spec.ts
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 npx playwright test --project=chromium e2e/agent-workspace.smoke.spec.ts e2e/agent-workspace-success.smoke.spec.ts e2e/agent-studio.smoke.spec.ts e2e/agent-studio-feedback.smoke.spec.ts e2e/team-mode.smoke.spec.ts e2e/tools-page.smoke.spec.ts e2e/run-detail.smoke.spec.ts e2e/sandboxes-page.smoke.spec.ts e2e/eval-page.smoke.spec.ts e2e/subagents-feedback.smoke.spec.ts e2e/observability.smoke.spec.ts e2e/knowledge-demo.smoke.spec.ts e2e/nav-resilience.spec.ts
+      - rg -n "\\b(alert|confirm|prompt)\\s*\\(" apps/agent-console/src apps/agent-console/e2e
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - `/subagents` 和 `/subagents/:subagentId` 中与所属任务相关的入口现在都会指向具体的 `/runs/:runId` 与 `/runs/:runId/subagents`，不再出现空 run id 的坏链接。
+      - `RunHistory`、Eval 最近运行、Eval 用例期望值、Eval 单条结果不再把 `COMPLETED / PASSED / FAILED` 直接暴露给用户，统一映射为 `已完成 / 通过 / 失败` 等中文标签。
+      - Eval 的“从运行保存用例”流程改成了新手可直接使用的期望状态菜单，并补上 `当前保存的期望结果` 中文提示，减少输入技术状态码的门槛。
+      - 新增手写浏览器案例覆盖 Subagents 任务跳转链接正确性，以及 Eval 中文状态和数据集/用例/运行/基线反馈链路；全量 non-live Chromium 浏览器回归现在为 54 条且全部通过。
+      - 原生浏览器 `alert/confirm/prompt` 搜索结果仅剩共享自定义确认对话框 helper 的 `confirm(...)` 调用入口，本轮触达页面没有回退到浏览器原生弹窗。
 
   - id: dify-dataset-default-retrieval-model-runtime
     date: 2026-05-26

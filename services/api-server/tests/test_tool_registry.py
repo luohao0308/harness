@@ -3,9 +3,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Agent, AgentCapabilityAttachment, AgentEvent, Capability, Task, ToolCall
+from app.db.models import (
+    Agent,
+    AgentCapabilityAttachment,
+    AgentEvent,
+    Capability,
+    CapabilityVersion,
+    Task,
+    ToolCall,
+)
+from app.knowledge_dify import read_connector_secret_ref
 from app.main import app
 from app.tools import capabilities as capabilities_module
+from app.tools import marketplace as marketplace_module
 from app.tools.capabilities import CapabilityRegistry
 from tests.conftest import AUTH_HEADERS
 
@@ -52,6 +62,24 @@ def _create_agent(db_session: Session, *, agent_id: str, tools: list[str]) -> No
     )
 
 
+class _FakeBraveResponse:
+    status_code = 200
+    text = ""
+
+    def json(self) -> dict:
+        return {
+            "web": {
+                "results": [
+                    {
+                        "title": "MCP 教程 - Brave result",
+                        "url": "https://example.com/mcp",
+                        "description": "Model Context Protocol tutorial result",
+                    }
+                ]
+            }
+        }
+
+
 def test_tool_registry_exposes_builtin_and_mcp_tools() -> None:
     response = TestClient(app).get("/api/tools/registry", headers=AUTH_HEADERS)
 
@@ -65,6 +93,352 @@ def test_tool_registry_exposes_builtin_and_mcp_tools() -> None:
     assert mcp_tool["source"] == "mcp"
     assert mcp_tool["mcp_server"] == "local-context"
     assert mcp_tool["mcp_method"] == "context.search"
+
+
+def test_agent_scoped_tool_registry_reflects_attached_marketplace_mcp(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="registry-agent", tools=[])
+    client = TestClient(app)
+
+    monkeypatch.setattr(
+        capabilities_module,
+        "download_remote_package_content",
+        lambda _source_uri: pytest.fail("marketplace registry listing must not download sources"),
+    )
+    monkeypatch.setattr(
+        capabilities_module,
+        "_resolved_public_host_errors",
+        lambda _host: pytest.fail("marketplace registry listing must not resolve hosts"),
+    )
+
+    before_attach = client.get(
+        "/api/tools/registry?agent_id=registry-agent",
+        headers=AUTH_HEADERS,
+    )
+    assert before_attach.status_code == 200
+    assert "brave" not in {item["name"] for item in before_attach.json()["items"]}
+
+    preflight = client.post(
+        "/api/tools/capabilities/preflight/marketplace",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://brave.com/search/api/",
+            "pinned_ref": "marketplace-sha256:brave-registry",
+            "marketplace_source": "smithery_mcp",
+            "marketplace_item_id": "smithery-mcp::brave",
+            "display_name": "Brave Search",
+            "description": "Search the web through Brave Search.",
+            "package_type": "mcp_server",
+            "permissions": ["mcp:remote"],
+            "manifest": {
+                "name": "brave",
+                "version": "1.0.0",
+                "description": "Search the web through Brave Search.",
+                "package_type": "mcp_server",
+                "permissions": ["mcp:remote"],
+                "transport": "http",
+                "secret_refs": [],
+                "mcp_server": {
+                    "registry": "smithery_mcp",
+                    "qualified_name": "brave",
+                    "homepage": "https://brave.com/search/api/",
+                },
+            },
+            "content": {"marketplace": {"source": "smithery_mcp"}},
+        },
+    )
+    assert preflight.status_code == 201
+    package_id = preflight.json()["package"]["id"]
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "registry metadata reviewed"},
+    )
+    assert approved.status_code == 200
+
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "registry-agent", "enabled": True, "priority": 10},
+    )
+    assert attached.status_code == 201
+
+    after_attach = client.get(
+        "/api/tools/registry?agent_id=registry-agent",
+        headers=AUTH_HEADERS,
+    )
+
+    assert after_attach.status_code == 200
+    payload = after_attach.json()
+    names = {item["name"] for item in payload["items"]}
+    assert "brave" in names
+    brave_tool = next(item for item in payload["items"] if item["name"] == "brave")
+    assert brave_tool["source"] == "mcp"
+    assert brave_tool["mcp_server"] == "brave"
+    assert brave_tool["mcp_method"] == "search"
+    assert "mcp" in payload["sources"]
+
+
+def test_agent_scoped_tool_registry_keeps_marketplace_mcp_org_scoped(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="shared-default-agent", tools=[])
+    client = TestClient(app)
+    monkeypatch.setattr(
+        capabilities_module,
+        "download_remote_package_content",
+        lambda _source_uri: pytest.fail("marketplace registry listing must not download sources"),
+    )
+    monkeypatch.setattr(
+        capabilities_module,
+        "_resolved_public_host_errors",
+        lambda _host: pytest.fail("marketplace registry listing must not resolve hosts"),
+    )
+
+    preflight = client.post(
+        "/api/tools/capabilities/preflight/marketplace",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://brave.com/search/api/",
+            "pinned_ref": "marketplace-sha256:brave-org-scope",
+            "marketplace_source": "smithery_mcp",
+            "marketplace_item_id": "smithery-mcp::brave",
+            "display_name": "Brave Search",
+            "description": "Search the web through Brave Search.",
+            "package_type": "mcp_server",
+            "permissions": ["mcp:remote"],
+            "manifest": {
+                "name": "brave",
+                "version": "1.0.0",
+                "description": "Search the web through Brave Search.",
+                "package_type": "mcp_server",
+                "permissions": ["mcp:remote"],
+                "transport": "http",
+                "secret_refs": [],
+                "mcp_server": {"qualified_name": "brave"},
+            },
+            "content": {"marketplace": {"source": "smithery_mcp"}},
+        },
+    )
+    assert preflight.status_code == 201
+    package_id = preflight.json()["package"]["id"]
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "registry metadata reviewed"},
+    )
+    assert approved.status_code == 200
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "shared-default-agent", "enabled": True, "priority": 10},
+    )
+    assert attached.status_code == 201
+
+    same_org = client.get(
+        "/api/tools/registry?agent_id=shared-default-agent",
+        headers=AUTH_HEADERS,
+    )
+    other_org = client.get(
+        "/api/tools/registry?agent_id=shared-default-agent",
+        headers={"Authorization": "Bearer dev-other-org-token"},
+    )
+
+    assert same_org.status_code == 200
+    assert "brave" in {item["name"] for item in same_org.json()["items"]}
+    assert other_org.status_code == 200
+    assert "brave" not in {item["name"] for item in other_org.json()["items"]}
+
+
+class _FakeMarketplaceResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeMarketplaceClient:
+    def __init__(self, *_, **__) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def __enter__(self) -> "_FakeMarketplaceClient":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def get(self, url: str, *, params: dict | None = None) -> _FakeMarketplaceResponse:
+        self.calls.append((url, params or {}))
+        if "registry.modelcontextprotocol.io" in url:
+            return _FakeMarketplaceResponse(
+                {
+                    "servers": [
+                        {
+                            "server": {
+                                "name": "io.github.example/search",
+                                "title": "Example Search",
+                                "description": "Search external knowledge.",
+                                "version": "1.2.3",
+                                "repository": {
+                                    "url": "https://github.com/example/search-mcp",
+                                    "source": "github",
+                                },
+                                "remotes": [
+                                    {
+                                        "type": "streamable-http",
+                                        "url": "https://mcp.example.com",
+                                    }
+                                ],
+                            },
+                            "_meta": {
+                                "io.modelcontextprotocol.registry/official": {
+                                    "status": "active",
+                                    "isLatest": True,
+                                    "publishedAt": "2026-04-01T00:00:00Z",
+                                }
+                            },
+                        }
+                    ],
+                    "metadata": {"count": 1},
+                }
+            )
+        if url.endswith("/servers"):
+            return _FakeMarketplaceResponse(
+                {
+                    "servers": [
+                        {
+                            "id": "server-1",
+                            "qualifiedName": "smithery/github",
+                            "displayName": "GitHub",
+                            "description": "Connect Agent to GitHub",
+                            "verified": True,
+                            "useCount": 12,
+                            "remote": True,
+                            "isDeployed": True,
+                            "homepage": "https://smithery.ai/servers/github",
+                            "createdAt": "2026-02-01T00:00:00Z",
+                        }
+                    ],
+                    "pagination": {"totalCount": 1},
+                }
+            )
+        if url.endswith("/skills"):
+            return _FakeMarketplaceResponse(
+                {
+                    "skills": [
+                        {
+                            "id": "skill-1",
+                            "namespace": "acme",
+                            "slug": "review",
+                            "qualifiedName": "acme/review",
+                            "displayName": "Review Skill",
+                            "description": "Review code with policy.",
+                            "categories": ["Coding"],
+                            "gitUrl": "https://github.com/acme/review/tree/main/skill",
+                            "qualityScore": 0.9,
+                            "externalStars": 42,
+                            "totalActivations": 7,
+                            "verified": False,
+                            "listed": True,
+                            "createdAt": "2026-02-02T00:00:00Z",
+                            "servers": ["smithery/github"],
+                        }
+                    ],
+                    "pagination": {"totalCount": 1},
+                }
+            )
+        return _FakeMarketplaceResponse({})
+
+
+def test_capability_marketplace_aggregates_mcp_and_skill_sources(monkeypatch) -> None:
+    fake_client = _FakeMarketplaceClient()
+    monkeypatch.setattr(
+        marketplace_module.httpx,
+        "Client",
+        lambda *args, **kwargs: fake_client,
+    )
+
+    response = TestClient(app).get(
+        "/api/tools/capabilities/marketplace?kind=all&query=search&limit=10",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "all"
+    assert payload["query"] == "search"
+    assert payload["errors"] == []
+    sources = {source["id"]: source for source in payload["sources"]}
+    assert sources["official_mcp_registry"]["status"] == "ready"
+    assert sources["smithery_mcp"]["status"] == "ready"
+    assert sources["smithery_skills"]["status"] == "ready"
+    names = {item["name"]: item for item in payload["items"]}
+    assert names["io.github.example/search"]["install_mode"] == "marketplace_preflight"
+    assert names["io.github.example/search"]["install_payload"]["package_type"] == "mcp_server"
+    assert (
+        names["io.github.example/search"]["install_payload"]["marketplace_source"]
+        == "official_mcp_registry"
+    )
+    assert (
+        names["io.github.example/search"]["install_payload"]["marketplace_item_id"]
+        == "official-mcp::io.github.example/search@1.2.3"
+    )
+    assert names["io.github.example/search"]["install_payload"]["manifest"]["transport"] == "http"
+    assert names["acme/review"]["kind"] == "skill"
+    assert names["acme/review"]["install_mode"] == "marketplace_preflight"
+    assert names["acme/review"]["install_payload"]["marketplace_source"] == "smithery_skills"
+    assert names["acme/review"]["install_payload"]["manifest"]["package_type"] == "skill_pack"
+    assert names["acme/review"]["install_payload"]["manifest"]["skill"][
+        "depends_on_mcp_servers"
+    ] == ["smithery/github"]
+    assert any(
+        call[0].endswith("/v0/servers")
+        and call[1]["search"] == "search"
+        and call[1]["version"] == "latest"
+        for call in fake_client.calls
+    )
+
+
+def test_capability_marketplace_degrades_when_external_sources_fail(monkeypatch) -> None:
+    class FailingMarketplaceClient:
+        def __enter__(self) -> "FailingMarketplaceClient":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> _FakeMarketplaceResponse:
+            raise marketplace_module.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(
+        marketplace_module.httpx,
+        "Client",
+        lambda *args, **kwargs: FailingMarketplaceClient(),
+    )
+
+    response = TestClient(app).get(
+        "/api/tools/capabilities/marketplace?kind=mcp&limit=5",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(item["source"] == "harness_curated" for item in payload["items"])
+    assert {error["source"] for error in payload["errors"]} == {
+        "official_mcp_registry",
+        "smithery_mcp",
+    }
+    source_status = {source["id"]: source["status"] for source in payload["sources"]}
+    assert source_status["official_mcp_registry"] == "unavailable"
+    assert source_status["smithery_mcp"] == "unavailable"
 
 
 def test_compat_tool_execute_denies_task_without_agent_scope(db_session: Session) -> None:
@@ -563,6 +937,341 @@ def test_simple_public_url_preflight_does_not_activate(
     assert enabled_payload["ready_state"] == "ready"
     assert enabled_payload["capability_version_id"] is not None
     assert enabled_payload["next_step_label"] == "Attach to Agent"
+
+
+def test_simple_public_url_preflight_is_idempotent_for_same_marketplace_package(
+    monkeypatch,
+) -> None:
+    client = TestClient(app)
+    monkeypatch.setattr(
+        capabilities_module,
+        "download_remote_package_content",
+        _fake_downloaded_package,
+    )
+    payload = {
+        "source_uri": "https://example.com/public.skill",
+        "display_name": "public skill",
+        "package_type": "skill_pack",
+        "agent_id": "public-preflight-agent",
+    }
+
+    first = client.post(
+        "/api/tools/capabilities/preflight/public-url",
+        headers=AUTH_HEADERS,
+        json=payload,
+    )
+    second = client.post(
+        "/api/tools/capabilities/preflight/public-url",
+        headers=AUTH_HEADERS,
+        json=payload,
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json()["staged_capability_id"] == first.json()["staged_capability_id"]
+    assert second.json()["package"]["validation_json"]["idempotent_preflight"] is True
+
+
+def test_marketplace_preflight_registers_metadata_without_public_source_resolution(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="marketplace-agent", tools=[])
+    client = TestClient(app)
+
+    def fail_download(_source_uri: str) -> capabilities_module.DownloadedPackageContent:
+        raise AssertionError("marketplace preflight must not fetch listed URLs")
+
+    def fail_resolver(_host: str) -> list[str]:
+        raise AssertionError("marketplace preflight must not resolve listed hosts")
+
+    monkeypatch.setattr(capabilities_module, "download_remote_package_content", fail_download)
+    monkeypatch.setattr(capabilities_module, "_resolved_public_host_errors", fail_resolver)
+
+    response = client.post(
+        "/api/tools/capabilities/preflight/marketplace",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://localhost/internal-mcp",
+            "pinned_ref": "marketplace-sha256:abc123",
+            "marketplace_source": "official_mcp_registry",
+            "marketplace_item_id": "official-mcp::local-test@1.0.0",
+            "display_name": "Local Test MCP",
+            "description": "Registry metadata only.",
+            "package_type": "mcp_server",
+            "permissions": ["mcp:remote"],
+            "manifest": {
+                "name": "local-test-mcp",
+                "version": "1.0.0",
+                "description": "Registry metadata only.",
+                "package_type": "mcp_server",
+                "permissions": ["mcp:remote"],
+                "transport": "http",
+                "secret_refs": [],
+            },
+            "content": {
+                "marketplace": {
+                    "source": "official_mcp_registry",
+                    "server": {"name": "local-test-mcp"},
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["ready_state"] == "staged"
+    assert payload["staged_capability_id"] == payload["package"]["id"]
+    assert payload["next_step_label"] == "Approve marketplace version"
+    package = payload["package"]
+    assert package["source_kind"] == "marketplace_preflight"
+    assert package["source_uri"] == "https://localhost/internal-mcp"
+    assert package["validation_json"]["marketplace_preflight"] is True
+    assert (
+        package["validation_json"]["source_resolution"]
+        == "registry_metadata_only_no_url_fetch"
+    )
+    assert package["provenance_json"]["marketplace_registry_metadata_only"] is True
+    assert package["audit_json"]["marketplace_preflight"]["no_source_download"] is True
+    assert package["audit_json"]["marketplace_preflight"]["requires_approval"] is True
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{package['id']}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "registry metadata reviewed"},
+    )
+
+    assert approved.status_code == 200
+    approved_payload = approved.json()
+    assert approved_payload["status"] == "approved"
+    assert approved_payload["capability_version_id"] is not None
+
+
+def test_marketplace_mcp_package_can_be_attached_and_test_invoked(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="brave-agent", tools=[])
+    client = TestClient(app)
+
+    def fail_download(_source_uri: str) -> capabilities_module.DownloadedPackageContent:
+        raise AssertionError("marketplace MCP smoke must not download source URLs")
+
+    def fail_resolver(_host: str) -> list[str]:
+        raise AssertionError("marketplace MCP smoke must not resolve listed hosts")
+
+    monkeypatch.setattr(capabilities_module, "download_remote_package_content", fail_download)
+    monkeypatch.setattr(capabilities_module, "_resolved_public_host_errors", fail_resolver)
+
+    preflight = client.post(
+        "/api/tools/capabilities/preflight/marketplace",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://brave.com/search/api/",
+            "pinned_ref": "marketplace-sha256:brave-test",
+            "marketplace_source": "smithery_mcp",
+            "marketplace_item_id": "smithery-mcp::brave",
+            "display_name": "Brave Search",
+            "description": "Search the web through Brave Search.",
+            "package_type": "mcp_server",
+            "permissions": ["mcp:remote"],
+            "manifest": {
+                "name": "brave",
+                "version": "1.0.0",
+                "description": "Search the web through Brave Search.",
+                "package_type": "mcp_server",
+                "permissions": ["mcp:remote"],
+                "transport": "http",
+                "secret_refs": [],
+                "mcp_server": {
+                    "registry": "smithery_mcp",
+                    "qualified_name": "brave",
+                    "homepage": "https://brave.com/search/api/",
+                    "smithery_connection_required": True,
+                },
+            },
+            "content": {"marketplace": {"source": "smithery_mcp"}},
+        },
+    )
+    assert preflight.status_code == 201
+    package_id = preflight.json()["package"]["id"]
+
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "registry metadata reviewed"},
+    )
+    assert approved.status_code == 200
+    approved_payload = approved.json()
+
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "brave-agent", "enabled": True, "priority": 10},
+    )
+    assert attached.status_code == 201
+
+    registry, _snapshot = CapabilityRegistry(db_session, "dev-org").tool_registry_for_agent(
+        "brave-agent"
+    )
+    assert "brave" in registry.tools
+    assert registry.tools["brave"].mcp_server == "brave"
+
+    invoked = client.post(
+        "/api/tools/capabilities/test-invoke",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "brave-agent",
+            "tool_name": "brave",
+            "input_json": {"query": "OpenAI latest news", "limit": 3},
+        },
+    )
+
+    assert invoked.status_code == 202
+    payload = invoked.json()
+    assert payload["allowed"] is True
+    assert payload["tool_call"]["tool_name"] == "brave"
+    assert payload["tool_call"]["status"] == "SUCCESS"
+    assert payload["tool_call"]["capability_version_id"] == approved_payload[
+        "capability_version_id"
+    ]
+    assert payload["output"]["mcp_server"] == "brave"
+    assert payload["output"]["mcp_method"] == "search"
+    assert payload["output"]["result"]["source"] == "mcp-marketplace-adapter"
+    assert len(payload["output"]["result"]["items"]) == 3
+
+
+def test_mcp_runtime_config_creates_new_version_and_live_brave_test(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    _create_agent(db_session, agent_id="brave-config-agent", tools=[])
+    client = TestClient(app)
+    monkeypatch.setattr(
+        capabilities_module,
+        "download_remote_package_content",
+        lambda _source_uri: pytest.fail("runtime config must not download package sources"),
+    )
+    monkeypatch.setattr(
+        capabilities_module,
+        "_resolved_public_host_errors",
+        lambda _host: pytest.fail("marketplace preflight must not resolve listed hosts"),
+    )
+
+    preflight = client.post(
+        "/api/tools/capabilities/preflight/marketplace",
+        headers=AUTH_HEADERS,
+        json={
+            "source_uri": "https://brave.com/search/api/",
+            "pinned_ref": "marketplace-sha256:brave-runtime-config",
+            "marketplace_source": "smithery_mcp",
+            "marketplace_item_id": "smithery-mcp::brave-runtime-config",
+            "display_name": "Brave Search",
+            "description": "Search the web through Brave Search.",
+            "package_type": "mcp_server",
+            "permissions": ["mcp:remote"],
+            "manifest": {
+                "name": "brave",
+                "version": "1.0.0",
+                "description": "Search the web through Brave Search.",
+                "package_type": "mcp_server",
+                "permissions": ["mcp:remote"],
+                "transport": "http",
+                "secret_refs": [],
+                "mcp_server": {"qualified_name": "brave"},
+            },
+            "content": {"marketplace": {"source": "smithery_mcp"}},
+        },
+    )
+    assert preflight.status_code == 201
+    package_id = preflight.json()["package"]["id"]
+    approved = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/approve",
+        headers=AUTH_HEADERS,
+        json={"reason": "registry metadata reviewed"},
+    )
+    assert approved.status_code == 200
+    original_version_id = approved.json()["capability_version_id"]
+    attached = client.post(
+        f"/api/tools/capabilities/packages/{package_id}/attachments",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "brave-config-agent", "enabled": True, "priority": 10},
+    )
+    assert attached.status_code == 201
+    attachment_id = attached.json()["attachment_id"]
+
+    before_config = client.get(
+        "/api/tools/capabilities/runtime-config",
+        headers=AUTH_HEADERS,
+        params={"agent_id": "brave-config-agent", "tool_name": "brave"},
+    )
+    assert before_config.status_code == 200
+    assert before_config.json()["configured"] is False
+    assert "endpoint_url" in before_config.json()["missing_fields"]
+
+    configured = client.patch(
+        "/api/tools/capabilities/runtime-config",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "brave-config-agent",
+            "tool_name": "brave",
+            "transport": "http",
+            "endpoint_url": "https://api.search.brave.com/res/v1/web/search",
+            "secret_ref": "secret://mcp/brave-config-agent/brave/api-key",
+            "secret_value": "brave-test-token",
+            "timeout_seconds": 9,
+        },
+    )
+    assert configured.status_code == 200
+    payload = configured.json()
+    assert payload["configured"] is True
+    assert payload["secret_configured"] is True
+    assert payload["endpoint_url"] == "https://api.search.brave.com/res/v1/web/search"
+    assert payload["capability_version_id"] != original_version_id
+    assert "brave-test-token" not in str(payload)
+
+    old_version = db_session.get(CapabilityVersion, original_version_id)
+    new_version = db_session.get(CapabilityVersion, payload["capability_version_id"])
+    attachment = db_session.get(AgentCapabilityAttachment, attachment_id)
+    assert old_version is not None
+    assert new_version is not None
+    assert attachment is not None
+    assert old_version.config_json.get("runtime") is None
+    assert new_version.config_json["runtime"]["endpoint_url"] == (
+        "https://api.search.brave.com/res/v1/web/search"
+    )
+    assert new_version.config_json["secret_ref"] == "secret://mcp/brave-config-agent/brave/api-key"
+    assert "secret_value" not in new_version.config_json
+    assert attachment.capability_version_id == new_version.id
+    assert read_connector_secret_ref(
+        db_session,
+        organization_id="dev-org",
+        secret_ref="secret://mcp/brave-config-agent/brave/api-key",
+    ) == "brave-test-token"
+
+    brave_calls: list[dict] = []
+
+    def fake_brave_get(*args, **kwargs) -> _FakeBraveResponse:
+        brave_calls.append({"args": args, "kwargs": kwargs})
+        return _FakeBraveResponse()
+
+    monkeypatch.setattr("app.tools.mcp_adapter.httpx.get", fake_brave_get)
+    invoked = client.post(
+        "/api/tools/capabilities/test-invoke",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "brave-config-agent",
+            "tool_name": "brave",
+            "input_json": {"query": "MCP 教程", "limit": 3},
+        },
+    )
+    assert invoked.status_code == 202
+    invoke_payload = invoked.json()
+    assert invoke_payload["tool_call"]["capability_version_id"] == new_version.id
+    assert invoke_payload["output"]["result"]["source"] == "brave-search-api"
+    assert invoke_payload["output"]["result"]["items"][0]["title"] == "MCP 教程 - Brave result"
+    assert brave_calls[0]["args"][0] == "https://api.search.brave.com/res/v1/web/search"
+    assert brave_calls[0]["kwargs"]["headers"]["X-Subscription-Token"] == "brave-test-token"
 
 
 def test_simple_public_git_preflight_requires_pin_or_content_hash() -> None:

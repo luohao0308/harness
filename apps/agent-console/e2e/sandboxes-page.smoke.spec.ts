@@ -86,6 +86,17 @@ const benchmarksFixture = {
   next_cursor: null,
 };
 
+const startedBenchmarkFixture = {
+  id: "bench-002",
+  status: "RUNNING",
+  warm_avg_ms: 0,
+  warm_p95_ms: 0,
+  cold_avg_ms: 0,
+  hit_rate: 0,
+  iteration_count: 5,
+  created_at: "2026-05-13T12:30:00.000Z",
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -141,6 +152,14 @@ test.describe("Sandboxes page mocked smoke tests", () => {
     await expect(page.getByText("API 网关")).toBeVisible();
     await expect(page.getByRole("button", { name: "运行基准测试" })).toBeVisible();
   });
+
+  test("Run Benchmark shows visible success feedback", async ({ page }) => {
+    await page.goto("/sandboxes");
+
+    await page.getByRole("button", { name: "运行基准测试" }).click();
+
+    await expect(page.getByRole("status").getByText("基准测试已启动")).toBeVisible();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -169,6 +188,11 @@ async function routeSandboxApis(page: Page): Promise<void> {
 
     if (path === "/api/sandboxes/warm-pool/benchmarks") {
       await fulfillJson(route, benchmarksFixture);
+      return;
+    }
+
+    if (path === "/api/sandboxes/warm-pool/benchmark" && route.request().method() === "POST") {
+      await fulfillJson(route, startedBenchmarkFixture);
       return;
     }
 

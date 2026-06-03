@@ -1948,6 +1948,11 @@ class CapabilitySimpleInstallRequest(BaseModel):
     content: dict = Field(default_factory=dict, description="Optional package content")
 
 
+class CapabilityMarketplacePreflightRequest(CapabilitySimpleInstallRequest):
+    marketplace_source: str = Field(default="unknown", description="Marketplace source ID")
+    marketplace_item_id: str = Field(default="", description="Marketplace item ID")
+
+
 class CapabilitySimpleInstallResponse(BaseModel):
     package: CapabilityPackageResponse = Field(description="Package lifecycle record")
     validation_summary: dict = Field(description="Validation, risk, and source summary")
@@ -1972,6 +1977,131 @@ class CapabilityTestInvocationRequest(BaseModel):
     agent_id: str = Field(min_length=1, description="Agent ID")
     tool_name: str = Field(min_length=1, description="Tool/capability name")
     input_json: dict = Field(default_factory=dict, description="Tool input")
+
+
+class CapabilityRuntimeConfigUpdateRequest(BaseModel):
+    agent_id: str = Field(min_length=1, description="Agent ID")
+    tool_name: str = Field(min_length=1, description="Tool/capability name")
+    transport: Literal["stdio", "http", "sse"] = Field(
+        default="http",
+        description="MCP runtime transport",
+    )
+    endpoint_url: str | None = Field(
+        default=None,
+        description="HTTP/SSE endpoint URL for remote MCP or provider API",
+    )
+    command: str | None = Field(default=None, description="stdio command")
+    args: list[str] = Field(default_factory=list, description="stdio command arguments")
+    secret_ref: str | None = Field(
+        default=None,
+        description="Server-side secret reference such as secret://mcp/brave/api-key",
+    )
+    secret_value: str | None = Field(
+        default=None,
+        description="One-time raw secret value stored server-side and never returned",
+    )
+    timeout_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        le=300,
+        description="Runtime timeout override",
+    )
+
+
+class CapabilityRuntimeConfigResponse(BaseModel):
+    agent_id: str = Field(description="Agent ID")
+    tool_name: str = Field(description="Tool/capability name")
+    tool_description: str = Field(default="", description="Tool description")
+    source: str = Field(default="mcp", description="Tool source")
+    capability_id: str = Field(description="Capability ID")
+    capability_version_id: str = Field(description="Active capability version ID")
+    capability_config_sha256: str = Field(description="Active config hash")
+    attachment_id: str = Field(description="Agent attachment ID")
+    attachment_enabled: bool = Field(description="Whether the attachment is enabled")
+    configured: bool = Field(description="Whether required runtime fields are configured")
+    missing_fields: list[str] = Field(default_factory=list, description="Missing fields")
+    transport: str = Field(default="http", description="Runtime transport")
+    endpoint_url: str | None = Field(default=None, description="HTTP/SSE endpoint URL")
+    command: str | None = Field(default=None, description="stdio command")
+    args: list[str] = Field(default_factory=list, description="stdio arguments")
+    secret_ref: str | None = Field(default=None, description="Server-side secret reference")
+    secret_configured: bool = Field(description="Whether secret material can be resolved")
+    timeout_seconds: int = Field(description="Runtime timeout")
+    config_json: dict = Field(description="Redacted runtime config snapshot")
+    registry_visible: bool = Field(description="Whether the tool is visible in Agent registry")
+    test_input_json: dict = Field(default_factory=dict, description="Suggested test input")
+
+
+class CapabilityRuntimeConfigPage(BaseModel):
+    items: list[CapabilityRuntimeConfigResponse] = Field(
+        default_factory=list,
+        description="Installed MCP runtime configuration records",
+    )
+
+
+class CapabilityMarketplaceItem(BaseModel):
+    id: str = Field(description="Marketplace item ID")
+    kind: Literal["mcp", "skill"] = Field(description="Marketplace item kind")
+    source: str = Field(description="Marketplace source ID")
+    source_label: str = Field(description="Marketplace source label")
+    name: str = Field(description="Registry-qualified name")
+    display_name: str = Field(description="Human-readable name")
+    description: str = Field(description="Human-readable description")
+    categories: list[str] = Field(default_factory=list, description="Marketplace categories")
+    verified: bool = Field(default=False, description="Source verification flag")
+    stars: float | None = Field(default=None, description="External stars when available")
+    use_count: float | None = Field(default=None, description="Usage count when available")
+    quality_score: float | None = Field(default=None, description="Quality score when available")
+    latest_version: str | None = Field(default=None, description="Latest version when available")
+    updated_at: str | None = Field(default=None, description="Source update timestamp")
+    homepage_url: str = Field(default="", description="Homepage URL")
+    repository_url: str = Field(default="", description="Repository URL")
+    remote_url: str = Field(default="", description="Remote MCP URL when available")
+    package_type: Literal[
+        "agent_template",
+        "skill_pack",
+        "tool_definition",
+        "mcp_server",
+        "prompt_template",
+        "knowledge_connector",
+        "context_optimizer",
+    ] = Field(description="Harness package type")
+    install_mode: Literal[
+        "attach_existing",
+        "trusted_install",
+        "public_preflight",
+        "marketplace_preflight",
+        "upload_install",
+    ] = Field(description="Harness installation path")
+    install_label: str = Field(description="Short action label")
+    install_payload: dict = Field(description="Payload for the selected installation path")
+    badges: list[str] = Field(default_factory=list, description="Display badges")
+    risk_notes: list[str] = Field(default_factory=list, description="Risk and policy notes")
+    metadata: dict = Field(default_factory=dict, description="Source-specific metadata")
+
+
+class CapabilityMarketplaceSource(BaseModel):
+    id: str = Field(description="Source ID")
+    label: str = Field(description="Source label")
+    status: str = Field(description="ready or unavailable")
+    item_count: int = Field(description="Items returned by this source")
+    url: str = Field(default="", description="Source URL")
+
+
+class CapabilityMarketplaceError(BaseModel):
+    source: str = Field(description="Source ID")
+    message: str = Field(description="Error message")
+
+
+class CapabilityMarketplaceResponse(BaseModel):
+    kind: Literal["all", "mcp", "skill"] = Field(description="Returned marketplace kind")
+    query: str = Field(description="Search query")
+    items: list[CapabilityMarketplaceItem] = Field(description="Marketplace entries")
+    sources: list[CapabilityMarketplaceSource] = Field(description="Source health")
+    errors: list[CapabilityMarketplaceError] = Field(
+        default_factory=list,
+        description="Non-fatal source errors",
+    )
 
 
 class ToolApprovalResponse(BaseModel):

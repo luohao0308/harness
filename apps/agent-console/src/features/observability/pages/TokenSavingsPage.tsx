@@ -41,7 +41,7 @@ export function TokenSavingsPage() {
   const cacheSources = normalizedCacheSources(summary?.cache_sources ?? []);
 
   return (
-    <ConsoleShell title={text("Token 节省", "Token Savings")}>
+    <ConsoleShell title={text("标记节省", "Token Savings")}>
       <div className="space-y-4 bg-slate-50/70 p-4">
         <section className="grid grid-cols-12 gap-3">
           <Card className="col-span-12 overflow-hidden border-slate-200 bg-white p-4 shadow-sm xl:col-span-3">
@@ -170,7 +170,7 @@ export function TokenSavingsPage() {
                   <tr>
                     <Td colSpan={8} className="py-12 text-center text-slate-500">
                       {text(
-                        "暂无 Token 节省证据。先在智能体工作室选择省用方案，然后从工作台发起一次运行。",
+                        "暂无标记节省证据。先在智能体工作室选择省用方案，然后从工作台发起一次运行。",
                         "No token savings evidence yet. Select a saving plan in Agent Studio, then start a run from Workspace.",
                       )}
                     </Td>
@@ -183,7 +183,7 @@ export function TokenSavingsPage() {
 
         {tokenSavings.error ? (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-            {text("加载 Token 节省数据失败", "Failed to load token savings data")}：
+            {text("加载标记节省数据失败", "Failed to load token savings data")}：
             {tokenSavings.error instanceof Error ? tokenSavings.error.message : String(tokenSavings.error)}
           </div>
         ) : null}

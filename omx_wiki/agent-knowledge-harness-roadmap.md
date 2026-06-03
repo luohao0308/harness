@@ -254,6 +254,21 @@ deterministic backfill input only. New runtime execution must resolve from enabl
 - Frontend regression coverage asserts configuration fields are absent from the
   default page and present only inside the relevant dialog.
 
+2026-05-27 runtime configuration follow-up:
+
+- Installed MCPs now have a dedicated Chinese `/tools/config` page, also linked
+  as `工具配置` in the sidebar and `运行配置` from Tool Registry.
+- The page lists Agent-scoped installed MCPs with clear `已配置 / 未配置 / 缺少密钥`
+  state, supports HTTP/SSE/stdio runtime fields, and provides a visible case
+  test panel after saving.
+- Runtime config is saved as a new immutable `CapabilityVersion`; raw API Keys
+  are written only through server-side secret storage and are never returned in
+  page/API payloads.
+- Configured Brave Search uses the official
+  `https://api.search.brave.com/res/v1/web/search` endpoint with
+  `X-Subscription-Token`; unconfigured marketplace MCPs remain explicit Harness
+  smoke outputs rather than fake live-provider results.
+
 ### P5/P4 Extension: Agent Context Optimizer Capability
 
 Status: verified.
@@ -356,6 +371,8 @@ Delivered scope:
   - keyboard selection, disabled-option skipping, grouping, and top/bottom placement are covered by a focused component test;
   - required English terms keep their original names with adjacent small Chinese explanations;
   - Agent Studio capability layout, Workspace selector/menu rows, Eval/Observability/Run Detail/Sandbox/Tool Registry terminology, and settings protocol selector were polished.
+  - later 2026-05-27 follow-ups finished the remaining high-visibility `Agent / Leader` drift across Agent Studio, Knowledge, and Team surfaces, mapped visible `ACTIVE` badges to Chinese-first labels, and reran the 53-case Chromium regression after the focused headed browser checks.
+  - the MCP / Skill store completion pass verified the beginner install flow end to end: explicit `未安装 / 待审批 / 待安装 / 已安装` chips, custom dialog/toast feedback instead of browser-native modals, null-safe installed-state detection for partial attachments, and concrete live cases for `mcp_context_search`, installed Brave MCP, and the `conservative-token-saver` Skill runtime context optimizer evidence.
 
 Verification evidence:
 

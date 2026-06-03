@@ -159,14 +159,32 @@ test.describe("Agent Studio page mocked smoke tests", () => {
 
     await expect(page.getByText("知识源").first()).toBeVisible();
     await expect(page.getByText("团队手册").first()).toBeVisible();
-    await expect(page.getByText("ACTIVE").first()).toBeVisible();
-    await expect(page.getByText("HEALTHY").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: /团队手册.*agent/ })).toBeVisible();
+    await expect(page.getByText("已启用").first()).toBeVisible();
+    await expect(page.getByText("健康").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /团队手册.*智能体/ })).toBeVisible();
     await expect(page.getByText("文档与生命周期")).toBeVisible();
     await expect(page.getByText("v1 · INDEXED")).toBeVisible();
-    await expect(page.getByText("3 chunks")).toBeVisible();
-    await expect(page.getByLabel("新增文档标题")).toBeVisible();
-    await expect(page.getByLabel("选择重新导入文档")).toBeVisible();
+    await expect(page.getByText("3 个分块")).toBeVisible();
+    await expect(page.getByRole("button", { name: "新增文档" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "重新导入" })).toBeVisible();
+    await expect(page.getByText("文档新增和重新导入都在弹窗中完成。")).toBeVisible();
+
+    await page.getByRole("button", { name: "编辑" }).click();
+    const editDialog = page.getByRole("dialog", { name: "编辑本地知识源" });
+    await expect(editDialog.getByLabel("编辑知识源说明")).toHaveValue("运行规范和响应准则");
+    await editDialog.getByRole("button", { name: "取消" }).click();
+
+    await page.getByRole("button", { name: "新增文档" }).click();
+    const addDialog = page.getByRole("dialog", { name: "新增文档" });
+    await expect(addDialog.getByLabel("新增文档标题")).toBeVisible();
+    await expect(addDialog.getByLabel("新增文档内容")).toBeVisible();
+    await addDialog.getByRole("button", { name: "取消" }).click();
+
+    await page.getByRole("button", { name: "重新导入" }).click();
+    const reingestDialog = page.getByRole("dialog", { name: "重新导入" });
+    await expect(reingestDialog.getByLabel("选择重新导入文档")).toBeVisible();
+    await expect(reingestDialog.getByLabel("重新导入内容")).toBeVisible();
+    await reingestDialog.getByRole("button", { name: "取消" }).click();
   });
 
   test("Knowledge management remains usable at 390px width", async ({ page }) => {
@@ -175,7 +193,8 @@ test.describe("Agent Studio page mocked smoke tests", () => {
 
     await expect(page.getByText("知识源").first()).toBeVisible();
     await expect(page.getByText("文档与生命周期")).toBeVisible();
-    await expect(page.getByLabel("导入初始文件")).toBeAttached();
+    await expect(page.getByRole("button", { name: "新增文档" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "重新导入" })).toBeVisible();
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(overflow).toBe(false);
@@ -206,6 +225,18 @@ async function routeAgentStudioApis(page: Page): Promise<void> {
       route.request().method() === "GET"
     ) {
       await fulfillJson(route, knowledgeDocumentsFixture);
+      return;
+    }
+
+    if (path === "/api/agents/token-optimizer/presets" && route.request().method() === "GET") {
+      await fulfillJson(route, {
+        items: [
+          { preset_id: "off", display_name: "关闭", description: "不启用额外 Token Optimizer。", enabled: false, priority: null },
+          { preset_id: "conservative", display_name: "保守省 Token", description: "轻量裁剪低相关证据。", enabled: true, priority: 5 },
+          { preset_id: "balanced", display_name: "均衡", description: "推荐默认方案。", enabled: true, priority: 5 },
+          { preset_id: "aggressive", display_name: "强力省 Token", description: "更积极限制候选上下文。", enabled: true, priority: 5 },
+        ],
+      });
       return;
     }
 

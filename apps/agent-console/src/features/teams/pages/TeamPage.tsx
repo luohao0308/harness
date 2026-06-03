@@ -41,9 +41,13 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
+import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import { cn } from "../../../lib/utils";
 import type { ConversationArtifact, ConversationNode } from "../../../stores/workspaceStore";
 import { ChatMessageBubble } from "../../agents/components/ChatMessageBubble";
@@ -114,7 +118,7 @@ type TeamComposerStateUpdater =
   | TeamComposerState
   | ((current: TeamComposerState) => TeamComposerState);
 type ComposerState = Record<string, TeamComposerState>;
-type TeamBottomPanel = "settings" | "model" | null;
+type TeamBottomPanel = "settings" | "model" | "mcp" | null;
 type TextFn = (zh: string, en: string) => string;
 type TeamModelChangeHandler = (slotId: string, providerId: string, modelId: string) => void;
 const MAX_TEAM_ATTACHMENT_TEXT_BYTES = 120_000;
@@ -973,6 +977,7 @@ function deriveTeamModelOptions(settings: ModelSettings | undefined): ModelOptio
 
 export function TeamPage() {
   const { text } = useI18n();
+  const { confirm, confirmDialog } = useConfirmDialog();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { teamId = "" } = useParams();
@@ -1036,8 +1041,6 @@ export function TeamPage() {
     queryFn: listAgents,
     enabled: addMemberOpen,
   });
-  const settingsQuery = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
-  const toolsQuery = useQuery({ queryKey: ["tools", "registry"], queryFn: getToolRegistry });
   const streamReadyTeamId = teamQuery.data?.id;
 
   useEffect(() => {
@@ -1094,8 +1097,30 @@ export function TeamPage() {
   );
   const teams = teamsQuery.data?.items ?? [];
   const agents = useMemo(() => team?.agents ?? [], [team?.agents]);
+  const toolAgentIds = useMemo(
+    () => Array.from(new Set(agents.map((agent) => agent.agent_id).filter(Boolean))).sort(),
+    [agents],
+  );
+  const settingsQuery = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
+  const toolsQuery = useQuery({
+    queryKey: ["tools", "registry", "team", toolAgentIds],
+    queryFn: async () =>
+      Promise.all(
+        toolAgentIds.map(async (agentId) => ({
+          agentId,
+          registry: await getToolRegistry(agentId),
+        })),
+      ),
+    enabled: toolAgentIds.length > 0,
+  });
   const agentDefinitions = agentsQuery.data?.items ?? [];
-  const tools = useMemo(() => toolsQuery.data?.items ?? [], [toolsQuery.data]);
+  const toolsByAgentId = useMemo(() => {
+    const next = new Map<string, ToolMetadata[]>();
+    for (const entry of toolsQuery.data ?? []) {
+      next.set(entry.agentId, entry.registry.items);
+    }
+    return next;
+  }, [toolsQuery.data]);
   const modelOptions = useMemo(() => deriveTeamModelOptions(settingsQuery.data), [settingsQuery.data]);
   const messages = team?.messages ?? [];
   const tasks = team?.tasks ?? [];
@@ -1230,11 +1255,23 @@ export function TeamPage() {
   const renameAgentMutation = useMutation({
     mutationFn: (payload: { slotId: string; agentName: string }) =>
       renameTeamAgent(teamId, payload.slotId, payload.agentName),
-    onSuccess: async () => {
+    onSuccess: async (_agent, payload) => {
       setEditingSlotId(null);
       setEditingAgentName("");
+      notifyFeedback({
+        tone: "success",
+        title: "成员名称已更新",
+        description: `已将团队成员更新为 ${payload.agentName}。`,
+      });
       await queryClient.invalidateQueries({ queryKey: ["teams", teamId] });
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: "成员名称更新失败",
+        description: feedbackErrorMessage(error, "请检查成员名称是否为空，或稍后重试。"),
+      });
     },
   });
 
@@ -1246,11 +1283,23 @@ export function TeamPage() {
       }),
     onSuccess: async (agent) => {
       setComposerBottomPanel(agent.slot_id, null);
+      notifyFeedback({
+        tone: "success",
+        title: "成员模型已切换",
+        description: `${agent.agent_name} 现在使用 ${agent.model_provider}/${agent.model_name}。`,
+      });
       queryClient.setQueryData<Team>(["teams", teamId], (current) =>
         current ? { ...current, agents: mergeTeamAgent(current.agents, agent) } : current,
       );
       await queryClient.invalidateQueries({ queryKey: ["teams", teamId] });
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: "成员模型切换失败",
+        description: feedbackErrorMessage(error, "请检查模型配置或稍后重试。"),
+      });
     },
   });
 
@@ -1259,10 +1308,35 @@ export function TeamPage() {
     onSuccess: async (_agent, slotId) => {
       setFullscreenSlotId((current) => (current === slotId ? null : current));
       setActiveSlotId((current) => (current === slotId ? leaderSlotId : current));
+      notifyFeedback({
+        tone: "warning",
+        title: "团队成员已移除",
+        description: "该成员已从当前团队中移除。",
+      });
       await queryClient.invalidateQueries({ queryKey: ["teams", teamId] });
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
     },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: "移除团队成员失败",
+        description: feedbackErrorMessage(error, "请检查该成员是否仍在运行，或稍后重试。"),
+      });
+    },
   });
+
+  const confirmRemoveAgent = useCallback(
+    async (agentName: string, status: string) => {
+      if (status !== "active") return true;
+      return confirm({
+        title: "移除团队成员",
+        description: `成员 ${agentName} 当前仍在运行中。移除后会中断该成员的当前团队协作。`,
+        confirmText: "确认移除",
+        variant: "danger",
+      });
+    },
+    [confirm],
+  );
 
   const addAgentMutation = useMutation({
     mutationFn: (payload: { agentId: string; agentName: string }) =>
@@ -1276,8 +1350,20 @@ export function TeamPage() {
       setNewMemberName("");
       setNewMemberAgentId(null);
       setActiveSlotId(agent.slot_id);
+      notifyFeedback({
+        tone: "success",
+        title: "团队成员已添加",
+        description: `${agent.agent_name} 已加入当前团队。`,
+      });
       await queryClient.invalidateQueries({ queryKey: ["teams", teamId] });
       await queryClient.invalidateQueries({ queryKey: ["teams"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: "团队成员添加失败",
+        description: feedbackErrorMessage(error, "请检查成员名称、智能体定义或稍后重试。"),
+      });
     },
   });
 
@@ -1480,6 +1566,16 @@ export function TeamPage() {
     onSuccess: async (_message, variables) => {
       triggerWake(variables.recipientSlotIds);
       await queryClient.invalidateQueries({ queryKey: ["teams", teamId] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("团队消息发送失败", "Team message send failed"),
+        description: feedbackErrorMessage(
+          error,
+          text("请检查当前团队状态、目标成员或稍后重试。", "Check the team state, recipient, or retry."),
+        ),
+      });
     },
     onSettled: (_message, _error, variables) => {
       if (!variables) return;
@@ -1748,7 +1844,19 @@ export function TeamPage() {
     ): Promise<ContextCompressionSummary | null> => {
       if (!team) return null;
       const branchKey = teamCompressionKey(team, agent, entries);
-      if (compressionInFlightRef.current.has(branchKey)) return null;
+      if (compressionInFlightRef.current.has(branchKey)) {
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "info",
+            title: text("上下文仍在压缩", "Context compression is still running"),
+            description: text(
+              `“${agent.agent_name}”当前已经在生成摘要，请稍候再试。`,
+              `${agent.agent_name} is already generating a summary. Please wait a moment.`,
+            ),
+          });
+        }
+        return null;
+      }
       const activePath = entries.map((entry) => entry.node);
       const eligible = activePath.filter(
         (node) =>
@@ -1756,7 +1864,19 @@ export function TeamPage() {
           !pinnedMessageIds.includes(node.id) &&
           node.content.trim().length > 0,
       );
-      if (eligible.length === 0) return null;
+      if (eligible.length === 0) {
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "warning",
+            title: text("暂无可压缩内容", "Nothing to compress yet"),
+            description: text(
+              `“${agent.agent_name}”至少需要一段未固定的对话内容后，才能生成摘要。`,
+              `${agent.agent_name} needs some unpinned conversation content before a summary can be generated.`,
+            ),
+          });
+        }
+        return null;
+      }
 
       const slotSummaries = contextCompressionsBySlotId[agent.slot_id] ?? {};
       const selectedProviderId = agent.model_provider || modelOptions[0]?.providerId || null;
@@ -1802,6 +1922,20 @@ export function TeamPage() {
         });
         const summary = workspaceCompressionSummary(branchKey, response);
         setTeamContextCompression(agent.slot_id, branchKey, summary);
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "success",
+            title: text("上下文已压缩", "Context compressed"),
+            description: text(
+              `已为“${agent.agent_name}”的 ${response.coverage_node_ids.length} 条消息生成摘要，预计从 ${Math.round(
+                response.estimated_original_tokens,
+              )} 标记压缩到 ${Math.round(response.estimated_summary_tokens)} 标记。`,
+              `Summarized ${response.coverage_node_ids.length} messages for ${agent.agent_name}, reducing the estimated prompt from ${Math.round(
+                response.estimated_original_tokens,
+              )} to ${Math.round(response.estimated_summary_tokens)} tokens.`,
+            ),
+          });
+        }
         return summary;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1827,6 +1961,13 @@ export function TeamPage() {
           error: message,
           updatedAt: failedAt,
         });
+        if (reason === "manual") {
+          notifyFeedback({
+            tone: "error",
+            title: text("上下文压缩失败", "Context compression failed"),
+            description: message || text("请稍后重试。", "Please try again shortly."),
+          });
+        }
         return null;
       } finally {
         compressionInFlightRef.current.delete(branchKey);
@@ -1838,6 +1979,7 @@ export function TeamPage() {
       pinnedMessageIds,
       setTeamContextCompression,
       team,
+      text,
     ],
   );
 
@@ -1917,7 +2059,6 @@ export function TeamPage() {
 
   const composerSharedProps = useMemo(
     () => ({
-      tools,
       modelOptions,
       contextMaxTokens,
       autoCompressionRatio,
@@ -1940,7 +2081,6 @@ export function TeamPage() {
       modelOptions,
       removeComposerAttachment,
       setComposerBottomPanel,
-      tools,
     ],
   );
 
@@ -1993,7 +2133,7 @@ export function TeamPage() {
                     <UsersRound aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-500" />
                     <span className="truncate">{activeTeam.name}</span>
                     <Badge tone={activeTeam.status === "ACTIVE" ? "success" : "neutral"}>
-                      {activeTeam.status}
+                      {statusLabel(activeTeam.status)}
                     </Badge>
                   </span>
                   <div className="hidden text-[11px] leading-4 text-slate-500 sm:block">
@@ -2208,7 +2348,8 @@ export function TeamPage() {
                         settledWakeCutoffs={settledWakeCutoffs}
                         composer={agentComposer}
                         attachments={attachmentsBySlotId[agent.slot_id] ?? []}
-	                        bottomPanel={bottomPanelBySlotId[agent.slot_id] ?? null}
+                        bottomPanel={bottomPanelBySlotId[agent.slot_id] ?? null}
+                        tools={toolsByAgentId.get(agent.agent_id) ?? []}
 	                        isSending={pendingSends.some(
 	                          (send) =>
 	                            send.sourceSlotId === agent.slot_id &&
@@ -2239,13 +2380,9 @@ export function TeamPage() {
                         onFullscreen={() =>
                           setFullscreenSlotId((current) => (current === agent.slot_id ? null : agent.slot_id))
                         }
-                        onRemove={() => {
+                        onRemove={async () => {
                           if (agent.role === "leader") return;
-                          const confirmation = text(
-                            `确定移除成员 ${agent.agent_name}？`,
-                            `Remove teammate ${agent.agent_name}?`,
-                          );
-                          if (agent.status === "active" && !window.confirm(confirmation)) return;
+                          if (!(await confirmRemoveAgent(agent.agent_name, agent.status))) return;
                           removeAgentMutation.mutate(agent.slot_id);
                         }}
                         onFocus={() => setActiveSlotId(agent.slot_id)}
@@ -2300,6 +2437,7 @@ export function TeamPage() {
                     composer={selectedComposer}
                     attachments={attachmentsBySlotId[selectedAgent.slot_id] ?? []}
                     bottomPanel={bottomPanelBySlotId[selectedAgent.slot_id] ?? null}
+                    tools={toolsByAgentId.get(selectedAgent.agent_id) ?? []}
 	                    isSending={pendingSends.some((send) => {
 	                      const selectedTarget = defaultComposerTarget(selectedAgent);
 	                      const selectedMode = selectedComposer.mode ?? "chat";
@@ -2348,13 +2486,9 @@ export function TeamPage() {
                     onOpenMessageInspector={(section, node) => setTeamInspector({ section, node })}
                     onStopWake={() => stopWake(selectedAgent.slot_id)}
                     onFullscreen={() => setFullscreenSlotId(selectedAgent.slot_id)}
-                    onRemove={() => {
+                    onRemove={async () => {
                       if (selectedAgent.role === "leader") return;
-                      const confirmation = text(
-                        `确定移除成员 ${selectedAgent.agent_name}？`,
-                        `Remove teammate ${selectedAgent.agent_name}?`,
-                      );
-                      if (selectedAgent.status === "active" && !window.confirm(confirmation)) return;
+                      if (!(await confirmRemoveAgent(selectedAgent.agent_name, selectedAgent.status))) return;
                       removeAgentMutation.mutate(selectedAgent.slot_id);
                     }}
                     onFocus={() => setActiveSlotId(selectedAgent.slot_id)}
@@ -2404,6 +2538,7 @@ export function TeamPage() {
         artifacts={teamInspector?.node.artifacts ?? []}
         onClose={() => setTeamInspector(null)}
       />
+      {confirmDialog}
     </ConsoleShell>
   );
 }
@@ -2494,7 +2629,9 @@ function TeamTaskBoard({
                         <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-slate-400">
                           <span className="truncate">
                             {text("负责人", "Owner")} ·{" "}
-                            {task.owner_slot_id ? agentNames.get(task.owner_slot_id) ?? task.owner_slot_id : "Leader"}
+                            {task.owner_slot_id
+                              ? agentNames.get(task.owner_slot_id) ?? task.owner_slot_id
+                              : text("队长", "Leader")}
                           </span>
                           {task.blocked_by_json.length > 0 ? (
                             <span>{text("依赖", "Deps")} {task.blocked_by_json.length}</span>
@@ -2550,37 +2687,18 @@ function TeamAddMemberModal({
   }));
   const canSubmit = Boolean(selectedAgent) && !submitting;
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4">
-      <Card
-        role="dialog"
-        aria-modal="true"
-        aria-label={text("添加成员", "Add member")}
-        className="w-full max-w-lg overflow-hidden rounded-xl p-0 shadow-xl"
-      >
-        <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
-          <div>
-            <div className="text-lg font-medium text-slate-950">{text("添加成员", "Add member")}</div>
-            <div className="mt-1 text-xs text-slate-500">
-              {text("选择一个 Agent 定义加入当前团队。", "Choose an agent definition to join this team.")}
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label={text("关闭", "Close")}
-            onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="space-y-4 px-6 py-5">
+    <ConfigDialog
+      open={open}
+      title={text("添加成员", "Add member")}
+      description={text("选择一个智能体定义加入当前团队。", "Choose an agent definition to join this team.")}
+      onClose={onClose}
+      className="max-w-lg"
+    >
+        <div className="space-y-4">
           <div className="space-y-1.5 text-xs font-medium text-slate-600">
             <div className="flex items-center justify-between gap-2">
-              <span>{text("Agent 定义", "Agent definition")}</span>
+              <span>{text("智能体定义", "Agent definition")}</span>
               <Badge tone={selectedAgent ? "success" : errorMessage ? "failed" : "neutral"}>
                 {loading
                   ? text("加载中", "Loading")
@@ -2592,15 +2710,15 @@ function TeamAddMemberModal({
             {agents.length === 0 ? (
               <div className="flex items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50/70 px-4 py-5 text-xs text-slate-500">
                 {loading
-                  ? text("正在加载 Agent...", "Loading agents...")
-                  : text("没有可用的 Agent", "No supported agents installed")}
+                  ? text("正在加载智能体...", "Loading agents...")
+                  : text("没有可用的智能体", "No supported agents installed")}
               </div>
             ) : (
               <MenuSelect
-                ariaLabel={text("Agent 定义", "Agent definition")}
+                ariaLabel={text("智能体定义", "Agent definition")}
                 value={selectedAgentId}
                 onChange={onAgentChange}
-                placeholder={text("选择 Agent", "Select agent")}
+                placeholder={text("选择智能体", "Select agent")}
                 options={agentOptions}
                 buttonClassName="rounded-md border-slate-200 px-3 py-2 shadow-none"
                 menuClassName="max-h-72"
@@ -2628,7 +2746,7 @@ function TeamAddMemberModal({
                   <Bot className="h-3.5 w-3.5" />
                   <span className="truncate">{selectedAgent.name}</span>
                 </div>
-                <Badge tone="success">{selectedAgent.status}</Badge>
+                <Badge tone="success">{statusLabel(selectedAgent.status)}</Badge>
               </div>
               <div className="mt-2 truncate font-mono text-[11px] text-slate-600">
                 {selectedAgent.id} · {selectedAgent.model_provider}/{selectedAgent.model_name}
@@ -2638,7 +2756,7 @@ function TeamAddMemberModal({
           {errorMessage ? <div className="text-xs text-red-600">{errorMessage}</div> : null}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-slate-200 bg-white px-6 py-5">
+        <div className="flex justify-end gap-2 border-t border-slate-200 pt-5">
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
             {text("取消", "Cancel")}
           </Button>
@@ -2647,8 +2765,7 @@ function TeamAddMemberModal({
             {submitting ? text("添加中", "Adding") : text("添加成员", "Add member")}
           </Button>
         </div>
-      </Card>
-    </div>
+    </ConfigDialog>
   );
 }
 
@@ -2758,6 +2875,7 @@ function AgentColumn({
   fullscreen = false,
 }: AgentColumnProps) {
   const isLeader = agent.role === "leader";
+  const roleLabel = isLeader ? text("队长", "Leader") : text("成员", "Teammate");
   const taskScope = tasks.filter((task) => isLeader || task.owner_slot_id === agent.slot_id);
   const selectedTarget = defaultComposerTarget(agent);
   const selectedMode = composer.mode ?? "chat";
@@ -2823,7 +2941,7 @@ function AgentColumn({
   );
   const contextUsageRatio = contextMaxTokens > 0 ? contextUsageCurrent / contextMaxTokens : 0;
   const usageSummary = useMemo(() => summarizeTeamUsage(visibleEntries), [visibleEntries]);
-  const modelLabel = agent.model_name || modelOptions[0]?.modelLabel || "default";
+  const modelLabel = agent.model_name || modelOptions[0]?.modelLabel || text("默认模型", "default");
   const selectedModelId = agent.model_name || modelOptions[0]?.modelId || null;
   const selectedProviderId = agent.model_provider || modelOptions[0]?.providerId || null;
   const messageListSignature = useMemo(
@@ -2923,6 +3041,26 @@ function AgentColumn({
           setComposerBottomPanel(agent.slot_id, "model");
           onComposerChange((current) => ({ ...current, draft: "" }));
           return;
+        case "mcp": {
+          const mcpCount = tools.filter(isMcpTool).length;
+          setComposerBottomPanel(agent.slot_id, "mcp");
+          onComposerChange((current) => ({ ...current, draft: "" }));
+          notifyFeedback({
+            tone: mcpCount > 0 ? "success" : "info",
+            title: mcpCount > 0 ? text("MCP 列表已打开", "MCP list opened") : text("暂无可用 MCP", "No MCP tools available"),
+            description:
+              mcpCount > 0
+                ? text(
+                    `当前团队列有 ${mcpCount} 个可用 MCP。点击条目可插入 @工具名。`,
+                    `This team column has ${mcpCount} available MCP tools. Select one to insert its @mention.`,
+                  )
+                : text(
+                    "已打开 MCP 列表。可以先到 MCP / 技能商店安装并挂载能力。",
+                    "The MCP list is open. Install and attach capabilities from the MCP / Skill marketplace first.",
+                  ),
+          });
+          return;
+        }
         case "tool": {
           const name = args.replace(/^@/, "").split(/\s+/)[0] ?? "";
           if (name) {
@@ -2944,6 +3082,8 @@ function AgentColumn({
       onComposerChange,
       onTogglePin,
       setComposerBottomPanel,
+      text,
+      tools,
       visibleEntries,
     ],
   );
@@ -2962,7 +3102,7 @@ function AgentColumn({
     <div
       ref={setScrollRef}
       role="region"
-      aria-label={`${agent.agent_name} ${isLeader ? "Leader" : "Teammate"} ${text("列", "column")}`}
+      aria-label={`${agent.agent_name} ${roleLabel} ${text("列", "column")}`}
       className={cn(
         "flex h-full min-w-0 snap-start flex-col overflow-hidden border-r border-slate-200 transition-opacity duration-150",
         isLeader ? "border-l-4 border-l-slate-900 bg-slate-50/70" : "bg-white",
@@ -2990,7 +3130,7 @@ function AgentColumn({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <div className="truncate text-[14px] font-semibold text-slate-950">{agent.agent_name}</div>
-              {isLeader ? <Badge tone="running">Leader</Badge> : null}
+              {isLeader ? <Badge tone="running">{text("队长", "Leader")}</Badge> : null}
               <Badge tone={teamAgentStatusTone(status)}>{teamAgentStatusLabel(status)}</Badge>
             </div>
             <div className="mt-0.5 truncate font-mono text-[11px] text-slate-400">
@@ -3006,6 +3146,14 @@ function AgentColumn({
             }}
             onClear={() => {
               onClearContextCompression(agent.slot_id, activeCompression?.branchKey ?? compressionBranchKey);
+              notifyFeedback({
+                tone: "info",
+                title: text("摘要已清除", "Context summary cleared"),
+                description: text(
+                  `“${agent.agent_name}”后续发送将重新携带原始上下文内容。`,
+                  `${agent.agent_name} will use the original conversation context on the next send.`,
+                ),
+              });
             }}
             text={text}
           />
@@ -3055,9 +3203,20 @@ function AgentColumn({
                   onCancelMessageEdit();
                   onMessageActionSend(newContent, current.target);
                 }}
-                onCopy={(nodeId) => {
+                onCopy={async (nodeId) => {
                   const current = branchVisibleEntries.find((candidate) => candidate.node.id === nodeId);
-                  return copyText(stripThinkBlocks(current?.node.content ?? ""));
+                  const copied = await copyText(stripThinkBlocks(current?.node.content ?? ""));
+                  if (!copied) {
+                    notifyFeedback({
+                      tone: "error",
+                      title: text("复制失败", "Copy failed"),
+                      description: text(
+                        "当前浏览器未允许写入剪贴板，请检查权限后重试。",
+                        "The browser could not write to the clipboard. Check permissions and retry.",
+                      ),
+                    });
+                  }
+                  return copied;
                 }}
                 onRegenerate={(nodeId) => {
                   const previousUser = previousUserContent(branchVisibleEntries, nodeId);
@@ -3072,14 +3231,15 @@ function AgentColumn({
             ))
           ) : (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-center text-xs text-slate-400 shadow-sm">
-              {team.name} {agent.role === "leader" ? "Leader" : agent.agent_name}
+              {team.name} {isLeader ? text("队长", "Leader") : agent.agent_name}
             </div>
           )}
         </div>
 
         <details className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
           <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-            {text("View Steps", "View Steps")} · {taskScope.length} {text("条任务", "tasks")}
+            {text("查看步骤", "View steps")} ·{" "}
+            {text(`${taskScope.length} 项任务`, `${taskScope.length} tasks`)}
           </summary>
           <div className="mt-3 space-y-2">
             {taskScope.length > 0 ? (
@@ -3114,6 +3274,8 @@ function AgentColumn({
             title={
               bottomPanel === "model"
                 ? text("切换模型", "Switch model")
+                : bottomPanel === "mcp"
+                  ? text("可用 MCP", "Available MCP")
                 : text("输入设置", "Composer settings")
             }
           >
@@ -3139,6 +3301,7 @@ function AgentColumn({
                 onContextMaxTokensChange={onContextMaxTokensChange}
                 autoCompressionRatio={autoCompressionRatio}
                 onAutoCompressionRatioChange={onAutoCompressionRatioChange}
+                pluginsInitiallyOpen={bottomPanel === "mcp"}
               />
             )}
           </TeamBottomPopover>
@@ -3155,7 +3318,10 @@ function AgentColumn({
             placeholder={teamComposerPlaceholder(selectedMode, text)}
             optionsOpen={bottomPanel !== null}
             onOptionsToggle={() =>
-              setComposerBottomPanel(agent.slot_id, bottomPanel === "settings" ? null : "settings")
+              setComposerBottomPanel(
+                agent.slot_id,
+                bottomPanel === "settings" || bottomPanel === "mcp" ? null : "settings",
+              )
             }
             goalModeToggleVisible={false}
             metadata={<TeamComposerMetadataRow usage={usageSummary} text={text} />}
@@ -3298,6 +3464,7 @@ function TeamBottomPopover({
   title: string;
   children: JSX.Element;
 }) {
+  const { text } = useI18n();
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -3339,10 +3506,21 @@ function TeamBottomPopover({
       aria-modal="false"
       aria-label={title}
       className={cn(
-        "absolute bottom-[58px] z-30 w-[min(200px,calc(100vw-5rem))] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg",
+        "absolute bottom-[58px] z-30 w-[min(280px,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl",
         align === "right" ? "right-4" : "left-4",
       )}
     >
+      <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-100 px-1 pb-2">
+        <div className="text-xs font-semibold text-slate-900">{title}</div>
+        <button
+          type="button"
+          aria-label={text("关闭弹层", "Close panel")}
+          onClick={onClose}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        >
+          <X aria-hidden="true" className="h-4 w-4" />
+        </button>
+      </div>
       {children}
     </div>
   );
@@ -3360,6 +3538,7 @@ function TeamComposerSettingsPanel({
   onContextMaxTokensChange,
   autoCompressionRatio,
   onAutoCompressionRatioChange,
+  pluginsInitiallyOpen,
 }: {
   workspaceMode: WorkspaceMode;
   onWorkspaceModeChange: (mode: WorkspaceMode) => void;
@@ -3372,9 +3551,14 @@ function TeamComposerSettingsPanel({
   onContextMaxTokensChange: (value: number) => void;
   autoCompressionRatio: number;
   onAutoCompressionRatioChange: (value: number) => void;
+  pluginsInitiallyOpen?: boolean;
 }) {
-  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(pluginsInitiallyOpen ?? false);
   const mcpTools = tools.filter(isMcpTool);
+
+  useEffect(() => {
+    if (pluginsInitiallyOpen) setPluginsOpen(true);
+  }, [pluginsInitiallyOpen]);
 
   return (
     <div className="flex flex-col text-xs text-slate-800">
@@ -3669,8 +3853,8 @@ function TeamMessageRunLinks({
   return (
     <div className="ml-11 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 shadow-sm">
       <GitBranch aria-hidden="true" className="h-3.5 w-3.5 text-slate-500" />
-      <span className="font-mono text-slate-800">run {runId.slice(0, 8)}</span>
-      {runStatus ? <Badge tone="info">{runStatus}</Badge> : null}
+      <span className="font-mono text-slate-800">运行 {runId.slice(0, 8)}</span>
+      {runStatus ? <Badge tone="info">{statusLabel(runStatus)}</Badge> : null}
       {createdLabel ? <span className="hidden text-slate-400 sm:inline">{createdLabel}</span> : null}
       <div className="ml-auto flex items-center gap-1">
         <Link

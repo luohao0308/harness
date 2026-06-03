@@ -11,7 +11,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
-  /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
+  /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/agents\/default\/runs\/chat\/stream/;
 
 const STABLE_RUN_ID = "e2e-success-run-00000000-0000-0000-0000-000000000001";
 const now = "2026-05-13T00:00:00.000Z";
@@ -284,6 +284,11 @@ async function routeSuccessApis(page: Page): Promise<void> {
       return;
     }
 
+    if (path === "/api/teams") {
+      await fulfillJson(route, { items: [], next_cursor: null });
+      return;
+    }
+
     // Workspace projection query (Inspector open)
     if (path.match(/^\/api\/agents\/runs\/[^/]+\/workspace$/)) {
       await fulfillJson(route, {
@@ -341,7 +346,7 @@ function sendButton(page: Page) {
 }
 
 function runDetailLink(page: Page) {
-  return page.locator('a[aria-label="运行详情"]');
+  return page.locator('a[aria-label="运行详情"]').first();
 }
 
 async function fulfillJson(route: Route, payload: unknown): Promise<void> {

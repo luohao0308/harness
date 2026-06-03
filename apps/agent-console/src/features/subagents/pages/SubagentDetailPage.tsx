@@ -17,6 +17,7 @@ import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
@@ -88,10 +89,22 @@ export function SubagentDetailPage() {
   const cancelMutation = useMutation({
     mutationFn: () => cancelSubagent(subagentId!),
     onSuccess: async (subagent) => {
+      notifyFeedback({
+        tone: "warning",
+        title: text("子代理已取消", "Subagent cancelled"),
+        description: text(`子代理 ${subagent.id.slice(0, 8)} 已收到取消请求。`, `Subagent ${subagent.id.slice(0, 8)} has been cancelled.`),
+      });
       await queryClient.invalidateQueries({ queryKey: ["subagent-detail", subagent.id] });
       await queryClient.invalidateQueries({ queryKey: ["task-subagents", subagent.task_id] });
       await queryClient.invalidateQueries({ queryKey: ["task-result", subagent.task_id] });
       await queryClient.invalidateQueries({ queryKey: ["task-events", subagent.task_id] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("子代理取消失败", "Subagent cancel failed"),
+        description: feedbackErrorMessage(error, text("请检查子代理状态或稍后重试。", "Check the subagent state and retry.")),
+      });
     },
   });
 
@@ -140,7 +153,10 @@ export function SubagentDetailPage() {
             <div className="mt-2 flex flex-wrap items-center gap-5 text-xs text-slate-500">
               <span>
                 {text("任务", "Task")}{" "}
-                <Link to={`/runs/`} className="font-mono text-slate-800 hover:text-slate-950">
+                <Link
+                  to={`/runs/${subagent.task_id}`}
+                  className="font-mono text-slate-800 hover:text-slate-950"
+                >
                   {subagent.task_id.slice(0, 8)}
                 </Link>
               </span>
@@ -161,7 +177,7 @@ export function SubagentDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             <Button>
-              <Link to={`/runs//subagents`}>
+              <Link to={`/runs/${subagent.task_id}/subagents`}>
                 <ListChecks className="h-3.5 w-3.5" /> {text("任务子代理", "Task Subagents")}
               </Link>
             </Button>
@@ -322,7 +338,7 @@ export function SubagentDetailPage() {
             <CardHeader>
               <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
                 <Network className="h-3 w-3" />
-                <TermHint description="推理与动作交替轨迹">ReAct</TermHint>
+                <TermHint description="推理与动作交替轨迹">推理行动</TermHint>
                 {text("轨迹", "Trace")}
               </div>
               <span className="text-[11px] text-slate-500">

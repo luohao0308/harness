@@ -27,7 +27,7 @@ function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
   );
 }
 
-function registryPayload() {
+function registryPayload(extraItems: Array<Record<string, unknown>> = []) {
   return {
     items: [
       {
@@ -46,10 +46,150 @@ function registryPayload() {
         mcp_server: "local-context",
         mcp_method: "context.search",
       },
+      ...extraItems,
     ],
     categories: ["knowledge"],
     sources: ["mcp"],
   };
+}
+
+function marketplacePayload() {
+  return {
+    kind: "all",
+    query: "",
+    sources: [
+      { id: "harness_curated", label: "平台推荐", status: "ready", item_count: 1, url: "" },
+      { id: "official_mcp_registry", label: "官方 MCP 注册表", status: "ready", item_count: 1, url: "https://registry.modelcontextprotocol.io" },
+      { id: "smithery_skills", label: "Smithery 技能库", status: "ready", item_count: 1, url: "https://smithery.ai" },
+    ],
+    errors: [],
+    items: [
+      {
+        id: "harness::mcp_context_search",
+        kind: "mcp",
+        source: "harness_curated",
+        source_label: "平台推荐",
+        name: "mcp_context_search",
+        display_name: "上下文搜索",
+        description: "让智能体检索工作区上下文。",
+        categories: ["MCP"],
+        verified: true,
+        stars: null,
+        use_count: null,
+        quality_score: 1,
+        latest_version: "built-in",
+        updated_at: null,
+        homepage_url: "",
+        repository_url: "",
+        remote_url: "",
+        package_type: "mcp_server",
+        install_mode: "attach_existing",
+        install_label: "直接启用",
+        install_payload: {
+          capability_id: "mcp_context_search",
+          agent_id: "default",
+          enabled: true,
+          priority: 10,
+        },
+        badges: ["本地", "MCP", "可直接启用"],
+        risk_notes: ["本地内置能力，启用后仍受策略约束。"],
+        metadata: {},
+      },
+      {
+        id: "official-mcp::io.github.example/search@1.0.0",
+        kind: "mcp",
+        source: "official_mcp_registry",
+        source_label: "官方 MCP 注册表",
+        name: "io.github.example/search",
+        display_name: "Example Search",
+        description: "Search external systems.",
+        categories: ["MCP"],
+        verified: true,
+        stars: null,
+        use_count: null,
+        quality_score: null,
+        latest_version: "1.0.0",
+        updated_at: "2026-04-01T00:00:00Z",
+        homepage_url: "",
+        repository_url: "https://github.com/example/search-mcp",
+        remote_url: "https://mcp.example.com",
+        package_type: "mcp_server",
+        install_mode: "marketplace_preflight",
+        install_label: "登记预检",
+        install_payload: {
+          source_uri: "https://mcp.example.com",
+          pinned_ref: "marketplace-sha256:abc",
+          package_type: "mcp_server",
+          display_name: "Example Search",
+          description: "Search external systems.",
+          marketplace_source: "official_mcp_registry",
+          marketplace_item_id: "official-mcp::io.github.example/search@1.0.0",
+          permissions: ["mcp:remote"],
+          secret_refs: [],
+          manifest: {
+            name: "io-github-example-search",
+            version: "1.0.0",
+            description: "Search external systems.",
+            package_type: "mcp_server",
+            permissions: ["mcp:remote"],
+            transport: "http",
+          },
+          content: { marketplace: { source: "official_mcp_registry" } },
+        },
+        badges: ["MCP", "latest", "active"],
+        risk_notes: ["远程 MCP 服务器会引入外部网络边界。"],
+        metadata: {},
+      },
+      {
+        id: "smithery-skill::acme/review",
+        kind: "skill",
+        source: "smithery_skills",
+        source_label: "Smithery 技能库",
+        name: "acme/review",
+        display_name: "Review Skill",
+        description: "Review code with policy.",
+        categories: ["Coding"],
+        verified: false,
+        stars: 42,
+        use_count: 7,
+        quality_score: 0.9,
+        latest_version: null,
+        updated_at: "2026-02-02T00:00:00Z",
+        homepage_url: "https://smithery.ai/skills/acme/review",
+        repository_url: "https://github.com/acme/review/tree/main/skill",
+        remote_url: "",
+        package_type: "skill_pack",
+        install_mode: "marketplace_preflight",
+        install_label: "登记预检",
+        install_payload: {
+          source_uri: "https://github.com/acme/review/tree/main/skill",
+          pinned_ref: "marketplace-sha256:def",
+          package_type: "skill_pack",
+          display_name: "Review Skill",
+          description: "Review code with policy.",
+          marketplace_source: "smithery_skills",
+          marketplace_item_id: "smithery-skill::acme/review",
+          permissions: ["skill:prompt"],
+          secret_refs: [],
+          manifest: {
+            name: "acme-review",
+            version: "1.0.0",
+            description: "Review code with policy.",
+            package_type: "skill_pack",
+            permissions: ["skill:prompt"],
+          },
+          content: { marketplace: { source: "smithery_skills" } },
+        },
+        badges: ["Skill", "Coding"],
+        risk_notes: ["Skill 会改变智能体指令边界。"],
+        metadata: {},
+      },
+    ],
+  };
+}
+
+function emptyMarketplacePayload() {
+  return { kind: "all", query: "", sources: [], errors: [], items: [] };
 }
 
 afterEach(() => {
@@ -57,13 +197,46 @@ afterEach(() => {
 });
 
 describe("ToolRegistryPage marketplace controls", () => {
-  it("keeps MCP and Skill configuration behind click-open dialogs by default", async () => {
+  it("opens a MCP / Skill marketplace panel and routes installs through Harness gates", async () => {
+    let packagePayload: Record<string, unknown> | null = null;
+    let marketplaceToolInstalled = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
-      if (path === "/api/tools/registry" && !init?.method) return jsonResponse(registryPayload());
+      if (path.startsWith("/api/tools/registry") && !init?.method) {
+        return jsonResponse(
+          registryPayload(
+            marketplaceToolInstalled
+              ? [
+                  {
+                    name: "io-github-example-search",
+                    description: "Search external systems.",
+                    category: "mcp",
+                    source: "mcp",
+                    risk_level: "low",
+                    requires_sandbox: false,
+                    network_policy: "restricted",
+                    timeout_seconds: 30,
+                    allowed_roles: ["engineer"],
+                    audit_level: "standard",
+                    idempotent: true,
+                    input_schema: { type: "object" },
+                    mcp_server: "io.github.example/search",
+                    mcp_method: "search",
+                  },
+                ]
+              : [],
+          ),
+        );
+      }
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
+      }
+      if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
+        return jsonResponse(marketplacePayload());
+      }
       if (path === "/api/tools/capabilities/packages" && !init?.method) {
-        return jsonResponse({ items: [] });
+        return jsonResponse({ items: packagePayload ? [packagePayload] : [] });
       }
       if (path === "/api/tools/capabilities/dependency-preflight" && !init?.method) {
         return jsonResponse({ local_release_path: "no-container" });
@@ -71,21 +244,118 @@ describe("ToolRegistryPage marketplace controls", () => {
       if (path === "/api/agents/default/capabilities/attachments" && init?.method === "POST") {
         return jsonResponse({ status: "attached" });
       }
+      if (path === "/api/tools/capabilities/preflight/marketplace" && init?.method === "POST") {
+        packagePayload = {
+          id: "pkg-market-1",
+          organization_id: "dev-org",
+          package_key: "example-search",
+          package_type: "mcp_server",
+          source_kind: "marketplace_preflight",
+          source_uri: "https://mcp.example.com",
+          source_sha256: "abcdef1234567890",
+          pinned_ref: "marketplace-sha256:abc",
+          status: "staged",
+          risk_level: "medium",
+          manifest_json: {},
+          validation_json: {
+            marketplace_preflight: true,
+            source_resolution: "registry_metadata_only_no_url_fetch",
+          },
+          provenance_json: { marketplace_registry_metadata_only: true },
+          audit_json: { marketplace_preflight: { no_source_download: true } },
+          capability_id: null,
+          capability_version_id: null,
+          created_at: "2026-05-18T00:00:00Z",
+          updated_at: "2026-05-18T00:00:00Z",
+          approved_at: null,
+        };
+        return jsonResponse({
+          package: packagePayload,
+          validation_summary: { status: "staged" },
+          ready_state: "staged",
+          next_step_label: "Approve marketplace version",
+          staged_capability_id: "pkg-market-1",
+          capability_id: null,
+          capability_version_id: null,
+          attachment: null,
+        }, 201);
+      }
+      if (path === "/api/tools/capabilities/packages/pkg-market-1/approve" && init?.method === "POST") {
+        packagePayload = {
+          ...(packagePayload ?? {}),
+          id: "pkg-market-1",
+          status: "approved",
+          capability_id: "cap-market-1",
+          capability_version_id: "cap-version-1",
+        };
+        return jsonResponse(packagePayload);
+      }
+      if (path === "/api/tools/capabilities/packages/pkg-market-1/attachments" && init?.method === "POST") {
+        marketplaceToolInstalled = true;
+        return jsonResponse({
+          attachment_id: "attach-market-1",
+          agent_id: "default",
+          capability_id: "cap-market-1",
+          capability_version_id: "cap-version-1",
+          enabled: true,
+          priority: 10,
+        }, 201);
+      }
+      if (path === "/api/tools/capabilities/test-invoke" && init?.method === "POST") {
+        return jsonResponse({
+          allowed: true,
+          output: {
+            mcp_server: "io.github.example/search",
+            mcp_method: "search",
+            result: {
+              items: [
+                {
+                  id: "search-result-1",
+                  title: "Example Search result",
+                  snippet: "OpenAI latest news",
+                },
+              ],
+              source: "mcp-marketplace-adapter",
+            },
+          },
+          tool_call: {
+            id: "tool-call-market-1",
+            tool_name: "io-github-example-search",
+            status: "SUCCESS",
+            risk_level: "low",
+            requires_sandbox: false,
+            duration_ms: 12,
+            output_kind: "json",
+            output_summary: "ok",
+            created_at: "2026-05-18T00:00:00Z",
+          },
+        });
+      }
       return jsonResponse({ detail: `unexpected ${path}` }, 404);
     });
     const user = userEvent.setup();
 
     renderPage(fetchMock);
 
-    expect(await screen.findByText("常用预置能力")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /上下文搜索/ })).toBeInTheDocument();
+    expect(await screen.findByText("MCP / 技能商店")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /打开安装向导/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /上下文搜索/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Example Search/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Review Skill/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("预置能力目标 Agent")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /安装到 Agent|Install to Agent/ })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /上下文搜索/ }));
-    const presetDialog = await screen.findByRole("dialog", { name: /配置上下文搜索/ });
-    expect(within(presetDialog).getByLabelText("预置能力目标 Agent")).toBeInTheDocument();
-    await user.click(within(presetDialog).getByRole("button", { name: /启用能力/ }));
+    expect(screen.queryByLabelText("搜索 MCP 和技能商店")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("市场侧栏安装目标智能体")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /安装到智能体|Install to Agent/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /打开安装向导/ }));
+    const marketplaceDialog = await screen.findByRole("dialog", { name: "MCP / 技能商店" });
+    expect(within(marketplaceDialog).getByLabelText("搜索 MCP 和技能商店")).toBeInTheDocument();
+    expect(within(marketplaceDialog).getByRole("button", { name: /上下文搜索/ })).toBeInTheDocument();
+    expect(within(marketplaceDialog).getByRole("button", { name: /Example Search/ })).toBeInTheDocument();
+    expect(within(marketplaceDialog).getByRole("button", { name: /Review Skill/ })).toBeInTheDocument();
+    await user.click(within(marketplaceDialog).getByRole("button", { name: /上下文搜索/ }));
+    expect(within(marketplaceDialog).getByLabelText(/^市场侧栏安装目标智能体/)).toBeInTheDocument();
+    const marketplaceWorkbench = within(marketplaceDialog).getByRole("complementary", { name: "商店安装工作台" });
+    await user.click(within(marketplaceWorkbench).getByRole("button", { name: /^直接启用$/ }));
     await waitFor(() => {
       const attachCall = fetchMock.mock.calls.find(
         ([input, init]) =>
@@ -98,17 +368,86 @@ describe("ToolRegistryPage marketplace controls", () => {
         enabled: true,
       });
     });
+    expect(await within(marketplaceDialog).findByText(/已启用到目标智能体/)).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.some(([input]) =>
         String(input).endsWith("/api/tools/capabilities/packages"),
       ),
-    ).toBe(false);
+    ).toBe(true);
+    await user.click(within(marketplaceDialog).getByRole("button", { name: /Example Search/ }));
+    await user.click(within(marketplaceWorkbench).getByRole("button", { name: /^登记预检$/ }));
+    await waitFor(() => {
+      const preflightCall = fetchMock.mock.calls.find(([input]) =>
+        String(input).endsWith("/api/tools/capabilities/preflight/marketplace"),
+      );
+      expect(preflightCall).toBeDefined();
+      expect(JSON.parse(String(preflightCall?.[1]?.body))).toMatchObject({
+        source_uri: "https://mcp.example.com",
+        package_type: "mcp_server",
+        agent_id: "default",
+        marketplace_source: "official_mcp_registry",
+        marketplace_item_id: "official-mcp::io.github.example/search@1.0.0",
+        manifest: { name: "io-github-example-search", transport: "http" },
+      });
+    });
+    expect(await within(marketplaceDialog).findByText(/登记包已就绪/)).toBeInTheDocument();
+    expect(within(marketplaceDialog).getByText(/商店登记/)).toBeInTheDocument();
+    await user.click(within(marketplaceDialog).getByRole("button", { name: /审批版本/ }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input).endsWith("/api/tools/capabilities/packages/pkg-market-1/approve") &&
+            init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    await user.click(within(marketplaceWorkbench).getByRole("button", { name: /^安装到智能体$/ }));
+    await waitFor(() => {
+      const attachPackageCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input).endsWith("/api/tools/capabilities/packages/pkg-market-1/attachments") &&
+          init?.method === "POST",
+      );
+      expect(attachPackageCall).toBeDefined();
+      expect(JSON.parse(String(attachPackageCall?.[1]?.body))).toMatchObject({
+        agent_id: "default",
+        enabled: true,
+      });
+    });
+    expect(await screen.findByText("io-github-example-search")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).includes("/api/tools/registry?agent_id=default"),
+        ),
+      ).toBe(true);
+    });
+    const quickTestInput = within(marketplaceDialog).getByLabelText("市场快速测试查询");
+    await user.clear(quickTestInput);
+    await user.type(quickTestInput, "OpenAI latest news");
+    await user.click(within(marketplaceDialog).getByRole("button", { name: /一键测试|Run test/ }));
+    expect(await within(marketplaceDialog).findByText(/Example Search result/)).toBeInTheDocument();
+    await waitFor(() => {
+      const testCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input).endsWith("/api/tools/capabilities/test-invoke") &&
+          init?.method === "POST",
+      );
+      expect(testCall).toBeDefined();
+      expect(JSON.parse(String(testCall?.[1]?.body))).toMatchObject({
+        agent_id: "default",
+        tool_name: "io-github-example-search",
+        input_json: { query: "OpenAI latest news", limit: 3 },
+      });
+    });
+    await user.click(within(marketplaceDialog).getByRole("button", { name: "关闭" }));
     expect(screen.getByRole("button", { name: /可信 URL/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /生命周期/ })).toBeInTheDocument();
     expect(screen.queryByLabelText("可信 URL 安装")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /生命周期/ }));
     const lifecycleDialog = await screen.findByRole("dialog", { name: "高级生命周期" });
-    expect(within(lifecycleDialog).getByRole("button", { name: /安装到 Agent|Install to Agent/ })).toBeInTheDocument();
+    expect(within(lifecycleDialog).getByRole("button", { name: /安装到智能体|Install to Agent/ })).toBeInTheDocument();
     expect(within(lifecycleDialog).getByLabelText("能力包清单")).toBeInTheDocument();
   });
 
@@ -118,7 +457,13 @@ describe("ToolRegistryPage marketplace controls", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
-      if (path === "/api/tools/registry" && !init?.method) return jsonResponse(registryPayload());
+      if (path.startsWith("/api/tools/registry") && !init?.method) return jsonResponse(registryPayload());
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
+      }
+      if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
+        return jsonResponse(emptyMarketplacePayload());
+      }
       if (path === "/api/tools/capabilities/packages" && !init?.method) {
         return jsonResponse({ items: packagePayload ? [packagePayload] : [] });
       }
@@ -224,23 +569,24 @@ describe("ToolRegistryPage marketplace controls", () => {
     renderPage(fetchMock);
 
     expect(await screen.findByText("mcp_context_search")).toBeInTheDocument();
+    expect(screen.getByText("搜索工作区上下文。")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /生命周期/ }));
     const lifecycleDialog = await screen.findByRole("dialog", { name: "高级生命周期" });
     await user.click(within(lifecycleDialog).getByRole("button", { name: /仅校验|Validate only/ }));
-    expect(await within(lifecycleDialog).findByText(/manifest_only_no_execution/)).toBeInTheDocument();
+    expect(await within(lifecycleDialog).findByText(/仅校验清单，不执行/)).toBeInTheDocument();
     await user.click(within(lifecycleDialog).getByRole("button", { name: /暂存包|Stage package/ }));
     expect(await within(lifecycleDialog).findByText(/pkg-1/)).toBeInTheDocument();
     await user.click(within(lifecycleDialog).getByRole("button", { name: /审批版本|Approve version/ }));
     expect(await within(lifecycleDialog).findByText(/version-1/)).toBeInTheDocument();
-    await user.click(within(lifecycleDialog).getByRole("button", { name: /安装到 Agent|Install to Agent/ }));
+    await user.click(within(lifecycleDialog).getByRole("button", { name: /安装到智能体|Install to Agent/ }));
     expect(await within(lifecycleDialog).findByText(/attachment-1/)).toBeInTheDocument();
     await user.click(within(lifecycleDialog).getByRole("button", { name: /回滚|Rollback/ }));
     await user.click(within(lifecycleDialog).getByRole("button", { name: /停用附件|Disable attachment/ }));
     await user.click(within(lifecycleDialog).getByRole("button", { name: /卸载|Uninstall/ }));
-    expect((await within(lifecycleDialog).findAllByText(/uninstalled/)).length).toBeGreaterThan(0);
+    expect((await within(lifecycleDialog).findAllByText(/已卸载/)).length).toBeGreaterThan(0);
     await user.click(within(lifecycleDialog).getByRole("button", { name: "关闭" }));
     await user.click(screen.getByRole("button", { name: /测试调用|Test invoke/ }));
-    const testDialog = await screen.findByRole("dialog", { name: "Agent 作用域测试调用" });
+    const testDialog = await screen.findByRole("dialog", { name: "智能体范围测试调用" });
     await user.click(within(testDialog).getByRole("button", { name: /测试调用|Test invoke/ }));
     expect(await within(testDialog).findByText(/hit/)).toBeInTheDocument();
 
@@ -276,5 +622,92 @@ describe("ToolRegistryPage marketplace controls", () => {
     expect(JSON.parse(String(rollbackCall?.[1]?.body))).toMatchObject({
       capability_version_id: "version-1",
     });
+  });
+
+  it("shows installed state from existing Agent attachments and localizes external marketplace copy", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path.startsWith("/api/tools/registry") && !init?.method) return jsonResponse(registryPayload());
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({
+          items: [
+            {
+              id: "default",
+              name: "默认智能体",
+              capability_attachments: [
+                {
+                  attachment_id: "attachment-context",
+                  capability_id: "cap-context",
+                  capability_key: "tool:mcp_context_search",
+                  capability_version_id: "mcp_context_search:a54e7fa10e179e14:3fab371f",
+                  capability_type: "mcp_tool",
+                  enabled: true,
+                  priority: 10,
+                  status: "active",
+                },
+                {
+                  attachment_id: "attachment-brave",
+                  capability_id: "cap-brave",
+                  capability_key: "package-brave",
+                  capability_version_id: "brave-9693b089e19e2135-3e429fc2",
+                  capability_type: "mcp_tool",
+                  enabled: true,
+                  priority: 10,
+                  status: "active",
+                },
+              ],
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
+        return jsonResponse({
+          ...marketplacePayload(),
+          items: [
+            marketplacePayload().items[0],
+            {
+              ...marketplacePayload().items[1],
+              id: "smithery-mcp::brave",
+              source: "smithery_mcp",
+              source_label: "Smithery MCP 服务库",
+              name: "brave",
+              display_name: "Brave Search",
+              description: "Search the web with Brave's independent index.",
+              install_payload: {
+                ...marketplacePayload().items[1].install_payload,
+                manifest: { name: "brave", package_type: "mcp_server" },
+              },
+              badges: ["MCP", "verified", "remote"],
+            },
+          ],
+        });
+      }
+      if (path === "/api/tools/capabilities/packages" && !init?.method) {
+        return jsonResponse({ items: [] });
+      }
+      if (path === "/api/tools/capabilities/dependency-preflight" && !init?.method) {
+        return jsonResponse({ local_release_path: "no-container" });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    const user = userEvent.setup();
+
+    renderPage(fetchMock);
+
+    await user.click(await screen.findByRole("button", { name: /打开安装向导/ }));
+    const marketplaceDialog = await screen.findByRole("dialog", { name: "MCP / 技能商店" });
+
+    const contextCard = within(marketplaceDialog).getByRole("button", { name: /上下文搜索/ });
+    expect(within(contextCard).getAllByText("已安装").length).toBeGreaterThan(0);
+
+    await user.click(within(marketplaceDialog).getByRole("button", { name: /Brave Search/ }));
+    expect(within(marketplaceDialog).getAllByText("已安装").length).toBeGreaterThan(0);
+    expect(
+      within(marketplaceDialog).getAllByText(/使用 Brave 独立索引进行网页、新闻、图片和视频搜索/).length,
+    ).toBeGreaterThan(0);
+    expect(within(marketplaceDialog).getAllByText("已验证").length).toBeGreaterThan(0);
+    expect(within(marketplaceDialog).getAllByText("远程").length).toBeGreaterThan(0);
   });
 });

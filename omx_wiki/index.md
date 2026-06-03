@@ -32,6 +32,7 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-25-agent-knowledge-context-optimizer]] - Agent-level declarative `context_optimizer` capability packages, backend context assembly overlays, manifest evidence, Run Detail and Observability projection, UI status, validation evidence, and safety boundaries.
 - [[session-2026-05-26-knowledge-workbench-modal-ui]] - `/knowledge` workbench modal configuration UI: source creation, source editing, add-document, and reingest flows moved out of inline page forms, with frontend tests, lint/build, and Playwright zero-overflow evidence.
 - [[session-2026-05-26-mcp-skill-tool-modal-config]] - Tool Registry and Agent Studio MCP/Skill/Tool configuration moved behind click-open modal dialogs, with frontend tests, lint, and build evidence.
+- [[session-2026-05-27-agent-console-chinese-follow-up-pages]] - Agent Studio, Knowledge, and Team Chinese-first wording follow-up with status-label cleanup, refreshed browser fixtures, focused headed smoke, and repeated 53-case Chromium evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories

@@ -9,6 +9,7 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
+import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import { getObservabilitySummary, listRuns, type Task } from "../../tasks/api";
 
@@ -66,7 +67,7 @@ export function RunHistoryPage() {
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("模型", "Model")}</Th>
                 <Th>
-                  <TermHint description="智能体运行平台">Harness</TermHint>
+                  <TermHint description="智能体运行平台">运行平台</TermHint>
                 </Th>
                 <Th>{text("更新时间", "Updated")}</Th>
                 <Th />
@@ -107,7 +108,7 @@ function RunRow({ run }: { run: Task }) {
         </div>
       </Td>
       <Td>
-        <Badge tone={statusTone(run.status)}>{run.status}</Badge>
+        <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
       </Td>
       <Td className="font-mono text-slate-600">
         {run.model_provider}/{run.model_name}

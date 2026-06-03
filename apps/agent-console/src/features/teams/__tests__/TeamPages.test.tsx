@@ -51,8 +51,8 @@ function jsonResponse(payload: unknown, status = 200) {
 function agentDefinition(): AgentDefinition {
   return {
     id: "default",
-    name: "Default Agent",
-    description: "Default entry agent",
+    name: "默认智能体",
+    description: "默认入口智能体",
     role: "planner",
     status: "ACTIVE",
     model_provider: "default",
@@ -157,7 +157,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
     id: "leader-agent",
     slot_id: "leader",
     role: "leader",
-    agent_name: "Leader",
+    agent_name: "队长",
   });
     const product = teamAgent({
       id: "product-agent",
@@ -176,7 +176,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
             source_run_id: "run-team-1",
             run_status: "COMPLETED",
             usage: { prompt_tokens: 10, completion_tokens: 20 },
-            tool_results: [{ tool: "team_members", ok: true, result: "Leader, 产品经理" }],
+            tool_results: [{ tool: "team_members", ok: true, result: "队长, 产品经理" }],
           },
         }),
       ],
@@ -386,7 +386,7 @@ function routeTeamApis(state: TeamState) {
             team_id: "team-created",
             slot_id: "leader",
             role: "leader",
-            agent_name: payload.leader_name ?? "Leader",
+            agent_name: payload.leader_name ?? "队长",
             session_id: "created-leader-session",
             conversation_id: "created-leader-session",
             session_messages:
@@ -703,7 +703,7 @@ describe("Team pages", () => {
       id: "research-agent",
       slot_id: "research-agent",
       role: "teammate",
-      agent_name: "Research Agent",
+      agent_name: "研究智能体",
       session_id: "research-session",
       conversation_id: "research-session",
     });
@@ -712,7 +712,7 @@ describe("Team pages", () => {
       to_agent_slot_id: "research-agent",
       from_agent_slot_id: "leader",
       type: "system",
-      content: 'You have been spawned as "Research Agent" and added to the team.',
+      content: '系统已将“研究智能体”加入团队。',
     });
     const afterSpawn = applyTeamEventToTeam(
       afterCrash!,
@@ -872,7 +872,7 @@ describe("Team pages", () => {
       expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
     });
 
-    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 Teammate 列/ }))[0];
+    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 成员 列/ }))[0];
     await waitFor(() => {
       expect(productColumn).toHaveClass("opacity-60");
     });
@@ -902,8 +902,10 @@ describe("Team pages", () => {
     expect(within(productColumn).getByText("2/2")).toBeInTheDocument();
     expect(within(productColumn).getAllByText("请设计团队窗口")).toHaveLength(1);
     await user.click(within(productColumn).getByRole("button", { name: "上一个分支" }));
+    expect(await within(productColumn).findByLabelText("分支 1/2")).toBeInTheDocument();
     expect(within(productColumn).getByText("1/2")).toBeInTheDocument();
     await user.click(within(productColumn).getByRole("button", { name: "下一个分支" }));
+    expect(await within(productColumn).findByLabelText("分支 2/2")).toBeInTheDocument();
     expect(within(productColumn).getByText("2/2")).toBeInTheDocument();
     expect(screen.getByLabelText("代理会话列")).toBeInTheDocument();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
@@ -919,6 +921,7 @@ describe("Team pages", () => {
         role: "teammate",
       });
     });
+    expect(await screen.findByText("团队成员已添加")).toBeInTheDocument();
     expect(await screen.findByRole("tab", { name: /测试工程师/ })).toBeInTheDocument();
     const addedEngineer = state.teams[0].agents.find((agent) => agent.agent_name === "测试工程师");
     expect(addedEngineer?.slot_id).toBeTruthy();
@@ -935,6 +938,7 @@ describe("Team pages", () => {
       );
       expect(JSON.parse(String(renameCall?.[1]?.body))).toMatchObject({ agent_name: "产品负责人" });
     });
+    expect(await screen.findByText("成员名称已更新")).toBeInTheDocument();
     expect(await screen.findByRole("tab", { name: /产品负责人/ })).toBeInTheDocument();
 
     const uiTab = await screen.findByRole("tab", { name: /UI/ });
@@ -974,8 +978,8 @@ describe("Team pages", () => {
       expect(within(productColumn).getAllByText("直接同步 UI 状态")).toHaveLength(1);
     });
 
-    const leaderColumn = (await screen.findAllByRole("region", { name: /Leader Leader 列/ }))[0];
-    await user.click(await screen.findByRole("tab", { name: /Leader/ }));
+    const leaderColumn = (await screen.findAllByRole("region", { name: /队长 队长 列/ }))[0];
+    await user.click(await screen.findByRole("tab", { name: /队长/ }));
     await user.type(within(leaderColumn).getByRole("textbox"), "Ask 产品负责人 to sync UI 状态");
     await user.click(within(leaderColumn).getByRole("button", { name: "发送" }));
 
@@ -991,11 +995,11 @@ describe("Team pages", () => {
 
     await user.click(within(productColumn).getByRole("button", { name: "切换全屏列" }));
     await waitFor(() => {
-      expect(screen.queryByRole("region", { name: /Leader Leader 列/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: /队长 队长 列/ })).not.toBeInTheDocument();
     });
     const fullscreenColumns = within(screen.getByLabelText("代理会话列"));
-    expect(fullscreenColumns.queryByRole("region", { name: /UI Teammate 列/ })).not.toBeInTheDocument();
-    expect(fullscreenColumns.getByRole("region", { name: /产品负责人 Teammate 列/ })).toBeInTheDocument();
+    expect(fullscreenColumns.queryByRole("region", { name: /UI 成员 列/ })).not.toBeInTheDocument();
+    expect(fullscreenColumns.getByRole("region", { name: /产品负责人 成员 列/ })).toBeInTheDocument();
 
     expect(await within(productColumn).findByText("实现多列 UI")).toBeInTheDocument();
   }, 15000);
@@ -1013,7 +1017,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 Teammate 列/ }))[0];
+    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 成员 列/ }))[0];
     const textbox = within(productColumn).getByRole("textbox");
 
     expect(within(productColumn).queryByRole("button", { name: "追踪目标模式" })).not.toBeInTheDocument();
@@ -1140,7 +1144,8 @@ describe("Team pages", () => {
       });
     });
     expect(await within(productColumn).findByText("deepseek-pro / deepseek-v4-pro")).toBeInTheDocument();
-  });
+
+  }, 15000);
 
   it("compresses a Team column context from slash command and usage ring", async () => {
     const user = userEvent.setup();
@@ -1155,7 +1160,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 Teammate 列/ }))[0];
+    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 成员 列/ }))[0];
     const textbox = within(productColumn).getByRole("textbox");
 
     await user.type(textbox, "/compress{Enter}");
@@ -1216,7 +1221,7 @@ describe("Team pages", () => {
                   name: "Seeded Team",
                   workspace_mode: "shared",
                   leader_agent_id: "default",
-                  leader_name: "Leader",
+                  leader_name: "队长",
                   seed_messages: [
                     {
                       role: "user",
@@ -1242,7 +1247,7 @@ describe("Team pages", () => {
                         team_id: "team-created",
                         slot_id: "leader",
                         role: "leader",
-                        agent_name: "Leader",
+                        agent_name: "队长",
                         session_id: "created-leader-session",
                         conversation_id: "created-leader-session",
                         session_messages: payload.seed_messages.map((message, index) =>
@@ -1349,9 +1354,9 @@ describe("Team pages", () => {
     await waitFor(() => {
       expect(within(productTab).getByText("失败")).toBeInTheDocument();
     });
-    const leaderColumn = (await screen.findAllByRole("region", { name: /Leader Leader 列/ }))[0];
+    const leaderColumn = (await screen.findAllByRole("region", { name: /队长 队长 列/ }))[0];
     expect(await within(leaderColumn).findByText(/Member "产品经理".*crashed/)).toBeInTheDocument();
-    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 Teammate 列/ }))[0];
+    const productColumn = (await screen.findAllByRole("region", { name: /产品经理 成员 列/ }))[0];
     expect(await within(productColumn).findByText("我已收到团队邮箱内容，会按产品视角继续处理。")).toBeInTheDocument();
     const directTeamFetches = fetchMock.mock.calls.filter(
       ([input, init]) => requestPath(input) === "/api/teams/team-1" && (init?.method ?? "GET") === "GET",
@@ -1368,7 +1373,7 @@ describe("Team pages", () => {
             id: "leader-agent",
             slot_id: "leader",
             role: "leader",
-            agent_name: "Leader",
+            agent_name: "队长",
           }),
           teamAgent({
             id: "product-agent",
@@ -1395,7 +1400,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     expect(await within(productColumn).findByText("正在生成...")).toBeInTheDocument();
   });
 
@@ -1429,7 +1434,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发流式回复{Enter}");
 
     expect(await within(productColumn).findByText("流式回复中")).toBeInTheDocument();
@@ -1504,7 +1509,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发流式回复{Enter}");
 
     expect(await within(productColumn).findByText("流式最终回复")).toBeInTheDocument();
@@ -1557,7 +1562,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发异常终止状态{Enter}");
 
     expect(await within(productColumn).findByText("回复已经正常结束")).toBeInTheDocument();
@@ -1611,7 +1616,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发保持连接的完成流{Enter}");
 
     expect(await within(productColumn).findByText("连接未关闭但回复已完成")).toBeInTheDocument();
@@ -1668,7 +1673,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发团队事件完成{Enter}");
 
     expect(await within(productColumn).findByText("正在生成...")).toBeInTheDocument();
@@ -1720,7 +1725,7 @@ describe("Team pages", () => {
     );
 
     expect(await screen.findByRole("tab", { name: /创意策划/ })).toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: /创意策划 Teammate 列/ })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: /创意策划 成员 列/ })).toBeInTheDocument();
   });
 
   it("clears the generating state when a wake stream closes without a final done frame", async () => {
@@ -1749,7 +1754,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发没有 done 的流{Enter}");
 
     expect(await within(productColumn).findByText("正常回复完成")).toBeInTheDocument();
@@ -1776,7 +1781,7 @@ describe("Team pages", () => {
             id: "leader-agent",
             slot_id: "leader",
             role: "leader",
-            agent_name: "Leader",
+            agent_name: "队长",
           }),
           teamAgent({
             id: "product-agent",
@@ -1813,7 +1818,7 @@ describe("Team pages", () => {
     );
 
     const productTab = await screen.findByRole("tab", { name: /产品经理/ });
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     expect(await within(productColumn).findByText("正常回复已经完成")).toBeInTheDocument();
     expect(within(productColumn).queryByText("正在生成...")).not.toBeInTheDocument();
     expect(within(productColumn).queryByText("协作中")).not.toBeInTheDocument();
@@ -1829,7 +1834,7 @@ describe("Team pages", () => {
             id: "leader-agent",
             slot_id: "leader",
             role: "leader",
-            agent_name: "Leader",
+            agent_name: "队长",
           }),
           teamAgent({
             id: "product-agent",
@@ -1866,7 +1871,7 @@ describe("Team pages", () => {
     );
 
     const productTab = await screen.findByRole("tab", { name: /产品经理/ });
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     expect(await within(productColumn).findByText("回复已经结束但后端旧状态还是 active")).toBeInTheDocument();
     expect(within(productColumn).queryByText("正在生成...")).not.toBeInTheDocument();
     expect(within(productColumn).queryByText("协作中")).not.toBeInTheDocument();
@@ -1882,7 +1887,7 @@ describe("Team pages", () => {
             id: "leader-agent",
             slot_id: "leader",
             role: "leader",
-            agent_name: "Leader",
+            agent_name: "队长",
           }),
           teamAgent({
             id: "product-agent",
@@ -1919,7 +1924,7 @@ describe("Team pages", () => {
     );
 
     const productTab = await screen.findByRole("tab", { name: /产品经理/ });
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     expect(await within(productColumn).findByText("回复完成但旧 wake 还在")).toBeInTheDocument();
     expect(within(productColumn).queryByText("正在生成...")).not.toBeInTheDocument();
     expect(within(productColumn).queryByText("协作中")).not.toBeInTheDocument();
@@ -1953,7 +1958,7 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    const productColumn = await screen.findByRole("region", { name: /产品经理 Teammate 列/ });
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     await user.type(within(productColumn).getByRole("textbox"), "触发流式回复{Enter}");
 
     expect(await within(productColumn).findByText("正在生成...")).toBeInTheDocument();
