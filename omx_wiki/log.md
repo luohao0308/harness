@@ -202,3 +202,7 @@
 - Refreshed [[session-2026-05-26-mcp-skill-tool-modal-config]] and `docs/ai/task-progress.yaml` for pending-search MCP execution. Captured `正在搜索“MCP教程”，请稍等。` implicit search detection, installed `brave` selection from the current Agent registry, `tool_call_requested -> tool_call_result -> delta -> done` SSE ordering, and 5-case backend/Ruff validation.
 - Refreshed [[session-2026-05-26-mcp-skill-tool-modal-config]] and `docs/ai/task-progress.yaml` after restarting the local API in tmux session `harness-api-mcp-restart`. Captured health check success, Agent-scoped registry visibility for installed `brave`, and live Workspace Chat Brave MCP event ordering through `done`.
 - Refreshed [[session-2026-05-26-mcp-skill-tool-modal-config]], [[agent-knowledge-harness-roadmap]], and `docs/ai/task-progress.yaml` for the installed MCP runtime configuration page. Captured `/tools/config`, sidebar `工具配置`, Tool Registry `运行配置`, Agent-scoped installed-MCP status badges, one-time API Key storage, immutable runtime-config capability versions, live Brave endpoint wiring, visible case-test results, and backend/frontend/browser validation.
+
+## [2026-05-28] session-log
+
+- Added [[session-2026-05-28-eval-dimensions-v2]] and refreshed `docs/ai/task-progress.yaml` for Eval Dimensions v2. Captured deterministic `refusal_contract`, `safety_contract`, and `persona_contract` graders, aggregate metrics, regression gates, Eval UI badges/breakdowns/presets, backend/frontend tests, Ruff, lint/build, docs validation, and whitespace evidence.

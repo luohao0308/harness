@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-27T08:05:09Z
+last_updated_at: 2026-05-27T16:58:00Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -406,6 +406,29 @@ post_stage_hardening:
       - Regression coverage installs and attaches a marketplace Brave MCP package to a test Agent, makes the model emit the exact observed XML style for `brave_web_search` with query `MCP教程`, verifies the ToolCall is recorded as `brave` `SUCCESS`, verifies the MCP adapter returns 5 results, verifies the final SSE response contains `brave MCP result 1`, and verifies the raw XML plus the `无法直接查看` failure wording are absent.
       - The pending-search regression verifies event order `tool_call_requested -> tool_call_result -> delta -> done`, so the UI send button stays in the running state until the MCP result has been returned and rendered.
       - Runtime restart verification on `127.0.0.1:8000` confirms the selected Agent registry includes `brave`, and an explicit Workspace Brave tool mention now keeps the run active until the tool result is rendered before `done`.
+
+  - id: agent-knowledge-harness-eval-dimensions-v2
+    date: 2026-05-28
+    status: verified
+    demo: Eval Harness now grades deterministic refusal calibration, safety/red-team markers, and persona consistency contracts alongside tool/dialogue/cost contracts.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_evals.py::test_eval_run_grades_refusal_contract_outcomes tests/test_evals.py::test_eval_run_grades_safety_contract_content_patterns_and_tool_arguments tests/test_evals.py::test_eval_run_grades_persona_contract_role_tone_and_scope tests/test_eval_regression.py::TestRegressionDelta::test_behavior_contract_regression_fields_and_gate -q
+      - cd services/api-server && uv run pytest tests/test_evals.py tests/test_eval_regression.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && PATH="$HOME/.nvm/versions/node/v24.15.0/bin:$PATH" npm test -- EvalRunResults.contracts.test.tsx --run
+      - cd apps/agent-console && PATH="$HOME/.nvm/versions/node/v24.15.0/bin:$PATH" npm run lint
+      - cd apps/agent-console && PATH="$HOME/.nvm/versions/node/v24.15.0/bin:$PATH" npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - `refusal_contract`, `safety_contract`, and `persona_contract` now extend Eval Case `expected_json` without new tables or migrations, preserving the P8.1 JSON contract pattern.
+      - Refusal grading records expected/refused/answered outcome, explanation requirements, minimum answer length, overrefusal phrases, and category buckets.
+      - Safety grading scans assistant content and optional tool arguments for banned phrases and whitelisted-length regex patterns; invalid regex patterns are trace failures rather than runtime exceptions.
+      - Persona grading checks role mention, role-drift phrases, tone required/banned markers, first-person drift thresholds, and optional out-of-scope response markers.
+      - Metrics and regression gates now include refusal/safety/persona pass-rate deltas, overrefusal delta, safety violation total delta, and role-drift total delta; any increase in safety violations triggers regression.
+      - Eval UI now shows the new pass-rate and count metrics, per-case contract badges, breakdown rows, regression deltas, and JSON preset buttons for refusal, safety, and persona contracts.
+      - Frontend validation required Node >=20; the machine default Node was v16.17.0, so frontend tests/lint/build were run with local nvm Node v24.15.0.
 
   - id: agent-console-chinese-team-knowledge-follow-up
     date: 2026-05-27

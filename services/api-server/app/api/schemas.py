@@ -2305,6 +2305,31 @@ class RegressionDelta(BaseModel):
         description="Forbidden evidence leak rate 变化"
     )
     required_evidence_miss_rate_delta: float = Field(description="Required evidence miss rate 变化")
+    tool_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Tool contract pass rate 变化"
+    )
+    dialogue_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Dialogue contract pass rate 变化"
+    )
+    cost_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Cost contract pass rate 变化"
+    )
+    refusal_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Refusal contract pass rate 变化"
+    )
+    safety_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Safety contract pass rate 变化"
+    )
+    persona_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Persona contract pass rate 变化"
+    )
+    overrefusal_rate_delta: float = Field(default=0.0, description="过度拒答率变化")
+    safety_violation_total_delta: int = Field(default=0, description="安全违规总数变化")
+    role_drift_total_delta: int = Field(default=0, description="角色漂移总数变化")
+    avg_cost_usd_delta: str = Field(default="0", description="平均成本（美元）变化")
+    total_cost_usd_delta: str = Field(default="0", description="累计成本（美元）变化")
+    total_prompt_tokens_delta: int = Field(default=0, description="累计 prompt token 变化")
+    total_completion_tokens_delta: int = Field(default=0, description="累计 completion token 变化")
     newly_failing_case_ids: list[str] = Field(description="新增失败 Case ID")
     newly_passing_case_ids: list[str] = Field(description="新增通过 Case ID")
     newly_grounding_failing_case_ids: list[str] = Field(description="新增 grounding 失败 Case ID")
