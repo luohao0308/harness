@@ -4,9 +4,10 @@ import urllib.error
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import SystemSetting
+from app.db.models import StoredSecret, SystemSetting
 from app.knowledge import ground_query
 from app.knowledge_connectors import (
     CONNECTOR_RELEASE_STATE_PREVIEW_NOT_COUNTED,
@@ -23,6 +24,7 @@ from app.knowledge_dify import (
     DifyKnowledgeBaseAdapter,
     DifyRetrievalResult,
     connector_secret_setting_key,
+    read_connector_secret_ref,
 )
 from app.main import app
 from tests.test_knowledge_rag import ADMIN_HEADERS, _ensure_agent, _two_chunk_content
@@ -291,7 +293,22 @@ def test_connector_secret_value_is_stored_server_side_and_not_returned(
         organization_id="dev-org",
         key=connector_secret_setting_key("secret://dify"),
     ).one()
-    assert stored.value_json["secret_value"] == "front-end-supplied-dify-key"
+    assert stored.value_json["secret_storage"] == "stored_secrets"
+    assert "front-end-supplied-dify-key" not in json.dumps(stored.value_json)
+    secret = db_session.execute(select(StoredSecret)).scalar_one()
+    assert secret.scope == "user"
+    assert secret.provider == "dify"
+    assert "front-end-supplied-dify-key" not in secret.encrypted_value
+    assert (
+        read_connector_secret_ref(
+            db_session,
+            organization_id="dev-org",
+            secret_ref="secret://dify",
+            provider="dify",
+            user_id="dev-admin",
+        )
+        == "front-end-supplied-dify-key"
+    )
 
     listed = client.get("/api/agents/default/knowledge/sources", headers=ADMIN_HEADERS)
     assert listed.status_code == 200

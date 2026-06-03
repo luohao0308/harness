@@ -238,6 +238,7 @@ def _run_dify_connector_retrieval(
             provider="dify",
             session=session,
             organization_id=retrieval_session.organization_id,
+            user_id=source.created_by,
         )
         if not api_key:
             audit_metadata = {
@@ -455,6 +456,7 @@ def _run_coze_connector_retrieval(
             provider="coze",
             session=session,
             organization_id=retrieval_session.organization_id,
+            user_id=source.created_by,
         )
         if not api_key:
             audit_metadata = {

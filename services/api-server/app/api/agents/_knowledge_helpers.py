@@ -62,6 +62,8 @@ def _store_knowledge_connector_secret(
             secret_ref=secret_ref,
             provider=provider,
             secret_value=secret_value,
+            owner_user_id=principal.user_id,
+            scope="user",
         )
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
@@ -510,6 +512,8 @@ def _knowledge_source_response(
                 session,
                 organization_id=source.organization_id,
                 secret_ref=secret_ref,
+                provider=connector_provider_key(settings_json, source_type=source.source_type),
+                user_id=source.created_by,
             )
         ),
         settings_json=response_settings_json,

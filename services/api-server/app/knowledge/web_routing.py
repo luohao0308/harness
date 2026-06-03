@@ -253,8 +253,16 @@ def _run_web_research_fallback(
         )
         return [], audits, metadata
 
+    owner_user_id = _retrieval_owner_user_id(session, retrieval_session)
     api_key_present = (
-        bool(knowledge_api.resolve_web_research_api_key(provider))
+        bool(
+            knowledge_api.resolve_web_research_api_key(
+                provider,
+                session=session,
+                organization_id=retrieval_session.organization_id,
+                user_id=owner_user_id,
+            )
+        )
         or provider == WEB_RESEARCH_PROVIDER_FAKE
     )
     calls_used = _web_provider_calls_used(
@@ -357,7 +365,12 @@ def _run_web_research_fallback(
         )
         return [], audits, metadata
 
-    adapter = knowledge_api.get_web_research_adapter(provider)
+    adapter = knowledge_api.get_web_research_adapter(
+        provider,
+        session=session,
+        organization_id=retrieval_session.organization_id,
+        user_id=owner_user_id,
+    )
     if adapter is None:
         metadata.update(
             {
@@ -453,6 +466,16 @@ def _run_web_research_fallback(
             metadata=metadata,
         )
     return sources, audits, metadata
+
+
+def _retrieval_owner_user_id(
+    session: Session,
+    retrieval_session: RetrievalSession,
+) -> str | None:
+    if not retrieval_session.run_id:
+        return None
+    task = session.get(Task, retrieval_session.run_id)
+    return task.created_by if task is not None else None
 
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "annotations"]

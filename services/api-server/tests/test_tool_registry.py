@@ -15,6 +15,7 @@ from app.db.models import (
 )
 from app.knowledge_dify import read_connector_secret_ref
 from app.main import app
+from app.security.secrets import SECRET_PURPOSE_MCP_RUNTIME
 from app.tools import capabilities as capabilities_module
 from app.tools import marketplace as marketplace_module
 from app.tools.capabilities import CapabilityRegistry
@@ -1332,6 +1333,9 @@ def test_mcp_runtime_config_creates_new_version_and_live_brave_test(
         db_session,
         organization_id="dev-org",
         secret_ref="secret://mcp/brave-config-agent/brave/api-key",
+        provider="brave",
+        user_id="dev-engineer",
+        purpose=SECRET_PURPOSE_MCP_RUNTIME,
     ) == "brave-test-token"
 
     brave_calls: list[dict] = []

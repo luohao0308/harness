@@ -1,6 +1,7 @@
 import shutil
 import time
 from importlib.util import find_spec
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlparse
 
@@ -53,6 +54,7 @@ from app.knowledge_dify import (
     store_connector_secret_ref,
 )
 from app.security.auth import Principal, require_role
+from app.security.secrets import SECRET_PURPOSE_MCP_RUNTIME
 from app.tools.adapter_registry import REGISTRY, adapter_metadata
 from app.tools.adapters import ensure_builtin_adapters_registered
 from app.tools.capabilities import (
@@ -173,6 +175,8 @@ def get_tool_adapter_health(
                 provider=slug,
                 session=session,
                 organization_id=principal.organization_id,
+                user_id=principal.user_id,
+                purpose=SECRET_PURPOSE_MCP_RUNTIME,
             )
     except CapabilityResolutionError:
         config = {}
@@ -251,6 +255,8 @@ def discover_mcp_server_tools(
             provider=tool_name,
             session=session,
             organization_id=principal.organization_id,
+            user_id=principal.user_id,
+            purpose=SECRET_PURPOSE_MCP_RUNTIME,
         )
     server_slug = _server_slug(record)
     discovery = discover_tools(
@@ -293,6 +299,7 @@ def discover_mcp_server_tools(
                 item,
                 session=session,
                 organization_id=principal.organization_id,
+                user_id=principal.user_id,
             ).model_dump()
             for item in registered
         ],
@@ -558,6 +565,7 @@ def _runtime_secret_configured(
     *,
     session: Session,
     organization_id: str | None,
+    user_id: str | None,
     tool_name: str,
     secret_ref: str | None,
 ) -> bool:
@@ -569,6 +577,8 @@ def _runtime_secret_configured(
             provider=tool_name,
             session=session,
             organization_id=organization_id,
+            user_id=user_id,
+            purpose=SECRET_PURPOSE_MCP_RUNTIME,
         )
     )
 
@@ -578,11 +588,13 @@ def _runtime_config_response(
     *,
     session: Session,
     organization_id: str | None,
+    user_id: str | None,
 ) -> CapabilityRuntimeConfigResponse:
     secret_ref = record.get("secret_ref")
     secret_configured = _runtime_secret_configured(
         session=session,
         organization_id=organization_id,
+        user_id=user_id,
         tool_name=str(record.get("tool_name") or ""),
         secret_ref=str(secret_ref) if secret_ref else None,
     )
@@ -1058,6 +1070,7 @@ def list_runtime_configs(
                 record,
                 session=session,
                 organization_id=principal.organization_id,
+                user_id=principal.user_id,
             )
             for record in records
         ]
@@ -1089,6 +1102,7 @@ def get_runtime_config(
         record,
         session=session,
         organization_id=principal.organization_id,
+        user_id=principal.user_id,
     )
 
 
@@ -1140,6 +1154,9 @@ def update_runtime_config(
                 secret_ref=secret_ref,
                 provider=request.tool_name,
                 secret_value=secret_value,
+                owner_user_id=principal.user_id,
+                scope="user",
+                purpose=SECRET_PURPOSE_MCP_RUNTIME,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1168,6 +1185,7 @@ def update_runtime_config(
         record,
         session=session,
         organization_id=principal.organization_id,
+        user_id=principal.user_id,
     )
 
 
@@ -1202,16 +1220,23 @@ def test_invoke_capability(
     session.add(task)
     session.flush()
     capability_registry = CapabilityRegistry(session, principal.organization_id)
-    execution = ToolRunner(
-        session=session,
-        agent_id=request.agent_id,
-        capability_registry=capability_registry,
-    ).execute(
-        task_id=task.id,
-        tool_name=request.tool_name,
-        input_json=request.input_json,
-        roles=principal.roles,
-    )
+    try:
+        execution = ToolRunner(
+            session=session,
+            workspace_root=Path(__file__).resolve().parents[2],
+            agent_id=request.agent_id,
+            capability_registry=capability_registry,
+        ).execute(
+            task_id=task.id,
+            tool_name=request.tool_name,
+            input_json=request.input_json,
+            roles=principal.roles,
+        )
+    except ValueError as exc:
+        task.status = "FAILED"
+        task.updated_at = utc_now()
+        session.flush()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     task.status = "COMPLETED" if execution.tool_call.status == "SUCCESS" else "FAILED"
     task.capability_snapshot_json = execution.tool_call.capability_snapshot_json
     task.completed_at = utc_now()

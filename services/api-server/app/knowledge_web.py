@@ -8,7 +8,14 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
+from sqlalchemy.orm import Session
+
 from app.core.config import get_settings
+from app.security.secrets import (
+    SECRET_PURPOSE_WEB_RESEARCH,
+    env_candidates_for_provider,
+    resolve_secret,
+)
 
 WEB_RESEARCH_PROVIDER_DISABLED = "disabled"
 WEB_RESEARCH_PROVIDER_FAKE = "fake"
@@ -79,8 +86,24 @@ def query_has_secret_pattern(query: str) -> bool:
     return any(pattern.search(query) for pattern in SECRET_PATTERNS)
 
 
-def resolve_web_research_api_key(provider: str) -> str:
+def resolve_web_research_api_key(
+    provider: str,
+    *,
+    session: Session | None = None,
+    organization_id: str | None = None,
+    user_id: str | None = None,
+) -> str:
     if provider == WEB_RESEARCH_PROVIDER_TAVILY:
+        resolved = resolve_secret(
+            session,
+            organization_id=organization_id,
+            user_id=user_id,
+            provider="tavily",
+            purpose=SECRET_PURPOSE_WEB_RESEARCH,
+            env_candidates=env_candidates_for_provider("tavily", "TAVILY_API_KEY"),
+        )
+        if resolved.found:
+            return resolved.value
         return get_settings().tavily_api_key.strip()
     return ""
 
@@ -113,8 +136,23 @@ def web_research_health(
 class TavilySearchAdapter:
     provider = WEB_RESEARCH_PROVIDER_TAVILY
 
-    def __init__(self, *, api_key: str | None = None) -> None:
-        self.api_key = (api_key or resolve_web_research_api_key(self.provider)).strip()
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        session: Session | None = None,
+        organization_id: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
+        self.api_key = (
+            api_key
+            or resolve_web_research_api_key(
+                self.provider,
+                session=session,
+                organization_id=organization_id,
+                user_id=user_id,
+            )
+        ).strip()
 
     def search(
         self,
@@ -233,9 +271,19 @@ class FakeWebResearchAdapter:
         return results
 
 
-def get_web_research_adapter(provider: str) -> WebResearchAdapter | None:
+def get_web_research_adapter(
+    provider: str,
+    *,
+    session: Session | None = None,
+    organization_id: str | None = None,
+    user_id: str | None = None,
+) -> WebResearchAdapter | None:
     if provider == WEB_RESEARCH_PROVIDER_TAVILY:
-        return TavilySearchAdapter()
+        return TavilySearchAdapter(
+            session=session,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
     if provider == WEB_RESEARCH_PROVIDER_FAKE:
         return FakeWebResearchAdapter()
     return None

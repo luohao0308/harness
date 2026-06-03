@@ -19,6 +19,7 @@ from app.api.observability import router as observability_router
 from app.api.onboarding import router as onboarding_router
 from app.api.retention import router as retention_router
 from app.api.sandboxes import router as sandboxes_router
+from app.api.secrets import router as secrets_router
 from app.api.settings import router as settings_router
 from app.api.subagent_marketplace import router as subagent_marketplace_router
 from app.api.subagent_specialists import router as subagent_specialists_router
@@ -132,6 +133,7 @@ app = FastAPI(
         },
         {"name": "users", "description": "Organization user and role management."},
         {"name": "api-keys", "description": "API key lifecycle for automation clients."},
+        {"name": "secrets", "description": "Encrypted business integration secret storage."},
         {"name": "audit", "description": "Organization audit log and export surfaces."},
         {"name": "data-management", "description": "Retention, export, and deletion operations."},
         {"name": "sandboxes", "description": "Sandbox, WarmPool, quota, and runtime isolation."},
@@ -175,6 +177,7 @@ app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(auth_router, prefix="/api")
 app.include_router(api_keys_router, prefix="/api")
+app.include_router(secrets_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
 app.include_router(data_management_router, prefix="/api")
 app.include_router(retention_router, prefix="/api")

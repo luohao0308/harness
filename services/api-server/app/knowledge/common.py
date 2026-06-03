@@ -27,6 +27,7 @@ from app.db.models import (
     RetrievalHit,
     RetrievalSession,
     SystemSetting,
+    Task,
     WebResearchAttempt,
     WebResearchSource,
     WorkspaceContextCache,

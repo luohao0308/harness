@@ -1,6 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.api.schemas import (
     ModelFallbackEventItem,
     ModelFallbackSummaryResponse,
     ModelHealthPage,
+    ModelOfficialStatusPage,
     ModelPricingSourceItem,
     ModelPricingSourcePage,
     ModelSettingsResponse,
@@ -25,6 +27,14 @@ from app.db.models import AdminAuditEvent, AgentEvent, ModelCall, SystemSetting,
 from app.db.session import get_db_session
 from app.events.event_types import EventType
 from app.security.auth import AuthenticatedPrincipal, Principal, require_role
+from app.security.secrets import (
+    SECRET_PURPOSE_MODEL_PROVIDER,
+    SECRET_SCOPE_ORG,
+    SECRET_SOURCE_ORG,
+    SecretEncryptionError,
+    resolve_secret,
+    upsert_secret,
+)
 from app.settings.model_pricing_sources import (
     SOURCE_BLOCKING_STATUSES,
     list_model_pricing_sources,
@@ -36,6 +46,23 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 
 MODEL_SETTINGS_KEY = "settings.models"
 POLICY_SETTINGS_KEY = "settings.policies"
+
+MODEL_OFFICIAL_STATUS_SOURCES = [
+    {
+        "provider": "openai",
+        "label": "OpenAI",
+        "page_url": "https://status.openai.com/",
+        "api_url": "https://status.openai.com/api/v2/status.json",
+        "fetch_mode": "statuspage_json",
+    },
+    {
+        "provider": "deepseek",
+        "label": "DeepSeek",
+        "page_url": "https://status.deepseek.com/",
+        "api_url": "https://status.deepseek.com/",
+        "fetch_mode": "status_page",
+    },
+]
 
 DEFAULT_MODEL_SETTINGS = ModelSettingsResponse(**GATEWAY_DEFAULT_MODEL_SETTINGS)
 
@@ -143,6 +170,169 @@ def write_setting(
     setting.updated_at = utc_now()
 
 
+def _store_model_provider_secrets(
+    *,
+    session: Session,
+    principal: AuthenticatedPrincipal,
+    value: dict,
+) -> dict:
+    sanitized = _strip_model_provider_raw_keys(value)
+    providers = sanitized.get("providers")
+    if not isinstance(providers, list):
+        return sanitized
+    original_providers = value.get("providers") if isinstance(value.get("providers"), list) else []
+    for index, provider in enumerate(providers):
+        if not isinstance(provider, dict):
+            continue
+        original = original_providers[index] if index < len(original_providers) else provider
+        if not isinstance(original, dict):
+            continue
+        raw_key = str(original.get("api_key") or "").strip()
+        if raw_key and raw_key != "replace-me":
+            provider_name = str(provider.get("name") or "").strip()
+            if not provider_name:
+                continue
+            try:
+                row = upsert_secret(
+                    session,
+                    organization_id=principal.organization_id,
+                    actor_id=principal.user_id,
+                    scope=SECRET_SCOPE_ORG,
+                    owner_user_id=None,
+                    provider=provider_name,
+                    purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+                    secret_ref=f"secret://models/{provider_name}/api-key",
+                    secret_value=raw_key,
+                )
+            except (SecretEncryptionError, ValueError) as exc:
+                raise ValueError(str(exc)) from exc
+            provider["api_key_configured"] = True
+            provider["api_key_source"] = SECRET_SOURCE_ORG
+            provider["api_key_secret_id"] = row.id
+    return sanitized
+
+
+def _model_settings_response_value(
+    *,
+    session: Session,
+    organization_id: str,
+    user_id: str,
+    value: dict,
+) -> dict:
+    sanitized = _strip_model_provider_raw_keys(value)
+    providers = sanitized.get("providers")
+    if not isinstance(providers, list):
+        return sanitized
+    original_providers = value.get("providers") if isinstance(value.get("providers"), list) else []
+    for index, provider in enumerate(providers):
+        if not isinstance(provider, dict):
+            continue
+        original = original_providers[index] if index < len(original_providers) else provider
+        if not isinstance(original, dict):
+            original = provider
+        provider_name = str(provider.get("name") or "").strip()
+        if not provider_name:
+            continue
+        resolved = resolve_secret(
+            session,
+            organization_id=organization_id,
+            user_id=user_id,
+            provider=provider_name,
+            purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+            env_candidates=[
+                str(provider.get("api_key_env") or ""),
+            ],
+        )
+        raw_legacy = str(original.get("api_key") or "").strip()
+        provider["api_key_configured"] = resolved.found or bool(
+            raw_legacy and raw_legacy != "replace-me"
+        )
+        provider["api_key_source"] = resolved.source if resolved.found else "missing"
+        if resolved.secret_id:
+            provider["api_key_secret_id"] = resolved.secret_id
+    return sanitized
+
+
+def _strip_model_provider_raw_keys(value: dict) -> dict:
+    sanitized = dict(value)
+    providers = sanitized.get("providers")
+    if not isinstance(providers, list):
+        return sanitized
+    next_providers = []
+    for provider in providers:
+        if not isinstance(provider, dict):
+            next_providers.append(provider)
+            continue
+        redacted = dict(provider)
+        raw_key = str(redacted.get("api_key") or "").strip()
+        redacted["api_key"] = ""
+        if raw_key and raw_key != "replace-me":
+            redacted.setdefault("api_key_configured", True)
+            redacted.setdefault("api_key_source", SECRET_SOURCE_ORG)
+        next_providers.append(redacted)
+    sanitized["providers"] = next_providers
+    return sanitized
+
+
+def _official_status_label(indicator: str) -> str:
+    normalized = indicator.strip().lower()
+    if normalized == "none":
+        return "operational"
+    if normalized in {"minor", "degraded"}:
+        return "degraded"
+    if normalized in {"major", "critical"}:
+        return "outage"
+    if normalized == "maintenance":
+        return "maintenance"
+    return "unknown"
+
+
+def _fetch_model_official_statuses() -> list[dict]:
+    checked_at = utc_now()
+    items = []
+    for source in MODEL_OFFICIAL_STATUS_SOURCES:
+        payload: dict = {}
+        error_message = None
+        indicator = "unknown"
+        description = "官方状态暂不可查"
+        try:
+            with httpx.Client(timeout=3.0, trust_env=False) as client:
+                response = client.get(source["api_url"])
+                response.raise_for_status()
+                if source.get("fetch_mode") == "statuspage_json":
+                    payload = response.json()
+                else:
+                    description = "官方状态页可打开，未提供 JSON 状态 API"
+        except (httpx.HTTPError, ValueError) as exc:
+            error_message = str(exc)
+
+        status = payload.get("status") if isinstance(payload.get("status"), dict) else {}
+        page = payload.get("page") if isinstance(payload.get("page"), dict) else {}
+        if status:
+            indicator = str(status.get("indicator") or "unknown")
+            description = str(status.get("description") or "官方状态暂不可查")
+        if error_message:
+            indicator = "unknown"
+            description = "官方状态暂不可查"
+        items.append(
+            {
+                "provider": source["provider"],
+                "label": source["label"],
+                "status": _official_status_label(indicator),
+                "indicator": indicator,
+                "description": description,
+                "page_url": str(page.get("url") or source["page_url"]),
+                "api_url": source["api_url"],
+                "checked_at": checked_at,
+                "updated_at": (
+                    page.get("updated_at") if isinstance(page.get("updated_at"), str) else None
+                ),
+                "error_message": error_message,
+            }
+        )
+    return items
+
+
 @router.get(
     "/models",
     response_model=ModelSettingsResponse,
@@ -150,12 +340,18 @@ def write_setting(
     description="返回模型网关、供应商、限流和健康状态。",
 )
 def get_model_settings(session: DbSession, principal: Principal) -> ModelSettingsResponse:
+    value = read_setting(
+        session=session,
+        organization_id=principal.organization_id,
+        key=MODEL_SETTINGS_KEY,
+        default_value=DEFAULT_MODEL_SETTINGS.model_dump(),
+    )
     return ModelSettingsResponse.model_validate(
-        read_setting(
+        _model_settings_response_value(
             session=session,
             organization_id=principal.organization_id,
-            key=MODEL_SETTINGS_KEY,
-            default_value=DEFAULT_MODEL_SETTINGS.model_dump(),
+            user_id=principal.user_id,
+            value=value,
         )
     )
 
@@ -175,21 +371,36 @@ def update_model_settings(
     normalized_payload = ModelSettingsResponse.model_validate(
         normalize_model_settings(payload.model_dump())
     )
+    try:
+        persisted_value = _store_model_provider_secrets(
+            session=session,
+            principal=principal,
+            value=normalized_payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     write_setting(
         session=session,
         principal=principal,
         key=MODEL_SETTINGS_KEY,
-        value=normalized_payload.model_dump(),
+        value=persisted_value,
     )
     write_admin_action(
         session=session,
         principal=principal,
         resource_id="models",
         action="settings.models.update",
-        payload=normalized_payload.model_dump(),
+        payload=_strip_model_provider_raw_keys(persisted_value),
     )
     session.commit()
-    return normalized_payload
+    return ModelSettingsResponse.model_validate(
+        _model_settings_response_value(
+            session=session,
+            organization_id=principal.organization_id,
+            user_id=principal.user_id,
+            value=persisted_value,
+        )
+    )
 
 
 @router.get(
@@ -202,6 +413,19 @@ def get_model_health(session: DbSession, principal: Principal) -> ModelHealthPag
     items = ModelHealthChecker(session).check(organization_id=principal.organization_id)
     session.commit()
     return ModelHealthPage(items=items)
+
+
+@router.get(
+    "/models/official-status",
+    response_model=ModelOfficialStatusPage,
+    summary="查询官方模型服务状态",
+    description=(
+        "查询已知供应商官方 Statuspage 状态；该结果仅作外部服务参考，不替代 Harness 模型探测。"
+    ),
+)
+def get_model_official_status(principal: Principal) -> ModelOfficialStatusPage:
+    _ = principal
+    return ModelOfficialStatusPage(items=_fetch_model_official_statuses())
 
 
 @router.get(

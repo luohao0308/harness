@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelResponse, OpenAICompatibleModelGateway
-from app.db.models import AdminAuditEvent, SystemSetting
+from app.db.models import AdminAuditEvent, StoredSecret, SystemSetting
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -156,7 +156,8 @@ def test_model_settings_health_endpoint_uses_current_settings() -> None:
             "model": "configured-model",
         }
     ]
-    client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+    saved = client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+    assert saved.status_code == 200
 
     health = client.get("/api/settings/models/health", headers=ADMIN_HEADERS)
 
@@ -210,7 +211,13 @@ def test_model_settings_health_endpoint_probes_real_provider(
             "api_key": "secret-key",
         }
     ]
-    client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+    saved = client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+    assert saved.status_code == 200
+    saved_provider = saved.json()["providers"][0]
+    assert saved_provider["api_key"] == ""
+    assert saved_provider["api_key_configured"] is True
+    assert saved_provider["api_key_source"] == "stored_secret_org"
+    assert saved_provider["api_key_secret_id"]
 
     health = client.get("/api/settings/models/health", headers=ADMIN_HEADERS)
 
@@ -226,3 +233,60 @@ def test_model_settings_health_endpoint_probes_real_provider(
     setting = db_session.execute(select(SystemSetting)).scalar_one()
     assert setting.value_json["health"]["status"] == "healthy"
     assert setting.value_json["providers"][0]["last_health"]["mode"] == "probe"
+    assert setting.value_json["providers"][0]["api_key"] == ""
+    secret = db_session.execute(select(StoredSecret)).scalar_one()
+    assert secret.provider == "deepseek-pro"
+    assert secret.purpose == "model_provider"
+    assert secret.scope == "org"
+    assert secret.owner_user_id is None
+    assert saved_provider["api_key_secret_id"] == secret.id
+    assert "secret-key" not in secret.encrypted_value
+
+
+def test_model_official_status_endpoint_returns_external_reference(monkeypatch) -> None:
+    from app.api import settings as settings_api
+
+    def fake_fetch_model_official_statuses():
+        return [
+            {
+                "provider": "openai",
+                "label": "OpenAI",
+                "status": "operational",
+                "indicator": "none",
+                "description": "All Systems Operational",
+                "page_url": "https://status.openai.com/",
+                "api_url": "https://status.openai.com/api/v2/status.json",
+                "checked_at": settings_api.utc_now(),
+                "updated_at": "2026-04-27T15:52:49Z",
+                "error_message": None,
+            },
+            {
+                "provider": "deepseek",
+                "label": "DeepSeek",
+                "status": "unknown",
+                "indicator": "unknown",
+                "description": "官方状态暂不可查",
+                "page_url": "https://status.deepseek.com/",
+                "api_url": "https://status.deepseek.com/",
+                "checked_at": settings_api.utc_now(),
+                "updated_at": None,
+                "error_message": "connection reset",
+            },
+        ]
+
+    monkeypatch.setattr(
+        settings_api,
+        "_fetch_model_official_statuses",
+        fake_fetch_model_official_statuses,
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/settings/models/official-status", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["provider"] for item in payload["items"]] == ["openai", "deepseek"]
+    assert payload["items"][0]["status"] == "operational"
+    assert payload["items"][0]["page_url"] == "https://status.openai.com/"
+    assert payload["items"][1]["status"] == "unknown"
+    assert payload["items"][1]["description"] == "官方状态暂不可查"

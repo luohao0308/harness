@@ -15,6 +15,7 @@ from app.knowledge_dify import resolve_connector_secret_ref
 from app.observability.tracing import traced_operation
 from app.sandbox.docker_manager import SandboxCommandTimeoutError
 from app.sandbox.policies import PolicyEngine, SandboxPolicyDecision
+from app.security.secrets import SECRET_PURPOSE_MCP_RUNTIME
 from app.tools.adapter_registry import REGISTRY, adapter_snapshot
 from app.tools.adapters import ensure_builtin_adapters_registered
 from app.tools.capabilities import (
@@ -270,6 +271,7 @@ class ToolRunner:
                     sandbox,
                     capability_config=resolved.version.config_json if resolved is not None else {},
                     organization_id=task.organization_id if task is not None else None,
+                    user_id=task.created_by if task is not None else None,
                 )
         except SandboxCommandTimeoutError as exc:
             tool_call.status = "TIMEOUT"
@@ -515,6 +517,7 @@ class ToolRunner:
                 sandbox,
                 capability_config=capability_config,
                 organization_id=task.organization_id if task is not None else None,
+                user_id=task.created_by if task is not None else None,
             )
         except SandboxCommandTimeoutError as exc:
             tool_call.status = "TIMEOUT"
@@ -833,6 +836,7 @@ class ToolRunner:
         *,
         capability_config: dict | None = None,
         organization_id: str | None = None,
+        user_id: str | None = None,
     ) -> dict:
         filesystem = WorkspaceFileTool(self.workspace_root)
         if metadata.source == "mcp":
@@ -844,6 +848,8 @@ class ToolRunner:
                     provider=metadata.name,
                     session=self.session,
                     organization_id=organization_id,
+                    user_id=user_id,
+                    purpose=SECRET_PURPOSE_MCP_RUNTIME,
                 )
                 if secret_ref
                 else ""

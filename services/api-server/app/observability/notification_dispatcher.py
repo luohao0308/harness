@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import AlertEvent, NotificationChannel
+from app.security.secrets import SECRET_PURPOSE_NOTIFICATION, resolve_secret
 
 SECRET_KEYS = {"password", "token", "secret", "webhook_url", "smtp_password"}
 
@@ -39,7 +40,10 @@ def validate_channel_config(*, kind: str, config: dict | None, verified: bool) -
     config = config or {}
     if kind in {"slack", "webhook"}:
         webhook_url = str(config.get("webhook_url") or config.get("url") or "")
-        if verified and not webhook_url:
+        webhook_ref = str(
+            config.get("webhook_url_secret_ref") or config.get("url_secret_ref") or ""
+        )
+        if verified and not (webhook_url or webhook_ref):
             raise ValueError("verified Slack/Webhook channels require webhook_url")
         if webhook_url:
             _validate_http_url(webhook_url)
@@ -62,7 +66,7 @@ def dispatch_alert_event(
         selectors=channel_selectors,
     )
     results = [
-        _dispatch_one(channel=channel, payload=_alert_payload(event, channel))
+        _dispatch_one(session=session, channel=channel, payload=_alert_payload(event, channel))
         for channel in channels
     ]
     event.context_json = {
@@ -137,16 +141,17 @@ def _alert_payload(event: AlertEvent, channel: NotificationChannel) -> dict[str,
 
 def _dispatch_one(
     *,
+    session: Session,
     channel: NotificationChannel,
     payload: dict[str, Any],
 ) -> NotificationDispatchResult:
     try:
         if channel.kind == "slack":
-            _dispatch_slack(channel, payload)
+            _dispatch_slack(session, channel, payload)
         elif channel.kind == "email":
-            _dispatch_email(channel, payload)
+            _dispatch_email(session, channel, payload)
         elif channel.kind == "webhook":
-            _dispatch_webhook(channel, payload)
+            _dispatch_webhook(session, channel, payload)
         else:
             raise ValueError(f"unsupported channel kind: {channel.kind}")
     except Exception as exc:
@@ -159,8 +164,14 @@ def _dispatch_one(
     return NotificationDispatchResult(channel_id=channel.id, kind=channel.kind, status="sent")
 
 
-def _dispatch_slack(channel: NotificationChannel, payload: dict[str, Any]) -> None:
-    webhook_url = str(channel.config_json.get("webhook_url") or "")
+def _dispatch_slack(
+    session: Session,
+    channel: NotificationChannel,
+    payload: dict[str, Any],
+) -> None:
+    webhook_url = _channel_secret(session, channel, "webhook_url") or str(
+        channel.config_json.get("webhook_url") or ""
+    )
     if not webhook_url:
         raise ValueError("missing Slack webhook_url")
     _validate_http_url(webhook_url)
@@ -172,9 +183,15 @@ def _dispatch_slack(channel: NotificationChannel, payload: dict[str, Any]) -> No
     _post_json(webhook_url, body)
 
 
-def _dispatch_webhook(channel: NotificationChannel, payload: dict[str, Any]) -> None:
-    webhook_url = str(
-        channel.config_json.get("webhook_url") or channel.config_json.get("url") or ""
+def _dispatch_webhook(
+    session: Session,
+    channel: NotificationChannel,
+    payload: dict[str, Any],
+) -> None:
+    webhook_url = (
+        _channel_secret(session, channel, "webhook_url")
+        or _channel_secret(session, channel, "url")
+        or str(channel.config_json.get("webhook_url") or channel.config_json.get("url") or "")
     )
     if not webhook_url:
         raise ValueError("missing webhook url")
@@ -182,7 +199,11 @@ def _dispatch_webhook(channel: NotificationChannel, payload: dict[str, Any]) -> 
     _post_json(webhook_url, payload)
 
 
-def _dispatch_email(channel: NotificationChannel, payload: dict[str, Any]) -> None:
+def _dispatch_email(
+    session: Session,
+    channel: NotificationChannel,
+    payload: dict[str, Any],
+) -> None:
     config = channel.config_json
     to_address = str(config.get("to") or "")
     host = str(config.get("smtp_host") or "")
@@ -193,14 +214,14 @@ def _dispatch_email(channel: NotificationChannel, payload: dict[str, Any]) -> No
     message["From"] = str(config.get("from") or "harness-alerts@example.invalid")
     message["To"] = to_address
     message.set_content(json.dumps(payload, ensure_ascii=False, indent=2))
+    password = _channel_secret(session, channel, "smtp_password") or config.get("smtp_password")
     if config.get("use_aiosmtplib"):
-        _dispatch_email_async(config, message)
+        _dispatch_email_async({**config, "smtp_password": password}, message)
         return
     with smtplib.SMTP(host, int(config.get("smtp_port") or 25), timeout=10) as smtp:
         if config.get("starttls"):
             smtp.starttls()
         username = config.get("smtp_username")
-        password = config.get("smtp_password")
         if username and password:
             smtp.login(str(username), str(password))
         smtp.send_message(message)
@@ -242,3 +263,18 @@ def _validate_http_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("webhook_url must be an absolute HTTP(S) URL")
+
+
+def _channel_secret(session: Session, channel: NotificationChannel, field: str) -> str:
+    secret_ref = str(channel.config_json.get(f"{field}_secret_ref") or "").strip()
+    if not secret_ref:
+        return ""
+    resolved = resolve_secret(
+        session,
+        organization_id=channel.organization_id,
+        user_id=channel.created_by,
+        provider=f"notification.{channel.id}.{field}",
+        purpose=SECRET_PURPOSE_NOTIFICATION,
+        env_candidates=[],
+    )
+    return resolved.value if resolved.found else ""

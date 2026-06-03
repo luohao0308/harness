@@ -36,6 +36,14 @@ from app.observability.metrics import (
     model_tokens_output_total,
 )
 from app.observability.tracing import traced_operation
+from app.security.secrets import (
+    SECRET_PURPOSE_MODEL_PROVIDER,
+    SECRET_SCOPE_ORG,
+    SECRET_SOURCE_ORG,
+    env_candidates_for_provider,
+    resolve_secret,
+    upsert_secret,
+)
 
 
 class ModelMessage(BaseModel):
@@ -223,6 +231,7 @@ def _upsert_builtin_deepseek_provider(*, providers: list, default_provider: dict
 @dataclass(frozen=True)
 class ResolvedModelSettings:
     organization_id: str | None
+    owner_user_id: str | None
     default_provider: str
     default_model: str
     provider: dict
@@ -813,6 +822,7 @@ class ModelSettingsResolver:
     ) -> tuple[ModelRequest, ResolvedModelSettings]:
         task = self.session.get(Task, task_id)
         organization_id = task.organization_id if task is not None else None
+        owner_user_id = task.created_by if task is not None else None
         settings = self._settings_for_org(organization_id)
         default_provider = str(settings.get("default_provider") or "openai-compatible")
         default_model = str(settings.get("default_model") or "default")
@@ -842,6 +852,7 @@ class ModelSettingsResolver:
             resolved_request,
             ResolvedModelSettings(
                 organization_id=organization_id,
+                owner_user_id=owner_user_id,
                 default_provider=default_provider,
                 default_model=default_model,
                 provider=provider,
@@ -896,6 +907,8 @@ class ModelHealthChecker:
                     model_gateway_for_provider(
                         provider,
                         timeout_seconds=int(provider.get("health_timeout_seconds") or 5),
+                        session=self.session,
+                        organization_id=organization_id,
                     ).complete(
                         ModelRequest(
                             model_provider=provider_name,
@@ -975,6 +988,11 @@ class ModelHealthChecker:
         return normalize_model_settings(setting.value_json)
 
     def _write_settings_for_org(self, *, organization_id: str, settings: dict) -> None:
+        settings = _store_provider_api_keys_for_gateway(
+            self.session,
+            organization_id=organization_id,
+            settings=settings,
+        )
         setting = self.session.execute(
             select(SystemSetting).where(
                 SystemSetting.organization_id == organization_id,
@@ -1135,7 +1153,7 @@ class AuditedModelGateway:
         )
         circuit_key = limiter_key
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
-        gateway = self.gateway or self._gateway_from_settings(settings.provider)
+        gateway = self.gateway or self._gateway_from_settings(settings)
         started_at = time.monotonic()
         generation_parameters = self._generation_parameters(settings.provider)
         request_message_hashes = self._request_message_hashes(request_payload)
@@ -1674,15 +1692,41 @@ class AuditedModelGateway:
         message_overhead = len(request_payload.messages) * 4
         return max(1, (content_length // 4) + message_overhead)
 
-    def _gateway_from_settings(self, provider: dict) -> ModelGateway:
-        return model_gateway_for_provider(provider)
+    def _gateway_from_settings(self, settings: ResolvedModelSettings) -> ModelGateway:
+        return model_gateway_for_provider(
+            settings.provider,
+            session=self.session,
+            organization_id=settings.organization_id,
+            user_id=settings.owner_user_id,
+        )
 
 
-def provider_api_key(provider: dict) -> str | None:
+def provider_api_key(
+    provider: dict,
+    *,
+    session: Session | None = None,
+    organization_id: str | None = None,
+    user_id: str | None = None,
+) -> str | None:
+    provider_name = str(provider.get("name") or provider.get("model_provider") or "").strip()
+    api_key_env = provider.get("api_key_env")
+    if provider_name and session is not None and organization_id:
+        resolved = resolve_secret(
+            session,
+            organization_id=organization_id,
+            user_id=user_id,
+            provider=provider_name,
+            purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+            env_candidates=env_candidates_for_provider(
+                provider_name,
+                str(api_key_env) if isinstance(api_key_env, str) else None,
+            ),
+        )
+        if resolved.found:
+            return resolved.value
     api_key = provider.get("api_key")
     if isinstance(api_key, str) and api_key not in {"", "replace-me"}:
         return api_key
-    api_key_env = provider.get("api_key_env")
     if isinstance(api_key_env, str) and api_key_env:
         env_value = os.environ.get(api_key_env)
         if env_value:
@@ -1692,6 +1736,43 @@ def provider_api_key(provider: dict) -> str | None:
             return settings_value
         return api_key
     return api_key if isinstance(api_key, str) else None
+
+
+def _store_provider_api_keys_for_gateway(
+    session: Session,
+    *,
+    organization_id: str,
+    settings: dict,
+) -> dict:
+    sanitized = deepcopy(settings)
+    providers = sanitized.get("providers")
+    if not isinstance(providers, list):
+        return sanitized
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        raw_key = str(provider.get("api_key") or "").strip()
+        provider["api_key"] = ""
+        if not raw_key or raw_key == "replace-me":
+            continue
+        provider_name = str(provider.get("name") or "").strip()
+        if not provider_name:
+            continue
+        row = upsert_secret(
+            session,
+            organization_id=organization_id,
+            actor_id="system",
+            scope=SECRET_SCOPE_ORG,
+            owner_user_id=None,
+            provider=provider_name,
+            purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+            secret_ref=f"secret://models/{provider_name}/api-key",
+            secret_value=raw_key,
+        )
+        provider["api_key_configured"] = True
+        provider["api_key_source"] = SECRET_SOURCE_ORG
+        provider["api_key_secret_id"] = row.id
+    return sanitized
 
 
 def _settings_api_key_for_env(api_key_env: str) -> str | None:
@@ -1705,9 +1786,17 @@ def model_gateway_for_provider(
     provider: dict,
     *,
     timeout_seconds: int | None = None,
+    session: Session | None = None,
+    organization_id: str | None = None,
+    user_id: str | None = None,
 ) -> ModelGateway:
     timeout = int(timeout_seconds or provider.get("timeout_seconds") or 30)
-    api_key = provider_api_key(provider)
+    api_key = provider_api_key(
+        provider,
+        session=session,
+        organization_id=organization_id,
+        user_id=user_id,
+    )
     if str(provider.get("api_format") or "openai").lower() == "anthropic":
         return AnthropicCompatibleModelGateway(
             base_url=provider.get("base_url"),

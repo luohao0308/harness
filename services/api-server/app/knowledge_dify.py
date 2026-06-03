@@ -15,6 +15,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models import SystemSetting, utc_now
+from app.security.secrets import (
+    SECRET_PURPOSE_KNOWLEDGE_CONNECTOR,
+    SECRET_SCOPE_ORG,
+    env_candidates_for_provider,
+    resolve_secret,
+    upsert_secret,
+)
 
 CONNECTOR_PROVIDER_DIFY = "dify"
 CONNECTOR_PROVIDER_COZE = "coze"
@@ -162,6 +169,9 @@ def store_connector_secret_ref(
     secret_ref: str,
     provider: str,
     secret_value: str,
+    owner_user_id: str | None = None,
+    scope: str = SECRET_SCOPE_ORG,
+    purpose: str = SECRET_PURPOSE_KNOWLEDGE_CONNECTOR,
 ) -> str:
     ref = secret_ref.strip()
     if not ref:
@@ -173,6 +183,19 @@ def store_connector_secret_ref(
         raise ValueError("connector secret value is required")
     if len(value.encode("utf-8")) > 10_000:
         raise ValueError("connector secret value is too large")
+    if not organization_id:
+        raise ValueError("connector secret organization_id is required")
+    upsert_secret(
+        session,
+        organization_id=organization_id,
+        actor_id=actor_id,
+        scope=scope,
+        owner_user_id=owner_user_id or (actor_id if scope == "user" else None),
+        provider=provider,
+        purpose=purpose,
+        secret_ref=ref,
+        secret_value=value,
+    )
     key = connector_secret_setting_key(ref)
     setting = session.execute(
         select(SystemSetting).where(
@@ -184,7 +207,8 @@ def store_connector_secret_ref(
         "schema_version": "connector-secret-v1",
         "provider": provider.strip().lower(),
         "secret_ref": ref,
-        "secret_value": value,
+        "secret_configured": True,
+        "secret_storage": "stored_secrets",
         "updated_by": actor_id,
         "updated_at": utc_now().isoformat(),
     }
@@ -210,10 +234,24 @@ def read_connector_secret_ref(
     *,
     organization_id: str | None,
     secret_ref: str,
+    provider: str | None = None,
+    user_id: str | None = None,
+    purpose: str = SECRET_PURPOSE_KNOWLEDGE_CONNECTOR,
 ) -> str:
     ref = secret_ref.strip()
     if not ref or secret_ref_looks_like_raw_secret(ref):
         return ""
+    normalized_provider = (provider or _secret_ref_slug(ref).lower() or "connector").strip().lower()
+    resolved = resolve_secret(
+        session,
+        organization_id=organization_id,
+        user_id=user_id,
+        provider=normalized_provider,
+        purpose=purpose,
+        env_candidates=[],
+    )
+    if resolved.found:
+        return resolved.value
     key = connector_secret_setting_key(ref)
     setting = session.execute(
         select(SystemSetting).where(
@@ -232,17 +270,23 @@ def resolve_connector_secret_ref(
     provider: str,
     session: Session | None = None,
     organization_id: str | None = None,
+    user_id: str | None = None,
+    purpose: str = SECRET_PURPOSE_KNOWLEDGE_CONNECTOR,
 ) -> str:
     ref = secret_ref.strip()
     if not ref:
         return ""
     if secret_ref_looks_like_raw_secret(ref):
         return ""
+    normalized_provider = provider.strip().lower()
     if session is not None:
         stored = read_connector_secret_ref(
             session,
             organization_id=organization_id,
             secret_ref=ref,
+            provider=normalized_provider,
+            user_id=user_id,
+            purpose=purpose,
         )
         if stored:
             return stored
@@ -255,7 +299,7 @@ def resolve_connector_secret_ref(
     if slug:
         env_candidates.append(f"{slug}_API_KEY")
         env_candidates.append(f"{slug}_KEY")
-    normalized_provider = provider.strip().lower()
+    env_candidates.extend(env_candidates_for_provider(normalized_provider))
     if normalized_provider == CONNECTOR_PROVIDER_DIFY:
         env_candidates.extend(
             [
