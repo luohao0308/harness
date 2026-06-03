@@ -368,8 +368,8 @@ export function EvalHarnessPage() {
                     <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                    <span>用例: {run.metrics_json.case_total ?? 0}</span>
-                    <span>通过: {run.metrics_json.passed_total ?? 0}</span>
+                    <span>用例: {metricNumber(run.metrics_json.case_total)}</span>
+                    <span>通过: {metricNumber(run.metrics_json.passed_total)}</span>
                     <span>
                       智能体:{" "}
                       {evalAgentLabel(
@@ -428,6 +428,10 @@ function EvalReadiness({
       <Badge tone={disabled ? "neutral" : "success"}>{status}</Badge>
     </div>
   );
+}
+
+function metricNumber(value: unknown) {
+  return typeof value === "number" ? value : 0;
 }
 
 const CONTRACT_PRESETS: Array<{ label: string; description: string; value: string }> = [
@@ -536,6 +540,35 @@ const CONTRACT_PRESETS: Array<{ label: string; description: string; value: strin
       2,
     ),
   },
+  {
+    label: "专家契约",
+    description: "必需专家 / 结构化输出 / fanout 批次",
+    value: JSON.stringify(
+      {
+        specialist_contract: {
+          expected_specialists: ["code-reviewer"],
+          forbidden_specialists: [],
+          min_outputs_per_specialist: { "code-reviewer": 1 },
+          output_assertions: {
+            "code-reviewer": [
+              { field: "issues", min_length: 1 },
+              { field: "summary", contains: ["风险"] },
+            ],
+          },
+          budget_assertions: {
+            max_total_specialist_cost_usd: "0.05",
+            max_total_specialist_runtime_ms: 30000,
+          },
+          fanout_assertions: {
+            expected_batch_count: 1,
+            min_batch_size: 2,
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  },
 ];
 
 function ContractPresetEditor({
@@ -566,7 +599,7 @@ function ContractPresetEditor({
       <div className="text-[11px] font-semibold text-slate-700">
         契约配置（可选）
         <span className="ml-2 font-normal text-slate-500">
-          tool / dialogue / cost / refusal / safety / persona
+          tool / dialogue / cost / refusal / safety / persona / specialist
         </span>
       </div>
       <div className="flex flex-wrap gap-1">

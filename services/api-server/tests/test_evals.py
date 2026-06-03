@@ -7,6 +7,7 @@ from app.db.models import (
     AdminAuditEvent,
     Agent,
     AgentEvent,
+    AgentRun,
     EvalCase,
     EvalResult,
     EvalRun,
@@ -14,6 +15,8 @@ from app.db.models import (
     ModelPricing,
     PromptAssemblyManifest,
     RetrievalHit,
+    SubagentOutput,
+    SubagentSpecialist,
     SystemSetting,
     Task,
     ToolCall,
@@ -614,6 +617,128 @@ def _traced_completed_run(
                 response_json=spec.get("response_json", {}),
             )
         )
+    db_session.flush()
+    return task.id
+
+
+def _specialist_completed_run(db_session: Session) -> str:
+    _ensure_agent(db_session)
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Specialist contract source run",
+        goal="specialist contract trace",
+        status="COMPLETED",
+        model_provider="default",
+        model_name="default",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    reviewer = db_session.get(SubagentSpecialist, "system-specialist-code-reviewer")
+    researcher = db_session.get(SubagentSpecialist, "system-specialist-researcher")
+    if reviewer is None:
+        reviewer = SubagentSpecialist(
+            id="system-specialist-code-reviewer",
+            slug="code-reviewer",
+            display_name="Code Reviewer",
+            description="Reviews code",
+            role="reviewer",
+            system_prompt="Review code",
+            capability_slugs_json=[],
+            output_schema_json={},
+            budget_json={},
+            trigger_keywords_json=[],
+            visibility="system",
+            status="ACTIVE",
+        )
+        db_session.add(reviewer)
+    if researcher is None:
+        researcher = SubagentSpecialist(
+            id="system-specialist-researcher",
+            slug="researcher",
+            display_name="Researcher",
+            description="Researches evidence",
+            role="researcher",
+            system_prompt="Research evidence",
+            capability_slugs_json=[],
+            output_schema_json={},
+            budget_json={},
+            trigger_keywords_json=[],
+            visibility="system",
+            status="ACTIVE",
+        )
+        db_session.add(researcher)
+    db_session.flush()
+    first = AgentRun(
+        task_id=task.id,
+        agent_type="subagent",
+        status="SUCCESS",
+        specialist_id=reviewer.id,
+        context_json={
+            "step_key": "review",
+            "specialist_slug": "code-reviewer",
+            "specialist_role": "reviewer",
+            "fanout_batch_id": "fanout-test",
+            "fanout_index": 0,
+            "fanout_total": 2,
+            "fanout_aggregation": "concat",
+        },
+        started_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    second = AgentRun(
+        task_id=task.id,
+        agent_type="subagent",
+        status="SUCCESS",
+        specialist_id=researcher.id,
+        context_json={
+            "step_key": "research",
+            "specialist_slug": "researcher",
+            "specialist_role": "researcher",
+            "fanout_batch_id": "fanout-test",
+            "fanout_index": 1,
+            "fanout_total": 2,
+            "fanout_aggregation": "concat",
+        },
+        started_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add_all([first, second])
+    db_session.flush()
+    db_session.add_all(
+        [
+            SubagentOutput(
+                agent_run_id=first.id,
+                task_id=task.id,
+                specialist_id=reviewer.id,
+                output_json={
+                    "issues": [{"severity": "HIGH", "message": "风险: missing test"}],
+                    "summary": "风险 review complete",
+                },
+                output_schema_sha256="review-schema",
+                budget_consumed_json={"cost_usd": "0.010", "runtime_seconds": 1},
+                budget_exceeded_json=[],
+            ),
+            SubagentOutput(
+                agent_run_id=second.id,
+                task_id=task.id,
+                specialist_id=researcher.id,
+                output_json={
+                    "citations": [
+                        {"url": "https://example.test/a", "title": "A", "snippet": "alpha"},
+                        {"url": "https://example.test/b", "title": "B", "snippet": "beta"},
+                    ],
+                    "answer": "source-backed answer",
+                },
+                output_schema_sha256="research-schema",
+                budget_consumed_json={"cost_usd": "0.015", "runtime_seconds": 2},
+                budget_exceeded_json=[],
+            ),
+        ]
+    )
     db_session.flush()
     return task.id
 
@@ -1327,3 +1452,133 @@ def test_eval_run_cost_missing_pricing_records_zero_cost_and_misses(
     assert "unknown-provider/unknown-model" in trace["missing_pricing"]
     metrics = run_response.json()["metrics_json"]
     assert "unknown-provider/unknown-model" in metrics["missing_pricing_models"]
+
+
+def test_eval_run_grades_specialist_contract_outputs_budget_and_fanout(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    run_id = _specialist_completed_run(db_session)
+    dataset = client.post(
+        "/api/evals/datasets",
+        headers=AUTH_HEADERS,
+        json={"name": "Specialist Contract Dataset", "description": "Subagent v2 contract"},
+    ).json()
+    passing = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "specialist_contract": {
+                    "expected_specialists": ["code-reviewer", "researcher"],
+                    "forbidden_specialists": ["safety-checker"],
+                    "min_outputs_per_specialist": {"code-reviewer": 1},
+                    "max_outputs_per_specialist": {"researcher": 3},
+                    "output_assertions": {
+                        "code-reviewer": [
+                            {"field": "issues", "min_length": 1, "max_length": 20},
+                            {"field": "summary", "contains": ["风险"]},
+                        ],
+                        "researcher": [{"field": "citations", "min_length": 2}],
+                    },
+                    "budget_assertions": {
+                        "max_total_specialist_cost_usd": "0.050",
+                        "max_total_specialist_runtime_ms": 5000,
+                    },
+                    "fanout_assertions": {"expected_batch_count": 1, "min_batch_size": 2},
+                },
+            },
+            "tags_json": ["specialist-contract"],
+        },
+    )
+    assert passing.status_code == 201
+    failing = client.post(
+        f"/api/evals/datasets/{dataset['id']}/cases/from-run/{run_id}",
+        headers=AUTH_HEADERS,
+        json={
+            "expected_json": {
+                "status": "COMPLETED",
+                "specialist_contract": {
+                    "expected_specialists": ["safety-checker"],
+                    "forbidden_specialists": ["researcher"],
+                    "output_assertions": {
+                        "code-reviewer": [{"field": "issues", "min_length": 3}],
+                        "researcher": [{"field": "answer", "contains": ["missing marker"]}],
+                    },
+                    "budget_assertions": {
+                        "max_total_specialist_cost_usd": "0.001",
+                        "max_total_specialist_runtime_ms": 1,
+                    },
+                    "fanout_assertions": {"expected_batch_count": 2, "min_batch_size": 3},
+                },
+            },
+            "tags_json": ["specialist-contract", "negative"],
+        },
+    )
+    assert failing.status_code == 201
+
+    run_response = client.post(
+        f"/api/evals/datasets/{dataset['id']}/runs",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+
+    assert run_response.status_code == 201
+    results = {result["eval_case_id"]: result for result in run_response.json()["results"]}
+    assert results[passing.json()["id"]]["status"] == "PASSED"
+    assert results[failing.json()["id"]]["status"] == "FAILED"
+    pass_trace = results[passing.json()["id"]]["grader_trace_json"]["specialist_contract"]
+    assert pass_trace["outputs_by_specialist"] == {"code-reviewer": 1, "researcher": 1}
+    assert pass_trace["total_specialist_invocations"] == 2
+    assert pass_trace["total_specialist_cost_usd"] == "0.025000"
+    assert pass_trace["fanout_batches"][0]["fanout_batch_id"] == "fanout-test"
+    fail_trace = results[failing.json()["id"]]["grader_trace_json"]["specialist_contract"]
+    assert "missing_specialist:safety-checker" in fail_trace["failures"]
+    assert "forbidden_specialist:researcher" in fail_trace["failures"]
+    assert any(
+        failure.startswith("output_assertion_failed:code-reviewer.issues.min_length")
+        for failure in fail_trace["failures"]
+    )
+    assert any(
+        failure.startswith("output_assertion_failed:researcher.answer.contains")
+        for failure in fail_trace["failures"]
+    )
+    assert any(failure.startswith("specialist_cost_exceeded") for failure in fail_trace["failures"])
+    assert any(
+        failure.startswith("specialist_runtime_exceeded") for failure in fail_trace["failures"]
+    )
+    assert "fanout_batch_count:1!=2" in fail_trace["failures"]
+    assert any(
+        failure.startswith("fanout_batch_too_small:fanout-test")
+        for failure in fail_trace["failures"]
+    )
+    metrics = run_response.json()["metrics_json"]
+    assert metrics["specialist_contract_configured_count"] == 2
+    assert metrics["specialist_contract_pass_rate"] == 0.5
+    assert metrics["specialist_contract_failure_breakdown"]["missing_specialist"] == 1
+    assert metrics["specialist_contract_failure_breakdown"]["forbidden_specialist"] == 1
+    assert metrics["total_specialist_invocations"] == 4
+    assert metrics["specialist_role_distribution"] == {"reviewer": 2, "researcher": 2}
+    assert metrics["total_specialist_cost_usd"] == "0.050000"
+
+
+def test_aggregate_metrics_defaults_specialist_contract_to_pass_when_unconfigured() -> None:
+    result = EvalResult(
+        eval_run_id="eval-run",
+        eval_case_id="case-1",
+        task_id=None,
+        status="PASSED",
+        scores_json={"task_success": 1},
+        grader_trace_json={"passed": True, "grounding_failures": []},
+        latency_ms=0,
+        cost_usd="0",
+    )
+
+    metrics = _aggregate_metrics([result])
+
+    assert metrics["specialist_contract_configured_count"] == 0
+    assert metrics["specialist_contract_pass_rate"] == 1.0
+    assert metrics["total_specialist_invocations"] == 0
+    assert metrics["specialist_role_distribution"] == {}
+    assert metrics["total_specialist_cost_usd"] == "0.000000"

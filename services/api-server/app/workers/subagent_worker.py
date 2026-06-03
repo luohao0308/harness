@@ -14,6 +14,11 @@ from app.agents.model_gateway import (
     ModelMessage,
     ModelRequest,
 )
+from app.agents.specialists import (
+    SpecialistBudgetState,
+    budget_state_for_run,
+    make_default_output,
+)
 from app.db.models import AgentRun, Task, utc_now
 from app.db.session import SessionLocal
 from app.events.event_store import EventStore
@@ -107,7 +112,13 @@ def _execute_subagent_with_session(
             },
         )
         task = session.get(Task, agent_run.task_id)
-        tool_results, react_trace, model_summary, context_summary = _execute_react_loop(
+        (
+            tool_results,
+            react_trace,
+            model_summary,
+            context_summary,
+            budget_state,
+        ) = _execute_react_loop(
             session=session,
             task=task,
             agent_run=agent_run,
@@ -130,7 +141,41 @@ def _execute_subagent_with_session(
                 "context_summary": context_summary,
                 "completed_at": utc_now().isoformat(),
             },
+            "budget_consumed": budget_state.consumed,
+            "budget_exceeded": budget_state.exceeded,
         }
+        if budget_state.exceeded:
+            agent_run.status = "BUDGET_EXCEEDED"
+            agent_run.completed_at = utc_now()
+            agent_subagents_running.dec()
+            event_store.append(
+                task_id=agent_run.task_id,
+                agent_run_id=agent_run.id,
+                event_type=EventType.SUBAGENT_FAILED,
+                payload_json={
+                    "agent_run_id": agent_run.id,
+                    "failure_reason": "budget_exceeded",
+                    "budget_exceeded": budget_state.exceeded,
+                    "budget_consumed": budget_state.consumed,
+                },
+            )
+            session.commit()
+            return agent_run.status
+        if agent_run.specialist_id:
+            from app.agents.subagent_manager import SubagentManager
+
+            specialist = agent_run.specialist
+            if specialist is not None:
+                output_json = make_default_output(specialist=specialist, summary=summary)
+                SubagentManager(session).finalize_with_output(
+                    agent_run=agent_run,
+                    raw_output_dict=output_json,
+                    budget_consumed=budget_state.consumed,
+                    budget_exceeded=budget_state.exceeded,
+                )
+                agent_subagents_running.dec()
+                session.commit()
+                return agent_run.status
         agent_run.status = "SUCCESS"
         agent_run.completed_at = utc_now()
         agent_subagents_running.dec()
@@ -185,9 +230,12 @@ def _execute_react_loop(
     workspace_root: Path | None,
     event_store: EventStore,
     model_gateway: ModelGateway | None,
-) -> tuple[list[dict], list[dict], str | None, dict]:
+) -> tuple[list[dict], list[dict], str | None, dict, SpecialistBudgetState]:
     if task is None:
-        return [], [], None, _compact_react_context([])
+        return [], [], None, _compact_react_context([]), SpecialistBudgetState(
+            consumed={},
+            exceeded=[],
+        )
 
     max_rounds = _assignment_max_tool_rounds(agent_run.context_json)
     pending_tools = _assignment_tools(agent_run.context_json)
@@ -195,6 +243,7 @@ def _execute_react_loop(
     react_trace: list[dict] = []
     model_summary: str | None = None
     context_summary = _compact_react_context(tool_results)
+    budget_state = budget_state_for_run(session, agent_run)
 
     for round_index in range(1, max_rounds + 1):
         round_results = _execute_tool_batch(
@@ -208,6 +257,15 @@ def _execute_react_loop(
         )
         tool_results.extend(round_results)
         context_summary = _compact_react_context(tool_results)
+        budget_state = budget_state_for_run(session, agent_run)
+        if budget_state.exceeded:
+            _record_budget_exceeded(
+                event_store=event_store,
+                agent_run=agent_run,
+                budget_state=budget_state,
+                stage="after_tool_call",
+            )
+            break
         response = _complete_react_round(
             session=session,
             task=task,
@@ -216,6 +274,15 @@ def _execute_react_loop(
             round_index=round_index,
             model_gateway=model_gateway,
         )
+        budget_state = budget_state_for_run(session, agent_run)
+        if budget_state.exceeded:
+            _record_budget_exceeded(
+                event_store=event_store,
+                agent_run=agent_run,
+                budget_state=budget_state,
+                stage="after_model_call",
+            )
+            break
         parsed = _parse_react_response(response)
         if parsed["summary"]:
             model_summary = parsed["summary"]
@@ -248,7 +315,7 @@ def _execute_react_loop(
         if parsed["done"] or not next_tools:
             break
         pending_tools = next_tools
-    return tool_results, react_trace, model_summary, context_summary
+    return tool_results, react_trace, model_summary, context_summary, budget_state
 
 
 def _execute_tool_batch(
@@ -296,10 +363,32 @@ def _execute_tool_batch(
         capability_registry=capability_registry,
     )
     roles = _assignment_roles(agent_run.context_json)
+    capability_whitelist = _assignment_capability_whitelist(agent_run.context_json)
     sandbox = None
     results = []
     for item in tools:
         tool_name = str(item["tool_name"])
+        if capability_whitelist is not None and tool_name not in capability_whitelist:
+            results.append(
+                _denied_tool_result(
+                    session=session,
+                    task=task,
+                    agent_run=agent_run,
+                    tool_name=tool_name,
+                    input_json=dict(item.get("input_json", {})),
+                    reason="Tool is not in specialist capability whitelist",
+                )
+            )
+            budget_state = budget_state_for_run(session, agent_run)
+            if budget_state.exceeded:
+                _record_budget_exceeded(
+                    event_store=event_store,
+                    agent_run=agent_run,
+                    budget_state=budget_state,
+                    stage="after_tool_call",
+                )
+                break
+            continue
         metadata = registry.tools.get(tool_name)
         if (
             metadata is not None
@@ -322,6 +411,15 @@ def _execute_tool_batch(
             sandbox=sandbox,
         )
         results.append(_tool_result_payload(execution))
+        budget_state = budget_state_for_run(session, agent_run)
+        if budget_state.exceeded:
+            _record_budget_exceeded(
+                event_store=event_store,
+                agent_run=agent_run,
+                budget_state=budget_state,
+                stage="after_tool_call",
+            )
+            break
     return results
 
 
@@ -346,11 +444,7 @@ def _complete_react_round(
             messages=[
                 ModelMessage(
                     role="system",
-                    content=(
-                        "You are a Harness Subagent. Use ReAct style execution. "
-                        "Return compact JSON with keys summary, done and next_tools. "
-                        "next_tools must be a list of {tool_name,input_json}."
-                    ),
+                    content=_react_system_prompt(agent_run.context_json),
                 ),
                 ModelMessage(
                     role="user",
@@ -492,6 +586,76 @@ def _assignment_roles(assignment: dict) -> list[str]:
         if roles:
             return roles
     return ["admin", "engineer"]
+
+
+def _assignment_capability_whitelist(assignment: dict) -> set[str] | None:
+    raw_whitelist = assignment.get("capability_whitelist")
+    if not isinstance(raw_whitelist, list):
+        return None
+    return {str(item) for item in raw_whitelist if isinstance(item, str)}
+
+
+def _react_system_prompt(assignment: dict) -> str:
+    base_prompt = (
+        "You are a Harness Subagent. Use ReAct style execution. "
+        "Return compact JSON with keys summary, done and next_tools. "
+        "next_tools must be a list of {tool_name,input_json}."
+    )
+    override = assignment.get("system_prompt_override")
+    if isinstance(override, str) and override.strip():
+        return f"{override.strip()}\n\n{base_prompt}"
+    return base_prompt
+
+
+def _record_budget_exceeded(
+    *,
+    event_store: EventStore,
+    agent_run: AgentRun,
+    budget_state: SpecialistBudgetState,
+    stage: str,
+) -> None:
+    event_store.append(
+        task_id=agent_run.task_id,
+        agent_run_id=agent_run.id,
+        event_type=EventType.SUBAGENT_PROGRESS,
+        payload_json={
+            "agent_run_id": agent_run.id,
+            "stage": stage,
+            "budget_exceeded": budget_state.exceeded,
+            "budget_consumed": budget_state.consumed,
+        },
+    )
+
+
+def _denied_tool_result(
+    *,
+    session: Session,
+    task: Task,
+    agent_run: AgentRun,
+    tool_name: str,
+    input_json: dict,
+    reason: str,
+) -> dict:
+    from app.sandbox.policies import SandboxPolicyDecision
+
+    registry = ToolRegistry.default()
+    metadata = registry.tools[tool_name]
+    runner = ToolRunner(session=session, agent_id=task.agent_id)
+    execution = runner._deny(  # noqa: SLF001 - worker owns whitelist denial audit.
+        task_id=task.id,
+        agent_run_id=agent_run.id,
+        metadata=metadata,
+        input_json=input_json,
+        decision=SandboxPolicyDecision(
+            allowed=False,
+            reason=reason,
+            policy_id="specialist-capability-whitelist",
+            audit_level=metadata.audit_level,
+            requires_sandbox=metadata.requires_sandbox,
+        ),
+        requires_sandbox=metadata.requires_sandbox,
+    )
+    return _tool_result_payload(execution)
 
 
 def _tool_result_payload(execution: ToolExecution) -> dict:

@@ -71,7 +71,7 @@ router = APIRouter(
     deprecated=True,
 )
 DbSession = Annotated[Session, Depends(get_db_session)]
-SUBAGENT_TERMINAL_STATUSES = {"SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"}
+SUBAGENT_TERMINAL_STATUSES = {"SUCCESS", "FAILED", "TIMEOUT", "CANCELLED", "BUDGET_EXCEEDED"}
 
 
 def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task:
@@ -355,6 +355,7 @@ def get_task_result(task_id: str, session: DbSession, principal: Principal) -> T
             .order_by(AgentRun.started_at.asc(), AgentRun.id.asc())
         ).scalars()
     )
+    subagent_runs.sort(key=_subagent_result_sort_key)
     subagent_results = [_to_subagent_result(agent_run) for agent_run in subagent_runs]
     if subagent_runs:
         artifacts.append(
@@ -435,6 +436,11 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
                 execution_mode=str(raw_step.get("execution_mode", "")),
                 requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
                 can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),
+                recommended_specialist_slug=_optional_string(
+                    raw_step.get("recommended_specialist_slug")
+                ),
+                fanout_specialist_slugs=_string_list(raw_step.get("fanout_specialist_slugs")),
+                fanout_aggregation=str(raw_step.get("fanout_aggregation") or "synthesizer_chain"),
                 tool_hints=_string_list(raw_step.get("tool_hints")),
                 acceptance_criteria=_string_list(raw_step.get("acceptance_criteria")),
                 risk_level=str(raw_step.get("risk_level") or "low"),
@@ -1350,6 +1356,21 @@ def _string_list(value: object) -> list[str]:
     return []
 
 
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 def _step_events_by_key(*, task_id: str, session: Session) -> dict[str, list[dict]]:
     events = session.execute(
         select(AgentEvent)
@@ -1461,6 +1482,8 @@ def _normalized_step(step: dict) -> dict:
 
 
 def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
+    specialist = getattr(agent_run, "specialist", None)
+    output = getattr(agent_run, "subagent_output", None)
     result = agent_run.context_json.get("result")
     summary = None
     tool_results = []
@@ -1484,12 +1507,40 @@ def _to_subagent_result(agent_run: AgentRun) -> TaskSubagentResult:
         id=agent_run.id,
         step_key=str(raw_step_key) if raw_step_key is not None else None,
         status=agent_run.status,
+        fanout_batch_id=_optional_string(agent_run.context_json.get("fanout_batch_id")),
+        fanout_index=_optional_int(agent_run.context_json.get("fanout_index")),
+        fanout_total=_optional_int(agent_run.context_json.get("fanout_total")),
+        specialist_slug=specialist.slug
+        if specialist is not None
+        else _optional_string(agent_run.context_json.get("specialist_slug")),
+        specialist_role=specialist.role
+        if specialist is not None
+        else _optional_string(agent_run.context_json.get("specialist_role")),
+        specialist_output=output.output_json if output is not None else None,
+        budget_consumed_json=output.budget_consumed_json
+        if output is not None
+        else agent_run.context_json.get("budget_consumed", {}),
+        budget_exceeded_json=output.budget_exceeded_json
+        if output is not None
+        else agent_run.context_json.get("budget_exceeded", []),
         summary=summary,
         tool_results=tool_results,
         artifacts=_subagent_artifacts(tool_results),
         react_trace=react_trace,
         context_summary=context_summary,
         completed_at=agent_run.completed_at,
+    )
+
+
+def _subagent_result_sort_key(agent_run: AgentRun) -> tuple:
+    return (
+        _optional_string(agent_run.context_json.get("step_key")) or "",
+        _optional_string(agent_run.context_json.get("fanout_batch_id")) or "",
+        _optional_int(agent_run.context_json.get("fanout_index"))
+        if _optional_int(agent_run.context_json.get("fanout_index")) is not None
+        else 9999,
+        agent_run.started_at or agent_run.timeout_at or utc_now(),
+        agent_run.id,
     )
 
 

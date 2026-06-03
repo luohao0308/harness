@@ -23,6 +23,9 @@ type PlanStep = {
   execution_mode: string;
   status?: string;
   can_spawn_subagent?: boolean;
+  recommended_specialist_slug?: string | null;
+  fanout_specialist_slugs?: string[];
+  fanout_aggregation?: string;
   assigned_agent_id?: string | null;
   tool_hints?: string[];
   acceptance_criteria?: string[];
@@ -81,6 +84,9 @@ export function ExecutionPlanPanel({
       execution_mode: step.execution_mode,
       status: step.status,
       can_spawn_subagent: step.can_spawn_subagent,
+      recommended_specialist_slug: step.recommended_specialist_slug,
+      fanout_specialist_slugs: step.fanout_specialist_slugs,
+      fanout_aggregation: step.fanout_aggregation,
       assigned_agent_id: step.assigned_agent_id,
       tool_hints: step.tool_hints,
       acceptance_criteria: step.acceptance_criteria,
@@ -211,6 +217,9 @@ export function ExecutionPlanPanel({
               (completedEvent?.payload_json.assigned_agent_id as string | undefined) ??
               null;
             const assignedSubagent = assignedAgentId ? subagentsById.get(assignedAgentId) : undefined;
+            const fanoutSpecialists = step.fanout_specialist_slugs ?? [];
+            const specialistSlug =
+              step.recommended_specialist_slug ?? assignedSubagent?.specialist?.slug ?? null;
             const isAsync = step.execution_mode === "async" || Boolean(step.can_spawn_subagent);
             const toolHints = step.tool_hints ?? [];
             const acceptanceCriteria = step.acceptance_criteria ?? [];
@@ -258,6 +267,20 @@ export function ExecutionPlanPanel({
                   <Badge tone={statusTone(step.risk_level ?? "low")}>
                     {riskLabel(step.risk_level ?? "low")}
                   </Badge>
+                  {specialistSlug ? (
+                    <>
+                      <span>·</span>
+                      <Badge tone="purple">派给 {specialistSlug}</Badge>
+                    </>
+                  ) : null}
+                  {fanoutSpecialists.length > 1 ? (
+                    <>
+                      <span>·</span>
+                      <Badge tone="info">
+                        并行派给 {fanoutSpecialists.length} 个专家
+                      </Badge>
+                    </>
+                  ) : null}
                   <span>·</span>
                   <span>{statusLabel(status)}</span>
                 </div>
@@ -323,6 +346,14 @@ export function ExecutionPlanPanel({
                   <div className="mt-2 flex flex-wrap items-center gap-1 pl-6 text-[10px] text-slate-500">
                     <GitBranch className="h-3 w-3 text-slate-400" />
                     <span>{text("派生子代理", "Spawn subagent")}</span>
+                    {specialistSlug ? (
+                      <Badge tone="purple">{text("专家", "Specialist")} {specialistSlug}</Badge>
+                    ) : null}
+                    {fanoutSpecialists.length > 1 ? (
+                      <Badge tone="info">
+                        fanout {fanoutSpecialists.length} · {step.fanout_aggregation ?? "synthesizer_chain"}
+                      </Badge>
+                    ) : null}
                     {assignedAgentId ? (
                       <>
                         <span className="font-mono text-slate-700">{assignedAgentId.slice(0, 8)}</span>

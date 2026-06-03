@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
+import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -28,6 +28,7 @@ import {
   type AgentRunWorkspace,
   type AgentEvent,
   type ReplayResult,
+  type Subagent,
   type ToolApproval,
   type ToolCall,
 } from "../../tasks/api";
@@ -64,6 +65,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const grounding = data?.knowledge_grounding;
   const contextAssembly = data?.context_assembly;
   const tokenOptimization = data?.token_optimization ?? {};
+  const specialistEvidence = useMemo(() => collectSpecialistEvidence(data?.subagents ?? []), [data?.subagents]);
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
   const execute = useMutation({
     mutationFn: () => executeAgentRun(runId!),
@@ -664,6 +666,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     </Badge>
                     {step.requires_sandbox && <Badge tone="warning">沙箱</Badge>}
                     {step.can_spawn_subagent && <Badge tone="purple">子代理</Badge>}
+                    {step.recommended_specialist_slug ? (
+                      <Badge tone="purple">专家: {step.recommended_specialist_slug}</Badge>
+                    ) : null}
+                    {step.fanout_specialist_slugs.length > 1 ? (
+                      <Badge tone="info">
+                        并行: {step.fanout_specialist_slugs.length} · {step.fanout_aggregation}
+                      </Badge>
+                    ) : null}
                     {dependsOn.length > 0 ? (
                       <Badge tone="info">依赖: {dependsOn.join(", ")}</Badge>
                     ) : (
@@ -698,6 +708,65 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             onSequenceChange={setReplaySequence}
             onReplay={() => replay.mutate()}
           />
+          <Card>
+            <CardHeader>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <BrainCircuit className="h-4 w-4" />
+                {text("专家证据", "Specialist Evidence")}
+              </div>
+              <span className="text-xs text-slate-500">{specialistEvidence.length}</span>
+            </CardHeader>
+            <div className="max-h-[420px] space-y-3 overflow-auto p-3">
+              {specialistEvidence.map((group) => (
+                <div key={group.key} className="rounded border border-slate-100 p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="font-mono text-slate-900">{group.label}</div>
+                      {group.batchId ? (
+                        <div className="mt-0.5 truncate font-mono text-[10px] text-slate-400">
+                          {group.batchId}
+                        </div>
+                      ) : null}
+                    </div>
+                    {group.batchId ? <Badge tone="info">fanout {group.items.length}</Badge> : null}
+                  </div>
+                  <div className="grid gap-2">
+                    {group.items.map((item) => (
+                      <div key={item.id} className="rounded border border-slate-100 bg-white p-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <Link to={`/subagents/${item.id}`} className="font-mono text-slate-900">
+                            {item.slug} / {item.id.slice(0, 8)}
+                          </Link>
+                          <div className="flex items-center gap-1">
+                            {typeof item.fanoutIndex === "number" && typeof item.fanoutTotal === "number" ? (
+                              <Badge tone="info">{item.fanoutIndex + 1}/{item.fanoutTotal}</Badge>
+                            ) : null}
+                            <Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>
+                          </div>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          {item.role} · {item.summary}
+                        </div>
+                        {item.budgetExceeded.length > 0 ? (
+                          <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+                            预算超限：{item.budgetExceeded.join(", ")}
+                          </div>
+                        ) : null}
+                        <pre className="mt-2 max-h-40 overflow-auto rounded bg-slate-950 p-2 text-[10px] leading-relaxed text-slate-100">
+                          {JSON.stringify(item.output, null, 2)}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {specialistEvidence.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-500">
+                  {text("暂无结构化专家输出。", "No structured specialist outputs yet.")}
+                </div>
+              ) : null}
+            </div>
+          </Card>
           <div id="approvals">
           <ApprovalsPanel
             approvals={data?.approvals ?? []}
@@ -720,7 +789,15 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                         <span className="font-mono text-xs">{subagent.id.slice(0, 8)}</span>
                         <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-500">{subagent.agent_type}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                        <span>{subagent.agent_type}</span>
+                        {subagent.specialist ? <Badge tone="purple">{subagent.specialist.slug}</Badge> : null}
+                      </div>
+                      {subagent.output ? (
+                        <div className="mt-1 truncate text-[11px] text-slate-500">
+                          {specialistOutputSummary(subagent.output.output_json)}
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 : (data?.events ?? []).map((event) => <EventRow key={event.id} event={event} />)}
@@ -1055,6 +1132,58 @@ function Metric({ label, value }: { label: React.ReactNode; value: string }) {
       <div className="mt-1 truncate font-mono text-xs text-slate-900">{value}</div>
     </div>
   );
+}
+
+function collectSpecialistEvidence(subagents: Subagent[]) {
+  const items = subagents
+    .filter((subagent) => subagent.output || subagent.specialist)
+    .map((subagent) => {
+      const output = subagent.output?.output_json ?? {};
+      const exceeded = subagent.output?.budget_exceeded_json ?? [];
+      return {
+        id: subagent.id,
+        slug: subagent.specialist?.slug ?? "specialist",
+        role: subagent.specialist?.role ?? "specialist",
+        status: subagent.status,
+        fanoutBatchId: subagent.fanout_batch_id,
+        fanoutIndex: subagent.fanout_index,
+        fanoutTotal: subagent.fanout_total,
+        output,
+        budgetExceeded: exceeded,
+        summary: specialistOutputSummary(output),
+      };
+    });
+  const grouped = new Map<string, typeof items>();
+  for (const item of items) {
+    const key = item.fanoutBatchId ?? item.id;
+    grouped.set(key, [...(grouped.get(key) ?? []), item]);
+  }
+  return Array.from(grouped.entries()).map(([key, groupItems]) => {
+    const batchId = groupItems[0]?.fanoutBatchId ?? null;
+    const ordered = [...groupItems].sort((left, right) => {
+      const leftIndex = typeof left.fanoutIndex === "number" ? left.fanoutIndex : 9999;
+      const rightIndex = typeof right.fanoutIndex === "number" ? right.fanoutIndex : 9999;
+      return leftIndex - rightIndex;
+    });
+    return {
+      key,
+      batchId,
+      label: batchId ? `Fanout 批次 · ${ordered.length} 个专家` : "单专家输出",
+      items: ordered,
+    };
+  });
+}
+
+function specialistOutputSummary(output: Record<string, unknown>) {
+  const summary = output.summary ?? output.answer;
+  if (typeof summary === "string" && summary.trim().length > 0) return summary;
+  const issues = output.issues;
+  if (Array.isArray(issues)) return `${issues.length} issue(s)`;
+  const citations = output.citations;
+  if (Array.isArray(citations)) return `${citations.length} citation(s)`;
+  const violations = output.violations;
+  if (Array.isArray(violations)) return `${violations.length} violation(s)`;
+  return "结构化输出已写入";
 }
 
 function recordField(value: Record<string, unknown>, key: string): Record<string, unknown> {

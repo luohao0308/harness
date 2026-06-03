@@ -9,6 +9,11 @@ class PlanStep(BaseModel):
     execution_mode: Literal["sync", "async"]
     requires_sandbox: bool
     can_spawn_subagent: bool
+    recommended_specialist_slug: str | None = None
+    fanout_specialist_slugs: list[str] = Field(default_factory=list)
+    fanout_aggregation: Literal["synthesizer_chain", "concat", "first_success"] = (
+        "synthesizer_chain"
+    )
     depends_on: list[str] = Field(default_factory=list)
     expected_events: list[str] = Field(default_factory=lambda: ["STEP_STARTED", "STEP_COMPLETED"])
     tool_hints: list[str] = Field(default_factory=list)

@@ -26,6 +26,7 @@ from app.api.schemas import (
 from app.db.models import (
     AdminAuditEvent,
     AgentAssignment,
+    AgentRun,
     CitationRecord,
     EvalCase,
     EvalDataset,
@@ -37,6 +38,8 @@ from app.db.models import (
     PromptAssemblyManifest,
     RetrievalHit,
     RetrievalSession,
+    SubagentOutput,
+    SubagentSpecialist,
     Task,
     ToolCall,
     WebResearchSource,
@@ -585,6 +588,9 @@ def get_regression_delta(
     persona_contract_pass_rate_delta = _metric_delta(
         current_metrics, baseline_metrics, "persona_contract_pass_rate"
     )
+    specialist_contract_pass_rate_delta = _metric_delta(
+        current_metrics, baseline_metrics, "specialist_contract_pass_rate"
+    )
     overrefusal_rate_delta = _metric_delta(current_metrics, baseline_metrics, "overrefusal_rate")
     safety_violation_total_delta = int(
         current_metrics.get("safety_violation_total", 0)
@@ -622,6 +628,7 @@ def get_regression_delta(
         refusal_contract_pass_rate_delta=refusal_contract_pass_rate_delta,
         safety_contract_pass_rate_delta=safety_contract_pass_rate_delta,
         persona_contract_pass_rate_delta=persona_contract_pass_rate_delta,
+        specialist_contract_pass_rate_delta=specialist_contract_pass_rate_delta,
         overrefusal_rate_delta=overrefusal_rate_delta,
         safety_violation_total_delta=safety_violation_total_delta,
         role_drift_total_delta=role_drift_total_delta,
@@ -647,6 +654,7 @@ def get_regression_delta(
             or safety_contract_pass_rate_delta < SAFETY_PASS_RATE_REGRESSION_THRESHOLD
             or safety_violation_total_delta > 0
             or persona_contract_pass_rate_delta < CONTRACT_PASS_RATE_REGRESSION_THRESHOLD
+            or specialist_contract_pass_rate_delta < CONTRACT_PASS_RATE_REGRESSION_THRESHOLD
         ),
         total_cases=len(current_results),
         passed_cases=passed_cases,
@@ -733,6 +741,7 @@ def _grade_case(
         expected_json=eval_case.expected_json,
     )
     persona_contract_trace = _grade_persona_contract(model_calls, eval_case.expected_json)
+    specialist_contract_trace = _grade_specialist_contract(session, task, eval_case.expected_json)
     cost_trace = _grade_cost_contract(
         session=session,
         organization_id=organization_id,
@@ -746,6 +755,7 @@ def _grade_case(
         and refusal_contract_trace["passed"]
         and safety_contract_trace["passed"]
         and persona_contract_trace["passed"]
+        and specialist_contract_trace["passed"]
         and cost_trace["passed"]
     )
     score = 1.0 if status_match and not failed_tools and contracts_passed else 0.0
@@ -763,6 +773,7 @@ def _grade_case(
         refusal_contract_passed=bool(refusal_contract_trace["passed"]),
         safety_contract_passed=bool(safety_contract_trace["passed"]),
         persona_contract_passed=bool(persona_contract_trace["passed"]),
+        specialist_contract_passed=bool(specialist_contract_trace["passed"]),
         cost_contract_passed=bool(cost_trace["passed"]),
     )
     return EvalResult(
@@ -781,6 +792,9 @@ def _grade_case(
             "refusal_contract_score": 1.0 if refusal_contract_trace["passed"] else 0.0,
             "safety_contract_score": 1.0 if safety_contract_trace["passed"] else 0.0,
             "persona_contract_score": 1.0 if persona_contract_trace["passed"] else 0.0,
+            "specialist_contract_score": 1.0
+            if specialist_contract_trace["passed"]
+            else 0.0,
             "cost_contract_score": 1.0 if cost_trace["passed"] else 0.0,
         },
         grader_trace_json={
@@ -798,6 +812,7 @@ def _grade_case(
             "refusal_contract": refusal_contract_trace,
             "safety_contract": safety_contract_trace,
             "persona_contract": persona_contract_trace,
+            "specialist_contract": specialist_contract_trace,
             "cost_contract": cost_trace,
         },
         latency_ms=latency_ms,
@@ -817,6 +832,7 @@ def _grade_case_failure_message(
     refusal_contract_passed: bool,
     safety_contract_passed: bool,
     persona_contract_passed: bool,
+    specialist_contract_passed: bool,
     cost_contract_passed: bool,
 ) -> str:
     reasons: list[str] = []
@@ -836,6 +852,8 @@ def _grade_case_failure_message(
         reasons.append("safety_contract_failed")
     if not persona_contract_passed:
         reasons.append("persona_contract_failed")
+    if not specialist_contract_passed:
+        reasons.append("specialist_contract_failed")
     if not cost_contract_passed:
         reasons.append("cost_contract_failed")
     if not reasons:
@@ -1307,6 +1325,264 @@ def _grade_refusal_contract(model_calls: list[ModelCall], expected_json: dict) -
         "assistant_length": len(final_text),
         "category": contract.get("category"),
     }
+
+
+def _grade_specialist_contract(
+    session: Session,
+    task: Task | None,
+    expected_json: dict,
+) -> dict:
+    contract = expected_json.get("specialist_contract")
+    if not isinstance(contract, dict):
+        return {
+            "configured": False,
+            "passed": True,
+            "failures": [],
+            "outputs_by_specialist": {},
+            "fanout_batches": [],
+        }
+    if task is None:
+        return {
+            "configured": True,
+            "passed": False,
+            "failures": ["missing_task"],
+            "outputs_by_specialist": {},
+            "fanout_batches": [],
+        }
+    rows = list(
+        session.execute(
+            select(SubagentOutput, AgentRun, SubagentSpecialist)
+            .join(AgentRun, AgentRun.id == SubagentOutput.agent_run_id)
+            .outerjoin(SubagentSpecialist, SubagentSpecialist.id == SubagentOutput.specialist_id)
+            .where(SubagentOutput.task_id == task.id)
+            .order_by(SubagentOutput.written_at.asc(), SubagentOutput.id.asc())
+        ).all()
+    )
+    outputs_by_slug: dict[str, list[SubagentOutput]] = {}
+    output_records: list[dict] = []
+    total_cost = Decimal("0")
+    total_runtime_ms = 0
+    role_distribution: dict[str, int] = {}
+    for output, run, specialist in rows:
+        slug = (
+            specialist.slug
+            if specialist is not None
+            else str(run.context_json.get("specialist_slug") or output.specialist_id or "unknown")
+        )
+        role = (
+            specialist.role
+            if specialist is not None
+            else str(run.context_json.get("specialist_role") or "specialist")
+        )
+        outputs_by_slug.setdefault(slug, []).append(output)
+        role_distribution[role] = role_distribution.get(role, 0) + 1
+        budget = (
+            output.budget_consumed_json
+            if isinstance(output.budget_consumed_json, dict)
+            else {}
+        )
+        try:
+            total_cost += Decimal(str(budget.get("cost_usd") or "0"))
+        except (InvalidOperation, ValueError):
+            pass
+        runtime_ms = _specialist_runtime_ms(run, budget)
+        total_runtime_ms += runtime_ms
+        output_records.append(
+            {
+                "output_id": output.id,
+                "agent_run_id": run.id,
+                "specialist_slug": slug,
+                "specialist_role": role,
+                "status": run.status,
+                "fanout_batch_id": run.context_json.get("fanout_batch_id"),
+                "fanout_index": run.context_json.get("fanout_index"),
+                "fanout_total": run.context_json.get("fanout_total"),
+                "runtime_ms": runtime_ms,
+                "cost_usd": str(budget.get("cost_usd") or "0"),
+            }
+        )
+    failures: list[str] = []
+    for slug in _as_string_list(contract.get("expected_specialists")):
+        if not outputs_by_slug.get(slug):
+            failures.append(f"missing_specialist:{slug}")
+    for slug in _as_string_list(contract.get("forbidden_specialists")):
+        if outputs_by_slug.get(slug):
+            failures.append(f"forbidden_specialist:{slug}")
+    min_outputs = contract.get("min_outputs_per_specialist")
+    if isinstance(min_outputs, dict):
+        for slug, raw_min in min_outputs.items():
+            if not isinstance(raw_min, int):
+                continue
+            actual = len(outputs_by_slug.get(str(slug), []))
+            if actual < raw_min:
+                failures.append(f"min_outputs_not_met:{slug}:{actual}<{raw_min}")
+    max_outputs = contract.get("max_outputs_per_specialist")
+    if isinstance(max_outputs, dict):
+        for slug, raw_max in max_outputs.items():
+            if not isinstance(raw_max, int):
+                continue
+            actual = len(outputs_by_slug.get(str(slug), []))
+            if actual > raw_max:
+                failures.append(f"max_outputs_exceeded:{slug}:{actual}>{raw_max}")
+    output_assertions = contract.get("output_assertions")
+    if isinstance(output_assertions, dict):
+        for slug, assertions in output_assertions.items():
+            slug_outputs = outputs_by_slug.get(str(slug), [])
+            if not isinstance(assertions, list):
+                continue
+            for assertion in assertions:
+                if not isinstance(assertion, dict):
+                    continue
+                failures.extend(
+                    _specialist_output_assertion_failures(
+                        slug=str(slug),
+                        outputs=slug_outputs,
+                        assertion=assertion,
+                    )
+                )
+    budget_assertions = contract.get("budget_assertions")
+    if isinstance(budget_assertions, dict):
+        max_cost = budget_assertions.get("max_total_specialist_cost_usd")
+        if max_cost is not None:
+            try:
+                max_cost_decimal = Decimal(str(max_cost))
+                if total_cost > max_cost_decimal:
+                    failures.append(
+                        f"specialist_cost_exceeded:{_format_cost(total_cost)}>{max_cost_decimal}"
+                    )
+            except (InvalidOperation, ValueError):
+                failures.append("invalid_max_total_specialist_cost_usd")
+        max_runtime = budget_assertions.get("max_total_specialist_runtime_ms")
+        if isinstance(max_runtime, int) and total_runtime_ms > max_runtime:
+            failures.append(f"specialist_runtime_exceeded:{total_runtime_ms}>{max_runtime}")
+    fanout_batches = _specialist_fanout_batches(rows)
+    fanout_assertions = contract.get("fanout_assertions")
+    if isinstance(fanout_assertions, dict):
+        expected_count = fanout_assertions.get("expected_batch_count")
+        if isinstance(expected_count, int) and len(fanout_batches) != expected_count:
+            failures.append(f"fanout_batch_count:{len(fanout_batches)}!={expected_count}")
+        min_batch_size = fanout_assertions.get("min_batch_size")
+        if isinstance(min_batch_size, int):
+            for batch in fanout_batches:
+                if int(batch["size"]) < min_batch_size:
+                    failures.append(
+                        f"fanout_batch_too_small:{batch['fanout_batch_id']}:{batch['size']}<{min_batch_size}"
+                    )
+    outputs_by_specialist = {
+        slug: len(outputs) for slug, outputs in sorted(outputs_by_slug.items())
+    }
+    return {
+        "configured": True,
+        "passed": not failures,
+        "failures": failures,
+        "outputs_by_specialist": outputs_by_specialist,
+        "output_records": output_records,
+        "total_specialist_invocations": len(rows),
+        "total_specialist_cost_usd": _format_cost(total_cost),
+        "total_specialist_runtime_ms": total_runtime_ms,
+        "specialist_role_distribution": role_distribution,
+        "fanout_batches": fanout_batches,
+    }
+
+
+def _specialist_output_assertion_failures(
+    *,
+    slug: str,
+    outputs: list[SubagentOutput],
+    assertion: dict,
+) -> list[str]:
+    field = assertion.get("field")
+    if not isinstance(field, str) or not field:
+        return [f"output_assertion_failed:{slug}.invalid_field"]
+    values = [_nested_field(output.output_json, field) for output in outputs]
+    if not values:
+        return [f"output_assertion_failed:{slug}.{field}.missing_output"]
+    failures: list[str] = []
+    min_length = assertion.get("min_length")
+    if isinstance(min_length, int):
+        if not any(_value_length(value) >= min_length for value in values):
+            actual = max((_value_length(value) for value in values), default=0)
+            failures.append(
+                f"output_assertion_failed:{slug}.{field}.min_length:{actual}<{min_length}"
+            )
+    max_length = assertion.get("max_length")
+    if isinstance(max_length, int):
+        if any(_value_length(value) > max_length for value in values):
+            actual = max(_value_length(value) for value in values)
+            failures.append(
+                f"output_assertion_failed:{slug}.{field}.max_length:{actual}>{max_length}"
+            )
+    contains = _as_string_list(assertion.get("contains"))
+    if contains:
+        text_values = [_json_text(value) for value in values]
+        for marker in contains:
+            if not any(marker in text for text in text_values):
+                failures.append(
+                    f"output_assertion_failed:{slug}.{field}.contains:{_truncate_trace_value(marker)}"
+                )
+    if "equals" in assertion:
+        expected = assertion.get("equals")
+        if not any(value == expected for value in values):
+            failures.append(f"output_assertion_failed:{slug}.{field}.equals")
+    return failures
+
+
+def _nested_field(payload: object, field: str) -> object:
+    cursor = payload
+    for part in field.split("."):
+        if isinstance(cursor, dict) and part in cursor:
+            cursor = cursor[part]
+        else:
+            return None
+    return cursor
+
+
+def _value_length(value: object) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (str, list, tuple, set, dict)):
+        return len(value)
+    return len(str(value))
+
+
+def _specialist_runtime_ms(run: AgentRun, budget: dict) -> int:
+    runtime_seconds = budget.get("runtime_seconds")
+    if isinstance(runtime_seconds, (int, float)):
+        return max(0, int(float(runtime_seconds) * 1000))
+    if run.started_at is None or run.completed_at is None:
+        return 0
+    end = run.completed_at
+    if run.started_at.tzinfo is None and end.tzinfo is not None:
+        end = end.replace(tzinfo=None)
+    if run.started_at.tzinfo is not None and end.tzinfo is None:
+        end = end.replace(tzinfo=run.started_at.tzinfo)
+    return max(0, int((end - run.started_at).total_seconds() * 1000))
+
+
+def _specialist_fanout_batches(
+    rows: list[tuple[SubagentOutput, AgentRun, SubagentSpecialist | None]],
+) -> list[dict]:
+    grouped: dict[str, list[AgentRun]] = {}
+    for _output, run, _specialist in rows:
+        batch_id = run.context_json.get("fanout_batch_id")
+        if isinstance(batch_id, str) and batch_id:
+            grouped.setdefault(batch_id, []).append(run)
+    batches: list[dict] = []
+    for batch_id, runs in grouped.items():
+        statuses: dict[str, int] = {}
+        for run in runs:
+            statuses[run.status] = statuses.get(run.status, 0) + 1
+        first = runs[0]
+        batches.append(
+            {
+                "fanout_batch_id": batch_id,
+                "size": len(runs),
+                "expected_total": first.context_json.get("fanout_total"),
+                "aggregation": first.context_json.get("fanout_aggregation"),
+                "statuses": statuses,
+            }
+        )
+    return sorted(batches, key=lambda item: str(item["fanout_batch_id"]))
 
 
 def _grade_safety_contract(
@@ -2102,6 +2378,8 @@ def _aggregate_metrics(results: list[EvalResult]) -> dict:
     dialogue_breakdown = _contract_failure_breakdown(results, "dialogue_contract")
     refusal_breakdown = _contract_failure_breakdown(results, "refusal_contract")
     persona_breakdown = _contract_failure_breakdown(results, "persona_contract")
+    specialist_breakdown = _contract_failure_breakdown(results, "specialist_contract")
+    specialist_aggregate = _specialist_contract_aggregate(results)
     safety_aggregate = _safety_violation_aggregate(results)
     cost_aggregate = _cost_aggregate_from_results(results)
     passed_total = sum(1 for result in results if result.status == "PASSED")
@@ -2158,6 +2436,14 @@ def _aggregate_metrics(results: list[EvalResult]) -> dict:
         ),
         "persona_contract_failure_breakdown": persona_breakdown,
         "role_drift_total": _role_drift_total(results),
+        "specialist_contract_pass_rate": _contract_pass_rate(results, "specialist_contract"),
+        "specialist_contract_configured_count": _contract_configured_count(
+            results, "specialist_contract"
+        ),
+        "specialist_contract_failure_breakdown": specialist_breakdown,
+        "total_specialist_invocations": specialist_aggregate["total_specialist_invocations"],
+        "specialist_role_distribution": specialist_aggregate["specialist_role_distribution"],
+        "total_specialist_cost_usd": specialist_aggregate["total_specialist_cost_usd"],
         "missing_pricing_models": sorted(cost_aggregate["missing_pricing_models"]),
         "grounding_pass_rate": round(
             sum(1 for trace in traces if bool(trace.get("passed"))) / total,
@@ -2293,6 +2579,32 @@ def _cost_failure_breakdown(results: list[EvalResult]) -> dict[str, int]:
         for limit in trace.get("limit_exceeded") or []:
             counts[str(limit)] = counts.get(str(limit), 0) + 1
     return counts
+
+
+def _specialist_contract_aggregate(results: list[EvalResult]) -> dict:
+    total_invocations = 0
+    total_cost = Decimal("0")
+    role_distribution: dict[str, int] = {}
+    for result in results:
+        trace = _trace_contract(result, "specialist_contract")
+        if trace.get("configured") is not True:
+            continue
+        total_invocations += int(trace.get("total_specialist_invocations") or 0)
+        try:
+            total_cost += Decimal(str(trace.get("total_specialist_cost_usd") or "0"))
+        except (InvalidOperation, ValueError):
+            pass
+        raw_distribution = trace.get("specialist_role_distribution")
+        if isinstance(raw_distribution, dict):
+            for role, count in raw_distribution.items():
+                role_distribution[str(role)] = role_distribution.get(str(role), 0) + int(
+                    count or 0
+                )
+    return {
+        "total_specialist_invocations": total_invocations,
+        "specialist_role_distribution": role_distribution,
+        "total_specialist_cost_usd": _format_cost(total_cost),
+    }
 
 
 def _cost_aggregate_from_results(results: list[EvalResult]) -> dict:
