@@ -428,6 +428,113 @@ class TestRegressionDelta:
         assert delta["safety_violation_total_delta"] == 1
         assert delta["role_drift_total_delta"] == 1
 
+    def test_specialist_contract_regression_field_and_gate(
+        self,
+        db_session: Session,
+    ) -> None:
+        dataset = EvalDataset(
+            organization_id="dev-org",
+            name="Specialist Contract Regression",
+            description="Specialist contract gate coverage",
+            status="ACTIVE",
+            created_by="dev-engineer",
+        )
+        db_session.add(dataset)
+        db_session.flush()
+        baseline_run = EvalRun(
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            metrics_json={},
+            created_by="dev-engineer",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        current_run = EvalRun(
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            metrics_json={},
+            created_by="dev-engineer",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        db_session.add_all([baseline_run, current_run])
+        db_session.flush()
+        dataset.baseline_run_id = baseline_run.id
+        eval_case = EvalCase(
+            dataset_id=dataset.id,
+            source_task_id=None,
+            input_json={},
+            expected_json={},
+            tags_json=["subagent-specialist-v2"],
+        )
+        db_session.add(eval_case)
+        db_session.flush()
+        eval_case_id = eval_case.id
+        base_trace = {
+            "grader_trace_schema_version": 1,
+            "grader": "deterministic_trace_grader_v1",
+            "passed": True,
+            "grounding_failures": [],
+            "forbidden_evidence_leaked": False,
+            "specialist_contract": {
+                "configured": True,
+                "passed": True,
+                "total_specialist_invocations": 1,
+                "total_specialist_cost_usd": "0.010000",
+                "specialist_role_distribution": {"reviewer": 1},
+            },
+        }
+        current_trace = {
+            **base_trace,
+            "specialist_contract": {
+                "configured": True,
+                "passed": False,
+                "failures": ["missing_specialist:code-reviewer"],
+                "total_specialist_invocations": 0,
+                "total_specialist_cost_usd": "0.000000",
+                "specialist_role_distribution": {},
+            },
+        }
+        db_session.add_all(
+            [
+                EvalResult(
+                    eval_run_id=baseline_run.id,
+                    eval_case_id=eval_case_id,
+                    task_id=None,
+                    status="PASSED",
+                    scores_json={"task_success": 1, "tool_selection_accuracy": 1},
+                    grader_trace_json=base_trace,
+                    latency_ms=0,
+                    cost_usd="0",
+                ),
+                EvalResult(
+                    eval_run_id=current_run.id,
+                    eval_case_id=eval_case_id,
+                    task_id=None,
+                    status="FAILED",
+                    scores_json={"task_success": 1, "tool_selection_accuracy": 1},
+                    grader_trace_json=current_trace,
+                    latency_ms=0,
+                    cost_usd="0",
+                ),
+            ]
+        )
+        db_session.commit()
+
+        response = TestClient(app).get(
+            f"/api/evals/runs/{current_run.id}/regression",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        delta = response.json()
+        assert delta["is_regression"] is True
+        assert delta["specialist_contract_pass_rate_delta"] == -1.0
+
     def test_regression_run_not_found(self, db_session: Session) -> None:
         client = TestClient(app)
         response = client.get(

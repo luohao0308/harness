@@ -1,9 +1,18 @@
 import os
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import AgentRun, Task, utc_now
+from app.agents.specialists import (
+    MAX_SPECIALIST_DEPTH,
+    SpecialistValidationError,
+    SubagentDepthExceededError,
+    budget_consumed_for_run,
+    normalize_budget,
+    output_schema_sha256,
+)
+from app.db.models import AgentRun, SubagentOutput, SubagentSpecialist, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
@@ -11,9 +20,14 @@ from app.observability.metrics import agent_subagent_recovery_total, agent_subag
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, timeout_at_from_now
 
 SUBAGENT_CONCURRENCY_LIMIT = 5
+MAX_FANOUT_PER_STEP = 5
 
 
 class SubagentLimitExceededError(RuntimeError):
+    pass
+
+
+class FanoutCapacityExceededError(RuntimeError):
     pass
 
 
@@ -30,7 +44,27 @@ class SubagentManager:
         parent_agent_id: str | None = None,
         timeout_seconds: int = DEFAULT_SUBAGENT_TIMEOUT_SECONDS,
         enqueue: bool = False,
+        specialist: SubagentSpecialist | None = None,
     ) -> AgentRun:
+        if parent_agent_id is not None:
+            depth = self._compute_depth(parent_agent_id)
+            if depth >= MAX_SPECIALIST_DEPTH:
+                self.event_store.append(
+                    task_id=task.id,
+                    agent_run_id=parent_agent_id,
+                    event_type=EventType.SUBAGENT_DEPTH_REJECTED,
+                    payload_json={
+                        "parent_agent_id": parent_agent_id,
+                        "depth": depth,
+                        "max_depth": MAX_SPECIALIST_DEPTH,
+                        "specialist_id": specialist.id if specialist is not None else None,
+                        "specialist_slug": specialist.slug if specialist is not None else None,
+                    },
+                )
+                self.session.flush()
+                raise SubagentDepthExceededError(
+                    f"depth {depth} >= {MAX_SPECIALIST_DEPTH}"
+                )
         running_or_pending = self.session.execute(
             select(func.count(AgentRun.id)).where(
                 AgentRun.task_id == task.id,
@@ -41,14 +75,36 @@ class SubagentManager:
         if running_or_pending >= SUBAGENT_CONCURRENCY_LIMIT:
             raise SubagentLimitExceededError("Subagent concurrency limit reached")
 
+        runtime_budget = (
+            normalize_budget(specialist.budget_json) if specialist is not None else None
+        )
+        effective_timeout_seconds = (
+            int(runtime_budget.get("max_runtime_seconds") or timeout_seconds)
+            if runtime_budget is not None
+            else timeout_seconds
+        )
+        context_json = dict(assignment)
+        if specialist is not None:
+            context_json = {
+                **context_json,
+                "specialist_id": specialist.id,
+                "specialist_slug": specialist.slug,
+                "specialist_role": specialist.role,
+                "system_prompt_override": specialist.system_prompt,
+                "capability_whitelist": list(specialist.capability_slugs_json or []),
+                "output_schema": specialist.output_schema_json,
+                "output_schema_sha256": output_schema_sha256(specialist.output_schema_json),
+                "budget": runtime_budget,
+            }
         agent_run = AgentRun(
             task_id=task.id,
             parent_agent_id=parent_agent_id,
             agent_type="subagent",
             status="PENDING",
-            context_json=assignment,
+            specialist_id=specialist.id if specialist is not None else None,
+            context_json=context_json,
             capability_snapshot_json=task.capability_snapshot_json,
-            timeout_at=timeout_at_from_now(timeout_seconds),
+            timeout_at=timeout_at_from_now(effective_timeout_seconds),
         )
         self.session.add(agent_run)
         self.session.flush()
@@ -59,14 +115,131 @@ class SubagentManager:
             event_type=EventType.SUBAGENT_SPAWNED,
             payload_json={
                 "agent_run_id": agent_run.id,
-                "assignment": assignment,
-                "timeout_seconds": timeout_seconds,
+                "assignment": context_json,
+                "timeout_seconds": effective_timeout_seconds,
                 "concurrency_limit": SUBAGENT_CONCURRENCY_LIMIT,
+                "specialist": _specialist_event_payload(specialist),
             },
         )
         if enqueue:
             self._enqueue(agent_run=agent_run, task_id=task.id, stage="queued")
         return agent_run
+
+    def spawn_fanout(
+        self,
+        *,
+        task: Task,
+        assignment: dict,
+        specialists: list[SubagentSpecialist],
+        aggregation: str = "synthesizer_chain",
+        parent_agent_id: str | None = None,
+        timeout_seconds: int = DEFAULT_SUBAGENT_TIMEOUT_SECONDS,
+        enqueue: bool = False,
+    ) -> tuple[str, list[AgentRun]]:
+        if len(specialists) < 2:
+            raise FanoutCapacityExceededError("fanout requires at least two specialists")
+        if len(specialists) > MAX_FANOUT_PER_STEP:
+            raise FanoutCapacityExceededError(
+                f"fanout size {len(specialists)} exceeds max {MAX_FANOUT_PER_STEP}"
+            )
+        running_or_pending = self.session.execute(
+            select(func.count(AgentRun.id)).where(
+                AgentRun.task_id == task.id,
+                AgentRun.agent_type == "subagent",
+                AgentRun.status.in_(["PENDING", "RUNNING"]),
+            )
+        ).scalar_one()
+        if running_or_pending + len(specialists) > SUBAGENT_CONCURRENCY_LIMIT:
+            raise FanoutCapacityExceededError("fanout exceeds subagent concurrency capacity")
+        batch_id = f"fanout-{uuid4()}"
+        total = len(specialists)
+        runs: list[AgentRun] = []
+        for index, specialist in enumerate(specialists):
+            run = self.spawn(
+                task=task,
+                assignment={
+                    **assignment,
+                    "fanout_batch_id": batch_id,
+                    "fanout_index": index,
+                    "fanout_total": total,
+                    "fanout_aggregation": aggregation,
+                    "fanout_specialist_slug": specialist.slug,
+                },
+                parent_agent_id=parent_agent_id,
+                timeout_seconds=timeout_seconds,
+                enqueue=enqueue,
+                specialist=specialist,
+            )
+            runs.append(run)
+        return batch_id, runs
+
+    def finalize_with_output(
+        self,
+        *,
+        agent_run: AgentRun,
+        raw_output_dict: dict,
+        budget_consumed: dict | None = None,
+        budget_exceeded: list[str] | None = None,
+    ) -> SubagentOutput:
+        if agent_run.subagent_output is not None:
+            raise ValueError("subagent output is immutable and already exists")
+        schema = agent_run.context_json.get("output_schema")
+        if not isinstance(schema, dict):
+            raise ValueError("subagent output schema snapshot is missing")
+        try:
+            _validate_output(schema=schema, output=raw_output_dict)
+        except SpecialistValidationError as exc:
+            agent_run.status = "FAILED"
+            agent_run.completed_at = utc_now()
+            agent_run.context_json = {
+                **agent_run.context_json,
+                "failure_reason": "output_schema_violation",
+                "failure_detail": str(exc),
+            }
+            self.event_store.append(
+                task_id=agent_run.task_id,
+                agent_run_id=agent_run.id,
+                event_type=EventType.SUBAGENT_FAILED,
+                payload_json={
+                    "agent_run_id": agent_run.id,
+                    "failure_reason": "output_schema_violation",
+                    "error": str(exc),
+                },
+            )
+            self.session.flush()
+            raise
+        output = SubagentOutput(
+            agent_run_id=agent_run.id,
+            task_id=agent_run.task_id,
+            specialist_id=agent_run.specialist_id,
+            output_json=raw_output_dict,
+            output_schema_sha256=str(
+                agent_run.context_json.get("output_schema_sha256")
+                or output_schema_sha256(schema)
+            ),
+            budget_consumed_json=(
+                budget_consumed or budget_consumed_for_run(self.session, agent_run)
+            ),
+            budget_exceeded_json=budget_exceeded or [],
+            written_at=utc_now(),
+        )
+        self.session.add(output)
+        agent_run.status = "SUCCESS"
+        agent_run.completed_at = utc_now()
+        self.event_store.append(
+            task_id=agent_run.task_id,
+            agent_run_id=agent_run.id,
+            event_type=EventType.SUBAGENT_COMPLETED,
+            payload_json={
+                "agent_run_id": agent_run.id,
+                "specialist_id": agent_run.specialist_id,
+                "output_id": output.id,
+                "budget_consumed": output.budget_consumed_json,
+                "budget_exceeded": output.budget_exceeded_json,
+            },
+        )
+        self.session.flush()
+        return output
 
     def cancel(self, agent_run: AgentRun) -> AgentRun:
         if agent_run.status in {"SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"}:
@@ -161,6 +334,17 @@ class SubagentManager:
                     "error": str(exc),
                 },
             )
+
+    def _compute_depth(self, parent_agent_id: str | None) -> int:
+        depth = 0
+        cursor = parent_agent_id
+        while cursor and depth <= MAX_SPECIALIST_DEPTH:
+            parent = self.session.get(AgentRun, cursor)
+            if parent is None:
+                break
+            depth += 1
+            cursor = parent.parent_agent_id
+        return depth
 
     def _mark_timeout(
         self,
@@ -268,3 +452,25 @@ def _align_datetime(*, now, value):
 def _default_takeover_owner() -> str:
     hostname = os.getenv("HOSTNAME") or "local"
     return f"worker:{hostname}:{os.getpid()}"
+
+
+def _validate_output(*, schema: dict, output: dict) -> None:
+    from jsonschema import Draft7Validator, ValidationError
+
+    try:
+        Draft7Validator(schema).validate(output)
+    except ValidationError as exc:
+        path = ".".join(str(item) for item in exc.path)
+        suffix = f" at {path}" if path else ""
+        raise SpecialistValidationError(f"output_schema_violation{suffix}: {exc.message}") from exc
+
+
+def _specialist_event_payload(specialist: SubagentSpecialist | None) -> dict | None:
+    if specialist is None:
+        return None
+    return {
+        "id": specialist.id,
+        "slug": specialist.slug,
+        "role": specialist.role,
+        "display_name": specialist.display_name,
+    }

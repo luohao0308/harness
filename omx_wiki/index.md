@@ -34,6 +34,8 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-26-mcp-skill-tool-modal-config]] - Tool Registry and Agent Studio MCP/Skill/Tool configuration moved behind click-open modal dialogs, with frontend tests, lint, and build evidence.
 - [[session-2026-05-27-agent-console-chinese-follow-up-pages]] - Agent Studio, Knowledge, and Team Chinese-first wording follow-up with status-label cleanup, refreshed browser fixtures, focused headed smoke, and repeated 53-case Chromium evidence.
 - [[session-2026-05-28-eval-dimensions-v2]] - Eval Dimensions v2 refusal/safety/persona deterministic contracts, aggregate metrics, regression gates, frontend presets, and validation evidence.
+- [[session-2026-05-28-subagent-specialists-v1]] - Subagent Specialists v1 templates, structured outputs, per-specialist budgets, deterministic routing, console expert evidence, and validation evidence.
+- [[session-2026-05-28-subagent-specialists-v2]] - Subagent Specialists v2 parallel fanout, nested-depth guard, success-rate ranking, specialist stats, Eval specialist contracts, and console fanout evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories
@@ -91,3 +93,7 @@ Persistent project knowledge for the AI Harness Platform.
 - `refusal`
 - `safety`
 - `persona`
+- `subagents`
+- `specialists`
+- `structured-output`
+- `fanout`

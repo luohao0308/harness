@@ -10,6 +10,8 @@ import { SandboxesPage } from "../features/sandboxes/pages/SandboxesPage";
 import { ModelSettingsPage } from "../features/settings/pages/ModelSettingsPage";
 import { PolicySettingsPage } from "../features/settings/pages/PolicySettingsPage";
 import { SubagentDetailPage } from "../features/subagents/pages/SubagentDetailPage";
+import { SubagentSpecialistDetailPage } from "../features/subagents/pages/SubagentSpecialistDetailPage";
+import { SubagentSpecialistsPage } from "../features/subagents/pages/SubagentSpecialistsPage";
 import { SubagentsPage } from "../features/subagents/pages/SubagentsPage";
 import { TeamListPage } from "../features/teams/pages/TeamListPage";
 import { TeamPage } from "../features/teams/pages/TeamPage";
@@ -36,6 +38,8 @@ export const router = createBrowserRouter([
       { path: "tasks", element: <Navigate to="/runs" replace /> },
       { path: "subagents", element: <SubagentsPage /> },
       { path: "subagents/:subagentId", element: <SubagentDetailPage /> },
+      { path: "subagent-specialists", element: <SubagentSpecialistsPage /> },
+      { path: "subagent-specialists/:specialistId", element: <SubagentSpecialistDetailPage /> },
       { path: "sandboxes", element: <SandboxesPage /> },
       { path: "observability", element: <ObservabilityPage /> },
       { path: "token-savings", element: <TokenSavingsPage /> },

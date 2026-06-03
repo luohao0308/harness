@@ -22,7 +22,12 @@ from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
 from app.agents.registry import ensure_default_agents
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
-from app.agents.subagent_manager import SubagentManager
+from app.agents.specialists import (
+    SubagentSpecialistRegistry,
+    collect_subagent_outputs,
+    ensure_system_specialists,
+)
+from app.agents.subagent_manager import FanoutCapacityExceededError, SubagentManager
 from app.db.models import AgentEvent, Task, TaskStep, utc_now
 from app.db.models import ExecutionPlan as ExecutionPlanModel
 from app.events.event_store import EventStore
@@ -311,6 +316,7 @@ class Executor:
                 "task_id": task.id,
                 "plan_id": plan_row.id,
                 "resumed_from_steps": resumed_step_keys,
+                "specialist_outputs": collect_subagent_outputs(self.session, task.id),
             },
         )
         self.session.flush()
@@ -432,6 +438,7 @@ class Executor:
                     "resume_from_step_key": resume_from_step_key,
                     "resumed_step_keys": resumed_step_keys,
                     "skipped_step_keys": skipped_step_keys,
+                    "specialist_outputs": collect_subagent_outputs(self.session, task.id),
                 },
             )
         self.session.flush()
@@ -559,7 +566,11 @@ class Executor:
             self.event_store.append(
                 task_id=task.id,
                 event_type=EventType.TASK_COMPLETED,
-                payload_json={"task_id": task.id, "plan_id": plan_row.id},
+                payload_json={
+                    "task_id": task.id,
+                    "plan_id": plan_row.id,
+                    "specialist_outputs": collect_subagent_outputs(self.session, task.id),
+                },
             )
         self.session.flush()
         return task
@@ -708,6 +719,9 @@ class Executor:
                 "execution_mode": step.execution_mode,
                 "requires_sandbox": step.requires_sandbox,
                 "can_spawn_subagent": step.can_spawn_subagent,
+                "recommended_specialist_slug": step.recommended_specialist_slug,
+                "fanout_specialist_slugs": step.fanout_specialist_slugs,
+                "fanout_aggregation": step.fanout_aggregation,
                 "tool_hints": step.tool_hints,
                 "risk_level": step.risk_level,
                 "artifact_expectations": step.artifact_expectations,
@@ -878,14 +892,24 @@ class Executor:
         step_row: TaskStep,
     ) -> StepResult:
         """Execute a step via subagent delegation."""
+        fanout_slugs = list(dict.fromkeys(step.fanout_specialist_slugs))
+        if len(fanout_slugs) > 1:
+            return self._execute_fanout_subagent_step(task, plan_row, step, step_row, fanout_slugs)
+        specialist = self._select_specialist(task=task, step=step)
         agent_run = SubagentManager(self.session).spawn(
             task=task,
             assignment={
                 "step_key": step.key,
                 "description": step.description,
                 "execution_mode": step.execution_mode,
+                "recommended_specialist_slug": step.recommended_specialist_slug,
+                "fanout_specialist_slugs": step.fanout_specialist_slugs,
+                "fanout_aggregation": step.fanout_aggregation,
+                "tool_hints": step.tool_hints,
+                "task_goal": task.goal,
             },
             enqueue=True,
+            specialist=specialist,
         )
         step_row.assigned_agent_id = agent_run.id
 
@@ -898,6 +922,7 @@ class Executor:
                 "step_key": step.key,
                 "agent_run_id": agent_run.id,
                 "interval_seconds": SUBAGENT_HEARTBEAT_INTERVAL,
+                "specialist_slug": specialist.slug if specialist is not None else None,
             },
         )
 
@@ -922,6 +947,8 @@ class Executor:
                 "assigned_agent_id": agent_run.id,
                 "execution_mode": step.execution_mode,
                 "next_action": result.next_action,
+                "specialist_slug": specialist.slug if specialist is not None else None,
+                "specialist_role": specialist.role if specialist is not None else None,
                 "trace_summary": (f"异步步骤 {step.key} 已派生子 Agent {agent_run.id[:8]}"),
                 "react_trace": {
                     "reason": {
@@ -943,6 +970,185 @@ class Executor:
         )
         self.session.flush()
         return result
+
+    def _execute_fanout_subagent_step(
+        self,
+        task: Task,
+        plan_row: ExecutionPlanModel,
+        step: PlanStep,
+        step_row: TaskStep,
+        fanout_slugs: list[str],
+    ) -> StepResult:
+        ensure_system_specialists(self.session)
+        registry = SubagentSpecialistRegistry(self.session, task.organization_id)
+        specialists = []
+        missing_slugs = []
+        for slug in fanout_slugs:
+            specialist = registry.get_by_slug(slug)
+            if specialist is None:
+                missing_slugs.append(slug)
+            else:
+                specialists.append(specialist)
+        if missing_slugs:
+            summary = "Fanout specialist not found: " + ", ".join(missing_slugs)
+            step_row.status = "STEP_FAILED"
+            step_row.error_message = summary
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_FAILED,
+                payload_json={
+                    "step_id": step_row.id,
+                    "step_key": step.key,
+                    "summary": summary,
+                    "missing_specialist_slugs": missing_slugs,
+                },
+            )
+            self.session.flush()
+            return StepResult(
+                step_key=step.key,
+                status="STEP_FAILED",
+                summary=summary,
+                next_action="stop",
+            )
+        manager = SubagentManager(self.session)
+        try:
+            batch_id, agent_runs = manager.spawn_fanout(
+                task=task,
+                assignment={
+                    "step_key": step.key,
+                    "description": step.description,
+                    "execution_mode": step.execution_mode,
+                    "recommended_specialist_slug": step.recommended_specialist_slug,
+                    "fanout_specialist_slugs": fanout_slugs,
+                    "fanout_aggregation": step.fanout_aggregation,
+                    "tool_hints": step.tool_hints,
+                    "task_goal": task.goal,
+                },
+                specialists=specialists,
+                aggregation=step.fanout_aggregation,
+                timeout_seconds=step.timeout_seconds or DEFAULT_SUBAGENT_TIMEOUT,
+                enqueue=True,
+            )
+        except FanoutCapacityExceededError as exc:
+            summary = f"FanoutCapacityExceeded: {exc}"
+            step_row.status = "STEP_FAILED"
+            step_row.error_message = summary
+            step_row.completed_at = utc_now()
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.STEP_FAILED,
+                payload_json={
+                    "step_id": step_row.id,
+                    "step_key": step.key,
+                    "summary": summary,
+                    "fanout_specialist_slugs": fanout_slugs,
+                    "fanout_aggregation": step.fanout_aggregation,
+                },
+            )
+            self.session.flush()
+            return StepResult(
+                step_key=step.key,
+                status="STEP_FAILED",
+                summary=summary,
+                next_action="stop",
+            )
+        step_row.assigned_agent_id = agent_runs[0].id if agent_runs else None
+        for agent_run in agent_runs:
+            self.event_store.append(
+                task_id=task.id,
+                agent_run_id=agent_run.id,
+                event_type=EventType.SUBAGENT_HEARTBEAT,
+                payload_json={
+                    "step_key": step.key,
+                    "agent_run_id": agent_run.id,
+                    "interval_seconds": SUBAGENT_HEARTBEAT_INTERVAL,
+                    "fanout_batch_id": batch_id,
+                    "fanout_index": agent_run.context_json.get("fanout_index"),
+                    "fanout_total": agent_run.context_json.get("fanout_total"),
+                    "specialist_slug": agent_run.context_json.get("specialist_slug"),
+                },
+            )
+        result = StepResult(
+            step_key=step.key,
+            status="STEP_COMPLETED",
+            summary=f"Fanout subagents spawned: {len(agent_runs)} in {batch_id}",
+            output="",
+            tool_calls=[],
+            next_action="spawn_subagent",
+        )
+        step_row.status = result.status
+        step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.STEP_COMPLETED,
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "summary": result.summary,
+                "assigned_agent_id": step_row.assigned_agent_id,
+                "assigned_agent_ids": [agent_run.id for agent_run in agent_runs],
+                "execution_mode": step.execution_mode,
+                "next_action": result.next_action,
+                "fanout_batch_id": batch_id,
+                "fanout_total": len(agent_runs),
+                "fanout_aggregation": step.fanout_aggregation,
+                "fanout_specialist_slugs": fanout_slugs,
+                "trace_summary": (
+                    f"异步步骤 {step.key} 已并行派生 {len(agent_runs)} 个专家子 Agent"
+                ),
+                "react_trace": {
+                    "reason": {
+                        "step_key": step.key,
+                        "summary": f"异步 fanout 需要多个专家并行处理：{step.description}",
+                    },
+                    "act": {
+                        "step_key": step.key,
+                        "tool_name": "subagent.fanout",
+                        "input_json": {
+                            "fanout_batch_id": batch_id,
+                            "agent_run_ids": [agent_run.id for agent_run in agent_runs],
+                        },
+                    },
+                    "observe": {
+                        "step_key": step.key,
+                        "status": "SUBAGENT_FANOUT_SPAWNED",
+                        "summary": result.summary,
+                    },
+                },
+            },
+        )
+        self.session.flush()
+        return result
+
+    def _select_specialist(self, *, task: Task, step: PlanStep):
+        ensure_system_specialists(self.session)
+        registry = SubagentSpecialistRegistry(self.session, task.organization_id)
+        if step.recommended_specialist_slug:
+            specialist = registry.get_by_slug(step.recommended_specialist_slug)
+            if specialist is not None:
+                return specialist
+        match_text = " ".join(
+            [
+                task.title,
+                task.goal,
+                step.description,
+                " ".join(step.tool_hints),
+                " ".join(step.acceptance_criteria),
+            ]
+        )
+        specialist, trace = registry.match_by_keywords_with_trace(match_text)
+        if specialist is not None:
+            self.event_store.append(
+                task_id=task.id,
+                event_type=EventType.SUBAGENT_PROGRESS,
+                payload_json={
+                    "step_key": step.key,
+                    "stage": "specialist_selected",
+                    **trace,
+                },
+            )
+        return specialist
 
     def _select_tool_for_step(
         self,

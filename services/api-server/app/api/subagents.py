@@ -7,18 +7,29 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.specialists import (
+    SpecialistValidationError,
+    SubagentDepthExceededError,
+    SubagentSpecialistRegistry,
+    ensure_system_specialists,
+)
 from app.agents.subagent_manager import SubagentLimitExceededError, SubagentManager
 from app.agents.subagent_recovery_history import (
     persist_recovery_batch,
     recovery_action_counts,
 )
 from app.api.schemas import (
+    FanoutBatchMemberResponse,
+    FanoutBatchPage,
+    FanoutBatchResponse,
     SubagentBulkActionItem,
     SubagentBulkActionRequest,
     SubagentBulkActionResponse,
     SubagentCreateRequest,
     SubagentListItemResponse,
     SubagentListPage,
+    SubagentOutputCreateRequest,
+    SubagentOutputResponse,
     SubagentPage,
     SubagentRecoverRequest,
     SubagentRecoveryBatchPage,
@@ -28,9 +39,10 @@ from app.api.schemas import (
     SubagentRecoverySummaryResponse,
     SubagentRecoveryTaskSummary,
     SubagentResponse,
+    SubagentSpecialistSummary,
 )
 from app.api.tasks import get_owned_task
-from app.db.models import AgentRun, SubagentRecoveryBatch, Task
+from app.db.models import AgentRun, SubagentOutput, SubagentRecoveryBatch, SubagentSpecialist, Task
 from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
 
@@ -56,7 +68,41 @@ def list_task_subagents(task_id: str, session: DbSession, principal: Principal) 
         .where(AgentRun.task_id == task_id, AgentRun.agent_type == "subagent")
         .order_by(AgentRun.started_at.asc().nullsfirst(), AgentRun.id.asc())
     )
-    return SubagentPage(items=list(session.execute(statement).scalars()))
+    return SubagentPage(
+        items=[_to_subagent_response(row) for row in session.execute(statement).scalars()]
+    )
+
+
+@router.get(
+    "/tasks/{task_id}/fanout-batches",
+    response_model=FanoutBatchPage,
+    summary="兼容层：查询 Agent Run fanout 批次",
+    description=f"{RUN_COMPATIBILITY_DESCRIPTION} 返回指定 Agent Run 的并行专家 fanout 批次聚合。",
+    deprecated=True,
+)
+def list_task_fanout_batches(
+    task_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> FanoutBatchPage:
+    get_owned_task(task_id, session, principal.organization_id)
+    runs = list(
+        session.execute(
+            select(AgentRun)
+            .where(AgentRun.task_id == task_id, AgentRun.agent_type == "subagent")
+            .order_by(AgentRun.started_at.asc().nullsfirst(), AgentRun.id.asc())
+        ).scalars()
+    )
+    grouped: dict[str, list[AgentRun]] = {}
+    for run in runs:
+        batch_id = run.context_json.get("fanout_batch_id")
+        if isinstance(batch_id, str) and batch_id:
+            grouped.setdefault(batch_id, []).append(run)
+    items = [
+        _fanout_batch_response(task_id, batch_id, members)
+        for batch_id, members in grouped.items()
+    ]
+    return FanoutBatchPage(items=items, next_cursor=None)
 
 
 @router.get(
@@ -87,18 +133,12 @@ def list_subagents(
     return SubagentListPage(
         items=[
             SubagentListItemResponse(
-                id=agent_run.id,
-                task_id=agent_run.task_id,
-                parent_agent_id=agent_run.parent_agent_id,
-                agent_type=agent_run.agent_type,
-                status=agent_run.status,
-                context_json=agent_run.context_json,
-                started_at=agent_run.started_at,
-                completed_at=agent_run.completed_at,
-                timeout_at=agent_run.timeout_at,
+                **_to_subagent_response(agent_run).model_dump(),
                 task_title=task.title,
                 task_status=task.status,
                 step_key=_subagent_step_key(agent_run),
+                specialist_slug=_specialist_slug(agent_run),
+                output_summary=_output_summary(agent_run.subagent_output),
             )
             for agent_run, task in rows
         ],
@@ -129,6 +169,15 @@ def create_task_subagent(
     principal: Principal,
 ) -> AgentRun:
     task = get_owned_task(task_id, session, principal.organization_id)
+    specialist = None
+    if request.specialist_slug:
+        ensure_system_specialists(session)
+        specialist = SubagentSpecialistRegistry(
+            session,
+            principal.organization_id,
+        ).get_by_slug(request.specialist_slug)
+        if specialist is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="专家模板未找到")
     try:
         agent_run = SubagentManager(session).spawn(
             task=task,
@@ -136,11 +185,17 @@ def create_task_subagent(
             parent_agent_id=request.parent_agent_id,
             timeout_seconds=request.timeout_seconds,
             enqueue=request.enqueue,
+            specialist=specialist,
         )
     except SubagentLimitExceededError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="子 Agent 并发数量已达到上限",
+        ) from exc
+    except SubagentDepthExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="子专家嵌套深度超过 3 层",
         ) from exc
     session.commit()
     session.refresh(agent_run)
@@ -507,7 +562,43 @@ def get_owned_subagent(subagent_id: str, session: Session, principal: Principal)
     description="返回单个子 Agent 的状态与上下文。",
 )
 def get_subagent(subagent_id: str, session: DbSession, principal: Principal) -> AgentRun:
-    return get_owned_subagent(subagent_id, session, principal)
+    return _to_subagent_response(get_owned_subagent(subagent_id, session, principal))
+
+
+@router.post(
+    "/subagents/{subagent_id}/output",
+    response_model=SubagentOutputResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="写入子 Agent 结构化输出",
+    description="用于测试和恢复路径。输出写一次且必须通过专家 schema 校验。",
+)
+def write_subagent_output(
+    subagent_id: str,
+    request: SubagentOutputCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> SubagentOutputResponse:
+    agent_run = get_owned_subagent(subagent_id, session, principal)
+    if agent_run.subagent_output is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="子 Agent 输出已存在")
+    try:
+        output = SubagentManager(session).finalize_with_output(
+            agent_run=agent_run,
+            raw_output_dict=request.output_json,
+            budget_consumed=request.budget_consumed_json,
+            budget_exceeded=request.budget_exceeded_json,
+        )
+    except SpecialistValidationError as exc:
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    session.commit()
+    session.refresh(output)
+    return SubagentOutputResponse.model_validate(output)
 
 
 @router.post(
@@ -522,4 +613,113 @@ def cancel_subagent(subagent_id: str, session: DbSession, principal: Principal) 
     cancelled = SubagentManager(session).cancel(agent_run)
     session.commit()
     session.refresh(cancelled)
-    return cancelled
+    return _to_subagent_response(cancelled)
+
+
+def _to_subagent_response(agent_run: AgentRun) -> SubagentResponse:
+    return SubagentResponse(
+        id=agent_run.id,
+        task_id=agent_run.task_id,
+        parent_agent_id=agent_run.parent_agent_id,
+        agent_type=agent_run.agent_type,
+        status=agent_run.status,
+        specialist_id=agent_run.specialist_id,
+        fanout_batch_id=_optional_context_string(agent_run, "fanout_batch_id"),
+        fanout_index=_optional_context_int(agent_run, "fanout_index"),
+        fanout_total=_optional_context_int(agent_run, "fanout_total"),
+        context_json=agent_run.context_json,
+        started_at=agent_run.started_at,
+        completed_at=agent_run.completed_at,
+        timeout_at=agent_run.timeout_at,
+        specialist=_to_specialist_summary(agent_run.specialist),
+        output=SubagentOutputResponse.model_validate(agent_run.subagent_output)
+        if agent_run.subagent_output is not None
+        else None,
+    )
+
+
+def _fanout_batch_response(
+    task_id: str,
+    batch_id: str,
+    members: list[AgentRun],
+) -> FanoutBatchResponse:
+    ordered = sorted(
+        members,
+        key=lambda run: (
+            _optional_context_int(run, "fanout_index")
+            if _optional_context_int(run, "fanout_index") is not None
+            else 9999,
+            run.id,
+        ),
+    )
+    statuses: dict[str, int] = {}
+    for run in ordered:
+        statuses[run.status] = statuses.get(run.status, 0) + 1
+    first = ordered[0]
+    return FanoutBatchResponse(
+        fanout_batch_id=batch_id,
+        task_id=task_id,
+        step_key=_subagent_step_key(first),
+        fanout_total=_optional_context_int(first, "fanout_total") or len(ordered),
+        aggregation=str(first.context_json.get("fanout_aggregation") or "synthesizer_chain"),
+        statuses=statuses,
+        members=[
+            FanoutBatchMemberResponse(
+                id=run.id,
+                status=run.status,
+                specialist_id=run.specialist_id,
+                specialist_slug=_specialist_slug(run),
+                fanout_index=_optional_context_int(run, "fanout_index"),
+                output_id=run.subagent_output.id if run.subagent_output is not None else None,
+            )
+            for run in ordered
+        ],
+    )
+
+
+def _optional_context_string(agent_run: AgentRun, key: str) -> str | None:
+    value = agent_run.context_json.get(key)
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _optional_context_int(agent_run: AgentRun, key: str) -> int | None:
+    value = agent_run.context_json.get(key)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _to_specialist_summary(
+    specialist: SubagentSpecialist | None,
+) -> SubagentSpecialistSummary | None:
+    if specialist is None:
+        return None
+    return SubagentSpecialistSummary.model_validate(specialist)
+
+
+def _specialist_slug(agent_run: AgentRun) -> str | None:
+    if agent_run.specialist is not None:
+        return agent_run.specialist.slug
+    value = agent_run.context_json.get("specialist_slug")
+    return str(value) if value is not None else None
+
+
+def _output_summary(output: SubagentOutput | None) -> str | None:
+    if output is None:
+        return None
+    data = output.output_json
+    if not isinstance(data, dict):
+        return None
+    for key in ("summary", "answer"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value[:240]
+    issues = data.get("issues")
+    if isinstance(issues, list):
+        return f"{len(issues)} issue(s)"
+    violations = data.get("violations")
+    if isinstance(violations, list):
+        return f"{len(violations)} violation(s)"
+    return None

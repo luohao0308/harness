@@ -965,16 +965,109 @@ export type Subagent = {
   parent_agent_id: string | null;
   agent_type: string;
   status: string;
+  specialist_id: string | null;
+  fanout_batch_id: string | null;
+  fanout_index: number | null;
+  fanout_total: number | null;
   context_json: Record<string, unknown>;
   started_at: string | null;
   completed_at: string | null;
   timeout_at: string | null;
+  specialist: SubagentSpecialistSummary | null;
+  output: SubagentOutput | null;
 };
 
 export type SubagentListItem = Subagent & {
   task_title: string;
   task_status: string;
   step_key: string | null;
+  specialist_slug: string | null;
+  output_summary: string | null;
+};
+
+export type SubagentSpecialistSummary = {
+  id: string;
+  slug: string;
+  display_name: string;
+  role: string;
+  visibility: string;
+  status: string;
+};
+
+export type SubagentSpecialist = SubagentSpecialistSummary & {
+  organization_id: string | null;
+  description: string;
+  system_prompt: string;
+  capability_slugs_json: string[];
+  output_schema_json: Record<string, unknown>;
+  output_schema_sha256: string;
+  budget_json: Record<string, unknown>;
+  trigger_keywords_json: string[];
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SubagentSpecialistCreatePayload = {
+  slug: string;
+  display_name: string;
+  description: string;
+  role: string;
+  system_prompt: string;
+  capability_slugs_json: string[];
+  output_schema_json: Record<string, unknown>;
+  budget_json: Record<string, unknown>;
+  trigger_keywords_json: string[];
+  visibility: "org" | "private";
+};
+
+export type SubagentSpecialistUpdatePayload = Partial<
+  Omit<SubagentSpecialistCreatePayload, "slug">
+> & {
+  status?: "ACTIVE" | "ARCHIVED";
+};
+
+export type SubagentSpecialistPreflight = {
+  status: "passed" | "failed";
+  output_schema_sha256: string;
+  budget_json: Record<string, unknown>;
+  errors: string[];
+};
+
+export type SubagentSpecialistFailureReason = {
+  reason: string;
+  count: number;
+};
+
+export type SubagentSpecialistStats = {
+  specialist_id: string;
+  slug: string;
+  window: "7d" | "30d" | "all";
+  total_invocations: number;
+  success_count: number;
+  failed_count: number;
+  budget_exceeded_count: number;
+  depth_rejected_count: number;
+  success_rate: number | null;
+  avg_runtime_ms: number | null;
+  p95_runtime_ms: number | null;
+  avg_cost_usd: string;
+  total_cost_usd: string;
+  avg_tool_calls: number;
+  avg_output_size_bytes: number;
+  recent_failure_reasons: SubagentSpecialistFailureReason[];
+};
+
+export type SubagentOutput = {
+  id: string;
+  agent_run_id: string;
+  task_id: string;
+  specialist_id: string | null;
+  output_json: Record<string, unknown>;
+  output_schema_sha256: string;
+  budget_consumed_json: Record<string, unknown>;
+  budget_exceeded_json: string[];
+  written_at: string;
 };
 
 export type SubagentRecoveryResponse = {
@@ -1067,6 +1160,25 @@ export type SubagentRecoveryGlobalSummary = {
   recent_batches: SubagentRecoveryBatch[];
 };
 
+export type FanoutBatchMember = {
+  id: string;
+  status: string;
+  specialist_id: string | null;
+  specialist_slug: string | null;
+  fanout_index: number | null;
+  output_id: string | null;
+};
+
+export type FanoutBatch = {
+  fanout_batch_id: string;
+  task_id: string;
+  step_key: string | null;
+  fanout_total: number;
+  aggregation: string;
+  statuses: Record<string, number>;
+  members: FanoutBatchMember[];
+};
+
 export type TaskResult = {
   task_id: string;
   status: TaskStatus;
@@ -1082,6 +1194,14 @@ export type TaskResult = {
     id: string;
     step_key: string | null;
     status: string;
+    fanout_batch_id: string | null;
+    fanout_index: number | null;
+    fanout_total: number | null;
+    specialist_slug: string | null;
+    specialist_role: string | null;
+    specialist_output: Record<string, unknown> | null;
+    budget_consumed_json: Record<string, unknown>;
+    budget_exceeded_json: string[];
     summary: string | null;
     tool_results: Array<{
       tool_call_id: string;
@@ -1116,6 +1236,9 @@ export type TaskPlanStep = {
   execution_mode: string;
   requires_sandbox: boolean;
   can_spawn_subagent: boolean;
+  recommended_specialist_slug: string | null;
+  fanout_specialist_slugs: string[];
+  fanout_aggregation: string;
   tool_hints: string[];
   acceptance_criteria: string[];
   risk_level: string;
@@ -1886,7 +2009,7 @@ export type EvalRun = {
   organization_id: string | null;
   agent_id: string | null;
   status: string;
-  metrics_json: Record<string, number>;
+  metrics_json: Record<string, unknown>;
   created_by: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -2683,6 +2806,64 @@ export async function listSubagents(params?: { status?: string; limit?: number }
   );
 }
 
+export async function listSubagentSpecialists(params?: { include_archived?: boolean }) {
+  const searchParams = new URLSearchParams();
+  if (params?.include_archived) {
+    searchParams.set("include_archived", "true");
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<{ items: SubagentSpecialist[]; next_cursor: string | null }>(
+    `/api/subagent-specialists${suffix}`,
+  );
+}
+
+export async function createSubagentSpecialist(payload: SubagentSpecialistCreatePayload) {
+  return request<SubagentSpecialist>("/api/subagent-specialists", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getSubagentSpecialist(specialistId: string) {
+  return request<SubagentSpecialist>(`/api/subagent-specialists/${specialistId}`);
+}
+
+export async function getSubagentSpecialistStats(
+  specialistId: string,
+  window: "7d" | "30d" | "all" = "30d",
+) {
+  return request<SubagentSpecialistStats>(
+    `/api/subagent-specialists/${specialistId}/stats?window=${window}`,
+  );
+}
+
+export async function updateSubagentSpecialist(
+  specialistId: string,
+  payload: SubagentSpecialistUpdatePayload,
+) {
+  return request<SubagentSpecialist>(`/api/subagent-specialists/${specialistId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function archiveSubagentSpecialist(specialistId: string) {
+  return request<void>(`/api/subagent-specialists/${specialistId}`, { method: "DELETE" });
+}
+
+export async function preflightSubagentSpecialist(
+  specialistId: string,
+  sampleOutput: Record<string, unknown>,
+) {
+  return request<SubagentSpecialistPreflight>(
+    `/api/subagent-specialists/${specialistId}/preflight`,
+    {
+      method: "POST",
+      body: JSON.stringify({ sample_output: sampleOutput }),
+    },
+  );
+}
+
 export async function getSubagent(subagentId: string) {
   return request<Subagent>(`/api/subagents/${subagentId}`);
 }
@@ -2701,6 +2882,12 @@ export async function bulkCancelSubagents(subagentIds: string[]) {
 export async function listTaskSubagentRecoveryBatches(taskId: string) {
   return request<{ items: SubagentRecoveryBatch[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/subagents/recovery-batches`,
+  );
+}
+
+export async function listFanoutBatchesForTask(taskId: string) {
+  return request<{ items: FanoutBatch[]; next_cursor: string | null }>(
+    `/api/tasks/${taskId}/fanout-batches`,
   );
 }
 
@@ -3029,6 +3216,7 @@ export type RegressionDelta = {
   refusal_contract_pass_rate_delta?: number;
   safety_contract_pass_rate_delta?: number;
   persona_contract_pass_rate_delta?: number;
+  specialist_contract_pass_rate_delta?: number;
   overrefusal_rate_delta?: number;
   safety_violation_total_delta?: number;
   role_drift_total_delta?: number;

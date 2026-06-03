@@ -4,6 +4,7 @@ import {
   Ban,
   Bot,
   Boxes,
+  BrainCircuit,
   ChevronRight,
   FileText,
   GitBranch,
@@ -23,7 +24,14 @@ import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { artifactStatusLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
-import { cancelSubagent, getSubagent, getTaskResult, type TaskResult } from "../../tasks/api";
+import {
+  cancelSubagent,
+  getSubagent,
+  getTaskResult,
+  listFanoutBatchesForTask,
+  type FanoutBatch,
+  type TaskResult,
+} from "../../tasks/api";
 
 type SubagentResult = TaskResult["subagent_results"][number];
 
@@ -86,6 +94,11 @@ export function SubagentDetailPage() {
     queryFn: () => getTaskResult(taskId!),
     enabled: Boolean(taskId),
   });
+  const fanoutBatchesQuery = useQuery({
+    queryKey: ["task-fanout-batches", taskId],
+    queryFn: () => listFanoutBatchesForTask(taskId!),
+    enabled: Boolean(taskId),
+  });
   const cancelMutation = useMutation({
     mutationFn: () => cancelSubagent(subagentId!),
     onSuccess: async (subagent) => {
@@ -116,6 +129,29 @@ export function SubagentDetailPage() {
     return Object.keys(assignmentValue).length > 0 ? assignmentValue : context;
   }, [context]);
   const taskResult = resultQuery.data?.subagent_results.find((item) => item.id === subagent?.id);
+  const fanoutBatch = useMemo(
+    () =>
+      (fanoutBatchesQuery.data?.items ?? []).find(
+        (batch) => batch.fanout_batch_id === subagent?.fanout_batch_id,
+      ),
+    [fanoutBatchesQuery.data?.items, subagent?.fanout_batch_id],
+  );
+  const specialistOutput = subagent?.output ?? null;
+  const specialistSummary =
+    subagent?.specialist ?? (taskResult?.specialist_slug ? {
+      id: "",
+      slug: taskResult.specialist_slug,
+      display_name: taskResult.specialist_slug,
+      role: taskResult.specialist_role ?? "specialist",
+      visibility: "",
+      status: "",
+    } : null);
+  const budgetConsumed =
+    specialistOutput?.budget_consumed_json ?? taskResult?.budget_consumed_json ?? objectValue(context.budget_consumed);
+  const budgetExceeded =
+    specialistOutput?.budget_exceeded_json ??
+    taskResult?.budget_exceeded_json ??
+    (Array.isArray(context.budget_exceeded) ? context.budget_exceeded.map(String) : []);
   const toolResults = taskResult?.tool_results ?? arrayValue(result.tool_results);
   const reactTrace = taskResult?.react_trace ?? arrayValue(result.react_trace);
   const contextSummary = taskResult?.context_summary ?? objectValue(result.context_summary);
@@ -149,6 +185,14 @@ export function SubagentDetailPage() {
                 {subagentTitle(context)}
               </h1>
               <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
+              {subagent.fanout_batch_id ? (
+                <Badge tone="info">
+                  批次{" "}
+                  {typeof subagent.fanout_index === "number" && typeof subagent.fanout_total === "number"
+                    ? `${subagent.fanout_index + 1}/${subagent.fanout_total}`
+                    : "并行"}
+                </Badge>
+              ) : null}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-5 text-xs text-slate-500">
               <span>
@@ -167,12 +211,33 @@ export function SubagentDetailPage() {
               <span>
                 {text("类型", "Type")} <span className="font-mono text-slate-800">{subagent.agent_type}</span>
               </span>
+              {specialistSummary ? (
+                <span>
+                  {text("专家", "Specialist")}{" "}
+                  {specialistSummary.id ? (
+                    <Link
+                      to={`/subagent-specialists/${specialistSummary.id}`}
+                      className="font-mono text-slate-800 hover:text-slate-950"
+                    >
+                      {specialistSummary.slug}
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-slate-800">{specialistSummary.slug}</span>
+                  )}
+                </span>
+              ) : null}
               <span>
                 {text("超时保护", "Timeout guard")}{" "}
                 <span className="font-mono text-slate-800">
                   {subagent.timeout_at ? formatShortDate(subagent.timeout_at) : "-"}
                 </span>
               </span>
+              {subagent.fanout_batch_id ? (
+                <span>
+                  Fanout{" "}
+                  <span className="font-mono text-slate-800">{subagent.fanout_batch_id}</span>
+                </span>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -219,6 +284,37 @@ export function SubagentDetailPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
+                <BrainCircuit className="h-3 w-3" /> {text("专家契约", "Specialist Contract")}
+              </div>
+              {specialistSummary ? <Badge tone="purple">{specialistSummary.slug}</Badge> : null}
+            </CardHeader>
+            <div className="space-y-3 p-3 text-xs text-slate-600">
+              {specialistSummary ? (
+                <>
+                  <div>
+                    <div className="text-[11px] text-slate-500">{text("角色", "Role")}</div>
+                    <div className="mt-1 font-mono text-slate-900">{specialistSummary.role}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-500">{text("预算消耗", "Budget consumed")}</div>
+                    <BudgetBars consumed={budgetConsumed} exceeded={budgetExceeded} />
+                  </div>
+                </>
+              ) : (
+                <div className="text-slate-500">
+                  {text("这个子代理没有绑定专家模板。", "This subagent is not bound to a specialist template.")}
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {subagent.fanout_batch_id ? (
+            <FanoutBatchCard batch={fanoutBatch} currentSubagentId={subagent.id} loading={fanoutBatchesQuery.isLoading} />
+          ) : null}
+
+          <Card>
+            <CardHeader>
+              <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
                 <Route className="h-3 w-3" /> {text("上下文压缩", "Context Compression")}
               </div>
             </CardHeader>
@@ -232,6 +328,28 @@ export function SubagentDetailPage() {
         </section>
 
         <section className="col-span-8 space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
+                <BrainCircuit className="h-3 w-3" /> {text("结构化专家输出", "Structured Specialist Output")}
+              </div>
+              {specialistOutput ? (
+                <span className="font-mono text-[10px] text-slate-400">
+                  {specialistOutput.output_schema_sha256.slice(0, 16)}
+                </span>
+              ) : null}
+            </CardHeader>
+            <div className="p-3">
+              {specialistOutput || taskResult?.specialist_output ? (
+                <JsonBlock value={specialistOutput?.output_json ?? taskResult?.specialist_output} />
+              ) : (
+                <div className="py-8 text-center text-xs text-slate-500">
+                  {text("尚未写入结构化专家输出。", "No structured specialist output has been written yet.")}
+                </div>
+              )}
+            </div>
+          </Card>
+
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
@@ -358,5 +476,118 @@ export function SubagentDetailPage() {
         </section>
       </div>
     </ConsoleShell>
+  );
+}
+
+function BudgetBars({
+  consumed,
+  exceeded,
+}: {
+  consumed: Record<string, unknown>;
+  exceeded: string[];
+}) {
+  const entries = [
+    ["runtime_seconds", "runtime"],
+    ["prompt_tokens", "prompt"],
+    ["completion_tokens", "completion"],
+    ["tool_calls", "tools"],
+    ["cost_usd", "cost"],
+  ].map(([key, label]) => {
+    const value = consumed[key];
+    return { key, label, value: typeof value === "number" ? value : 0 };
+  });
+  return (
+    <div className="mt-2 space-y-2">
+      {entries.map((entry) => {
+        const exceededKey = exceeded.includes(entry.key) || exceeded.includes(entry.label);
+        const width = Math.min(100, entry.value > 0 ? Math.max(8, entry.value % 100) : 4);
+        return (
+          <div key={entry.key}>
+            <div className="mb-1 flex justify-between font-mono text-[10px] text-slate-500">
+              <span>{entry.label}</span>
+              <span>{entry.value}</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-slate-100">
+              <div
+                className={exceededKey ? "h-1.5 rounded-full bg-red-500" : "h-1.5 rounded-full bg-cyan-500"}
+                style={{ width: `${width}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+      {exceeded.length > 0 ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+          超出预算：{exceeded.join(", ")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FanoutBatchCard({
+  batch,
+  currentSubagentId,
+  loading,
+}: {
+  batch: FanoutBatch | undefined;
+  currentSubagentId: string;
+  loading: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
+          <Network className="h-3 w-3" /> Fanout 批次
+        </div>
+        {batch ? <Badge tone="info">{batch.aggregation}</Badge> : null}
+      </CardHeader>
+      <div className="space-y-2 p-3 text-xs">
+        {loading && !batch ? (
+          <div className="text-slate-500">批次成员加载中...</div>
+        ) : batch ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
+                <div className="text-[10px] text-slate-500">步骤</div>
+                <div className="mt-1 font-mono text-slate-900">{batch.step_key ?? "-"}</div>
+              </div>
+              <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
+                <div className="text-[10px] text-slate-500">成员</div>
+                <div className="mt-1 font-mono text-slate-900">
+                  {batch.members.length}/{batch.fanout_total}
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {batch.members.map((member) => (
+                <Link
+                  key={member.id}
+                  to={`/subagents/${member.id}`}
+                  className={
+                    member.id === currentSubagentId
+                      ? "flex items-center justify-between gap-2 rounded border border-cyan-200 bg-cyan-50 px-2 py-1.5"
+                      : "flex items-center justify-between gap-2 rounded border border-slate-100 px-2 py-1.5 hover:bg-slate-50"
+                  }
+                >
+                  <span className="min-w-0 truncate">
+                    <span className="font-mono text-slate-900">{member.id.slice(0, 8)}</span>
+                    <span className="ml-2 text-slate-500">{member.specialist_slug ?? "specialist"}</span>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    {typeof member.fanout_index === "number" ? (
+                      <span className="font-mono text-[10px] text-slate-500">#{member.fanout_index + 1}</span>
+                    ) : null}
+                    <Badge tone={statusTone(member.status)}>{statusLabel(member.status)}</Badge>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="text-slate-500">未找到该 fanout 批次。</div>
+        )}
+      </div>
+    </Card>
   );
 }

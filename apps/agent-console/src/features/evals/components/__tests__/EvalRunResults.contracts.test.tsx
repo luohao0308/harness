@@ -32,6 +32,11 @@ describe("EvalRunResults contract surface", () => {
         refusal_contract_pass_rate: 0.5,
         safety_contract_pass_rate: 0.0,
         persona_contract_pass_rate: 1.0,
+        specialist_contract_pass_rate: 0.5,
+        specialist_contract_configured_count: 2,
+        total_specialist_invocations: 3,
+        total_specialist_cost_usd: "0.006000",
+        specialist_role_distribution: { reviewer: 0.67, researcher: 0.33 },
         overrefusal_rate: 0.5,
         safety_violation_total: 2,
         role_drift_total: 1,
@@ -51,7 +56,8 @@ describe("EvalRunResults contract surface", () => {
         refusal_contract_failure_breakdown: { unexpected_refusal: 1 },
         safety_violation_breakdown: { banned_phrase: 2 },
         persona_contract_failure_breakdown: { role_drift: 1 },
-      } as unknown as Record<string, number>,
+        specialist_contract_failure_breakdown: { missing_specialist: 1 },
+      },
       results: [
         {
           id: "result-1",
@@ -105,6 +111,12 @@ describe("EvalRunResults contract surface", () => {
               role_drift_count: 1,
               failures: ["role_drift:我是 ChatGPT"],
             },
+            specialist_contract: {
+              configured: true,
+              passed: false,
+              total_specialist_invocations: 3,
+              failures: ["missing_specialist:researcher"],
+            },
           } as unknown as Record<string, unknown>,
           latency_ms: 200,
           cost_usd: "0.020000",
@@ -130,6 +142,9 @@ describe("EvalRunResults contract surface", () => {
     expect(screen.getByText("拒答契约通过率")).toBeInTheDocument();
     expect(screen.getByText("安全契约通过率")).toBeInTheDocument();
     expect(screen.getByText("人设契约通过率")).toBeInTheDocument();
+    expect(screen.getByText("专家契约通过率")).toBeInTheDocument();
+    expect(screen.getByText("专家调用总数")).toBeInTheDocument();
+    expect(screen.getByText("专家累计成本（USD）")).toBeInTheDocument();
     expect(screen.getByText("安全命中总数")).toBeInTheDocument();
     expect(screen.getByText("累计成本（USD）")).toBeInTheDocument();
     expect(screen.getByText("$0.012000")).toBeInTheDocument();
@@ -139,11 +154,16 @@ describe("EvalRunResults contract surface", () => {
     expect(screen.getByText("拒答 失败")).toBeInTheDocument();
     expect(screen.getByText("安全 失败")).toBeInTheDocument();
     expect(screen.getByText("人设 失败")).toBeInTheDocument();
+    expect(screen.getByText("专家 失败")).toBeInTheDocument();
     expect(screen.getByText(/工具契约 \(2\)/)).toBeInTheDocument();
     expect(screen.getByText(/成本契约 \(1\)/)).toBeInTheDocument();
     expect(screen.getByText(/拒答契约 \(2\)/)).toBeInTheDocument();
     expect(screen.getByText(/安全命中 \(1\)/)).toBeInTheDocument();
     expect(screen.getByText(/人设契约 \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/专家契约 \(2\)/)).toBeInTheDocument();
+    expect(screen.getByText("专家角色分布")).toBeInTheDocument();
+    expect(screen.getByText(/reviewer 67.0%/)).toBeInTheDocument();
+    expect(screen.getByText("missing_specialist")).toBeInTheDocument();
     expect(screen.getByText("missing_required_tool")).toBeInTheDocument();
     expect(screen.getByText("max_cost_usd")).toBeInTheDocument();
     expect(screen.getByText("unexpected_refusal")).toBeInTheDocument();
@@ -171,6 +191,7 @@ describe("EvalRunResults contract surface", () => {
       refusal_contract_pass_rate_delta: -0.5,
       safety_contract_pass_rate_delta: -1,
       persona_contract_pass_rate_delta: 0.25,
+      specialist_contract_pass_rate_delta: -0.12,
       overrefusal_rate_delta: 0.5,
       safety_violation_total_delta: 2,
       role_drift_total_delta: 1,
@@ -206,6 +227,7 @@ describe("EvalRunResults contract surface", () => {
     expect(screen.getByText("拒答契约")).toBeInTheDocument();
     expect(screen.getByText("安全契约")).toBeInTheDocument();
     expect(screen.getByText("人设契约")).toBeInTheDocument();
+    expect(screen.getByText("专家契约")).toBeInTheDocument();
     expect(screen.getByText("安全命中")).toBeInTheDocument();
     expect(screen.getByText("平均成本 USD")).toBeInTheDocument();
     expect(screen.getByText("-23.0pp")).toBeInTheDocument();
@@ -214,5 +236,6 @@ describe("EvalRunResults contract surface", () => {
     expect(screen.getByText("-50.0pp")).toBeInTheDocument();
     expect(screen.getByText("-100.0pp")).toBeInTheDocument();
     expect(screen.getByText("+25.0pp")).toBeInTheDocument();
+    expect(screen.getByText("-12.0pp")).toBeInTheDocument();
   });
 });

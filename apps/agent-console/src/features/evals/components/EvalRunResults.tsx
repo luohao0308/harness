@@ -36,13 +36,27 @@ const metricLabels: Record<string, string> = {
   safety_violation_total: "安全命中总数",
   persona_contract_pass_rate: "人设契约通过率",
   role_drift_total: "角色漂移总数",
+  specialist_contract_pass_rate: "专家契约通过率",
+  specialist_contract_configured_count: "专家契约用例数",
+  total_specialist_invocations: "专家调用总数",
+  total_specialist_cost_usd: "专家累计成本（USD）",
   retry_rate: "重试率",
   human_escalation_rate: "人工升级率",
 };
 
 const tokenMetricKeys = new Set(["total_prompt_tokens", "total_completion_tokens"]);
-const countMetricKeys = new Set(["safety_violation_total", "role_drift_total"]);
-const costMetricKeys = new Set(["avg_cost_usd", "total_cost_usd", "cost_per_passed_case_usd"]);
+const countMetricKeys = new Set([
+  "safety_violation_total",
+  "role_drift_total",
+  "specialist_contract_configured_count",
+  "total_specialist_invocations",
+]);
+const costMetricKeys = new Set([
+  "avg_cost_usd",
+  "total_cost_usd",
+  "cost_per_passed_case_usd",
+  "total_specialist_cost_usd",
+]);
 const rateMetricKeys = new Set([
   "task_success_rate",
   "grounding_pass_rate",
@@ -60,6 +74,7 @@ const rateMetricKeys = new Set([
   "overrefusal_rate",
   "safety_contract_pass_rate",
   "persona_contract_pass_rate",
+  "specialist_contract_pass_rate",
   "retry_rate",
   "human_escalation_rate",
 ]);
@@ -198,6 +213,11 @@ export function EvalRunResults({
               isPercentage
             />
             <DeltaMetric
+              label="专家契约"
+              delta={regressionDelta.specialist_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
               label="过度拒答"
               delta={regressionDelta.overrefusal_rate_delta ?? 0}
               isPercentage
@@ -293,6 +313,8 @@ export function EvalRunResults({
       {/* Contract failure breakdown */}
       {latestRun && <ContractBreakdown metrics={metrics} />}
 
+      {latestRun && <SpecialistRoleDistribution metrics={metrics} />}
+
       {/* Per-case results */}
       <Table>
         <thead className="bg-slate-50 text-slate-500">
@@ -374,6 +396,7 @@ type ContractTrace = {
   violation_total?: number;
   outcome?: string;
   role_drift_count?: number;
+  total_specialist_invocations?: number;
 };
 
 function readContract(trace: Record<string, unknown>, key: string): ContractTrace | null {
@@ -393,6 +416,7 @@ function ContractCell({
   const refusal = readContract(result.grader_trace_json, "refusal_contract");
   const safety = readContract(result.grader_trace_json, "safety_contract");
   const persona = readContract(result.grader_trace_json, "persona_contract");
+  const specialist = readContract(result.grader_trace_json, "specialist_contract");
   const renderBadge = (label: string, trace: ContractTrace | null) => {
     if (!trace || trace.configured !== true) {
       return (
@@ -426,6 +450,9 @@ function ContractCell({
   if (persona && persona.configured === true && !persona.passed) {
     allFailures.push(...stringList(persona.failures).map((f) => `人设:${f}`));
   }
+  if (specialist && specialist.configured === true && !specialist.passed) {
+    allFailures.push(...stringList(specialist.failures).map((f) => `专家:${f}`));
+  }
   return (
     <div>
       <div className="flex flex-wrap gap-1">
@@ -435,6 +462,7 @@ function ContractCell({
         {renderBadge("拒答", refusal)}
         {renderBadge("安全", safety)}
         {renderBadge("人设", persona)}
+        {renderBadge("专家", specialist)}
       </div>
       {cost && cost.configured === true && (
         <div className="mt-1 font-mono text-[11px] text-slate-500">
@@ -444,10 +472,11 @@ function ContractCell({
       )}
       {(refusal?.configured === true ||
         safety?.configured === true ||
-        persona?.configured === true) && (
+        persona?.configured === true ||
+        specialist?.configured === true) && (
         <div className="mt-1 font-mono text-[11px] text-slate-500">
           拒答:{refusal?.outcome ?? "-"} · 安全:{safety?.violation_total ?? 0} · 漂移:
-          {persona?.role_drift_count ?? 0}
+          {persona?.role_drift_count ?? 0} · 专家:{specialist?.total_specialist_invocations ?? 0}
         </div>
       )}
       {allFailures.length > 0 && (
@@ -467,19 +496,22 @@ function ContractBreakdown({ metrics }: { metrics: Record<string, unknown> }) {
   const refusalBreakdown = metrics["refusal_contract_failure_breakdown"];
   const safetyBreakdown = metrics["safety_violation_breakdown"];
   const personaBreakdown = metrics["persona_contract_failure_breakdown"];
+  const specialistBreakdown = metrics["specialist_contract_failure_breakdown"];
   const toolConfigured = Number(metrics["tool_contract_configured_count"] ?? 0);
   const dialogueConfigured = Number(metrics["dialogue_contract_configured_count"] ?? 0);
   const costConfigured = Number(metrics["cost_contract_configured_count"] ?? 0);
   const refusalConfigured = Number(metrics["refusal_contract_configured_count"] ?? 0);
   const safetyConfigured = Number(metrics["safety_contract_configured_count"] ?? 0);
   const personaConfigured = Number(metrics["persona_contract_configured_count"] ?? 0);
+  const specialistConfigured = Number(metrics["specialist_contract_configured_count"] ?? 0);
   if (
     toolConfigured +
       dialogueConfigured +
       costConfigured +
       refusalConfigured +
       safetyConfigured +
-      personaConfigured ===
+      personaConfigured +
+      specialistConfigured ===
     0
   ) {
     return null;
@@ -516,8 +548,40 @@ function ContractBreakdown({ metrics }: { metrics: Record<string, unknown> }) {
         breakdown={personaBreakdown}
         emptyHint="无失败项"
       />
+      <BreakdownColumn
+        title={`专家契约 (${specialistConfigured})`}
+        breakdown={specialistBreakdown}
+        emptyHint="无失败项"
+      />
     </div>
   );
+}
+
+function SpecialistRoleDistribution({ metrics }: { metrics: Record<string, unknown> }) {
+  const raw = metrics["specialist_role_distribution"];
+  const entries =
+    raw && typeof raw === "object" ? Object.entries(raw as Record<string, unknown>) : [];
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <div className="border-b border-slate-100 p-3 text-xs">
+      <div className="mb-2 text-[10px] uppercase text-slate-500">专家角色分布</div>
+      <div className="flex flex-wrap gap-1.5">
+        {entries.map(([role, value]) => (
+          <Badge key={role} tone="info">
+            {role} {formatDistributionValue(value)}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatDistributionValue(value: unknown) {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return String(value ?? "0");
+  return num <= 1 ? `${(num * 100).toFixed(1)}%` : String(num);
 }
 
 function BreakdownColumn({

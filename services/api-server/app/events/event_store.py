@@ -217,8 +217,9 @@ def replay_events_to_state(
             EventType.SUBAGENT_FAILED.value,
             EventType.SUBAGENT_TIMEOUT.value,
             EventType.SUBAGENT_CANCELLED.value,
+            EventType.SUBAGENT_DEPTH_REJECTED.value,
         }:
-            agent_run_id = payload.get("agent_run_id")
+            agent_run_id = payload.get("agent_run_id") or payload.get("parent_agent_id")
             if agent_run_id is not None:
                 state["subagents"][agent_run_id] = event.event_type.removeprefix("SUBAGENT_")
         if event.event_type in {

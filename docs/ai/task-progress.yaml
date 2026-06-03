@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-27T16:58:00Z
+last_updated_at: 2026-05-28T04:47:26Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -429,6 +429,58 @@ post_stage_hardening:
       - Metrics and regression gates now include refusal/safety/persona pass-rate deltas, overrefusal delta, safety violation total delta, and role-drift total delta; any increase in safety violations triggers regression.
       - Eval UI now shows the new pass-rate and count metrics, per-case contract badges, breakdown rows, regression deltas, and JSON preset buttons for refusal, safety, and persona contracts.
       - Frontend validation required Node >=20; the machine default Node was v16.17.0, so frontend tests/lint/build were run with local nvm Node v24.15.0.
+
+  - id: agent-knowledge-harness-subagent-specialists-v1
+    date: 2026-05-28
+    status: verified
+    demo: Subagents now run as specialist-with-contract templates with role prompts, tool whitelists, structured outputs, per-specialist budgets, planner hints, and console evidence views.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_subagent_specialists.py tests/test_subagents.py -q
+      - cd services/api-server && uv run pytest tests -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-subagent-specialists-alembic-upgrade.sqlite uv run alembic upgrade head
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-subagent-specialists-alembic-upgrade.sqlite uv run alembic downgrade 20260527_0022
+      - cd apps/agent-console && npm test -- SubagentSpecialistsPage SubagentDetailPage --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `subagent_specialists` and `subagent_outputs`, nullable `agent_runs.specialist_id`, and four seeded system templates: `code-reviewer`, `researcher`, `safety-checker`, and `synthesizer`.
+      - `SubagentManager.spawn(..., specialist=...)` snapshots specialist prompt, capability whitelist, output schema hash, and budget into the subagent context while preserving legacy subagent behavior.
+      - Worker execution enforces capability whitelists and budget checks after model/tool calls; `BUDGET_EXCEEDED` is terminal for the subagent but does not automatically fail the parent task.
+      - `SubagentManager.finalize_with_output(...)` validates JSON output against the specialist schema, writes immutable `subagent_outputs`, and keeps the old `context_json.result` compatibility path.
+      - Planner and executor now carry `recommended_specialist_slug`, select specialists deterministically by explicit slug or trigger-keyword match, and include collected specialist outputs in task result context.
+      - New `/api/subagent-specialists` CRUD/preflight API and `/api/subagents/{id}/output` recovery/test endpoint are covered by backend regression tests.
+      - Agent Console now has `/subagent-specialists` and `/subagent-specialists/:id`, sidebar `专家库`, specialist filtering on `/subagents`, structured output/budget evidence on subagent detail, specialist badges on plan steps, and Run Detail `专家证据`.
+      - Validation passed full backend regression (`426 passed`, one upstream 422 deprecation warning), Ruff, frontend target tests, TypeScript lint, production build with the existing Vite large-chunk warning, Alembic upgrade/downgrade, docs validation, and whitespace check.
+
+  - id: agent-knowledge-harness-subagent-specialists-v2
+    date: 2026-05-28
+    status: verified
+    demo: Subagent Specialists v2 adds bounded parallel fanout, nested-depth rejection, success-rate stats/ranking, and Eval specialist contracts without migrations.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_subagent_specialists.py tests/test_subagents.py tests/test_evals.py tests/test_eval_regression.py -q
+      - cd services/api-server && uv run pytest -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm test -- SubagentSpecialistsPage.test.tsx SubagentDetailPage.test.tsx EvalRunResults.contracts.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npm test -- --run
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - PlanStep and API projections now carry `fanout_specialist_slugs` and `fanout_aggregation`; spawned fanout runs share `fanout_batch_id`, `fanout_index`, and `fanout_total`.
+      - `SubagentManager` now has bounded `spawn_fanout`, `MAX_FANOUT_PER_STEP=5`, and `MAX_SPECIALIST_DEPTH=3`; depth rejection records `SUBAGENT_DEPTH_REJECTED` and maps to HTTP 409.
+      - V1 async execution semantics are preserved: fanout spawns bounded sibling specialists and exposes aggregation metadata/evidence without adding a synchronous parent wait loop.
+      - Specialist stats support `7d`, `30d`, and `all` windows for success, runtime, cost, output size, tool-call, and failure-reason metrics; planner multi-candidate matches now rank by success rate or recency fallback trace.
+      - Eval `specialist_contract` checks expected and forbidden specialists, output assertions, budget totals, fanout batches, aggregate metrics, role distribution, and regression deltas/gates.
+      - Agent Console shows success-rate/invocation stats, specialist detail performance windows, fanout filters, batch columns, sibling links, fanout badges, Run Detail fanout evidence grouping, and Eval specialist contract metrics/preset.
+      - No migration files or new DB tables were added; v2 reuses `agent_runs.context_json`, `subagent_outputs.output_json`, `eval_cases.expected_json`, and Eval result JSON columns.
+      - Full backend regression passed `435 passed`; full frontend Vitest rerun passed `44 files / 214 tests`; frontend lint/build passed with the existing Vite large-chunk warning.
 
   - id: agent-console-chinese-team-knowledge-follow-up
     date: 2026-05-27

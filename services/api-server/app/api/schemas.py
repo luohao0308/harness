@@ -423,6 +423,14 @@ class TaskSubagentResult(BaseModel):
     id: str = Field(description="子 Agent ID")
     step_key: str | None = Field(default=None, description="来源步骤键")
     status: str = Field(description="子 Agent 状态")
+    fanout_batch_id: str | None = Field(default=None, description="fanout 批次 ID")
+    fanout_index: int | None = Field(default=None, description="fanout 批次序号")
+    fanout_total: int | None = Field(default=None, description="fanout 批次总数")
+    specialist_slug: str | None = Field(default=None, description="专家 slug")
+    specialist_role: str | None = Field(default=None, description="专家角色")
+    specialist_output: dict | None = Field(default=None, description="结构化专家输出")
+    budget_consumed_json: dict = Field(default_factory=dict, description="专家预算消耗")
+    budget_exceeded_json: list[str] = Field(default_factory=list, description="超出的专家预算项")
     summary: str | None = Field(default=None, description="子 Agent 结果摘要")
     tool_results: list[ToolResult] = Field(default_factory=list, description="工具执行结果")
     artifacts: list[SubagentArtifact] = Field(default_factory=list, description="子 Agent 产物")
@@ -494,6 +502,15 @@ class TaskPlanStepState(BaseModel):
     execution_mode: str = Field(description="执行模式")
     requires_sandbox: bool = Field(description="是否需要沙箱")
     can_spawn_subagent: bool = Field(description="是否可派生子 Agent")
+    recommended_specialist_slug: str | None = Field(
+        default=None,
+        description="推荐专家模板 slug",
+    )
+    fanout_specialist_slugs: list[str] = Field(
+        default_factory=list,
+        description="并行 fanout 专家 slug 列表",
+    )
+    fanout_aggregation: str = Field(default="synthesizer_chain", description="fanout 聚合模式")
     tool_hints: list[str] = Field(default_factory=list, description="计划工具意图")
     acceptance_criteria: list[str] = Field(default_factory=list, description="验收标准")
     risk_level: str = Field(default="low", description="风险等级")
@@ -1080,10 +1097,19 @@ class SubagentResponse(BaseModel):
     parent_agent_id: str | None = Field(default=None, description="父 Agent ID")
     agent_type: str = Field(description="Agent 类型")
     status: str = Field(description="子 Agent 状态")
+    specialist_id: str | None = Field(default=None, description="专家模板 ID")
+    fanout_batch_id: str | None = Field(default=None, description="fanout 批次 ID")
+    fanout_index: int | None = Field(default=None, description="fanout 批次序号")
+    fanout_total: int | None = Field(default=None, description="fanout 批次总数")
     context_json: dict = Field(description="上下文")
     started_at: datetime | None = Field(default=None, description="开始时间")
     completed_at: datetime | None = Field(default=None, description="完成时间")
     timeout_at: datetime | None = Field(default=None, description="超时时间")
+    specialist: "SubagentSpecialistSummary | None" = Field(
+        default=None,
+        description="专家模板摘要",
+    )
+    output: "SubagentOutputResponse | None" = Field(default=None, description="结构化专家输出")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1097,10 +1123,36 @@ class SubagentListItemResponse(SubagentResponse):
     task_title: str = Field(description="任务标题")
     task_status: str = Field(description="任务状态")
     step_key: str | None = Field(default=None, description="来源步骤键")
+    specialist_slug: str | None = Field(default=None, description="专家 slug")
+    output_summary: str | None = Field(default=None, description="结构化输出摘要")
 
 
 class SubagentListPage(BaseModel):
     items: list[SubagentListItemResponse] = Field(description="组织子 Agent 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class FanoutBatchMemberResponse(BaseModel):
+    id: str = Field(description="子 Agent ID")
+    status: str = Field(description="子 Agent 状态")
+    specialist_id: str | None = Field(default=None, description="专家模板 ID")
+    specialist_slug: str | None = Field(default=None, description="专家 slug")
+    fanout_index: int | None = Field(default=None, description="fanout 序号")
+    output_id: str | None = Field(default=None, description="结构化输出 ID")
+
+
+class FanoutBatchResponse(BaseModel):
+    fanout_batch_id: str = Field(description="fanout 批次 ID")
+    task_id: str = Field(description="任务 ID")
+    step_key: str | None = Field(default=None, description="来源步骤")
+    fanout_total: int = Field(description="批次总数")
+    aggregation: str = Field(description="聚合模式")
+    statuses: dict[str, int] = Field(default_factory=dict, description="状态分布")
+    members: list[FanoutBatchMemberResponse] = Field(description="批次成员")
+
+
+class FanoutBatchPage(BaseModel):
+    items: list[FanoutBatchResponse] = Field(description="fanout 批次列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
@@ -1109,6 +1161,123 @@ class SubagentCreateRequest(BaseModel):
     parent_agent_id: str | None = Field(default=None, description="父 Agent ID")
     timeout_seconds: int = Field(default=900, ge=1, description="超时秒数")
     enqueue: bool = Field(default=False, description="是否进入 Dramatiq 队列")
+    specialist_slug: str | None = Field(default=None, description="可选专家模板 slug")
+
+
+class SubagentSpecialistSummary(BaseModel):
+    id: str = Field(description="专家 ID")
+    slug: str = Field(description="专家 slug")
+    display_name: str = Field(description="专家名称")
+    role: str = Field(description="专家角色")
+    visibility: str = Field(description="可见性")
+    status: str = Field(description="状态")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubagentSpecialistResponse(SubagentSpecialistSummary):
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    description: str = Field(description="专家说明")
+    system_prompt: str = Field(description="系统提示词")
+    capability_slugs_json: list[str] = Field(description="工具白名单")
+    output_schema_json: dict = Field(description="输出 JSON Schema")
+    output_schema_sha256: str = Field(description="输出 Schema SHA256")
+    budget_json: dict = Field(description="预算")
+    trigger_keywords_json: list[str] = Field(description="触发关键词")
+    created_by: str | None = Field(default=None, description="创建者")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubagentSpecialistPage(BaseModel):
+    items: list[SubagentSpecialistResponse] = Field(description="专家模板列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class SubagentSpecialistCreateRequest(BaseModel):
+    slug: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    display_name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    role: str = Field(default="specialist", min_length=1, max_length=32)
+    system_prompt: str = Field(min_length=1)
+    capability_slugs_json: list[str] = Field(default_factory=list)
+    output_schema_json: dict = Field(description="JSON Schema draft-07")
+    budget_json: dict = Field(default_factory=dict)
+    trigger_keywords_json: list[str] = Field(default_factory=list)
+    visibility: Literal["org", "private"] = Field(default="org")
+
+
+class SubagentSpecialistUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1)
+    role: str | None = Field(default=None, min_length=1, max_length=32)
+    system_prompt: str | None = Field(default=None, min_length=1)
+    capability_slugs_json: list[str] | None = Field(default=None)
+    output_schema_json: dict | None = Field(default=None)
+    budget_json: dict | None = Field(default=None)
+    trigger_keywords_json: list[str] | None = Field(default=None)
+    visibility: Literal["org", "private"] | None = Field(default=None)
+    status: Literal["ACTIVE", "ARCHIVED"] | None = Field(default=None)
+
+
+class SubagentSpecialistPreflightRequest(BaseModel):
+    sample_output: dict = Field(default_factory=dict, description="用于校验输出 schema 的样例输出")
+
+
+class SubagentSpecialistPreflightResponse(BaseModel):
+    status: Literal["passed", "failed"] = Field(description="预检状态")
+    output_schema_sha256: str = Field(description="Schema SHA256")
+    budget_json: dict = Field(description="规范化预算")
+    errors: list[str] = Field(default_factory=list, description="预检错误")
+
+
+class SubagentSpecialistFailureReason(BaseModel):
+    reason: str = Field(description="失败原因")
+    count: int = Field(description="次数")
+
+
+class SubagentSpecialistStats(BaseModel):
+    specialist_id: str = Field(description="专家 ID")
+    slug: str = Field(description="专家 slug")
+    window: Literal["7d", "30d", "all"] = Field(description="统计窗口")
+    total_invocations: int = Field(description="总调用次数")
+    success_count: int = Field(description="成功次数")
+    failed_count: int = Field(description="失败次数")
+    budget_exceeded_count: int = Field(description="预算超限次数")
+    depth_rejected_count: int = Field(description="深度拒绝次数")
+    success_rate: float | None = Field(default=None, description="成功率")
+    avg_runtime_ms: int | None = Field(default=None, description="平均耗时")
+    p95_runtime_ms: int | None = Field(default=None, description="P95 耗时")
+    avg_cost_usd: str = Field(description="平均成本")
+    total_cost_usd: str = Field(description="累计成本")
+    avg_tool_calls: float = Field(description="平均工具调用数")
+    avg_output_size_bytes: int = Field(description="平均输出大小")
+    recent_failure_reasons: list[SubagentSpecialistFailureReason] = Field(
+        default_factory=list,
+        description="最近失败原因",
+    )
+
+
+class SubagentOutputResponse(BaseModel):
+    id: str = Field(description="输出 ID")
+    agent_run_id: str = Field(description="子 Agent Run ID")
+    task_id: str = Field(description="任务 ID")
+    specialist_id: str | None = Field(default=None, description="专家 ID")
+    output_json: dict = Field(description="结构化输出")
+    output_schema_sha256: str = Field(description="Schema SHA256")
+    budget_consumed_json: dict = Field(description="预算消耗")
+    budget_exceeded_json: list[str] = Field(description="超出的预算项")
+    written_at: datetime = Field(description="写入时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubagentOutputCreateRequest(BaseModel):
+    output_json: dict = Field(description="结构化输出")
+    budget_consumed_json: dict | None = Field(default=None, description="可选预算消耗覆盖")
+    budget_exceeded_json: list[str] | None = Field(default=None, description="可选预算超限覆盖")
 
 
 class SubagentRecoverRequest(BaseModel):
@@ -2322,6 +2491,9 @@ class RegressionDelta(BaseModel):
     )
     persona_contract_pass_rate_delta: float = Field(
         default=0.0, description="Persona contract pass rate 变化"
+    )
+    specialist_contract_pass_rate_delta: float = Field(
+        default=0.0, description="Specialist contract pass rate 变化"
     )
     overrefusal_rate_delta: float = Field(default=0.0, description="过度拒答率变化")
     safety_violation_total_delta: int = Field(default=0, description="安全违规总数变化")

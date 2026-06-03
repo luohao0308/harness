@@ -404,11 +404,77 @@ class AgentRun(Base):
     parent_agent_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
     agent_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
+    specialist_id: Mapped[str | None] = mapped_column(
+        ForeignKey("subagent_specialists.id"),
+        nullable=True,
+        index=True,
+    )
     context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     capability_snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     timeout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    specialist: Mapped[SubagentSpecialist | None] = relationship()
+    subagent_output: Mapped[SubagentOutput | None] = relationship(
+        back_populates="agent_run",
+        uselist=False,
+    )
+
+
+class SubagentSpecialist(Base):
+    __tablename__ = "subagent_specialists"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "slug",
+            name="subagent_specialists_org_slug_uidx",
+        ),
+        Index("ix_subagent_specialists_visibility_status", "visibility", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    capability_slugs_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    output_schema_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    budget_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    trigger_keywords_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    visibility: Mapped[str] = mapped_column(String(16), nullable=False, default="org", index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE", index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SubagentOutput(Base):
+    __tablename__ = "subagent_outputs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    agent_run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    specialist_id: Mapped[str | None] = mapped_column(
+        ForeignKey("subagent_specialists.id"),
+        nullable=True,
+        index=True,
+    )
+    output_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    output_schema_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    budget_consumed_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    budget_exceeded_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    written_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    agent_run: Mapped[AgentRun] = relationship(back_populates="subagent_output")
+    specialist: Mapped[SubagentSpecialist | None] = relationship()
 
 
 class AgentAssignment(Base):

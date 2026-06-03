@@ -15,6 +15,7 @@ import { formatShortDate } from "../../../lib/utils";
 import { bulkCancelSubagents, listSubagents, type SubagentListItem } from "../../tasks/api";
 
 const statusFilters = ["ALL", "PENDING", "RUNNING", "SUCCESS", "FAILED", "TIMEOUT", "CANCELLED"];
+type FanoutFilter = "ALL" | "FANOUT";
 
 function contextSummary(context: Record<string, unknown>) {
   const label = context.label;
@@ -47,10 +48,16 @@ function statusCounts(items: SubagentListItem[]) {
   }, {});
 }
 
+function specialistLabel(subagent: SubagentListItem) {
+  return subagent.specialist?.slug ?? subagent.specialist_slug ?? null;
+}
+
 export function SubagentsPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [specialistFilter, setSpecialistFilter] = useState("ALL");
+  const [fanoutFilter, setFanoutFilter] = useState<FanoutFilter>("ALL");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const subagentsQuery = useQuery({
     queryKey: ["subagents", statusFilter],
@@ -60,8 +67,27 @@ export function SubagentsPage() {
     queryKey: ["subagents", "all-counts"],
     queryFn: () => listSubagents({ limit: 500 }),
   });
-  const subagents = subagentsQuery.data?.items ?? [];
+  const rawSubagents = subagentsQuery.data?.items ?? [];
+  const specialistOptions = Array.from(
+    new Set(
+      (allSubagentsQuery.data?.items ?? [])
+        .map((subagent) => specialistLabel(subagent))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ).sort();
+  const subagents = rawSubagents.filter((subagent) => {
+    if (specialistFilter !== "ALL" && specialistLabel(subagent) !== specialistFilter) {
+      return false;
+    }
+    if (fanoutFilter === "FANOUT" && !subagent.fanout_batch_id) {
+      return false;
+    }
+    return true;
+  });
   const counts = statusCounts(allSubagentsQuery.data?.items ?? []);
+  const fanoutCount = (allSubagentsQuery.data?.items ?? []).filter(
+    (subagent) => Boolean(subagent.fanout_batch_id),
+  ).length;
   const selectableIds = subagents
     .filter((subagent) => ["PENDING", "RUNNING"].includes(subagent.status))
     .map((subagent) => subagent.id);
@@ -148,6 +174,57 @@ export function SubagentsPage() {
                 </button>
               );
             })}
+            <div className="mx-1 h-5 w-px bg-slate-200" />
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+              {text("专家", "Specialist")}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSpecialistFilter("ALL")}
+              className={
+                specialistFilter === "ALL"
+                  ? "rounded-md border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs text-slate-900"
+                  : "rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              }
+            >
+              {text("全部", "All")}
+            </button>
+            {specialistOptions.map((slug) => (
+              <button
+                key={slug}
+                type="button"
+                onClick={() => setSpecialistFilter(slug)}
+                className={
+                  specialistFilter === slug
+                    ? "rounded-md border border-slate-300 bg-slate-100 px-2.5 py-1 font-mono text-xs text-slate-900"
+                    : "rounded-md border border-slate-200 bg-white px-2.5 py-1 font-mono text-xs text-slate-600 hover:bg-slate-50"
+                }
+              >
+                {slug}
+              </button>
+            ))}
+            <div className="mx-1 h-5 w-px bg-slate-200" />
+            <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+              Fanout
+            </div>
+            {[
+              ["ALL", text("全部", "All"), Object.values(counts).reduce((total, value) => total + value, 0)],
+              ["FANOUT", text("仅并行", "Fanout only"), fanoutCount],
+            ].map(([value, label, count]) => (
+              <button
+                key={String(value)}
+                type="button"
+                onClick={() => setFanoutFilter(value as FanoutFilter)}
+                className={
+                  fanoutFilter === value
+                    ? "rounded-md border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs text-slate-900"
+                    : "rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                }
+              >
+                {label}
+                <span className="ml-1 font-mono text-[10px] text-slate-400">{count}</span>
+              </button>
+            ))}
           </div>
         </Card>
 
@@ -203,8 +280,10 @@ export function SubagentsPage() {
                 </Th>
                 <Th>{text("子代理", "Subagent")}</Th>
                 <Th>{text("任务", "Task")}</Th>
+                <Th>{text("专家", "Specialist")}</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("来源步骤", "Source Step")}</Th>
+                <Th>Fanout</Th>
                 <Th>{text("开始时间", "Started")}</Th>
                 <Th>{text("完成时间", "Completed")}</Th>
                 <Th>{text("上下文压缩", "Context Compression")}</Th>
@@ -246,9 +325,48 @@ export function SubagentsPage() {
                     </div>
                   </Td>
                   <Td>
+                    {subagent.specialist ? (
+                      <Link
+                        to={`/subagent-specialists/${subagent.specialist.id}`}
+                        className="inline-flex"
+                      >
+                        <Badge tone="purple">{subagent.specialist.slug}</Badge>
+                      </Link>
+                    ) : subagent.specialist_slug ? (
+                      <Badge tone="purple">{subagent.specialist_slug}</Badge>
+                    ) : (
+                      <span className="text-slate-400">-</span>
+                    )}
+                    <div className="mt-1 max-w-[220px] truncate text-[11px] text-slate-500">
+                      {subagent.output_summary ?? outputSummary(subagent)}
+                    </div>
+                  </Td>
+                  <Td>
                     <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
                   </Td>
                   <Td className="font-mono text-slate-500">{subagent.step_key ?? "-"}</Td>
+                  <Td>
+                    {subagent.fanout_batch_id ? (
+                      <div className="space-y-1">
+                        <Badge tone="info">
+                          批次{" "}
+                          {typeof subagent.fanout_index === "number" && typeof subagent.fanout_total === "number"
+                            ? `${subagent.fanout_index + 1}/${subagent.fanout_total}`
+                            : subagent.fanout_total
+                              ? `?/${subagent.fanout_total}`
+                              : "并行"}
+                        </Badge>
+                        <div
+                          className="max-w-[120px] truncate font-mono text-[10px] text-slate-400"
+                          title={subagent.fanout_batch_id}
+                        >
+                          {subagent.fanout_batch_id}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-slate-400">-</span>
+                    )}
+                  </Td>
                   <Td className="font-mono text-slate-500">
                     {subagent.started_at ? formatShortDate(subagent.started_at) : "-"}
                   </Td>
@@ -262,7 +380,7 @@ export function SubagentsPage() {
               ))}
               {!subagentsQuery.isLoading && subagents.length === 0 && (
                 <tr>
-                  <Td colSpan={8} className="py-12 text-center text-slate-500">
+                  <Td colSpan={10} className="py-12 text-center text-slate-500">
                     {text(
                       "暂无符合筛选条件的子代理。",
                       "No subagents match the selected filters.",
@@ -276,4 +394,16 @@ export function SubagentsPage() {
       </div>
     </ConsoleShell>
   );
+}
+
+function outputSummary(subagent: SubagentListItem) {
+  if (!subagent.output) return "尚无结构化输出";
+  const output = subagent.output.output_json;
+  const summary = output.summary ?? output.answer;
+  if (typeof summary === "string" && summary.length > 0) return summary;
+  const issues = output.issues;
+  if (Array.isArray(issues)) return `${issues.length} issue(s)`;
+  const violations = output.violations;
+  if (Array.isArray(violations)) return `${violations.length} violation(s)`;
+  return "已写入结构化输出";
 }

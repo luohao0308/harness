@@ -13,6 +13,7 @@ from app.tools.registry import ToolRegistry
 
 PLANNER_PROMPT_VERSION = "1.1.0"
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
+ALLOWED_FANOUT_AGGREGATIONS = {"synthesizer_chain", "concat", "first_success"}
 
 
 class DeterministicPlanner:
@@ -76,6 +77,7 @@ class DeterministicPlanner:
                     execution_mode="async",
                     requires_sandbox=False,
                     can_spawn_subagent=True,
+                    recommended_specialist_slug="researcher",
                     depends_on=[steps[-1].key],
                     tool_hints=["read_file", "list_files"],
                     acceptance_criteria=["子 Agent 返回可供父任务汇总的调研结果。"],
@@ -173,6 +175,25 @@ class DeterministicPlanner:
             can_spawn_subagent = bool(raw_step.get("can_spawn_subagent"))
             if execution_mode == "async":
                 can_spawn_subagent = True
+            recommended_specialist_slug = raw_step.get("recommended_specialist_slug")
+            if not isinstance(recommended_specialist_slug, str):
+                recommended_specialist_slug = raw_step.get("specialist_slug")
+            if not isinstance(recommended_specialist_slug, str):
+                recommended_specialist_slug = None
+            fanout_specialist_slugs = self._normalize_string_list(
+                raw_step.get("fanout_specialist_slugs"),
+                default=[],
+            )
+            if len(fanout_specialist_slugs) == 1 and recommended_specialist_slug is None:
+                recommended_specialist_slug = fanout_specialist_slugs[0]
+            if len(fanout_specialist_slugs) > 1:
+                execution_mode = "async"
+                can_spawn_subagent = True
+            fanout_aggregation = str(
+                raw_step.get("fanout_aggregation") or "synthesizer_chain"
+            )
+            if fanout_aggregation not in ALLOWED_FANOUT_AGGREGATIONS:
+                fanout_aggregation = "synthesizer_chain"
             tool_hints = self._normalize_tool_hints(raw_step.get("tool_hints"))
             risk_level = self._normalize_risk_level(raw_step.get("risk_level"), tool_hints)
             quality_notes = self._step_quality_notes(
@@ -197,6 +218,9 @@ class DeterministicPlanner:
                     "execution_mode": execution_mode,
                     "requires_sandbox": bool(raw_step.get("requires_sandbox", False)),
                     "can_spawn_subagent": can_spawn_subagent,
+                    "recommended_specialist_slug": recommended_specialist_slug,
+                    "fanout_specialist_slugs": fanout_specialist_slugs,
+                    "fanout_aggregation": fanout_aggregation,
                     "depends_on": depends_on,
                     "expected_events": raw_step.get(
                         "expected_events",

@@ -11,6 +11,7 @@ from app.api.metrics import router as metrics_router
 from app.api.observability import router as observability_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.settings import router as settings_router
+from app.api.subagent_specialists import router as subagent_specialists_router
 from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
 from app.api.teams import router as teams_router
@@ -94,6 +95,7 @@ app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(subagent_specialists_router, prefix="/api")
 app.include_router(subagents_router, prefix="/api")
 app.include_router(sandboxes_router, prefix="/api")
 app.include_router(observability_router, prefix="/api")

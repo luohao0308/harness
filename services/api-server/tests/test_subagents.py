@@ -6,8 +6,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelRequest, ModelResponse
-from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT, SubagentManager
-from app.db.models import Agent, AgentRun, SubagentRecoveryBatch, Task, utc_now
+from app.agents.specialists import ensure_system_specialists
+from app.agents.subagent_manager import (
+    MAX_FANOUT_PER_STEP,
+    SUBAGENT_CONCURRENCY_LIMIT,
+    FanoutCapacityExceededError,
+    SubagentManager,
+)
+from app.db.models import Agent, AgentRun, SubagentRecoveryBatch, SubagentSpecialist, Task, utc_now
 from app.events.event_store import EventStore
 from app.main import app
 from app.tools.capabilities import CapabilityRegistry
@@ -378,6 +384,93 @@ def test_subagent_api_create_for_task(db_session: Session) -> None:
     assert payload["task_id"] == task.id
     assert payload["status"] == "PENDING"
     assert payload["context_json"]["step_key"] == "parallel_review"
+
+
+def test_spawn_fanout_creates_shared_batch_metadata_and_api_projection(
+    db_session: Session,
+) -> None:
+    ensure_system_specialists(db_session)
+    task = create_task(db_session)
+    specialists = [
+        db_session.query(SubagentSpecialist).filter_by(slug=slug, visibility="system").one()
+        for slug in ["researcher", "code-reviewer", "safety-checker"]
+    ]
+    batch_id, runs = SubagentManager(db_session).spawn_fanout(
+        task=task,
+        assignment={"step_key": "parallel_experts", "description": "并行专家审查"},
+        specialists=specialists,
+        aggregation="concat",
+    )
+    runs[0].status = "SUCCESS"
+    runs[1].status = "FAILED"
+    db_session.commit()
+
+    assert batch_id.startswith("fanout-")
+    assert [run.context_json["fanout_index"] for run in runs] == [0, 1, 2]
+    assert {run.context_json["fanout_batch_id"] for run in runs} == {batch_id}
+    assert {run.context_json["fanout_total"] for run in runs} == {3}
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    spawned = [event for event in events if event.event_type == "SUBAGENT_SPAWNED"]
+    assert len(spawned) == 3
+    assert spawned[0].payload_json["assignment"]["fanout_batch_id"] == batch_id
+
+    client = TestClient(app)
+    listed = client.get(f"/api/tasks/{task.id}/subagents", headers=AUTH_HEADERS)
+    batches = client.get(f"/api/tasks/{task.id}/fanout-batches", headers=AUTH_HEADERS)
+    result = client.get(f"/api/tasks/{task.id}/result", headers=AUTH_HEADERS)
+
+    assert listed.status_code == 200
+    assert {item["fanout_batch_id"] for item in listed.json()["items"]} == {batch_id}
+    assert batches.status_code == 200
+    batch = batches.json()["items"][0]
+    assert batch["fanout_batch_id"] == batch_id
+    assert batch["step_key"] == "parallel_experts"
+    assert batch["fanout_total"] == 3
+    assert batch["aggregation"] == "concat"
+    assert batch["statuses"] == {"SUCCESS": 1, "FAILED": 1, "PENDING": 1}
+    assert [member["fanout_index"] for member in batch["members"]] == [0, 1, 2]
+    assert result.status_code == 200
+    result_members = result.json()["subagent_results"]
+    assert {item["fanout_batch_id"] for item in result_members} == {batch_id}
+    assert [item["fanout_index"] for item in result_members] == [0, 1, 2]
+
+
+def test_spawn_fanout_rejects_oversized_and_capacity_excess(
+    db_session: Session,
+) -> None:
+    ensure_system_specialists(db_session)
+    task = create_task(db_session)
+    researcher = db_session.query(SubagentSpecialist).filter_by(
+        slug="researcher",
+        visibility="system",
+    ).one()
+    manager = SubagentManager(db_session)
+
+    too_many = [researcher for _ in range(MAX_FANOUT_PER_STEP + 1)]
+    try:
+        manager.spawn_fanout(
+            task=task,
+            assignment={"step_key": "too_many"},
+            specialists=too_many,
+        )
+    except FanoutCapacityExceededError as exc:
+        assert "exceeds max" in str(exc)
+    else:
+        raise AssertionError("expected FanoutCapacityExceededError")
+
+    for index in range(SUBAGENT_CONCURRENCY_LIMIT - 1):
+        manager.spawn(task=task, assignment={"step_key": f"existing_{index}"})
+
+    try:
+        manager.spawn_fanout(
+            task=task,
+            assignment={"step_key": "over_capacity"},
+            specialists=[researcher, researcher],
+        )
+    except FanoutCapacityExceededError as exc:
+        assert "concurrency capacity" in str(exc)
+    else:
+        raise AssertionError("expected FanoutCapacityExceededError")
 
 
 def test_subagent_recovery_resets_stale_running_and_times_out_expired(

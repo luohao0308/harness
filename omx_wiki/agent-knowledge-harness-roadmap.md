@@ -422,6 +422,66 @@ Verification evidence:
 - `git diff --check` -> passed.
 - Detailed session record: [[session-2026-05-28-eval-dimensions-v2]].
 
+### P8.3: Subagent Specialists v1
+
+Status: implemented locally on `p7-release-demo-hardening`.
+
+Goal: make subagents reusable Harness specialist contracts instead of anonymous async workers.
+
+Delivered scope:
+
+- `subagent_specialists` templates for role prompt, capability whitelist, output schema, trigger keywords, visibility, status, and per-specialist budget;
+- seeded system specialists: `code-reviewer`, `researcher`, `safety-checker`, and `synthesizer`;
+- `subagent_outputs` write-once structured output records with schema hash, budget consumed, and budget exceeded evidence;
+- `AgentRun.specialist_id` plus context snapshots for specialist prompt, whitelist, output schema, schema hash, and budget;
+- deterministic planner/executor routing through `recommended_specialist_slug` and trigger-keyword matching;
+- worker budget and whitelist guards after model/tool calls, with `BUDGET_EXCEEDED` as terminal subagent status;
+- parent task result aggregation of specialist output and budget evidence;
+- Agent Console `专家库`, specialist detail/preflight, specialist filtering on `/subagents`, structured output/budget detail, plan-step specialist badges, and Run Detail `专家证据`.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_subagent_specialists.py tests/test_subagents.py -q` -> `20 passed`.
+- `cd services/api-server && uv run pytest tests -q` -> `426 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- SQLite Alembic upgrade to `20260528_0023` and downgrade to `20260527_0022` -> passed.
+- `cd apps/agent-console && npm test -- SubagentSpecialistsPage SubagentDetailPage --run` -> `3 passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-28-subagent-specialists-v1]].
+
+### P8.4: Subagent Specialists v2
+
+Status: implemented locally on `p7-release-demo-hardening`.
+
+Goal: make specialist orchestration parallel, bounded, measurable, and evaluable without schema churn.
+
+Delivered scope:
+
+- bounded fanout step contracts through `fanout_specialist_slugs` and `fanout_aggregation`;
+- shared fanout metadata in `AgentRun.context_json`, including `fanout_batch_id`, `fanout_index`, and `fanout_total`;
+- `SubagentManager.spawn_fanout(...)` with `MAX_FANOUT_PER_STEP=5`;
+- nested specialist depth guard with `MAX_SPECIALIST_DEPTH=3`, `SubagentDepthExceededError`, HTTP 409 mapping, and `SUBAGENT_DEPTH_REJECTED` events;
+- real-time specialist stats endpoint with `7d`, `30d`, and `all` windows;
+- success-rate ranking for multi-candidate keyword matches, plus recency fallback trace metadata;
+- Eval `specialist_contract` deterministic grader, aggregate metrics, role distribution, failure breakdown, and regression delta/gate support;
+- fanout batch API and console projections for batch filters, sibling links, badges, grouped Run Detail evidence, specialist performance windows, and `专家契约` Eval preset.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_subagent_specialists.py tests/test_subagents.py tests/test_evals.py tests/test_eval_regression.py -q` -> `55 passed`.
+- `cd services/api-server && uv run pytest -q` -> `435 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `cd apps/agent-console && npm test -- SubagentSpecialistsPage.test.tsx SubagentDetailPage.test.tsx EvalRunResults.contracts.test.tsx` -> `5 passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `cd apps/agent-console && npm test -- --run` -> `44 files / 214 tests passed`.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-28-subagent-specialists-v2]].
+
 ## Boundaries
 
 - Do not reopen Stage 07. It is a completed foundation.
@@ -438,3 +498,5 @@ Verification evidence:
 - [[session-2026-05-17-agent-knowledge-p3-web-research]]
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]]
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]]
+- [[session-2026-05-28-subagent-specialists-v1]]
+- [[session-2026-05-28-subagent-specialists-v2]]
