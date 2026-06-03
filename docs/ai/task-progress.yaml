@@ -509,6 +509,26 @@ post_stage_hardening:
       - No migration files, new tables, or new dependencies were added; sandbox workspace root remains a runtime mount/ToolRunner parameter rather than persisted database state.
       - Targeted backend adapter tests passed `73 passed`; full backend regression passed `456 passed`; full frontend Vitest rerun passed `46 files / 219 tests`; frontend lint/build passed with the existing Vite large-chunk warning.
 
+  - id: agent-knowledge-harness-large-file-refactor-v1
+    date: 2026-05-28
+    status: verified
+    demo: Agent API, Knowledge/RAG, Eval API, TeamPage, and ToolRegistryPage were split into focused review surfaces in five independent pure-refactor commits.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_agents.py tests/test_knowledge_rag.py tests/test_knowledge_connectors.py tests/test_evals.py tests/test_eval_regression.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm test -- TeamPages.test.tsx ToolRegistryPage.marketplace.test.tsx
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - find services/api-server/app/api/agents services/api-server/app/knowledge services/api-server/app/api/evals apps/agent-console/src/features/teams/pages/TeamPage apps/agent-console/src/features/tools/pages/ToolRegistryPage -type f \( -name '*.py' -o -name '*.tsx' -o -name '*.ts' \) | sort | xargs wc -l
+    acceptance_notes:
+      - Five independent commits completed the PRD split: `9ada9df` Agent API, `e08f8d1` Knowledge/RAG, `192239f` Eval API, `531c067` TeamPage, and `121df13` ToolRegistryPage.
+      - Public import and route/component compatibility remains in place for `app.api.agents`, `app.knowledge`, `app.api.evals`, `TeamPage`, and `ToolRegistryPage`.
+      - Split-module line count gate passed: Agent API max `agent_chat.py` is 950 lines under the allowed endpoint threshold; Knowledge max is 641; Eval API max is 616; TeamPage max is 728; ToolRegistryPage max is 723.
+      - Backend target regression passed `169 passed`; frontend TeamPage + ToolRegistryPage tests passed `22 passed`; frontend lint/build passed with the existing Vite large-chunk warning.
+
   - id: agent-console-chinese-team-knowledge-follow-up
     date: 2026-05-27
     status: verified

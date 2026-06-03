@@ -37,6 +37,7 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-28-subagent-specialists-v1]] - Subagent Specialists v1 templates, structured outputs, per-specialist budgets, deterministic routing, console expert evidence, and validation evidence.
 - [[session-2026-05-28-subagent-specialists-v2]] - Subagent Specialists v2 parallel fanout, nested-depth guard, success-rate ranking, specialist stats, Eval specialist contracts, and console fanout evidence.
 - [[session-2026-05-28-real-tool-adapters-v1]] - Real Tool Adapters v1 registry-backed GitHub, Slack, and sandbox file adapters with health/schema UI, adapter hashes, and validation evidence.
+- [[session-2026-05-28-large-file-refactor-v1]] - Large File Refactor v1 split of Agent API, Knowledge/RAG, Eval API, TeamPage, and ToolRegistryPage review surfaces with validation evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories
