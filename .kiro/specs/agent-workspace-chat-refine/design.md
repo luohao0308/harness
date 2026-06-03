@@ -2,7 +2,7 @@
 
 ## Overview
 
-This design turns `apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx` (currently "Agent Workspace Pro") into a focused chat surface modelled after local Agent CLI / Harness Agent UI. The user facing goal is "this page is where I talk to the agent" — everything that is not the conversation is demoted to either an on-demand `InspectorDrawer`, a link to `Run Detail`, or removed from this route entirely.
+This design turns `apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx` (currently "Agent Workspace Pro") into a focused chat surface modelled after 主流 Agent 工具 UI. The user facing goal is "this page is where I talk to the agent" — everything that is not the conversation is demoted to either an on-demand `InspectorDrawer`, a link to `Run Detail`, or removed from this route entirely.
 
 The design also closes the two observed defects:
 
@@ -1331,7 +1331,7 @@ The matrix below cross-maps every functional requirement (Req 1 … Req 11) to t
 | 8.1 / 8.2 | Welcome visibility and content | Module Layout → `ChatWelcomeState`; `examplePrompts.ts` | — | Component test |
 | 8.3 | Pick prompt fills draft | Module Layout → `ChatWelcomeState` | — | Component test |
 | 8.4 / 8.5 / 8.6 | Degradation when metadata queries fail | `AgentWorkspacePage` query error branches | — | Component test per query |
-| 9.1 / 9.2 | i18n alignment | Accessibility & i18n → i18n | — | i18n snapshot for zh-CN + en-US |
+| 9.1 / 9.2 | i18n consistency | Accessibility & i18n → i18n | — | i18n snapshot for zh-CN + en-US |
 | 9.3 | Keyboard focus order | Accessibility & i18n → Focus management | — | a11y audit / component test |
 | 9.4 | Esc behaviour | Composer Keyboard → Esc behaviour | — | Component test |
 | 9.5 | aria-label on icon-only buttons | Accessibility & i18n → Icon-only table | — | a11y audit |

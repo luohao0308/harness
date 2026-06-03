@@ -118,7 +118,7 @@
   - 维持控制台现有无衬线字体与等宽 ID 展示；中文按钮和状态优先短语化。
 - Spacing/layout rhythm:
   - 以 8px 节奏为主，商店页强调卡片分区和步骤流。
-  - `hao` TUI 采用 local Agent CLI 风格的 inline 终端节奏：不切换全屏 alternate screen，不呈现编辑器式大画布；欢迎卡、主会话、底部 `›` 输入行和轻量状态留在当前 shell 输出流里。底部状态必须包含当前模型、模型强度、compact 圆环、输出风格、审批数和命令数。工具工作台只按需作为底部 drawer 出现，不默认右侧分屏。
+  - `hao` TUI 采用 本地 Agent CLI 的 inline 终端节奏：不切换全屏 alternate screen，不呈现编辑器式大画布；欢迎卡、主会话、底部 `›` 输入行和轻量状态留在当前 shell 输出流里。底部状态必须包含当前模型、模型强度、compact 圆环、输出风格、审批数和命令数。工具工作台只按需作为底部 drawer 出现，不默认右侧分屏。
 - Shape/radius/elevation:
   - 使用现有圆角卡片与轻阴影，不引入新材质语言。
 - Motion:
@@ -138,7 +138,7 @@
   - `Table`
   - `Textarea`
 - New/changed components:
-  - `hao` local Agent CLI 风格 inline TUI：左右两栏 `hao Code` 欢迎卡、真实可用的 `/init` 和 `/release-notes` 启动页命令、底部 `›` composer、模型强度状态、compact 圆环、隐藏式工作台 drawer、主会话内工具/审批单行状态。
+  - `hao` 本地 Agent CLI inline TUI：左右两栏 `hao Code` 欢迎卡、真实可用的 `/init` 和 `/release-notes` 启动页命令、底部 `›` composer、模型强度状态、compact 圆环、隐藏式工作台 drawer、主会话内工具/审批单行状态。
   - 统一确认弹窗
   - 全局操作反馈 toast/状态提示
   - 商店安装状态徽标与步骤提示

@@ -95,7 +95,7 @@ class ConservativeCharTokenEstimator(TokenEstimator):
 
 def token_estimator_for_model(model_id: str | None) -> TokenEstimator:
     normalized = (model_id or "").strip().lower()
-    known_prefixes = ("gpt-", "o1", "o3", "o4", "chat-first UI-")
+    known_prefixes = ("gpt-", "o1", "o3", "o4")
     if normalized.startswith(known_prefixes):
         try:
             return TiktokenTokenEstimator()

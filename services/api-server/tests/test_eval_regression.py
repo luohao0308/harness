@@ -383,7 +383,7 @@ class TestRegressionDelta:
             "persona_contract": {
                 "configured": True,
                 "passed": False,
-                "failures": ["role_drift:我是 chat-first UI"],
+                "failures": ["role_drift:我是通用 AI"],
                 "role_drift_count": 1,
             },
         }

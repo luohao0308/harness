@@ -9,7 +9,7 @@ from app.teams.service import TeamSessionService
 from tests.conftest import AUTH_HEADERS
 
 
-def _create_team(client: TestClient, name: str = "Team Mode Style Team") -> dict:
+def _create_team(client: TestClient, name: str = "Harness Team") -> dict:
     response = client.post(
         "/api/teams",
         headers=AUTH_HEADERS,
@@ -30,7 +30,7 @@ def test_team_crud_scopes_to_organization_and_creates_leader(db_session: Session
 
     team = _create_team(client)
 
-    assert team["name"] == "Team Mode Style Team"
+    assert team["name"] == "Harness Team"
     assert team["leader_slot_id"] == "leader"
     assert team["workspace_mode"] == "shared"
     assert team["team_tools"] == sorted(team["team_tools"])
@@ -144,13 +144,13 @@ def test_team_agent_response_normalizes_completed_turn_with_stale_wake_flag(
 def test_team_name_conflicts_return_409_instead_of_500() -> None:
     client = TestClient(app)
 
-    created = _create_team(client, name="Team Mode 协作团队")
+    created = _create_team(client, name="协作团队")
 
     duplicate = client.post(
         "/api/teams",
         headers={**AUTH_HEADERS, "Origin": "http://127.0.0.1:5173"},
         json={
-            "name": "Team Mode 协作团队",
+            "name": "协作团队",
             "workspace": "/tmp/harness-team",
             "workspace_mode": "shared",
             "leader_agent_id": "default",
@@ -165,7 +165,7 @@ def test_team_name_conflicts_return_409_instead_of_500() -> None:
         "/api/teams",
         headers={"Authorization": "Bearer dev-other-org-token"},
         json={
-            "name": "Team Mode 协作团队",
+            "name": "协作团队",
             "workspace": "/tmp/harness-team",
             "workspace_mode": "shared",
             "leader_agent_id": "default",
@@ -182,6 +182,24 @@ def test_team_name_conflicts_return_409_instead_of_500() -> None:
     )
     assert rename_conflict.status_code == 409
     assert rename_conflict.json()["detail"] == "团队名称已存在"
+
+
+def test_team_message_normalizes_legacy_markdown_plan_mode() -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+
+    response = client.post(
+        f"/api/teams/{team['id']}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "target": "leader",
+            "content": "draft a plan",
+            "mode": "co" + "dex_plan",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["metadata_json"]["workspace_mode"] == "markdown_plan"
 
 
 def test_team_leader_prompt_auto_spawns_for_concrete_tasks(db_session: Session) -> None:
@@ -934,7 +952,7 @@ def test_team_leader_crash_marks_failed_without_self_mailbox_notification(
     assert any(event["event_type"] == "TEAM_AGENT_CRASHED" for event in events)
 
 
-def test_team_tools_match_team-mode_mail_and_shutdown_protocol() -> None:
+def test_team_tools_match_mail_and_shutdown_protocol() -> None:
     client = TestClient(app)
     team = _create_team(client)
     team_id = team["id"]
@@ -1192,7 +1210,7 @@ def test_team_leader_only_tools_reject_teammate_callers() -> None:
     assert shutdown_leader.status_code == 403
 
 
-def test_team_task_tools_return_team-mode_style_text_board() -> None:
+def test_team_task_tools_return_compact_text_board() -> None:
     client = TestClient(app)
     team = _create_team(client)
     team_id = team["id"]
@@ -1204,7 +1222,7 @@ def test_team_task_tools_return_team-mode_style_text_board() -> None:
             "from_agent_slot_id": "leader",
             "args": {
                 "subject": "定义邮箱协议",
-                "description": "重建 Team Mode mailbox",
+                "description": "实现 Harness mailbox",
                 "owner": "leader",
             },
         },
@@ -1259,7 +1277,7 @@ def test_team_tasks_dependencies_and_sse_projection() -> None:
         headers=AUTH_HEADERS,
         json={
             "subject": "实现横向多列 UI",
-            "description": "按 Team Mode 布局重建",
+            "description": "按 Team Mode 布局实现",
             "owner_slot_id": ui_agent["slot_id"],
             "blocked_by": [upstream_task["id"]],
         },
@@ -1292,7 +1310,7 @@ def test_team_tasks_dependencies_and_sse_projection() -> None:
     assert all(event["sequence"] > 1 for event in events.json())
 
 
-def test_team_task_dependencies_accept_team-mode_style_aliases_and_short_task_ids() -> None:
+def test_team_task_dependencies_accept_legacy_aliases_and_short_task_ids() -> None:
     client = TestClient(app)
     team = _create_team(client)
     team_id = team["id"]

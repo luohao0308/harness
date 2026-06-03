@@ -295,7 +295,7 @@
 | P5       | Discard/close/Esc preserves store               | 3.5, 14.4, 16.5                 | 3.3, 4.5, 4.8, 6.1, 7.1      | 8.1      |
 | P6       | Edit/Regenerate preserves history               | 4.4, 4.5, 4.6, 10.2, 10.3, 16.6 | 3.4, 6.1                     | 8.1      |
 | P7       | Copy purity (`stripThinkBlocks`)                | 5.2, 5.7, 16.7                  | 2.1, 2.2, 4.1, 5.2           | 8.1      |
-| P8       | Metadata alignment (Strip ≡ Drawer)                | 7.1–7.4, 16.8                   | 4.3, 6.1                     | 8.1      |
+| P8       | Metadata consistency (Strip ≡ Drawer)                | 7.1–7.4, 16.8                   | 4.3, 6.1                     | 8.1      |
 | P9       | User bubble color tokens                        | 8.1, 8.5–8.7, 16.9              | 5.2                          | 8.1      |
 | P10      | Stop_Button visibility ⇔ activeStream !== null  | 9.1, 9.3, 16.10                 | 6.1                          | 8.1      |
 | P11      | Persistence safety (no streaming on rehydrate)  | 12.2, 12.4, 12.6, 16.11         | 2.8, 3.3, 7.1                | 8.1      |

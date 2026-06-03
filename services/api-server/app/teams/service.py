@@ -1,4 +1,4 @@
-"""Team Session service and Team Mode alignment orchestration."""
+"""Team Session service and Team Mode product surface orchestration."""
 
 # ruff: noqa: E501
 

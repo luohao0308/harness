@@ -6,7 +6,7 @@ import {
   uncoveredContextPath,
 } from "../../../agents/lib/contextCompression";
 import { estimateTextTokens } from "../../../agents/lib/contextTruncation";
-import type { WorkspaceMode } from "../../../agents/lib/types";
+import { normalizeWorkspaceMode, type WorkspaceMode } from "../../../agents/lib/types";
 import type { UsageSummary } from "../../../agents/components/InspectorDrawer";
 import type { ModelOption } from "../../../agents/components/ModelPicker";
 import type {
@@ -225,9 +225,7 @@ export function readString(source: Record<string, unknown> | null | undefined, k
 }
 
 export function readWorkspaceMode(source: Record<string, unknown> | null | undefined): WorkspaceMode {
-  const mode = readString(source, "workspace_mode");
-  if (mode === "chat" || mode === "markdown_plan" || mode === "plan" || mode === "goal") return mode;
-  return "chat";
+  return normalizeWorkspaceMode(readString(source, "workspace_mode"));
 }
 
 export function readNumber(source: Record<string, unknown> | null | undefined, key: string): number | undefined {

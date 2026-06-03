@@ -9,6 +9,7 @@
  */
 
 import type { ConversationNode } from "../../../stores/workspaceStore";
+import { normalizeWorkspaceMode } from "./types";
 
 export type PlanApprovalGateInput = {
   activePath: ConversationNode[];
@@ -52,7 +53,7 @@ export function planApprovalGate(
   // Precondition 5: only markdown planning output asks for approval.
   // A `plan` node is already a Plan-Act run result; showing the panel there
   // would create an approve -> plan -> approve loop.
-  const mode = tail.metadata?.workspace_mode;
+  const mode = normalizeWorkspaceMode(tail.metadata?.workspace_mode);
   if (mode !== "markdown_plan") {
     return HIDDEN;
   }

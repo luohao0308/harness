@@ -7,8 +7,8 @@
 1. **输入框过大**：v2 `min-h-24`（96px）固定高度；希望默认 1 行（约 40px），随内容自动增高，超过阈值内部滚动。
 2. **页面不自动跟随对话**：v2 用 `shouldAutoScroll`（阈值 50px）+ `pathLength + lastContentLength` 作为 `useEffect` 依赖，流式 `delta` 过程中若 hidden overflow / 容器高度计算不对 / `shouldAutoScroll` 阈值在 rAF 与实际 scrollHeight 更新之间错位，都会导致"不跟滚"。需要用 `useLayoutEffect` + 底部 sentinel 的 `IntersectionObserver` 重做。
 3. **Metadata 太抢焦点**：v2 `MetadataStrip` 挂在 `TopMetaBar` 下面；需要挪到 Composer 上方（次要位置），不再与顶栏徽标同排。
-4. **没有历史对话 / 像完整的 chat-first UI 对话窗口**：需要左侧可折叠的"历史对话"抽屉，列出本 Agent 下的 conversations，支持新建 / 切换 / 删除 / 当前高亮。
-5. **用 `/` 命令触发模式和动作**：在 Composer 输入 `/` 弹出命令菜单（`/plan`、`/Harness Agent`、`/chat`、`/pin`、`/clear`、`/model`、`/tool`、`/search`、`/help`），方向键 + Enter 确认，Esc 关闭；命令执行后 **不把 `/command` 本身发给后端**（除非命令需要 content）。
+4. **没有历史对话 / 像完整的对话窗口**：需要左侧可折叠的"历史对话"抽屉，列出本 Agent 下的 conversations，支持新建 / 切换 / 删除 / 当前高亮。
+5. **用 `/` 命令触发模式和动作**：在 Composer 输入 `/` 弹出命令菜单（`/plan`、`/plan-md`、`/chat`、`/pin`、`/clear`、`/model`、`/tool`、`/search`、`/help`），方向键 + Enter 确认，Esc 关闭；命令执行后 **不把 `/command` 本身发给后端**（除非命令需要 content）。
 6. **其他打磨**：顶栏缩小、Inspector 三个按钮合并下拉、`ChatModeBanner` 去掉、Composer 下方按钮瘦身等由设计阶段决定。
 
 本 feature 在 **不变更后端 SSE 契约、不新增 runtime 依赖、不重写其他页面** 的前提下完成以上打磨。所有改动限定在 `apps/agent-console/` 内部。`useWorkspaceStore`、`AgentChatStreamEvent`、`streamAgentChatRun` 保持向后兼容（可 additive 扩展字段 / action）。v1 + v2 已落地的 15+1 property-based 测试必须继续全绿。
@@ -24,7 +24,7 @@
 - **History_Panel**: v3 新增组件 `ConversationHistoryPanel`，渲染在 `Chat_Surface` 左侧的可折叠抽屉（默认展开 260px，可收起到 0）。包含顶部「新建对话」按钮、对话列表（按 `updated_at` 倒序）、每项提供「删除」图标。
 - **Current_Conversation_Id**: `useWorkspaceStore` 新增字段 `currentConversationId: string`，指向当前活跃的 `Conversation_Summary.id`。
 - **Slash_Menu**: v3 新增组件 `SlashCommandMenu`，悬浮在 `Workspace_Composer` textarea 上方，触发条件为 `draft` 以 `/` 开头（光标在 draft 内任意位置均可，只要前缀为 `/`）。
-- **Slash_Command**: Slash 菜单的一项，包含 `name`（`"plan" | "Harness Agent" | "chat" | "pin" | "clear" | "model" | "tool" | "search" | "help"` 等）、`aliases`（例如 `plan-md → Harness Agent`）、`args`（是否需要参数）、`description.zh / description.en`。
+- **Slash_Command**: Slash 菜单的一项，包含 `name`（`"plan" | "plan-md" | "chat" | "pin" | "clear" | "model" | "tool" | "search" | "help"` 等）、`aliases`（例如 `plan-md → plan`）、`args`（是否需要参数）、`description.zh / description.en`。
 - **Slash_Parse_Result**: 纯函数 `parseSlashCommand(draft)` 的返回，`{ kind: "none" } | { kind: "matching", prefix, query, candidates } | { kind: "confirmed", command, args, restDraft }`；第三种表示 draft 已满足 `"/cmd<space>...` 或被显式 Enter 触发，可以分派动作。
 - **Composer_Autogrow**: Composer 的 textarea 自动高度：初始 `min-height: 40px`（单行）、内容撑高到 `max-height: 200px`、超过内部滚动。实现机制是 `onChange` 读 `scrollHeight` 并写回 `style.height`。
 - **Scroll_Sentinel**: `ChatMessageList` 末尾的零高度 `<div>`，用 `IntersectionObserver(root=scrollContainer, threshold=0)` 监测是否可见；可见 → `autoFollow = true`；不可见 + 离底 > 200px → 显示「跳到最新」按钮。
@@ -90,7 +90,7 @@
 6. THE History_Panel 的每个条目 SHALL 提供"删除"按钮（hover / focus 可见），点击后：
    - IF 被删的是当前 `currentConversationId`, THEN THE Workspace SHALL 删除该条目并自动切到列表中 `updated_at` 最新的另一条；IF 列表中只剩 1 条（被删后为空）, THEN THE Workspace SHALL 创建一条新的空对话并切换过去（保持始终至少存在 1 条）。
    - ELSE THE Workspace SHALL 仅删除该条目，不切换当前对话。
-7. THE History_Panel SHALL 提供收起按钮（可选：通过顶部 X 或 chat-first UI 风格汉堡按钮），收起后宽度变为 0，`Chat_Surface` 主列填满剩余宽度；收起状态 SHALL 持久化到 `localStorage`（键 `harness.workspace.v3.<agentId>.historyPanelCollapsed`）。
+7. THE History_Panel SHALL 提供收起按钮（可选：通过顶部 X 或 折叠菜单按钮），收起后宽度变为 0，`Chat_Surface` 主列填满剩余宽度；收起状态 SHALL 持久化到 `localStorage`（键 `harness.workspace.v3.<agentId>.historyPanelCollapsed`）。
 8. WHEN 用户首次发送 user 消息时（对应 `Conversation_Summary` 的 `title` 仍为默认）, THE Workspace SHALL 自动以 `ConversationNode.content.trim().slice(0, 40)` 更新 `Conversation_Summary.title`；后续消息不再覆盖 title（允许未来增加"重命名"但不在本 feature 范围）。
 9. THE Workspace SHALL 在 `nodesById / activeLeafId / pinnedNodeIds / dismissedPlanNodeIds / draft / contextWindowTurns` 任一变化时（v2 的 300ms debounce 仍然有效），把对应字段同步回 `Conversation_Summary`（以 `currentConversationId` 匹配），并把整个 `Conversations_Snapshot` 持久化到 `Persistence_Key_V3`。
 10. THE Workspace SHALL 在组件挂载时读取 `Persistence_Key_V3`：
@@ -108,7 +108,7 @@
 1. WHEN `draft` 的第一个字符为 `/` 且 `draft` 不包含换行, THE Workspace_Composer SHALL 显示 `Slash_Menu` 悬浮在 textarea 上方。
 2. THE Slash_Menu SHALL 包含以下命令（双语 description）：
    - `/plan` → 切换 `Workspace_Mode = "plan"`（Plan-Act Run）。
-   - `/Harness Agent` （别名 `/plan-md`）→ 切换 `Workspace_Mode = "markdown_plan"`（Plan markdown）。
+   - `/plan-md` → 切换 `Workspace_Mode = "markdown_plan"`（Plan markdown）。
    - `/chat` → 切换 `Workspace_Mode = "chat"`。
    - `/pin` → 把 `Active_Path` 末端 `ConversationNode`（若存在）pin 到 `pinnedNodeIds`。
    - `/clear` → 触发与「清空对话」相同的二次确认后清空当前 `Conversation_Summary`（等价于调用 `useWorkspaceStore.reset()`）。
@@ -136,7 +136,7 @@
 
 1. THE TopMetaBar SHALL 以单行紧凑形式展示 `agentName + modelLabel + streaming 徽标 + Run Detail 按钮`；v2 的两行布局（meta 行 + metadata strip 行）SHALL 合并为一行（metadata strip 已迁移到 Composer 上方）。
 2. THE TopMetaBar SHALL 合并 v2 的三个 Inspector 按钮（Metadata / Artifacts / Runtime）为一个 `Inspector_Menu` 下拉：默认显示一个 "Inspector" 按钮，点击后弹出三行菜单项（Metadata / Artifacts / Runtime），点击任一项打开 `Inspector_Drawer` 到对应 section。
-3. THE ChatSurface SHALL 不再渲染 `ChatModeBanner`（v3 靠 `/chat`、`/plan`、`/Harness Agent` slash 命令 + 顶栏 mode badge 表达当前模式；`ChatModeBanner` 组件文件保留但不再从 `ChatSurface` 挂载，以减少 diff 面积）。
+3. THE ChatSurface SHALL 不再渲染 `ChatModeBanner`（v3 靠 `/chat`、`/plan`、`/plan-md` slash 命令 + 顶栏 mode badge 表达当前模式；`ChatModeBanner` 组件文件保留但不再从 `ChatSurface` 挂载，以减少 diff 面积）。
 4. THE TopMetaBar 的 `Workspace_Mode` badge 在 `Workspace_Mode = "chat"` 时 SHALL 隐藏；仅在 `plan` / `markdown_plan` 时显示。
 5. THE ChatSurface SHALL 保持 Property P1（无 `max-w-3xl` 等宽度约束）、P8（MetadataStrip 字段实时绑定）、P10（Stop button 可见性）、P11（持久化刷新安全）等 v2 不变量。
 6. THE ChatWelcomeState SHALL 保留现有 3 个示例 prompt 卡片；不再新增额外卡片（瘦身）。

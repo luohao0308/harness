@@ -132,16 +132,16 @@ def test_model_settings_persist_per_organization(db_session: Session) -> None:
     client = TestClient(app)
 
     current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
-    current["default_model"] = "local Agent CLI-code-compatible"
+    current["default_model"] = "external-model-compatible"
 
     updated = client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
     reloaded = client.get("/api/settings/models", headers=ADMIN_HEADERS)
 
     assert updated.status_code == 200
-    assert reloaded.json()["default_model"] == "local Agent CLI-code-compatible"
+    assert reloaded.json()["default_model"] == "external-model-compatible"
     setting = db_session.execute(select(SystemSetting)).scalar_one()
     assert setting.key == "settings.models"
-    assert setting.value_json["default_model"] == "local Agent CLI-code-compatible"
+    assert setting.value_json["default_model"] == "external-model-compatible"
 
 
 def test_model_settings_health_endpoint_uses_current_settings() -> None:

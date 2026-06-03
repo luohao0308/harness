@@ -110,7 +110,7 @@ Prometheus/Grafana/Loki 生产监控
 
 ## 禁止表达
 
-正式材料禁止使用“还原 local Agent CLI”作为主宣传语。内部技术材料使用以下表述：
+正式材料禁止使用“实现目标本地 CLI”作为主宣传语。内部技术材料使用以下表述：
 
 ```text
 参考现代 Agentic Coding 产品的 Planner、Executor、Subagent、事件流和工具执行范式，构建面向企业私有化场景的 AI Agent Harness 平台。

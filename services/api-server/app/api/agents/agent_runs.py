@@ -35,7 +35,7 @@ def create_agent_run(
     "/{agent_id}/runs/plan/stream",
     summary="流式创建 Agent Plan",
     description=(
-        "local Agent CLI 风格入口：用户只提交目标，服务端流式返回计划进度，最终创建 Agent Run。"
+        "目标驱动流式规划入口：用户只提交目标，服务端流式返回计划进度，最终创建 Agent Run。"
     ),
 )
 def stream_agent_plan_run(

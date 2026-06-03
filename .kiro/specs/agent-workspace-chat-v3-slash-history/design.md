@@ -2,7 +2,7 @@
 
 ## Overview
 
-v3 在 v2 的全宽 chat-first UI-like 工作台基础上，解决「输入框过大、不自动跟滚、metadata 太抢焦点、没有历史对话、没有 slash 命令」这 6 条反馈。所有改动严格遵循既有约束：**不新增 runtime 依赖 / 不改 SSE 契约 / `useWorkspaceStore` 仅 additive 扩展 / TS 严格模式 / 保持 v1 + v2 的 15+1 property-based tests 全绿**。
+v3 在 v2 的全宽 聊天式 工作台基础上，解决「输入框过大、不自动跟滚、metadata 太抢焦点、没有历史对话、没有 slash 命令」这 6 条反馈。所有改动严格遵循既有约束：**不新增 runtime 依赖 / 不改 SSE 契约 / `useWorkspaceStore` 仅 additive 扩展 / TS 严格模式 / 保持 v1 + v2 的 15+1 property-based tests 全绿**。
 
 核心思路：
 
@@ -125,12 +125,12 @@ ChatComposer:
 
 ```typescript
 export type SlashCommandName =
-  | "plan" | "Harness Agent" | "chat" | "pin" | "clear"
+  | "plan" | "plan-md" | "chat" | "pin" | "clear"
   | "model" | "tool" | "search" | "help";
 
 export type SlashCommand = {
   name: SlashCommandName;
-  aliases: string[];          // e.g. Harness Agent: ["plan-md"]
+  aliases: string[];          // e.g. plan: ["plan-md"]
   needsArgs: boolean;         // only tool = true
   zh: string;                 // description
   en: string;
@@ -232,7 +232,7 @@ onKeyDown:
 onSlashDispatch(cmd: SlashCommand, args: string):
   switch cmd.name:
     case "plan":   onWorkspaceModeChange("plan");      onDraftChange("")
-    case "Harness Agent":  onWorkspaceModeChange("markdown_plan");onDraftChange("")
+    case "plan-md":  onWorkspaceModeChange("markdown_plan");onDraftChange("")
     case "chat":   onWorkspaceModeChange("chat");      onDraftChange("")
     case "pin":    if tail: togglePinned(tail.id);     onDraftChange("")
     case "clear":  onClearConversation();              onDraftChange("")
@@ -402,7 +402,7 @@ useOutsideClick(ref, () => setOpen(false), open);
 
 ### ChatComposer mode radio removal (Req 6.7)
 
-v2 `<ChatComposer>` 底部的 `<div role="radiogroup">` 含 chat/Harness Agent/plan 三个 chip。v3 移除这一块。保留 `mode` / `onChangeMode` props 以向后兼容（`ChatSurface` 不再传 `onChangeMode` 给渲染 UI，但 prop 仍在类型中，向后兼容）。
+v2 `<ChatComposer>` 底部的 `<div role="radiogroup">` 含 chat/plan-md/plan 三个 chip。v3 移除这一块。保留 `mode` / `onChangeMode` props 以向后兼容（`ChatSurface` 不再传 `onChangeMode` 给渲染 UI，但 prop 仍在类型中，向后兼容）。
 
 ## Components
 
@@ -591,7 +591,7 @@ storage key: `harness.workspace.v3.<agentId>.conversations`
 ## Testing Strategy
 
 ### Layer 1 — Pure function unit tests
-- `parseSlashCommand`: edge cases (`""` / `"/"` / `"/plan"` / `"/plan extra"` / `"/pla"` / `"/Harness Agent"` / `"/plan-md"` / `"/tool"` / `"/tool curl"` / 换行 / emoji / 超长)
+- `parseSlashCommand`: edge cases (`""` / `"/"` / `"/plan"` / `"/plan extra"` / `"/pla"` / `"/plan-md"` / `"/plan-md"` / `"/tool"` / `"/tool curl"` / 换行 / emoji / 超长)
 - `filterCommandsByPrefix`: 大小写、前缀、别名
 - `replaceSlashPrefix`: 确保替换第一段不破坏后续 args
 - `sortConversationsByUpdatedAt`: 稳定性 / 倒序

@@ -30,7 +30,7 @@
       "title": "安装并使用 hao CLI",
       "category": "快速开始",
       "path": "/help/getting-started/hao-cli.md",
-      "keywords": ["hao", "CLI", "agent-runtime", "OMX", "npm", "旧包", "登录", "版本", "本地 TUI"]
+      "keywords": ["hao", "CLI", "OMX", "npm", "旧包", "登录", "版本", "本地 TUI"]
     },
     {
       "id": "getting-started.first-agent",

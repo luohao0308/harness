@@ -17,7 +17,7 @@ from ._tool_events import WorkspaceToolEventService
     "/{agent_id}/runs/chat/stream",
     summary="Workspace Pro 对话流",
     description=(
-        "Cursor/Workspace artifacts 风格 Workspace Pro 入口。服务端通过 SSE 返回 "
+        "Workspace Pro artifact stream 入口。服务端通过 SSE 返回 "
         "think、delta、artifact、usage 和 done 事件；底层仍创建 Agent Run 和可审计 Plan。"
     ),
 )
@@ -492,8 +492,8 @@ def stream_agent_chat_run(
                         query_goal=goal,
                         started_at=started_at,
                         first_byte_at=first_byte_at,
-                        run_created_message="Harness Agent plan run started.",
-                        done_message="Harness Agent plan response completed.",
+                        run_created_message="Planning run started.",
+                        done_message="Planning response completed.",
                         enable_knowledge_grounding=False,
                     )
                     return
@@ -594,8 +594,8 @@ def stream_agent_chat_run(
                         query_goal=goal,
                         started_at=started_at,
                         first_byte_at=first_byte_at,
-                        run_created_message="Harness Agent plan run started.",
-                        done_message="Harness Agent plan response completed.",
+                        run_created_message="Planning run started.",
+                        done_message="Planning response completed.",
                         enable_knowledge_grounding=False,
                     )
                     return

@@ -109,7 +109,7 @@ describe("EvalRunResults contract surface", () => {
               configured: true,
               passed: false,
               role_drift_count: 1,
-              failures: ["role_drift:我是 chat-first UI"],
+              failures: ["role_drift:我是通用 AI"],
             },
             specialist_contract: {
               configured: true,

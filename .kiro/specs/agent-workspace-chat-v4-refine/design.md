@@ -10,7 +10,7 @@ v4 是 `/agents/:agentId/workspace` 聊天页的第四轮 UX 打磨，紧跟已�
 4. **Composer 工具栏折叠进 Options popover** — 新增 `ComposerOptionsPopover.tsx`（`role="dialog"` + focus trap + ESC close），合并 Context / Pinned / Tools / Model 四个分区；usage meter + Export + Clear 留在主行。
 5. **上下文长度可调整** — store additive 新增 `contextMaxTokens: number` 字段（默认 8192，范围 `[2000, 200000]`，步进 1000）；slider + numeric input 放在 popover 的 Context 分区；持久化到 `harness.workspace.v4.<agentId>.contextMaxTokens`；作为 `context_max_tokens` 附加到 `AgentChatStreamPayload`。
 6. **流式返回修复** — 端到端 4 层诊断：FastAPI `StreamingResponse` 响应头（`Cache-Control: no-cache, no-transform`、`Connection: keep-alive`、`X-Accel-Buffering: no`）；Nginx 专用 location block 关闭 `proxy_buffering` / `proxy_cache` / `chunked_transfer_encoding`；前端 `TextDecoder({ stream: true })` 读法保持不动；禁止对 `text/event-stream` 应用 gzip/br `Content-Encoding`。
-7. **local Agent CLI / Harness Agent 式微调** — 代码块 Copy 按钮、流式 caret 光标、同角色消息 group-by-role（3 条）。
+7. **Agent Workspace 微调** — 代码块 Copy 按钮、流式 caret 光标、同角色消息 group-by-role（3 条）。
 
 v1 / v2 / v3 已交付的 P1–P19 属性测试继续全绿；v4 新增 P20–P24 共 5 条 PBT（`reduceAutoFollow` 的三条状态转移 + `clampContextMaxTokens` 幂等 + `groupByRole` 完备与保序）。
 
@@ -166,7 +166,7 @@ Imperative bridge：`ChatMessageList` 通过 `forwardRef` + `useImperativeHandle
 
 ### Composer autogrow architecture (Req 1)
 
-v3 常量从 `[40, 200]` 收紧到 `[COMPOSER_MIN_HEIGHT_V4, COMPOSER_MAX_HEIGHT] = [24, 200]`；`lineHeight` 从 `leading-6`（24px）降到 `leading-5`（20px）；`padding-y` 从 `py-2`（8px/8px）降到 `py-0.5`（2px/2px）。24 = 20 + 2 + 2 刚好容纳单行，与 chat-first UI / local Agent CLI 的起步视觉对齐。
+v3 常量从 `[40, 200]` 收紧到 `[COMPOSER_MIN_HEIGHT_V4, COMPOSER_MAX_HEIGHT] = [24, 200]`；`lineHeight` 从 `leading-6`（24px）降到 `leading-5`（20px）；`padding-y` 从 `py-2`（8px/8px）降到 `py-0.5`（2px/2px）。24 = 20 + 2 + 2 刚好容纳单行，与 主流对话输入 的起步视觉对齐。
 
 ```typescript
 // lib/composerAutogrow.ts

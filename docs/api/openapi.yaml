@@ -166,7 +166,7 @@ paths:
       tags:
       - agents
       summary: 流式创建 Agent Plan
-      description: local Agent CLI 风格入口：用户只提交目标，服务端流式返回计划进度，最终创建 Agent Run。
+      description: 目标驱动流式规划入口：用户只提交目标，服务端流式返回计划进度，最终创建 Agent Run。
       operationId: stream_agent_plan_run_api_agents__agent_id__runs_plan_stream_post
       security:
       - HTTPBearer: []
@@ -200,7 +200,7 @@ paths:
       tags:
       - agents
       summary: Workspace Pro 对话流
-      description: Cursor/Workspace artifacts 风格 Workspace Pro 入口。服务端通过 SSE 返回 think、delta、artifact、usage
+      description: Workspace Pro artifact stream 入口。服务端通过 SSE 返回 think、delta、artifact、usage
         和 done 事件；底层仍创建 Agent Run 和可审计 Plan。
       operationId: stream_agent_chat_run_api_agents__agent_id__runs_chat_stream_post
       security:

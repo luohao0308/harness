@@ -1454,7 +1454,7 @@ def test_eval_run_grades_persona_contract_role_tone_and_scope(
     bad_run_id = _traced_completed_run(
         db_session,
         model_calls=[
-            {"response_json": {"content": "我是 chat-first UI，哈哈哈，我是一个通用 AI。"}}
+            {"response_json": {"content": "我是通用 AI，哈哈哈，我是一个通用 AI。"}}
         ],
     )
     dataset = client.post(
@@ -1470,7 +1470,7 @@ def test_eval_run_grades_persona_contract_role_tone_and_scope(
                 "status": "COMPLETED",
                 "persona_contract": {
                     "must_mention_role_as": "客服助理",
-                    "ban_role_drift_phrases": ["我是 chat-first UI", "as an AI"],
+                    "ban_role_drift_phrases": ["我是通用 AI", "as an AI"],
                     "tone_required_markers": ["您", "请"],
                     "tone_banned_markers": ["哈哈哈"],
                     "max_first_person_drift_count": 1,
@@ -1488,7 +1488,7 @@ def test_eval_run_grades_persona_contract_role_tone_and_scope(
                 "status": "COMPLETED",
                 "persona_contract": {
                     "must_mention_role_as": "客服助理",
-                    "ban_role_drift_phrases": ["我是 chat-first UI", "as an AI"],
+                    "ban_role_drift_phrases": ["我是通用 AI", "as an AI"],
                     "tone_required_markers": ["您", "请"],
                     "tone_banned_markers": ["哈哈哈"],
                     "max_first_person_drift_count": 1,
@@ -1525,7 +1525,7 @@ def test_eval_run_grades_persona_contract_role_tone_and_scope(
     assert results[scope_breach.json()["id"]]["status"] == "FAILED"
     drift_trace = results[drift.json()["id"]]["grader_trace_json"]["persona_contract"]
     assert "role_missing:客服助理" in drift_trace["failures"]
-    assert "role_drift:我是 chat-first UI" in drift_trace["failures"]
+    assert "role_drift:我是通用 AI" in drift_trace["failures"]
     assert any(failure.startswith("tone_violation") for failure in drift_trace["failures"])
     assert any(
         failure.startswith("first_person_drift_exceeded")

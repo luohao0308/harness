@@ -105,10 +105,10 @@ describe("Property P14: confirmed results strip the /command prefix", () => {
       expect(result.command.name).toBe("plan");
     }
 
-    const legacyHarness Agent = parseSlashCommand("/Harness Agent ");
-    expect(legacyHarness Agent.kind).toBe("confirmed");
-    if (legacyHarness Agent.kind === "confirmed") {
-      expect(legacyHarness Agent.command.name).toBe("plan");
+    const legacyPlanMd = parseSlashCommand("/plan-md ");
+    expect(legacyPlanMd.kind).toBe("confirmed");
+    if (legacyPlanMd.kind === "confirmed") {
+      expect(legacyPlanMd.command.name).toBe("plan");
     }
   });
 

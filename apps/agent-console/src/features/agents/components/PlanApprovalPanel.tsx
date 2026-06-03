@@ -1,5 +1,5 @@
 /**
- * PlanApprovalPanel — Harness Agent/terminal-style plan review card (Req 3.1–3.9).
+ * PlanApprovalPanel — compact plan review card (Req 3.1–3.9).
  *
  * Rendered inside the sticky footer of `ChatSurface` only when
  * `planApprovalGate` (Task 2.6) returns `{ visible: true, planNode }`. This

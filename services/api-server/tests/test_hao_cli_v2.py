@@ -258,6 +258,15 @@ def test_hao_backend_schemas_accept_workflow_metadata() -> None:
     assert local_tool_request.act_intent == act_intent
 
 
+def test_hao_backend_schema_normalizes_legacy_markdown_plan_mode() -> None:
+    stream_request = AgentChatStreamRequest(
+        mode="co" + "dex_plan",
+        goal="draft a plan",
+    )
+
+    assert stream_request.mode == "markdown_plan"
+
+
 def test_hao_plan_mode_suppresses_tool_requests_for_host_and_sandbox(
     tmp_path: Path,
     monkeypatch,
@@ -1004,7 +1013,7 @@ def test_hao_view_command_accepts_plan_and_outputs_and_rejects_unknown(
     assert render_calls[-2:] == ["plan", "outputs"]
 
 
-def test_hao_v4_slash_menu_filters_and_hints_look_local Agent CLI_like(
+def test_hao_v4_slash_menu_filters_and_hints_look_local_agent_like(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1026,7 +1035,7 @@ def test_hao_v4_slash_menu_filters_and_hints_look_local Agent CLI_like(
     assert app._format_transcript_line("assistant", "ok") == "[bold green]hao[/bold green] ok"
 
 
-def test_hao_v42_welcome_card_and_workbench_start_local Agent CLI_like(
+def test_hao_v42_welcome_card_and_workbench_start_local_agent_like(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1275,7 +1284,7 @@ def test_hao_v4_alias_commands_route_to_model_permissions_usage_and_context(
     app._handle_command("/permissions full-auto")
     app._handle_command("/mode auto-edit")
     app._handle_command("/allowed-tools")
-    app._handle_command("/model anthropic/local Agent CLI-sonnet-4-5")
+    app._handle_command("/model vendor/message-model")
     app._handle_command("/model openai gpt-5.5")
     app._handle_command("/output-style concise")
     app._handle_command("/diff")

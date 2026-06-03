@@ -495,7 +495,7 @@ def test_anthropic_compatible_gateway_normalizes_messages(monkeypatch) -> None:
     response = gateway.complete(
         ModelRequest(
             model_provider="anthropic-compatible",
-            model_name="local Agent CLI-compatible",
+            model_name="message-compatible",
             messages=[
                 ModelMessage(role="system", content="You are concise."),
                 ModelMessage(role="user", content="plan this task"),
@@ -507,7 +507,7 @@ def test_anthropic_compatible_gateway_normalizes_messages(monkeypatch) -> None:
     assert captured["authorization"] == "Bearer secret-key"
     assert captured["timeout"] == 9
     body = json.loads(captured["body"].decode("utf-8"))
-    assert body["model"] == "local Agent CLI-compatible"
+    assert body["model"] == "message-compatible"
     assert body["max_tokens"] == 2048
     assert body["messages"] == [{"role": "user", "content": "plan this task"}]
     assert "You are concise." in body["system"]

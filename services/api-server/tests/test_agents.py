@@ -1732,7 +1732,7 @@ def test_agent_workspace_pro_markdown_plan_mode_tool_mention_executes_tool_first
             "goal": "@list_files",
             "messages": [],
             "active_leaf_id": "root",
-            "active_branch_id": "branch-Harness Agent-tool",
+            "active_branch_id": "branch-plan-tool",
             "pinned_node_ids": [],
             "context_window_turns": 8,
             "tool_mentions": [{"name": "list_files", "source": "builtin", "payload": {}}],
@@ -1759,7 +1759,7 @@ def test_agent_workspace_pro_markdown_plan_mode_tool_mention_executes_tool_first
     assert done["status"] == "COMPLETED"
 
 
-def test_agent_workspace_pro_markdown_plan_streams_markdown_plan_without_plan_act(
+def test_agent_workspace_pro_markdown_plan_streams_without_plan_act(
     db_session: Session,
 ) -> None:
     response = TestClient(app).post(
@@ -1767,22 +1767,22 @@ def test_agent_workspace_pro_markdown_plan_streams_markdown_plan_without_plan_ac
         headers=AUTH_HEADERS,
         json={
             "mode": "markdown_plan",
-            "goal": "把当前项目的页面改成 chat-first UI 式聊天体验",
+            "goal": "把当前项目的页面改成 对话式 Agent 体验",
             "messages": [
                 {
-                    "id": "user-markdown-plan",
+                    "id": "user-plan-plan",
                     "parent_id": None,
                     "children_ids": [],
                     "role": "user",
-                    "content": "把当前项目的页面改成 chat-first UI 式聊天体验",
+                    "content": "把当前项目的页面改成 对话式 Agent 体验",
                     "state": "done",
                     "metadata": {},
                     "tool_calls": [],
                     "artifacts": [],
                 }
             ],
-            "active_leaf_id": "user-markdown-plan",
-            "active_branch_id": "branch-markdown-plan",
+            "active_leaf_id": "user-plan-plan",
+            "active_branch_id": "branch-plan-plan",
             "pinned_node_ids": [],
             "context_window_turns": 8,
         },
@@ -2828,7 +2828,7 @@ def fake_workspace_plan_model(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "app.agents.model_gateway.model_gateway_for_provider",
-        lambda provider, *, timeout_seconds=30: FakeGateway(),
+        lambda provider, **kwargs: FakeGateway(),
     )
     monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_audited_stream)
 

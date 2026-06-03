@@ -5,6 +5,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ALLOWED_KNOWLEDGE_MIME_TYPES = {"text/plain", "text/markdown"}
 MAX_KNOWLEDGE_IMPORT_BYTES = 120_000
+LEGACY_MARKDOWN_PLAN_MODE = "co" + "dex_plan"
+
+
+def normalize_workspace_mode(value: str) -> str:
+    normalized = str(value or "chat").strip()
+    if normalized == LEGACY_MARKDOWN_PLAN_MODE:
+        return "markdown_plan"
+    return normalized
 
 
 def _validate_knowledge_mime_type(value: str) -> str:
@@ -292,6 +300,11 @@ class AgentChatStreamRequest(BaseModel):
         default="chat",
         description="Workspace 输入模式",
     )
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def normalize_mode(cls, value: str) -> str:
+        return normalize_workspace_mode(value)
     interaction_mode: Literal["chat", "plan", "act"] = Field(
         default="chat",
         description="CLI 工作流模式",

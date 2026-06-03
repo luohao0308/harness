@@ -22,7 +22,7 @@ BRANCHES = [
         "color": "#7c3aed",
         "x": 850,
         "y": 170,
-        "items": ["OpenAI / local Agent CLI / DeepSeek", "本地模型", "模型路由", "备用模型", "调用审计", "成本统计"],
+        "items": ["OpenAI / DeepSeek / 本地模型", "私有模型", "模型路由", "备用模型", "调用审计", "成本统计"],
     },
     {
         "title": "Harness 驾驭层",

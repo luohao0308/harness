@@ -126,7 +126,7 @@ function teamTask(overrides: Partial<TeamTask>): TeamTask {
     id,
     team_id: "team-1",
     subject: "实现多列 UI",
-    description: "重建 Team Mode 的横向多代理列",
+    description: "实现横向多代理列",
     owner_slot_id: "product",
     status: "in_progress",
     blocked_by_json: [],
@@ -192,7 +192,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
   return {
     id: "team-1",
     organization_id: "dev-org",
-    name: "Team Mode 协作团队",
+    name: "协作团队",
     status: "ACTIVE",
     workspace: "/tmp/harness-team",
     workspace_mode: "shared",
@@ -822,11 +822,11 @@ describe("Team pages", () => {
     );
 
     expect(await screen.findByText("团队模式")).toBeInTheDocument();
-    expect((await screen.findAllByText("Team Mode 协作团队")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("协作团队")).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: /创建团队/ }));
 
     const dialog = await screen.findByRole("dialog", { name: "创建团队" });
-    expect(within(dialog).getByLabelText("团队名称")).toHaveValue("Team Mode 协作团队 2");
+    expect(within(dialog).getByLabelText("团队名称")).toHaveValue("协作团队 2");
     const createButton = within(dialog).getByRole("button", { name: /创建团队/ });
     expect(await within(dialog).findByText("default · default/default")).toBeInTheDocument();
     expect(createButton).toBeEnabled();
@@ -865,8 +865,8 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    expect((await screen.findAllByText("Team Mode 协作团队")).length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /Team Mode 协作团队/ })).toBeInTheDocument();
+    expect((await screen.findAllByText("协作团队")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: /协作团队/ })).toBeInTheDocument();
     expect(screen.getByRole("tablist", { name: "代理切换" })).toBeInTheDocument();
     expect(screen.getByTestId("team-tab-bar")).toBeInTheDocument();
     const productTab = await screen.findByRole("tab", { name: /产品经理/ });
@@ -1059,15 +1059,15 @@ describe("Team pages", () => {
     await waitFor(() => {
       expect(textbox).toHaveAttribute("placeholder", expect.stringContaining("发送消息"));
     });
-    await user.type(textbox, "/Harness Agent{Enter}");
+    await user.type(textbox, "/plan-md{Enter}");
     await waitFor(() => {
       expect(textbox).toHaveAttribute("placeholder", expect.stringContaining("规划目标"));
     });
-    await user.type(textbox, "slash Harness Agent 团队目标{Enter}");
+    await user.type(textbox, "slash plan 团队目标{Enter}");
     await waitFor(() => {
       expect(state.lastMessagePayload).toMatchObject({
         target: "product",
-        content: "slash Harness Agent 团队目标",
+        content: "slash plan 团队目标",
         mode: "markdown_plan",
       });
     });

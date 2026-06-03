@@ -10,7 +10,7 @@
 4. **Composer 底部工具栏太挤** — `ComposerToolbar` 的 Context / Pin / Tools / Model 四项统一收进一个"Options"按钮 → popover 面板（含 4 个分区）；Model picker 与 usage 计量保持可见（usage 保留 inline 小字）；popover 必须 `role="dialog"` + focus trap + ESC close。
 5. **上下文长度可调整** — 当前 `ContextUsageBar` 硬编码 8192；新增 `contextMaxTokens` slider / numeric input，范围 [2000, 200000]，步进 1000，位于 Options popover 的 Context 分区；状态写回 `useWorkspaceStore.contextMaxTokens`（additive 字段）+ localStorage；usage meter 以该值为分母；发请求时作为 `context_max_tokens` 附加到 payload，后端忽略无副作用。
 6. **模型仍然不流式返回** — 顽固 bug；需要在 requirements 里显式列出四个调查层面（后端 FastAPI `StreamingResponse` 与 buffer flush / Nginx `proxy_buffering` 与 `X-Accel-Buffering` 头 / 前端 `TextDecoder` stream 读法 / 浏览器-容器间 keep-alive 与 content-encoding），**端到端可观测目标：用户发送消息后，增量 token 每 ≤50ms 渲染一次；Chrome DevTools Network → EventStream 面板能观察到逐事件到达**。
-7. **锦上添花优化** — 从一组候选里选 2–3 条最能提升"像 local Agent CLI / Harness Agent"的体验进入 requirements：**代码块右上角 Copy code 按钮** / **流式期间 caret 动画光标** / **连续同角色消息 group-by-role**。其余（侧栏搜索、按日期分组、`Cmd+Enter` 独立发送键绑定、消息 timestamp hover）归入 Out of Scope 供未来迭代。
+7. **锦上添花优化** — 从一组候选里选 2–3 条最能提升"接近高密度 Agent 工作流"的体验进入 requirements：**代码块右上角 Copy code 按钮** / **流式期间 caret 动画光标** / **连续同角色消息 group-by-role**。其余（侧栏搜索、按日期分组、`Cmd+Enter` 独立发送键绑定、消息 timestamp hover）归入 Out of Scope 供未来迭代。
 
 本 feature **保留 v3 已交付的所有行为**（slash 命令、历史对话、autogrow 基础设施、P12–P19 属性测试全部继续全绿），仅在明确条目处做最小差异更新。所有改动限定在 `apps/agent-console/` 内部；#6 的诊断可能需要对 `services/api-server/` 或 `deploy/nginx/agent-harness.conf` 做**严格 additive** 的小修（新增响应头 / 复用现有 SSE location 的 proxy_buffering 规则），不改后端 SSE 事件集合、请求方法、URL 或请求体已有字段的语义（新增 `context_max_tokens` 请求体字段对后端为可忽略的 opt-in）。
 
@@ -52,7 +52,7 @@
 >
 > **Translation**: The composer is still too tall — the v3 `minHeight` of 40px should be halved to ~20–24px for a single-line starting state; `maxHeight` remains 200px. The clamp range needs to be redefined and textarea line-height / padding must shrink in parallel.
 
-**User Story:** As Workspace 使用者, I want Workspace_Composer 单行起步高度在 24px 或以下, so that 首屏 Composer 不再有空白浪费、与 chat-first UI / local Agent CLI 的视觉比例更接近。
+**User Story:** As Workspace 使用者, I want Workspace_Composer 单行起步高度在 24px 或以下, so that 首屏 Composer 不再有空白浪费、与 主流对话输入 的视觉比例更接近。
 
 #### Acceptance Criteria
 
@@ -99,7 +99,7 @@
 #### Acceptance Criteria
 
 1. THE Top_Meta_Bar SHALL 不再渲染 `modelLabel` 文本 pill，也不渲染 `modelLabelIsFallback` 的 Badge。
-2. THE Top_Meta_Bar SHALL 不再渲染 `Workspace_Mode` badge（即无论 `workspaceMode` 取 `"chat" / "markdown_plan" / "plan"` 任何值都隐藏；模式切换靠 v3 的 Slash 命令 `/chat` `/plan` `/Harness Agent` 表达）。
+2. THE Top_Meta_Bar SHALL 不再渲染 `Workspace_Mode` badge（即无论 `workspaceMode` 取 `"chat" / "markdown_plan" / "plan"` 任何值都隐藏；模式切换靠 v3 的 Slash 命令 `/chat` `/plan` `/plan-md` 表达）。
 3. THE Top_Meta_Bar SHALL 保留 `streamingLabel` 气泡（`Sparkles` 图标 + "Streaming" 文案 + `Badge` warning tone），与 `Stop` 按钮同组出现且 `isStreaming === true` 时可见，否则隐藏。
 4. THE Top_Meta_Bar SHALL 保留 `Inspector_Menu` 下拉（v3 已合并的 Metadata / Artifacts / Runtime 三项），不改其内部结构。
 5. THE Top_Meta_Bar SHALL 保留 `Run_Detail` 入口（`GitBranch` 图标 + 双语「Run 详情 / Run Detail」），可见条件维持 v3：`activeRunId` 存在时 primary button、否则 disabled secondary button。
@@ -198,11 +198,11 @@
 11. IF 响应头 `Content-Encoding` 命中 `gzip|br|deflate` 或 `Transfer-Encoding` 缺少 `chunked`（即 nginx/压缩中间件未按第 3–4 条正确配置）, THEN THE useChatStream SHALL 把 `streaming_diagnostic: "possible_buffering"` 写到 assistant 节点 metadata（v3 已实现该分支；v4 保持不倒退）。
 12. THE /api/agents/{agent_id}/runs/chat/stream endpoint SHALL 保持既有请求方法（`POST`）、URL、请求体字段及 `AgentChatStreamEvent` 事件集合不变；v4 对后端的改动严格限定在响应头与（若需要）压缩中间件 allowlist 的 additive 调整上。
 
-### Requirement 7: local Agent CLI / Harness Agent 风格微调 / local Agent CLI-Code-like polish
+### Requirement 7: 高密度 Agent 工作流微调 / Agent Workspace interaction polish
 
-> **用户反馈 (原话)**: 根据你的想法看看哪里还可以优化 — 列 3-5 条轻量改进 ... 从中选 2-3 条最能提升"像 local Agent CLI / Harness Agent"的放进 requirements.
+> **用户反馈 (原话)**: 根据你的想法看看哪里还可以优化 — 列 3-5 条轻量改进 ... 从中选 2-3 条最能提升"接近高密度 Agent 工作流"的放进 requirements.
 
-**User Story:** As Workspace 使用者, I want 对话界面有若干"local Agent CLI / Harness Agent 式"的细节, so that 使用体验更接近行业标杆 CLI / Web 产品。
+**User Story:** As Workspace 使用者, I want 对话界面有若干"Agent Workspace "的细节, so that 使用体验更接近行业标杆 CLI / Web 产品。
 
 v4 选入以下 3 条（其余见 Out of Scope）：
 
@@ -274,7 +274,7 @@ v4 选入以下 3 条（其余见 Out of Scope）：
 #### Acceptance Criteria
 
 1. THE Workspace SHALL 继续支持 v3 的 localStorage 键 `harness.workspace.v3.<agentId>.conversations` 的读写语义（保留 `Legacy_Migration` 的 v2 → v3 迁移路径）。v4 新增的 `contextMaxTokens` 使用独立小键 `harness.workspace.v4.<agentId>.contextMaxTokens`，SHALL 不破坏 v3 conversations 快照。
-2. THE Workspace SHALL 继续支持 v3 的 `Slash_Menu` 全部 9 条命令（`/plan` `/Harness Agent` `/chat` `/pin` `/clear` `/model` `/tool` `/search` `/help`），包括方向键 / Enter / Esc / Tab 键绑定。
+2. THE Workspace SHALL 继续支持 v3 的 `Slash_Menu` 全部 9 条命令（`/plan` `/plan-md` `/chat` `/pin` `/clear` `/model` `/tool` `/search` `/help`），包括方向键 / Enter / Esc / Tab 键绑定。
 3. THE Workspace SHALL 继续支持 v3 的 `ConversationHistoryPanel` 行为（新建 / 切换 / 删除 / 折叠 / 持久化）。
 4. THE Workspace SHALL 继续支持 v1 / v2 的所有属性 P1–P11（含 v2 P8 MetadataStrip 实时绑定、P10 Stop 可见、P11 持久化刷新安全等）。
 5. THE Workspace SHALL 继续支持 v2 的 Edit / Copy / Regenerate 三操作与 Plan-approve 流程（v2 Req 4 / 5 / 10）；Req 7.3.5（Group_By_Role 不吞操作）是对这条的显式重申。

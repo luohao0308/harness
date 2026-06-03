@@ -47,7 +47,7 @@ export function TeamCreateModal({
     () => agents.find((agent) => agent.id === leaderAgentId) ?? null,
     [agents, leaderAgentId],
   );
-  const suggestedTeamName = useMemo(() => nextAvailableTeamName(teams, "Team Mode 协作团队"), [teams]);
+  const suggestedTeamName = useMemo(() => nextAvailableTeamName(teams, "协作团队"), [teams]);
   const queriesReady = teamsQuery.isSuccess && agentsQuery.isSuccess;
   const queryError = teamsQuery.error ?? agentsQuery.error;
   const queryErrorMessage = queryError instanceof Error ? queryError.message : null;

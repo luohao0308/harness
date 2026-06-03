@@ -316,7 +316,7 @@ VIEW_COMMANDS = {
 
 class HaoApp(App):
     TITLE = "hao"
-    SUB_TITLE = "local Agent CLI-style local Agent CLI"
+    SUB_TITLE = "local Agent CLI"
     CSS = """
     Screen { layout: vertical; }
     #chat { height: 1fr; padding: 1 2 0 2; }
@@ -1267,10 +1267,10 @@ class HaoApp(App):
         return "\n".join(
             (
                 "[bold]hao release notes[/bold]",
-                "v4.3: local Agent CLI-style footer shows model strength, compact ring, "
+                "v4.3: local Agent CLI footer shows model strength, compact ring, "
                 "style, approvals, and commands.",
                 "v4.3: /compress aliases /compact for local active-path context summarization.",
-                "v4.2: inline local Agent CLI-style terminal page; no fullscreen editor screen.",
+                "v4.2: inline local Agent CLI terminal page; no fullscreen editor screen.",
                 "v4.2: two-column welcome card, bottom `>` composer, and hidden workbench drawer.",
                 "v4.2: safe UTF-8 terminal input plus no duplicate user echo in real terminals.",
                 "v4.1: /compact, /config, /usage, /output-style, /tasks, and command cards.",

@@ -35,7 +35,7 @@ export type SlashCommandName =
 export type SlashCommand = {
   /** Canonical command identifier. */
   name: SlashCommandName;
-  /** Alternative triggers (e.g. `"Harness Agent"` for `plan`). Lower-case only. */
+  /** Alternative triggers (e.g. `"plan-md"` for `plan`). Lower-case only. */
   aliases: string[];
   /** Whether this command expects a single textual argument (e.g. `/tool <name>`). */
   needsArgs: boolean;
@@ -49,7 +49,7 @@ export type SlashCommand = {
 export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "plan",
-    aliases: ["Harness Agent", "plan-md"],
+    aliases: ["plan-md"],
     needsArgs: false,
     zh: "生成 Markdown 规划",
     en: "Generate a markdown plan",

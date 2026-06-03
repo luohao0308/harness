@@ -145,7 +145,7 @@ function teamTask(overrides: Partial<TeamTask>): TeamTask {
     id,
     team_id: "team-1",
     subject: "实现多列 UI",
-    description: "重建 Team Mode 的横向多代理列",
+    description: "实现横向多代理列",
     owner_slot_id: "product",
     status: "in_progress",
     blocked_by_json: [],
@@ -173,7 +173,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
   return {
     id: "team-1",
     organization_id: "dev-org",
-    name: "Team Mode 协作团队",
+    name: "协作团队",
     status: "ACTIVE",
     workspace: "/tmp/harness-team",
     workspace_mode: "shared",
@@ -200,7 +200,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
 function createdTeamFixture(payload: Record<string, unknown>): Team {
   const name = typeof payload.name === "string" && payload.name.trim().length > 0
     ? payload.name.trim()
-    : "Team Mode 协作团队";
+    : "协作团队";
   const leaderName = typeof payload.leader_name === "string" && payload.leader_name.trim().length > 0
     ? payload.leader_name.trim()
     : "队长";
@@ -522,7 +522,7 @@ test.describe("Team Mode browser smoke", () => {
 
     await page.goto("/teams");
     await expect(page.getByText("团队模式")).toBeVisible();
-    await expect(page.getByText("Team Mode 协作团队").first()).toBeVisible();
+    await expect(page.getByText("协作团队").first()).toBeVisible();
     await expect(page.getByText("队长").first()).toBeVisible();
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
@@ -653,7 +653,7 @@ test.describe("Team Mode browser smoke", () => {
     await page.setViewportSize({ width: 390, height: 844 });
 
     await page.goto("/teams/team-1");
-    await expect(page.getByText("Team Mode 协作团队").first()).toBeVisible();
+    await expect(page.getByText("协作团队").first()).toBeVisible();
     await expect(page.getByRole("tab", { name: /产品经理/ })).toBeVisible();
 
     await page.getByRole("tab", { name: /产品经理/ }).click();

@@ -242,7 +242,7 @@ def _workspace_markdown_plan_messages(
         ModelMessage(
             role="system",
             content=(
-                "You are the Harness Agent planning assistant in AI Harness Workspace Pro. "
+                "You are the planning assistant in AI Harness Workspace Pro. "
                 "Answer with concise markdown planning text only. "
                 "Include assumptions, next steps, and acceptance criteria when useful. "
                 "Do not execute tools or emit operational details. "

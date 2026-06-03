@@ -39,7 +39,7 @@ Agent Workspace Pro
 |---|---|---|
 | 选择 Agent | `/agents`、`/agents/:agentId/workspace` | 用户看到可用 Agent 和默认模型 |
 | 正常对话 | `/agents/:agentId/workspace` | 输入消息后返回真实模型回复 |
-| Harness Agent 式规划 | `/agents/:agentId/workspace` | 用户显式选择规划时生成规划回复，不自动进入执行 |
+| 规划模式 | `/agents/:agentId/workspace` | 用户显式选择规划时生成规划回复，不自动进入执行 |
 | 显式 Plan-Act | `/agents/:agentId/workspace` | 用户显式创建可执行 Run 后进入计划、工具意图和产物流 |
 | Conversation Tree | `/agents/:agentId/workspace` | 编辑历史消息生成新分支，旧分支保留 |
 | Pause / Continue | `/agents/:agentId/workspace` | 暂停只中断 stream，继续携带 partial content 恢复 |

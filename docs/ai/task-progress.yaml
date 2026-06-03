@@ -1,7 +1,7 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-03T15:05:28Z
-last_updated_by: Harness Agent
+last_updated_at: 2026-06-03T17:34:42Z
+last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
 product: AI Harness Platform
@@ -117,6 +117,30 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: product-reference-cleanup-and-history-hygiene
+    date: 2026-06-03
+    status: verified
+    demo: Project docs, plans, architecture notes, help copy, OpenAPI projections, tests, and planning-mode names were neutralized so Harness uses its own product language while preserving old client compatibility.
+    verification_result: passed
+    verification_commands:
+      - rg -n --hidden -i "<external reference cleanup pattern>" . --glob '!.git/**' --glob '!node_modules/**' --glob '!services/api-server/.venv/**' --glob '!apps/agent-console/node_modules/**' --glob '!apps/web-site/node_modules/**' --glob '!services/api-server/local_preview.db*'
+      - find . -path './.git' -prune -o -path './node_modules' -prune -o -path './apps/agent-console/node_modules' -prune -o -path './apps/web-site/node_modules' -prune -o -path './services/api-server/.venv' -prune -o -path './services/api-server/local_preview.db*' -prune -o '<external reference filename cleanup pattern>' -print
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py -q -k "markdown_plan or context_manifest_binding"
+      - cd services/api-server && PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_teams.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_evals.py tests/test_eval_regression.py tests/test_model_gateway.py tests/test_settings.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm test -- slashCommands.property.test.ts ChatSurface.shell.test.tsx modeSwitch.property.test.ts planApprovalGate.test.ts planInitialNodes.property.test.ts useChatStream.test.tsx TeamPages.test.tsx
+      - cd apps/agent-console && npm test -- EvalRunResults.contracts.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Planning mode is now named `markdown_plan` across current schemas, APIs, docs, frontend state, tests, and generated OpenAPI artifacts.
+      - Legacy clients and historical Team metadata remain readable through normalization helpers that avoid reintroducing old mode strings into current docs or OpenAPI contracts.
+      - The Team Mode architecture note now uses Harness-owned product-surface wording and the old filename was replaced.
+      - `AuditedModelGateway.stream` now passes the complete settings object into gateway construction, matching the non-streaming path.
+      - Local SQLite runtime sidecar files remain untracked and are excluded from the commit.
   - id: model-settings-manual-health-refresh-official-status
     date: 2026-06-03
     status: verified
@@ -354,10 +378,10 @@ post_stage_hardening:
       - Independent reviews passed after fixes: architect PASS, code-reviewer PASS, test-engineer PASS, frontend/design PASS, verifier PASS.
       - Restarted local dev services in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`; API `/health` returned ok and Agent Console root returned HTTP 200. A temporary `harness-console-playwright` Vite session on port 5177 served the Playwright smoke suite.
       - Added one-page visual summary HTML at `docs/reports/langgraph-langchain-visual-summary-2026-06-03.html` for a low-text overview of new LangGraph/LangChain capabilities, Console surfaces, evidence paths, guardrails, and validation counts.
-  - id: hao-agent-cli-v4.3-local Agent CLI-footer-compact-ring
+  - id: hao-agent-cli-v4.3-footer-compact-ring
     date: 2026-06-02
     status: verified
-    demo: hao TUI now shows a local Agent CLI-style footer with model strength, compact ring, output style, approval count, and command count, while `/compress` aliases the existing `/compact` local context summarization flow.
+    demo: hao TUI now shows a 本地 Agent CLI footer with model strength, compact ring, output style, approval count, and command count, while `/compress` aliases the existing `/compact` local context summarization flow.
     verification_result: passed
     verification_commands:
       - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/main.py app/cli/hao/tui.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
@@ -377,7 +401,7 @@ post_stage_hardening:
       - The startup welcome card now surfaces the selected model as `provider / model · strength ...` instead of the previous generic billing line.
       - The terminal footer now prints `provider/model · strength ...` plus compact ring, compact percentage/message count, output style, approval count, and command count in the current shell stream.
       - Model strength is a local display label derived from the selected provider/model name; it does not change backend routing or invent pricing data.
-      - `/compress [instructions]` is now a local Agent CLI-style alias for `/compact [instructions]`; both use the existing deterministic local active-path summary and keep the latest six messages in the next payload.
+      - `/compress [instructions]` is now a 本地 Agent CLI alias for `/compact [instructions]`; both use the existing deterministic local active-path summary and keep the latest six messages in the next payload.
       - `/usage`, `/config`, `/status`, `/release-notes`, `docs/cli/hao.md`, Help Center page `安装并使用 hao CLI`, and `DESIGN.md` document the model-strength and compact-ring surface.
       - Restarted the local API server at `http://127.0.0.1:8000` and the Agent Console Vite dev server at `http://127.0.0.1:5173`; `/health`, root, and Help markdown checks passed.
   - id: hao-agent-cli-v4.2-terminal-input-startup-commands
@@ -409,10 +433,10 @@ post_stage_hardening:
       - The observability tracing cleanup path now tolerates context hops during stream teardown, preventing the final model call from surfacing a `stream error` after the assistant response already streamed.
       - Updated `docs/cli/hao.md`, Help Center page `安装并使用 hao CLI`, and `DESIGN.md` for the terminal input, startup command, and auth-error output contract.
       - Full hao CLI regression is now 127 passed, and the focused tracing regression passes.
-  - id: hao-agent-cli-v4.2-local Agent CLI-code-page
+  - id: hao-agent-cli-v4.2-local-agent-cli-page
     date: 2026-06-02
     status: verified
-    demo: hao TUI now uses a local Agent CLI-like inline terminal page with a copied two-column welcome card, bottom `›` composer, hidden on-demand workbench drawer, inline tool/approval status, and proxy-safe localhost API calls.
+    demo: hao TUI now uses an inline terminal page with a two-column welcome card, bottom `›` composer, hidden on-demand workbench drawer, inline tool/approval status, and proxy-safe localhost API calls.
     verification_result: passed
     verification_commands:
       - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/tui.py app/cli/hao/api_client.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
@@ -430,17 +454,17 @@ post_stage_hardening:
       - git diff --check
     acceptance_notes:
       - Removed the default Textual Header/Footer, right-side split pane, and full-screen alternate-screen entry from `hao`; startup now runs through a Rich terminal loop inside the current shell.
-      - A real `/quit` startup smoke now prints the terminal-style welcome card in normal terminal output without entering the Textual editor-like screen.
-      - Reworked the startup card to copy local Agent CLI's two-column structure: `hao Code` title border, left `Welcome back!` area with icon/model/cwd, and right Tips / What's new copy.
+      - A real `/quit` startup smoke now prints the compact welcome card in normal terminal output without entering the Textual editor-like screen.
+      - Reworked the startup card to build the 本地 Agent CLI two-column structure: `hao Code` title border, left `Welcome back!` area with icon/model/cwd, and right Tips / What's new copy.
       - Workbench views stay hidden by default and open as a bottom drawer only through `/tools`, `/diff`, `/files`, `/approvals`, `/outputs`, `/tasks`, `/bashes`, or `/view ...`; `/clear` hides the drawer.
       - Tool, diff, and approval events remain visible as inline transcript status when the drawer is closed, while existing `SLASH_COMMANDS`, host/sandbox routing, approval freeze, and audit fail-closed behavior remain unchanged.
       - `HarnessApiClient` now creates httpx clients with `trust_env=False`, preventing global proxy variables from breaking local Harness API calls with missing SOCKS support.
       - Updated `docs/cli/hao.md`, Help Center page `安装并使用 hao CLI`, and `DESIGN.md` for the v4.2 page contract.
       - Restarted the Agent Console Vite dev server at `http://127.0.0.1:5173/` and local API server at `http://127.0.0.1:8000`; root, Help markdown, and `/health` returned expected responses.
-  - id: hao-agent-cli-v4-local Agent CLI-code-alignment-followup
+  - id: hao-agent-cli-v4-local-agent-cli-consistency-followup
     date: 2026-06-02
     status: verified
-    demo: hao TUI v4.1 adds more local Agent CLI-style command aliases, local context compaction, output-style hints, config/cost/task cards, and command output cards.
+    demo: hao TUI v4.1 adds more 本地 Agent CLI command aliases, local context compaction, output-style hints, config/cost/task cards, and command output cards.
     verification_result: passed
     verification_commands:
       - cd services/api-server && .venv/bin/python -m py_compile app/cli/hao/tui.py
@@ -456,17 +480,17 @@ post_stage_hardening:
       - curl --noproxy '*' -sS http://127.0.0.1:5173/help/getting-started/hao-cli.md
       - git diff --check
     acceptance_notes:
-      - Added local Agent CLI-style aliases and commands: `/compact`, `/config` / `/settings`, `/cost` / `/stats`, `/allowed-tools`, `/output-style`, `/tasks` / `/bashes`, and `/todos`.
+      - Added 本地 Agent CLI aliases and commands: `/compact`, `/config` / `/settings`, `/cost` / `/stats`, `/allowed-tools`, `/output-style`, `/tasks` / `/bashes`, and `/todos`.
       - `/compact [instructions]` now replaces older active-path messages in the next stream payload with a deterministic local system summary while keeping the latest six messages visible.
       - `/output-style default|concise|explanatory|review` injects a response-style hint into the local context card sent with model turns.
       - Status/config/usage surfaces now expose output style and compact state, and command output summaries render as terminal-like cards with status, exit code, command, stdout, and stderr.
       - Updated `docs/cli/hao.md`, `apps/agent-console/public/help/getting-started/hao-cli.md`, and `DESIGN.md` for the v4.1 command/output surface and verified the full hao CLI regression at `121 passed`.
       - Restarted the Agent Console Vite dev server at `http://127.0.0.1:5173/`; root returned HTTP 200 and the public Help markdown served the new slash-command documentation.
       - Started the local API server at `http://127.0.0.1:8000` with a temporary in-process `AUTH_JWT_SECRET`; `/health` returned `{"status":"ok","service":"api-server"}`.
-  - id: hao-agent-cli-v4-local Agent CLI-code-surface
+  - id: hao-agent-cli-v4-local-agent-cli-surface
     date: 2026-06-02
     status: verified
-    demo: hao TUI now exposes a local Agent CLI-style slash command menu, aliases, model/permissions/context/usage/resume controls, and transcript polish.
+    demo: hao TUI now exposes a 本地 Agent CLI slash command menu, aliases, model/permissions/context/usage/resume controls, and transcript polish.
     verification_result: passed
     verification_commands:
       - cd services/api-server && uv run python -m py_compile app/cli/hao/tui.py
@@ -477,7 +501,7 @@ post_stage_hardening:
       - git diff --check
     acceptance_notes:
       - TUI input now shows a live slash-command hint menu with filtered results and a shared command catalog for `/help` and `/commands`.
-      - Added local Agent CLI-style aliases and controls: `/permissions` for `/mode`, direct workbench view commands, `/model`, `/context`, `/usage`, and in-place `/resume <session_id>`.
+      - Added 本地 Agent CLI aliases and controls: `/permissions` for `/mode`, direct workbench view commands, `/model`, `/context`, `/usage`, and in-place `/resume <session_id>`.
       - Transcript rendering now uses compact `>` / `hao` role labels while preserving raw model-visible tool messages, backend audit, and approval safety semantics.
       - Updated `docs/cli/hao.md` to document the v4 command surface and verified the full hao CLI regression at `120 passed`.
   - id: hao-agent-cli-v2-step-1a-session-tree
@@ -585,10 +609,10 @@ post_stage_hardening:
       - Existing Workspace context assembly keeps `tool` role messages visible to the next stream instead of converting them into system text.
       - Full backend regression passes with `637 passed, 2 warnings`.
       - Step 5 received two independent subagent review approvals; both concluded the remaining work was progress/wiki writeback plus final validation.
-  - id: hao-agent-cli-v3-Harness Agent-alignment-step-4
+  - id: hao-agent-cli-v3-local-agent-safety-step-4
     date: 2026-06-01
     status: verified
-    demo: hao CLI v3 Harness Agent-alignment Step 4 completes approval/workbench polish with headless and TUI safety hardening.
+    demo: hao CLI v3 local safety Step 4 completes approval/workbench polish with headless and TUI safety hardening.
     verification_result: passed
     verification_commands:
       - cd services/api-server && uv run ruff check app/cli/hao/main.py app/cli/hao/tui.py tests/test_hao_cli_v2.py
@@ -708,7 +732,7 @@ post_stage_hardening:
       - git diff --check
     acceptance_notes:
       - `getModelPricingSources()` now retries with bundled `/model_pricing_sources.json` only when the API returns 404, so real backend failures still surface.
-      - The bundled JSON is copied from the backend official-source dataset and keeps the pricing table usable even when a stale local backend has not mounted the new route.
+      - The bundled JSON is from the backend official-source dataset and keeps the pricing table usable even when a stale local backend has not mounted the new route.
       - Browser smoke on the live dev server confirmed the pricing API returned 404, the bundled JSON returned 200, the table rendered DeepSeek Flash / OpenAI GPT-5.5 / Kimi K2.6 / Z.AI GLM-5.1 rows, and there was no unavailable warning or document overflow.
   - id: model-settings-layout-polish
     date: 2026-05-31
@@ -1979,10 +2003,10 @@ post_stage_hardening:
       - Playwright desktop 1440x900 and mobile 390x844 smoke checks confirmed /token-savings loads, shows cache hit rate and saved-token data, has zero document horizontal overflow, and reports no browser console errors.
       - Compressed the /token-savings KPI area so the top section is about 108px high at 2048px wide, and changed token values to dynamic compact units such as 944, 19.44K, 76.78K, 126.78K, and future M/B values instead of fixed "tokens" suffixes.
 
-  - id: team-mode-team-mode-alignment-product-surface
+  - id: team-mode-product-surface
     date: 2026-05-25
     status: verified
-    demo: Team Mode now has a durable Team Mode-style Team Session product surface with backend team/mailbox/task/event state, horizontal agent columns, team tool orchestration, and mocked browser smoke coverage.
+    demo: Team Mode now has a durable mailbox-driven Team Session product surface with backend team/mailbox/task/event state, horizontal agent columns, team tool orchestration, and mocked browser smoke coverage.
     verification_result: passed
     verification_commands:
       - cd services/api-server && uv run pytest tests/test_teams.py -q
@@ -1996,7 +2020,7 @@ post_stage_hardening:
       - Added Team Mode persistence for Team, TeamAgent, TeamMailboxMessage, TeamTask, and TeamEvent with organization scoping and Alembic migration 20260523_0020.
       - Added Team API endpoints for team CRUD, member CRUD, mailbox delivery/read, task lifecycle, event streams, wake streams, and explicit team tool calls.
       - Added Team frontend routes, list/create modal, team rail, horizontal chat columns, per-column composer, task foldout, status projection, stream placeholders, branch switching, context compression, and Agent Workspace team-launch flow.
-      - Added Team Mode alignment architecture note documenting Team Mode product invariants, communication contract, team tool contract, UI contract, and non-goals.
+      - Added Team Mode product surface architecture note documenting Team Mode product invariants, communication contract, team tool contract, UI contract, and non-goals.
       - Added mocked browser smoke for Team Mode creation, message dispatch, teammate columns, and desktop/mobile layout usability.
 
   - id: capability-product-and-console-spine-polish
@@ -2037,14 +2061,14 @@ post_stage_hardening:
     acceptance_notes:
       - Added `/compress` with `compact` and `context` aliases to the shared slash command registry.
       - Agent Workspace dispatches `/compress` through the existing manual context compression path and clears the composer draft.
-      - `/plan` now names the markdown planning command; legacy `/Harness Agent` and `/plan-md` remain aliases for that planning behavior.
+      - `/plan` now names the markdown planning command; legacy `/plan-md` remains a compatibility alias for that planning behavior.
       - Added `/run` with `act` and `execute` aliases for executable Plan-Act Run mode, avoiding the old `/plan` name collision.
       - Team Mode reuses the existing Agent context compression endpoint for each Team column, with branch keys scoped by team id, slot id, and active leaf node.
       - Team Mode now supports `/compress`, context-ring manual compression, and automatic compression after a completed assistant turn crosses the configured threshold.
       - Team Mode now renders generated compression summaries with the same exported ContextSummaryManager component used by Agent Workspace, so each column header has the same compact control, hover/focus preview text, coverage count, token compression, recompress, and clear behavior.
       - ContextRing pending state now shows a spinning progress arc and "正在压缩上下文" accessibility/title copy instead of looking idle while compression is running.
       - Team assistant messages can create sibling branches from the previous user message and show the Agent-like branch switcher; stale branch node ids are pruned when the message list changes.
-      - Regression coverage verifies slash command parsing, Team `/plan` planning sends, legacy `/Harness Agent` compatibility, `/run` executable sends, Agent slash compression, Team summary rendering, Team slash/ring compression payloads, and Team branch switching without duplicating the anchor user message.
+      - Regression coverage verifies slash command parsing, Team `/plan` planning sends, legacy `/plan-md` compatibility, `/run` executable sends, Agent slash compression, Team summary rendering, Team slash/ring compression payloads, and Team branch switching without duplicating the anchor user message.
 
   - id: agent-team-model-picker-popover-layout
     date: 2026-05-25

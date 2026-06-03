@@ -2,11 +2,11 @@
 
 ## Introduction
 
-Harness 的 `/agents/:agentId/workspace` 页面（以下称 Workspace）当前以 "Agent Workspace Pro" 形式承载了 Chat、Markdown plan、Plan-Act 三种模式，同时把 Artifacts、Tool Runtime、Approvals、Plan DAG、Metrics 等运行与评测面板直接挤在主视口内。实际使用中暴露出两个问题：一是聊天手感不符合用户预期（裸 Enter 仅换行、SSE 失败静默、缺少流式指示细节）；二是评测与运行观察过度占据工作台，反而模糊了"这里是跟 Agent 对话的主通道"的定位。
+Harness 的 `/agents/:agentId/workspace` 页面（以下称 Workspace）当前以 "Agent Workspace Pro" 形式承载了 Chat、Markdown Plan、Plan-Act 三种模式，同时把 Artifacts、Tool Runtime、Approvals、Plan DAG、Metrics 等运行与评测面板直接挤在主视口内。实际使用中暴露出两个问题：一是聊天手感不符合用户预期（裸 Enter 仅换行、SSE 失败静默、缺少流式指示细节）；二是评测与运行观察过度占据工作台，反而模糊了"这里是跟 Agent 对话的主通道"的定位。
 
 本 feature 的范围是 **Workspace 聊天体验的聚焦化重构**：
 
-1. 将 Workspace 重塑为一个对齐 local Agent CLI / Harness Agent UI 的极简聊天主界面，在保持现有 Harness 视觉风格（灰白面板、slate-950 强调色、rounded-2xl 卡片、Lucide 图标）的前提下，把 Chat 设为工作台的唯一默认主通道。
+1. 将 Workspace 重塑为一个面向主流 Agent 工具 UI 的极简聊天主界面，在保持现有 Harness 视觉风格（灰白面板、slate-950 强调色、rounded-2xl 卡片、Lucide 图标）的前提下，把 Chat 设为工作台的唯一默认主通道。
 2. 修正输入框的键位语义，将 Enter 作为默认发送键，Shift+Enter 换行；保留 Cmd/Ctrl+Enter 作为兼容触发。
 3. 修正 SSE 流在前端的可诊断性：连接失败、HTTP 非 2xx、网络中断、鉴权失败必须在消息气泡区呈现可读错误并提供重试入口；正常情况下 `delta` / `think_delta` / `tool_call_*` / `usage` / `done` 事件按既有契约渲染。
 4. 将评测、审批、Plan DAG、Artifacts 详情、Model Calls、Tool Call Runtime 等"运行与评测视图"从 Workspace 的默认主视口中撤出，迁移或链接到 `/runs/:runId`、`/observability`、`/evals`、`/tools`、`/sandboxes`、`/subagents` 等已有路由。
@@ -38,7 +38,7 @@ Harness 的 `/agents/:agentId/workspace` 页面（以下称 Workspace）当前�
 
 ### Requirement 1: 聊天主界面布局
 
-**User Story:** As a Harness 使用者，I want Workspace 作为一个专注的对话窗口, so that 我可以像使用 local Agent CLI 或 Harness Agent UI 一样与 Agent 连续对话，而不被评测和运行观察面板打断。
+**User Story:** As a Harness 使用者，I want Workspace 作为一个专注的对话窗口, so that 我可以像使用 连续对话式 Agent 工具 一样与 Agent 连续对话，而不被评测和运行观察面板打断。
 
 #### Acceptance Criteria
 
@@ -55,7 +55,7 @@ Harness 的 `/agents/:agentId/workspace` 页面（以下称 Workspace）当前�
 
 ### Requirement 2: 输入框键位与发送语义
 
-**User Story:** As a Harness 使用者，I want 输入框按"回车发送、Shift+Enter 换行"的约定工作, so that 我的肌肉记忆与主流 AI IDE（local Agent CLI、Harness Agent UI、chat-first UI）保持一致。
+**User Story:** As a Harness 使用者，I want 输入框按"回车发送、Shift+Enter 换行"的约定工作, so that 我的肌肉记忆与主流对话式 Agent 工具保持一致。
 
 #### Acceptance Criteria
 

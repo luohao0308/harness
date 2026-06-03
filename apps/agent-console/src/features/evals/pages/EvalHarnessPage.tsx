@@ -714,7 +714,7 @@ const CONTRACT_PRESETS: Array<{ label: string; description: string; value: strin
       {
         persona_contract: {
           must_mention_role_as: "客服助理",
-          ban_role_drift_phrases: ["我是 chat-first UI", "as an AI"],
+          ban_role_drift_phrases: ["我是通用 AI", "as an AI"],
           tone_required_markers: ["您", "请"],
           tone_banned_markers: ["哈哈哈"],
           max_first_person_drift_count: 1,

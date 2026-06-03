@@ -113,7 +113,7 @@ hao --agent-id default --cwd . --mode confirm --target host
 - `--mode confirm|auto-edit|full-auto`：本机权限模式。
 - `--target host|sandbox`：本机执行或 Harness sandbox 执行。
 
-TUI 现在采用更接近 local Agent CLI 的 inline 终端布局：`hao` 不再切到单独的全屏 alternate screen，而是在当前 shell 输出流里显示 `hao Code` 欢迎框、主会话、底部 `›` 输入提示和状态提示。欢迎框按 local Agent CLI 的启动页结构排版，左侧是欢迎、图标、模型强度和当前目录，右侧是 Tips 和 What's new。底部状态会显示当前模型、推导出的强度标签、compact 圆环、输出风格、审批数和命令数。工具、diff、文件树、审批、命令、计划、输出、todo 和验证视图不再常驻右侧分屏；只有输入 `/tools`、`/diff`、`/tasks`、`/view ...` 等命令时才会打开底部工作台 drawer。
+TUI 现在采用本地 Agent CLI 的 inline 终端布局：`hao` 不再切到单独的全屏 alternate screen，而是在当前 shell 输出流里显示 `hao Code` 欢迎框、主会话、底部 `›` 输入提示和状态提示。欢迎框按本地 Agent CLI 的启动页结构排版，左侧是欢迎、图标、模型强度和当前目录，右侧是 Tips 和 What's new。底部状态会显示当前模型、推导出的强度标签、compact 圆环、输出风格、审批数和命令数。工具、diff、文件树、审批、命令、计划、输出、todo 和验证视图不再常驻右侧分屏；只有输入 `/tools`、`/diff`、`/tasks`、`/view ...` 等命令时才会打开底部工作台 drawer。
 
 本地 Harness API 请求会忽略 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 等环境代理配置，避免 `127.0.0.1` 服务被 SOCKS 代理环境变量污染。
 
@@ -161,9 +161,9 @@ TUI 现在采用更接近 local Agent CLI 的 inline 终端布局：`hao` 不再
 /quit
 ```
 
-v4 之后，TUI 底部输入框更接近 local Agent CLI 的单输入体验：输入 `/` 会显示可过滤的命令菜单，`/help <query>` 和 `/commands <query>` 会输出同一份命令目录；`/permissions` 是 `/mode` 的 local Agent CLI 风格别名，`/model` 可以查看或切换后续请求记录的模型标识，`/context` 会显示下一轮发送给模型的本地上下文卡，`/usage` 会显示本地消息、工具、审批和命令计数。`/resume <session_id>` 可以在当前 TUI 内加载已有本地 session。
+v4 之后，TUI 底部输入框采用本地 Agent CLI 的单输入体验：输入 `/` 会显示可过滤的命令菜单，`/help <query>` 和 `/commands <query>` 会输出同一份命令目录；`/permissions` 是 `/mode` 的本地权限别名，`/model` 可以查看或切换后续请求记录的模型标识，`/context` 会显示下一轮发送给模型的本地上下文卡，`/usage` 会显示本地消息、工具、审批和命令计数。`/resume <session_id>` 可以在当前 TUI 内加载已有本地 session。
 
-v4.1 继续补 local Agent CLI 风格命令面：
+v4.1 继续补齐本地 Agent CLI 命令面：
 
 - `/config` 和 `/settings` 输出当前模型、模型强度、工作流、target、权限、输出风格、compact 圆环、session、run 和 cwd。
 - `/cost`、`/stats` 作为 `/usage` 的别名，显示本地消息、工具、审批、命令、compact 圆环和 compact 计数；当前不伪造真实 token 成本。
@@ -174,11 +174,11 @@ v4.1 继续补 local Agent CLI 风格命令面：
 
 命令和工具输出现在按更接近终端任务卡片的格式展示：先显示工具名与状态，再显示 exit code、命令行、stdout/stderr 首行，完整输出仍记录在本地 session artifact 中。
 
-v4.2 继续收敛到 local Agent CLI 风格页面：
+v4.2 继续收敛到本地 Agent CLI 页面：
 
 - 默认界面取消顶部 Header/Footer 和右侧常驻工作台，进入后只显示欢迎卡、主会话、底部 `›` 输入行和一行轻量状态。
 - 默认入口使用普通 Rich 终端循环，不再进入看起来像编辑器的 Textual 全屏 alternate screen。
-- 欢迎卡照 local Agent CLI 启动页分成左右两栏：左侧 `Welcome back!`、图标、模型强度、cwd；右侧 Tips for getting started 和 What's new；卡片里的 `/init` 和 `/release-notes` 都是真实命令。
+- 欢迎卡按本地 Agent CLI 启动页分成左右两栏：左侧 `Welcome back!`、图标、模型强度、cwd；右侧 Tips for getting started 和 What's new；卡片里的 `/init` 和 `/release-notes` 都是真实命令。
 - 底部状态区显示 `provider/model · strength ...`，下一行显示 compact 圆环、已压缩比例、输出风格、审批数和命令数；`/model`、`/output-style`、`/compact`、工具审批和命令状态变化会刷新这块信息。
 - `/init` 会在当前 `--cwd` 下创建 `HAO.md` workspace 指令文件；如果文件已存在，只提示 `exists`，不会覆盖。
 - `/release-notes` 会在当前会话里输出 hao v4/v4.1/v4.2 的本地变更摘要。

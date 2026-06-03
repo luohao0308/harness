@@ -2,7 +2,7 @@
  * Composer autogrow primitives (v4 / Req 1, Property P18).
  *
  * v4 tightens the minimum height from v3's 40 px to 24 px so the composer
- * starts as a single-line input (matches chat-first UI / local Agent CLI). The max
+ * starts as a single-line input (matches 主流对话输入). The max
  * height remains 200 px.
  *
  * The module stays DOM-free so the clamp can be property-tested and reused

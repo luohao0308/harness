@@ -8,7 +8,7 @@
 
 1. **布局缩在页面中部，右侧大片空白**；Workspace 没有真正占满浏览器视口。
 2. **模型输出看起来不是流式**，尽管 `useChatStream` 已经按 `delta` 事件追加文本；需要排查前端批量更新与后端 / 代理层缓冲两条路径。
-3. **Plan (markdown) 模式缺少 Harness Agent / local Agent CLI 风格的规划审批浮层**：收到 plan 后应在 Composer 上方弹出"批准并执行 / 修改规划 / 丢弃"。
+3. **Plan (markdown) 模式缺少 Plan 审批浮层**：收到 plan 后应在 Composer 上方弹出"批准并执行 / 修改规划 / 丢弃"。
 4. **用户消息不可编辑重发**；每条 `role=user` 气泡应可就地编辑再提交，产生新的分支。
 5. **缺少复制按钮**；每条 assistant 与 user 消息都应能一键复制可见文本。
 6. **上一版被撤走的"上下文轮数 / Pin 列表 / @tool 提及"控件需要以轻量形式回归**，整合进 Composer 附近而非新开三栏。
@@ -86,7 +86,7 @@
 
 ### Requirement 3: Plan 模式审批浮层
 
-**User Story:** As 使用 Plan (markdown) 或 Plan-Act 模式的使用者, I want 在模型返回规划后，Composer 上方出现一个 Harness Agent / local Agent CLI 风格的小浮层让我做"批准 / 补充 / 丢弃", so that 我可以快速决定这次规划是执行、改、还是丢弃，而不是回到普通聊天再手动发指令。
+**User Story:** As 使用 Plan (markdown) 或 Plan-Act 模式的使用者, I want 在模型返回规划后，Composer 上方出现一个 Plan 审批浮层让我做"批准 / 补充 / 丢弃", so that 我可以快速决定这次规划是执行、改、还是丢弃，而不是回到普通聊天再手动发指令。
 
 #### Acceptance Criteria
 
@@ -164,7 +164,7 @@
 
 ### Requirement 8: 用户消息样式
 
-**User Story:** As Workspace 使用者, I want 用户消息气泡是白底黑字, so that 它在整体灰白主题下更清爽、更像主流 Chat 产品（chat-first UI、local Agent CLI、Gemini）的用户气泡。
+**User Story:** As Workspace 使用者, I want 用户消息气泡是白底黑字, so that 它在整体灰白主题下更清爽、更像主流 Chat 产品（主流聊天工具）的用户气泡。
 
 #### Acceptance Criteria
 
@@ -277,7 +277,7 @@
 5. **P5 Discard safety invariant**: WHEN 用户点击 `Plan_Approval_Panel` 的「丢弃」或「关闭（X）」, THE Workspace SHALL 不修改 `useWorkspaceStore` 中任何 `ConversationNode` 字段；即操作前后 `nodesById` 深等价。
 6. **P6 Edit does not delete invariant**: WHEN 用户在 user 气泡点击「保存并重发」, THE Workspace SHALL 保留原 user `ConversationNode` 及其所有后代节点于 `useWorkspaceStore.nodesById` 中，且该原 user 节点的父节点下 SHALL 至少存在 2 个兄弟 user 节点（原节点 + 新节点）；形式化：`getSiblings(originalUserNodeId).length >= 2`。
 7. **P7 Copy purity invariant**: WHEN 用户点击 `Copy_Button`, THE clipboard 中写入的文本 SHALL 等于 `ConversationNode.content` 去除所有 `<think>...</think>` 包裹段后的字符串；不得包含气泡装饰 HTML 或 React 内部元素。
-8. **P8 Metadata alignment invariant**: THE Metadata_Strip 展示的 `input_tokens`、`output_tokens`、`cost_usd`、`ttfb_ms`、`duration_ms`、`run_id` 值 SHALL 在任意时刻等于 `Active_Path` 末端 `ConversationNode.metadata` 中对应字段的值（缺失字段以占位符显示），不存在 `Inspector_Drawer` 与 `Metadata_Strip` 展示数值不一致的时刻。
+8. **P8 Metadata consistency invariant**: THE Metadata_Strip 展示的 `input_tokens`、`output_tokens`、`cost_usd`、`ttfb_ms`、`duration_ms`、`run_id` 值 SHALL 在任意时刻等于 `Active_Path` 末端 `ConversationNode.metadata` 中对应字段的值（缺失字段以占位符显示），不存在 `Inspector_Drawer` 与 `Metadata_Strip` 展示数值不一致的时刻。
 9. **P9 User bubble color invariant**: WHERE `ConversationNode.role = user`, THE Message_Bubble 的背景颜色 token SHALL 为 `bg-white`（或等价 token），且文本颜色 token SHALL 为 `text-slate-900`（或等价 token）；不得匹配 `bg-slate-950` / `text-white` 的用户气泡样式。
 10. **P10 Stop button visibility invariant**: WHILE `useWorkspaceStore.activeStream !== null`, THE Meta_Bar SHALL 渲染 `Stop_Button`；WHILE `useWorkspaceStore.activeStream === null`, THE Meta_Bar SHALL 不渲染 `Stop_Button`。
 11. **P11 Persistence safety invariant**: WHEN 浏览器刷新后恢复 `useWorkspaceStore`, THE Workspace SHALL 不存在任何 `ConversationNode.state = streaming` 的节点（所有此前处于 streaming 的节点 SHALL 恢复为 `paused` 或 `error`，由设计阶段统一选择）；该约束仅在刷新恢复路径上生效，正常运行期间 `state = streaming` 节点 SHALL 允许按 Requirement 2 与 Requirement 9 的语义存在。

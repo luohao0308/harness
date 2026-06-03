@@ -1,28 +1,16 @@
-# Team Mode Team Mode alignment Target
+# Team Mode Product Surface Target
 
 ## Target Reset
 
-The authoritative product target is `/Users/luohao/Downloads/Team Mode-main` Team Mode plus the
-visual reference `/Users/luohao/Downloads/Team Mode.jpg`.
-
 Harness Team Mode is not a Run, Trace, Observability, assignment, or Agent Workspace
 variant. Runs and sessions may exist as implementation evidence, but they must not shape the
-Team Mode product surface. The user-facing result must feel like Team Mode Team Mode: a long-lived
-team collaboration room with a Leader, teammates, mailboxes, wake/status transitions, task
-steps, and horizontal chat columns.
+Team Mode product surface. The user-facing result is a long-lived team collaboration room
+with a Leader, teammates, mailboxes, wake/status transitions, task steps, and horizontal chat
+columns.
 
 Use Harness colors, typography scale, and slate/page/panel tokens only as the skin. Structure,
-message routing, wake behavior, and backend-visible semantics must match Team Mode.
-
-## Authoritative Team Mode Sources
-
-- UI shell and column layout: `/Users/luohao/Downloads/Team Mode-main/src/renderer/pages/team/TeamPage.tsx`
-- Agent tabs: `/Users/luohao/Downloads/Team Mode-main/src/renderer/pages/team/components/TeamTabs.tsx`
-- Column chat routing: `/Users/luohao/Downloads/Team Mode-main/src/renderer/pages/team/components/TeamChatView.tsx`
-- Session coordinator: `/Users/luohao/Downloads/Team Mode-main/src/process/team/TeamSession.ts`
-- Mailbox service: `/Users/luohao/Downloads/Team Mode-main/src/process/team/Mailbox.ts`
-- Wake/status engine: `/Users/luohao/Downloads/Team Mode-main/src/process/team/TeammateManager.ts`
-- Team tools: `/Users/luohao/Downloads/Team Mode-main/src/process/team/mcp/team/TeamMcpServer.ts`
+message routing, wake behavior, and backend-visible semantics must follow the Harness Team
+Mode contract below.
 
 ## Product Invariant
 
@@ -38,7 +26,7 @@ There is exactly one Team Session product model:
 
 ## Communication Contract
 
-Team Mode behavior to reproduce:
+Team communication behavior:
 
 - User message from the Leader column goes to the Leader mailbox.
 - User message from a teammate column goes directly to that teammate mailbox.
@@ -56,21 +44,21 @@ Team Mode behavior to reproduce:
 
 ## Team Tool Contract
 
-Harness must provide Team Mode-equivalent native tools. Transport can be FastAPI/SSE/SQLAlchemy
-instead of Electron IPC/TCP MCP, but the behavior and result text must match:
+Harness must provide native team tools. Transport is FastAPI/SSE/SQLAlchemy and result text
+must stay compact enough for agent-to-agent coordination:
 
 - `team_send_message`: resolves slot id or agent name; `*` broadcasts to every non-sender slot.
 - `team_spawn_agent`: Leader-only; creates slot, writes welcome mail, wakes new teammate.
 - `team_task_create`: creates pending task with optional owner and dependency list.
 - `team_task_update`: changes status/owner/description; completing a task unblocks dependents.
-- `team_task_list`: returns the same compact text board style as Team Mode.
+- `team_task_list`: returns a compact text board.
 - `team_members`: returns name, backend/type, role, status, and model.
 - `team_rename_agent`: Leader-only; preserves original-name hint.
 - `team_shutdown_agent`: Leader-only; cannot target Leader; sends `shutdown_request`.
 
 ## UI Contract
 
-The first viewport must match Team Mode's shape:
+The first viewport must preserve the Team Mode product shape:
 
 - Harness ConsoleShell left navigation remains, but the Team product area uses Team Mode structure.
 - Internal left rail lists teams and has a compact create entry.
@@ -105,16 +93,13 @@ Required entities:
 - Do not implement Team Mode as a Run workspace mode.
 - Do not make Run Detail, Trace, Observability, assignments, or handoffs the default Team screen.
 - Do not keep a Harness control-panel task dashboard as the primary team experience.
-- Do not copy Team Mode's Electron IPC/TCP MCP transport; copy its product semantics using Harness'
-  native backend.
 - Do not claim completion from API green checks alone. Visual and communication semantics must be
-  verified against the Team Mode source and screenshot.
+  verified against the Team Mode contract and screenshots.
 
 ## Execution Order
 
 1. Lock this target and test spec before further broad edits.
-2. Align the column composer and tabs with Team Mode's column-is-target interaction.
+2. Align the column composer and tabs with the column-is-target interaction.
 3. Align backend mailbox/wake/status/tool semantics with the Team Mode contracts above.
 4. Remove or demote any Run/Trace/dashboard-centered Team UI.
-5. Verify with backend tests, frontend tests, Playwright desktop/mobile smoke, and screenshots
-   compared against `/Users/luohao/Downloads/Team Mode.jpg`.
+5. Verify with backend tests, frontend tests, Playwright desktop/mobile smoke, and screenshots.

@@ -1067,7 +1067,7 @@ The 11 properties below are the cross-verification invariants enumerated in Requ
 
 **Validates: Requirements 5.2, 5.7, 16.7**
 
-### Property 8: Metadata alignment invariant
+### Property 8: Metadata consistency invariant
 
 *For any* `Active_Path` snapshot with tail node `t`, the `Metadata_Strip` rendered output for field `f ∈ {input_tokens, output_tokens, cost_usd, ttfb_ms, duration_ms, run_id}` SHALL equal `formatMetadataField(t.metadata[f])` where `formatMetadataField(undefined) = "—"`, `formatMetadataField(cost_usd)` follows the "$0.0001 / N/A" rule, and `formatMetadataField(run_id)` returns `run_id.slice(0, 8)`; furthermore, the value shown in `Metadata_Strip` SHALL equal the value shown in the corresponding row of `Inspector_Drawer` at the same instant — there SHALL NOT exist a time at which the two displays disagree on the same field.
 

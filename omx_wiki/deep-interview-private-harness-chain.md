@@ -32,8 +32,8 @@ The next-phase outcome selected in `$deep-interview` was a real privately deploy
   - Full multi-tenant RBAC.
   - Polished marketing website.
   - Full SaaS commercialization.
-- Harness Agent/OMX may autonomously decide routine docs structure, stage splitting, tests, local refactors, bug fixes, API/frontend alignment, deployment script fixes, and progress updates.
-- Harness Agent/OMX must pause before significant new dependencies, destructive database migrations, auth/RBAC expansion, Kubernetes topology, product repositioning, or deleting large functional areas.
+- Harness agents/OMX may autonomously decide routine docs structure, stage splitting, tests, local refactors, bug fixes, API/frontend alignment, deployment script fixes, and progress updates.
+- Harness agents/OMX must pause before significant new dependencies, destructive database migrations, auth/RBAC expansion, Kubernetes topology, product repositioning, or deleting large functional areas.
 
 ## Binding Harness Chain
 

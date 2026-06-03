@@ -8,9 +8,10 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.api.schemas import normalize_workspace_mode
 from app.db.models import AgentMessage, Team, TeamAgent, TeamEvent, TeamMailboxMessage, TeamTask
 from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
@@ -160,6 +161,11 @@ class TeamMessageCreateRequest(BaseModel):
     summary: str | None = None
     files: list[str] = Field(default_factory=list)
     mode: Literal["chat", "markdown_plan", "plan", "goal"] = "chat"
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def normalize_mode(cls, value: str) -> str:
+        return normalize_workspace_mode(value)
 
 
 class TeamTaskCreateRequest(BaseModel):

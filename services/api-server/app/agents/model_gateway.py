@@ -1489,7 +1489,7 @@ class AuditedModelGateway:
         )
         circuit_key = limiter_key
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
-        gateway = self.gateway or self._gateway_from_settings(settings.provider)
+        gateway = self.gateway or self._gateway_from_settings(settings)
         started_at = time.monotonic()
         generation_parameters = self._generation_parameters(settings.provider)
         request_message_hashes = self._request_message_hashes(request_payload)
