@@ -19,6 +19,10 @@ class FakeGitHubClient:
         self.calls.append({"url": url, "params": params or {}})
         return self.responses.pop(0)
 
+    def post(self, url: str, json: dict | None = None) -> httpx.Response:
+        self.calls.append({"url": url, "json": json or {}})
+        return self.responses.pop(0)
+
 
 def _adapter(method: str) -> GitHubAdapter:
     return GitHubAdapter(
@@ -185,3 +189,44 @@ def test_github_invalid_input_and_missing_secret_do_not_raise() -> None:
 
     assert missing_secret.output_json["error"] == "missing_secret"
     assert invalid.output_json["error"] == "invalid_input"
+
+
+def test_github_create_issue_comment_posts_with_required_idempotency_key(monkeypatch) -> None:
+    fake = FakeGitHubClient(
+        [
+            httpx.Response(
+                201,
+                json={
+                    "id": 99,
+                    "html_url": "https://github.test/acme/repo/issues/7#comment-99",
+                    "user": {"login": "bot"},
+                    "created_at": "2026-05-29T00:00:00Z",
+                    "body": "posted",
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr("app.tools.adapters.github_adapter._client", lambda *args, **kwargs: fake)
+
+    result = _adapter("create_issue_comment").execute(
+        metadata=_metadata("github.create_issue_comment"),
+        input_json={
+            "repo": "acme/repo",
+            "number": 7,
+            "body": "posted",
+            "idempotency_key": "comment-7",
+        },
+        config_json=None,
+        secret_value="ghp_test",
+    )
+
+    assert fake.calls[0]["url"] == "https://api.github.com/repos/acme/repo/issues/7/comments"
+    assert fake.calls[0]["json"] == {"body": "posted"}
+    assert result.output_json["comment"]["id"] == 99
+    assert result.output_json["tool"] == "github.create_issue_comment"
+
+
+def test_github_write_adapter_risk_is_high() -> None:
+    registry_metadata = ToolRegistry.default().tools["github.create_issue"]
+    assert registry_metadata.risk_level == "high"
+    assert registry_metadata.idempotent is False

@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-28T07:00:38Z
+last_updated_at: 2026-05-29T05:51:06Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,111 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: post-audit-hardening-v1
+    date: 2026-05-29
+    status: verified
+    demo: Post-audit hardening closes migration width, FastAPI lifespan, frontend bundle, large-file split, adapter bootstrap, deployment preflight, and commit-hygiene gaps from the four recent delivery slices.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_teams.py tests/test_subagent_marketplace.py tests/test_specialist_calibration.py tests/test_adapter_registry.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd services/api-server && .venv/bin/python -m pytest tests -q
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-post-audit-hardening-after-review.sqlite .venv/bin/python -m alembic upgrade head
+      - bash scripts/migration-preflight.sh
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added patch migration `20260531_0026_widen_marketplace_ids.py` rather than editing the already-landed 0025 migration; marketplace decision/listing/installation ids and `listing_id` are now `String(128)` while unrelated task/team ids remain `String(36)`.
+      - Migrated FastAPI startup registration to an async lifespan hook and added idempotent adapter bootstrap plus `python -m app.cli.registry_info` for import-only adapter diagnostics.
+      - Added Vite manual chunks for vendor and feature bundles; latest build produced 7 JavaScript chunks and a 77.18 kB main `index-*.js` asset. Route-level `React.lazy` remains a v2 follow-up by PRD boundary.
+      - Split `agent_chat`, `agent_knowledge`, eval endpoint, and provider fallback modules while preserving public import paths and endpoint compatibility.
+      - Added `scripts/migration-preflight.sh` and deployment runbook instructions for PostgreSQL Alembic preflight. Docker daemon was unavailable in this environment, so the script fell back to local PostgreSQL binaries and upgraded through `20260531_0026`.
+      - Added future PRD commit-hygiene DoD guidance in `.omx/plans/_template.md`.
+      - Code review found and fixed one real issue before completion: accidental `TeamAgent.id` and `TeamMailboxMessage.id` widening was reverted to `String(36)`. Follow-up review approved the diff; architecture review left only WATCH items for route-level lazy loading and explicit re-export boundaries.
+      - Full backend regression passed with `500 passed`; full frontend Vitest passed in single-fork mode with `48 files / 223 tests passed`.
+
+  - id: subagent-specialists-v3
+    date: 2026-05-29
+    status: verified
+    demo: Subagent Specialists v3 adds LLM-based specialist selection with calibration, a signed/admin-reviewed specialist marketplace, and bounded dynamic fanout extension.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run pytest tests/test_subagent_marketplace.py tests/test_specialist_calibration.py tests/test_fanout_extend.py tests/test_specialist_llm_selector.py -q
+      - cd services/api-server && uv run ruff check app tests
+      - cd services/api-server && uv run pytest tests/test_specialist_llm_selector.py tests/test_specialist_calibration.py tests/test_subagent_marketplace.py tests/test_fanout_extend.py tests/test_subagent_specialists.py tests/test_subagents.py -q
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-subagent-specialists-v3.sqlite uv run alembic upgrade head
+      - cd services/api-server && uv run pytest tests -q
+      - cd apps/agent-console && npm test -- SubagentSpecialistsPage.test.tsx SubagentDetailPage.test.tsx SubagentMarketplacePage.test.tsx --run
+      - cd apps/agent-console && npm test -- src/features/teams/__tests__/TeamPages.test.tsx --run
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `specialist_selection_decisions`, `specialist_marketplace_listings`, and `specialist_installations` plus `SpecialistLLMSelector` using model-gateway JSON selection with confidence thresholds and keyword/ranking fallback.
+      - `/api/subagent-specialists/calibration` now reports confidence buckets, low-sample state, and ECE from recorded selection decisions joined to same-task subagent outcomes.
+      - Added signed specialist marketplace APIs and console pages for listing browse/detail, admin approval, installation, and org-local specialist copies; installs validate manifest schema, signature, prompt blacklist, and capability allowlist.
+      - Added dynamic fanout extension with same-batch requester checks, running-batch guard, max total fanout, per-batch/per-requester extend caps, `FANOUT_EXTENDED` events, and console badges/history.
+      - Code review found and fixed real issues before completion: changing a verified listing's manifest/signature/version now resets `verified=false`, uninstall archives the installed specialist copy instead of hard deleting historical FK targets, and calibration run matching is scoped to the decision's task ids.
+      - Drift review confirmed v3 stays on subagent specialist selection, marketplace sharing, calibration, and dynamic fanout; it does not change P5-P8 capability/adapter/observability semantics. `MARKETPLACE_INSTALLED` remains an enum reservation because the existing EventStore is task-scoped and marketplace install is org-scoped.
+      - Full backend regression passed with `497 passed`; full frontend Vitest passed in single-fork mode with `48 files / 223 tests passed`. The known unrelated TeamPages branch-switch flaky from default parallel Vitest was reproduced earlier and passed in targeted and single-fork reruns.
+      - Live external model-selector/provider latency and a real cross-org marketplace admin workflow were not run; API and unit/integration tests cover the local contracts.
+
+  - id: real-tool-adapters-v2
+    date: 2026-05-29
+    status: verified
+    demo: Real Tool Adapters v2 adds MCP protocol discovery/execution, Code Interpreter, write-capable GitHub/Slack operations, and Notion/Linear adapters behind sandbox, approval, and idempotency controls.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_runner.py tests/test_mcp_protocol_discovery.py tests/test_sandbox.py::test_tool_registry_matches_stage12_required_tools tests/test_adapters_code_interpreter.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests -q
+      - cd services/api-server && .venv/bin/python -m ruff check app tests
+      - cd apps/agent-console && npm test -- src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx src/features/tools/__tests__/ToolConfigurationPage.test.tsx src/features/tasks/__tests__/api.test.ts --run
+      - cd apps/agent-console && npm test -- src/features/teams/__tests__/TeamPages.test.tsx --run
+      - cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork
+      - cd apps/agent-console && npm test -- --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added a minimal MCP JSON-RPC 2.0 client locked to protocol version `2024-11-05`, with HTTP/SSE parsing and stdio transport that requires an injected sandbox executor instead of host subprocess execution.
+      - MCP discovery now registers org-scoped child tool capabilities through the existing capability tables; built-in capabilities remain global to avoid duplicate visible capability rows.
+      - Added Code Interpreter `run_python` and `install_package` adapters requiring sandbox execution, bounded stdio/file output, import/call denylist checks, and idempotency keys for non-idempotent execution; review tightened the denylist for `subprocess`, `importlib`, and dynamic `getattr` bypasses.
+      - Added GitHub write tools, Slack write tools, Notion, and Linear adapters with structured provider errors, high-risk write metadata, and runtime idempotency replay backed by existing `SystemSetting` storage instead of new tables.
+      - Code review found and fixed drift before completion: built-in capabilities were briefly registered as org-scoped discovered tools, discovered write tools did not force `idempotency_key` in schema, ToolRunner did not initially enforce idempotency keys at runtime, Slack reaction/discovered mutating MCP tools were not uniformly high-risk, stdio runtime command config accepted shell fragments, and stdio calls did not replay the initialize handshake inside the sandbox process.
+      - Drift review confirmed no new migrations/tables/dependencies, no host stdio fork path, write tools remain high-risk policy/approval gated by risk metadata, and stdio discovery is blocked from the admin API.
+      - Full backend regression passed with `487 passed`; frontend sequential full Vitest passed with `47 files / 222 tests passed`; default parallel Vitest still exposed the unrelated TeamPages branch-switch flaky (`分支 1/2`) that passed both targeted and single-fork full reruns.
+      - Live external-provider smoke was not run because real GitHub/Slack/Notion/Linear credentials and a live stdio MCP server were not available in this task context.
+
+  - id: observability-v1-cost-trace-alerts
+    date: 2026-05-29
+    status: verified
+    demo: Observability v1 now exposes cost rollups, local OpenTelemetry trace exploration, and in-app alert/SLO rules for private deployments.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && uv run ruff check app tests
+      - cd services/api-server && uv run pytest tests/test_observability.py tests/test_observability_cost_rollup.py tests/test_observability_tracing.py tests/test_observability_alerts.py tests/test_evals.py tests/test_eval_regression.py -q
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-observability-v1.sqlite uv run alembic upgrade head
+      - cd apps/agent-console && npm test -- ObservabilityV1Pages
+      - cd apps/agent-console && npm test -- --run
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `otel_spans`, `alert_rules`, and `alert_events` with 90-day span retention and four seeded in-app alert rules.
+      - `/api/observability/cost-rollup` aggregates model pricing, specialist budget fallbacks, and adapter tool cost evidence by agent, provider, specialist, or adapter.
+      - Local trace storage and UI now show HTTP, model, tool, subagent, and eval grader spans with tree/Gantt detail and Run Detail deep links.
+      - Alert rules support org-owned CRUD, editable global defaults via org clone, manual/worker evaluation, alert event listing, SSE, and the console bell.
+      - Full backend regression passed with `465 passed`; full frontend Vitest passed with `47 files / 222 tests passed`.
+      - Code review found and fixed real issues before completion: local trace parent span linkage, SQLite JSON seed migration, invalid cost query rate-limit ordering, unrelated frontend filter drift, and cross-org same-trace-id span leakage.
+      - Drift review confirmed Observability projects Eval-owned grounding/regression metrics only; no external alert channels, Jaeger/Grafana deployment requirement, budget enforcement, or P5-P8/Subagent/Adapter semantic changes were added.
+
   - id: dify-grounded-answer-evidence-use
     date: 2026-05-26
     status: verified

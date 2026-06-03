@@ -65,6 +65,9 @@ function subagent(overrides: Record<string, unknown> = {}) {
     fanout_batch_id: null,
     fanout_index: null,
     fanout_total: null,
+    dynamic_fanout_origin: null,
+    dynamic_fanout_requested_by: null,
+    dynamic_fanout_reason: null,
     context_json: { step_key: "review" },
     started_at: "2026-05-28T00:00:00Z",
     completed_at: "2026-05-28T00:01:00Z",
@@ -201,6 +204,22 @@ describe("SubagentSpecialistsPage", () => {
       }
       if (path === "/api/subagent-specialists/spec-reviewer/stats?window=30d" && !init?.method) {
         return jsonResponse(stats());
+      }
+      if (path === "/api/subagent-specialists/calibration?window=30d" && !init?.method) {
+        return jsonResponse({
+          organization_id: "dev-org",
+          window: "30d",
+          decision_count: 1,
+          low_sample: true,
+          ece: null,
+          buckets: [
+            { bucket: "[0.0-0.2)", min_confidence: 0, max_confidence: 0.2, decision_count: 0, success_count: 0, success_rate: null, avg_confidence: null, ece_contribution: null },
+            { bucket: "[0.2-0.4)", min_confidence: 0.2, max_confidence: 0.4, decision_count: 0, success_count: 0, success_rate: null, avg_confidence: null, ece_contribution: null },
+            { bucket: "[0.4-0.6)", min_confidence: 0.4, max_confidence: 0.6, decision_count: 0, success_count: 0, success_rate: null, avg_confidence: null, ece_contribution: null },
+            { bucket: "[0.6-0.8)", min_confidence: 0.6, max_confidence: 0.8, decision_count: 0, success_count: 0, success_rate: null, avg_confidence: null, ece_contribution: null },
+            { bucket: "[0.8-1.0]", min_confidence: 0.8, max_confidence: 1, decision_count: 1, success_count: 1, success_rate: 1, avg_confidence: 0.9, ece_contribution: 0.1 },
+          ],
+        });
       }
       if (path === "/api/subagent-specialists/spec-reviewer/preflight" && init?.method === "POST") {
         return jsonResponse({

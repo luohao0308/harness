@@ -36,6 +36,7 @@ class ToolAdapter(Protocol):
         config_json: dict[str, Any] | None,
         secret_value: str | None,
         sandbox_workspace_root: Path | None = None,
+        sandbox_command_executor: Any | None = None,
     ) -> AdapterResult: ...
 
     def health_check(

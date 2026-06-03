@@ -20,6 +20,10 @@ class FakeSlackClient:
         self.calls.append({"url": url, "params": params or {}})
         return self.responses.pop(0)
 
+    def post(self, url: str, json: dict | None = None) -> httpx.Response:
+        self.calls.append({"url": url, "json": json or {}})
+        return self.responses.pop(0)
+
 
 def _adapter(method: str) -> SlackAdapter:
     return SlackAdapter(
@@ -179,3 +183,43 @@ def test_slack_api_error_and_missing_secret_do_not_raise(monkeypatch) -> None:
     assert error.output_json["error"] == "slack_api_error"
     assert error.output_json["slack_error"] == "invalid_auth"
     assert missing.output_json["error"] == "missing_secret"
+
+
+def test_slack_post_message_uses_chat_post_message(monkeypatch) -> None:
+    fake = FakeSlackClient(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "channel": "C1",
+                    "ts": "1.000",
+                    "message": {"text": "hello <https://example.test|doc>", "ts": "1.000"},
+                },
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "app.tools.adapters.slack_adapter.httpx.Client", lambda *args, **kwargs: fake
+    )
+
+    result = _adapter("post_message").execute(
+        metadata=_metadata("slack.post_message"),
+        input_json={"channel": "C1", "text": "hello", "idempotency_key": "msg-1"},
+        config_json={"runtime": {"endpoint_url": "https://slack.test/api"}},
+        secret_value="xoxb-test",
+    )
+
+    assert fake.calls[0]["url"] == "https://slack.test/api/chat.postMessage"
+    assert fake.calls[0]["json"]["channel"] == "C1"
+    assert result.output_json["message"]["text"] == "hello doc"
+
+
+def test_slack_write_tools_have_side_effect_metadata() -> None:
+    post = ToolRegistry.default().tools["slack.post_message"]
+    reaction = ToolRegistry.default().tools["slack.add_reaction"]
+
+    assert post.risk_level == "high"
+    assert reaction.risk_level == "high"
+    assert post.idempotent is False
+    assert reaction.idempotent is False

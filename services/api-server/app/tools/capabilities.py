@@ -738,6 +738,132 @@ class CapabilityRegistry:
             metadata=row.metadata,
         )
 
+    def register_discovered_mcp_tools(
+        self,
+        *,
+        agent_id: str,
+        server_tool_name: str,
+        server_slug: str,
+        discovered_tools: list[dict],
+        runtime: dict,
+        secret_ref: str | None,
+        created_by: str | None,
+    ) -> list[dict]:
+        agent = self._agent(agent_id)
+        row = self._attached_tool(agent_id=agent_id, tool_name=server_tool_name)
+        created: list[dict] = []
+        existing_priorities = list(
+            self.session.execute(
+                select(AgentCapabilityAttachment.priority).where(
+                    AgentCapabilityAttachment.agent_id == agent_id
+                )
+            ).scalars()
+        )
+        next_priority = (max(existing_priorities) if existing_priorities else 100) + 1
+        for index, item in enumerate(discovered_tools):
+            if not isinstance(item, dict):
+                continue
+            tool_name = _discovered_tool_name(server_slug, item.get("name"))
+            if not tool_name:
+                continue
+            annotations = item.get("annotations")
+            idempotent = not _mcp_annotations_mark_write(annotations)
+            input_schema = (
+                item.get("input_schema")
+                if isinstance(item.get("input_schema"), dict)
+                else item.get("inputSchema")
+                if isinstance(item.get("inputSchema"), dict)
+                else {}
+            )
+            if not idempotent:
+                input_schema = _schema_requiring_idempotency_key(input_schema)
+            metadata = ToolMetadata(
+                name=tool_name,
+                description=str(item.get("description") or f"MCP tool {item.get('name') or ''}"),
+                category="mcp",
+                source="mcp",
+                risk_level=_risk_level_from_mcp_annotations(annotations),
+                requires_sandbox=False,
+                network_policy="restricted",
+                timeout_seconds=_runtime_timeout(runtime.get("timeout_seconds"), 30),
+                allowed_roles=["admin", "engineer"],
+                audit_level="elevated",
+                idempotent=idempotent,
+                input_schema=input_schema,
+                mcp_server=server_slug,
+                mcp_method=str(item.get("name") or tool_name),
+            )
+            capability = self._get_or_create_discovered_tool_capability(metadata)
+            content = {
+                "tool_metadata": metadata.model_dump(),
+                "package_manifest": {
+                    "name": tool_name,
+                    "version": "1.0.0",
+                    "description": metadata.description,
+                    "package_type": "mcp_server",
+                    "permissions": ["mcp:remote"],
+                    "mcp_server": {
+                        "qualified_name": server_slug,
+                        "parent_tool_name": server_tool_name,
+                        "discovered_from_capability_version_id": row.version.id,
+                    },
+                    "mcp_protocol_discovered": True,
+                },
+            }
+            config = redact_secrets(
+                {
+                    "secret_ref": secret_ref,
+                    "secret_scope": "mcp_runtime" if secret_ref else None,
+                    "source": "mcp",
+                    "runtime": {
+                        **runtime,
+                        "mcp_tool_name": str(item.get("name") or tool_name),
+                    },
+                    "mcp_protocol": True,
+                    "discovered_from_tool": server_tool_name,
+                }
+            )
+            version = self._get_or_create_discovered_tool_version(
+                capability=capability,
+                content=content,
+                config=config,
+                created_by=created_by,
+            )
+            capability.current_version_id = version.id
+            capability.updated_at = utc_now()
+            attachment = self.session.execute(
+                select(AgentCapabilityAttachment).where(
+                    AgentCapabilityAttachment.agent_id == agent.id,
+                    AgentCapabilityAttachment.capability_version_id == version.id,
+                )
+            ).scalar_one_or_none()
+            if attachment is None:
+                attachment = AgentCapabilityAttachment(
+                    organization_id=agent.organization_id,
+                    agent_id=agent.id,
+                    capability_id=capability.id,
+                    capability_version_id=version.id,
+                    enabled=True,
+                    priority=next_priority + index,
+                    attached_by=created_by,
+                    attached_at=utc_now(),
+                )
+                self.session.add(attachment)
+                self.session.flush()
+            else:
+                attachment.enabled = True
+            created.append(
+                self._runtime_config_record(
+                    agent_id=agent_id,
+                    attachment=attachment,
+                    capability=capability,
+                    version=version,
+                    metadata=metadata,
+                )
+            )
+        self.session.flush()
+        return created
+
     def create_snapshot(
         self,
         *,
@@ -1403,6 +1529,8 @@ class CapabilityRegistry:
             "tool_name": metadata.name,
             "tool_description": metadata.description,
             "source": metadata.source,
+            "mcp_server": metadata.mcp_server,
+            "mcp_method": metadata.mcp_method,
             "capability_id": capability.id,
             "capability_version_id": version.id,
             "capability_config_sha256": version.config_sha256,
@@ -1633,6 +1761,29 @@ class CapabilityRegistry:
         self.session.flush()
         return capability
 
+    def _get_or_create_discovered_tool_capability(self, metadata: ToolMetadata) -> Capability:
+        key = tool_capability_key(metadata.name)
+        capability = self.session.execute(
+            select(Capability).where(
+                Capability.organization_id == self.organization_id,
+                Capability.capability_key == key,
+            )
+        ).scalar_one_or_none()
+        if capability is not None:
+            return capability
+        capability = Capability(
+            organization_id=self.organization_id,
+            capability_key=key,
+            type=_capability_type_for_tool(metadata),
+            status="active",
+            schema_version=CAPABILITY_SCHEMA_VERSION,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        self.session.add(capability)
+        self.session.flush()
+        return capability
+
     def _get_or_create_tool_version(
         self,
         capability: Capability,
@@ -1661,6 +1812,53 @@ class CapabilityRegistry:
             content_sha256=content_sha,
             config_sha256=config_sha,
             schema_version=CAPABILITY_SCHEMA_VERSION,
+            created_at=utc_now(),
+        )
+        self.session.add(version)
+        self.session.flush()
+        return version
+
+    def _get_or_create_discovered_tool_version(
+        self,
+        *,
+        capability: Capability,
+        content: dict,
+        config: dict,
+        created_by: str | None,
+    ) -> CapabilityVersion:
+        content_sha = stable_json_sha256(content)
+        config_sha = stable_json_sha256(config)
+        version_id = _bounded_identifier(
+            f"{content['tool_metadata']['name']}:{content_sha[:16]}:{config_sha[:8]}",
+            fallback="mcp-discovered-version",
+            max_length=MAX_CAPABILITY_VERSION_ID_LENGTH,
+        )
+        version = self.session.get(CapabilityVersion, version_id)
+        if version is not None:
+            return version
+        next_version_number = (
+            max(
+                self.session.execute(
+                    select(CapabilityVersion.version).where(
+                        CapabilityVersion.capability_id == capability.id
+                    )
+                ).scalars(),
+                default=0,
+            )
+            + 1
+        )
+        version = CapabilityVersion(
+            id=version_id,
+            capability_id=capability.id,
+            version=next_version_number,
+            type=capability.type,
+            status="active",
+            content_json=content,
+            config_json=config,
+            content_sha256=content_sha,
+            config_sha256=config_sha,
+            schema_version=CAPABILITY_SCHEMA_VERSION,
+            created_by=created_by,
             created_at=utc_now(),
         )
         self.session.add(version)
@@ -1926,11 +2124,55 @@ def _runtime_timeout(value: Any, fallback: int) -> int:
 
 
 def _suggested_mcp_test_input(tool_name: str) -> dict:
+    if tool_name.startswith("mcp."):
+        return {}
     if tool_name == "brave":
         return {"query": "MCP 教程", "limit": 3}
     if "context" in tool_name:
         return {"query": "发布准备情况", "limit": 3}
     return {"query": "OpenAI 最新动态", "limit": 3}
+
+
+def _discovered_tool_name(server_slug: str, name: Any) -> str | None:
+    raw = str(name or "").strip()
+    if not raw:
+        return None
+    server = _bounded_identifier(server_slug, fallback="server", max_length=40)
+    tool = _bounded_identifier(raw, fallback="tool", max_length=60)
+    return f"mcp.{server}.{tool}"
+
+
+def _mcp_annotations_mark_write(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if value.get("readOnlyHint") is True:
+        return False
+    if value.get("destructiveHint") is True or value.get("openWorldHint") is True:
+        return True
+    return bool(value.get("write") or value.get("mutates"))
+
+
+def _schema_requiring_idempotency_key(schema: dict) -> dict:
+    patched = dict(schema) if isinstance(schema, dict) else {"type": "object"}
+    properties = patched.get("properties") if isinstance(patched.get("properties"), dict) else {}
+    patched["properties"] = {
+        **properties,
+        "idempotency_key": {"type": "string", "minLength": 1},
+    }
+    required = patched.get("required") if isinstance(patched.get("required"), list) else []
+    required_values = [str(item) for item in required]
+    if "idempotency_key" not in required_values:
+        required_values.append("idempotency_key")
+    patched["required"] = required_values
+    if "type" not in patched:
+        patched["type"] = "object"
+    return patched
+
+
+def _risk_level_from_mcp_annotations(value: Any) -> str:
+    if not _mcp_annotations_mark_write(value):
+        return "low"
+    return "high"
 
 
 def _tool_metadata_from_package_manifest(manifest: dict) -> dict | None:

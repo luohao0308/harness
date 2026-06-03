@@ -1,7 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Code2, GitBranch, Play, RefreshCw } from "lucide-react";
 
 import { ConsoleShell } from "../../../../app/ConsoleShell";
+import { Badge } from "../../../../components/ui/badge";
+import { Button } from "../../../../components/ui/button";
+import { Card, CardHeader } from "../../../../components/ui/card";
+import { Textarea } from "../../../../components/ui/input";
 import { feedbackErrorMessage, notifyFeedback } from "../../../../components/ui/feedback-toast";
 import type { MenuSelectOption } from "../../../../components/ui/menu-select";
 import { useI18n } from "../../../../lib/i18n";
@@ -17,6 +22,8 @@ import {
   getToolRegistry,
   installTrustedUrlCapability,
   installUploadedCapability,
+  discoverMCPServer,
+  listMCPServers,
   listAgents,
   listAdapters,
   listCapabilityMarketplace,
@@ -34,6 +41,8 @@ import {
   type CapabilityMarketplacePreflightPayload,
   type CapabilityPackage,
   type CapabilitySimpleInstallPayload,
+  type MCPServer,
+  type ToolExecuteResult,
 } from "../../../tasks/api";
 import { ToolRegistryDialogs } from "./dialogs";
 import {
@@ -100,6 +109,7 @@ export function ToolRegistryPage() {
   const [invokeInput, setInvokeInput] = useState(`{ "query": "release readiness", "limit": 2 }`);
   const [marketplaceQuickQuery, setMarketplaceQuickQuery] = useState("发布准备情况");
   const [schemaAdapterSlug, setSchemaAdapterSlug] = useState<string | null>(null);
+  const [codeInput, setCodeInput] = useState('print("hello from sandbox")');
   const [lastDirectAttachedMarketplaceItemId, setLastDirectAttachedMarketplaceItemId] = useState<string | null>(null);
   const [lastAttachedMarketplacePackageId, setLastAttachedMarketplacePackageId] = useState<string | null>(null);
   const registryQuery = useQuery({
@@ -108,6 +118,11 @@ export function ToolRegistryPage() {
   });
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
   const adaptersQuery = useQuery({ queryKey: ["tool-adapters"], queryFn: listAdapters });
+  const mcpServersQuery = useQuery({
+    queryKey: ["mcp-servers", simpleAgentId],
+    queryFn: () => listMCPServers(simpleAgentId),
+    enabled: activeConfigDialog === "mcp-servers",
+  });
   const marketplaceQuery = useQuery({
     queryKey: ["capability-marketplace", marketplaceFilter, marketplaceSearch],
     queryFn: () =>
@@ -480,6 +495,41 @@ export function ToolRegistryPage() {
     },
     onError: (error) => notifyMutationError("测试调用失败", error, "请检查工具名、输入 JSON 和智能体附件状态。"),
   });
+  const discoverMCPMutation = useMutation({
+    mutationFn: (toolName: string) => discoverMCPServer(simpleAgentId, toolName),
+    onSuccess: async (result) => {
+      notifyFeedback({
+        tone: result.discovery_status === "ready" ? "success" : "warning",
+        title: result.discovery_status === "ready" ? "MCP Discovery 完成" : "MCP Discovery 未完成",
+        description: result.discovery_message || `${result.registered_runtime_configs.length} 个子工具已注册`,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["mcp-servers", simpleAgentId] }),
+        queryClient.invalidateQueries({ queryKey: ["tool-registry"] }),
+      ]);
+    },
+    onError: (error) => notifyMutationError("MCP Discovery 失败", error, "请检查运行配置、endpoint 和服务端日志。"),
+  });
+  const codeInterpreterMutation = useMutation({
+    mutationFn: () =>
+      testInvokeCapability({
+        agent_id: simpleAgentId,
+        tool_name: "code_interpreter.run_python",
+        input_json: {
+          code: codeInput,
+          timeout_seconds: 10,
+          idempotency_key: `code-interpreter:${Date.now()}`,
+        },
+      }),
+    onSuccess: (result) => {
+      notifyFeedback({
+        tone: result.allowed ? "success" : "warning",
+        title: result.allowed ? "Code Interpreter 已执行" : "Code Interpreter 等待处理",
+        description: `${result.tool_call.status} · ${result.tool_call.duration_ms}ms`,
+      });
+    },
+    onError: (error) => notifyMutationError("Code Interpreter 调用失败", error, "请确认当前智能体已安装该能力并启用沙箱。"),
+  });
   const marketplaceQuickTestMutation = useMutation({
     mutationFn: (toolName: string) =>
       testInvokeCapability({
@@ -717,7 +767,181 @@ export function ToolRegistryPage() {
           testInvokeError={testInvokeMutation.error}
           onTestInvoke={() => testInvokeMutation.mutate()}
         />
+
+        {activeConfigDialog === "mcp-servers" ? (
+          <MCPServersPanel
+            servers={mcpServersQuery.data?.items ?? []}
+            loading={mcpServersQuery.isLoading || discoverMCPMutation.isPending}
+            error={mcpServersQuery.error ?? discoverMCPMutation.error}
+            discoveringToolName={discoverMCPMutation.variables ?? null}
+            onRefresh={() => void mcpServersQuery.refetch()}
+            onDiscover={(toolName) => discoverMCPMutation.mutate(toolName)}
+            onClose={() => setActiveConfigDialog(null)}
+          />
+        ) : null}
+
+        {activeConfigDialog === "code-interpreter" ? (
+          <CodeInterpreterPanel
+            code={codeInput}
+            onCodeChange={setCodeInput}
+            pending={codeInterpreterMutation.isPending}
+            result={codeInterpreterMutation.data}
+            error={codeInterpreterMutation.error}
+            onRun={() => codeInterpreterMutation.mutate()}
+            onClose={() => setActiveConfigDialog(null)}
+          />
+        ) : null}
       </div>
     </ConsoleShell>
+  );
+}
+
+function MCPServersPanel({
+  servers,
+  loading,
+  error,
+  discoveringToolName,
+  onRefresh,
+  onDiscover,
+  onClose,
+}: {
+  servers: MCPServer[];
+  loading: boolean;
+  error: unknown;
+  discoveringToolName: string | null;
+  onRefresh: () => void;
+  onDiscover: (toolName: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <GitBranch className="h-4 w-4" />
+          MCP Servers
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="secondary" disabled={loading} onClick={onRefresh}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            刷新
+          </Button>
+          <Button type="button" variant="ghost" onClick={onClose}>关闭</Button>
+        </div>
+      </CardHeader>
+      <div className="grid gap-3 p-3">
+        {servers.length === 0 ? (
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+            当前智能体还没有已安装的 MCP server runtime config。
+          </div>
+        ) : null}
+        {servers.map((server) => (
+          <div key={server.tool_name} className="rounded-md border border-slate-200 bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-mono text-sm text-slate-950">{server.tool_name}</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {server.server_slug} · {server.transport} · {server.child_tool_count} child tools
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge tone={server.configured ? "success" : "warning"}>
+                  {server.configured ? "已配置" : "待配置"}
+                </Badge>
+                <Badge tone={server.discovery_status === "ready" ? "success" : "neutral"}>
+                  {server.discovery_status}
+                </Badge>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={loading || !server.configured}
+                  onClick={() => onDiscover(server.tool_name)}
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  {discoveringToolName === server.tool_name ? "发现中" : "Discovery"}
+                </Button>
+              </div>
+            </div>
+            {server.discovery_message ? (
+              <div className="mt-2 text-xs text-slate-500">{server.discovery_message}</div>
+            ) : null}
+            {server.discovered_tools.length > 0 ? (
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {server.discovered_tools.map((tool) => (
+                  <div key={tool.slug} className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+                    <div className="font-mono text-xs text-slate-900">{tool.slug}</div>
+                    <div className="mt-1 line-clamp-2 text-xs text-slate-500">{tool.description}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {error ? <div className="text-xs text-red-600">{feedbackErrorMessage(error, "MCP server 列表加载失败。")}</div> : null}
+      </div>
+    </Card>
+  );
+}
+
+function CodeInterpreterPanel({
+  code,
+  onCodeChange,
+  pending,
+  result,
+  error,
+  onRun,
+  onClose,
+}: {
+  code: string;
+  onCodeChange: (value: string) => void;
+  pending: boolean;
+  result?: ToolExecuteResult;
+  error: unknown;
+  onRun: () => void;
+  onClose: () => void;
+}) {
+  const resultPayload = result?.output?.result;
+  const payload = typeof resultPayload === "object" && resultPayload !== null ? resultPayload as Record<string, unknown> : null;
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <Code2 className="h-4 w-4" />
+          Code Interpreter
+        </div>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="primary" disabled={pending} onClick={onRun}>
+            <Play className="h-3.5 w-3.5" />
+            {pending ? "运行中" : "运行"}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onClose}>关闭</Button>
+        </div>
+      </CardHeader>
+      <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <Textarea
+          className="min-h-44 font-mono text-xs"
+          value={code}
+          onChange={(event) => onCodeChange(event.target.value)}
+        />
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="font-semibold text-slate-900">执行结果</span>
+            {result ? <Badge tone={result.allowed ? "success" : "warning"}>{result.tool_call.status}</Badge> : null}
+          </div>
+          {payload ? (
+            <div className="grid gap-2">
+              <pre className="max-h-32 overflow-auto rounded bg-white p-2 font-mono text-[11px] text-slate-800">{String(payload.stdout ?? "")}</pre>
+              {payload.stderr ? (
+                <pre className="max-h-24 overflow-auto rounded bg-white p-2 font-mono text-[11px] text-red-700">{String(payload.stderr)}</pre>
+              ) : null}
+              <div>exit_code: {String(payload.exit_code ?? "-")}</div>
+              <div>generated_files: {Array.isArray(payload.generated_files) ? payload.generated_files.length : 0}</div>
+            </div>
+          ) : (
+            <div>尚未运行。</div>
+          )}
+          {error ? <div className="mt-2 text-red-600">{feedbackErrorMessage(error, "Code Interpreter 调用失败。")}</div> : null}
+        </div>
+      </div>
+    </Card>
   );
 }

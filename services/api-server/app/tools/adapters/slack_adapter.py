@@ -29,10 +29,10 @@ class SlackAdapter:
     description: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
+    risk_level: RiskLevel = "low"
 
     server_label: str = "slack"
     requires_secret: bool = True
-    risk_level: RiskLevel = "low"
     module_path: str = "app.tools.adapters.slack_adapter"
 
     def execute(
@@ -43,8 +43,9 @@ class SlackAdapter:
         config_json: dict[str, Any] | None,
         secret_value: str | None,
         sandbox_workspace_root=None,
+        sandbox_command_executor=None,
     ) -> AdapterResult:
-        del metadata, sandbox_workspace_root
+        del metadata, sandbox_workspace_root, sandbox_command_executor
         endpoint = _endpoint_url(config_json)
         token = str(secret_value or "").strip()
         if not token:
@@ -61,6 +62,14 @@ class SlackAdapter:
             )
         elif self.method == "get_thread":
             output = _get_thread(
+                endpoint=endpoint, token=token, input_json=input_json, config_json=config_json
+            )
+        elif self.method == "post_message":
+            output = _post_message(
+                endpoint=endpoint, token=token, input_json=input_json, config_json=config_json
+            )
+        elif self.method == "add_reaction":
+            output = _add_reaction(
                 endpoint=endpoint, token=token, input_json=input_json, config_json=config_json
             )
         else:
@@ -153,6 +162,40 @@ def register_slack_adapters(registry: AdapterRegistry) -> None:
             },
             output_schema={"type": "object", "properties": {"replies": {"type": "array"}}},
         ),
+        SlackAdapter(
+            slug="slack.post_message",
+            method="post_message",
+            description="Post a Slack message to a channel or user.",
+            risk_level="high",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "channel": {"type": "string", "minLength": 1},
+                    "text": {"type": "string", "minLength": 1, "maxLength": 40000},
+                    "thread_ts": {"type": "string"},
+                    "idempotency_key": {"type": "string", "minLength": 1},
+                },
+                "required": ["channel", "text", "idempotency_key"],
+            },
+            output_schema={"type": "object", "properties": {"message": {"type": "object"}}},
+        ),
+        SlackAdapter(
+            slug="slack.add_reaction",
+            method="add_reaction",
+            description="Add a Slack emoji reaction to a message.",
+            risk_level="high",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "channel": {"type": "string", "minLength": 1},
+                    "timestamp": {"type": "string", "minLength": 1},
+                    "name": {"type": "string", "minLength": 1},
+                    "idempotency_key": {"type": "string", "minLength": 1},
+                },
+                "required": ["channel", "timestamp", "name", "idempotency_key"],
+            },
+            output_schema={"type": "object", "properties": {"reaction_added": {"type": "boolean"}}},
+        ),
     ]:
         registry.register(adapter)
 
@@ -224,6 +267,60 @@ def _slack_get(
         error = str(payload.get("error") or "slack_api_error")
         return {"error": "slack_api_error", "message": error, "slack_error": error}
     return payload if isinstance(payload, dict) else {}
+
+
+def _slack_post(
+    *,
+    endpoint: str,
+    token: str,
+    method: str,
+    payload: dict[str, Any],
+    config_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    last_error: dict[str, Any] | None = None
+    for _attempt in range(3):
+        try:
+            with httpx.Client(
+                timeout=_timeout(config_json),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json; charset=utf-8",
+                },
+            ) as client:
+                response = client.post(f"{endpoint}/{method}", json=payload)
+        except httpx.TimeoutException:
+            last_error = {"error": "timeout", "message": "Slack API request timed out"}
+            continue
+        except httpx.RequestError as exc:
+            last_error = {"error": "slack_request_error", "message": str(exc)[:300]}
+            continue
+        try:
+            decoded = response.json()
+        except ValueError:
+            return {
+                "error": "slack_api_error",
+                "status": response.status_code,
+                "message": "Invalid JSON",
+            }
+        if response.status_code == 429:
+            return {
+                "error": "rate_limited",
+                "status": 429,
+                "retry_after": response.headers.get("retry-after"),
+                "message": "Slack API rate limited the request",
+            }
+        if response.status_code >= 400:
+            return {
+                "error": "slack_api_error",
+                "status": response.status_code,
+                "message": str(decoded)[:300],
+            }
+        if isinstance(decoded, dict) and not decoded.get("ok", False):
+            error = str(decoded.get("error") or "slack_api_error")
+            return {"error": "slack_api_error", "message": error, "slack_error": error}
+        return decoded if isinstance(decoded, dict) else {}
+    return last_error or {"error": "slack_request_error", "message": "Slack request failed"}
 
 
 def _search_messages(
@@ -369,6 +466,78 @@ def _get_thread(
         "replies": replies[1:] if replies else [],
         "source": "slack-api",
         "tool": "slack.get_thread",
+    }
+
+
+def _post_message(
+    *,
+    endpoint: str,
+    token: str,
+    input_json: dict[str, Any],
+    config_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    channel = str(input_json.get("channel") or "").strip()
+    text = str(input_json.get("text") or "").strip()
+    if not channel or not text:
+        return {"error": "invalid_input", "message": "channel and text are required"}
+    payload: dict[str, Any] = {"channel": channel, "text": text[:40000]}
+    thread_ts = str(input_json.get("thread_ts") or "").strip()
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    result = _slack_post(
+        endpoint=endpoint,
+        token=token,
+        method="chat.postMessage",
+        payload=payload,
+        config_json=config_json,
+    )
+    if result.get("error"):
+        return result
+    message = result.get("message") if isinstance(result.get("message"), dict) else {}
+    return {
+        "message": {
+            "channel": result.get("channel") or channel,
+            "ts": result.get("ts") or message.get("ts"),
+            "text": _mrkdwn_to_plain(
+                str(message.get("text") or text),
+                endpoint=endpoint,
+                token=token,
+                config_json=config_json,
+            ),
+        },
+        "source": "slack-api",
+        "tool": "slack.post_message",
+    }
+
+
+def _add_reaction(
+    *,
+    endpoint: str,
+    token: str,
+    input_json: dict[str, Any],
+    config_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    channel = str(input_json.get("channel") or "").strip()
+    timestamp = str(input_json.get("timestamp") or input_json.get("ts") or "").strip()
+    name = str(input_json.get("name") or "").strip().strip(":")
+    if not channel or not timestamp or not name:
+        return {"error": "invalid_input", "message": "channel, timestamp, and name are required"}
+    result = _slack_post(
+        endpoint=endpoint,
+        token=token,
+        method="reactions.add",
+        payload={"channel": channel, "timestamp": timestamp, "name": name},
+        config_json=config_json,
+    )
+    if result.get("error"):
+        return result
+    return {
+        "reaction_added": True,
+        "channel": channel,
+        "timestamp": timestamp,
+        "name": name,
+        "source": "slack-api",
+        "tool": "slack.add_reaction",
     }
 
 

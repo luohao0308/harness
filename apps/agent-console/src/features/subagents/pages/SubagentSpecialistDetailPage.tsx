@@ -25,12 +25,14 @@ import { formatShortDate } from "../../../lib/utils";
 import {
   archiveSubagentSpecialist,
   getSubagentSpecialist,
+  getSubagentSpecialistCalibration,
   getSubagentSpecialistStats,
   listSubagents,
   preflightSubagentSpecialist,
   updateSubagentSpecialist,
   type SubagentListItem,
   type SubagentSpecialist,
+  type SpecialistCalibrationReport,
   type SubagentSpecialistStats,
   type SubagentSpecialistUpdatePayload,
 } from "../../tasks/api";
@@ -82,6 +84,10 @@ export function SubagentSpecialistDetailPage() {
     queryKey: ["subagent-specialist-stats", specialist?.id, statsWindow],
     queryFn: () => getSubagentSpecialistStats(specialist!.id, statsWindow),
     enabled: Boolean(specialist),
+  });
+  const calibrationQuery = useQuery({
+    queryKey: ["subagent-specialist-calibration", statsWindow],
+    queryFn: () => getSubagentSpecialistCalibration(statsWindow),
   });
 
   useEffect(() => {
@@ -378,6 +384,20 @@ export function SubagentSpecialistDetailPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <Activity className="h-4 w-4" />
+                Calibration
+              </div>
+              {calibrationQuery.data?.low_sample ? <Badge tone="warning">low sample</Badge> : null}
+            </CardHeader>
+            <SpecialistCalibrationPanel
+              report={calibrationQuery.data}
+              loading={calibrationQuery.isLoading}
+            />
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Beaker className="h-4 w-4" />
                 {text("输出预检", "Output Preflight")}
               </div>
@@ -571,6 +591,60 @@ function SpecialistStatsPanel({
         ) : (
           <div className="mt-2 text-slate-400">无失败原因</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function SpecialistCalibrationPanel({
+  report,
+  loading,
+}: {
+  report: SpecialistCalibrationReport | undefined;
+  loading: boolean;
+}) {
+  if (loading && !report) {
+    return <div className="p-3 text-xs text-slate-500">Calibration 加载中...</div>;
+  }
+  if (!report) {
+    return <div className="p-3 text-xs text-slate-500">暂无选择校准数据。</div>;
+  }
+  return (
+    <div className="space-y-3 p-3 text-xs">
+      <div className="grid grid-cols-3 gap-2">
+        <StatsMetric label="Decisions" value={report.decision_count.toLocaleString()} />
+        <StatsMetric label="ECE" value={report.ece === null ? "-" : report.ece.toFixed(3)} />
+        <StatsMetric label="Window" value={report.window} />
+      </div>
+      <div className="space-y-2">
+        {report.buckets.map((bucket) => (
+          <div key={bucket.bucket} className="rounded-md border border-slate-100 bg-white p-2">
+            <div className="flex items-center justify-between gap-3 font-mono text-[11px] text-slate-600">
+              <span>{bucket.bucket}</span>
+              <span>{bucket.decision_count} decisions</span>
+            </div>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-[11px]">
+              <div>
+                <div className="text-slate-400">confidence</div>
+                <div className="font-mono text-slate-900">
+                  {bucket.avg_confidence === null ? "-" : bucket.avg_confidence.toFixed(2)}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-400">success</div>
+                <div className="font-mono text-slate-900">
+                  {bucket.success_rate === null ? "-" : `${(bucket.success_rate * 100).toFixed(1)}%`}
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-400">ECE</div>
+                <div className="font-mono text-slate-900">
+                  {bucket.ece_contribution === null ? "-" : bucket.ece_contribution.toFixed(3)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

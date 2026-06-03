@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI
@@ -11,6 +12,7 @@ from app.api.metrics import router as metrics_router
 from app.api.observability import router as observability_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.settings import router as settings_router
+from app.api.subagent_marketplace import router as subagent_marketplace_router
 from app.api.subagent_specialists import router as subagent_specialists_router
 from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
@@ -66,16 +68,18 @@ def build_cors_origin_regex() -> str | None:
     return rf"^https?://(?:{local_hosts})(?::(?:{ports}))?$"
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    ensure_builtin_adapters_registered(REGISTRY)
+    yield
+
+
 app = FastAPI(
     title="企业级 AI Agent Harness API",
     version="0.1.0",
     description="用于企业级 AI Agent Harness 平台的任务、事件、沙箱、审计和设置 API。",
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-def register_tool_adapters() -> None:
-    ensure_builtin_adapters_registered(REGISTRY)
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,6 +96,13 @@ app.add_middleware(
 # `streaming_diagnostic: "possible_buffering"` fallback. If GZip is ever
 # required for other routes, skip SSE paths via a `scope["path"]` check.
 app.add_middleware(OpenTelemetryTraceMiddleware)
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    FastAPIInstrumentor.instrument_app(app)
+except ImportError:
+    # The custom middleware still emits the Harness trace id in minimal installs.
+    pass
 
 app.include_router(health_router)
 app.include_router(metrics_router)
@@ -102,6 +113,7 @@ app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
+app.include_router(subagent_marketplace_router, prefix="/api")
 app.include_router(subagent_specialists_router, prefix="/api")
 app.include_router(subagents_router, prefix="/api")
 app.include_router(sandboxes_router, prefix="/api")

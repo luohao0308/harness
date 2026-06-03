@@ -8,6 +8,10 @@ import httpx
 
 from app.tools.adapter_registry import REGISTRY
 from app.tools.adapters import ensure_builtin_adapters_registered
+from app.tools.mcp_protocol.client import MCPClient, MCPProtocolError
+from app.tools.mcp_protocol.transports.http_transport import MCPHTTPTransport
+from app.tools.mcp_protocol.transports.stdio_transport import MCPStdioSandboxTransport
+from app.tools.mcp_protocol.transports.streamable_http import MCPStreamableHTTPTransport
 from app.tools.registry import ToolMetadata
 
 
@@ -33,6 +37,7 @@ class MCPAdapter:
         config_json: dict | None = None,
         secret_value: str | None = None,
         sandbox_workspace_root: Path | None = None,
+        sandbox_command_executor=None,
     ) -> MCPToolResult:
         server = metadata.mcp_server or "local"
         method = metadata.mcp_method or metadata.name
@@ -46,6 +51,7 @@ class MCPAdapter:
                 config_json=config,
                 secret_value=secret_value,
                 sandbox_workspace_root=sandbox_workspace_root,
+                sandbox_command_executor=sandbox_command_executor,
             )
             return MCPToolResult(
                 server=adapter.server_label,
@@ -96,6 +102,18 @@ class MCPAdapter:
                     input_json=input_json,
                     timeout_seconds=int(runtime.get("timeout_seconds") or metadata.timeout_seconds),
                     runtime_evidence=runtime_evidence,
+                ),
+            )
+        if runtime_evidence["configured"] and _looks_like_protocol_tool(metadata.name, config):
+            return MCPToolResult(
+                server=server,
+                method=method,
+                output_json=_execute_mcp_protocol_tool(
+                    metadata=metadata,
+                    runtime=runtime,
+                    secret_value=secret_value,
+                    input_json=input_json,
+                    sandbox_command_executor=sandbox_command_executor,
                 ),
             )
         query = str(input_json.get("query", ""))
@@ -192,4 +210,54 @@ def _execute_brave_search(
         "live_provider": True,
         "runtime": {**runtime_evidence, "secret_available": True},
         "query": query,
+    }
+
+
+def _looks_like_protocol_tool(tool_name: str, config: dict) -> bool:
+    if tool_name.startswith("mcp."):
+        return True
+    return bool(config.get("mcp_protocol"))
+
+
+def _execute_mcp_protocol_tool(
+    *,
+    metadata: ToolMetadata,
+    runtime: dict,
+    secret_value: str | None,
+    input_json: dict,
+    sandbox_command_executor,
+) -> dict:
+    transport_name = str(runtime.get("transport") or "http")
+    timeout = int(runtime.get("timeout_seconds") or metadata.timeout_seconds)
+    endpoint_url = str(runtime.get("endpoint_url") or "").strip()
+    command = str(runtime.get("command") or "").strip()
+    args = runtime.get("args") if isinstance(runtime.get("args"), list) else []
+    tool_name = str(runtime.get("mcp_tool_name") or metadata.mcp_method or metadata.name)
+    if transport_name == "stdio":
+        transport = MCPStdioSandboxTransport(
+            command=command,
+            args=[str(item) for item in args],
+            sandbox_executor=sandbox_command_executor,
+        )
+    elif transport_name == "sse":
+        transport = MCPStreamableHTTPTransport(
+            endpoint_url=endpoint_url,
+            secret_value=secret_value,
+        )
+    else:
+        transport = MCPHTTPTransport(endpoint_url=endpoint_url, secret_value=secret_value)
+    client = MCPClient(transport, timeout_seconds=timeout)
+    try:
+        result = client.call_tool(tool_name, input_json)
+    except MCPProtocolError as exc:
+        return {"error": "mcp_protocol_error", "message": str(exc)[:300], "tool": metadata.name}
+    finally:
+        client.close()
+    return {
+        "source": "mcp-protocol",
+        "tool": metadata.name,
+        "mcp_tool_name": tool_name,
+        "content": result.content,
+        "structured_content": result.structured_content,
+        "is_error": result.is_error,
     }

@@ -477,6 +477,78 @@ class SubagentOutput(Base):
     specialist: Mapped[SubagentSpecialist | None] = relationship()
 
 
+class SpecialistSelectionDecision(Base):
+    __tablename__ = "specialist_selection_decisions"
+    __table_args__ = (
+        Index(
+            "ix_specialist_selection_decisions_org_created",
+            "organization_id",
+            "created_at",
+        ),
+        Index("ix_specialist_selection_decisions_task_step", "task_id", "plan_step_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    plan_step_key: Mapped[str] = mapped_column(Text, nullable=False)
+    selected_slug: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reasoning: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    selector: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    alternative_slugs_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    candidate_slugs_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    trace_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SpecialistMarketplaceListing(Base):
+    __tablename__ = "specialist_marketplace_listings"
+    __table_args__ = (
+        UniqueConstraint("slug", name="specialist_marketplace_listings_slug_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
+    slug: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    author_org_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    author_name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    manifest_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SpecialistInstallation(Base):
+    __tablename__ = "specialist_installations"
+    __table_args__ = (
+        UniqueConstraint(
+            "listing_id",
+            "installed_org_id",
+            name="specialist_installations_listing_org_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
+    listing_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("specialist_marketplace_listings.id"), nullable=False, index=True
+    )
+    installed_org_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    installed_specialist_id: Mapped[str] = mapped_column(
+        ForeignKey("subagent_specialists.id"), nullable=False
+    )
+    installed_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    auto_update_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    listing: Mapped[SpecialistMarketplaceListing] = relationship()
+    installed_specialist: Mapped[SubagentSpecialist] = relationship()
+
+
 class AgentAssignment(Base):
     __tablename__ = "agent_assignments"
 
@@ -1373,6 +1445,88 @@ class ObservabilityExportRecord(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class OtelSpan(Base):
+    __tablename__ = "otel_spans"
+    __table_args__ = (
+        UniqueConstraint("trace_id", "span_id", name="otel_spans_trace_span_uidx"),
+        Index("ix_otel_spans_trace_start", "trace_id", "start_time"),
+        Index("ix_otel_spans_task_start", "task_id", "start_time"),
+        Index("ix_otel_spans_org_start", "organization_id", "start_time"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    span_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    parent_span_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="internal", index=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attributes_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="OK", index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    agent_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_runs.id"),
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="alert_rules_org_name_uidx"),
+        CheckConstraint(
+            "comparator IN ('>', '<', '>=', '<=', '==')",
+            name="alert_rules_comparator_chk",
+        ),
+        CheckConstraint(
+            "severity IN ('info', 'warning', 'critical')",
+            name="alert_rules_severity_chk",
+        ),
+        Index("ix_alert_rules_org_enabled", "organization_id", "enabled"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    metric: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    comparator: Mapped[str] = mapped_column(String(2), nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    window_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="warning")
+    notification_channels_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+    __table_args__ = (
+        Index("ix_alert_events_org_triggered", "organization_id", "triggered_at"),
+        Index("ix_alert_events_rule_triggered", "rule_id", "triggered_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    rule_id: Mapped[str] = mapped_column(ForeignKey("alert_rules.id"), nullable=False, index=True)
+    rule_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    metric: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    comparator: Mapped[str] = mapped_column(String(2), nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    observed_value: Mapped[float] = mapped_column(Float, nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    context_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SystemSetting(Base):

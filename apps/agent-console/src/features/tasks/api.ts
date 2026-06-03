@@ -873,7 +873,12 @@ export type ObservabilityTraceSpan = {
   name: string;
   service: string;
   start_time: string;
+  end_time: string | null;
   duration_ms: number;
+  kind: string;
+  status: string;
+  task_id: string | null;
+  agent_run_id: string | null;
   attributes: Record<string, unknown>;
   source: string;
 };
@@ -894,6 +899,106 @@ export type ObservabilityTrace = {
     span_count: number;
     total_duration_ms: number;
   }>;
+};
+
+export type TraceListItem = {
+  trace_id: string;
+  task_id: string | null;
+  root_name: string;
+  start_time: string;
+  duration_ms: number;
+  span_count: number;
+  status: string;
+  source: string;
+};
+
+export type TraceListResponse = {
+  items: TraceListItem[];
+  next_cursor: string | null;
+};
+
+export type CostRollupBreakdownItem = {
+  key: string;
+  label: string;
+  cost_usd: number;
+  tokens_in: number;
+  tokens_out: number;
+  run_count: number;
+  share: number;
+};
+
+export type CostRollupSeriesPoint = {
+  bucket_start: string;
+  key: string;
+  label: string;
+  cost_usd: number;
+  tokens: number;
+  run_count: number;
+};
+
+export type CostRollup = {
+  window: "24h" | "7d" | "30d" | "all";
+  group_by: "agent" | "provider" | "specialist" | "adapter";
+  generated_at: string;
+  total_cost_usd: number;
+  total_tokens: number;
+  total_runs: number;
+  average_run_cost_usd: number;
+  breakdown: CostRollupBreakdownItem[];
+  series: CostRollupSeriesPoint[];
+};
+
+export type AlertRule = {
+  id: string;
+  organization_id: string | null;
+  name: string;
+  metric: string;
+  comparator: ">" | "<" | ">=" | "<=" | "==";
+  threshold: number;
+  window_seconds: number;
+  enabled: boolean;
+  severity: "info" | "warning" | "critical";
+  notification_channels_json: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AlertRulePayload = {
+  name: string;
+  metric: string;
+  comparator: ">" | "<" | ">=" | "<=" | "==";
+  threshold: number;
+  window_seconds: number;
+  enabled: boolean;
+  severity: "info" | "warning" | "critical";
+  notification_channels_json: string[];
+};
+
+export type AlertEvent = {
+  id: string;
+  organization_id: string | null;
+  rule_id: string;
+  rule_name: string;
+  metric: string;
+  comparator: string;
+  threshold: number;
+  observed_value: number;
+  severity: string;
+  status: string;
+  message: string;
+  context_json: Record<string, unknown>;
+  triggered_at: string;
+  resolved_at: string | null;
+};
+
+export type AlertRulePage = {
+  items: AlertRule[];
+  next_cursor: string | null;
+};
+
+export type AlertEventPage = {
+  items: AlertEvent[];
+  next_cursor: string | null;
 };
 
 export type GrafanaDashboard = {
@@ -969,6 +1074,9 @@ export type Subagent = {
   fanout_batch_id: string | null;
   fanout_index: number | null;
   fanout_total: number | null;
+  dynamic_fanout_origin: string | null;
+  dynamic_fanout_requested_by: string | null;
+  dynamic_fanout_reason: string | null;
   context_json: Record<string, unknown>;
   started_at: string | null;
   completed_at: string | null;
@@ -1056,6 +1164,65 @@ export type SubagentSpecialistStats = {
   avg_tool_calls: number;
   avg_output_size_bytes: number;
   recent_failure_reasons: SubagentSpecialistFailureReason[];
+};
+
+export type SpecialistCalibrationBucket = {
+  bucket: string;
+  min_confidence: number;
+  max_confidence: number;
+  decision_count: number;
+  success_count: number;
+  success_rate: number | null;
+  avg_confidence: number | null;
+  ece_contribution: number | null;
+};
+
+export type SpecialistCalibrationReport = {
+  organization_id: string;
+  window: "7d" | "30d" | "all";
+  decision_count: number;
+  low_sample: boolean;
+  ece: number | null;
+  buckets: SpecialistCalibrationBucket[];
+};
+
+export type SpecialistMarketplaceListing = {
+  id: string;
+  slug: string;
+  display_name: string;
+  description: string;
+  author_org_id: string | null;
+  author_name: string;
+  version: string;
+  manifest_json: Record<string, unknown>;
+  signature: string;
+  verified: boolean;
+  download_count: number;
+  installed: boolean;
+  installed_specialist_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SpecialistMarketplaceListingCreatePayload = {
+  slug: string;
+  display_name: string;
+  description: string;
+  author_name?: string;
+  version: string;
+  manifest_json: Record<string, unknown>;
+  signature: string;
+};
+
+export type SpecialistMarketplaceInstallation = {
+  id: string;
+  listing_id: string;
+  installed_org_id: string;
+  installed_specialist_id: string;
+  installed_version: string;
+  auto_update_enabled: boolean;
+  installed_at: string;
+  specialist: SubagentSpecialist | null;
 };
 
 export type SubagentOutput = {
@@ -1166,6 +1333,9 @@ export type FanoutBatchMember = {
   specialist_id: string | null;
   specialist_slug: string | null;
   fanout_index: number | null;
+  dynamic_fanout_origin: string | null;
+  dynamic_fanout_requested_by: string | null;
+  dynamic_fanout_reason: string | null;
   output_id: string | null;
 };
 
@@ -1177,6 +1347,7 @@ export type FanoutBatch = {
   aggregation: string;
   statuses: Record<string, number>;
   members: FanoutBatchMember[];
+  extend_history: Array<Record<string, unknown>>;
 };
 
 export type TaskResult = {
@@ -1799,6 +1970,32 @@ export type CapabilityRuntimeConfig = {
 
 export type CapabilityRuntimeConfigPage = {
   items: CapabilityRuntimeConfig[];
+};
+
+export type MCPDiscoveredTool = {
+  name: string;
+  slug: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  annotations: Record<string, unknown>;
+  risk_level: string;
+};
+
+export type MCPServer = {
+  agent_id: string;
+  tool_name: string;
+  server_slug: string;
+  transport: string;
+  configured: boolean;
+  discovery_status: string;
+  discovery_message: string;
+  discovered_tools: MCPDiscoveredTool[];
+  resources_count: number;
+  child_tool_count: number;
+};
+
+export type MCPServerDiscovery = MCPServer & {
+  registered_runtime_configs: CapabilityRuntimeConfig[];
 };
 
 export type CapabilityPackage = {
@@ -2862,6 +3059,14 @@ export async function getSubagentSpecialistStats(
   );
 }
 
+export async function getSubagentSpecialistCalibration(
+  window: "7d" | "30d" | "all" = "30d",
+) {
+  return request<SpecialistCalibrationReport>(
+    `/api/subagent-specialists/calibration?window=${window}`,
+  );
+}
+
 export async function updateSubagentSpecialist(
   specialistId: string,
   payload: SubagentSpecialistUpdatePayload,
@@ -2893,6 +3098,22 @@ export async function getSubagent(subagentId: string) {
   return request<Subagent>(`/api/subagents/${subagentId}`);
 }
 
+export async function extendSubagentFanout(
+  subagentId: string,
+  payload: { additional_specialist_slugs: string[]; reason: string },
+) {
+  return request<{
+    fanout_batch_id: string;
+    added_count: number;
+    fanout_total: number;
+    extend_count: number;
+    agent_runs: Subagent[];
+  }>(`/api/subagents/${subagentId}/fanout/extend`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function cancelSubagent(subagentId: string) {
   return request<Subagent>(`/api/subagents/${subagentId}/cancel`, { method: "POST" });
 }
@@ -2914,6 +3135,53 @@ export async function listFanoutBatchesForTask(taskId: string) {
   return request<{ items: FanoutBatch[]; next_cursor: string | null }>(
     `/api/tasks/${taskId}/fanout-batches`,
   );
+}
+
+export async function listSpecialistMarketplaceListings(params?: { include_unverified?: boolean }) {
+  const searchParams = new URLSearchParams();
+  if (params?.include_unverified) {
+    searchParams.set("include_unverified", "true");
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<{ items: SpecialistMarketplaceListing[]; next_cursor: string | null }>(
+    `/api/subagent-marketplace/listings${suffix}`,
+  );
+}
+
+export async function getSpecialistMarketplaceListing(listingId: string) {
+  return request<SpecialistMarketplaceListing>(`/api/subagent-marketplace/listings/${listingId}`);
+}
+
+export async function createSpecialistMarketplaceListing(
+  payload: SpecialistMarketplaceListingCreatePayload,
+) {
+  return request<SpecialistMarketplaceListing>("/api/subagent-marketplace/listings", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function approveSpecialistMarketplaceListing(listingId: string, verified = true) {
+  return request<SpecialistMarketplaceListing>(
+    `/api/subagent-marketplace/listings/${listingId}/approve`,
+    { method: "POST", body: JSON.stringify({ verified }) },
+  );
+}
+
+export async function installSpecialistMarketplaceListing(
+  listingId: string,
+  autoUpdateEnabled = false,
+) {
+  return request<SpecialistMarketplaceInstallation>(
+    `/api/subagent-marketplace/listings/${listingId}/install`,
+    { method: "POST", body: JSON.stringify({ auto_update_enabled: autoUpdateEnabled }) },
+  );
+}
+
+export async function uninstallSpecialistMarketplaceInstallation(installationId: string) {
+  return request<void>(`/api/subagent-marketplace/installations/${installationId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function recoverTaskSubagents(taskId: string) {
@@ -3103,6 +3371,19 @@ export async function listCapabilityRuntimeConfigs(agentId: string) {
   const searchParams = new URLSearchParams({ agent_id: agentId });
   return request<CapabilityRuntimeConfigPage>(
     `/api/tools/capabilities/runtime-configs?${searchParams.toString()}`,
+  );
+}
+
+export async function listMCPServers(agentId: string) {
+  const searchParams = new URLSearchParams({ agent_id: agentId });
+  return request<{ items: MCPServer[] }>(`/api/tools/mcp-servers?${searchParams.toString()}`);
+}
+
+export async function discoverMCPServer(agentId: string, toolName: string) {
+  const searchParams = new URLSearchParams({ agent_id: agentId });
+  return request<MCPServerDiscovery>(
+    `/api/tools/mcp-servers/${encodeURIComponent(toolName)}/discover?${searchParams.toString()}`,
+    { method: "POST" },
   );
 }
 
@@ -3520,6 +3801,20 @@ export async function getTokenSavings(limit = 50) {
   return request<TokenSavingsPage>(`/api/observability/token-savings?limit=${limit}`);
 }
 
+export async function getCostRollup(params?: {
+  window?: CostRollup["window"];
+  group_by?: CostRollup["group_by"];
+}) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined) {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<CostRollup>(`/api/observability/cost-rollup${suffix}`);
+}
+
 export async function getObservabilityGroundingQuality(params?: {
   dataset_id?: string;
   eval_run_id?: string;
@@ -3577,6 +3872,58 @@ export async function getObservabilityTrace(
   return request<ObservabilityTrace>(
     `/api/observability/traces/${encodeURIComponent(traceId)}${suffix}`,
   );
+}
+
+export async function listObservabilityTraces(params?: { task_id?: string; limit?: number }) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<TraceListResponse>(`/api/observability/traces${suffix}`);
+}
+
+export async function listAlertRules() {
+  return request<AlertRulePage>("/api/observability/alert-rules");
+}
+
+export async function createAlertRule(payload: AlertRulePayload) {
+  return request<AlertRule>("/api/observability/alert-rules", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAlertRule(ruleId: string, payload: Partial<AlertRulePayload>) {
+  return request<AlertRule>(`/api/observability/alert-rules/${encodeURIComponent(ruleId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAlertRule(ruleId: string) {
+  await request<unknown>(`/api/observability/alert-rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function evaluateAlertRules() {
+  return request<AlertEventPage>("/api/observability/alert-rules/evaluate", {
+    method: "POST",
+  });
+}
+
+export async function listAlertEvents(params?: { since?: string; limit?: number }) {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+  const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+  return request<AlertEventPage>(`/api/observability/alert-events${suffix}`);
 }
 
 export async function listGrafanaDashboards() {

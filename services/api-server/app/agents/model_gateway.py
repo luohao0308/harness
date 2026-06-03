@@ -35,6 +35,7 @@ from app.observability.metrics import (
     model_tokens_input_total,
     model_tokens_output_total,
 )
+from app.observability.tracing import traced_operation
 
 
 class ModelMessage(BaseModel):
@@ -1184,14 +1185,27 @@ class AuditedModelGateway:
         )
         self.session.commit()
         try:
-            ModelCircuitBreaker.check(key=circuit_key)
-            ModelRateLimiter.check(
-                key=limiter_key,
-                rpm=settings.rate_limit_rpm,
-                tpm=settings.rate_limit_tpm,
-                estimated_tokens=estimated_prompt_tokens,
-            )
-            response_payload = gateway.complete(request_payload)
+            with traced_operation(
+                self.session,
+                "model_call",
+                task_id=self.task_id,
+                agent_run_id=self.agent_run_id,
+                kind="client",
+                attributes={
+                    "model_call_id": model_call.id,
+                    "model_provider": request_payload.model_provider,
+                    "model_name": request_payload.model_name,
+                    "attempt_index": attempt_index,
+                },
+            ):
+                ModelCircuitBreaker.check(key=circuit_key)
+                ModelRateLimiter.check(
+                    key=limiter_key,
+                    rpm=settings.rate_limit_rpm,
+                    tpm=settings.rate_limit_tpm,
+                    estimated_tokens=estimated_prompt_tokens,
+                )
+                response_payload = gateway.complete(request_payload)
         except Exception as exc:
             if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
                 ModelCircuitBreaker.record_failure(
@@ -1512,24 +1526,38 @@ class AuditedModelGateway:
         raw_response: dict = {}
         terminal_chunk: ModelStreamChunk | None = None
         try:
-            ModelCircuitBreaker.check(key=circuit_key)
-            ModelRateLimiter.check(
-                key=limiter_key,
-                rpm=settings.rate_limit_rpm,
-                tpm=settings.rate_limit_tpm,
-                estimated_tokens=estimated_prompt_tokens,
-            )
-            for chunk in gateway.stream(request_payload):
-                if chunk.text:
-                    text_accumulator += chunk.text
-                    yield chunk
-                if chunk.usage:
-                    usage.update(chunk.usage)
-                if chunk.raw_response:
-                    raw_response = chunk.raw_response
-                if chunk.done:
-                    terminal_chunk = chunk
-                    break
+            with traced_operation(
+                self.session,
+                "model_call_stream",
+                task_id=self.task_id,
+                agent_run_id=self.agent_run_id,
+                kind="client",
+                attributes={
+                    "model_call_id": model_call.id,
+                    "model_provider": request_payload.model_provider,
+                    "model_name": request_payload.model_name,
+                    "attempt_index": attempt_index,
+                    "streaming": True,
+                },
+            ):
+                ModelCircuitBreaker.check(key=circuit_key)
+                ModelRateLimiter.check(
+                    key=limiter_key,
+                    rpm=settings.rate_limit_rpm,
+                    tpm=settings.rate_limit_tpm,
+                    estimated_tokens=estimated_prompt_tokens,
+                )
+                for chunk in gateway.stream(request_payload):
+                    if chunk.text:
+                        text_accumulator += chunk.text
+                        yield chunk
+                    if chunk.usage:
+                        usage.update(chunk.usage)
+                    if chunk.raw_response:
+                        raw_response = chunk.raw_response
+                    if chunk.done:
+                        terminal_chunk = chunk
+                        break
         except GeneratorExit:
             model_call.status = "FAILED"
             model_call.terminal_status = "stream_aborted"

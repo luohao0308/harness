@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.tools import _runtime_endpoint_errors
 from app.db.models import (
     Agent,
     AgentCapabilityAttachment,
@@ -78,6 +79,21 @@ class _FakeBraveResponse:
                 ]
             }
         }
+
+
+def test_stdio_runtime_config_rejects_shell_fragments() -> None:
+    assert _runtime_endpoint_errors(
+        transport="stdio",
+        endpoint_url=None,
+        command="node",
+    ) == []
+    errors = _runtime_endpoint_errors(
+        transport="stdio",
+        endpoint_url=None,
+        command="node -e 'bad'",
+    )
+
+    assert "single executable" in "; ".join(errors)
 
 
 def test_tool_registry_exposes_builtin_and_mcp_tools() -> None:

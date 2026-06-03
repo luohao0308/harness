@@ -38,8 +38,9 @@ class SandboxFileAdapter:
         config_json: dict[str, Any] | None,
         secret_value: str | None,
         sandbox_workspace_root: Path | None = None,
+        sandbox_command_executor=None,
     ) -> AdapterResult:
-        del metadata, config_json, secret_value
+        del metadata, config_json, secret_value, sandbox_command_executor
         if sandbox_workspace_root is None:
             return AdapterResult(
                 {"error": "sandbox_not_ready", "message": "Sandbox workspace is required"}

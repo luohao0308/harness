@@ -2,7 +2,9 @@ import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
+  Bell,
   Box,
+  CreditCard,
   Download,
   ExternalLink,
   Gauge,
@@ -10,6 +12,7 @@ import {
   Logs,
   RefreshCw,
   RotateCcw,
+  Search,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
@@ -267,6 +270,36 @@ export function ObservabilityPage() {
   return (
     <ConsoleShell title={text("观测", "Observability")}>
       <div className="space-y-4 p-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Link
+            to="/observability/cost"
+            className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-panel transition hover:border-cyan-200 hover:bg-cyan-50/40"
+          >
+            <div className="flex items-center gap-2 font-semibold text-slate-900">
+              <CreditCard className="h-4 w-4 text-cyan-700" /> 成本看板
+            </div>
+            <div className="mt-1 text-xs text-slate-500">Token、USD、运行和维度 Top 10</div>
+          </Link>
+          <Link
+            to="/observability/trace"
+            className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-panel transition hover:border-cyan-200 hover:bg-cyan-50/40"
+          >
+            <div className="flex items-center gap-2 font-semibold text-slate-900">
+              <Search className="h-4 w-4 text-cyan-700" /> Trace 探索
+            </div>
+            <div className="mt-1 text-xs text-slate-500">本地 OTel span 与事件回退链路</div>
+          </Link>
+          <Link
+            to="/observability/alerts"
+            className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-panel transition hover:border-cyan-200 hover:bg-cyan-50/40"
+          >
+            <div className="flex items-center gap-2 font-semibold text-slate-900">
+              <Bell className="h-4 w-4 text-cyan-700" /> 告警规则
+            </div>
+            <div className="mt-1 text-xs text-slate-500">规则配置、事件时间线和 in-app 提示</div>
+          </Link>
+        </div>
+
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">

@@ -13,7 +13,13 @@ from app.agents.specialists import (
     SubagentSpecialistRegistry,
     ensure_system_specialists,
 )
-from app.agents.subagent_manager import SubagentLimitExceededError, SubagentManager
+from app.agents.subagent_manager import (
+    FanoutCapacityExceededError,
+    FanoutExtendForbiddenError,
+    FanoutNotRunningError,
+    SubagentLimitExceededError,
+    SubagentManager,
+)
 from app.agents.subagent_recovery_history import (
     persist_recovery_batch,
     recovery_action_counts,
@@ -26,6 +32,8 @@ from app.api.schemas import (
     SubagentBulkActionRequest,
     SubagentBulkActionResponse,
     SubagentCreateRequest,
+    SubagentFanoutExtendRequest,
+    SubagentFanoutExtendResponse,
     SubagentListItemResponse,
     SubagentListPage,
     SubagentOutputCreateRequest,
@@ -566,6 +574,71 @@ def get_subagent(subagent_id: str, session: DbSession, principal: Principal) -> 
 
 
 @router.post(
+    "/subagents/{subagent_id}/fanout/extend",
+    response_model=SubagentFanoutExtendResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="动态扩缩子 Agent fanout 批次",
+    description="仅允许同一任务内、已属于该 fanout 批次的子 Agent 触发追加专家。",
+)
+def extend_subagent_fanout(
+    subagent_id: str,
+    request: SubagentFanoutExtendRequest,
+    session: DbSession,
+    principal: Principal,
+) -> SubagentFanoutExtendResponse:
+    requester = get_owned_subagent(subagent_id, session, principal)
+    batch_id = _optional_context_string(requester, "fanout_batch_id")
+    if batch_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="子 Agent 不属于 fanout 批次",
+        )
+    ensure_system_specialists(session)
+    registry = SubagentSpecialistRegistry(session, principal.organization_id)
+    specialists = []
+    missing = []
+    for slug in list(dict.fromkeys(request.additional_specialist_slugs)):
+        specialist = registry.get_by_slug(slug)
+        if specialist is None:
+            missing.append(slug)
+        else:
+            specialists.append(specialist)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"专家模板未找到: {', '.join(missing)}",
+        )
+    try:
+        runs = SubagentManager(session).extend_fanout(
+            batch_id=batch_id,
+            additional_specialists=specialists,
+            requested_by_agent_run_id=requester.id,
+            reason=request.reason,
+            enqueue=True,
+        )
+    except FanoutExtendForbiddenError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except FanoutNotRunningError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except FanoutCapacityExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    session.commit()
+    for run in runs:
+        session.refresh(run)
+    extend_history = _fanout_extend_history_for_runs([requester, *runs])
+    return SubagentFanoutExtendResponse(
+        fanout_batch_id=batch_id,
+        added_count=len(runs),
+        fanout_total=max(
+            (_optional_context_int(run, "fanout_total") or 0 for run in runs),
+            default=len(runs),
+        ),
+        extend_count=len(extend_history),
+        agent_runs=[_to_subagent_response(run) for run in runs],
+    )
+
+
+@router.post(
     "/subagents/{subagent_id}/output",
     response_model=SubagentOutputResponse,
     status_code=status.HTTP_201_CREATED,
@@ -627,6 +700,12 @@ def _to_subagent_response(agent_run: AgentRun) -> SubagentResponse:
         fanout_batch_id=_optional_context_string(agent_run, "fanout_batch_id"),
         fanout_index=_optional_context_int(agent_run, "fanout_index"),
         fanout_total=_optional_context_int(agent_run, "fanout_total"),
+        dynamic_fanout_origin=_optional_context_string(agent_run, "dynamic_fanout_origin"),
+        dynamic_fanout_requested_by=_optional_context_string(
+            agent_run,
+            "dynamic_fanout_requested_by",
+        ),
+        dynamic_fanout_reason=_optional_context_string(agent_run, "dynamic_fanout_reason"),
         context_json=agent_run.context_json,
         started_at=agent_run.started_at,
         completed_at=agent_run.completed_at,
@@ -663,6 +742,7 @@ def _fanout_batch_response(
         fanout_total=_optional_context_int(first, "fanout_total") or len(ordered),
         aggregation=str(first.context_json.get("fanout_aggregation") or "synthesizer_chain"),
         statuses=statuses,
+        extend_history=_fanout_extend_history_for_runs(ordered),
         members=[
             FanoutBatchMemberResponse(
                 id=run.id,
@@ -670,6 +750,12 @@ def _fanout_batch_response(
                 specialist_id=run.specialist_id,
                 specialist_slug=_specialist_slug(run),
                 fanout_index=_optional_context_int(run, "fanout_index"),
+                dynamic_fanout_origin=_optional_context_string(run, "dynamic_fanout_origin"),
+                dynamic_fanout_requested_by=_optional_context_string(
+                    run,
+                    "dynamic_fanout_requested_by",
+                ),
+                dynamic_fanout_reason=_optional_context_string(run, "dynamic_fanout_reason"),
                 output_id=run.subagent_output.id if run.subagent_output is not None else None,
             )
             for run in ordered
@@ -689,6 +775,14 @@ def _optional_context_int(agent_run: AgentRun, key: str) -> int | None:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+
+def _fanout_extend_history_for_runs(runs: list[AgentRun]) -> list[dict]:
+    for run in runs:
+        history = run.context_json.get("fanout_extend_history")
+        if isinstance(history, list):
+            return [item for item in history if isinstance(item, dict)]
+    return []
 
 
 def _to_specialist_summary(

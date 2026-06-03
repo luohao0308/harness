@@ -36,8 +36,12 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-28-eval-dimensions-v2]] - Eval Dimensions v2 refusal/safety/persona deterministic contracts, aggregate metrics, regression gates, frontend presets, and validation evidence.
 - [[session-2026-05-28-subagent-specialists-v1]] - Subagent Specialists v1 templates, structured outputs, per-specialist budgets, deterministic routing, console expert evidence, and validation evidence.
 - [[session-2026-05-28-subagent-specialists-v2]] - Subagent Specialists v2 parallel fanout, nested-depth guard, success-rate ranking, specialist stats, Eval specialist contracts, and console fanout evidence.
+- [[session-2026-05-29-subagent-specialists-v3]] - Subagent Specialists v3 LLM selection, calibration, signed marketplace, dynamic fanout extension, review fixes, and validation evidence.
 - [[session-2026-05-28-real-tool-adapters-v1]] - Real Tool Adapters v1 registry-backed GitHub, Slack, and sandbox file adapters with health/schema UI, adapter hashes, and validation evidence.
+- [[session-2026-05-29-real-tool-adapters-v2]] - Real Tool Adapters v2 MCP protocol discovery/execution, Code Interpreter, GitHub/Slack writes, Notion/Linear adapters, and idempotency/sandbox review evidence.
 - [[session-2026-05-28-large-file-refactor-v1]] - Large File Refactor v1 split of Agent API, Knowledge/RAG, Eval API, TeamPage, and ToolRegistryPage review surfaces with validation evidence.
+- [[session-2026-05-29-agent-knowledge-observability-v1]] - Observability v1 cost rollups, local OpenTelemetry trace UI, in-app Alert/SLO rules, review fixes, drift boundaries, and validation evidence.
+- [[session-2026-05-29-post-audit-hardening-v1]] - Post-audit hardening for marketplace migration width, FastAPI lifespan, Vite chunks, backend file splits, adapter bootstrap, PostgreSQL migration preflight, review fixes, and validation evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories
@@ -103,3 +107,7 @@ Persistent project knowledge for the AI Harness Platform.
 - `github`
 - `slack`
 - `sandbox`
+- `code-interpreter`
+- `notion`
+- `linear`
+- `post-audit-hardening`

@@ -1,21 +1,44 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useConsoleStore } from "../../stores/consoleStore";
 import { ConsoleShell } from "../ConsoleShell";
+
+function renderShell(path: string, title: string, content: string) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(JSON.stringify({ items: [], next_cursor: null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <QueryClientProvider client={queryClient}>
+        <ConsoleShell title={title}>
+          <div>{content}</div>
+        </ConsoleShell>
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("ConsoleShell", () => {
   it("embeds the workspace route inside the normal console frame", () => {
     useConsoleStore.getState().setLocale("en-US");
 
-    render(
-      <MemoryRouter initialEntries={["/agents/default/workspace"]}>
-        <ConsoleShell title="智能体工作台">
-          <div>工作台内容</div>
-        </ConsoleShell>
-      </MemoryRouter>,
-    );
+    renderShell("/agents/default/workspace", "智能体工作台", "工作台内容");
 
     expect(screen.getByText("工作台内容")).toBeInTheDocument();
     expect(screen.getByText("控制台")).toBeInTheDocument();
@@ -28,13 +51,7 @@ describe("ConsoleShell", () => {
   });
 
   it("shows the knowledge base navigation item", () => {
-    render(
-      <MemoryRouter initialEntries={["/knowledge"]}>
-        <ConsoleShell title="知识库">
-          <div>知识库内容</div>
-        </ConsoleShell>
-      </MemoryRouter>,
-    );
+    renderShell("/knowledge", "知识库", "知识库内容");
 
     expect(screen.getByText("知识库内容")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "知识库" })).toHaveAttribute("href", "/knowledge");

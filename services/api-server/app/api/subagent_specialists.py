@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,8 @@ from app.agents.specialists import (
     validate_output_schema,
 )
 from app.api.schemas import (
+    SpecialistCalibrationBucket,
+    SpecialistCalibrationReport,
     SubagentSpecialistCreateRequest,
     SubagentSpecialistPage,
     SubagentSpecialistPreflightRequest,
@@ -24,7 +28,7 @@ from app.api.schemas import (
     SubagentSpecialistStats,
     SubagentSpecialistUpdateRequest,
 )
-from app.db.models import SubagentSpecialist, utc_now
+from app.db.models import AgentRun, SpecialistSelectionDecision, SubagentSpecialist, utc_now
 from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
 
@@ -92,6 +96,46 @@ def create_subagent_specialist(
         ) from exc
     session.refresh(specialist)
     return _to_specialist_response(specialist)
+
+
+@router.get(
+    "/calibration",
+    response_model=SpecialistCalibrationReport,
+    summary="查询专家选择校准报告",
+)
+def get_specialist_calibration(
+    session: DbSession,
+    principal: Principal,
+    window: str = Query(default="30d", pattern=r"^(7d|30d|all)$"),
+) -> SpecialistCalibrationReport:
+    since = _window_since(window)
+    statement = select(SpecialistSelectionDecision).where(
+        SpecialistSelectionDecision.organization_id == principal.organization_id,
+    )
+    if since is not None:
+        statement = statement.where(SpecialistSelectionDecision.created_at >= since)
+    decisions = list(session.execute(statement).scalars())
+    buckets = _calibration_buckets(session, decisions)
+    decision_count = len(decisions)
+    low_sample = decision_count < 20
+    ece = None
+    if not low_sample and decision_count > 0:
+        ece = round(
+            sum(
+                bucket.ece_contribution or 0
+                for bucket in buckets
+                if bucket.ece_contribution is not None
+            ),
+            4,
+        )
+    return SpecialistCalibrationReport(
+        organization_id=principal.organization_id,
+        window=window,  # type: ignore[arg-type]
+        decision_count=decision_count,
+        low_sample=low_sample,
+        ece=ece,
+        buckets=buckets,
+    )
 
 
 @router.get(
@@ -293,3 +337,88 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _window_since(window: str):
+    now = utc_now()
+    if window == "7d":
+        return now - timedelta(days=7)
+    if window == "30d":
+        return now - timedelta(days=30)
+    return None
+
+
+def _calibration_buckets(
+    session: Session,
+    decisions: list[SpecialistSelectionDecision],
+) -> list[SpecialistCalibrationBucket]:
+    total = len(decisions)
+    runs_by_decision_id = _runs_by_decision_id(session, decisions)
+    buckets: list[SpecialistCalibrationBucket] = []
+    for index in range(5):
+        low = index / 5
+        high = (index + 1) / 5
+        bucket_decisions = [
+            decision
+            for decision in decisions
+            if low <= float(decision.confidence or 0) < high
+            or (index == 4 and float(decision.confidence or 0) == 1.0)
+        ]
+        success_count = 0
+        scored_count = 0
+        confidence_sum = 0.0
+        for decision in bucket_decisions:
+            confidence_sum += float(decision.confidence or 0)
+            run = runs_by_decision_id.get(decision.id)
+            if run is None:
+                continue
+            scored_count += 1
+            if run.status == "SUCCESS" and run.subagent_output is not None:
+                success_count += 1
+        success_rate = round(success_count / scored_count, 3) if scored_count else None
+        avg_confidence = (
+            round(confidence_sum / len(bucket_decisions), 3) if bucket_decisions else None
+        )
+        ece_contribution = None
+        if total and success_rate is not None and avg_confidence is not None:
+            ece_contribution = round(
+                (len(bucket_decisions) / total) * abs(success_rate - avg_confidence),
+                4,
+            )
+        buckets.append(
+            SpecialistCalibrationBucket(
+                bucket=f"[{low:.1f}-{high:.1f}{']' if index == 4 else ')'}",
+                min_confidence=low,
+                max_confidence=high,
+                decision_count=len(bucket_decisions),
+                success_count=success_count,
+                success_rate=success_rate,
+                avg_confidence=avg_confidence,
+                ece_contribution=ece_contribution,
+            )
+        )
+    return buckets
+
+
+def _runs_by_decision_id(
+    session: Session,
+    decisions: list[SpecialistSelectionDecision],
+) -> dict[str, AgentRun]:
+    decision_ids = {decision.id for decision in decisions}
+    if not decision_ids:
+        return {}
+    task_ids = {decision.task_id for decision in decisions}
+    runs = list(
+        session.execute(
+            select(AgentRun).where(
+                AgentRun.agent_type == "subagent",
+                AgentRun.task_id.in_(task_ids),
+            )
+        ).scalars()
+    )
+    result: dict[str, AgentRun] = {}
+    for run in runs:
+        decision_id = run.context_json.get("specialist_selection_decision_id")
+        if isinstance(decision_id, str) and decision_id in decision_ids:
+            result.setdefault(decision_id, run)
+    return result

@@ -193,6 +193,7 @@ export function SubagentDetailPage() {
                     : "并行"}
                 </Badge>
               ) : null}
+              {subagent.dynamic_fanout_origin ? <Badge tone="warning">动态扩缩</Badge> : null}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-5 text-xs text-slate-500">
               <span>
@@ -236,6 +237,14 @@ export function SubagentDetailPage() {
                 <span>
                   Fanout{" "}
                   <span className="font-mono text-slate-800">{subagent.fanout_batch_id}</span>
+                </span>
+              ) : null}
+              {subagent.dynamic_fanout_requested_by ? (
+                <span>
+                  触发者{" "}
+                  <span className="font-mono text-slate-800">
+                    {subagent.dynamic_fanout_requested_by.slice(0, 8)}
+                  </span>
                 </span>
               ) : null}
             </div>
@@ -559,6 +568,11 @@ function FanoutBatchCard({
                 </div>
               </div>
             </div>
+            {batch.extend_history.length > 0 ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                动态扩缩 {batch.extend_history.length} 次
+              </div>
+            ) : null}
             <div className="space-y-1">
               {batch.members.map((member) => (
                 <Link
@@ -573,6 +587,11 @@ function FanoutBatchCard({
                   <span className="min-w-0 truncate">
                     <span className="font-mono text-slate-900">{member.id.slice(0, 8)}</span>
                     <span className="ml-2 text-slate-500">{member.specialist_slug ?? "specialist"}</span>
+                    {member.dynamic_fanout_origin ? (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">
+                        动态新增
+                      </span>
+                    ) : null}
                   </span>
                   <span className="flex items-center gap-1">
                     {typeof member.fanout_index === "number" ? (
