@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Badge } from "../../../../components/ui/badge";
 import { useI18n } from "../../../../lib/i18n";
 import { statusLabel } from "../../../../lib/labels";
+import { formatShortDate } from "../../../../lib/utils";
 import { BranchSwitcher } from "../../../agents/components/BranchSwitcher";
 import { ChatMessageBubble } from "../../../agents/components/ChatMessageBubble";
 import type { InspectorSection } from "../../../agents/lib/types";
@@ -103,11 +104,7 @@ export function TeamMessageRunLinks({
   runCreatedAt?: string;
 }) {
   const { text } = useI18n();
-  const createdAt = runCreatedAt ? new Date(runCreatedAt) : null;
-  const createdLabel =
-    createdAt && Number.isFinite(createdAt.getTime())
-      ? createdAt.toLocaleString()
-      : null;
+  const createdLabel = runCreatedAt ? formatShortDate(runCreatedAt) : null;
   return (
     <div className="ml-11 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 shadow-sm">
       <GitBranch aria-hidden="true" className="h-3.5 w-3.5 text-slate-500" />

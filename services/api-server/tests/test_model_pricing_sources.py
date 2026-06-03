@@ -38,9 +38,7 @@ def test_model_pricing_source_document_covers_builtin_presets() -> None:
         "deepseek-pro/deepseek-v4-pro",
         "openai-compatible/gpt-5.5",
         "kimi/kimi-k2.6",
-        "moonshot/moonshot-v1-8k",
         "z-ai/glm-5.1",
-        "z-ai/glm-5-turbo",
     }
     assert all(re.fullmatch(r"[0-9a-f]{64}", row.source_hash) for row in rows)
     for row in rows:
@@ -85,12 +83,6 @@ def test_verified_usd_rows_convert_per_1m_to_backend_per_1k() -> None:
     assert per_1m_to_per_1k(glm.cached_input_per_1m) == Decimal("0.00026")
     assert per_1m_to_per_1k(glm.output_per_1m) == Decimal("0.0044")
 
-    moonshot = rows["moonshot/moonshot-v1-8k"]
-    assert moonshot.currency == "USD"
-    assert moonshot.verification_status == "verified"
-    assert per_1m_to_per_1k(moonshot.input_per_1m) == Decimal("0.00020")
-    assert per_1m_to_per_1k(moonshot.output_per_1m) == Decimal("0.00200")
-
 
 def test_missing_pricing_blocks_usd_rollup() -> None:
     missing = source_status_for_model("unknown", "unknown-model")
@@ -99,20 +91,28 @@ def test_missing_pricing_blocks_usd_rollup() -> None:
     assert missing.status in BLOCKING_PRICING_STATUSES
 
 
-def test_deepseek_pro_promotional_price_becomes_stale_after_validity_window() -> None:
-    before = source_status_for_model(
+def test_deepseek_pro_current_price_remains_verified_without_validity_window() -> None:
+    current = source_status_for_model(
         "deepseek-pro",
         "deepseek-v4-pro",
-        now=datetime(2026, 5, 31, 15, 58, tzinfo=UTC),
+        now=datetime(2026, 6, 3, 12, 0, tzinfo=UTC),
     )
-    after = source_status_for_model(
+    future = source_status_for_model(
         "deepseek-pro",
         "deepseek-v4-pro",
-        now=datetime(2026, 5, 31, 15, 59, tzinfo=UTC),
+        now=datetime(2026, 12, 31, 12, 0, tzinfo=UTC),
     )
+    rows = {
+        row.source_key: row
+        for row in list_model_pricing_sources(now=datetime(2026, 12, 31, 12, 0, tzinfo=UTC))
+    }
+    deepseek_pro = rows["deepseek-pro/deepseek-v4-pro"]
 
-    assert before.status == "verified"
-    assert after.status == "stale"
+    assert current.status == "verified"
+    assert future.status == "verified"
+    assert deepseek_pro.valid_until is None
+    assert deepseek_pro.token_tier == "all"
+    assert deepseek_pro.blocks_usd_rollup(now=datetime(2026, 12, 31, 12, 0, tzinfo=UTC)) is False
 
 
 def test_verified_usd_source_rows_have_exact_seed_projection() -> None:
@@ -176,7 +176,7 @@ def test_model_pricing_sources_api_requires_auth_and_returns_statuses() -> None:
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["schema_version"] == "model_pricing_sources.v1"
-    assert len(payload["items"]) == 7
+    assert len(payload["items"]) == 5
     by_model = {
         f"{item['mapped_provider']}/{item['mapped_model']}": item
         for item in payload["items"]
@@ -190,6 +190,3 @@ def test_model_pricing_sources_api_requires_auth_and_returns_statuses() -> None:
     assert by_model["z-ai/glm-5.1"]["currency"] == "USD"
     assert by_model["z-ai/glm-5.1"]["verification_status"] == "verified"
     assert by_model["z-ai/glm-5.1"]["blocks_usd_rollup"] is False
-    assert by_model["moonshot/moonshot-v1-8k"]["currency"] == "USD"
-    assert by_model["moonshot/moonshot-v1-8k"]["verification_status"] == "verified"
-    assert by_model["moonshot/moonshot-v1-8k"]["blocks_usd_rollup"] is False

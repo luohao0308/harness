@@ -98,6 +98,7 @@ from app.observability.notification_dispatcher import (
 )
 from app.sandbox.warm_pool import WarmPoolManager
 from app.security.auth import Principal, require_role
+from app.security.secrets import SECRET_PURPOSE_NOTIFICATION, SECRET_SCOPE_ORG, upsert_secret
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 
 router = APIRouter(prefix="/observability", tags=["observability"])
@@ -341,13 +342,20 @@ def create_notification_channel(
         organization_id=principal.organization_id,
         name=payload.name,
         kind=payload.kind,
-        config_json=dict(payload.config_json),
+        config_json={},
         verified=payload.verified,
         created_by=principal.user_id,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
     session.add(channel)
+    session.flush()
+    channel.config_json = _store_notification_channel_secrets(
+        session=session,
+        principal=principal,
+        channel=channel,
+        config=dict(payload.config_json),
+    )
     session.commit()
     session.refresh(channel)
     return _notification_channel_response(channel)
@@ -381,7 +389,16 @@ def update_notification_channel(
     )
     updates = payload.model_dump(exclude_unset=True)
     for key, value in updates.items():
+        if key == "config_json":
+            continue
         setattr(channel, key, value)
+    if payload.config_json is not None:
+        channel.config_json = _store_notification_channel_secrets(
+            session=session,
+            principal=principal,
+            channel=channel,
+            config=dict(payload.config_json),
+        )
     channel.updated_at = datetime.now(UTC)
     session.commit()
     session.refresh(channel)
@@ -1200,12 +1217,15 @@ def get_runtime_architecture(
     )
     sync_step_total = 0
     async_step_total = 0
+    langgraph_step_total = 0
     for (plan_json,) in plan_rows:
         for raw_step in plan_json.get("steps", []) if isinstance(plan_json, dict) else []:
             if not isinstance(raw_step, dict):
                 continue
             if raw_step.get("execution_mode") == "async":
                 async_step_total += 1
+            elif raw_step.get("execution_mode") == "langgraph_node":
+                langgraph_step_total += 1
             else:
                 sync_step_total += 1
 
@@ -1263,6 +1283,7 @@ def get_runtime_architecture(
             plan_total=len(plan_rows),
             sync_step_total=sync_step_total,
             async_step_total=async_step_total,
+            langgraph_step_total=langgraph_step_total,
             status="active",
         ),
         event_sourcing=EventSourcingArchitectureResponse(
@@ -1950,6 +1971,35 @@ def _validate_notification_channel_config(
         validate_channel_config(kind=kind, config=config, verified=verified)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _store_notification_channel_secrets(
+    *,
+    session: Session,
+    principal: Principal,
+    channel: NotificationChannel,
+    config: dict,
+) -> dict:
+    sanitized = dict(config)
+    for field in ("webhook_url", "url", "smtp_password", "password", "token", "secret"):
+        raw_value = str(sanitized.get(field) or "").strip()
+        if not raw_value:
+            continue
+        secret_ref = f"secret://notification/{channel.id}/{field}"
+        upsert_secret(
+            session,
+            organization_id=principal.organization_id,
+            actor_id=principal.user_id,
+            scope=SECRET_SCOPE_ORG,
+            owner_user_id=None,
+            provider=f"notification.{channel.id}.{field}",
+            purpose=SECRET_PURPOSE_NOTIFICATION,
+            secret_ref=secret_ref,
+            secret_value=raw_value,
+        )
+        sanitized.pop(field, None)
+        sanitized[f"{field}_secret_ref"] = secret_ref
+    return sanitized
 
 
 def _count_items(session: Session, statement) -> list[CountItem]:

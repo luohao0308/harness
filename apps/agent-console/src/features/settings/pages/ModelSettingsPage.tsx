@@ -2,15 +2,16 @@ import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Brain,
   Check,
+  Activity,
   ExternalLink,
   GitBranch,
   Loader2,
   Plus,
+  RefreshCw,
   Save,
-  Star,
-  Trash2,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -30,9 +31,12 @@ import { formatShortDate } from "../../../lib/utils";
 import {
   getModelFallbackSummary,
   getModelHealth,
+  getModelOfficialStatus,
   getModelPricingSources,
   getModelSettings,
   updateModelSettings,
+  type ModelHealth,
+  type ModelOfficialStatus,
   type ModelPricingSourceItem,
   type ModelSettings,
 } from "../../tasks/api";
@@ -46,6 +50,10 @@ type ProviderConfig = {
   base_url?: string;
   api_key?: string;
   api_key_env?: string;
+  api_key_configured?: boolean;
+  api_key_source?: string;
+  api_key_secret_id?: string | null;
+  model_kind?: string;
   model_context_window_tokens?: number;
   rate_limit_rpm?: number;
   rate_limit_tpm?: number;
@@ -77,17 +85,20 @@ const providerPresets: ProviderConfig[] = [
     name: "deepseek-flash",
     label: "DeepSeek Flash",
     model: "deepseek-v4-flash",
+    model_kind: "文本模型",
   },
   {
     ...deepSeekPresetBase,
     name: "deepseek-pro",
     label: "DeepSeek Pro",
     model: "deepseek-v4-pro",
+    model_kind: "推理模型",
   },
   {
     name: "openai-compatible",
     label: "OpenAI GPT-5.5",
     model: "gpt-5.5",
+    model_kind: "推理模型",
     api_format: "openai",
     base_url: "https://api.openai.com/v1",
     api_key: "",
@@ -103,6 +114,7 @@ const providerPresets: ProviderConfig[] = [
     name: "kimi",
     label: "Kimi K2.6",
     model: "kimi-k2.6",
+    model_kind: "推理模型",
     api_format: "openai",
     base_url: "https://api.moonshot.cn/v1",
     api_key: "",
@@ -117,6 +129,7 @@ const providerPresets: ProviderConfig[] = [
     name: "z-ai",
     label: "Z.AI GLM-5.1",
     model: "glm-5.1",
+    model_kind: "推理模型",
     api_format: "openai",
     base_url: "https://api.z.ai/api/paas/v4",
     api_key: "",
@@ -147,11 +160,26 @@ const emptyProvider: ProviderConfig = {
 
 const MODEL_SETTINGS_ADD_CUSTOM_EVENT = "harness:model-settings:add-custom-model";
 
+type ProviderGroup = {
+  key: string;
+  label: string;
+  providers: ProviderConfig[];
+};
+
 export function ModelSettingsPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
-  const health = useQuery({ queryKey: ["settings", "models", "health"], queryFn: getModelHealth });
+  const health = useQuery({
+    queryKey: ["settings", "models", "health"],
+    queryFn: getModelHealth,
+    enabled: false,
+  });
+  const officialStatus = useQuery({
+    queryKey: ["settings", "models", "official-status"],
+    queryFn: getModelOfficialStatus,
+    enabled: false,
+  });
   const fallbacks = useQuery({
     queryKey: ["settings", "models", "fallbacks"],
     queryFn: () => getModelFallbackSummary(20),
@@ -160,9 +188,6 @@ export function ModelSettingsPage() {
     queryKey: ["settings", "models", "pricing-sources"],
     queryFn: getModelPricingSources,
   });
-  const healthByProvider = new Map(
-    (health.data?.items ?? []).map((item) => [`${item.provider}:${item.model}`, item]),
-  );
   const [providerDialogMode, setProviderDialogMode] = useState<"preset" | "custom" | null>(null);
   const [draftProvider, setDraftProvider] = useState<ProviderConfig>(emptyProvider);
   const [saveMessage, setSaveMessage] = useState("");
@@ -171,12 +196,22 @@ export function ModelSettingsPage() {
     () => ((settings.data?.providers ?? []) as ProviderConfig[]),
     [settings.data?.providers],
   );
+  const displayProviders = useMemo(() => mergePresetAndConfiguredProviders(providers), [providers]);
+  const providerGroups = useMemo(() => groupProvidersByVendor(displayProviders), [displayProviders]);
+  const healthItems = useMemo(
+    () => modelHealthItems(displayProviders, health.data?.items ?? []),
+    [displayProviders, health.data?.items],
+  );
+  const officialStatusItems = officialStatus.data?.items ?? [];
+  const refreshingStatus = health.isFetching || officialStatus.isFetching;
   const defaultProvider = providers.find(
     (provider) =>
       String(provider.name) === String(settings.data?.default_provider) &&
       String(provider.model ?? "default") === String(settings.data?.default_model ?? "default"),
   );
-  const pricingItems = pricingSources.data?.items ?? [];
+  const pricingItems = (pricingSources.data?.items ?? []).filter(
+    (item) => !isDeprecatedPricingSource(item),
+  );
   const pricingStatusText = pricingSources.isLoading
     ? text("同步中", "Syncing")
     : pricingSources.isError
@@ -199,7 +234,6 @@ export function ModelSettingsPage() {
       });
       queryClient.setQueryData(["settings", "models"], saved);
       void queryClient.invalidateQueries({ queryKey: ["settings", "models"], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ["settings", "models", "health"], exact: true });
       void queryClient.invalidateQueries({
         queryKey: ["settings", "models", "fallbacks"],
         exact: true,
@@ -273,27 +307,6 @@ export function ModelSettingsPage() {
     save(next, providerActionKey(normalized), options);
   }
 
-  function removeProvider(provider: ProviderConfig) {
-    const nextProviders = providers.filter((item) => providerKey(item) !== providerKey(provider));
-    const fallback = nextProviders[0];
-    const removingDefault = providerKey(provider) === providerKey({
-      name: currentSettings().default_provider,
-      model: currentSettings().default_model,
-    });
-    save({
-      ...currentSettings(),
-      default_provider:
-        removingDefault
-          ? String(fallback?.name ?? "openai-compatible")
-          : currentSettings().default_provider,
-      default_model:
-        removingDefault
-          ? String(fallback?.model ?? "default")
-          : currentSettings().default_model,
-      providers: nextProviders,
-    }, `remove:${provider.name}:${String(provider.model ?? "default")}`);
-  }
-
   function setDefaultProvider(provider: ProviderConfig) {
     if (!providerHasUsableApiKey(provider)) {
       openProviderDialog(provider, "preset");
@@ -337,37 +350,143 @@ export function ModelSettingsPage() {
     addOrUpdateProvider(normalized, true, { closeDialog: true });
   }
 
+  async function refreshModelStatus() {
+    const [healthResult] = await Promise.all([
+      health.refetch(),
+      officialStatus.refetch(),
+    ]);
+    if (!healthResult.error) {
+      await queryClient.invalidateQueries({ queryKey: ["settings", "models"], exact: true });
+    }
+  }
+
   return (
     <ConsoleShell title={text("模型设置", "Model Settings")}>
       <div className="space-y-4 p-4 pb-24">
         <Card className="overflow-hidden">
           <CardHeader className="items-start gap-3">
-            <div className="min-w-0">
-              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Brain className="h-4 w-4" /> {text("模型网关", "Model Gateway")}
+            <div>
+              <div className="text-[11px] tracking-widest text-slate-500">
+                {text("模型切换", "Model Switch")}
               </div>
-              <div className="mt-1 text-xs text-slate-500">
+              <div className="mt-1 text-[11px] text-slate-500">
+                {text("只有已配置 API Key 的模型可以直接切换；保存后密钥只进入密钥库，不会回显原文。", "Only models with an API key can switch directly; saved keys go into the secret vault and are never echoed.")}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              <span className="text-[11px] text-slate-500">
+                {saveMutation.isPending ? text("保存中...", "Saving...") : saveMessage}
+              </span>
+              <Button type="button" onClick={() => openProviderDialog(emptyProvider, "custom")}>
+                <Plus className="h-3.5 w-3.5" />
+                {text("添加自定义模型", "Add custom model")}
+              </Button>
+            </div>
+          </CardHeader>
+          <div className="grid gap-2 p-3 md:grid-cols-2 xl:grid-cols-5">
+            {providerPresets.map((preset) => {
+              const installedProvider = providers.find((provider) => providerKey(provider) === providerKey(preset));
+              const displayProvider = installedProvider ? { ...preset, ...installedProvider } : preset;
+              const modelKind = modelKindLabel(displayProvider);
+              const configured = installedProvider ? providerHasUsableApiKey(installedProvider) : false;
+              const active =
+                settings.data?.default_provider === preset.name &&
+                settings.data?.default_model === preset.model;
+              const pending = pendingAction === providerActionKey(installedProvider ?? preset);
+              const actionLabel = pending
+                ? text("切换中", "Switching")
+                : active && configured
+                  ? text("已启用", "Active")
+                  : configured
+                    ? text("切换", "Switch")
+                    : text("配置并启用", "Configure & Enable");
+              return (
+                <div
+                  key={`${preset.name}:${preset.model}`}
+                  className="flex min-h-[104px] flex-col justify-between rounded-md border border-slate-100 bg-white p-2.5 shadow-sm"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-[13px] font-semibold leading-5 text-slate-900">
+                        {preset.model ?? preset.name}
+                      </span>
+                      <Badge tone={modelKindTone(modelKind)}>{modelKind}</Badge>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    className="mt-3 w-full justify-center"
+                    variant={active && configured ? "secondary" : configured ? "secondary" : "primary"}
+                    disabled={(active && configured) || saveMutation.isPending}
+                    aria-label={`${preset.model ?? preset.name} ${actionLabel}`}
+                    onClick={() => handlePresetAction(preset)}
+                  >
+                    {pending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : active && configured ? (
+                      <Check className="h-3.5 w-3.5" />
+                    ) : configured ? (
+                      <ArrowRightLeft className="h-3.5 w-3.5" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5" />
+                    )}
+                    {actionLabel}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+        <Card className="overflow-hidden">
+          <CardHeader className="items-start gap-3">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-2 text-[13px] font-semibold text-slate-900">
+                <Brain className="h-3.5 w-3.5" /> {text("模型网关", "Model Gateway")}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">
                 {text(
-                  "先看当前默认模型和关键运行状态，再决定切换或补充自定义供应商。",
-                  "Check the default model and live status before switching or adding providers.",
+                  "当前默认模型、健康状态、限流与后备切换概览。",
+                  "Default model, health, rate limits, and fallback overview.",
                 )}
               </div>
             </div>
-            <Badge tone={modelHealthTone(String(settings.data?.health.status ?? ""))} className="shrink-0">
-              {settings.isLoading ? text("同步中", "Syncing") : statusLabel(String(settings.data?.health.status ?? "..."))}
-            </Badge>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              <Badge tone={modelHealthTone(String(settings.data?.health.status ?? ""))}>
+                {settings.isLoading ? text("同步中", "Syncing") : statusLabel(String(settings.data?.health.status ?? "..."))}
+              </Badge>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void refreshModelStatus()}
+                disabled={refreshingStatus}
+                aria-label={text("刷新模型状态", "Refresh model status")}
+              >
+                {refreshingStatus ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {refreshingStatus ? text("刷新中", "Refreshing") : text("刷新状态", "Refresh")}
+              </Button>
+            </div>
           </CardHeader>
-          <div className="grid gap-3 p-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-            <div className="rounded-md border border-slate-100 bg-slate-50/70 p-3">
-              <div className="text-[11px] uppercase tracking-widest text-slate-500">{text("当前默认", "Current Default")}</div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <div className="min-w-0 text-sm font-semibold text-slate-900">
-                  {defaultProvider ? providerDisplayName(defaultProvider) : settings.data?.default_provider ?? "..."}
+          <div className="grid gap-2.5 p-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+            <div className="rounded-md border border-slate-100 bg-slate-50 p-2.5">
+              <div className="text-[10px] uppercase tracking-widest text-slate-500">{text("当前默认", "Current Default")}</div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <div className="min-w-0 text-[13px] font-semibold leading-5 text-slate-900">
+                  {defaultProvider ? vendorDisplayName(defaultProvider) : settings.data?.default_provider ?? "..."}
                 </div>
                 <Badge tone="neutral">{settings.data?.default_model ?? "default"}</Badge>
               </div>
-              <div className="mt-1 break-all font-mono text-[11px] text-slate-500">
-                {defaultProvider?.api_format ?? "openai"} · {defaultProvider?.base_url ?? "..."}
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                <span className="font-mono">{defaultProvider?.api_format ?? "openai"}</span>
+                <span>·</span>
+                {defaultProvider ? (
+                  <ProviderEndpointLink provider={defaultProvider} />
+                ) : (
+                  <span className="font-mono">...</span>
+                )}
               </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -384,7 +503,52 @@ export function ModelSettingsPage() {
                 label={<TermHint description="主模型失败后的后备切换">Fallback</TermHint>}
                 value={String(fallbacks.data?.fallback_total ?? "...")}
               />
-              <Metric label={text("已配置供应商", "Configured Providers")} value={String(providers.length)} />
+              <Metric label={text("供应商", "Providers")} value={String(providerGroups.length)} />
+            </div>
+          </div>
+          <div className="grid gap-2.5 border-t border-slate-100 p-2.5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
+            <div className="rounded-md border border-slate-100 bg-white">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-2">
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-800">
+                  <Activity className="h-3.5 w-3.5" />
+                  {text("Harness 探测", "Harness Probe")}
+                </div>
+                <span className="text-[10px] text-slate-500">
+                  {health.data
+                    ? text("刚刚刷新", "Refreshed")
+                    : text("使用最近状态", "Recent status")}
+                </span>
+              </div>
+              <div className="grid gap-1.5 p-2.5 sm:grid-cols-2">
+                {healthItems.map((item) => (
+                  <ModelHealthStrip key={`${item.provider}:${item.model}`} item={item} />
+                ))}
+              </div>
+              {health.isError ? (
+                <div className="border-t border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+                  {modelHealthErrorText(health.error)}
+                </div>
+              ) : null}
+            </div>
+            <div className="rounded-md border border-slate-100 bg-white">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-2">
+                <div className="text-[11px] font-semibold text-slate-800">
+                  {text("官方状态", "Official Status")}
+                </div>
+                <span className="text-[10px] text-slate-500">
+                  {officialStatus.data ? text("外部服务", "External") : text("未刷新", "Not refreshed")}
+                </span>
+              </div>
+              <div className="grid gap-1.5 p-2.5">
+                {(officialStatusItems.length > 0 ? officialStatusItems : defaultOfficialStatusItems()).map((item) => (
+                  <OfficialStatusStrip key={item.provider} item={item} />
+                ))}
+              </div>
+              {officialStatus.isError ? (
+                <div className="border-t border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+                  {modelHealthErrorText(officialStatus.error)}
+                </div>
+              ) : null}
             </div>
           </div>
         </Card>
@@ -394,8 +558,8 @@ export function ModelSettingsPage() {
               <div className="text-[11px] tracking-widest text-slate-500">
                 {text("内置模型成本", "Built-in Model Costs")}
               </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {text("价格来自官方来源契约，阻塞状态不会进入 USD 成本汇总", "Prices come from the official source contract; blocking rows are excluded from USD rollups.")}
+              <div className="mt-1 text-[11px] text-slate-500">
+                {text("价格来自官方来源契约；不可汇总项会单独标记，不影响模型切换。", "Prices come from the official source contract; non-rollup rows are marked without affecting model switching.")}
               </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
@@ -432,8 +596,8 @@ export function ModelSettingsPage() {
           ) : (
             <>
               <div className="overflow-x-auto">
-                <Table className="min-w-[980px]">
-                  <thead className="bg-slate-50 text-slate-500">
+                <Table className="min-w-[980px] text-[11px]">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
                     <tr>
                       <Th>{text("模型", "Model")}</Th>
                       <Th>{text("价格 / 1M token", "Price / 1M tokens")}</Th>
@@ -457,7 +621,7 @@ export function ModelSettingsPage() {
                   </tbody>
                 </Table>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">
                 <span>
                   {text(
                     "企业门禁会拦截缺失、过期、SKU 模糊或需要汇率换算的价格。",
@@ -472,94 +636,6 @@ export function ModelSettingsPage() {
               </div>
             </>
           )}
-        </Card>
-        <Card className="overflow-hidden">
-          <CardHeader className="items-start gap-3">
-            <div>
-              <div className="text-[11px] tracking-widest text-slate-500">
-                {text("模型切换", "Model Switch")}
-              </div>
-              <div className="mt-1 text-xs text-slate-500">
-                {text("只有已配置 API Key 的模型可以直接切换；未配置的模型会先打开配置窗口。", "Only models with an API key can switch directly; unconfigured models open the setup dialog first.")}
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              <span className="text-[11px] text-slate-500">
-                {saveMutation.isPending ? text("保存中...", "Saving...") : saveMessage}
-              </span>
-              <Button type="button" onClick={() => openProviderDialog(emptyProvider, "custom")}>
-                <Plus className="h-3.5 w-3.5" />
-                {text("添加自定义模型", "Add custom model")}
-              </Button>
-            </div>
-          </CardHeader>
-          <div className="grid gap-2 p-3">
-            {providerPresets.map((preset) => {
-              const installedProvider = providers.find((provider) => providerKey(provider) === providerKey(preset));
-              const installed = installedProvider !== undefined;
-              const configured = installedProvider ? providerHasUsableApiKey(installedProvider) : false;
-              const active =
-                settings.data?.default_provider === preset.name &&
-                settings.data?.default_model === preset.model;
-              const pending = pendingAction === providerActionKey(installedProvider ?? preset);
-              const actionLabel = pending
-                ? text("切换中", "Switching")
-                : active && configured
-                  ? text("已启用", "Active")
-                  : configured
-                    ? text("切换", "Switch")
-                    : text("配置并启用", "Configure & Enable");
-              return (
-                <div
-                  key={`${preset.name}:${preset.model}`}
-                  className="rounded-md border border-slate-100 bg-white p-3 shadow-sm"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-900">
-                          {preset.label ?? preset.model ?? preset.name}
-                        </span>
-                        {active && <Badge tone="success">{text("当前默认", "Default")}</Badge>}
-                        {!active && installed && configured ? (
-                          <Badge tone="success">{text("已配置", "Configured")}</Badge>
-                        ) : null}
-                        {installed && !configured ? (
-                          <Badge tone="warning">{text("需配置密钥", "Needs key")}</Badge>
-                        ) : null}
-                        {!installed ? <Badge tone="neutral">{text("未配置", "Not configured")}</Badge> : null}
-                      </div>
-                      <div
-                        className="mt-1 truncate font-mono text-[11px] text-slate-500"
-                        title={`${preset.model} · ${preset.api_format ?? "openai"} · ${preset.base_url}`}
-                      >
-                        {preset.model} · {preset.api_format ?? "openai"} · {preset.base_url}
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      className="shrink-0"
-                      variant={active && configured ? "secondary" : configured ? "secondary" : "primary"}
-                      disabled={(active && configured) || saveMutation.isPending}
-                      aria-label={`${preset.label ?? preset.model ?? preset.name} ${actionLabel}`}
-                      onClick={() => handlePresetAction(preset)}
-                    >
-                      {pending ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : active && configured ? (
-                        <Check className="h-3.5 w-3.5" />
-                      ) : configured ? (
-                        <Star className="h-3.5 w-3.5" />
-                      ) : (
-                        <Plus className="h-3.5 w-3.5" />
-                      )}
-                      {actionLabel}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         </Card>
         <Card className="overflow-hidden">
           <CardHeader>
@@ -644,100 +720,114 @@ export function ModelSettingsPage() {
             <div>
               <div className="text-[11px] tracking-widest text-slate-500">{text("供应商", "Providers")}</div>
               <div className="mt-1 text-xs text-slate-500">
-                {text("展示限流、主动探测和供应商级熔断状态", "Shows rate limits, active probes, and provider circuit state")}
+                {text("按供应商聚合展示模型、密钥和限流配置", "Groups models by provider with secrets and rate limits")}
               </div>
             </div>
           </CardHeader>
           <div className="overflow-x-auto">
-            <Table className="min-w-[920px]">
+            <Table className="min-w-[860px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <Th>{text("名称", "Name")}</Th>
-                  <Th>{text("模型", "Model")}</Th>
-                  <Th>{text("状态", "Status")}</Th>
+                  <Th>{text("供应商", "Provider")}</Th>
+                  <Th>{text("现有模型", "Models")}</Th>
+                  <Th>{text("密钥", "Secret")}</Th>
                   <Th>{text("限流", "Rate Limit")}</Th>
-                  <Th>{text("探测", "Probe")}</Th>
-                  <Th>{text("熔断", "Circuit")}</Th>
-                  <Th>{text("失败", "Failures")}</Th>
                   <Th className="text-right">{text("操作", "Actions")}</Th>
                 </tr>
               </thead>
               <tbody>
-                {providers.map((provider) => {
-                  const model = String(provider.model ?? settings.data?.default_model ?? "default");
-                  const item = healthByProvider.get(`${String(provider.name)}:${model}`);
-                  const active =
-                    settings.data?.default_provider === provider.name &&
-                    settings.data?.default_model === model;
-                  const canSwitch = providerHasUsableApiKey(provider);
+                {providerGroups.map((group) => {
+                  const secretStatus = groupSecretStatus(group.providers);
                   return (
-                    <tr key={`${String(provider.name)}:${model}`} className="border-t border-slate-100">
+                    <tr key={group.key} className="border-t border-slate-100 align-top">
+                      <Td>
+                        <span className="font-medium text-slate-900">
+                          {group.label}
+                        </span>
+                        <ProviderEndpointSummary providers={group.providers} />
+                      </Td>
+                      <Td>
+                        <div className="grid gap-1.5">
+                          {group.providers.map((provider) => {
+                            const model = String(provider.model ?? "default");
+                            return (
+                              <div
+                                key={`${String(provider.name)}:${model}`}
+                                className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                              >
+                                <span className="font-mono text-[11px] text-slate-900">{model}</span>
+                                <Badge tone={modelKindTone(modelKindLabel(provider))}>{modelKindLabel(provider)}</Badge>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </Td>
                       <Td>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-medium text-slate-900">
-                            {String(provider.label || provider.model || provider.name)}
-                          </span>
-                          {active && <Badge tone="success">{text("默认", "Default")}</Badge>}
-                        </div>
-                        <div className="mt-1 font-mono text-[11px] text-slate-500">
-                          {model} · {String(provider.api_format ?? "openai")}
-                        </div>
-                      </Td>
-                      <Td className="font-mono">{model}</Td>
-                      <Td>{statusLabel(String(item?.status ?? provider.status))}</Td>
-                      <Td>
-                        <div>{formatLimit(provider.rate_limit_rpm ?? settings.data?.rate_limits.rpm, "rpm")}</div>
-                        <div className="mt-1 text-slate-500">
-                          {formatLimit(provider.rate_limit_tpm ?? settings.data?.rate_limits.tpm, "tpm")}
+                          <Badge tone={secretStatus.tone}>
+                            {secretStatus.label}
+                          </Badge>
+                          {secretSourceSummary(group.providers).map((source) => (
+                            <Badge key={source} tone="info">{source}</Badge>
+                          ))}
                         </div>
                       </Td>
                       <Td>
-                        <div>{statusLabel(String(item?.mode ?? "configured"))}</div>
-                        <div className="mt-1 text-slate-500">{formatLatency(item?.latency_ms)}</div>
-                        {item?.checked_at ? (
-                          <div className="mt-1 text-slate-500">{formatShortDate(item.checked_at)}</div>
-                        ) : null}
-                      </Td>
-                      <Td>
-                        <div>{statusLabel(String(item?.circuit_status ?? "closed"))}</div>
-                        {item?.circuit_open_until ? (
-                          <div className="mt-1 text-slate-500">{formatShortDate(item.circuit_open_until)}</div>
-                        ) : null}
-                      </Td>
-                      <Td>
-                        <div>
-                          {text(`${String(item?.consecutive_failures ?? 0)} 次`, `${String(item?.consecutive_failures ?? 0)} failures`)}
+                        <div className="grid gap-1.5">
+                          {group.providers.map((provider) => {
+                            const model = String(provider.model ?? "default");
+                            return (
+                              <div key={`${String(provider.name)}:${model}`} className="text-slate-600">
+                                <span className="font-mono text-[11px] text-slate-800">{model}</span>
+                                <span className="ml-1">
+                                  {formatLimit(provider.rate_limit_rpm ?? settings.data?.rate_limits.rpm, "rpm")}
+                                </span>
+                                <span className="ml-1 text-slate-500">
+                                  {formatLimit(provider.rate_limit_tpm ?? settings.data?.rate_limits.tpm, "tpm")}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
-                        {item?.error_message ? (
-                          <div className="mt-1 max-w-56 truncate text-red-600">{item.error_message}</div>
-                        ) : null}
                       </Td>
                       <Td>
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            title={
-                              active && canSwitch
-                                ? text("当前默认", "Current default")
-                                : canSwitch
-                                  ? text("设为默认", "Set default")
-                                  : text("配置密钥后设为默认", "Configure key before setting default")
-                            }
-                            disabled={(active && canSwitch) || saveMutation.isPending}
-                            onClick={() => setDefaultProvider(provider)}
-                          >
-                            <Star className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            title={text("删除", "Remove")}
-                            disabled={saveMutation.isPending}
-                            onClick={() => removeProvider(provider)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                        <div className="flex flex-wrap items-center justify-end gap-1">
+                          {group.providers.map((provider) => {
+                            const model = String(provider.model ?? "default");
+                            const modelActive =
+                              settings.data?.default_provider === provider.name &&
+                              settings.data?.default_model === model;
+                            const canSwitch = providerHasUsableApiKey(provider);
+                            const actionTitle =
+                              !canSwitch
+                                ? text(`配置：${model}`, `Configure: ${model}`)
+                                : modelActive
+                                  ? text(`当前：${model}`, `Current: ${model}`)
+                                  : text(`切换：${model}`, `Switch: ${model}`);
+                            return (
+                              <div key={`${String(provider.name)}:${model}`} className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="h-7 px-2"
+                                  aria-label={actionTitle}
+                                  title={actionTitle}
+                                  disabled={(modelActive && canSwitch) || saveMutation.isPending}
+                                  onClick={() =>
+                                    canSwitch
+                                      ? setDefaultProvider(provider)
+                                      : openProviderDialog(provider, "preset")
+                                  }
+                                >
+                                  {!canSwitch
+                                    ? text("配置", "Configure")
+                                    : modelActive
+                                      ? text("当前", "Current")
+                                      : text("切换", "Switch")}
+                                </Button>
+                              </div>
+                            );
+                          })}
                         </div>
                       </Td>
                     </tr>
@@ -872,7 +962,7 @@ export function ModelSettingsPage() {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
             <span className="text-[11px] text-slate-500">
-              {text("保存后会更新供应商列表，并立即设为默认模型。", "Saving updates the provider list and makes it the default model.")}
+              {text("保存后会更新供应商列表，把 API Key 写入密钥库，并立即设为默认模型。", "Saving updates the provider list, writes the API key to the secret vault, and makes it the default model.")}
             </span>
             <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" onClick={closeProviderDialog} disabled={saveMutation.isPending}>
@@ -936,7 +1026,24 @@ function providerActionKey(provider: ProviderConfig) {
   return `provider:${provider.name}:${String(provider.model ?? "default")}`;
 }
 
+function mergePresetAndConfiguredProviders(configuredProviders: ProviderConfig[]) {
+  const merged = new Map<string, ProviderConfig>();
+  for (const preset of providerPresets) {
+    const configured = configuredProviders.find((provider) => providerKey(provider) === providerKey(preset));
+    merged.set(providerKey(preset), configured ? { ...preset, ...configured } : preset);
+  }
+  for (const provider of configuredProviders) {
+    if (!merged.has(providerKey(provider))) {
+      merged.set(providerKey(provider), provider);
+    }
+  }
+  return Array.from(merged.values());
+}
+
 function providerHasUsableApiKey(provider: ProviderConfig) {
+  if (provider.api_key_configured === true) {
+    return true;
+  }
   const apiKey = String(provider.api_key ?? "").trim();
   return apiKey.length > 0 && apiKey !== "replace-me";
 }
@@ -945,22 +1052,350 @@ function providerDisplayName(provider: ProviderConfig) {
   return String(provider.label || provider.model || provider.name);
 }
 
+function vendorKey(provider: ProviderConfig) {
+  const name = String(provider.name ?? "").toLowerCase();
+  const baseUrl = String(provider.base_url ?? "").toLowerCase();
+  if (name.startsWith("deepseek") || baseUrl.includes("deepseek")) return "deepseek";
+  if (name.startsWith("openai") || baseUrl.includes("openai")) return "openai";
+  if (name.startsWith("kimi") || name.includes("moonshot") || baseUrl.includes("moonshot")) return "kimi";
+  if (name.startsWith("z-ai") || name.startsWith("zai") || baseUrl.includes("z.ai")) return "z-ai";
+  return String(provider.name || provider.label || "custom-provider").trim().toLowerCase();
+}
+
+function vendorDisplayName(provider: ProviderConfig) {
+  const labels: Record<string, string> = {
+    deepseek: "DeepSeek",
+    openai: "OpenAI",
+    kimi: "Kimi",
+    "z-ai": "Z.AI",
+  };
+  return labels[vendorKey(provider)] ?? String(provider.label || provider.name || "自定义供应商");
+}
+
+function groupProvidersByVendor(providers: ProviderConfig[]): ProviderGroup[] {
+  const groups = new Map<string, ProviderGroup>();
+  for (const provider of providers) {
+    const key = vendorKey(provider);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.providers.push(provider);
+      continue;
+    }
+    groups.set(key, {
+      key,
+      label: vendorDisplayName(provider),
+      providers: [provider],
+    });
+  }
+  return Array.from(groups.values()).map((group) => ({
+    ...group,
+    providers: [...group.providers].sort((left, right) =>
+      String(left.model ?? left.name).localeCompare(String(right.model ?? right.name), "zh-CN"),
+    ),
+  }));
+}
+
+function modelKindLabel(provider: ProviderConfig) {
+  const explicit = String(provider.model_kind ?? "").trim();
+  if (explicit) return normalizeModelKind(explicit);
+  const model = String(provider.model ?? provider.label ?? provider.name).toLowerCase();
+  return normalizeModelKind(model);
+}
+
+function normalizeModelKind(value: string) {
+  const normalized = value.toLowerCase();
+  if (value.includes("图片") || normalized.includes("vision") || normalized.includes("image") || normalized.includes("dall") || value.includes("绘图")) {
+    return "图片模型";
+  }
+  if (value.includes("向量") || normalized.includes("embed") || normalized.includes("vector")) return "向量模型";
+  if (
+    value.includes("推理") ||
+    normalized.includes("reason") ||
+    normalized.includes("thinking") ||
+    normalized.includes("pro") ||
+    normalized.includes("r1") ||
+    normalized.includes("o1") ||
+    normalized.includes("o3") ||
+    normalized.includes("gpt-5") ||
+    normalized.includes("k2") ||
+    normalized.includes("glm-5")
+  ) {
+    return "推理模型";
+  }
+  return "文本模型";
+}
+
+function modelKindTone(kind: string): BadgeTone {
+  if (kind.includes("推理")) return "purple";
+  if (kind.includes("图片")) return "info";
+  if (kind.includes("向量")) return "running";
+  return "neutral";
+}
+
+function secretSourceSummary(providers: ProviderConfig[]) {
+  return Array.from(
+    new Set(
+      providers
+        .map((provider) =>
+          provider.api_key_source ? secretSourceLabel(String(provider.api_key_source)) : null,
+        )
+        .filter((source): source is string => Boolean(source)),
+    ),
+  );
+}
+
+function secretSourceLabel(source: string) {
+  const normalized = source.trim();
+  if (!normalized || normalized === "missing" || normalized === "not_configured") return null;
+  const labels: Record<string, string> = {
+    stored_secret_user: "用户密钥",
+    stored_secret_org: "组织密钥",
+    stored_secret: "密钥库",
+    db_user: "用户密钥",
+    db_org: "组织密钥",
+    env_legacy: "Env 兼容",
+    legacy_setting: "旧配置",
+  };
+  return labels[normalized] ?? normalized;
+}
+
+function groupSecretStatus(providers: ProviderConfig[]): { label: string; tone: BadgeTone } {
+  const configuredCount = providers.filter(providerHasUsableApiKey).length;
+  if (configuredCount === 0) return { label: "未配置", tone: "warning" };
+  if (configuredCount === providers.length) return { label: "已配置", tone: "success" };
+  return { label: "部分已配置", tone: "warning" };
+}
+
+function modelHealthItems(providers: ProviderConfig[], refreshedItems: ModelHealth[]) {
+  const refreshed = new Map(refreshedItems.map((item) => [`${item.provider}:${item.model}`, item]));
+  return providers.map((provider) => {
+    const providerName = String(provider.name);
+    const model = String(provider.model ?? "default");
+    const item = refreshed.get(`${providerName}:${model}`);
+    if (item) return item;
+    const lastHealth = provider.last_health && typeof provider.last_health === "object"
+      ? (provider.last_health as Partial<ModelHealth> & Record<string, unknown>)
+      : {};
+    return {
+      provider: providerName,
+      model,
+      status: String(lastHealth.status ?? provider.status ?? "unknown"),
+      mode: String(lastHealth.mode ?? (providerHasUsableApiKey(provider) ? "configured" : "missing_key")),
+      checked_at: String(lastHealth.checked_at ?? ""),
+      latency_ms: Number(lastHealth.latency_ms ?? 0),
+      error_message:
+        typeof lastHealth.error_message === "string"
+          ? lastHealth.error_message
+          : null,
+      circuit_status: "closed",
+      circuit_open_until: null,
+      consecutive_failures: 0,
+    };
+  });
+}
+
+function defaultOfficialStatusItems(): ModelOfficialStatus[] {
+  const now = new Date(0).toISOString();
+  return [
+    {
+      provider: "openai",
+      label: "OpenAI",
+      status: "unknown",
+      indicator: "unknown",
+      description: "点击刷新后查询官方状态",
+      page_url: "https://status.openai.com/",
+      api_url: "https://status.openai.com/api/v2/status.json",
+      checked_at: now,
+      updated_at: null,
+      error_message: null,
+    },
+    {
+      provider: "deepseek",
+      label: "DeepSeek",
+      status: "unknown",
+      indicator: "unknown",
+      description: "点击刷新后查询官方状态",
+      page_url: "https://status.deepseek.com/",
+      api_url: "https://status.deepseek.com/",
+      checked_at: now,
+      updated_at: null,
+      error_message: null,
+    },
+  ];
+}
+
+function ModelHealthStrip({ item }: { item: ModelHealth }) {
+  const status = String(item.status || "unknown");
+  const detail = item.error_message || `${statusLabel(String(item.mode))} · ${formatLatency(item.latency_ms)}`;
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-slate-100 bg-slate-50 px-2 py-1.5">
+      <span className={`h-6 w-1 rounded-full ${statusBarClass(status)}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-mono text-[11px] font-medium text-slate-900">{item.model}</span>
+          <Badge tone={modelHealthTone(status)}>{statusLabel(status)}</Badge>
+        </div>
+        <div className="mt-0.5 truncate text-[10px] text-slate-500" title={detail}>
+          {detail}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OfficialStatusStrip({ item }: { item: ModelOfficialStatus }) {
+  const detail = item.error_message ? "官方状态暂不可查" : item.description;
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-slate-100 bg-slate-50 px-2 py-1.5">
+      <span className={`h-6 w-1 rounded-full ${statusBarClass(item.status)}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <span className="truncate text-[11px] font-medium text-slate-900">{item.label}</span>
+          <a
+            href={item.page_url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`${item.label} 官方状态页`}
+            className="inline-flex shrink-0 items-center gap-1 text-[10px] text-slate-500 hover:text-slate-900"
+          >
+            Status
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+          <Badge tone={officialStatusTone(item.status)}>{officialStatusLabel(item.status)}</Badge>
+          <span className="truncate text-[10px] text-slate-500" title={detail}>
+            {detail}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProviderEndpointSummary({ providers }: { providers: ProviderConfig[] }) {
+  const endpoints = providerEndpointValues(providers);
+  if (endpoints.length === 0) {
+    return <div className="mt-1 font-mono text-[11px] text-slate-500">openai · ...</div>;
+  }
+  return (
+    <div
+      className="mt-1 flex max-w-[260px] flex-col gap-1 text-[11px] text-slate-500"
+      title={providerEndpointTitle(providers)}
+    >
+      {endpoints.map((endpoint) => (
+        <div key={`${endpoint.apiFormat}:${endpoint.baseUrl}`} className="flex min-w-0 items-center gap-1">
+          <span className="shrink-0 font-mono">{endpoint.apiFormat}</span>
+          <span>·</span>
+          <ProviderEndpointAnchor baseUrl={endpoint.baseUrl} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function providerEndpointTitle(providers: ProviderConfig[]) {
+  return providers
+    .map((provider) => `${String(provider.model ?? "default")} · ${providerEndpointValue(provider)}`)
+    .join("\n");
+}
+
+function providerEndpointValues(providers: ProviderConfig[]) {
+  const endpoints = new Map<string, { apiFormat: string; baseUrl: string }>();
+  for (const provider of providers) {
+    const apiFormat = String(provider.api_format ?? "openai");
+    const baseUrl = providerBaseUrl(provider);
+    endpoints.set(`${apiFormat}:${baseUrl}`, { apiFormat, baseUrl });
+  }
+  return Array.from(endpoints.values());
+}
+
+function providerEndpointValue(provider: ProviderConfig) {
+  return `${String(provider.api_format ?? "openai")} · ${providerBaseUrl(provider)}`;
+}
+
+function providerBaseUrl(provider: ProviderConfig) {
+  return String(provider.base_url ?? "").trim() || "...";
+}
+
+function ProviderEndpointLink({ provider }: { provider: ProviderConfig }) {
+  return <ProviderEndpointAnchor baseUrl={providerBaseUrl(provider)} />;
+}
+
+function ProviderEndpointAnchor({ baseUrl }: { baseUrl: string }) {
+  if (!isHttpUrl(baseUrl)) {
+    return <span className="font-mono">{baseUrl}</span>;
+  }
+  return (
+    <a
+      href={baseUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex min-w-0 items-center gap-1 font-mono text-slate-600 underline-offset-2 hover:text-slate-950 hover:underline"
+    >
+      <span className="truncate">{baseUrl}</span>
+      <ExternalLink className="h-3 w-3 shrink-0" />
+    </a>
+  );
+}
+
+function isHttpUrl(value: string) {
+  return /^https?:\/\//i.test(value);
+}
+
+function isDeprecatedPricingSource(item: ModelPricingSourceItem) {
+  const key = `${item.mapped_provider || item.provider}/${item.mapped_model || item.model}`.toLowerCase();
+  return key === "moonshot/moonshot-v1-8k" || key === "z-ai/glm-5-turbo";
+}
+
 function formatLimit(value: unknown, unit: string) {
   if (value === undefined || value === null || value === "") return `... ${unit}`;
   return `${Number(value).toLocaleString("zh-CN")} ${unit}`;
 }
 
-function formatLatency(value?: number) {
-  if (value === undefined || value === null) return "... ms";
-  return `${value.toLocaleString("zh-CN")} ms`;
-}
-
 function modelHealthTone(status: string): BadgeTone {
   const normalized = status.toLowerCase();
-  if (["healthy", "success", "ok", "closed"].includes(normalized)) return "success";
-  if (["degraded", "warning", "open", "timeout"].includes(normalized)) return "warning";
+  if (["healthy", "success", "ok", "closed", "operational"].includes(normalized)) return "success";
+  if (["degraded", "warning", "open", "timeout", "maintenance"].includes(normalized)) return "warning";
   if (["unhealthy", "failed", "error"].includes(normalized)) return "failed";
   return "neutral";
+}
+
+function officialStatusTone(status: string): BadgeTone {
+  const normalized = status.toLowerCase();
+  if (normalized === "operational") return "success";
+  if (normalized === "degraded" || normalized === "maintenance") return "warning";
+  if (normalized === "outage") return "failed";
+  return "neutral";
+}
+
+function officialStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    operational: "正常",
+    degraded: "降级",
+    outage: "中断",
+    maintenance: "维护",
+    unknown: "未知",
+  };
+  return labels[status] ?? status;
+}
+
+function statusBarClass(status: string) {
+  const normalized = status.toLowerCase();
+  if (["healthy", "success", "ok", "closed", "operational"].includes(normalized)) return "bg-emerald-500";
+  if (["degraded", "warning", "open", "timeout", "maintenance"].includes(normalized)) return "bg-amber-500";
+  if (["unhealthy", "failed", "error", "outage"].includes(normalized)) return "bg-rose-500";
+  return "bg-slate-300";
+}
+
+function formatLatency(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "未探测";
+  return `${Math.round(value)} ms`;
+}
+
+function modelHealthErrorText(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message ? `状态刷新失败：${message}` : "状态刷新失败，请稍后重试。";
 }
 
 function modelPricingErrorText(error: unknown) {
@@ -976,19 +1411,19 @@ function PricingSourceRow({ item }: { item: ModelPricingSourceItem }) {
   return (
     <tr className="border-t border-slate-100">
       <Td>
-        <div className="font-medium text-slate-900">{item.display_name}</div>
+        <div className="text-[13px] font-medium leading-5 text-slate-900">{item.display_name}</div>
         <div className="mt-1 font-mono text-[11px] text-slate-500">{item.mapped_model}</div>
         <div className="mt-1 text-[11px] text-slate-500">
           {item.context_window_tokens ? `上下文 ${item.context_window_tokens.toLocaleString("zh-CN")}` : "上下文 -"}
           {item.max_output_tokens ? ` / 最大输出 ${item.max_output_tokens.toLocaleString("zh-CN")}` : ""}
         </div>
       </Td>
-      <Td className="font-mono">
+      <Td className="font-mono leading-5">
         <div>输入 {formatPrice(item.input_per_1m, item.currency)}</div>
         <div className="mt-1 text-slate-500">缓存输入 {formatPrice(item.cached_input_per_1m, item.currency)}</div>
         <div className="mt-1">输出 {formatPrice(item.output_per_1m, item.currency)}</div>
       </Td>
-      <Td className="font-mono">
+      <Td className="font-mono leading-5">
         <div>输入 {formatUsdSource(item.prompt_per_1k_usd)}</div>
         <div className="mt-1 text-slate-500">缓存输入 {formatUsdSource(item.cache_prompt_per_1k_usd)}</div>
         <div className="mt-1">输出 {formatUsdSource(item.completion_per_1k_usd)}</div>
@@ -998,7 +1433,7 @@ function PricingSourceRow({ item }: { item: ModelPricingSourceItem }) {
           {pricingStatusLabel(item.verification_status)}
         </Badge>
         {item.blocks_usd_rollup ? (
-          <div className="mt-1 text-[11px] text-amber-700">USD 汇总已阻塞</div>
+          <div className="mt-1 text-[10px] text-amber-600">不计入汇总</div>
         ) : null}
         {item.valid_until ? (
           <div className="mt-1 text-[11px] text-slate-500">有效至 {formatShortDate(item.valid_until)}</div>
@@ -1058,9 +1493,9 @@ function pricingModeLabel(item: ModelPricingSourceItem) {
 
 function Metric({ label, value }: { label: ReactNode; value: string }) {
   return (
-    <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
-      <div className="text-slate-500">{label}</div>
-      <div className="mt-1 min-w-0 truncate font-mono text-slate-900" title={value}>{value}</div>
+    <div className="rounded-md border border-slate-100 bg-slate-50 p-2.5">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 min-w-0 truncate font-mono text-[11px] text-slate-900" title={value}>{value}</div>
     </div>
   );
 }

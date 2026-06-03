@@ -60,8 +60,22 @@ function formatLocalisedTimestamp(value: string | undefined, locale: string): st
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   try {
-    return date.toLocaleString(locale);
+    return new Intl.DateTimeFormat(locale, {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(date);
   } catch {
-    return date.toLocaleString();
+    return new Intl.DateTimeFormat("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(date);
   }
 }

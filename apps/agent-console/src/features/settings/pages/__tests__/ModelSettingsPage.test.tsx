@@ -84,8 +84,8 @@ function pricingSourcesPayload() {
     mapped_model: model,
     display_name: displayName,
     official_url:
-      provider === "deepseek-flash"
-          ? "https://api-docs.deepseek.com/quick_start/pricing"
+      provider.startsWith("deepseek")
+        ? "https://api-docs.deepseek.com/quick_start/pricing"
         : provider === "openai-compatible"
           ? "https://developers.openai.com/api/docs/pricing"
         : provider === "kimi"
@@ -134,6 +134,7 @@ function pricingSourcesPayload() {
     ],
     items: [
       source("DeepSeek Flash", "deepseek-flash", "deepseek-v4-flash", "USD", "0.14", "0.0028", "0.28", "0.00014", "0.0000028", "0.00028", "verified", false),
+      source("DeepSeek Pro", "deepseek-pro", "deepseek-v4-pro", "USD", "0.435", "0.003625", "0.87", "0.000435", "0.000003625", "0.00087", "verified", false),
       source("OpenAI GPT-5.5", "openai-compatible", "gpt-5.5", "USD", "5", "0.5", "30", "0.005", "0.0005", "0.030", "verified", false),
       source("Kimi K2.6", "kimi", "kimi-k2.6", "USD", "0.95", "0.16", "4.00", "0.00095", "0.00016", "0.00400", "verified", false),
       source("Z.AI GLM-5.1", "z-ai", "glm-5.1", "USD", "1.4", "0.26", "4.4", "0.0014", "0.00026", "0.0044", "verified", false),
@@ -146,6 +147,80 @@ function bundledPricingSourcesPayload() {
   return {
     ...payload,
     rows: payload.items,
+  };
+}
+
+function pricingSourcesWithBlockedRowPayload() {
+  const payload = pricingSourcesPayload();
+  return {
+    ...payload,
+    retrieved_at: "2026-06-03T23:59:00Z",
+    items: [
+      ...payload.items,
+      {
+        ...payload.items[0],
+        provider: "blocked-provider",
+        model: "blocked-model",
+        mapped_provider: "blocked-provider",
+        mapped_model: "blocked-model",
+        display_name: "Blocked Pricing Model",
+        verification_status: "stale",
+        valid_until: "2026-06-03T23:59:00Z",
+        blocks_usd_rollup: true,
+        region: "official-currency-dependent",
+        token_tier: "tiered",
+      },
+    ],
+  };
+}
+
+function modelHealthPayload() {
+  return {
+    items: [
+      {
+        provider: "openai-compatible",
+        model: "gpt-5.5",
+        status: "unhealthy",
+        mode: "probe",
+        checked_at: "2026-06-03T14:40:00Z",
+        latency_ms: 732,
+        error_message: "401 invalid_api_key",
+        circuit_status: "closed",
+        circuit_open_until: null,
+        consecutive_failures: 1,
+      },
+    ],
+  };
+}
+
+function officialStatusPayload() {
+  return {
+    items: [
+      {
+        provider: "openai",
+        label: "OpenAI",
+        status: "operational",
+        indicator: "none",
+        description: "All Systems Operational",
+        page_url: "https://status.openai.com/",
+        api_url: "https://status.openai.com/api/v2/status.json",
+        checked_at: "2026-06-03T14:40:00Z",
+        updated_at: "2026-04-27T15:52:49Z",
+        error_message: null,
+      },
+      {
+        provider: "deepseek",
+        label: "DeepSeek",
+        status: "unknown",
+        indicator: "unknown",
+        description: "官方状态暂不可查",
+        page_url: "https://status.deepseek.com/",
+        api_url: "https://status.deepseek.com/",
+        checked_at: "2026-06-03T14:40:00Z",
+        updated_at: null,
+        error_message: "connection reset",
+      },
+    ],
   };
 }
 
@@ -169,6 +244,57 @@ afterEach(() => {
 });
 
 describe("ModelSettingsPage", () => {
+  it("puts model switching before gateway status", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models") return jsonResponse(modelSettingsPayload());
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") return jsonResponse(pricingSourcesPayload());
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    renderPage(fetchMock);
+
+    await screen.findByText("模型切换");
+    const pageText = document.body.textContent ?? "";
+
+    expect(pageText.indexOf("模型切换")).toBeGreaterThanOrEqual(0);
+    expect(pageText.indexOf("模型网关")).toBeGreaterThanOrEqual(0);
+    expect(pageText.indexOf("模型切换")).toBeLessThan(pageText.indexOf("模型网关"));
+  });
+
+  it("manually refreshes Harness model health and official provider status", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models") return jsonResponse(modelSettingsPayload());
+      if (path === "/api/settings/models/health") return jsonResponse(modelHealthPayload());
+      if (path === "/api/settings/models/official-status") return jsonResponse(officialStatusPayload());
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") return jsonResponse(pricingSourcesPayload());
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    const user = userEvent.setup();
+    renderPage(fetchMock);
+
+    await screen.findByText("Harness 探测");
+    expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === "/api/settings/models/health")).toBe(false);
+    expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === "/api/settings/models/official-status")).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "刷新模型状态" }));
+
+    expect(await screen.findByText("401 invalid_api_key")).toBeInTheDocument();
+    expect(screen.getByText("All Systems Operational")).toBeInTheDocument();
+    expect(screen.getByText("官方状态暂不可查")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "OpenAI 官方状态页" })).toHaveAttribute(
+      "href",
+      "https://status.openai.com/",
+    );
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === "/api/settings/models/health")).toBe(true);
+      expect(fetchMock.mock.calls.some(([input]) => requestPath(input) === "/api/settings/models/official-status")).toBe(true);
+    });
+  });
+
   it("requires preset API key configuration before switching and releases after save succeeds", async () => {
     const savedSettings = {
       ...modelSettingsPayload(),
@@ -213,14 +339,13 @@ describe("ModelSettingsPage", () => {
     const user = userEvent.setup();
     renderPage(fetchMock);
 
-    await screen.findByText("DeepSeek Flash");
-    await user.click(screen.getByRole("button", { name: /DeepSeek Flash 配置并启用/ }));
+    await user.click(await screen.findByRole("button", { name: /deepseek-v4-flash 配置并启用/ }));
     const dialog = await screen.findByRole("dialog", { name: /配置 DeepSeek Flash/ });
     await user.type(within(dialog).getByLabelText(/接口访问密钥/), "sk-deepseek-test");
     await user.click(within(dialog).getByRole("button", { name: /保存并启用/ }));
 
     expect((await screen.findAllByText("模型配置已保存")).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: /已启用/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /deepseek-v4-flash 已启用/ })).toBeInTheDocument();
     expect(screen.queryByText("切换中")).not.toBeInTheDocument();
     await waitFor(() => {
       const saveCall = fetchMock.mock.calls.find(
@@ -261,13 +386,44 @@ describe("ModelSettingsPage", () => {
     const user = userEvent.setup();
     renderPage(fetchMock);
 
-    await screen.findByText("OpenAI GPT-5.5");
-    expect(screen.queryByRole("button", { name: /OpenAI GPT-5.5 已启用/ })).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: /gpt-5\.5 配置并启用/ });
+    expect(screen.queryByRole("button", { name: /gpt-5\.5 已启用/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /OpenAI GPT-5.5 配置并启用/ }));
+    await user.click(screen.getByRole("button", { name: /gpt-5\.5 配置并启用/ }));
 
     expect(await screen.findByRole("dialog", { name: /配置 OpenAI GPT-5.5/ })).toBeInTheDocument();
-    expect(screen.getAllByText("需配置密钥").length).toBeGreaterThan(0);
+    expect(document.body).not.toHaveTextContent("OpenAI · openai");
+  });
+
+  it("treats stored model secrets as configured without exposing raw API keys", async () => {
+    const settings = {
+      ...modelSettingsPayload(),
+      providers: [
+        {
+          ...modelSettingsPayload().providers[0],
+          api_key_configured: true,
+          api_key_source: "stored_secret_org",
+          api_key_secret_id: "secret-openai",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models" && !init?.method) return jsonResponse(settings);
+      if (path === "/api/settings/models" && init?.method === "PUT") {
+        return jsonResponse(JSON.parse(String(init.body)));
+      }
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") return jsonResponse(pricingSourcesPayload());
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    renderPage(fetchMock);
+
+    await screen.findAllByText("组织密钥");
+    expect(screen.getAllByText("已配置").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /gpt-5\.5 已启用/ })).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("sk-");
   });
 
   it("opens custom model configuration from the quick action instead of rendering the form inline", async () => {
@@ -339,15 +495,43 @@ describe("ModelSettingsPage", () => {
     await screen.findByText("内置模型成本");
     expect(await screen.findByText("DeepSeek Flash")).toBeInTheDocument();
     expect(screen.getAllByText("OpenAI GPT-5.5").length).toBeGreaterThan(0);
-    expect(screen.getByText("kimi-k2.6")).toBeInTheDocument();
-    expect(screen.getByText("glm-5.1")).toBeInTheDocument();
-    expect(screen.getAllByText("已验证")).toHaveLength(4);
-    const kimiRow = screen.getByText("kimi-k2.6").closest("tr");
+    expect(screen.getAllByText("kimi-k2.6").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("glm-5.1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("已验证")).toHaveLength(5);
+    const deepSeekProRow = screen.getByText("DeepSeek Pro").closest("tr");
+    expect(deepSeekProRow).not.toBeNull();
+    expect(within(deepSeekProRow as HTMLElement).getByText("输入 USD 0.435")).toBeInTheDocument();
+    expect(within(deepSeekProRow as HTMLElement).queryByText("已过期")).not.toBeInTheDocument();
+    expect(within(deepSeekProRow as HTMLElement).queryByText(/有效至/)).not.toBeInTheDocument();
+    const kimiRow = screen.getByText("Kimi K2.6").closest("tr");
     expect(kimiRow).not.toBeNull();
     expect(within(kimiRow as HTMLElement).getByText("输入 USD 0.95")).toBeInTheDocument();
     expect(within(kimiRow as HTMLElement).getByText("已验证")).toBeInTheDocument();
     expect(screen.queryByText("USD 汇总已阻塞")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("openai-compatible/gpt");
+  });
+
+  it("softens blocked pricing rows and renders timestamps in 24-hour time", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models") return jsonResponse(modelSettingsPayload());
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") {
+        return jsonResponse(pricingSourcesWithBlockedRowPayload());
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    renderPage(fetchMock);
+
+    const row = (await screen.findByText("Blocked Pricing Model")).closest("tr");
+
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("已过期")).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("不计入汇总")).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText(/有效至/).textContent).toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(document.body).not.toHaveTextContent("USD 汇总已阻塞");
+    expect(document.body).not.toHaveTextContent(/\b(?:AM|PM)\b/);
   });
 
   it("falls back to bundled official pricing when the backend pricing endpoint is missing", async () => {
@@ -378,7 +562,7 @@ describe("ModelSettingsPage", () => {
     });
   });
 
-  it("shows model names as preset titles and exposes only one OpenAI built-in preset", async () => {
+  it("shows model ids as switch card titles with model type and one OpenAI built-in preset", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = requestPath(input);
       if (path === "/api/settings/models") return jsonResponse(modelSettingsPayload());
@@ -391,39 +575,23 @@ describe("ModelSettingsPage", () => {
     });
     renderPage(fetchMock);
 
-    const gpt55Card = (await screen.findByText(/gpt-5\.5 · openai · https:\/\/api\.openai\.com\/v1/)).closest(".rounded-md");
-    const openAiPresetCards = screen
-      .getAllByText(/https:\/\/api\.openai\.com\/v1/)
-      .map((node) => node.closest(".rounded-md"));
+    const openAiPresetButtons = await screen.findAllByRole("button", { name: /gpt-5\.5 (配置并启用|切换|已启用)/ });
+    const gpt55Card = openAiPresetButtons[0].closest("[class*='min-h-']");
 
     expect(gpt55Card).not.toBeNull();
-    expect(openAiPresetCards.filter(Boolean)).toHaveLength(1);
+    expect(openAiPresetButtons).toHaveLength(1);
     await waitFor(() => {
-      expect(within(gpt55Card as HTMLElement).getByText("OpenAI GPT-5.5")).toBeInTheDocument();
-      expect(within(gpt55Card as HTMLElement).getByText("当前默认")).toBeInTheDocument();
+      expect(within(gpt55Card as HTMLElement).getByText("gpt-5.5")).toBeInTheDocument();
+      expect(within(gpt55Card as HTMLElement).getByText("推理模型")).toBeInTheDocument();
+      expect(within(gpt55Card as HTMLElement).queryByText("OpenAI · openai")).not.toBeInTheDocument();
+      expect(gpt55Card as HTMLElement).not.toHaveTextContent("https://api.openai.com/v1");
     });
   });
 
-  it("removing a sibling model on the same provider keeps the current default", async () => {
-    const settings = {
-      ...modelSettingsPayload(),
-      providers: [
-        ...modelSettingsPayload().providers,
-        {
-          name: "openai-compatible",
-          label: "OpenAI 自定义分析模型",
-          model: "gpt-custom-analysis",
-          api_format: "openai",
-          base_url: "https://api.openai.com/v1",
-        },
-      ],
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  it("shows preset supplier rows with clickable endpoint links even before provider configuration", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = requestPath(input);
-      if (path === "/api/settings/models" && !init?.method) return jsonResponse(settings);
-      if (path === "/api/settings/models" && init?.method === "PUT") {
-        return jsonResponse(JSON.parse(String(init.body)));
-      }
+      if (path === "/api/settings/models") return jsonResponse(modelSettingsPayload());
       if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
       if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
       if (path === "/api/settings/models/pricing-sources") {
@@ -431,29 +599,144 @@ describe("ModelSettingsPage", () => {
       }
       return jsonResponse({ detail: `unexpected ${path}` }, 404);
     });
-    const user = userEvent.setup();
     renderPage(fetchMock);
 
-    const siblingRow = (await screen.findByText("gpt-custom-analysis")).closest("tr");
-    expect(siblingRow).not.toBeNull();
-    await user.click(within(siblingRow as HTMLElement).getByTitle("删除"));
+    const kimiRow = (await screen.findAllByText("Kimi"))
+      .find((node) => node.closest("tr"))
+      ?.closest("tr");
+    const zaiRow = (await screen.findAllByText("Z.AI"))
+      .find((node) => node.closest("tr"))
+      ?.closest("tr");
 
-    await waitFor(() => {
-      const saveCall = fetchMock.mock.calls.find(
-        ([input, init]) =>
-          requestPath(input) === "/api/settings/models" && init?.method === "PUT",
-      );
-      expect(saveCall).toBeDefined();
-      expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({
-        default_provider: "openai-compatible",
-        default_model: "gpt-5.5",
-        providers: [
-          expect.objectContaining({
-            name: "openai-compatible",
-            model: "gpt-5.5",
-          }),
-        ],
-      });
+    expect(kimiRow).not.toBeNull();
+    expect(zaiRow).not.toBeNull();
+    expect(within(kimiRow as HTMLElement).getAllByText("kimi-k2.6").length).toBeGreaterThan(0);
+    expect(within(kimiRow as HTMLElement).getByRole("link", { name: /https:\/\/api\.moonshot\.cn\/v1/ })).toHaveAttribute(
+      "href",
+      "https://api.moonshot.cn/v1",
+    );
+    expect(within(zaiRow as HTMLElement).getAllByText("glm-5.1").length).toBeGreaterThan(0);
+    expect(within(zaiRow as HTMLElement).getByRole("link", { name: /https:\/\/api\.z\.ai\/api\/paas\/v4/ })).toHaveAttribute(
+      "href",
+      "https://api.z.ai/api/paas/v4",
+    );
+    expect(within(kimiRow as HTMLElement).queryByRole("button", { name: "删除：kimi-k2.6" })).not.toBeInTheDocument();
+    expect(within(zaiRow as HTMLElement).queryByRole("button", { name: "删除：glm-5.1" })).not.toBeInTheDocument();
+  });
+
+  it("groups DeepSeek models under one provider row while listing existing models", async () => {
+    const settings = {
+      ...modelSettingsPayload(),
+      default_provider: "deepseek-pro",
+      default_model: "deepseek-v4-pro",
+      providers: [
+        {
+          name: "deepseek-flash",
+          label: "DeepSeek Flash",
+          model: "deepseek-v4-flash",
+          model_kind: "文本模型",
+          api_format: "openai",
+          base_url: "https://api.deepseek.com",
+          api_key_configured: true,
+          api_key_source: "stored_secret_user",
+        },
+        {
+          name: "deepseek-pro",
+          label: "DeepSeek Pro",
+          model: "deepseek-v4-pro",
+          model_kind: "推理模型",
+          api_format: "openai",
+          base_url: "https://api.deepseek.com",
+          api_key_configured: true,
+          api_key_source: "stored_secret_user",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models") return jsonResponse(settings);
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") {
+        return jsonResponse(pricingSourcesPayload());
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
     });
+    renderPage(fetchMock);
+
+    const providerRows = await screen.findAllByText("DeepSeek");
+    const deepSeekRow = providerRows.find((node) => node.closest("tr"))?.closest("tr");
+
+    expect(deepSeekRow).not.toBeNull();
+    expect(screen.getAllByText("DeepSeek").filter((node) => node.closest("tr"))).toHaveLength(1);
+    expect(within(deepSeekRow as HTMLElement).getAllByText("deepseek-v4-flash").length).toBeGreaterThan(0);
+    expect(within(deepSeekRow as HTMLElement).getAllByText("deepseek-v4-pro").length).toBeGreaterThan(0);
+    expect(within(deepSeekRow as HTMLElement).getByText("文本模型")).toBeInTheDocument();
+    expect(within(deepSeekRow as HTMLElement).getByText("推理模型")).toBeInTheDocument();
+    expect(within(deepSeekRow as HTMLElement).queryByText("2 个模型")).not.toBeInTheDocument();
+    expect(within(deepSeekRow as HTMLElement).queryByText("含默认")).not.toBeInTheDocument();
+  });
+
+  it("shows partial provider key state without leaking missing secret sources", async () => {
+    const settings = {
+      ...modelSettingsPayload(),
+      default_provider: "deepseek-flash",
+      default_model: "deepseek-v4-flash",
+      providers: [
+        {
+          name: "deepseek-flash",
+          label: "DeepSeek Flash",
+          model: "deepseek-v4-flash",
+          model_kind: "text",
+          api_format: "openai",
+          base_url: "https://api.deepseek.com",
+          api_key_configured: true,
+          api_key_source: "stored_secret_user",
+          rate_limit_rpm: 300,
+          rate_limit_tpm: 1000000,
+        },
+        {
+          name: "deepseek-pro",
+          label: "DeepSeek Pro",
+          model: "deepseek-v4-pro",
+          model_kind: "reasoning",
+          api_format: "openai",
+          base_url: "https://api.deepseek.com",
+          api_key_configured: false,
+          api_key_source: "missing",
+          rate_limit_rpm: 120,
+          rate_limit_tpm: 500000,
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models") return jsonResponse(settings);
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") {
+        return jsonResponse(pricingSourcesPayload());
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    renderPage(fetchMock);
+
+    const deepSeekRow = (await screen.findAllByText("DeepSeek"))
+      .find((node) => node.closest("tr"))
+      ?.closest("tr");
+
+    expect(deepSeekRow).not.toBeNull();
+    await waitFor(() => {
+      expect(within(deepSeekRow as HTMLElement).getByText("部分已配置")).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).queryByText("密钥已配")).not.toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).queryByText("未配置")).not.toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByText("文本模型")).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByText("推理模型")).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByText(/300 rpm/)).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByText(/120 rpm/)).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).queryByRole("button", { name: "删除：deepseek-v4-pro" })).not.toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByRole("button", { name: "配置：deepseek-v4-pro" })).toBeInTheDocument();
+    });
+    expect(document.body).not.toHaveTextContent(/\bmissing\b/);
   });
 });
