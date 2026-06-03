@@ -98,9 +98,20 @@ const regressionFixture = {
   task_success_rate_delta: -0.15,
   tool_selection_accuracy_delta: -0.05,
   avg_latency_ms_delta: 200,
+  grounding_pass_rate_delta: 0,
+  citation_coverage_rate_delta: 0,
+  unsupported_marker_rate_delta: 0,
+  fallback_mismatch_rate_delta: 0,
+  forbidden_evidence_leak_rate_delta: 0,
+  required_evidence_miss_rate_delta: 0,
   is_regression: true,
   newly_failing_case_ids: ["case-002"],
   newly_passing_case_ids: [],
+  newly_grounding_failing_case_ids: [],
+  newly_forbidden_leak_case_ids: [],
+  low_sample_count: false,
+  low_sample_caveat: null,
+  grounding_sample_count: 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -112,7 +123,9 @@ test.describe("Eval Harness page mocked smoke tests", () => {
     await routeEvalApis(page);
   });
 
-  test("Dataset list renders with case counts and baseline badge", async ({ page }) => {
+  test("Dataset list renders with case counts and baseline badge", async ({
+    page,
+  }) => {
     await page.goto("/evals");
 
     // Dataset names visible
@@ -180,7 +193,10 @@ async function routeEvalApis(page: Page): Promise<void> {
     }
 
     // Cases for dataset
-    if (path.match(/^\/api\/evals\/datasets\/[^/]+\/cases$/) && method === "GET") {
+    if (
+      path.match(/^\/api\/evals\/datasets\/[^/]+\/cases$/) &&
+      method === "GET"
+    ) {
       await fulfillJson(route, casesFixture);
       return;
     }
@@ -192,13 +208,19 @@ async function routeEvalApis(page: Page): Promise<void> {
     }
 
     // Regression delta
-    if (path.match(/^\/api\/evals\/runs\/[^/]+\/regression$/) && method === "GET") {
+    if (
+      path.match(/^\/api\/evals\/runs\/[^/]+\/regression$/) &&
+      method === "GET"
+    ) {
       await fulfillJson(route, regressionFixture);
       return;
     }
 
     // Create eval run
-    if (path.match(/^\/api\/evals\/datasets\/[^/]+\/runs$/) && method === "POST") {
+    if (
+      path.match(/^\/api\/evals\/datasets\/[^/]+\/runs$/) &&
+      method === "POST"
+    ) {
       await fulfillJson(route, evalRunsFixture.items[0]);
       return;
     }

@@ -112,7 +112,7 @@ Verified-baseline evidence:
 
 ### P2: Productize Local Knowledge Management
 
-Status: completed.
+Status: completed / pushed to `origin/p7-release-demo-hardening` through `c404603`.
 
 Goal: make local knowledge usable beyond an inline demo form.
 
@@ -253,16 +253,37 @@ Verification evidence:
 
 ### P7: Release And Demo Hardening
 
-Status: planned.
+Status: completed.
 
 Goal: preserve the private handoff quality while new capability layers grow.
 
-Scope:
+Delivered scope:
 
-- Docker Compose migration smoke for knowledge tables;
-- one-command seeded demo data for Knowledge/RAG;
-- browser release smoke covering Agent Studio knowledge, Workspace grounding, and Run Detail knowledge evidence;
-- updated runbooks for backup/restore, provider configuration, and failure diagnosis.
+- deterministic Knowledge/RAG demo seed through public APIs only;
+- agent-scoped grounding support document so the demo question satisfies the backend `min_hits=2` local-grounding threshold;
+- local fixture origin carried by seed names, `p7-seed-fixture:*` idempotency keys, and `seed-fixture://...` document URIs;
+- service-level Knowledge/RAG migration/restore smoke for required tables and selector continuity;
+- mocked release browser smoke covering Agent Studio knowledge, Workspace grounding, Run Detail knowledge evidence, Eval grounding metrics, and Observability grounding quality;
+- updated deployment, troubleshooting, and web-research runbooks for seed/readback, migration/restore, browser smoke, and provider-boundary diagnosis.
+
+Verification evidence:
+
+- `python3 -m py_compile scripts/seed-knowledge-demo.py scripts/smoke-test-knowledge-migration-restore.py` -> passed.
+- `python3 scripts/seed-knowledge-demo.py --print-plan` -> passed.
+- `HARNESS_API_BASE_URL=http://127.0.0.1:18007 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent` -> passed against a temporary local API server.
+- `python3 scripts/smoke-test-knowledge-migration-restore.py` -> passed.
+- `cd services/api-server && uv run ruff check ../../scripts/seed-knowledge-demo.py ../../scripts/smoke-test-knowledge-migration-restore.py app tests` -> passed.
+- `cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_agents.py tests/test_evals.py tests/test_eval_regression.py tests/test_observability.py -q` -> passed.
+- `cd apps/agent-console && npm run lint` -> passed.
+- `cd apps/agent-console && npm run build` -> passed.
+- `cd apps/agent-console && npm test` -> passed.
+- `cd apps/agent-console && npm run e2e:smoke:release` -> passed.
+- `HARNESS_API_BASE_URL=http://127.0.0.1:18008 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent` -> passed on the non-default local API with `agent_grounding-evidence_document_id`.
+- `POST /api/agents/default/runs/chat/stream` with the demo question on `http://127.0.0.1:18008` -> returned `knowledge_grounding: Local knowledge grounded the answer.`
+- `docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config` -> passed.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Pushed branch `p7-release-demo-hardening` to `origin` through `c404603`.
 
 ## Boundaries
 

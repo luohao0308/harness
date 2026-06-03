@@ -119,6 +119,69 @@ empty DEEPSEEK_API_KEY is acceptable for local mock-model fallback validation
 real provider validation requires a deployment-local secret, never a committed key
 ```
 
+### P7 knowledge demo seed failure
+
+Check the payload plan without touching the API:
+
+```bash
+python3 scripts/seed-knowledge-demo.py --print-plan
+```
+
+Check API reachability and auth:
+
+```bash
+curl --noproxy '*' http://127.0.0.1:8000/health
+HARNESS_API_BASE_URL=http://127.0.0.1:8000 \
+HARNESS_ADMIN_TOKEN=dev-admin-token \
+python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent
+```
+
+Action:
+
+```text
+verify the API server is running on the same HARNESS_API_BASE_URL used by the seed
+verify HARNESS_ADMIN_TOKEN matches the local admin token
+inspect the failing POST /api/agents/{agent_id}/knowledge/sources response body
+rerun with --check-idempotent to prove existing seed rows are reused rather than duplicated
+do not repair the seed by writing directly to database tables
+```
+
+Expected seed markers:
+
+```text
+P7 Demo Agent Runbook
+P7 Demo Org Handoff
+p7-seed-fixture:agent:agent-runbook
+p7-seed-fixture:org:org-handoff
+seed-fixture://agent-knowledge-harness/p7/
+```
+
+### P7 knowledge migration/restore smoke failure
+
+Check the default service-level smoke first:
+
+```bash
+python3 scripts/smoke-test-knowledge-migration-restore.py
+```
+
+Check a specific service database only when the target URL is intentional:
+
+```bash
+HARNESS_P7_DATABASE_URL="$DATABASE_URL" \
+python3 scripts/smoke-test-knowledge-migration-restore.py --allow-service-db-mutation
+```
+
+Action:
+
+```text
+remember bare DATABASE_URL is ignored by the smoke; use HARNESS_P7_DATABASE_URL or --database-url explicitly
+confirm Alembic reaches head before reading selector continuity output
+inspect missing table names reported by the smoke before changing application code
+rerun against temporary SQLite to separate migration breakage from service database state
+use --keep-db only when a local temp database needs manual inspection
+do not promote full Docker Compose restore to the default release smoke without a new plan
+```
+
 ## API 5xx
 
 Check:

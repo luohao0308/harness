@@ -44,3 +44,9 @@ CI does not call paid providers. Promotion states must be explicit:
 - `P3 live provider verified`
 
 Run a live probe only as an explicit admin operation using a fixed low-risk query. Do not use customer query text for health checks.
+
+## P7 Demo Seed Boundary
+
+P7 Knowledge demo seed data is deterministic local fixture evidence. It is created through public Knowledge APIs by `scripts/seed-knowledge-demo.py` and marked with seed names, `p7-seed-fixture:*` idempotency keys, and `seed-fixture://agent-knowledge-harness/p7/...` document URIs.
+
+Do not treat the P7 seed as live web validation. It must not set or imply provider-backed verification. Optional Tavily validation remains a separate credential-gated P3/P7 release operation using `TAVILY_API_KEY`, the configured web research policy, and a fixed low-risk query.

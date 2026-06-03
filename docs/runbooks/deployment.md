@@ -115,6 +115,46 @@ python3 scripts/smoke-test-agent-run.py
 
 `scripts/smoke-test-docker.py` validates the compose-level service chain. `scripts/smoke-test-agent-run.py` is the canonical product smoke: it must prove the Agent Run path and required run/task/event/tool/sandbox/subagent/eval/observability correlation.
 
+### P7 Knowledge Demo And Restore Smoke
+
+P7 adds deterministic Knowledge/RAG demo hardening without widening the private handoff into a new installer or full operations profile.
+
+Seed demo knowledge through public APIs only:
+
+```bash
+python3 scripts/seed-knowledge-demo.py --print-plan
+
+HARNESS_API_BASE_URL=http://127.0.0.1:8000 \
+HARNESS_DEMO_AGENT_ID=default \
+HARNESS_ADMIN_TOKEN=dev-admin-token \
+python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent
+```
+
+The seed writes agent-scoped and org-scoped Markdown sources using the same API path as Agent Studio. Fixture origin is carried by deterministic names, `idempotency_key`, and `seed-fixture://...` document URIs. It is local fixture evidence, not provider-backed web verification.
+
+Run the default service-level migration/restore smoke before claiming release readiness:
+
+```bash
+python3 scripts/smoke-test-knowledge-migration-restore.py
+```
+
+To point the smoke at a specific service database instead of temporary SQLite:
+
+```bash
+HARNESS_P7_DATABASE_URL="$DATABASE_URL" \
+python3 scripts/smoke-test-knowledge-migration-restore.py --allow-service-db-mutation
+```
+
+This smoke checks the Knowledge/RAG migration surface and selector continuity for retrieval hits and citations after engine reopen. It does not require full Docker Compose. Full Compose startup remains the private handoff path above, and a full Compose migration/restore profile should stay manual or nightly unless a later release plan changes that boundary.
+
+The browser release gate includes a mocked P7 Knowledge demo projection:
+
+```bash
+cd apps/agent-console && npm run e2e:smoke:release
+```
+
+The mocked browser smoke proves Agent Studio knowledge projection, Workspace local grounding indicator, Run Detail retrieval/citation/manifest evidence, Eval grounding metrics, and Observability grounding quality without consuming live seeded backend rows.
+
 ### Shutdown / Cleanup
 
 ```bash
