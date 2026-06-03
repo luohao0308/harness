@@ -19,7 +19,40 @@ The website remains present as a public information shell. Console execution foc
 
 - Stage: `07-private-deployable-harness-chain`
 - Status: `completed`
-- Updated at: `2026-05-14`
+- Updated at: `2026-05-18`
+
+## Completed: P7 Release And Demo Hardening
+
+Date: 2026-05-18
+
+Status: `P7 release demo hardening verified and pushed`
+
+Changes:
+- Added deterministic Knowledge/RAG demo seed script that uses public Agent Knowledge APIs, deterministic seed names, `p7-seed-fixture:*` idempotency keys, `seed-fixture://...` document URIs, and an agent grounding support document for the backend `min_hits=2` threshold.
+- Added service-level Knowledge/RAG migration/restore smoke that runs Alembic, checks required tables, and verifies retrieval-hit and citation selector continuity after engine reopen.
+- Added mocked release browser smoke covering Agent Studio seed projection, Workspace local grounding indicator, Run Detail retrieval/citation/prompt-manifest evidence, Eval grounding metrics, and Observability grounding quality.
+- Wired the P7 browser smoke into `npm run e2e:smoke:release`.
+- Updated deployment, troubleshooting, and web-research runbooks to distinguish deterministic local fixture evidence from optional credential-gated live provider validation.
+
+Verification:
+```text
+python3 -m py_compile scripts/seed-knowledge-demo.py scripts/smoke-test-knowledge-migration-restore.py -> passed
+python3 scripts/seed-knowledge-demo.py --print-plan -> passed
+HARNESS_API_BASE_URL=http://127.0.0.1:18007 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent -> passed against temporary local API server
+HARNESS_API_BASE_URL=http://127.0.0.1:18008 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent -> passed on non-default local API with agent_grounding-evidence_document_id
+POST /api/agents/default/runs/chat/stream on http://127.0.0.1:18008 with the demo question -> returned knowledge_grounding: Local knowledge grounded the answer.
+python3 scripts/smoke-test-knowledge-migration-restore.py -> passed
+cd services/api-server && uv run ruff check ../../scripts/seed-knowledge-demo.py ../../scripts/smoke-test-knowledge-migration-restore.py app tests -> passed
+cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_agents.py tests/test_evals.py tests/test_eval_regression.py tests/test_observability.py -q -> passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm run build -> passed
+cd apps/agent-console && npm test -> passed
+cd apps/agent-console && npm run e2e:smoke:release -> passed
+docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+git push -u origin p7-release-demo-hardening -> pushed through c404603
+```
 
 ## Completed: P6 Groundedness Eval And Observability
 

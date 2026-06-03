@@ -41,6 +41,7 @@ Read these first:
 15. [[session-2026-05-17-agent-knowledge-p3-web-research]] if the next work touches real web research, Tavily, source-bound web citations, URL policy, fake-provider hardening, or web research Run Detail evidence.
 16. [[session-2026-05-17-agent-knowledge-p4-context-assembly]] and `.omx/plans/ralplan-agent-knowledge-harness-p4-memory-context-router-v2.md` if the next work touches backend context assembly, long-term memory records, context manifests, token budgeting, pinned context, or model-call context binding.
 17. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
+18. [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] if the next work touches deterministic demo seeds, Knowledge/RAG migration/restore smoke, release browser smoke, or local fixture versus live provider evidence boundaries.
 
 ## Current State
 
@@ -59,6 +60,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Agent Knowledge Harness P4 memory and context router V2 is completed and pushed through `6c4a95d`: backend context assembly manifests, long-term memory records, SQL-level scope filtering, token estimator/drop ordering, pinned-message tagging, compressed-summary schema/model/branch/path checks, model-call context binding, shadow/authoritative feature flag behavior, memory injection flags, and Run Detail context manifest projection are implemented and verified.
 - Agent Knowledge Harness P5 MCP/Skills productization is completed and pushed through `f05816e`: runtime tool authority is now `CapabilityRegistry -> AgentCapabilityAttachment -> immutable CapabilityVersion -> ToolRunner metadata snapshot`, legacy `Agent.tools_json` is only deterministic migration/seed backfill input with no runtime lazy backfill, ToolRunner fails closed without Agent attachment scope, executing test invocation is agent-scoped, admin validation is non-executing, approval decisions resume or fail runs correctly, console tool cards refresh after approval, and Run/ModelCall/ToolCall/Eval artifacts carry capability snapshot refs/hashes.
 - Agent Knowledge Harness P6 groundedness Eval and Observability is completed and pushed through `83c8eee`: Eval now owns `GroundingTraceV1`, forbidden evidence leak judgment, grounding metrics, regression deltas/gates, and failure reasons; Observability has a read-only grounding-quality projection; Run Detail saves objective evidence selectors without inferring required/forbidden snippets or unsupported markers; Eval API responses scrub forbidden snippet payloads.
+- Agent Knowledge Harness P7 release and demo hardening is completed and pushed to `origin/p7-release-demo-hardening` through `c404603`: deterministic Knowledge/RAG demo seed uses public APIs only and includes an agent grounding support document for the backend `min_hits=2` threshold; service-level migration/restore smoke verifies Knowledge/RAG tables and selector continuity; release browser smoke covers Agent Studio, Workspace, Run Detail, Eval, and Observability demo projections; runbooks now distinguish local fixture evidence from optional credential-gated live provider validation.
 - Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
 - P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
 
@@ -71,6 +73,7 @@ Evidence from `docs/task-progress.md`:
 - P3 real policy-gated web research is recorded as completed with `96 passed` backend target tests, ruff, Alembic clean upgrade, frontend lint/build/targeted tests, and a live Tavily smoke.
 - P4 memory/context router V2 is recorded as completed with backend context assembly tests, model-call binding tests, ruff, frontend build/lint/test evidence, docs validation, and final pushed commits through `6c4a95d`.
 - P5 MCP/Skills productization is recorded as completed with capability registry storage, attachment-only runtime authority, approval resume fixes, console feedback, targeted backend/frontend tests, ruff, lint, and final pushed commits through `f05816e`.
+- P7 release/demo hardening is recorded as completed and pushed with seed-plan py_compile/print-plan checks, non-default local API seed/readback/idempotency, chat-stream demo grounding proof, service-level migration/restore smoke, backend ruff/targeted tests, frontend lint/build/unit tests, release browser smoke, compose config, docs validation, whitespace checks, and branch push evidence through `c404603`.
 
 Evidence from the current codebase:
 
@@ -98,6 +101,54 @@ The gap this wiki closes is discoverability. A new session can now start from th
 The accepted next-phase goal was a privately deployable enterprise internal-test platform that proves a complete Harness chain end to end. The target is not Kubernetes, full multi-tenant RBAC, polished marketing, or SaaS commercialization. See [[deep-interview-private-harness-chain]] for the binding chain.
 
 ## Most Recent Completed Work
+
+P7 pushed branch work:
+
+```text
+scripts/seed-knowledge-demo.py
+scripts/smoke-test-knowledge-migration-restore.py
+apps/agent-console/e2e/eval-page.smoke.spec.ts
+apps/agent-console/e2e/knowledge-demo.smoke.spec.ts
+apps/agent-console/package.json
+docs/runbooks/deployment.md
+docs/runbooks/troubleshooting.md
+docs/runbooks/web-research.md
+docs/ai/task-progress.yaml
+docs/task-progress.md
+omx_wiki/agent-knowledge-harness-roadmap.md
+omx_wiki/index.md
+omx_wiki/project-handoff-current-state.md
+omx_wiki/session-2026-05-18-agent-knowledge-p7-release-demo-hardening.md
+```
+
+P7 verification summary:
+
+```text
+HARNESS_API_BASE_URL=http://127.0.0.1:18007 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent -> passed against temporary local API server
+HARNESS_API_BASE_URL=http://127.0.0.1:18008 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent -> passed on non-default local API, with agent_grounding-evidence_document_id c56df7d0-d084-4014-9119-12f8100e5dc6
+POST /api/agents/default/runs/chat/stream on http://127.0.0.1:18008 with the demo question -> returned knowledge_grounding: Local knowledge grounded the answer.
+python3 scripts/smoke-test-knowledge-migration-restore.py -> passed
+cd apps/agent-console && npm run e2e:smoke:release -> passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+```
+
+P7 commits pushed to `origin/p7-release-demo-hardening`:
+
+```text
+c404603 Record P7 release demo handoff
+40026b3 Add P7 release demo review report
+f8ba7cf Document P7 release demo runbooks
+a561d4e Add P7 browser release smoke
+7a15f1e Guard P7 service smoke scripts
+d6478b7 Add P7 Knowledge demo seed
+```
+
+P7 pull request URL:
+
+```text
+https://github.com/luohao0308/harness/pull/new/p7-release-demo-hardening
+```
 
 Recent P5 commits pushed on `main`:
 
@@ -187,17 +238,19 @@ Captured in wiki:
 - [[session-2026-05-13-workspace-browser-smoke]]
 - [[session-2026-05-17-agent-knowledge-p3-web-research]]
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]]
+- [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]]
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]]
 - [[session-2026-05-18-agent-knowledge-p6-groundedness-eval-observability]]
 
 ## Next Known Work
 
-The latest completed Agent Knowledge Harness lane is **P6 Groundedness Eval and Observability**. The next planned lane is **P7 Release And Demo Hardening**.
+The latest completed Agent Knowledge Harness lane is **P7 Release And Demo Hardening**, pushed to `origin/p7-release-demo-hardening` through `c404603`.
 
 Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
 - keep groundedness/citation/unsupported-claim Eval and Observability surfaces regression-tested;
 - keep Docker Compose release and demo validation current.
+- keep deterministic local P7 seed separate from optional credential-gated Tavily/live provider validation.
 
 Useful follow-up rules:
 

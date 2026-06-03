@@ -92,3 +92,10 @@
 ## [2026-05-17T19:09:16.022Z] query
 - **Pages:** none
 - **Summary:** Query "P6 Eval Observability P7 roadmap next task progress" → 0 results (of 0 total)
+
+## [2026-05-18] session-log
+- Refreshed [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]], [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], and [[index]] after pushing P7 to `origin/p7-release-demo-hardening` through `c404603`. Captured atomic commit split, PR URL, non-default local API seed/readback/idempotency, the added grounding support document for backend `min_hits=2`, chat-stream proof returning `Local knowledge grounded the answer.`, release smoke validation, and remaining evidence boundaries.
+## [2026-05-18T02:57:13.230Z] lint
+- **Pages:** none
+- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
+

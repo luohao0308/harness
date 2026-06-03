@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>P7 Release Demo Hardening Code Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        color: #172033;
+        background: #f6f8fb;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+      }
+      main {
+        max-width: 1040px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #d9e1ec;
+        border-radius: 8px;
+        box-shadow: 0 12px 36px rgba(24, 39, 75, 0.08);
+        overflow: hidden;
+      }
+      header {
+        padding: 28px 32px;
+        border-bottom: 1px solid #d9e1ec;
+        background: #0f766e;
+        color: #ffffff;
+      }
+      h1,
+      h2 {
+        margin: 0;
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 26px;
+      }
+      h2 {
+        margin-bottom: 12px;
+        font-size: 18px;
+        color: #172033;
+      }
+      section {
+        padding: 24px 32px;
+        border-bottom: 1px solid #e6ebf2;
+      }
+      section:last-child {
+        border-bottom: 0;
+      }
+      p,
+      li {
+        font-size: 14px;
+        line-height: 1.65;
+      }
+      .meta {
+        margin-top: 10px;
+        color: #d5f5ef;
+        font-size: 13px;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        margin-top: 16px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: #dcfce7;
+        color: #14532d;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        border: 1px solid #d9e1ec;
+        border-radius: 8px;
+        padding: 14px;
+        background: #fbfcfe;
+      }
+      .card strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 14px;
+      }
+      code {
+        padding: 2px 5px;
+        border-radius: 4px;
+        background: #eef2f7;
+        color: #1f2937;
+        font-size: 12px;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 12px;
+        border-radius: 6px;
+        background: #111827;
+        color: #f9fafb;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      ol,
+      ul {
+        padding-left: 20px;
+      }
+      .finding {
+        margin: 10px 0;
+        padding: 12px;
+        border-left: 4px solid #0f766e;
+        background: #f0fdfa;
+        border-radius: 6px;
+      }
+      .muted {
+        color: #5f6f86;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>P7 Release Demo Hardening Code Review</h1>
+        <div class="meta">生成日期：2026-05-18 | 分支：p7-release-demo-hardening</div>
+        <div class="status">结论：已修复审查问题，验证通过</div>
+      </header>
+
+      <section>
+        <h2>审查结论</h2>
+        <p>
+          本次审查覆盖 P7 新增的 Knowledge demo seed、迁移/恢复 smoke、前端 release
+          smoke、runbook 与进度文档。初始 code-review 发现 2 个高优先级问题和 2 个中优先级问题；
+          已全部修复并复跑验证。
+        </p>
+        <div class="finding">
+          <strong>修复 1：迁移/恢复 smoke 外部数据库防护</strong>
+          <p>
+            默认路径现在只使用临时 SQLite；裸 <code>DATABASE_URL</code> 被忽略。
+            若使用 <code>HARNESS_P7_DATABASE_URL</code> 或 <code>--database-url</code> 指向服务库，
+            必须显式传入 <code>--allow-service-db-mutation</code>。
+          </p>
+        </div>
+        <div class="finding">
+          <strong>修复 2：demo seed 幂等副作用</strong>
+          <p>
+            seed 现在先读取现有知识源并校验确定性 source/document/chunk contract；
+            已存在且有效时不再重复 POST，避免重复 ingestion 任务和事件。
+          </p>
+        </div>
+        <div class="finding">
+          <strong>修复 3：release smoke 自启动</strong>
+          <p>
+            <code>npm run e2e:smoke:release</code> 现在显式启动 Vite、等待 5177 可用、
+            再运行 Playwright，并在退出时清理本地服务。
+          </p>
+        </div>
+        <div class="finding">
+          <strong>修复 4：前端 fixture 合约</strong>
+          <p>
+            P7 org-scoped source fixture 现在包含与真实 seed/readback 一致的 indexed document、
+            deterministic URI 和非零 chunk count，并在 Agent Studio smoke 中通过交互验证。
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>新增功能</h2>
+        <div class="grid">
+          <div class="card">
+            <strong>公共 API demo seed</strong>
+            <p>
+              <code>scripts/seed-knowledge-demo.py</code> 创建 agent 与 org 两个确定性 Knowledge
+              source，并补齐 agent 侧 grounding support document，验证 readback、document URI、
+              idempotency key 和 chunk count。
+            </p>
+          </div>
+          <div class="card">
+            <strong>迁移/恢复 smoke</strong>
+            <p>
+              <code>scripts/smoke-test-knowledge-migration-restore.py</code> 默认在临时 SQLite
+              上执行 Alembic head，验证 Knowledge/RAG 表和 retrieval/citation selector 连续性。
+            </p>
+          </div>
+          <div class="card">
+            <strong>前端 release smoke</strong>
+            <p>
+              <code>knowledge-demo.smoke.spec.ts</code> 用 mock route 覆盖 Agent Studio、Workspace、
+              Run Detail、Eval 和 Observability 的 P7 demo 投影。
+            </p>
+          </div>
+          <div class="card">
+            <strong>runbook 与进度记录</strong>
+            <p>
+              Deployment、Troubleshooting、Web Research runbook 与任务进度记录补充了 P7 release
+              demo hardening 的执行路径和证据边界。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>功能作用</h2>
+        <p>
+          P7 的作用是为私有 handoff 提供可重复、低凭证依赖的 Knowledge/RAG demo 信心：
+          seed 数据只走公共 API，迁移 smoke 只证明服务级 schema 与 selector continuity，
+          浏览器 smoke 只证明前端投影。它不引入新的 Knowledge、RAG、Eval 或 Observability
+          产品语义，也不把 fixture 证据包装成 provider-backed web verification。
+        </p>
+      </section>
+
+      <section>
+        <h2>前端手动测试步骤</h2>
+        <p class="muted">
+          前置条件：后端或发布负责人已完成 P7 demo seed，前端测试者只验证浏览器可见行为。
+        </p>
+        <ol>
+          <li>
+            打开 Agent Console，确认浏览器可访问测试环境提供的 console URL。
+          </li>
+          <li>
+            打开 <code>/agents</code>，确认 <code>P7 Demo Agent Runbook</code> 与
+            <code>P7 Demo Org Handoff</code> 均显示为 healthy，并能看到 indexed 文档版本。
+          </li>
+          <li>
+            打开 <code>/agents/default/workspace</code>，提交 demo question，确认页面显示
+            <code>Local knowledge grounded the answer.</code> 并提供运行详情入口。
+          </li>
+          <li>
+            打开 Run Detail，确认 Knowledge evidence 区域显示 local knowledge retrieval hit、citation
+            和 prompt manifest。
+          </li>
+          <li>打开 <code>/evals</code> 与 <code>/observability</code>，确认 grounding 指标和质量投影可见。</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>验证证据</h2>
+        <pre>python3 -m py_compile scripts/seed-knowledge-demo.py scripts/smoke-test-knowledge-migration-restore.py
+cd services/api-server &amp;&amp; uv run pytest tests/test_p7_scripts.py -q
+cd services/api-server &amp;&amp; uv run ruff check ../../scripts/seed-knowledge-demo.py ../../scripts/smoke-test-knowledge-migration-restore.py tests/test_p7_scripts.py
+DATABASE_URL=postgresql://example.invalid/service python3 scripts/smoke-test-knowledge-migration-restore.py
+# expected refusal without --allow-service-db-mutation:
+HARNESS_P7_DATABASE_URL=sqlite+pysqlite:////tmp/p7-should-not-touch.sqlite python3 scripts/smoke-test-knowledge-migration-restore.py
+python3 scripts/seed-knowledge-demo.py --print-plan
+HARNESS_API_BASE_URL=http://127.0.0.1:18007 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent
+cd apps/agent-console &amp;&amp; npm run lint
+cd apps/agent-console &amp;&amp; npm run build
+cd apps/agent-console &amp;&amp; npm test
+cd apps/agent-console &amp;&amp; npm run e2e:smoke:release
+python3 scripts/validate-docs.py
+git diff --check</pre>
+        <p class="muted">
+          结果摘要：Python 回归 2 passed；frontend unit 147 passed；release smoke 36 passed；
+          docs validation passed；diff whitespace check passed。临时 API seed readback/idempotency 通过，
+          ingestion task 数为 2，证明第二轮未重复 POST；服务库 mutation guard 的负向验证按预期拒绝执行。
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

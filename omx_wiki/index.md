@@ -25,7 +25,8 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-17-agent-knowledge-p4-context-assembly]] - P4 memory/context router V2 record through `6c4a95d`: backend authoritative context assembly, scoped memory, token-budget pruning, pinned-message tagging, context manifests, Run Detail evidence, validation, and push evidence.
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]] - P5 MCP/Skills productization record through `f05816e`: capability registry, Agent attachments, immutable capability versions, fail-closed ToolRunner, approval resume, console feedback, tests, report, and push evidence.
 - [[session-2026-05-18-agent-knowledge-p6-groundedness-eval-observability]] - P6 groundedness Eval and Observability record through `83c8eee`: Eval-owned grounding traces, forbidden leak boundaries, Observability projection, Run Detail selector saves, tests, report, and push evidence.
-- [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P6 Eval/Observability.
+- [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] - P7 release/demo hardening record through `c404603` on `origin/p7-release-demo-hardening`: deterministic Knowledge seed, grounding support document, service-level migration/restore smoke, release browser smoke, runbooks, validation evidence, and push evidence.
+- [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories
 
@@ -72,3 +73,6 @@ Persistent project knowledge for the AI Harness Platform.
 - `task-progress`
 - `observability`
 - `forbidden-leak`
+- `release`
+- `demo`
+- `migration`

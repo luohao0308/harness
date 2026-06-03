@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-17T18:20:00Z
+last_updated_at: 2026-05-18T05:20:00Z
 last_updated_by: codex
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -116,6 +116,40 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: p7-release-demo-hardening
+    date: 2026-05-18
+    status: release_demo_hardening_verified_and_pushed
+    demo: Deterministic Knowledge/RAG demo seed, service-level migration/restore smoke, and release browser smoke keep private handoff evidence current without widening P7 beyond release hardening.
+    verification_result: passed
+    verification_commands:
+      - python3 -m py_compile scripts/seed-knowledge-demo.py scripts/smoke-test-knowledge-migration-restore.py
+      - python3 scripts/seed-knowledge-demo.py --print-plan
+      - HARNESS_API_BASE_URL=http://127.0.0.1:18007 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent
+      - HARNESS_API_BASE_URL=http://127.0.0.1:18008 python3 scripts/seed-knowledge-demo.py --verify-readback --check-idempotent
+      - POST /api/agents/default/runs/chat/stream on http://127.0.0.1:18008 with the demo question
+      - python3 scripts/smoke-test-knowledge-migration-restore.py
+      - cd services/api-server && uv run ruff check ../../scripts/seed-knowledge-demo.py ../../scripts/smoke-test-knowledge-migration-restore.py app tests
+      - cd services/api-server && uv run pytest tests/test_knowledge_rag.py tests/test_agents.py tests/test_evals.py tests/test_eval_regression.py tests/test_observability.py -q
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm run build
+      - cd apps/agent-console && npm test
+      - cd apps/agent-console && npm run e2e:smoke:release
+      - docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config
+      - python3 scripts/validate-docs.py
+      - git diff --check
+      - git push -u origin p7-release-demo-hardening
+    acceptance_notes:
+      - Demo seed script uses public Knowledge APIs only and marks local fixture origin through deterministic names, idempotency keys, and seed-fixture URIs.
+      - Demo seed includes an agent grounding support document so the demo question satisfies the backend min_hits=2 local-grounding threshold.
+      - Demo seed readback/idempotency was verified against a temporary local API server and a non-default local API server, and avoids direct database writes and metadata_json writes.
+      - The non-default local chat stream returned "Local knowledge grounded the answer." for the demo question.
+      - Service-level migration/restore smoke verifies Knowledge/RAG tables and selector continuity for retrieval hits and citations after engine reopen.
+      - Browser release smoke adds a mocked P7 Knowledge demo projection across Agent Studio, Workspace, Run Detail, Eval, and Observability.
+      - Existing Eval browser smoke fixtures were updated for P6 regression-delta fields so the release gate remains compatible with groundedness metrics.
+      - P7 fixtures preserve the P6 boundary: no raw forbidden evidence snippet payloads are reintroduced into fixture, report, runbook, or UI smoke surfaces.
+      - Runbooks distinguish deterministic local fixture seed from optional credential-gated Tavily/live provider validation.
+      - Branch p7-release-demo-hardening was pushed to origin through c404603.
+
   - id: p6-groundedness-eval-observability
     date: 2026-05-18
     status: eval_owned_grounding_quality_verified
