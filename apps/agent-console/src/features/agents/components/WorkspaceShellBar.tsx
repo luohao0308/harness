@@ -56,7 +56,7 @@ export function WorkspaceShellBar({
     ? text("运行详情", "Run Detail")
     : text("运行未创建", "No run yet");
   const toolsChipLabel = text(
-    `工具/MCP: ${tools.length} 个可用`,
+    `工具/MCP（模型上下文协议）: ${tools.length} 个可用`,
     `Tools/MCP: ${tools.length} available`,
   );
   const toolsPreviewLabel = formatToolsPreview(tools, text);
@@ -81,7 +81,7 @@ export function WorkspaceShellBar({
               <span className="truncate">{agentName}</span>
             </span>
             <div className="hidden text-[11px] leading-4 text-slate-500 sm:block">
-              {text("模型 + Harness = 智能体", "Model + Harness = Agent")}
+              {text("模型加运行平台组成智能体", "Model + Harness = Agent")}
               <span className="mx-1 text-slate-300">·</span>
               {text("工作台", "Workspace")} · {agentId}
             </div>

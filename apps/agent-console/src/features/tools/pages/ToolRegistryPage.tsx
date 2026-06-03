@@ -7,8 +7,9 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
-import { booleanLabel, riskLabel } from "../../../lib/labels";
+import { booleanLabel, riskLabel, toolSourceLabel } from "../../../lib/labels";
 import { getToolRegistry } from "../../tasks/api";
 
 export function ToolRegistryPage() {
@@ -30,7 +31,7 @@ export function ToolRegistryPage() {
       <div className="space-y-4 p-4">
         <section className="grid grid-cols-4 gap-3">
           <Metric label={text("工具总数", "Tools")} value={tools.length} />
-          <Metric label="MCP" value={mcpCount} />
+          <Metric label={<TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>} value={mcpCount} />
           <Metric label={text("需要沙箱", "Sandboxed")} value={sandboxCount} />
           <Metric label={text("分类", "Categories")} value={registryQuery.data?.categories.length ?? 0} />
         </section>
@@ -39,8 +40,8 @@ export function ToolRegistryPage() {
           <HarnessTile
             icon={<PlugZap className="h-4 w-4" />}
             title={text("工具注册表", "Tool Registry")}
-            status={text("API 已接入", "API-backed")}
-            description={text("也就是 Tool Registry；工具元数据、来源、Schema、风险和角色权限来自后端注册表。", "Metadata, source, schema, risk, and role access come from the backend registry.")}
+            status={text("接口已接入", "API-backed")}
+            description={text("工具元数据、来源、结构说明、风险和角色权限来自后端注册表。", "Metadata, source, schema, risk, and role access come from the backend registry.")}
           />
           <HarnessTile
             icon={<ShieldAlert className="h-4 w-4" />}
@@ -52,13 +53,13 @@ export function ToolRegistryPage() {
             icon={<ShieldCheck className="h-4 w-4" />}
             title={text("沙箱", "Sandbox")}
             status={`${sandboxCount} ${text("需要隔离", "isolated")}`}
-            description={text("Shell、测试、写文件、Git 和网络动作通过 Docker 沙箱执行。", "Shell, tests, writes, Git, and network actions run through Docker Sandbox.")}
+            description={text("命令行、测试、写文件、版本控制和网络动作通过容器沙箱执行。", "Shell, tests, writes, Git, and network actions run through Docker Sandbox.")}
           />
           <HarnessTile
             icon={<GitBranch className="h-4 w-4" />}
-            title="MCP"
+            title={<TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>}
             status={`${mcpCount} ${text("已注册", "registered")}`}
-            description={text("MCP 形态工具复用同一工具执行器（ToolRunner）、策略（Policy）、工具调用审计（ToolCall）和事件路径（Event path）。", "MCP-shaped tools reuse the same ToolRunner, Policy, ToolCall, and Event path.")}
+            description={text("外部协议形态工具复用同一工具执行器、策略、工具调用审计和事件路径。", "MCP-shaped tools reuse the same ToolRunner, Policy, ToolCall, and Event path.")}
           />
           <HarnessTile
             icon={<Workflow className="h-4 w-4" />}
@@ -78,7 +79,7 @@ export function ToolRegistryPage() {
               </div>
               <div className="mt-1 text-xs text-slate-500">
                 {text(
-                  "内置工具和 MCP 形态工具共用权限、策略、工具调用审计（ToolCall）和 Trace 链路。",
+                  "内置工具和外部协议形态工具共用权限、策略、工具调用审计和跨服务追踪链路。",
                   "Built-in and MCP-shaped tools share permissions, policy, ToolCall audit, and trace.",
                 )}
               </div>
@@ -90,7 +91,7 @@ export function ToolRegistryPage() {
                   variant={sourceFilter === source ? "primary" : "ghost"}
                   onClick={() => setSourceFilter(source)}
                 >
-                  {source}
+                  {toolSourceLabel(source)}
                 </Button>
               ))}
             </div>
@@ -103,8 +104,12 @@ export function ToolRegistryPage() {
                 <Th>{text("风险", "Risk")}</Th>
                 <Th>{text("权限", "Permissions")}</Th>
                 <Th>{text("审计", "Audit")}</Th>
-                <Th>{text("MCP", "MCP")}</Th>
-                <Th>{text("结构 Schema", "Schema")}</Th>
+                <Th>
+                  <TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>
+                </Th>
+                <Th>
+                  <TermHint description="结构说明，描述工具入参格式">Schema</TermHint>
+                </Th>
               </tr>
             </thead>
             <tbody>
@@ -117,7 +122,7 @@ export function ToolRegistryPage() {
                     </div>
                   </Td>
                   <Td>
-                    <Badge tone={tool.source === "mcp" ? "info" : "neutral"}>{tool.source}</Badge>
+                    <Badge tone={tool.source === "mcp" ? "info" : "neutral"}>{toolSourceLabel(tool.source)}</Badge>
                     <div className="mt-1 text-[11px] text-slate-500">{tool.category}</div>
                   </Td>
                   <Td>
@@ -179,7 +184,7 @@ function HarnessTile({
   disabled = false,
 }: {
   icon: React.ReactNode;
-  title: string;
+  title: React.ReactNode;
   status: string;
   description: string;
   disabled?: boolean;
@@ -198,7 +203,7 @@ function HarnessTile({
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value }: { label: React.ReactNode; value: number }) {
   return (
     <Card className="p-4">
       <div className="text-[11px] text-slate-500">{label}</div>

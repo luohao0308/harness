@@ -95,7 +95,15 @@
 
 ## [2026-05-18] session-log
 - Refreshed [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]], [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], and [[index]] after pushing P7 to `origin/p7-release-demo-hardening` through `c404603`. Captured atomic commit split, PR URL, non-default local API seed/readback/idempotency, the added grounding support document for backend `min_hits=2`, chat-stream proof returning `Local knowledge grounded the answer.`, release smoke validation, and remaining evidence boundaries.
+- Refreshed [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]], [[agent-knowledge-harness-roadmap]], [[project-handoff-current-state]], [[index]], and task progress after pushing the console Chinese-first selector/terminology follow-up through `a5d046b`. Captured shared `MenuSelect`, `TermHint`, keyboard selector coverage, frontend lint/test/build evidence, non-default frontend service check on `18082`, and the boundary that this is UI/accessibility polish rather than a Knowledge/RAG semantic change.
 ## [2026-05-18T02:57:13.230Z] lint
+- **Pages:** none
+- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
+## [2026-05-18T12:18:08.104Z] lint
+- **Pages:** none
+- **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
+
+## [2026-05-18T12:19:46.268Z] lint
 - **Pages:** none
 - **Summary:** Lint: 0 issues (0 orphan, 0 stale, 0 broken, 0 contradictions)
 

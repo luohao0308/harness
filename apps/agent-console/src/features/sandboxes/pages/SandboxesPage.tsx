@@ -6,6 +6,7 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
@@ -47,7 +48,7 @@ export function SandboxesPage() {
               <Gauge className="h-4 w-4" /> {text("资源配额用量", "Resource Quota Usage")}
             </div>
             <span className="text-xs text-slate-500">
-              {text("按当前组织聚合沙箱 CPU、内存、网络和 WarmPool 复用情况", "Aggregated sandbox CPU, memory, network, and WarmPool reuse")}
+              {text("按当前组织聚合沙箱算力、内存、网络和预热池复用情况", "Aggregated sandbox CPU, memory, network, and WarmPool reuse")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-4 gap-3 p-3 text-xs">
@@ -64,7 +65,12 @@ export function SandboxesPage() {
               value={`${quota.data?.running_memory_limit_mb_total ?? "..."} MB`}
             />
             <Metric
-              label={text("运行 CPU", "Running CPU")}
+              label={
+                <>
+                  {text("运行 ", "Running ")}
+                  <TermHint description="中央处理器">CPU</TermHint>
+                </>
+              }
               value={formatCpu(quota.data?.running_cpu_limit_total)}
             />
             <Metric
@@ -72,7 +78,12 @@ export function SandboxesPage() {
               value={`${quota.data?.configured_memory_mb ?? "..."} MB`}
             />
             <Metric
-              label={text("策略 CPU", "Policy CPU")}
+              label={
+                <>
+                  {text("策略 ", "Policy ")}
+                  <TermHint description="中央处理器">CPU</TermHint>
+                </>
+              }
               value={quota.data?.configured_cpus ?? "..."}
             />
             <Metric
@@ -89,20 +100,20 @@ export function SandboxesPage() {
           <InfraTile
             icon={<ShieldCheck className="h-4 w-4" />}
             title={text("多租户隔离", "Tenant Isolation")}
-            status={quota.data?.organization_id ? "API 已接入" : "加载中"}
-            description={text("沙箱、运行、评测与观测查询按 organization_id 聚合和隔离。", "Sandbox, Run, Eval, and observability queries are scoped by organization_id.")}
+            status={quota.data?.organization_id ? "接口已接入" : "加载中"}
+            description={text("沙箱、运行、评测与观测查询按组织标识聚合和隔离。", "Sandbox, Run, Eval, and observability queries are scoped by organization_id.")}
           />
           <InfraTile
             icon={<Box className="h-4 w-4" />}
-            title="WarmPool"
+            title={<TermHint description="沙箱预热池，减少冷启动等待">WarmPool</TermHint>}
             status={`${warmPool.data?.min_size ?? "..."} / ${warmPool.data?.max_size ?? "..."}`}
-            description={text("默认 min_ready=2、max_ready=5，目标启动耗时小于 50ms。", "Default min_ready=2 and max_ready=5, with startup target below 50ms.")}
+            description={text("默认预热下限 2、上限 5，目标启动耗时小于 50ms。", "Default min_ready=2 and max_ready=5, with startup target below 50ms.")}
           />
           <InfraTile
             icon={<Globe2 className="h-4 w-4" />}
-            title="API 网关"
+            title={<TermHint description="应用程序接口">API 网关</TermHint>}
             status={text("未启用", "Disabled")}
-            description={text("对外发布智能体能力的入口保留禁用态，等待 API 支撑。", "External Agent publishing entry remains disabled until API-backed.")}
+            description={text("对外发布智能体能力的入口保留禁用态，等待接口支撑。", "External Agent publishing entry remains disabled until API-backed.")}
             disabled
           />
           <InfraTile
@@ -116,9 +127,10 @@ export function SandboxesPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Box className="h-4 w-4" /> WarmPool
+              <Box className="h-4 w-4" />
+              <TermHint description="沙箱预热池，减少冷启动等待">WarmPool</TermHint>
             </div>
-            <span className="text-xs text-slate-500">{text("Docker 容器沙箱预热池", "Docker container sandbox warm pool")}</span>
+            <span className="text-xs text-slate-500">{text("容器沙箱预热池", "Docker container sandbox warm pool")}</span>
           </CardHeader>
           <div className="grid grid-cols-4 gap-3 p-3 text-xs">
             <Metric label={text("空闲", "Idle")} value={String(warmPool.data?.idle ?? "...")} />
@@ -134,7 +146,9 @@ export function SandboxesPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Gauge className="h-4 w-4" /> WarmPool 基准测试
+              <Gauge className="h-4 w-4" />
+              <TermHint description="沙箱预热池，减少冷启动等待">WarmPool</TermHint>
+              基准测试
             </div>
             <div className="flex items-center gap-2">
               {latestBenchmark && (
@@ -164,7 +178,7 @@ export function SandboxesPage() {
               {text("配额历史审计", "Quota History Audit")}
             </div>
             <span className="text-xs text-slate-500">
-              {text("最近 100 条沙箱资源规格、生命周期和 WarmPool 复用记录", "Latest 100 sandbox resource, lifecycle, and WarmPool reuse records")}
+              {text("最近 100 条沙箱资源规格、生命周期和预热池复用记录", "Latest 100 sandbox resource, lifecycle, and WarmPool reuse records")}
             </span>
           </CardHeader>
           <Table>
@@ -172,10 +186,14 @@ export function SandboxesPage() {
               <tr>
                 <Th>{text("沙箱", "Sandbox")}</Th>
                 <Th>{text("状态", "Status")}</Th>
-                <Th>{text("CPU", "CPU")}</Th>
+                <Th>
+                  <TermHint description="中央处理器">CPU</TermHint>
+                </Th>
                 <Th>{text("内存", "Memory")}</Th>
                 <Th>{text("网络", "Network")}</Th>
-                <Th>{text("WarmPool 预热池", "WarmPool")}</Th>
+                <Th>
+                  <TermHint description="沙箱预热池，减少冷启动等待">WarmPool</TermHint>
+                </Th>
                 <Th>{text("生命周期", "Lifetime")}</Th>
                 <Th>{text("创建时间", "Created")}</Th>
               </tr>
@@ -216,7 +234,7 @@ function InfraTile({
   disabled = false,
 }: {
   icon: React.ReactNode;
-  title: string;
+  title: React.ReactNode;
   status: string;
   description: string;
   disabled?: boolean;
@@ -257,7 +275,7 @@ function hitRate(hit?: number, miss?: number) {
   return `${Math.round((hit / total) * 100)}%`;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: React.ReactNode; value: string }) {
   return (
     <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
       <div className="text-slate-500">{label}</div>

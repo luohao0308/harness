@@ -7,6 +7,7 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import { getObservabilitySummary, listRuns, type Task } from "../../tasks/api";
@@ -67,7 +68,9 @@ export function RunHistoryPage() {
                 <Th>运行</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("模型", "Model")}</Th>
-                <Th>{text("Harness", "Harness")}</Th>
+                <Th>
+                  <TermHint description="智能体运行平台">Harness</TermHint>
+                </Th>
                 <Th>{text("更新时间", "Updated")}</Th>
                 <Th />
               </tr>

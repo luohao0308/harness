@@ -94,7 +94,7 @@ describe("WorkspaceShellBar", () => {
       "/agents",
     );
     expect(screen.getByText("Default Agent")).toBeInTheDocument();
-    expect(screen.getByText(/模型 \+ Harness = 智能体/)).toBeInTheDocument();
+    expect(screen.getByText(/模型加运行平台组成智能体/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
         name: "Current model: deepseek-v4-flash",
@@ -102,7 +102,7 @@ describe("WorkspaceShellBar", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "工具/MCP: 2 个可用",
+        name: "工具/MCP（模型上下文协议）: 2 个可用",
       }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Model:/ })).not.toBeInTheDocument();
@@ -132,7 +132,7 @@ describe("WorkspaceShellBar", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "工具/MCP: 2 个可用",
+        name: "工具/MCP（模型上下文协议）: 2 个可用",
       }),
     );
     expect(screen.getByRole("dialog", { name: "工具" })).toBeInTheDocument();

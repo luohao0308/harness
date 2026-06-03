@@ -1,21 +1,23 @@
 import { Check } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import type { EvalRun, RegressionDelta } from "../../tasks/api";
 
 const metricLabels: Record<string, string> = {
   task_success_rate: "任务成功率",
-  grounding_pass_rate: "Grounding 通过率",
+  grounding_pass_rate: "依据校验通过率",
   citation_coverage_rate: "引用覆盖率",
-  unsupported_marker_rate: "Unsupported 标记率",
-  fallback_mismatch_rate: "Fallback 不匹配率",
-  forbidden_evidence_leak_rate: "Forbidden 泄漏率",
-  required_evidence_miss_rate: "Required evidence 缺失率",
-  grounding_failure_total: "Grounding 失败总数",
+  unsupported_marker_rate: "不支持标记率",
+  fallback_mismatch_rate: "后备路径不匹配率",
+  forbidden_evidence_leak_rate: "禁止证据泄漏率",
+  required_evidence_miss_rate: "必需证据缺失率",
+  grounding_failure_total: "依据校验失败总数",
   tool_selection_accuracy: "工具选择准确率",
   policy_violation_rate: "策略违规率",
   avg_latency_ms: "平均延迟",
@@ -78,7 +80,7 @@ export function EvalRunResults({
               isPercentage
             />
             <DeltaMetric
-              label="Grounding"
+              label={<TermHint description="依据校验通过率">Grounding</TermHint>}
               delta={regressionDelta.grounding_pass_rate_delta}
               isPercentage
             />
@@ -88,13 +90,13 @@ export function EvalRunResults({
               isPercentage
             />
             <DeltaMetric
-              label="Forbidden leak"
+              label={<TermHint description="禁止证据泄漏率">Forbidden leak</TermHint>}
               delta={regressionDelta.forbidden_evidence_leak_rate_delta}
               isPercentage
               invertColor
             />
             <DeltaMetric
-              label="Unsupported"
+              label={<TermHint description="不支持标记率">Unsupported</TermHint>}
               delta={regressionDelta.unsupported_marker_rate_delta}
               isPercentage
               invertColor
@@ -146,7 +148,7 @@ export function EvalRunResults({
           )}
           {regressionDelta.newly_forbidden_leak_case_ids.length > 0 && (
             <div className="mt-1 text-xs text-red-600">
-              Forbidden leak: {regressionDelta.newly_forbidden_leak_case_ids.length} 个用例
+              禁止证据泄漏: {regressionDelta.newly_forbidden_leak_case_ids.length} 个用例
             </div>
           )}
         </div>
@@ -184,8 +186,12 @@ export function EvalRunResults({
             <Th>{text("状态", "Status")}</Th>
             <Th>{text("任务", "Task")}</Th>
             <Th>{text("分数", "Score")}</Th>
-            <Th>{text("Trace 评分器", "Trace Grader")}</Th>
-            <Th>{text("Grounding", "Grounding")}</Th>
+            <Th>
+              <TermHint description="链路评分器">Trace 评分器</TermHint>
+            </Th>
+            <Th>
+              <TermHint description="依据校验结果">Grounding</TermHint>
+            </Th>
           </tr>
         </thead>
         <tbody>
@@ -212,10 +218,10 @@ export function EvalRunResults({
                     <Badge
                       tone={result.grader_trace_json.passed === false ? "failed" : "success"}
                     >
-                      {result.grader_trace_json.passed === false ? "failed" : "passed"}
+                      {result.grader_trace_json.passed === false ? "失败" : "通过"}
                     </Badge>
                     {result.grader_trace_json.forbidden_evidence_leaked === true && (
-                      <Badge tone="failed">forbidden leak</Badge>
+                      <Badge tone="failed">禁止证据泄漏</Badge>
                     )}
                     {leakSources.map((source) => (
                       <Badge key={source} tone="warning">
@@ -249,7 +255,7 @@ function DeltaMetric({
   suffix = "",
   invertColor = false,
 }: {
-  label: string;
+  label: ReactNode;
   delta: number;
   isPercentage?: boolean;
   suffix?: string;

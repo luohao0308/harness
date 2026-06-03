@@ -55,7 +55,7 @@ const eventLabels: Record<string, string> = {
   SUBAGENT_CANCELLED: "子代理取消",
   SANDBOX_REQUESTED: "请求沙箱",
   SANDBOX_ALLOCATED: "沙箱分配",
-  SANDBOX_REUSED_FROM_WARM_POOL: "复用 WarmPool",
+  SANDBOX_REUSED_FROM_WARM_POOL: "复用 WarmPool 预热池",
   SANDBOX_COMMAND_STARTED: "沙箱命令开始",
   SANDBOX_COMMAND_COMPLETED: "沙箱命令完成",
   SANDBOX_COMMAND_FAILED: "沙箱命令失败",
@@ -146,7 +146,7 @@ const toolOutputKindLabels: Record<string, string> = {
   timeout: "工具超时",
   error: "执行错误",
   empty: "无输出",
-  json: "JSON 输出",
+  json: "JSON 结构化输出",
   unknown: "未知输出",
 };
 
@@ -154,6 +154,13 @@ const timeoutCategoryLabels: Record<string, string> = {
   sandbox_command_timeout: "沙箱命令超时",
   tool_timeout: "工具执行超时",
   unknown_timeout: "未知超时",
+};
+
+const toolSourceLabels: Record<string, string> = {
+  all: "全部",
+  builtin: "内置",
+  internal: "内置",
+  mcp: "MCP（模型上下文协议）",
 };
 
 export function statusLabel(status: string) {
@@ -216,4 +223,8 @@ export function toolOutputKindLabel(kind: string) {
 
 export function timeoutCategoryLabel(category: string | null | undefined) {
   return category ? (timeoutCategoryLabels[category] ?? category) : "无超时";
+}
+
+export function toolSourceLabel(source: string) {
+  return toolSourceLabels[source] ?? source;
 }

@@ -253,7 +253,7 @@ export function ChatMessageBubble({
             )}
           >
             {text(
-              "检测到可能的代理缓冲（服务器或代理可能合并了 SSE 帧）",
+              "检测到可能的代理缓冲（服务器或代理可能合并了 SSE 帧；SSE 是服务端事件流）",
               "Possible proxy buffering detected (server or proxy may be batching SSE frames)",
             )}
           </p>

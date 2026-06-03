@@ -12,7 +12,7 @@
 执行模式：Spec-first development + stage-gated implementation + vertical slice demo
 官网策略：保留为 public shell，不作为控制台核心
 关键模块：Agent Studio / Agent Workspace / Harness Management / Observability / Eval Harness / Infra
-最近后续完成：private deployment experience
+最近后续完成：P7 Console Chinese Selector Polish
 当前后续主线：待下一轮规划确认
 ```
 
@@ -57,6 +57,9 @@
 - 前端测试基础设施已经具备 `npm test`、quick browser smoke、release browser smoke 和 live browser validation 等入口。
 - 本轮 release-gate + handoff hygiene 将现有非 Workspace browser smoke 纳入 `e2e:smoke:release`，保留 `e2e:smoke` 作为 Workspace/Run Detail quick loop。
 - 本轮 Private Deployment Experience 将 Docker Compose 私有部署整理为 canonical handoff path，并通过 override 端口完成 compose 全链路、Docker smoke、Agent Run smoke 和 cleanup 验收。
+- 本轮 P7 控制台 UI follow-up 将模型、知识、运行、设置等下拉统一到共享 `MenuSelect`，补齐键盘选择、禁用项跳过、分组和上下弹出能力。
+- 本轮 P7 控制台 UI follow-up 为 MCP、RAG、API、Trace、WarmPool、JSON、Markdown、Prompt、Provider 等必须保留的英文技术名词增加中文小字说明，保持中文优先。
+- 本轮 P7 控制台 UI follow-up 已推送到 `origin/p7-release-demo-hardening`，最新提交为 `a5d046b`。
 
 ## 验证记录
 
@@ -87,6 +90,13 @@ docker compose -p harness-private-test --env-file deploy/docker-compose/.env.exa
 python3 scripts/smoke-test-docker.py with HARNESS_* override URLs -> passed
 python3 scripts/smoke-test-agent-run.py with HARNESS_API_BASE_URL=http://127.0.0.1:18000 -> passed
 docker compose -p harness-private-test --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml down -> passed
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm test -> 30 files / 148 tests passed
+cd apps/agent-console && npm run build -> passed
+git diff --check -> passed
+frontend http://127.0.0.1:18082/ -> ok
+API http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+git push origin p7-release-demo-hardening -> pushed through a5d046b
 ```
 
 ## 未完成项

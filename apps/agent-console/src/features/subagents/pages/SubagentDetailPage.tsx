@@ -18,6 +18,7 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { artifactStatusLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
@@ -320,7 +321,9 @@ export function SubagentDetailPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
-                <Network className="h-3 w-3" /> {text("ReAct 轨迹", "ReAct Trace")}
+                <Network className="h-3 w-3" />
+                <TermHint description="推理与动作交替轨迹">ReAct</TermHint>
+                {text("轨迹", "Trace")}
               </div>
               <span className="text-[11px] text-slate-500">
                 {text(`${reactTrace.length} 轮`, `${reactTrace.length} rounds`)}
