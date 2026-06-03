@@ -398,6 +398,30 @@ Verification evidence:
 - Follow-up local service check: frontend `http://127.0.0.1:18082/` -> ok; API `http://127.0.0.1:8000/health` -> ok.
 - Pushed branch `p7-release-demo-hardening` to `origin` through `a5d046b`.
 
+### P8.2: Eval Dimensions v2 Refusal Safety Persona
+
+Status: implemented locally on `p7-release-demo-hardening`.
+
+Goal: make Eval judge model-behavior quality beyond tool/dialogue/cost success.
+
+Delivered scope:
+
+- optional `refusal_contract`, `safety_contract`, and `persona_contract` JSON sections in `EvalCase.expected_json`;
+- deterministic graders for refusal calibration, overrefusal, safety marker/regex scans, tool-argument scanning, role drift, tone markers, first-person drift, and optional out-of-scope response markers;
+- aggregate metrics and regression gates for refusal/safety/persona pass rates, safety violation deltas, overrefusal, and role drift;
+- Eval UI metric cards, regression deltas, per-case badges, breakdown rows, and JSON preset buttons for the new contract dimensions.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_evals.py tests/test_eval_regression.py -q` -> `26 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `cd apps/agent-console && PATH="$HOME/.nvm/versions/node/v24.15.0/bin:$PATH" npm test -- EvalRunResults.contracts.test.tsx --run` -> `2 passed`.
+- `cd apps/agent-console && PATH="$HOME/.nvm/versions/node/v24.15.0/bin:$PATH" npm run lint` -> passed.
+- `cd apps/agent-console && PATH="$HOME/.nvm/versions/node/v24.15.0/bin:$PATH" npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-28-eval-dimensions-v2]].
+
 ## Boundaries
 
 - Do not reopen Stage 07. It is a completed foundation.

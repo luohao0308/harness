@@ -306,6 +306,128 @@ class TestRegressionDelta:
         assert delta["grounding_sample_count"] == 1
         assert delta["low_sample_count"] is True
 
+    def test_behavior_contract_regression_fields_and_gate(
+        self,
+        db_session: Session,
+    ) -> None:
+        dataset = EvalDataset(
+            organization_id="dev-org",
+            name="P8.2 Behavior Regression",
+            description="Refusal safety persona gate coverage",
+            status="ACTIVE",
+            created_by="dev-engineer",
+        )
+        db_session.add(dataset)
+        db_session.flush()
+        baseline_run = EvalRun(
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            metrics_json={},
+            created_by="dev-engineer",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        current_run = EvalRun(
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            metrics_json={},
+            created_by="dev-engineer",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        db_session.add_all([baseline_run, current_run])
+        db_session.flush()
+        dataset.baseline_run_id = baseline_run.id
+        eval_case = EvalCase(
+            dataset_id=dataset.id,
+            source_task_id=None,
+            input_json={},
+            expected_json={},
+            tags_json=["p8-2"],
+        )
+        db_session.add(eval_case)
+        db_session.flush()
+        eval_case_id = eval_case.id
+        base_trace = {
+            "grader_trace_schema_version": 1,
+            "grader": "deterministic_trace_grader_v1",
+            "passed": True,
+            "grounding_failures": [],
+            "forbidden_evidence_leaked": False,
+            "refusal_contract": {"configured": True, "passed": True, "outcome": "answer"},
+            "safety_contract": {
+                "configured": True,
+                "passed": True,
+                "violation_total": 0,
+                "violation_breakdown": {},
+            },
+            "persona_contract": {
+                "configured": True,
+                "passed": True,
+                "role_drift_count": 0,
+            },
+        }
+        current_trace = {
+            **base_trace,
+            "safety_contract": {
+                "configured": True,
+                "passed": False,
+                "failures": ["banned_phrase:私人邮箱"],
+                "violation_total": 1,
+                "violation_breakdown": {"banned_phrase": 1},
+            },
+            "persona_contract": {
+                "configured": True,
+                "passed": False,
+                "failures": ["role_drift:我是 chat-first UI"],
+                "role_drift_count": 1,
+            },
+        }
+        db_session.add_all(
+            [
+                EvalResult(
+                    eval_run_id=baseline_run.id,
+                    eval_case_id=eval_case_id,
+                    task_id=None,
+                    status="PASSED",
+                    scores_json={"task_success": 1, "tool_selection_accuracy": 1},
+                    grader_trace_json=base_trace,
+                    latency_ms=0,
+                    cost_usd="0",
+                ),
+                EvalResult(
+                    eval_run_id=current_run.id,
+                    eval_case_id=eval_case_id,
+                    task_id=None,
+                    status="FAILED",
+                    scores_json={"task_success": 1, "tool_selection_accuracy": 1},
+                    grader_trace_json=current_trace,
+                    latency_ms=0,
+                    cost_usd="0",
+                ),
+            ]
+        )
+        db_session.commit()
+
+        client = TestClient(app)
+        response = client.get(
+            f"/api/evals/runs/{current_run.id}/regression",
+            headers=AUTH_HEADERS,
+        )
+
+        assert response.status_code == 200
+        delta = response.json()
+        assert delta["is_regression"] is True
+        assert delta["refusal_contract_pass_rate_delta"] == 0.0
+        assert delta["safety_contract_pass_rate_delta"] == -1.0
+        assert delta["persona_contract_pass_rate_delta"] == -1.0
+        assert delta["safety_violation_total_delta"] == 1
+        assert delta["role_drift_total_delta"] == 1
+
     def test_regression_run_not_found(self, db_session: Session) -> None:
         client = TestClient(app)
         response = client.get(

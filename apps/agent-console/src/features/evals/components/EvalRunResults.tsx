@@ -22,10 +22,67 @@ const metricLabels: Record<string, string> = {
   tool_selection_accuracy: "工具选择准确率",
   policy_violation_rate: "策略违规率",
   avg_latency_ms: "平均延迟",
-  avg_cost_usd: "平均成本",
+  avg_cost_usd: "平均成本（USD）",
+  total_cost_usd: "累计成本（USD）",
+  total_prompt_tokens: "累计 Prompt Tokens",
+  total_completion_tokens: "累计 Completion Tokens",
+  cost_per_passed_case_usd: "单次通过成本",
+  tool_contract_pass_rate: "工具契约通过率",
+  dialogue_contract_pass_rate: "对话契约通过率",
+  cost_contract_pass_rate: "成本契约通过率",
+  refusal_contract_pass_rate: "拒答契约通过率",
+  overrefusal_rate: "过度拒答率",
+  safety_contract_pass_rate: "安全契约通过率",
+  safety_violation_total: "安全命中总数",
+  persona_contract_pass_rate: "人设契约通过率",
+  role_drift_total: "角色漂移总数",
   retry_rate: "重试率",
   human_escalation_rate: "人工升级率",
 };
+
+const tokenMetricKeys = new Set(["total_prompt_tokens", "total_completion_tokens"]);
+const countMetricKeys = new Set(["safety_violation_total", "role_drift_total"]);
+const costMetricKeys = new Set(["avg_cost_usd", "total_cost_usd", "cost_per_passed_case_usd"]);
+const rateMetricKeys = new Set([
+  "task_success_rate",
+  "grounding_pass_rate",
+  "citation_coverage_rate",
+  "unsupported_marker_rate",
+  "fallback_mismatch_rate",
+  "forbidden_evidence_leak_rate",
+  "required_evidence_miss_rate",
+  "tool_selection_accuracy",
+  "policy_violation_rate",
+  "tool_contract_pass_rate",
+  "dialogue_contract_pass_rate",
+  "cost_contract_pass_rate",
+  "refusal_contract_pass_rate",
+  "overrefusal_rate",
+  "safety_contract_pass_rate",
+  "persona_contract_pass_rate",
+  "retry_rate",
+  "human_escalation_rate",
+]);
+
+function formatMetricValue(key: string, value: unknown): string {
+  if (key === "avg_latency_ms") {
+    return `${Number(value ?? 0)}ms`;
+  }
+  if (costMetricKeys.has(key)) {
+    return `$${value ?? "0"}`;
+  }
+  if (tokenMetricKeys.has(key)) {
+    return Number(value ?? 0).toLocaleString();
+  }
+  if (countMetricKeys.has(key)) {
+    return Number(value ?? 0).toLocaleString();
+  }
+  if (rateMetricKeys.has(key)) {
+    const num = Number(value ?? 0);
+    return `${(num * 100).toFixed(1)}%`;
+  }
+  return String(value ?? "");
+}
 
 interface EvalRunResultsProps {
   latestRun: EvalRun | null;
@@ -110,6 +167,58 @@ export function EvalRunResults({
               suffix="ms"
               invertColor
             />
+            <DeltaMetric
+              label="工具契约"
+              delta={regressionDelta.tool_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
+              label="对话契约"
+              delta={regressionDelta.dialogue_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
+              label="成本契约"
+              delta={regressionDelta.cost_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
+              label="拒答契约"
+              delta={regressionDelta.refusal_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
+              label="安全契约"
+              delta={regressionDelta.safety_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
+              label="人设契约"
+              delta={regressionDelta.persona_contract_pass_rate_delta ?? 0}
+              isPercentage
+            />
+            <DeltaMetric
+              label="过度拒答"
+              delta={regressionDelta.overrefusal_rate_delta ?? 0}
+              isPercentage
+              invertColor
+            />
+            <DeltaMetric
+              label="安全命中"
+              delta={regressionDelta.safety_violation_total_delta ?? 0}
+              invertColor
+            />
+            <DeltaMetric
+              label="角色漂移"
+              delta={regressionDelta.role_drift_total_delta ?? 0}
+              invertColor
+            />
+            <DeltaMetric
+              label="平均成本 USD"
+              delta={Number(regressionDelta.avg_cost_usd_delta ?? "0")}
+              suffix="$"
+              invertColor
+            />
           </div>
           {regressionDelta.is_regression && (
             <div
@@ -170,7 +279,7 @@ export function EvalRunResults({
           <div key={key} className="rounded-md border border-slate-200 bg-slate-50 p-3">
             <div className="text-[10px] uppercase text-slate-500">{metricLabels[key]}</div>
             <div className="mt-1 font-mono text-lg text-slate-900">
-              {key.includes("latency") ? `${value}ms` : value}
+              {formatMetricValue(key, value)}
             </div>
           </div>
         ))}
@@ -180,6 +289,9 @@ export function EvalRunResults({
           </div>
         )}
       </div>
+
+      {/* Contract failure breakdown */}
+      {latestRun && <ContractBreakdown metrics={metrics} />}
 
       {/* Per-case results */}
       <Table>
@@ -195,6 +307,7 @@ export function EvalRunResults({
             <Th>
               <TermHint description="依据校验结果">依据校验</TermHint>
             </Th>
+            <Th>{text("契约", "Contracts")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -238,12 +351,204 @@ export function EvalRunResults({
                     </div>
                   )}
                 </Td>
+                <Td className="max-w-xs text-slate-600">
+                  <ContractCell result={result} />
+                </Td>
               </tr>
             );
           })}
         </tbody>
       </Table>
     </Card>
+  );
+}
+
+type ContractTrace = {
+  configured?: boolean;
+  passed?: boolean;
+  failures?: unknown;
+  limit_exceeded?: unknown;
+  actual_cost_usd?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  violation_total?: number;
+  outcome?: string;
+  role_drift_count?: number;
+};
+
+function readContract(trace: Record<string, unknown>, key: string): ContractTrace | null {
+  const value = trace?.[key];
+  if (!value || typeof value !== "object") return null;
+  return value as ContractTrace;
+}
+
+function ContractCell({
+  result,
+}: {
+  result: { grader_trace_json: Record<string, unknown> };
+}) {
+  const tool = readContract(result.grader_trace_json, "tool_contract");
+  const dialogue = readContract(result.grader_trace_json, "dialogue_contract");
+  const cost = readContract(result.grader_trace_json, "cost_contract");
+  const refusal = readContract(result.grader_trace_json, "refusal_contract");
+  const safety = readContract(result.grader_trace_json, "safety_contract");
+  const persona = readContract(result.grader_trace_json, "persona_contract");
+  const renderBadge = (label: string, trace: ContractTrace | null) => {
+    if (!trace || trace.configured !== true) {
+      return (
+        <Badge key={label} tone="neutral">
+          {label} 未配置
+        </Badge>
+      );
+    }
+    return (
+      <Badge key={label} tone={trace.passed ? "success" : "failed"}>
+        {label} {trace.passed ? "通过" : "失败"}
+      </Badge>
+    );
+  };
+  const allFailures: string[] = [];
+  if (tool && tool.configured === true && !tool.passed) {
+    allFailures.push(...stringList(tool.failures).map((f) => `工具:${f}`));
+  }
+  if (dialogue && dialogue.configured === true && !dialogue.passed) {
+    allFailures.push(...stringList(dialogue.failures).map((f) => `对话:${f}`));
+  }
+  if (cost && cost.configured === true && !cost.passed) {
+    allFailures.push(...stringList(cost.failures).map((f) => `成本:${f}`));
+  }
+  if (refusal && refusal.configured === true && !refusal.passed) {
+    allFailures.push(...stringList(refusal.failures).map((f) => `拒答:${f}`));
+  }
+  if (safety && safety.configured === true && !safety.passed) {
+    allFailures.push(...stringList(safety.failures).map((f) => `安全:${f}`));
+  }
+  if (persona && persona.configured === true && !persona.passed) {
+    allFailures.push(...stringList(persona.failures).map((f) => `人设:${f}`));
+  }
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1">
+        {renderBadge("工具", tool)}
+        {renderBadge("对话", dialogue)}
+        {renderBadge("成本", cost)}
+        {renderBadge("拒答", refusal)}
+        {renderBadge("安全", safety)}
+        {renderBadge("人设", persona)}
+      </div>
+      {cost && cost.configured === true && (
+        <div className="mt-1 font-mono text-[11px] text-slate-500">
+          ${cost.actual_cost_usd ?? "0"} · {cost.prompt_tokens ?? 0}/
+          {cost.completion_tokens ?? 0} tok
+        </div>
+      )}
+      {(refusal?.configured === true ||
+        safety?.configured === true ||
+        persona?.configured === true) && (
+        <div className="mt-1 font-mono text-[11px] text-slate-500">
+          拒答:{refusal?.outcome ?? "-"} · 安全:{safety?.violation_total ?? 0} · 漂移:
+          {persona?.role_drift_count ?? 0}
+        </div>
+      )}
+      {allFailures.length > 0 && (
+        <div className="mt-1 truncate font-mono text-[11px] text-slate-500">
+          {allFailures.slice(0, 4).join(", ")}
+          {allFailures.length > 4 && ` … +${allFailures.length - 4}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContractBreakdown({ metrics }: { metrics: Record<string, unknown> }) {
+  const toolBreakdown = metrics["tool_contract_failure_breakdown"];
+  const costBreakdown = metrics["cost_contract_failure_breakdown"];
+  const dialogueBreakdown = metrics["dialogue_contract_failure_breakdown"];
+  const refusalBreakdown = metrics["refusal_contract_failure_breakdown"];
+  const safetyBreakdown = metrics["safety_violation_breakdown"];
+  const personaBreakdown = metrics["persona_contract_failure_breakdown"];
+  const toolConfigured = Number(metrics["tool_contract_configured_count"] ?? 0);
+  const dialogueConfigured = Number(metrics["dialogue_contract_configured_count"] ?? 0);
+  const costConfigured = Number(metrics["cost_contract_configured_count"] ?? 0);
+  const refusalConfigured = Number(metrics["refusal_contract_configured_count"] ?? 0);
+  const safetyConfigured = Number(metrics["safety_contract_configured_count"] ?? 0);
+  const personaConfigured = Number(metrics["persona_contract_configured_count"] ?? 0);
+  if (
+    toolConfigured +
+      dialogueConfigured +
+      costConfigured +
+      refusalConfigured +
+      safetyConfigured +
+      personaConfigured ===
+    0
+  ) {
+    return null;
+  }
+  return (
+    <div className="grid grid-cols-3 gap-3 border-b border-slate-100 p-3 text-xs">
+      <BreakdownColumn
+        title={`工具契约 (${toolConfigured})`}
+        breakdown={toolBreakdown}
+        emptyHint="无失败项"
+      />
+      <BreakdownColumn
+        title={`对话契约 (${dialogueConfigured})`}
+        breakdown={dialogueBreakdown}
+        emptyHint="无失败项"
+      />
+      <BreakdownColumn
+        title={`成本契约 (${costConfigured})`}
+        breakdown={costBreakdown}
+        emptyHint="未超限"
+      />
+      <BreakdownColumn
+        title={`拒答契约 (${refusalConfigured})`}
+        breakdown={refusalBreakdown}
+        emptyHint="无失败项"
+      />
+      <BreakdownColumn
+        title={`安全命中 (${safetyConfigured})`}
+        breakdown={safetyBreakdown}
+        emptyHint="未命中"
+      />
+      <BreakdownColumn
+        title={`人设契约 (${personaConfigured})`}
+        breakdown={personaBreakdown}
+        emptyHint="无失败项"
+      />
+    </div>
+  );
+}
+
+function BreakdownColumn({
+  title,
+  breakdown,
+  emptyHint,
+}: {
+  title: string;
+  breakdown: unknown;
+  emptyHint: string;
+}) {
+  const entries =
+    breakdown && typeof breakdown === "object"
+      ? Object.entries(breakdown as Record<string, unknown>)
+      : [];
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
+      <div className="text-[10px] uppercase text-slate-500">{title}</div>
+      {entries.length === 0 ? (
+        <div className="mt-1 text-slate-400">{emptyHint}</div>
+      ) : (
+        <ul className="mt-1 space-y-0.5 font-mono text-[11px]">
+          {entries.map(([key, value]) => (
+            <li key={key}>
+              <span className="text-slate-700">{key}</span>
+              <span className="text-slate-500"> × {String(value)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

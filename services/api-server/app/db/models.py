@@ -1231,6 +1231,32 @@ class EvalResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ModelPricing(Base):
+    __tablename__ = "model_pricing"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "provider",
+            "model",
+            name="model_pricing_org_provider_model_uidx",
+        ),
+        Index("ix_model_pricing_provider_model", "provider", "model"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_per_1k_usd: Mapped[str] = mapped_column(String(32), nullable=False, default="0")
+    completion_per_1k_usd: Mapped[str] = mapped_column(String(32), nullable=False, default="0")
+    cache_prompt_per_1k_usd: Mapped[str] = mapped_column(String(32), nullable=False, default="0")
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class WarmPoolBenchmarkRun(Base):
     __tablename__ = "warm_pool_benchmark_runs"
 
