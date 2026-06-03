@@ -334,6 +334,10 @@ function routeTeamApis(state: TeamState) {
       return jsonResponse({ items: [], categories: [], sources: [] });
     }
 
+    if (path === "/api/observability/alert-events" && method === "GET") {
+      return jsonResponse({ items: [], next_cursor: null });
+    }
+
     const compressionMatch = path.match(/^\/api\/agents\/([^/]+)\/context\/compress$/);
     if (compressionMatch && method === "POST") {
       const payload = parseBody<{

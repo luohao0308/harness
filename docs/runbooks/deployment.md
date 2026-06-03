@@ -73,6 +73,37 @@ docker compose --env-file deploy/docker-compose/.env -f deploy/docker-compose/do
 
 This command is the first gate. Do not start the stack until it exits 0.
 
+### Migration Pre-flight
+
+Before deploying a branch with new Alembic migrations, run the full migration
+chain against PostgreSQL. SQLite is not a sufficient pre-flight for production
+schema changes because it can miss type-width issues.
+
+One-command local check:
+
+```bash
+bash scripts/migration-preflight.sh
+```
+
+The script defaults to `HARNESS_MIGRATION_PREFLIGHT_MODE=auto`: it uses Docker
+when the daemon is available, and otherwise falls back to local PostgreSQL
+`initdb` / `pg_ctl` binaries if they are installed. Set the mode to `docker` or
+`local` to force one path.
+
+Equivalent manual flow:
+
+```bash
+docker run --rm -e POSTGRES_PASSWORD=t -p 15432:5432 -d --name harness-pg postgres:16
+cd services/api-server
+DATABASE_URL=postgresql+psycopg://postgres:t@127.0.0.1:15432/postgres \
+  .venv/bin/python -m alembic upgrade head
+cd ../..
+docker rm -f harness-pg
+```
+
+Always remove the temporary container after the check, including failed runs, so
+the pre-flight does not leave port `15432` occupied.
+
 ### Start
 
 ```bash

@@ -124,7 +124,7 @@ def test_tool_runner_requests_approval_for_sandbox_file_write(db_session: Sessio
     execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
         task_id=task.id,
         tool_name="sandbox.write_file",
-        input_json={"path": "result.txt", "content": "hello"},
+        input_json={"path": "result.txt", "content": "hello", "idempotency_key": "file-1"},
         roles=["engineer"],
     )
 
@@ -134,6 +134,122 @@ def test_tool_runner_requests_approval_for_sandbox_file_write(db_session: Sessio
     assert execution.tool_call.capability_snapshot_json["adapter"]["slug"] == "sandbox.write_file"
     approval = db_session.execute(select(ToolApproval)).scalar_one()
     assert approval.tool_call_id == execution.tool_call.id
+
+
+def test_tool_runner_denies_non_idempotent_mcp_tool_without_idempotency_key(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session, tools=["slack.post_message"])
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {
+                        "name": "high",
+                        "requires_sandbox": False,
+                        "approval": "auto",
+                        "allowed_roles": ["admin", "engineer"],
+                    }
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {"default_network": False, "default_timeout_seconds": 60},
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="test",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
+        task_id=task.id,
+        tool_name="slack.post_message",
+        input_json={"channel": "C1", "text": "hello"},
+        roles=["admin", "engineer"],
+    )
+
+    assert execution.allowed is False
+    assert execution.tool_call.status == "DENIED"
+    assert execution.tool_call.error_message == "non-idempotent MCP tool requires idempotency_key"
+
+
+def test_tool_runner_denies_approval_request_without_idempotency_key(
+    db_session: Session,
+) -> None:
+    task = create_task(db_session, tools=["slack.post_message"])
+
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).request_approval(
+        task_id=task.id,
+        tool_name="slack.post_message",
+        input_json={"channel": "C1", "text": "hello"},
+    )
+
+    assert execution.allowed is False
+    assert execution.tool_call.status == "DENIED"
+    assert execution.tool_call.error_message == "non-idempotent MCP tool requires idempotency_key"
+
+
+def test_tool_runner_replays_write_tool_by_idempotency_key(db_session: Session) -> None:
+    task = create_task(db_session, tools=["slack.post_message"])
+    db_session.add(
+        SystemSetting(
+            organization_id=task.organization_id,
+            key="settings.policies",
+            value_json={
+                "risk_levels": [
+                    {
+                        "name": "high",
+                        "requires_sandbox": False,
+                        "approval": "auto",
+                        "allowed_roles": ["admin", "engineer"],
+                    }
+                ],
+                "approvals": {"manual_review": True, "deny_on_missing_policy": True},
+                "sandbox": {"default_network": False, "default_timeout_seconds": 60},
+                "audit": {"model_calls": True, "tool_calls": True, "policy_actions": True},
+            },
+            updated_by="test",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.flush()
+
+    class FakeMCPAdapter:
+        calls = 0
+
+        def execute(self, **kwargs):
+            from app.tools.mcp_adapter import MCPToolResult
+
+            self.calls += 1
+            return MCPToolResult(
+                server="slack",
+                method="post_message",
+                output_json={"message": {"ts": "1.000"}, "source": "slack-api"},
+            )
+
+    adapter = FakeMCPAdapter()
+    runner = ToolRunner(session=db_session, agent_id=task.agent_id, mcp_adapter=adapter)
+
+    first = runner.execute(
+        task_id=task.id,
+        tool_name="slack.post_message",
+        input_json={"channel": "C1", "text": "hello", "idempotency_key": "same-key"},
+        roles=["admin", "engineer"],
+    )
+    second = runner.execute(
+        task_id=task.id,
+        tool_name="slack.post_message",
+        input_json={"channel": "C1", "text": "hello", "idempotency_key": "same-key"},
+        roles=["admin", "engineer"],
+    )
+
+    assert first.tool_call.status == "SUCCESS"
+    assert second.tool_call.status == "SUCCESS"
+    assert adapter.calls == 1
+    assert second.output["idempotent_replay"] is True
+    assert second.output["original_tool_call_id"] == first.tool_call.id
 
 
 def test_tool_runner_denies_sandbox_tool_without_sandbox(db_session: Session) -> None:

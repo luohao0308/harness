@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import {
   ChevronRight,
+  Code2,
   GitBranch,
   PackagePlus,
   PlugZap,
@@ -145,6 +146,14 @@ export function ToolRegistryOverview({
               <Button type="button" variant="secondary" onClick={() => navigate("/tools/config")}>
                 <SlidersHorizontal className="h-3.5 w-3.5" />
                 运行配置
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => onOpenDialog("mcp-servers")}>
+                <GitBranch className="h-3.5 w-3.5" />
+                MCP Servers
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => onOpenDialog("code-interpreter")}>
+                <Code2 className="h-3.5 w-3.5" />
+                Code Interpreter
               </Button>
             </div>
             <MutationError error={marketplaceCardError} />

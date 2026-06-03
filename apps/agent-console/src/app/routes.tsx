@@ -4,12 +4,17 @@ import { AgentListPage } from "../features/agents/pages/AgentListPage";
 import { AgentWorkspacePage } from "../features/agents/pages/AgentWorkspacePage";
 import { EvalHarnessPage } from "../features/evals/pages/EvalHarnessPage";
 import { KnowledgePage } from "../features/knowledge/pages/KnowledgePage";
+import { AlertRulesPage } from "../features/observability/pages/AlertRulesPage";
+import { CostDashboardPage } from "../features/observability/pages/CostDashboardPage";
 import { ObservabilityPage } from "../features/observability/pages/ObservabilityPage";
 import { TokenSavingsPage } from "../features/observability/pages/TokenSavingsPage";
+import { TraceExplorerPage } from "../features/observability/pages/TraceExplorerPage";
 import { SandboxesPage } from "../features/sandboxes/pages/SandboxesPage";
 import { ModelSettingsPage } from "../features/settings/pages/ModelSettingsPage";
 import { PolicySettingsPage } from "../features/settings/pages/PolicySettingsPage";
 import { SubagentDetailPage } from "../features/subagents/pages/SubagentDetailPage";
+import { SubagentMarketplaceDetailPage } from "../features/subagents/pages/SubagentMarketplaceDetailPage";
+import { SubagentMarketplacePage } from "../features/subagents/pages/SubagentMarketplacePage";
 import { SubagentSpecialistDetailPage } from "../features/subagents/pages/SubagentSpecialistDetailPage";
 import { SubagentSpecialistsPage } from "../features/subagents/pages/SubagentSpecialistsPage";
 import { SubagentsPage } from "../features/subagents/pages/SubagentsPage";
@@ -40,8 +45,13 @@ export const router = createBrowserRouter([
       { path: "subagents/:subagentId", element: <SubagentDetailPage /> },
       { path: "subagent-specialists", element: <SubagentSpecialistsPage /> },
       { path: "subagent-specialists/:specialistId", element: <SubagentSpecialistDetailPage /> },
+      { path: "subagent-marketplace", element: <SubagentMarketplacePage /> },
+      { path: "subagent-marketplace/:listingId", element: <SubagentMarketplaceDetailPage /> },
       { path: "sandboxes", element: <SandboxesPage /> },
       { path: "observability", element: <ObservabilityPage /> },
+      { path: "observability/cost", element: <CostDashboardPage /> },
+      { path: "observability/trace", element: <TraceExplorerPage /> },
+      { path: "observability/alerts", element: <AlertRulesPage /> },
       { path: "token-savings", element: <TokenSavingsPage /> },
       { path: "tools", element: <ToolRegistryPage /> },
       { path: "tools/config", element: <ToolConfigurationPage /> },

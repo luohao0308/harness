@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
-  Bell,
   Bot,
   Box,
   Brain,
@@ -21,10 +20,12 @@ import {
   Search,
   Settings2,
   ShieldCheck,
+  Store,
 } from "lucide-react";
 
 import { Button } from "../components/ui/button";
 import { FeedbackToastViewport } from "../components/ui/feedback-toast";
+import { AlertBell } from "../features/observability/components/AlertBell";
 import { useConsoleStore } from "../stores/consoleStore";
 import { environmentLabel } from "../lib/labels";
 import { cn } from "../lib/utils";
@@ -35,6 +36,7 @@ const navItems = [
   { to: "/runs", label: "运行历史", icon: ListChecks },
   { to: "/subagents", label: "子代理", icon: Bot },
   { to: "/subagent-specialists", label: "专家库", icon: BrainCircuit },
+  { to: "/subagent-marketplace", label: "专家市场", icon: Store },
   { to: "/sandboxes", label: "沙箱", icon: Box },
   { to: "/tools", label: "工具", icon: PlugZap },
   { to: "/tools/config", label: "工具配置", icon: Settings2 },
@@ -220,9 +222,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
               环境: {environmentLabel(environment)}{" "}
               <ChevronDown className="h-3 w-3" />
             </Button>
-            <Button variant="ghost" className="w-8 px-0" aria-label="告警">
-              <Bell className="h-4 w-4" />
-            </Button>
+            <AlertBell />
             {!isTeamRoute ? (
               <Button
                 variant="primary"

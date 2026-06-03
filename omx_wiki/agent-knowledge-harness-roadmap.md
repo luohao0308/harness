@@ -513,6 +513,155 @@ Verification evidence:
 
 Important boundary: no migration files, new tables, or new dependencies were added. Real MCP protocol transports, OAuth, write-capable GitHub/Slack operations, Code Interpreter, and additional SaaS adapters remain future lanes.
 
+### P8.6: Real Tool Adapters v2
+
+Status: verified locally on `p7-release-demo-hardening`.
+
+Goal: make installed MCP servers and common production tools executable through real protocol/provider adapters while preserving the existing capability, sandbox, approval, audit, and no-migration boundaries.
+
+Delivered scope:
+
+- minimal MCP JSON-RPC client/session/discovery with protocol version `2024-11-05`, HTTP/SSE response handling, and stdio transport that requires an injected sandbox executor plus in-sandbox initialize replay before target calls;
+- `/api/tools/mcp-servers` list/discovery APIs that register discovered MCP child tools as Agent-attached org-scoped capabilities;
+- Code Interpreter adapters for sandboxed Python execution and package installation, with denylist checks for dangerous imports/calls/dynamic lookup plus bounded stdio/file output;
+- GitHub write tools for issue comments, issue creation, and pull request reviews;
+- Slack write tools for posting messages and adding reactions;
+- Notion search/page/database reads plus append-block writes;
+- Linear issue/comment reads and writes;
+- persistent 24h idempotency replay for non-idempotent tools using existing `SystemSetting` rows;
+- Tool Registry UI panels for MCP server discovery and Code Interpreter test invocation.
+
+Review fixes before completion:
+
+- restored built-in capability registration to the global capability path after a duplicate visible capability regression exposed by full backend tests;
+- made discovered MCP write-tool schemas require `idempotency_key`;
+- added runtime `idempotency_key` enforcement in ToolRunner before non-idempotent MCP/adapter side effects, including approval request and approved-call paths.
+- made Slack reaction and mutating discovered MCP tools high-risk/critical by default;
+- tightened stdio runtime command config to a single executable name/path with safe args;
+- replayed MCP initialize/initialized in the stdio sandbox process and tightened Code Interpreter bypass checks for `subprocess`, `importlib`, and `getattr`.
+
+Verification evidence:
+
+- `cd services/api-server && .venv/bin/python -m pytest tests/test_tool_runner.py tests/test_mcp_protocol_discovery.py tests/test_sandbox.py::test_tool_registry_matches_stage12_required_tools tests/test_adapters_code_interpreter.py -q` -> `24 passed`.
+- `cd services/api-server && .venv/bin/python -m pytest tests -q` -> `487 passed`.
+- `cd services/api-server && .venv/bin/python -m ruff check app tests` -> passed.
+- `cd apps/agent-console && npm test -- src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx src/features/tools/__tests__/ToolConfigurationPage.test.tsx src/features/tasks/__tests__/api.test.ts --run` -> `3 files / 11 tests passed`.
+- `cd apps/agent-console && npm test -- src/features/teams/__tests__/TeamPages.test.tsx --run` -> `19 passed`.
+- `cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork` -> `47 files / 222 tests passed`.
+- `cd apps/agent-console && npm test -- --run` -> failed on the unrelated TeamPages branch-switch flaky (`分支 1/2`) while the direct TeamPages file and single-fork full suite passed.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-29-real-tool-adapters-v2]].
+
+Important boundary: no migration files, new tables, or new dependencies were added. Stdio MCP is never launched from the host path; admin discovery rejects stdio without a run sandbox. Live external-provider smoke and live stdio MCP server smoke remain pending until safe credentials/fixtures are available. Default parallel frontend Vitest exposed an unrelated TeamPages branch-switch flaky, but targeted TeamPages and single-fork full frontend reruns passed.
+
+### P8.7: Observability v1
+
+Status: verified locally on `p7-release-demo-hardening`.
+
+Goal: make private-deployment operations observable without adding an external observability stack requirement.
+
+Delivered scope:
+
+- real-time cost rollups for model calls, specialist budgets, and adapter tool costs by agent, provider, specialist, or adapter;
+- local `otel_spans` storage with 90-day retention and trace list/detail APIs before Tempo/Event Store fallbacks;
+- HTTP, model gateway, tool runner, subagent spawn/finalize, and eval grader spans;
+- `alert_rules` and `alert_events` with four default in-app rules, org clone editing, evaluator worker, manual evaluation, SSE, and console bell;
+- console pages for Cost, Trace, and Alerts, plus Run Detail trace links.
+
+Verification evidence:
+
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `cd services/api-server && uv run pytest tests/test_observability.py tests/test_observability_cost_rollup.py tests/test_observability_tracing.py tests/test_observability_alerts.py tests/test_evals.py tests/test_eval_regression.py -q` -> `60 passed`.
+- `cd services/api-server && uv run pytest -q` -> `465 passed`.
+- `cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-observability-v1.sqlite uv run alembic upgrade head` -> passed through `20260529_0024`.
+- `cd apps/agent-console && npm test -- ObservabilityV1Pages` -> `3 passed`.
+- `cd apps/agent-console && npm test -- --run` -> `47 files / 222 tests passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-29-agent-knowledge-observability-v1]].
+
+Important boundary: Observability projects Eval-owned grounding/regression evidence only; it does not recompute grounding quality. v1 stays in-app/local and does not add external alert channels, Jaeger/Grafana deployment requirements, cost enforcement, or SLO burn-rate automation.
+
+### P8.8: Subagent Specialists v3
+
+Status: verified locally on `p7-release-demo-hardening`.
+
+Goal: make specialist orchestration smarter, shareable across orgs, and dynamically extensible while preserving v1/v2 specialist contracts.
+
+Delivered scope:
+
+- LLM-based specialist selection through `SpecialistLLMSelector`, using model-gateway JSON output, confidence thresholds, and fallback to keyword/success-rate/recency routing;
+- persisted `specialist_selection_decisions` with selected slug, confidence, selector, candidates, alternatives, reasoning, trace, and task/step linkage;
+- calibration API with confidence buckets, low-sample reporting, and ECE computed from same-task subagent outcomes;
+- signed specialist marketplace listings with admin approval, manifest schema/budget validation, prompt blacklist scanning, capability allowlist checks, and org-local install copies;
+- dynamic fanout extension with same-batch requester validation, running-batch guard, `MAX_DYNAMIC_FANOUT=10`, max 3 extensions per batch, max 1 extension per requester, and `FANOUT_EXTENDED` event evidence;
+- Agent Console marketplace pages, calibration panel, dynamic fanout badges, and fanout extension history.
+
+Review fixes before completion:
+
+- changing a verified listing's manifest, signature, or version now resets `verified=false` and blocks install until admin reapproval;
+- marketplace uninstall archives the installed specialist copy instead of hard deleting historical `AgentRun` / `SubagentOutput` FK targets;
+- calibration run matching is scoped to the decision task ids, avoiding stale or abnormal context from another task influencing bucket scoring.
+
+Verification evidence:
+
+- `cd services/api-server && uv run pytest tests/test_subagent_marketplace.py tests/test_specialist_calibration.py tests/test_fanout_extend.py tests/test_specialist_llm_selector.py -q` -> `10 passed`.
+- `cd services/api-server && uv run pytest tests -q` -> `497 passed`.
+- `cd services/api-server && uv run ruff check app tests` -> passed.
+- `cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-subagent-specialists-v3.sqlite uv run alembic upgrade head` -> passed through `20260530_0025`.
+- `cd apps/agent-console && npm test -- SubagentSpecialistsPage.test.tsx SubagentDetailPage.test.tsx SubagentMarketplacePage.test.tsx --run` -> `3 files / 4 tests passed`.
+- `cd apps/agent-console && npm test -- src/features/teams/__tests__/TeamPages.test.tsx --run` -> `19 passed`.
+- `cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork` -> `48 files / 223 tests passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with the existing Vite large-chunk warning.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-29-subagent-specialists-v3]].
+
+Important boundary: dynamic fanout currently uses existing authenticated API plus subagent path identity to enforce same-batch requester semantics; a separate subagent-runtime credential remains future hardening. `MARKETPLACE_INSTALLED` is reserved in the enum but not emitted through the task-scoped EventStore for org-scoped marketplace lifecycle.
+
+### P8.9: Post-Audit Hardening v1
+
+Status: verified locally on `p7-release-demo-hardening`.
+
+Goal: close the non-blocking audit gaps left after Large File Refactor v1, Observability v1, Real Tool Adapters v2, and Subagent Specialists v3 without adding new product scope.
+
+Delivered scope:
+
+- patch migration `20260531_0026_widen_marketplace_ids.py` widens specialist marketplace decision/listing/installation ids and installation `listing_id` to `String(128)` while preserving unrelated task/team UUID widths;
+- FastAPI startup registration now uses an async lifespan hook;
+- built-in adapter registration is idempotent and available to import-only scripts through `ensure_builtin_adapters_registered` plus `python -m app.cli.registry_info`;
+- Vite manual chunks split the console build into vendor and feature bundles; the main JS chunk is now 77.18 kB in the latest build;
+- `agent_chat`, `agent_knowledge`, eval endpoint, and provider fallback code were split into smaller modules with compatibility re-exports;
+- deployment runbook and `scripts/migration-preflight.sh` now require a PostgreSQL Alembic preflight for new migrations, with Docker-first and local-PostgreSQL fallback modes.
+
+Review fixes before completion:
+
+- code review found accidental out-of-scope widening of `TeamAgent.id` and `TeamMailboxMessage.id`; both were reverted to `String(36)`;
+- follow-up code review returned APPROVE;
+- architecture review returned WATCH only for route-level lazy loading and wildcard compatibility re-exports, both kept as v2 follow-ups under the PRD boundary.
+
+Verification evidence:
+
+- `cd services/api-server && .venv/bin/python -m pytest tests/test_teams.py tests/test_subagent_marketplace.py tests/test_specialist_calibration.py tests/test_adapter_registry.py -q` -> `44 passed`.
+- `cd services/api-server && .venv/bin/python -m ruff check app tests` -> passed.
+- `cd services/api-server && .venv/bin/python -m pytest tests -q` -> `500 passed`.
+- `cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-post-audit-hardening-after-review.sqlite .venv/bin/python -m alembic upgrade head` -> passed through `20260531_0026`.
+- `bash scripts/migration-preflight.sh` -> passed through `20260531_0026` on PostgreSQL; Docker daemon was unavailable, so the script used local PostgreSQL binaries.
+- `cd apps/agent-console && npm test -- --run --pool forks --poolOptions.forks.singleFork` -> `48 files / 223 tests passed`.
+- `cd apps/agent-console && npm run lint -- --pretty false` -> passed.
+- `cd apps/agent-console && npm run build` -> passed with 7 JavaScript chunks and main `index-*.js` at 77.18 kB.
+- `python3 scripts/validate-docs.py` -> passed.
+- `git diff --check` -> passed.
+- Detailed session record: [[session-2026-05-29-post-audit-hardening-v1]].
+
+Important boundary: this hardening slice does not implement route-level `React.lazy`, does not replace compatibility wildcard re-exports with explicit public APIs, and does not rewrite already-pushed history. `.omx/plans/_template.md` was updated locally for future commit-hygiene DoD, but `.omx/` is repository-ignored and remains an OMX planning artifact unless later promoted to a tracked docs path.
+
 ## Boundaries
 
 - Do not reopen Stage 07. It is a completed foundation.
@@ -531,4 +680,7 @@ Important boundary: no migration files, new tables, or new dependencies were add
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]]
 - [[session-2026-05-28-subagent-specialists-v1]]
 - [[session-2026-05-28-subagent-specialists-v2]]
+- [[session-2026-05-29-subagent-specialists-v3]]
 - [[session-2026-05-28-real-tool-adapters-v1]]
+- [[session-2026-05-29-agent-knowledge-observability-v1]]
+- [[session-2026-05-29-post-audit-hardening-v1]]

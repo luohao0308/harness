@@ -12,6 +12,7 @@ from app.db.models import CapabilityVersion, SandboxInstance, Task, ToolApproval
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.knowledge_dify import resolve_connector_secret_ref
+from app.observability.tracing import traced_operation
 from app.sandbox.docker_manager import SandboxCommandTimeoutError
 from app.sandbox.policies import PolicyEngine, SandboxPolicyDecision
 from app.tools.adapter_registry import REGISTRY, adapter_snapshot
@@ -23,6 +24,7 @@ from app.tools.capabilities import (
     redact_secrets,
 )
 from app.tools.filesystem import WorkspaceFileTool
+from app.tools.idempotency import get_idempotent_result, remember_idempotent_result
 from app.tools.mcp_adapter import MCPAdapter
 from app.tools.registry import ToolMetadata, ToolRegistry
 from app.tools.shell import ShellTool, ShellToolRequest
@@ -118,6 +120,17 @@ class ToolRunner:
         )
         if not decision.allowed:
             if decision.policy_id == "tool-approval-required":
+                idempotency_decision = self._check_required_idempotency_key(metadata, input_json)
+                if not idempotency_decision.allowed:
+                    return self._deny(
+                        task_id=task_id,
+                        agent_run_id=agent_run_id,
+                        metadata=metadata,
+                        input_json=stored_input_json,
+                        decision=idempotency_decision,
+                        requires_sandbox=requires_sandbox,
+                        resolved=resolved,
+                    )
                 return self._request_approval(
                     task_id=task_id,
                     agent_run_id=agent_run_id,
@@ -133,6 +146,17 @@ class ToolRunner:
                 metadata=metadata,
                 input_json=stored_input_json,
                 decision=decision,
+                requires_sandbox=requires_sandbox,
+                resolved=resolved,
+            )
+        idempotency_decision = self._check_required_idempotency_key(metadata, input_json)
+        if not idempotency_decision.allowed:
+            return self._deny(
+                task_id=task_id,
+                agent_run_id=agent_run_id,
+                metadata=metadata,
+                input_json=stored_input_json,
+                decision=idempotency_decision,
                 requires_sandbox=requires_sandbox,
                 resolved=resolved,
             )
@@ -202,14 +226,51 @@ class ToolRunner:
             payload_json={"tool_call_id": tool_call.id, "tool_name": metadata.name},
         )
 
-        try:
-            output = self._execute_allowed(
-                metadata,
-                input_json,
-                sandbox,
-                capability_config=resolved.version.config_json if resolved is not None else {},
-                organization_id=task.organization_id if task is not None else None,
+        cached_output = self._cached_idempotent_output(
+            organization_id=task.organization_id if task is not None else None,
+            metadata=metadata,
+            input_json=input_json,
+        )
+        if cached_output is not None:
+            tool_call.status = "SUCCESS"
+            tool_call.duration_ms = int((time.monotonic() - started_at) * 1000)
+            stored_output = redact_secrets(cached_output)
+            tool_call.output_json = stored_output
+            self.event_store.append(
+                task_id=task_id,
+                agent_run_id=agent_run_id,
+                event_type=EventType.TOOL_RESULT_RECEIVED,
+                payload_json={
+                    "tool_call_id": tool_call.id,
+                    "tool_name": metadata.name,
+                    "status": tool_call.status,
+                    "idempotent_replay": True,
+                },
             )
+            self.session.flush()
+            return ToolExecution(tool_call=tool_call, allowed=True, output=stored_output)
+
+        try:
+            with traced_operation(
+                self.session,
+                "tool_call",
+                task_id=task_id,
+                agent_run_id=agent_run_id,
+                kind="client" if metadata.name == "network_request" else "internal",
+                attributes={
+                    "tool_call_id": tool_call.id,
+                    "tool_name": metadata.name,
+                    "risk_level": metadata.risk_level,
+                    "capability_version_id": tool_call.capability_version_id,
+                },
+            ):
+                output = self._execute_allowed(
+                    metadata,
+                    input_json,
+                    sandbox,
+                    capability_config=resolved.version.config_json if resolved is not None else {},
+                    organization_id=task.organization_id if task is not None else None,
+                )
         except SandboxCommandTimeoutError as exc:
             tool_call.status = "TIMEOUT"
             tool_call.error_message = str(exc)
@@ -223,6 +284,13 @@ class ToolRunner:
         else:
             tool_call.status = "SUCCESS"
             event_type = EventType.TOOL_RESULT_RECEIVED
+            self._remember_idempotent_output(
+                organization_id=task.organization_id if task is not None else None,
+                metadata=metadata,
+                input_json=input_json,
+                tool_call_id=tool_call.id,
+                output=output,
+            )
 
         tool_call.duration_ms = int((time.monotonic() - started_at) * 1000)
         stored_output = redact_secrets(output)
@@ -282,6 +350,18 @@ class ToolRunner:
             resolved=resolved,
             metadata=metadata,
         )
+        idempotency_decision = self._check_required_idempotency_key(metadata, input_json)
+        if not idempotency_decision.allowed:
+            return self._deny(
+                task_id=task_id,
+                agent_run_id=agent_run_id,
+                metadata=metadata,
+                input_json=redact_secrets(input_json),
+                decision=idempotency_decision,
+                requires_sandbox=metadata.requires_sandbox,
+                resolved=resolved,
+                capability_snapshot_json=capability_snapshot_json,
+            )
         decision = SandboxPolicyDecision(
             allowed=False,
             reason=reason or "workspace side-effect tool requires approval",
@@ -346,6 +426,44 @@ class ToolRunner:
         tool_call.status = "RUNNING"
         tool_call.error_message = None
         tool_call.sandbox_id = sandbox.id if sandbox is not None else tool_call.sandbox_id
+        task = self.session.get(Task, tool_call.task_id)
+        capability_config = self._capability_config_for_existing_call(tool_call)
+        capability_snapshot_json = self._snapshot_for_existing_call(tool_call, metadata)
+        tool_call.capability_snapshot_json = capability_snapshot_json
+        idempotency_decision = self._check_required_idempotency_key(metadata, input_json)
+        if not idempotency_decision.allowed:
+            tool_call.status = "DENIED"
+            tool_call.error_message = idempotency_decision.reason
+            tool_call.output_json = {}
+            payload = {
+                "tool_call_id": tool_call.id,
+                "tool_name": metadata.name,
+                "allowed": False,
+                "policy_id": idempotency_decision.policy_id,
+                "reason": idempotency_decision.reason,
+                "audit_level": idempotency_decision.audit_level,
+                "requires_sandbox": requires_sandbox,
+            }
+            self.event_store.append(
+                task_id=tool_call.task_id,
+                agent_run_id=tool_call.agent_run_id,
+                event_type=EventType.POLICY_CHECKED,
+                payload_json=payload,
+            )
+            self.event_store.append(
+                task_id=tool_call.task_id,
+                agent_run_id=tool_call.agent_run_id,
+                event_type=EventType.POLICY_DENIED,
+                payload_json=payload,
+            )
+            self.event_store.append(
+                task_id=tool_call.task_id,
+                agent_run_id=tool_call.agent_run_id,
+                event_type=EventType.TOOL_DENIED_BY_POLICY,
+                payload_json=payload,
+            )
+            self.session.flush()
+            return ToolExecution(tool_call=tool_call, allowed=False, output={})
         self.event_store.append(
             task_id=tool_call.task_id,
             agent_run_id=tool_call.agent_run_id,
@@ -367,10 +485,29 @@ class ToolRunner:
             payload_json={"tool_call_id": tool_call.id, "tool_name": metadata.name},
         )
 
-        task = self.session.get(Task, tool_call.task_id)
-        capability_config = self._capability_config_for_existing_call(tool_call)
-        capability_snapshot_json = self._snapshot_for_existing_call(tool_call, metadata)
-        tool_call.capability_snapshot_json = capability_snapshot_json
+        cached_output = self._cached_idempotent_output(
+            organization_id=task.organization_id if task is not None else None,
+            metadata=metadata,
+            input_json=input_json,
+        )
+        if cached_output is not None:
+            tool_call.status = "SUCCESS"
+            tool_call.duration_ms = int((time.monotonic() - started_at) * 1000)
+            stored_output = redact_secrets(cached_output)
+            tool_call.output_json = stored_output
+            self.event_store.append(
+                task_id=tool_call.task_id,
+                agent_run_id=tool_call.agent_run_id,
+                event_type=EventType.TOOL_RESULT_RECEIVED,
+                payload_json={
+                    "tool_call_id": tool_call.id,
+                    "tool_name": metadata.name,
+                    "status": tool_call.status,
+                    "idempotent_replay": True,
+                },
+            )
+            self.session.flush()
+            return ToolExecution(tool_call=tool_call, allowed=True, output=stored_output)
         try:
             output = self._execute_allowed(
                 metadata,
@@ -392,6 +529,13 @@ class ToolRunner:
         else:
             tool_call.status = "SUCCESS"
             event_type = EventType.TOOL_RESULT_RECEIVED
+            self._remember_idempotent_output(
+                organization_id=task.organization_id if task is not None else None,
+                metadata=metadata,
+                input_json=input_json,
+                tool_call_id=tool_call.id,
+                output=output,
+            )
 
         tool_call.duration_ms = int((time.monotonic() - started_at) * 1000)
         stored_output = redact_secrets(output)
@@ -479,6 +623,35 @@ class ToolRunner:
             metadata=metadata,
             roles=roles,
             sandbox_present=sandbox is not None,
+        )
+
+    def _check_required_idempotency_key(
+        self,
+        metadata: ToolMetadata,
+        input_json: dict,
+    ) -> SandboxPolicyDecision:
+        if metadata.idempotent or metadata.source != "mcp":
+            return SandboxPolicyDecision(
+                allowed=True,
+                reason="idempotency key is not required",
+                policy_id="tool-idempotency-key-not-required",
+                audit_level=metadata.audit_level,
+                requires_sandbox=metadata.requires_sandbox,
+            )
+        if str(input_json.get("idempotency_key") or "").strip():
+            return SandboxPolicyDecision(
+                allowed=True,
+                reason="idempotency key accepted",
+                policy_id="tool-idempotency-key-required",
+                audit_level=metadata.audit_level,
+                requires_sandbox=metadata.requires_sandbox,
+            )
+        return SandboxPolicyDecision(
+            allowed=False,
+            reason="non-idempotent MCP tool requires idempotency_key",
+            policy_id="tool-idempotency-key-required",
+            audit_level=metadata.audit_level,
+            requires_sandbox=metadata.requires_sandbox,
         )
 
     def _deny(
@@ -681,6 +854,21 @@ class ToolRunner:
                 config_json=config,
                 secret_value=secret_value,
                 sandbox_workspace_root=self.workspace_root if sandbox is not None else None,
+                sandbox_command_executor=(
+                    (
+                        lambda command, cwd, timeout_seconds: self.shell_tool.run(
+                            session=self.session,
+                            sandbox=sandbox,
+                            request=ShellToolRequest(
+                                command=command,
+                                cwd=cwd,
+                                timeout_seconds=timeout_seconds,
+                            ),
+                        )
+                    )
+                    if sandbox is not None
+                    else None
+                ),
             )
             return {
                 "mcp_server": result.server,
@@ -828,3 +1016,45 @@ class ToolRunner:
             "stderr_preview": result.stderr[:2000],
             "duration_ms": result.duration_ms,
         }
+
+    def _cached_idempotent_output(
+        self,
+        *,
+        organization_id: str | None,
+        metadata: ToolMetadata,
+        input_json: dict,
+    ) -> dict | None:
+        if metadata.idempotent:
+            return None
+        key = str(input_json.get("idempotency_key") or "").strip()
+        if not key:
+            return None
+        return get_idempotent_result(
+            self.session,
+            organization_id=organization_id,
+            tool_name=metadata.name,
+            idempotency_key=key,
+        )
+
+    def _remember_idempotent_output(
+        self,
+        *,
+        organization_id: str | None,
+        metadata: ToolMetadata,
+        input_json: dict,
+        tool_call_id: str,
+        output: dict,
+    ) -> None:
+        if metadata.idempotent or output.get("error"):
+            return
+        key = str(input_json.get("idempotency_key") or "").strip()
+        if not key:
+            return
+        remember_idempotent_result(
+            self.session,
+            organization_id=organization_id,
+            tool_name=metadata.name,
+            idempotency_key=key,
+            tool_call_id=tool_call_id,
+            output_json=redact_secrets(output),
+        )

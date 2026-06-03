@@ -11,6 +11,7 @@ from .refusal import *
 from .safety import *
 from .specialist import *
 from .tool import *
+from app.observability.tracing import traced_operation
 
 def _grade_case(
     session: Session,
@@ -19,6 +20,30 @@ def _grade_case(
     organization_id: str | None = None,
 ) -> EvalResult:
     task = session.get(Task, eval_case.source_task_id) if eval_case.source_task_id else None
+    with traced_operation(
+        session,
+        "eval_grade_case",
+        task_id=task.id if task else None,
+        kind="internal",
+        attributes={"eval_run_id": eval_run_id, "eval_case_id": eval_case.id},
+    ):
+        return _grade_case_inner(
+            session=session,
+            eval_run_id=eval_run_id,
+            eval_case=eval_case,
+            organization_id=organization_id,
+            task=task,
+        )
+
+
+def _grade_case_inner(
+    *,
+    session: Session,
+    eval_run_id: str,
+    eval_case: EvalCase,
+    organization_id: str | None,
+    task: Task | None,
+) -> EvalResult:
     tool_calls = _tool_calls(session, task.id) if task else []
     model_calls = _model_calls(session, task.id) if task else []
     assignments = _assignments(session, task.id) if task else []

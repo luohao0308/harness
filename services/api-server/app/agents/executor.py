@@ -22,6 +22,7 @@ from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.react_engine import Act, Observe, ReActTrace, Reason
 from app.agents.registry import ensure_default_agents
 from app.agents.schemas import ExecutionPlan, PlanStep, StepResult
+from app.agents.specialist_llm_selector import SpecialistLLMSelector
 from app.agents.specialists import (
     SubagentSpecialistRegistry,
     collect_subagent_outputs,
@@ -899,7 +900,7 @@ class Executor:
         fanout_slugs = list(dict.fromkeys(step.fanout_specialist_slugs))
         if len(fanout_slugs) > 1:
             return self._execute_fanout_subagent_step(task, plan_row, step, step_row, fanout_slugs)
-        specialist = self._select_specialist(task=task, step=step)
+        specialist, selection_context = self._select_specialist(task=task, step=step)
         agent_run = SubagentManager(self.session).spawn(
             task=task,
             assignment={
@@ -911,6 +912,7 @@ class Executor:
                 "fanout_aggregation": step.fanout_aggregation,
                 "tool_hints": step.tool_hints,
                 "task_goal": task.goal,
+                **selection_context,
             },
             enqueue=True,
             specialist=specialist,
@@ -1131,7 +1133,7 @@ class Executor:
         if step.recommended_specialist_slug:
             specialist = registry.get_by_slug(step.recommended_specialist_slug)
             if specialist is not None:
-                return specialist
+                return specialist, {"specialist_selection": {"resolved_by": "planner_hint"}}
         match_text = " ".join(
             [
                 task.title,
@@ -1141,7 +1143,17 @@ class Executor:
                 " ".join(step.acceptance_criteria),
             ]
         )
-        specialist, trace = registry.match_by_keywords_with_trace(match_text)
+        outcome = SpecialistLLMSelector(
+            self.session,
+            organization_id=task.organization_id,
+        ).select(
+            task=task,
+            plan_step_key=step.key,
+            plan_step_description=step.description,
+            match_text=match_text,
+        )
+        specialist = outcome.specialist
+        trace = outcome.trace
         if specialist is not None:
             self.event_store.append(
                 task_id=task.id,
@@ -1152,7 +1164,10 @@ class Executor:
                     **trace,
                 },
             )
-        return specialist
+        return specialist, {
+            "specialist_selection_decision_id": outcome.decision.id,
+            "specialist_selection": trace,
+        }
 
     def _select_tool_for_step(
         self,

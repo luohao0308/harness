@@ -32,6 +32,10 @@ from app.api.schemas import (
     CapabilitySimpleInstallRequest,
     CapabilitySimpleInstallResponse,
     CapabilityTestInvocationRequest,
+    MCPDiscoveredToolResponse,
+    MCPServerDiscoverResponse,
+    MCPServerPage,
+    MCPServerResponse,
     ToolExecuteResponse,
     ToolMetadataResponse,
     ToolRegistryResponse,
@@ -49,8 +53,14 @@ from app.knowledge_dify import (
 from app.security.auth import Principal, require_role
 from app.tools.adapter_registry import REGISTRY, adapter_metadata
 from app.tools.adapters import ensure_builtin_adapters_registered
-from app.tools.capabilities import CapabilityRegistry, CapabilityResolutionError
+from app.tools.capabilities import (
+    CapabilityRegistry,
+    CapabilityResolutionError,
+    _discovered_tool_name,
+    _risk_level_from_mcp_annotations,
+)
 from app.tools.marketplace import list_capability_marketplace
+from app.tools.mcp_protocol.discovery import discover_tools
 from app.tools.registry import ToolRegistry
 from app.tools.runner import ToolRunner
 
@@ -58,6 +68,10 @@ router = APIRouter(prefix="/tools", tags=["tools"])
 DbSession = Annotated[Session, Depends(get_db_session)]
 _ADAPTER_HEALTH_LIMITS: dict[str, list[float]] = {}
 ADAPTER_HEALTH_MAX_PER_MINUTE = 10
+STDIO_COMMAND_ALLOWED_CHARS = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-@+"
+)
+STDIO_ARG_BLOCKED_CHARS = {"\n", "\r", "\x00"}
 
 
 def _bad_request_from_capability_error(exc: CapabilityResolutionError) -> HTTPException:
@@ -162,6 +176,117 @@ def get_tool_adapter_health(
     )
 
 
+@router.get(
+    "/mcp-servers",
+    response_model=MCPServerPage,
+    summary="List configured MCP protocol servers",
+)
+def list_mcp_servers(
+    session: DbSession,
+    principal: Principal,
+    agent_id: str = "default",
+) -> MCPServerPage:
+    require_role(principal, {"admin", "engineer"})
+    ensure_default_agents(session, principal.organization_id)
+    session.commit()
+    try:
+        records = CapabilityRegistry(session, principal.organization_id).list_runtime_configs(
+            agent_id
+        )
+    except CapabilityResolutionError as exc:
+        raise _bad_request_from_capability_error(exc) from exc
+    items = [
+        _mcp_server_response(
+            record,
+            discovered_tools=[],
+            resources_count=0,
+            discovery_status="idle",
+            discovery_message="",
+            child_tool_count=_child_tool_count(records, _server_slug(record)),
+        )
+        for record in records
+        if not str(record.get("tool_name") or "").startswith("mcp.")
+    ]
+    return MCPServerPage(items=items)
+
+
+@router.post(
+    "/mcp-servers/{tool_name:path}/discover",
+    response_model=MCPServerDiscoverResponse,
+    summary="Discover MCP protocol tools and register child capabilities",
+)
+def discover_mcp_server_tools(
+    tool_name: str,
+    session: DbSession,
+    principal: Principal,
+    agent_id: str = "default",
+) -> MCPServerDiscoverResponse:
+    require_role(principal, {"admin", "engineer"})
+    ensure_default_agents(session, principal.organization_id)
+    session.commit()
+    registry = CapabilityRegistry(session, principal.organization_id)
+    try:
+        record = registry.runtime_config_for_tool(agent_id=agent_id, tool_name=tool_name)
+    except CapabilityResolutionError as exc:
+        raise _bad_request_from_capability_error(exc) from exc
+    config = record.get("config_json") if isinstance(record.get("config_json"), dict) else {}
+    runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
+    secret_ref = str(config.get("secret_ref") or "").strip()
+    secret_value = ""
+    if secret_ref:
+        secret_value = resolve_connector_secret_ref(
+            secret_ref,
+            provider=tool_name,
+            session=session,
+            organization_id=principal.organization_id,
+        )
+    server_slug = _server_slug(record)
+    discovery = discover_tools(
+        server_slug=server_slug,
+        runtime=runtime,
+        secret_value=secret_value,
+    )
+    discovered = [_discovered_tool_response(server_slug, tool) for tool in discovery.tools]
+    registered: list[dict] = []
+    if discovery.ok and discovery.tools:
+        registered = registry.register_discovered_mcp_tools(
+            agent_id=agent_id,
+            server_tool_name=tool_name,
+            server_slug=server_slug,
+            discovered_tools=[
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                    "annotations": tool.annotations,
+                }
+                for tool in discovery.tools
+            ],
+            runtime=runtime,
+            secret_ref=secret_ref or None,
+            created_by=principal.user_id,
+        )
+        session.commit()
+    return MCPServerDiscoverResponse(
+        **_mcp_server_response(
+            record,
+            discovered_tools=discovered,
+            resources_count=discovery.resources_count,
+            discovery_status="ready" if discovery.ok else "failed",
+            discovery_message=discovery.message,
+            child_tool_count=len(registered),
+        ).model_dump(),
+        registered_runtime_configs=[
+            _runtime_config_response(
+                item,
+                session=session,
+                organization_id=principal.organization_id,
+            ).model_dump()
+            for item in registered
+        ],
+    )
+
+
 def _enforce_adapter_health_rate_limit(organization_id: str | None, slug: str) -> None:
     key = f"{organization_id or 'global'}:{slug}"
     now = time.monotonic()
@@ -170,6 +295,52 @@ def _enforce_adapter_health_rate_limit(organization_id: str | None, slug: str) -
         raise HTTPException(status_code=429, detail="adapter health rate limit exceeded")
     recent.append(now)
     _ADAPTER_HEALTH_LIMITS[key] = recent
+
+
+def _server_slug(record: dict) -> str:
+    raw = str(record.get("mcp_server") or record.get("tool_name") or "mcp-server")
+    normalized = "".join(char.lower() if char.isalnum() else "-" for char in raw).strip("-")
+    return normalized or "mcp-server"
+
+
+def _child_tool_count(records: list[dict], server_slug: str) -> int:
+    prefix = f"mcp.{server_slug}."
+    return sum(1 for record in records if str(record.get("tool_name") or "").startswith(prefix))
+
+
+def _discovered_tool_response(server_slug: str, tool) -> MCPDiscoveredToolResponse:
+    slug = _discovered_tool_name(server_slug, tool.name) or f"mcp.{server_slug}.tool"
+    return MCPDiscoveredToolResponse(
+        name=tool.name,
+        slug=slug,
+        description=tool.description,
+        input_schema=tool.input_schema,
+        annotations=tool.annotations,
+        risk_level=_risk_level_from_mcp_annotations(tool.annotations),
+    )
+
+
+def _mcp_server_response(
+    record: dict,
+    *,
+    discovered_tools: list[MCPDiscoveredToolResponse],
+    resources_count: int,
+    discovery_status: str,
+    discovery_message: str,
+    child_tool_count: int,
+) -> MCPServerResponse:
+    return MCPServerResponse(
+        agent_id=str(record.get("agent_id") or ""),
+        tool_name=str(record.get("tool_name") or ""),
+        server_slug=_server_slug(record),
+        transport=str(record.get("transport") or "http"),
+        configured=bool(record.get("configured")),
+        discovery_status=discovery_status,
+        discovery_message=discovery_message,
+        discovered_tools=discovered_tools,
+        resources_count=resources_count,
+        child_tool_count=child_tool_count,
+    )
 
 
 @router.post(
@@ -342,6 +513,21 @@ def _runtime_endpoint_errors(
                 errors.append("endpoint_url must not contain credentials")
     if transport == "stdio" and not command:
         errors.append("command is required for stdio MCP runtime")
+    if transport == "stdio" and command:
+        stripped_command = command.strip()
+        if not stripped_command or any(char.isspace() for char in stripped_command):
+            errors.append("stdio command must be a single executable path or name")
+        elif any(char not in STDIO_COMMAND_ALLOWED_CHARS for char in stripped_command):
+            errors.append("stdio command contains unsupported characters")
+    return errors
+
+
+def _runtime_arg_errors(args: list[str]) -> list[str]:
+    errors: list[str] = []
+    for index, raw in enumerate(args[:20]):
+        value = str(raw)
+        if any(char in value for char in STDIO_ARG_BLOCKED_CHARS):
+            errors.append(f"args[{index}] contains unsupported control characters")
     return errors
 
 
@@ -904,6 +1090,8 @@ def update_runtime_config(
         endpoint_url=endpoint_url,
         command=command,
     )
+    if transport == "stdio":
+        errors.extend(_runtime_arg_errors(request.args))
     if secret_ref and secret_ref_looks_like_raw_secret(secret_ref):
         errors.append("secret_ref must reference a server-side secret, not a raw API key")
     if errors:

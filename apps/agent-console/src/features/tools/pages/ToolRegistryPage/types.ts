@@ -5,6 +5,8 @@ export type ToolConfigDialog =
   | "upload"
   | "lifecycle"
   | "test-invoke"
+  | "mcp-servers"
+  | "code-interpreter"
   | null;
 
 export type MarketplaceFilter = "all" | "mcp" | "skill";

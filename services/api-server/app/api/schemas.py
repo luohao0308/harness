@@ -1101,6 +1101,12 @@ class SubagentResponse(BaseModel):
     fanout_batch_id: str | None = Field(default=None, description="fanout 批次 ID")
     fanout_index: int | None = Field(default=None, description="fanout 批次序号")
     fanout_total: int | None = Field(default=None, description="fanout 批次总数")
+    dynamic_fanout_origin: str | None = Field(default=None, description="动态扩缩来源子 Agent")
+    dynamic_fanout_requested_by: str | None = Field(
+        default=None,
+        description="触发动态扩缩的子 Agent",
+    )
+    dynamic_fanout_reason: str | None = Field(default=None, description="动态扩缩原因")
     context_json: dict = Field(description="上下文")
     started_at: datetime | None = Field(default=None, description="开始时间")
     completed_at: datetime | None = Field(default=None, description="完成时间")
@@ -1138,6 +1144,9 @@ class FanoutBatchMemberResponse(BaseModel):
     specialist_id: str | None = Field(default=None, description="专家模板 ID")
     specialist_slug: str | None = Field(default=None, description="专家 slug")
     fanout_index: int | None = Field(default=None, description="fanout 序号")
+    dynamic_fanout_origin: str | None = Field(default=None, description="动态扩缩来源")
+    dynamic_fanout_requested_by: str | None = Field(default=None, description="动态扩缩触发者")
+    dynamic_fanout_reason: str | None = Field(default=None, description="动态扩缩原因")
     output_id: str | None = Field(default=None, description="结构化输出 ID")
 
 
@@ -1149,6 +1158,7 @@ class FanoutBatchResponse(BaseModel):
     aggregation: str = Field(description="聚合模式")
     statuses: dict[str, int] = Field(default_factory=dict, description="状态分布")
     members: list[FanoutBatchMemberResponse] = Field(description="批次成员")
+    extend_history: list[dict] = Field(default_factory=list, description="动态扩缩历史")
 
 
 class FanoutBatchPage(BaseModel):
@@ -1162,6 +1172,23 @@ class SubagentCreateRequest(BaseModel):
     timeout_seconds: int = Field(default=900, ge=1, description="超时秒数")
     enqueue: bool = Field(default=False, description="是否进入 Dramatiq 队列")
     specialist_slug: str | None = Field(default=None, description="可选专家模板 slug")
+
+
+class SubagentFanoutExtendRequest(BaseModel):
+    additional_specialist_slugs: list[str] = Field(
+        min_length=1,
+        max_length=10,
+        description="追加到当前 fanout 批次的专家 slug",
+    )
+    reason: str = Field(min_length=1, max_length=240, description="动态扩缩原因")
+
+
+class SubagentFanoutExtendResponse(BaseModel):
+    fanout_batch_id: str = Field(description="fanout 批次 ID")
+    added_count: int = Field(description="新增子 Agent 数")
+    fanout_total: int = Field(description="扩缩后的批次总数")
+    extend_count: int = Field(description="批次动态扩缩次数")
+    agent_runs: list[SubagentResponse] = Field(description="新增子 Agent")
 
 
 class SubagentSpecialistSummary(BaseModel):
@@ -1258,6 +1285,108 @@ class SubagentSpecialistStats(BaseModel):
         default_factory=list,
         description="最近失败原因",
     )
+
+
+class SpecialistSelectionDecisionResponse(BaseModel):
+    id: str = Field(description="选择决策 ID")
+    task_id: str = Field(description="任务 ID")
+    plan_step_key: str = Field(description="计划步骤 key")
+    selected_slug: str | None = Field(default=None, description="选中的专家 slug")
+    confidence: float = Field(description="选择置信度")
+    reasoning: str = Field(description="选择理由")
+    selector: Literal["llm", "keyword", "success_rate", "recency_fallback"] = Field(
+        description="最终选择器"
+    )
+    alternative_slugs_json: list[str] = Field(default_factory=list, description="备选专家")
+    candidate_slugs_json: list[str] = Field(default_factory=list, description="候选专家")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SpecialistCalibrationBucket(BaseModel):
+    bucket: str = Field(description="置信度分桶")
+    min_confidence: float = Field(description="分桶最小置信度")
+    max_confidence: float = Field(description="分桶最大置信度")
+    decision_count: int = Field(description="决策数")
+    success_count: int = Field(description="成功数")
+    success_rate: float | None = Field(default=None, description="真实成功率")
+    avg_confidence: float | None = Field(default=None, description="平均置信度")
+    ece_contribution: float | None = Field(default=None, description="ECE 贡献")
+
+
+class SpecialistCalibrationReport(BaseModel):
+    organization_id: str = Field(description="组织 ID")
+    window: Literal["7d", "30d", "all"] = Field(description="统计窗口")
+    decision_count: int = Field(description="决策数")
+    low_sample: bool = Field(description="样本数是否不足")
+    ece: float | None = Field(default=None, description="Expected Calibration Error")
+    buckets: list[SpecialistCalibrationBucket] = Field(description="置信度分桶")
+
+
+class SpecialistMarketplaceListingCreateRequest(BaseModel):
+    slug: str = Field(min_length=1, max_length=96, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    display_name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    author_name: str = Field(default="Harness User", min_length=1)
+    version: str = Field(default="1.0.0", min_length=1, max_length=32)
+    manifest_json: dict = Field(description="完整专家 manifest")
+    signature: str = Field(min_length=1, max_length=128, description="manifest HMAC 签名")
+
+
+class SpecialistMarketplaceListingUpdateRequest(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1)
+    description: str | None = Field(default=None, min_length=1)
+    author_name: str | None = Field(default=None, min_length=1)
+    version: str | None = Field(default=None, min_length=1, max_length=32)
+    manifest_json: dict | None = Field(default=None)
+    signature: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class SpecialistMarketplaceApproveRequest(BaseModel):
+    verified: bool = Field(default=True, description="是否审核通过")
+
+
+class SpecialistMarketplaceInstallRequest(BaseModel):
+    auto_update_enabled: bool = Field(default=False, description="是否启用自动更新")
+
+
+class SpecialistMarketplaceListingResponse(BaseModel):
+    id: str = Field(description="Listing ID")
+    slug: str = Field(description="市场 slug")
+    display_name: str = Field(description="名称")
+    description: str = Field(description="说明")
+    author_org_id: str | None = Field(default=None, description="作者组织")
+    author_name: str = Field(description="作者")
+    version: str = Field(description="版本")
+    manifest_json: dict = Field(description="专家 manifest")
+    signature: str = Field(description="签名")
+    verified: bool = Field(description="是否已审核")
+    download_count: int = Field(description="安装次数")
+    installed: bool = Field(default=False, description="当前组织是否已安装")
+    installed_specialist_id: str | None = Field(default=None, description="已安装专家 ID")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SpecialistMarketplaceListingPage(BaseModel):
+    items: list[SpecialistMarketplaceListingResponse] = Field(description="市场 Listing")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class SpecialistInstallationResponse(BaseModel):
+    id: str = Field(description="安装 ID")
+    listing_id: str = Field(description="Listing ID")
+    installed_org_id: str = Field(description="安装组织")
+    installed_specialist_id: str = Field(description="安装后的专家 ID")
+    installed_version: str = Field(description="安装版本")
+    auto_update_enabled: bool = Field(description="是否自动更新")
+    installed_at: datetime = Field(description="安装时间")
+    specialist: SubagentSpecialistResponse | None = Field(default=None, description="安装后的专家")
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SubagentOutputResponse(BaseModel):
@@ -1766,7 +1895,12 @@ class ObservabilityTraceSpan(BaseModel):
     name: str = Field(description="Span 名称")
     service: str = Field(description="服务名")
     start_time: datetime = Field(description="开始时间")
+    end_time: datetime | None = Field(default=None, description="结束时间")
     duration_ms: int = Field(description="耗时毫秒")
+    kind: str = Field(default="internal", description="Span kind")
+    status: str = Field(default="OK", description="Span status")
+    task_id: str | None = Field(default=None, description="任务 ID")
+    agent_run_id: str | None = Field(default=None, description="Agent Run ID")
     attributes: dict = Field(default_factory=dict, description="Span 属性")
     source: str = Field(description="数据来源")
 
@@ -1797,6 +1931,135 @@ class ObservabilityTraceResponse(BaseModel):
         default_factory=list,
         description="跨服务 Trace 边",
     )
+
+
+class TraceListItem(BaseModel):
+    trace_id: str = Field(description="Trace ID")
+    task_id: str | None = Field(default=None, description="任务 ID")
+    root_name: str = Field(description="Root span name")
+    start_time: datetime = Field(description="开始时间")
+    duration_ms: int = Field(description="Trace 总耗时")
+    span_count: int = Field(description="Span 数量")
+    status: str = Field(description="Trace 状态")
+    source: str = Field(description="数据来源")
+
+
+class TraceListResponse(BaseModel):
+    items: list[TraceListItem] = Field(description="Trace 列表")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class CostRollupBreakdownItem(BaseModel):
+    key: str = Field(description="聚合键")
+    label: str = Field(description="展示名称")
+    cost_usd: float = Field(description="成本 USD")
+    tokens_in: int = Field(description="输入 Token")
+    tokens_out: int = Field(description="输出 Token")
+    run_count: int = Field(description="运行数量")
+    share: float = Field(description="成本占比")
+
+
+class CostRollupSeriesPoint(BaseModel):
+    bucket_start: str = Field(description="时间桶起点")
+    key: str = Field(description="聚合键")
+    label: str = Field(description="展示名称")
+    cost_usd: float = Field(description="成本 USD")
+    tokens: int = Field(description="Token 总量")
+    run_count: int = Field(description="运行数量")
+
+
+class CostRollupResponse(BaseModel):
+    window: Literal["24h", "7d", "30d", "all"] = Field(description="时间窗口")
+    group_by: Literal["agent", "provider", "specialist", "adapter"] = Field(
+        description="聚合维度"
+    )
+    generated_at: datetime = Field(description="生成时间")
+    total_cost_usd: float = Field(description="总成本 USD")
+    total_tokens: int = Field(description="总 Token")
+    total_runs: int = Field(description="总运行数")
+    average_run_cost_usd: float = Field(description="平均运行成本")
+    breakdown: list[CostRollupBreakdownItem] = Field(description="Top breakdown")
+    series: list[CostRollupSeriesPoint] = Field(description="时间序列")
+
+
+class AlertRuleCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128, description="规则名称")
+    metric: str = Field(description="指标名")
+    comparator: Literal[">", "<", ">=", "<=", "=="] = Field(description="比较符")
+    threshold: float = Field(ge=0, description="阈值")
+    window_seconds: int = Field(default=300, ge=60, le=86400, description="窗口秒数")
+    enabled: bool = Field(default=True, description="是否启用")
+    severity: Literal["info", "warning", "critical"] = Field(
+        default="warning",
+        description="严重级别",
+    )
+    notification_channels_json: list[str] = Field(
+        default_factory=lambda: ["in_app"],
+        description="通知通道",
+    )
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128, description="规则名称")
+    metric: str | None = Field(default=None, description="指标名")
+    comparator: Literal[">", "<", ">=", "<=", "=="] | None = Field(
+        default=None,
+        description="比较符",
+    )
+    threshold: float | None = Field(default=None, ge=0, description="阈值")
+    window_seconds: int | None = Field(default=None, ge=60, le=86400, description="窗口秒数")
+    enabled: bool | None = Field(default=None, description="是否启用")
+    severity: Literal["info", "warning", "critical"] | None = Field(
+        default=None,
+        description="严重级别",
+    )
+    notification_channels_json: list[str] | None = Field(default=None, description="通知通道")
+
+
+class AlertRuleResponse(BaseModel):
+    id: str = Field(description="规则 ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    name: str = Field(description="规则名称")
+    metric: str = Field(description="指标名")
+    comparator: str = Field(description="比较符")
+    threshold: float = Field(description="阈值")
+    window_seconds: int = Field(description="窗口秒数")
+    enabled: bool = Field(description="是否启用")
+    severity: str = Field(description="严重级别")
+    notification_channels_json: list[str] = Field(description="通知通道")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AlertRulePage(BaseModel):
+    items: list[AlertRuleResponse] = Field(description="告警规则")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
+
+
+class AlertEventResponse(BaseModel):
+    id: str = Field(description="告警事件 ID")
+    organization_id: str | None = Field(default=None, description="组织 ID")
+    rule_id: str = Field(description="规则 ID")
+    rule_name: str = Field(description="规则名称")
+    metric: str = Field(description="指标名")
+    comparator: str = Field(description="比较符")
+    threshold: float = Field(description="阈值")
+    observed_value: float = Field(description="观测值")
+    severity: str = Field(description="严重级别")
+    status: str = Field(description="状态")
+    message: str = Field(description="消息")
+    context_json: dict = Field(description="上下文")
+    triggered_at: datetime = Field(description="触发时间")
+    resolved_at: datetime | None = Field(default=None, description="恢复时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AlertEventPage(BaseModel):
+    items: list[AlertEventResponse] = Field(description="告警事件")
+    next_cursor: str | None = Field(default=None, description="下一页游标")
 
 
 class GrafanaDashboardResponse(BaseModel):
@@ -2014,6 +2277,39 @@ class AdapterHealthResponse(BaseModel):
     message: str = Field(description="Probe message")
     sample: dict = Field(default_factory=dict, description="Bounded probe sample")
     last_checked_at: datetime = Field(description="Probe timestamp")
+
+
+class MCPDiscoveredToolResponse(BaseModel):
+    name: str = Field(description="MCP tool name")
+    slug: str = Field(description="Harness adapter/capability slug")
+    description: str = Field(default="", description="MCP tool description")
+    input_schema: dict = Field(default_factory=dict, description="MCP input schema")
+    annotations: dict = Field(default_factory=dict, description="MCP tool annotations")
+    risk_level: str = Field(default="low", description="Derived Harness risk level")
+
+
+class MCPServerResponse(BaseModel):
+    agent_id: str = Field(description="Agent ID")
+    tool_name: str = Field(description="Installed MCP server capability tool name")
+    server_slug: str = Field(description="Normalized MCP server slug")
+    transport: str = Field(description="Runtime transport")
+    configured: bool = Field(description="Whether runtime fields are configured")
+    discovery_status: str = Field(description="idle, ready, or failed")
+    discovery_message: str = Field(default="", description="Last discovery message")
+    discovered_tools: list[MCPDiscoveredToolResponse] = Field(default_factory=list)
+    resources_count: int = Field(default=0, description="Discovered resource count")
+    child_tool_count: int = Field(default=0, description="Registered child tool count")
+
+
+class MCPServerPage(BaseModel):
+    items: list[MCPServerResponse] = Field(default_factory=list, description="MCP servers")
+
+
+class MCPServerDiscoverResponse(MCPServerResponse):
+    registered_runtime_configs: list[dict] = Field(
+        default_factory=list,
+        description="Runtime config records created for discovered child tools",
+    )
 
 
 class CapabilityAdminValidationRequest(BaseModel):

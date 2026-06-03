@@ -54,6 +54,9 @@ describe("SubagentDetailPage", () => {
           fanout_batch_id: "fanout-1",
           fanout_index: 0,
           fanout_total: 2,
+          dynamic_fanout_origin: null,
+          dynamic_fanout_requested_by: null,
+          dynamic_fanout_reason: null,
           context_json: {
             label: "Review async step",
             step_key: "review",
@@ -126,6 +129,9 @@ describe("SubagentDetailPage", () => {
                   specialist_id: "spec-reviewer",
                   specialist_slug: "code-reviewer",
                   fanout_index: 0,
+                  dynamic_fanout_origin: null,
+                  dynamic_fanout_requested_by: null,
+                  dynamic_fanout_reason: null,
                   output_id: "output-1",
                 },
                 {
@@ -134,7 +140,17 @@ describe("SubagentDetailPage", () => {
                   specialist_id: "spec-researcher",
                   specialist_slug: "researcher",
                   fanout_index: 1,
+                  dynamic_fanout_origin: "fanout-1",
+                  dynamic_fanout_requested_by: "subagent-1",
+                  dynamic_fanout_reason: "researcher_found_security_topic",
                   output_id: "output-2",
+                },
+              ],
+              extend_history: [
+                {
+                  extend_index: 1,
+                  reason: "researcher_found_security_topic",
+                  requested_by_agent_run_id: "subagent-1",
                 },
               ],
             },
@@ -156,6 +172,8 @@ describe("SubagentDetailPage", () => {
     expect(await screen.findByText("Fanout 批次")).toBeInTheDocument();
     expect(screen.getByText("concat")).toBeInTheDocument();
     expect(screen.getByText("researcher")).toBeInTheDocument();
+    expect(screen.getByText("动态新增")).toBeInTheDocument();
+    expect(screen.getByText("动态扩缩 1 次")).toBeInTheDocument();
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([input]) => requestPath(input as RequestInfo | URL))).toContain(
         "/api/tasks/task-1/result",

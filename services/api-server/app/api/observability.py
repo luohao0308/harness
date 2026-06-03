@@ -1,6 +1,7 @@
 import json
 import time
 from base64 import b64encode
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -10,13 +11,21 @@ from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.planner import PLANNER_PROMPT_VERSION
 from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT
 from app.api.schemas import (
+    AlertEventPage,
+    AlertEventResponse,
+    AlertRuleCreateRequest,
+    AlertRulePage,
+    AlertRuleResponse,
+    AlertRuleUpdateRequest,
     CacheSourceSummary,
+    CostRollupResponse,
     CountItem,
     EventSourcingArchitectureResponse,
     GrafanaDashboardPage,
@@ -46,6 +55,8 @@ from app.api.schemas import (
     TokenSavingsPage,
     TokenSavingsRunItem,
     TokenSavingsSummary,
+    TraceListItem,
+    TraceListResponse,
     WarmPoolArchitectureResponse,
     WarmPoolResponse,
 )
@@ -56,12 +67,15 @@ from app.db.models import (
     AgentEvent,
     AgentHandoff,
     AgentRun,
+    AlertEvent,
+    AlertRule,
     ContextAssemblyManifest,
     EvalResult,
     EvalRun,
     ExecutionPlan,
     ModelCall,
     ObservabilityExportRecord,
+    OtelSpan,
     SandboxInstance,
     Task,
     TaskSnapshot,
@@ -70,6 +84,8 @@ from app.db.models import (
 )
 from app.db.session import get_db_session
 from app.events.event_store import SNAPSHOT_FREQUENCY_EVENTS
+from app.observability.alert_evaluator import evaluate_alert_rules, validate_alert_rule_fields
+from app.observability.cost_rollup import build_cost_rollup
 from app.sandbox.warm_pool import WarmPoolManager
 from app.security.auth import Principal, require_role
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
@@ -77,6 +93,247 @@ from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 router = APIRouter(prefix="/observability", tags=["observability"])
 DEFAULT_CONTEXT_CACHE_SOURCES = ("compression_summary", "rag_retrieval", "long_term_memory")
 DbSession = Annotated[Session, Depends(get_db_session)]
+_cost_rollup_last_seen: dict[str, float] = {}
+
+
+@router.get(
+    "/cost-rollup",
+    response_model=CostRollupResponse,
+    summary="查询成本聚合",
+    description="按时间窗口和维度聚合模型、专家和工具适配器成本证据。",
+)
+def get_cost_rollup(
+    session: DbSession,
+    principal: Principal,
+    window: str = "7d",
+    group_by: str = "agent",
+) -> CostRollupResponse:
+    try:
+        if window not in {"24h", "7d", "30d", "all"}:
+            raise ValueError("window must be one of 24h, 7d, 30d, all")
+        if group_by not in {"agent", "provider", "specialist", "adapter"}:
+            raise ValueError("group_by must be one of agent, provider, specialist, adapter")
+        _check_cost_rollup_rate_limit(principal.organization_id)
+        return build_cost_rollup(
+            session=session,
+            organization_id=principal.organization_id,
+            window=window,  # type: ignore[arg-type]
+            group_by=group_by,  # type: ignore[arg-type]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/traces",
+    response_model=TraceListResponse,
+    summary="查询 Trace 列表",
+    description="返回本地 OpenTelemetry span 存储中的 Trace 摘要。",
+)
+def list_observability_traces(
+    session: DbSession,
+    principal: Principal,
+    task_id: str | None = Query(default=None, description="任务 ID"),
+    limit: int = Query(default=50, ge=1, le=200, description="返回数量"),
+) -> TraceListResponse:
+    rows = _local_trace_list(
+        session=session,
+        principal=principal,
+        task_id=task_id,
+        limit=limit,
+    )
+    return TraceListResponse(items=rows, next_cursor=None)
+
+
+@router.get(
+    "/alert-rules",
+    response_model=AlertRulePage,
+    summary="查询告警规则",
+    description="返回当前组织和系统默认告警规则。",
+)
+def list_alert_rules(session: DbSession, principal: Principal) -> AlertRulePage:
+    statement = select(AlertRule).where(
+        or_(
+            AlertRule.organization_id == principal.organization_id,
+            AlertRule.organization_id.is_(None),
+        )
+    )
+    rows = session.execute(statement.order_by(AlertRule.created_at.asc())).scalars()
+    by_name: dict[str, AlertRule] = {}
+    for row in rows:
+        current = by_name.get(row.name)
+        if current is None or row.organization_id == principal.organization_id:
+            by_name[row.name] = row
+    return AlertRulePage(
+        items=[AlertRuleResponse.model_validate(row) for row in by_name.values()],
+        next_cursor=None,
+    )
+
+
+@router.post(
+    "/alert-rules",
+    response_model=AlertRuleResponse,
+    status_code=201,
+    summary="创建告警规则",
+    description="创建组织级告警规则；v1 通知通道仅支持 in_app。",
+)
+def create_alert_rule(
+    request_body: AlertRuleCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AlertRuleResponse:
+    _validate_alert_payload(request_body)
+    rule = AlertRule(
+        organization_id=principal.organization_id,
+        name=request_body.name,
+        metric=request_body.metric,
+        comparator=request_body.comparator,
+        threshold=request_body.threshold,
+        window_seconds=request_body.window_seconds,
+        enabled=request_body.enabled,
+        severity=request_body.severity,
+        notification_channels_json=list(request_body.notification_channels_json),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+    return AlertRuleResponse.model_validate(rule)
+
+
+@router.patch(
+    "/alert-rules/{rule_id}",
+    response_model=AlertRuleResponse,
+    summary="更新告警规则",
+    description="更新当前组织告警规则；系统默认规则可复制为组织规则后禁用或调整。",
+)
+def update_alert_rule(
+    rule_id: str,
+    request_body: AlertRuleUpdateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AlertRuleResponse:
+    rule = _editable_alert_rule(session=session, principal=principal, rule_id=rule_id)
+    _validate_alert_payload(request_body)
+    updates = request_body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(rule, key, value)
+    rule.updated_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(rule)
+    return AlertRuleResponse.model_validate(rule)
+
+
+@router.delete(
+    "/alert-rules/{rule_id}",
+    status_code=204,
+    summary="删除告警规则",
+    description="删除当前组织告警规则。",
+)
+def delete_alert_rule(rule_id: str, session: DbSession, principal: Principal) -> Response:
+    rule = _owned_alert_rule(session=session, principal=principal, rule_id=rule_id)
+    session.execute(delete(AlertEvent).where(AlertEvent.rule_id == rule.id))
+    session.delete(rule)
+    session.commit()
+    return Response(status_code=204)
+
+
+@router.post(
+    "/alert-rules/evaluate",
+    response_model=AlertEventPage,
+    summary="手动评估告警规则",
+    description="触发一次当前组织告警规则评估，便于本地验证。",
+)
+def evaluate_alert_rules_once(session: DbSession, principal: Principal) -> AlertEventPage:
+    results = evaluate_alert_rules(session=session, organization_id=principal.organization_id)
+    session.commit()
+    event_ids = [result.event_id for result in results if result.event_id]
+    if not event_ids:
+        return AlertEventPage(items=[], next_cursor=None)
+    events = session.execute(
+        select(AlertEvent).where(AlertEvent.id.in_(event_ids)).order_by(AlertEvent.triggered_at.desc())
+    ).scalars()
+    return AlertEventPage(
+        items=[AlertEventResponse.model_validate(event) for event in events],
+        next_cursor=None,
+    )
+
+
+@router.get(
+    "/alert-events",
+    response_model=AlertEventPage,
+    summary="查询告警事件",
+    description="返回当前组织告警事件时间线。",
+)
+def list_alert_events(
+    session: DbSession,
+    principal: Principal,
+    since: Annotated[datetime | None, Query(description="起始时间")] = None,
+    limit: Annotated[int, Query(ge=1, le=200, description="返回数量")] = 50,
+) -> AlertEventPage:
+    statement = select(AlertEvent).where(AlertEvent.organization_id == principal.organization_id)
+    if since is not None:
+        statement = statement.where(AlertEvent.triggered_at >= since)
+    events = session.execute(
+        statement.order_by(AlertEvent.triggered_at.desc()).limit(limit)
+    ).scalars()
+    return AlertEventPage(
+        items=[AlertEventResponse.model_validate(event) for event in events],
+        next_cursor=None,
+    )
+
+
+@router.get(
+    "/alert-events/stream",
+    summary="订阅告警事件",
+    description="通过 SSE 推送当前组织新的告警事件。",
+)
+def stream_alert_events(
+    session: DbSession,
+    principal: Principal,
+    since: Annotated[datetime | None, Query(description="起始时间")] = None,
+) -> StreamingResponse:
+    bind = session.get_bind()
+    session.close()
+    from sqlalchemy.orm import sessionmaker
+
+    poll_session_factory = sessionmaker(bind=bind, autoflush=False, autocommit=False)
+
+    def iterator() -> Iterator[str]:
+        cursor = since or datetime.now(UTC)
+        idle_polls = 0
+        while True:
+            with poll_session_factory() as poll_session:
+                events = list(
+                    poll_session.execute(
+                        select(AlertEvent)
+                        .where(
+                            AlertEvent.organization_id == principal.organization_id,
+                            AlertEvent.triggered_at > cursor,
+                        )
+                        .order_by(AlertEvent.triggered_at.asc())
+                        .limit(50)
+                    ).scalars()
+                )
+            if events:
+                idle_polls = 0
+                for event in events:
+                    cursor = event.triggered_at
+                    payload = AlertEventResponse.model_validate(event).model_dump(mode="json")
+                    yield f"id: {event.id}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                continue
+            yield ": heartbeat\n\n"
+            idle_polls += 1
+            if idle_polls >= 30:
+                break
+            time.sleep(1)
+
+    return StreamingResponse(
+        iterator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get(
@@ -1363,6 +1620,22 @@ def _observability_trace(
             service_nodes=_trace_service_nodes(filtered_spans),
             service_edges=_trace_service_edges(filtered_spans),
         )
+    local_spans = _local_trace_spans(session=session, principal=principal, trace_id=trace_id)
+    if local_spans:
+        filtered_spans = _filter_spans(
+            local_spans,
+            service=service,
+            span_name=span_name,
+            attribute_key=attribute_key,
+            attribute_value=attribute_value,
+        )
+        return ObservabilityTraceResponse(
+            trace_id=trace_id,
+            spans=filtered_spans,
+            source="local_otel",
+            service_nodes=_trace_service_nodes(filtered_spans),
+            service_edges=_trace_service_edges(filtered_spans),
+        )
     spans = _event_trace_spans(session=session, principal=principal, trace_id=trace_id)
     filtered_spans = _filter_spans(
         spans,
@@ -1437,6 +1710,65 @@ def get_observability_services_health(
 
 def require_observability_operator(principal: Principal) -> None:
     require_role(principal, {"admin", "operator"})
+
+
+def _check_cost_rollup_rate_limit(organization_id: str) -> None:
+    now = time.monotonic()
+    last_seen = _cost_rollup_last_seen.get(organization_id)
+    if last_seen is not None and now - last_seen < 10:
+        raise HTTPException(status_code=429, detail="成本聚合刷新过于频繁，请稍后重试")
+    _cost_rollup_last_seen[organization_id] = now
+
+
+def _validate_alert_payload(
+    payload: AlertRuleCreateRequest | AlertRuleUpdateRequest,
+) -> None:
+    try:
+        validate_alert_rule_fields(
+            metric=getattr(payload, "metric", None),
+            comparator=getattr(payload, "comparator", None),
+            severity=getattr(payload, "severity", None),
+            threshold=getattr(payload, "threshold", None),
+            window_seconds=getattr(payload, "window_seconds", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    channels = getattr(payload, "notification_channels_json", None)
+    if channels is not None and any(channel != "in_app" for channel in channels):
+        raise HTTPException(status_code=400, detail="v1 only supports in_app notifications")
+
+
+def _owned_alert_rule(*, session: Session, principal: Principal, rule_id: str) -> AlertRule:
+    rule = session.get(AlertRule, rule_id)
+    if rule is None or rule.organization_id != principal.organization_id:
+        raise HTTPException(status_code=404, detail="告警规则不存在")
+    return rule
+
+
+def _editable_alert_rule(*, session: Session, principal: Principal, rule_id: str) -> AlertRule:
+    rule = session.get(AlertRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="告警规则不存在")
+    if rule.organization_id == principal.organization_id:
+        return rule
+    if rule.organization_id is not None:
+        raise HTTPException(status_code=404, detail="告警规则不存在")
+    clone = AlertRule(
+        organization_id=principal.organization_id,
+        name=rule.name,
+        metric=rule.metric,
+        comparator=rule.comparator,
+        threshold=rule.threshold,
+        window_seconds=rule.window_seconds,
+        enabled=rule.enabled,
+        severity=rule.severity,
+        notification_channels_json=list(rule.notification_channels_json or ["in_app"]),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    session.add(clone)
+    session.flush()
+    return clone
 
 
 def _count_items(session: Session, statement) -> list[CountItem]:
@@ -1586,7 +1918,12 @@ def _event_trace_spans(
                 name=event.event_type,
                 service="api-server",
                 start_time=event.created_at,
+                end_time=event.created_at,
                 duration_ms=0,
+                kind="internal",
+                status="ERROR" if event.event_type.endswith("FAILED") else "OK",
+                task_id=event.task_id,
+                agent_run_id=event.agent_run_id,
                 attributes={
                     "task_id": event.task_id,
                     "agent_run_id": event.agent_run_id,
@@ -1598,6 +1935,95 @@ def _event_trace_spans(
         )
         previous_span_id = span_id
     return spans
+
+
+def _local_trace_spans(
+    *,
+    session: Session,
+    principal: Principal,
+    trace_id: str,
+) -> list[ObservabilityTraceSpan]:
+    task_ids = select(Task.id).where(Task.organization_id == principal.organization_id)
+    spans = session.execute(
+        select(OtelSpan)
+        .where(
+            OtelSpan.trace_id == trace_id,
+            or_(
+                OtelSpan.organization_id == principal.organization_id,
+                OtelSpan.task_id.in_(task_ids),
+            ),
+        )
+        .order_by(OtelSpan.start_time.asc(), OtelSpan.id.asc())
+        .limit(2000)
+    ).scalars()
+    return [_otel_span_response(span) for span in spans]
+
+
+def _otel_span_response(span: OtelSpan) -> ObservabilityTraceSpan:
+    attributes = span.attributes_json if isinstance(span.attributes_json, dict) else {}
+    return ObservabilityTraceSpan(
+        trace_id=span.trace_id,
+        span_id=span.span_id,
+        parent_span_id=span.parent_span_id,
+        name=span.name,
+        service=str(attributes.get("service.name") or "api-server"),
+        start_time=span.start_time,
+        end_time=span.end_time,
+        duration_ms=span.duration_ms,
+        kind=span.kind,
+        status=span.status,
+        task_id=span.task_id,
+        agent_run_id=span.agent_run_id,
+        attributes=attributes,
+        source="local_otel",
+    )
+
+
+def _local_trace_list(
+    *,
+    session: Session,
+    principal: Principal,
+    task_id: str | None,
+    limit: int,
+) -> list[TraceListItem]:
+    task_ids = select(Task.id).where(Task.organization_id == principal.organization_id)
+    statement = select(OtelSpan).where(
+        or_(
+            OtelSpan.organization_id == principal.organization_id,
+            OtelSpan.task_id.in_(task_ids),
+        )
+    )
+    if task_id:
+        statement = statement.where(OtelSpan.task_id == task_id)
+    rows = list(
+        session.execute(
+            statement.order_by(OtelSpan.start_time.desc(), OtelSpan.id.desc()).limit(5000)
+        ).scalars()
+    )
+    grouped: dict[str, list[OtelSpan]] = {}
+    for row in rows:
+        grouped.setdefault(row.trace_id, []).append(row)
+    items: list[TraceListItem] = []
+    for trace_id, spans in grouped.items():
+        ordered = sorted(spans, key=lambda span: (span.start_time, span.id))
+        root = next((span for span in ordered if not span.parent_span_id), ordered[0])
+        start = min(span.start_time for span in ordered)
+        end = max(span.end_time for span in ordered)
+        task = next((span.task_id for span in ordered if span.task_id), None)
+        items.append(
+            TraceListItem(
+                trace_id=trace_id,
+                task_id=task,
+                root_name=root.name,
+                start_time=start,
+                duration_ms=max(0, int((end - start).total_seconds() * 1000)),
+                span_count=len(ordered),
+                status="ERROR" if any(span.status == "ERROR" for span in ordered) else "OK",
+                source="local_otel",
+            )
+        )
+    items.sort(key=lambda item: item.start_time, reverse=True)
+    return items[:limit]
 
 
 def _filter_spans(
@@ -1656,7 +2082,7 @@ def _trace_service_nodes(
             or span.attributes.get("http.status_code")
             or ""
         )
-        if status_code.startswith("5") or "ERROR" in span.name.upper():
+        if status_code.startswith("5") or span.status == "ERROR" or "ERROR" in span.name.upper():
             bucket["error_count"] += 1
     return [
         ObservabilityTraceServiceNode(service=service, **values)
@@ -1765,7 +2191,16 @@ def _tempo_trace_spans(
                         name=str(raw_span.get("name") or "span"),
                         service=service_name,
                         start_time=_parse_tempo_time(raw_span.get("startTimeUnixNano")),
+                        end_time=None,
                         duration_ms=_tempo_duration_ms(raw_span),
+                        kind=str(raw_span.get("kind") or "internal").lower(),
+                        status=_tempo_span_status(raw_span),
+                        task_id=str(attrs.get("task_id") or attrs.get("harness.task_id") or "")
+                        or None,
+                        agent_run_id=str(
+                            attrs.get("agent_run_id") or attrs.get("harness.agent_run_id") or ""
+                        )
+                        or None,
                         attributes={**attrs, "otel_trace_id": span_trace_id},
                         source="tempo",
                     )
@@ -1799,6 +2234,15 @@ def _tempo_attribute_value(value: object) -> object:
     if "kvlistValue" in value:
         return value["kvlistValue"]
     return value
+
+
+def _tempo_span_status(raw_span: dict) -> str:
+    status = raw_span.get("status") if isinstance(raw_span, dict) else None
+    if isinstance(status, dict):
+        code = str(status.get("code") or status.get("statusCode") or "")
+        if code in {"2", "STATUS_CODE_ERROR", "ERROR"}:
+            return "ERROR"
+    return "OK"
 
 
 def _parse_tempo_time(value: object) -> datetime:

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Shield, Wrench, X } from "lucide-react";
+import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Search, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -272,6 +272,10 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     () => Math.max(0, ...(data?.events ?? []).map((event) => event.sequence)),
     [data?.events],
   );
+  const primaryTraceId = useMemo(
+    () => data?.events.find((event) => event.trace_id)?.trace_id ?? null,
+    [data?.events],
+  );
 
   useEffect(() => {
     if (selectedEvalDatasetId || !datasetsQuery.data?.items.length) return;
@@ -369,6 +373,13 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   {text("回到工作台", "Back to Workspace")}
                 </Button>
               </Link>
+              {primaryTraceId ? (
+                <Link to={`/observability/trace?trace_id=${encodeURIComponent(primaryTraceId)}`}>
+                  <Button>
+                    <Search className="h-3.5 w-3.5" /> 查看 Trace
+                  </Button>
+                </Link>
+              ) : null}
             </div>
           </Card>
 
@@ -1149,7 +1160,14 @@ function EventRow({ event }: { event: AgentEvent }) {
         <Badge tone={statusTone(event.event_type)}>{eventLabel(event.event_type)}</Badge>
       </div>
       <div className="mt-1 font-mono text-[11px] text-slate-500">{formatShortDate(event.created_at)}</div>
-      {event.trace_id && <div className="mt-1 truncate font-mono text-[10px] text-slate-400">{event.trace_id}</div>}
+      {event.trace_id && (
+        <Link
+          to={`/observability/trace?trace_id=${encodeURIComponent(event.trace_id)}`}
+          className="mt-1 block truncate font-mono text-[10px] text-cyan-700 hover:underline"
+        >
+          {event.trace_id}
+        </Link>
+      )}
     </div>
   );
 }
