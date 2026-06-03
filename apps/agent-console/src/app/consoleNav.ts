@@ -15,10 +15,10 @@ export const consoleNavEntries = [
   { to: "/evals", label: "评测", iconKey: "evals" },
   { to: "/settings/policies", label: "策略", iconKey: "shield" },
   { to: "/settings/models", label: "模型", iconKey: "brain" },
+  { to: "/settings/secrets", label: "密钥库", iconKey: "key" },
   { to: "/settings/users", label: "用户", iconKey: "users" },
   { to: "/settings/api-keys", label: "API Keys", iconKey: "key" },
   { to: "/settings/audit", label: "审计", iconKey: "audit" },
   { to: "/settings/data-management", label: "数据", iconKey: "database" },
   { to: "/help", label: "帮助", iconKey: "help" },
 ] as const;
-

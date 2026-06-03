@@ -1,12 +1,39 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AUTH_SESSION_EXPIRED_EVENT,
+  clearAuthTokens,
   createAgentKnowledgeSource,
   deleteAgentKnowledgeSource,
+  getAuthBearerToken,
+  getStoredAccessToken,
+  getStoredRefreshToken,
+  importAgentKnowledgeSourceFile,
   resolveApiBaseUrl,
+  saveStoredSecret,
+  setAuthTokens,
+  uploadCurrentUserAvatar,
 } from "../api";
 
+function stubBrowserStorage() {
+  const store = new Map<string, string>();
+  const dispatchEvent = vi.fn(() => true);
+  vi.stubGlobal("window", {
+    localStorage: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, value);
+      },
+      removeItem: (key: string) => store.delete(key),
+    },
+    location: { hostname: "127.0.0.1" },
+    dispatchEvent,
+  });
+  return { dispatchEvent };
+}
+
 afterEach(() => {
+  clearAuthTokens();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -35,6 +62,188 @@ describe("resolveApiBaseUrl", () => {
 });
 
 describe("json API requests", () => {
+  it("uses the stored JWT before development bearer tokens", async () => {
+    stubBrowserStorage();
+    setAuthTokens({ access_token: "jwt-access-token", refresh_token: "jwt-refresh-token" });
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          id: "secret-1",
+          scope: "org",
+          provider: "deepseek",
+          purpose: "model_provider",
+          configured: true,
+          source: "stored_secret_org",
+          status: "active",
+          created_at: "2026-06-03T00:00:00Z",
+          updated_at: "2026-06-03T00:00:00Z",
+          last_used_at: null,
+          owner_user_id: null,
+          secret_ref: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(getAuthBearerToken()).toBe("jwt-access-token");
+    await saveStoredSecret({
+      scope: "org",
+      provider: "deepseek",
+      purpose: "model_provider",
+      secret_value: "sk-test",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/secrets",
+      expect.objectContaining({
+        method: "PUT",
+        headers: expect.objectContaining({ Authorization: "Bearer jwt-access-token" }),
+      }),
+    );
+  });
+
+  it("falls back to the development bearer token only when no JWT is stored", () => {
+    clearAuthTokens();
+    expect(getAuthBearerToken()).toBe("dev-engineer-token");
+  });
+
+  it("clears stored tokens and notifies auth state when refresh fails", async () => {
+    const { dispatchEvent } = stubBrowserStorage();
+    setAuthTokens({ access_token: "expired-access-token", refresh_token: "expired-refresh-token" });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/secrets") {
+        return new Response(JSON.stringify({ detail: "expired" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/auth/refresh") {
+        return new Response(JSON.stringify({ detail: "refresh expired" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ detail: `unexpected ${path}` }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveStoredSecret({
+      scope: "org",
+      provider: "deepseek",
+      purpose: "model_provider",
+      secret_value: "sk-test",
+    })).rejects.toThrow("请求失败 401");
+
+    expect(getStoredAccessToken()).toBe("");
+    expect(getStoredRefreshToken()).toBe("");
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: AUTH_SESSION_EXPIRED_EVENT }),
+    );
+  });
+
+  it("refreshes expired JWTs before retrying multipart avatar uploads", async () => {
+    stubBrowserStorage();
+    setAuthTokens({ access_token: "expired-access-token", refresh_token: "valid-refresh-token" });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (path === "/api/auth/me/avatar" && authorization === "Bearer expired-access-token") {
+        return new Response(JSON.stringify({ detail: "expired" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/auth/refresh") {
+        return new Response(
+          JSON.stringify({
+            access_token: "fresh-access-token",
+            refresh_token: "fresh-refresh-token",
+            token_type: "bearer",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (path === "/api/auth/me/avatar" && authorization === "Bearer fresh-access-token") {
+        return new Response(
+          JSON.stringify({
+            user_id: "user-1",
+            email: "owner@example.com",
+            name: "Owner",
+            avatar_data_url: "data:image/png;base64,YXZhdGFy",
+            organization_id: "org-1",
+            role: "owner",
+            permissions: [],
+            organizations: [{ id: "org-1", name: "Acme", slug: "acme", role: "owner" }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ detail: `unexpected ${path} ${authorization}` }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await uploadCurrentUserAvatar(
+      new File(["avatar-bytes"], "avatar.png", { type: "image/png" }),
+    );
+
+    expect(response.avatar_data_url).toBe("data:image/png;base64,YXZhdGFy");
+    expect(getStoredAccessToken()).toBe("fresh-access-token");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses the refreshed JWT when retrying multipart uploads with an explicit stored token", async () => {
+    stubBrowserStorage();
+    setAuthTokens({ access_token: "expired-access-token", refresh_token: "valid-refresh-token" });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (
+        path === "/api/agents/default/knowledge/sources/import" &&
+        authorization === "Bearer expired-access-token"
+      ) {
+        return new Response(JSON.stringify({ detail: "expired" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/auth/refresh") {
+        return new Response(
+          JSON.stringify({
+            access_token: "fresh-access-token",
+            refresh_token: "fresh-refresh-token",
+            token_type: "bearer",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (
+        path === "/api/agents/default/knowledge/sources/import" &&
+        authorization === "Bearer fresh-access-token"
+      ) {
+        return new Response(JSON.stringify({ id: "source-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ detail: `unexpected ${path} ${authorization}` }), { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await importAgentKnowledgeSourceFile(
+      "default",
+      new File(["knowledge"], "knowledge.md", { type: "text/markdown" }),
+      { title: "Knowledge", scope: "org" },
+    );
+
+    expect(response.id).toBe("source-1");
+    expect(getStoredAccessToken()).toBe("fresh-access-token");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("handles no-content knowledge source deletion responses", async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);

@@ -1,21 +1,29 @@
 import { FormEvent, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, UserPlus } from "lucide-react";
+import { Loader2, Lock, UserPlus } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { useAuth } from "../AuthProvider";
+import { getAuthConfig } from "../../tasks/api";
 
 export function RegisterPage() {
   const navigate = useNavigate();
   const { registerWithPassword } = useAuth();
+  const authConfig = useQuery({
+    queryKey: ["auth", "config"],
+    queryFn: getAuthConfig,
+    retry: false,
+  });
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const registrationEnabled = authConfig.data?.public_registration_enabled === true;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -34,6 +42,35 @@ export function RegisterPage() {
     } finally {
       setPending(false);
     }
+  }
+
+  if (authConfig.isLoading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-page px-4 py-8">
+        <Card className="w-full max-w-md p-5 text-sm text-slate-500">
+          正在加载注册配置...
+        </Card>
+      </main>
+    );
+  }
+
+  if (!registrationEnabled) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-page px-4 py-8">
+        <Card className="w-full max-w-md p-5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-slate-700">
+            <Lock className="h-4 w-4" />
+          </div>
+          <h1 className="mt-3 text-lg font-semibold text-slate-950">注册已关闭</h1>
+          <p className="mt-1 text-sm leading-6 text-slate-500">
+            当前部署使用管理员邀请流程。请联系组织管理员创建账号，或使用已分配账号登录。
+          </p>
+          <Link to="/login" className="mt-5 block">
+            <Button variant="primary" className="w-full">返回登录</Button>
+          </Link>
+        </Card>
+      </main>
+    );
   }
 
   return (

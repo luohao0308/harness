@@ -31,7 +31,7 @@ import type {
   AgentChatStreamPayload,
   ToolMetadata,
 } from "../../tasks/api";
-import { API_BASE_URL, getStoredAccessToken, parseChatSseFrame } from "../../tasks/api";
+import { API_BASE_URL, getAuthBearerToken, parseChatSseFrame } from "../../tasks/api";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { ConversationArtifact, ConversationNode } from "../../../stores/workspaceStore";
 import { mergeToolCallEvent } from "../streamEvents";
@@ -53,9 +53,6 @@ import {
 } from "../lib/sseErrors";
 import type { WorkspaceMode } from "../lib/types";
 import { useStreamFlush } from "./useStreamFlush";
-
-const DEV_BEARER_TOKEN =
-  import.meta.env.VITE_DEV_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-engineer-token" : "");
 
 /** 10 seconds — no server byte within this window aborts the stream. */
 const CONNECTION_TIMEOUT_MS = 10_000;
@@ -689,7 +686,7 @@ async function runStream(opts: {
    */
   onDiagnostic?: (kind: "possible_buffering") => void;
 }): Promise<void> {
-  const bearerToken = (getStoredAccessToken() || DEV_BEARER_TOKEN).trim();
+  const bearerToken = getAuthBearerToken();
   const requestHeaders: HeadersInit = { "Content-Type": "application/json" };
   if (bearerToken) {
     requestHeaders.Authorization = `Bearer ${bearerToken}`;

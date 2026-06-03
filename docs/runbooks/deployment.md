@@ -23,14 +23,17 @@ Use the compose-specific env template for private handoff:
 cp deploy/docker-compose/.env.example deploy/docker-compose/.env
 ```
 
-Before starting any API container, replace the example auth secret:
+Before starting any API container, replace the example startup secrets:
 
 ```bash
-AUTH_JWT_SECRET="$(openssl rand -hex 32)"
+python3 scripts/generate-runtime-secrets.py
 ```
 
-Write that value to `deploy/docker-compose/.env`. The placeholder
-`replace-with-openssl-rand-hex-32` is intentionally rejected at API startup.
+Write `AUTH_JWT_SECRET`, `HARNESS_SECRET_ENCRYPTION_KEY`, and
+`HARNESS_SECRET_ENCRYPTION_KEY_ID` to `deploy/docker-compose/.env`. The
+placeholder `replace-with-openssl-rand-hex-32` is intentionally rejected at API
+startup, and production secret-vault reads/writes require
+`HARNESS_SECRET_ENCRYPTION_KEY`.
 For an empty database, set `HARNESS_INITIAL_ADMIN_EMAIL` and
 `HARNESS_INITIAL_ADMIN_PASSWORD` for the first boot only. Remove or clear those
 two bootstrap variables after the first successful login and restart the API.
@@ -230,7 +233,8 @@ P1 adds the first production deployment profile without changing the product bou
 - `deploy/helm/harness/` provides a minimal Helm chart with ingress, migration job, HPA, and PDB.
 
 The production profile expects explicit secrets for `POSTGRES_PASSWORD`,
-`REDIS_PASSWORD`, `AUTH_JWT_SECRET`, and `HARNESS_DOMAIN`. It is intentionally
+`REDIS_PASSWORD`, `AUTH_JWT_SECRET`, `HARNESS_SECRET_ENCRYPTION_KEY`, and
+`HARNESS_DOMAIN`. It is intentionally
 narrower than the dev compose path and keeps graceful shutdown plus frontend
 reconnect as the user-facing fallback for SSE interruption. Console production
 builds do not embed dev bearer tokens unless `CONSOLE_DEV_TOKEN` or
@@ -321,9 +325,11 @@ Environment:
 cp .env.example /opt/agent-harness/shared/.env
 ```
 
-Replace `AUTH_JWT_SECRET` and, for an empty database, set the first-run admin
-bootstrap variables in `/opt/agent-harness/shared/.env` before startup. The API
-will reject the placeholder secret.
+Replace `AUTH_JWT_SECRET` and `HARNESS_SECRET_ENCRYPTION_KEY`, and for an empty
+database, set the first-run admin bootstrap variables in
+`/opt/agent-harness/shared/.env` before startup. The API will reject the JWT
+placeholder secret, and production secret-vault reads/writes require the
+encryption key.
 
 Start:
 

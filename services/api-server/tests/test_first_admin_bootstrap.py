@@ -132,9 +132,22 @@ def test_auth_secret_validation_rejects_missing_and_placeholder() -> None:
         )
 
 
+def test_production_secret_encryption_key_validation_rejects_missing_and_placeholder() -> None:
+    with pytest.raises(RuntimeError, match="HARNESS_SECRET_ENCRYPTION_KEY is required"):
+        validate_startup_settings(_settings(APP_ENV="production", HARNESS_SECRET_ENCRYPTION_KEY=""))
+    with pytest.raises(RuntimeError, match="placeholder"):
+        validate_startup_settings(
+            _settings(
+                APP_ENV="production",
+                HARNESS_SECRET_ENCRYPTION_KEY="replace-with-generated-fernet-key",
+            )
+        )
+
+
 def test_lifespan_rejects_placeholder_auth_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("AUTH_JWT_SECRET", "replace-with-openssl-rand-hex-32")
+    monkeypatch.setenv("HARNESS_SECRET_ENCRYPTION_KEY", "production-secret-encryption-key-32-min")
     monkeypatch.setattr("app.main.bootstrap_first_admin", lambda session, settings: None)
     get_settings.cache_clear()
     try:

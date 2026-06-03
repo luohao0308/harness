@@ -20,6 +20,7 @@ ingress:
 
 env:
   appEnv: production
+  authPublicRegistrationEnabled: false
   apiBaseUrl: https://harness.local
   consoleBaseUrl: https://harness.local
   websiteBaseUrl: https://harness.local
@@ -32,8 +33,10 @@ env:
   redisPassword: agent-redis
 
 auth:
-  # Generate with: openssl rand -hex 32
+  # Generate both startup secrets with: python3 scripts/generate-runtime-secrets.py
   jwtSecret: replace-with-openssl-rand-hex-32
+  secretEncryptionKey: replace-with-generated-fernet-key
+  secretEncryptionKeyId: primary-v1
   initialAdmin:
     # Used only when the users table is empty; remove after first successful boot.
     email: ""

@@ -41,7 +41,8 @@ Observability, Specialist Marketplace, and data management.
 Start the private stack:
 
 ```bash
-AUTH_JWT_SECRET="$(openssl rand -hex 32)" \
+eval "$(python3 scripts/generate-runtime-secrets.py)"
+export AUTH_JWT_SECRET HARNESS_SECRET_ENCRYPTION_KEY HARNESS_SECRET_ENCRYPTION_KEY_ID
 HARNESS_INITIAL_ADMIN_EMAIL=admin@example.com \
 HARNESS_INITIAL_ADMIN_PASSWORD=change-me-strong-password \
 POSTGRES_PASSWORD=change-me \
@@ -57,6 +58,9 @@ API. Keep `AUTH_JWT_SECRET` stable. Then finish onboarding, configure the model
 provider, load demo data, and run the first task from Agent Workspace. A
 successful first pass creates a Run with a Plan, event stream, tool-call record,
 sandbox boundary, grounding or context manifest, Eval evidence, and cost data.
+Keep `HARNESS_SECRET_ENCRYPTION_KEY` stable as well; it decrypts stored
+business integration secrets and is generated server-side, never in the
+frontend.
 
 See [First-Run Admin Runbook](docs/runbooks/first-run-admin.md) for JWT login,
 smoke-test token exports, and the `scripts/create-admin.py` fallback.

@@ -31,6 +31,7 @@ export const staticConsoleRoutePaths = [
   "/help",
   "/help/troubleshooting",
   "/settings/models",
+  "/settings/secrets",
   "/settings/policies",
   "/settings/users",
   "/settings/api-keys",

@@ -38,6 +38,16 @@ spec:
                 secretKeyRef:
                   name: harness-secrets
                   key: auth-jwt-secret
+            - name: HARNESS_SECRET_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: secret-encryption-key
+            - name: HARNESS_SECRET_ENCRYPTION_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: harness-secrets
+                  key: secret-encryption-key-id
             - name: HARNESS_INITIAL_ADMIN_EMAIL
               valueFrom:
                 secretKeyRef:

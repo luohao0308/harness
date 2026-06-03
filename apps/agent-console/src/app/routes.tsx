@@ -1,9 +1,10 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
 
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { RouteSkeleton } from "../components/ui/RouteSkeleton";
+import { useAuth } from "../features/auth/AuthProvider";
 import { getOnboardingState } from "../features/tasks/api";
 
 const AgentListPage = lazy(() => import("../features/agents/pages/AgentListPage").then((module) => ({ default: module.AgentListPage })));
@@ -28,6 +29,7 @@ const DataManagementPage = lazy(() => import("../features/settings/pages/DataMan
 const FrontendErrorsPage = lazy(() => import("../features/settings/pages/FrontendErrorsPage").then((module) => ({ default: module.FrontendErrorsPage })));
 const ModelSettingsPage = lazy(() => import("../features/settings/pages/ModelSettingsPage").then((module) => ({ default: module.ModelSettingsPage })));
 const PolicySettingsPage = lazy(() => import("../features/settings/pages/PolicySettingsPage").then((module) => ({ default: module.PolicySettingsPage })));
+const SecretVaultPage = lazy(() => import("../features/settings/pages/SecretVaultPage").then((module) => ({ default: module.SecretVaultPage })));
 const UserManagementPage = lazy(() => import("../features/settings/pages/UserManagementPage").then((module) => ({ default: module.UserManagementPage })));
 const SubagentDetailPage = lazy(() => import("../features/subagents/pages/SubagentDetailPage").then((module) => ({ default: module.SubagentDetailPage })));
 const SubagentMarketplaceDetailPage = lazy(() => import("../features/subagents/pages/SubagentMarketplaceDetailPage").then((module) => ({ default: module.SubagentMarketplaceDetailPage })));
@@ -50,49 +52,71 @@ export const router = createBrowserRouter([
       { path: "login", element: routeElement(<LoginPage />) },
       { path: "register", element: routeElement(<RegisterPage />) },
       { path: "oauth/callback", element: routeElement(<OAuthCallbackPage />) },
-      { index: true, element: <OnboardingGate /> },
-      { path: "onboarding", element: routeElement(<OnboardingWizardPage />) },
-      { path: "agents", element: routeElement(<AgentListPage />) },
-      { path: "agents/:agentId/workspace", element: routeElement(<AgentWorkspacePage />) },
+      { index: true, element: protectedElement(<OnboardingGate />) },
+      { path: "onboarding", element: protectedElement(<OnboardingWizardPage />) },
+      { path: "agents", element: protectedElement(<AgentListPage />) },
+      { path: "agents/:agentId/workspace", element: protectedElement(<AgentWorkspacePage />) },
       { path: "agents/:agentId/chat", element: <Navigate to="/agents/default/workspace" replace /> },
-      { path: "teams", element: routeElement(<TeamListPage />) },
-      { path: "teams/:teamId", element: routeElement(<TeamPage />) },
-      { path: "runs", element: routeElement(<RunHistoryPage />) },
-      { path: "runs/:runId", element: routeElement(<RunDetailPage />) },
-      { path: "runs/:runId/events", element: routeElement(<RunDetailPage focus="events" />) },
-      { path: "runs/:runId/subagents", element: routeElement(<RunDetailPage focus="subagents" />) },
+      { path: "teams", element: protectedElement(<TeamListPage />) },
+      { path: "teams/:teamId", element: protectedElement(<TeamPage />) },
+      { path: "runs", element: protectedElement(<RunHistoryPage />) },
+      { path: "runs/:runId", element: protectedElement(<RunDetailPage />) },
+      { path: "runs/:runId/events", element: protectedElement(<RunDetailPage focus="events" />) },
+      { path: "runs/:runId/subagents", element: protectedElement(<RunDetailPage focus="subagents" />) },
       { path: "tasks", element: <Navigate to="/runs" replace /> },
-      { path: "subagents", element: routeElement(<SubagentsPage />) },
-      { path: "subagents/:subagentId", element: routeElement(<SubagentDetailPage />) },
-      { path: "subagent-specialists", element: routeElement(<SubagentSpecialistsPage />) },
-      { path: "subagent-specialists/:specialistId", element: routeElement(<SubagentSpecialistDetailPage />) },
-      { path: "subagent-marketplace", element: routeElement(<SubagentMarketplacePage />) },
-      { path: "subagent-marketplace/:listingId", element: routeElement(<SubagentMarketplaceDetailPage />) },
-      { path: "sandboxes", element: routeElement(<SandboxesPage />) },
-      { path: "observability", element: routeElement(<ObservabilityPage />) },
-      { path: "observability/cost", element: routeElement(<CostDashboardPage />) },
-      { path: "observability/trace", element: routeElement(<TraceExplorerPage />) },
-      { path: "observability/alerts", element: routeElement(<AlertRulesPage />) },
-      { path: "token-savings", element: routeElement(<TokenSavingsPage />) },
-      { path: "tools", element: routeElement(<ToolRegistryPage />) },
-      { path: "tools/config", element: routeElement(<ToolConfigurationPage />) },
-      { path: "knowledge", element: routeElement(<KnowledgePage />) },
-      { path: "evals", element: routeElement(<EvalHarnessPage />) },
-      { path: "help", element: routeElement(<HelpCenterPage />) },
-      { path: "help/troubleshooting", element: routeElement(<HelpCenterPage />) },
-      { path: "settings/models", element: routeElement(<ModelSettingsPage />) },
-      { path: "settings/policies", element: routeElement(<PolicySettingsPage />) },
-      { path: "settings/users", element: routeElement(<UserManagementPage />) },
-      { path: "settings/api-keys", element: routeElement(<ApiKeysPage />) },
-      { path: "settings/audit", element: routeElement(<AuditLogPage />) },
-      { path: "settings/data-management", element: routeElement(<DataManagementPage />) },
-      { path: "settings/frontend-errors", element: routeElement(<FrontendErrorsPage />) },
+      { path: "subagents", element: protectedElement(<SubagentsPage />) },
+      { path: "subagents/:subagentId", element: protectedElement(<SubagentDetailPage />) },
+      { path: "subagent-specialists", element: protectedElement(<SubagentSpecialistsPage />) },
+      { path: "subagent-specialists/:specialistId", element: protectedElement(<SubagentSpecialistDetailPage />) },
+      { path: "subagent-marketplace", element: protectedElement(<SubagentMarketplacePage />) },
+      { path: "subagent-marketplace/:listingId", element: protectedElement(<SubagentMarketplaceDetailPage />) },
+      { path: "sandboxes", element: protectedElement(<SandboxesPage />) },
+      { path: "observability", element: protectedElement(<ObservabilityPage />) },
+      { path: "observability/cost", element: protectedElement(<CostDashboardPage />) },
+      { path: "observability/trace", element: protectedElement(<TraceExplorerPage />) },
+      { path: "observability/alerts", element: protectedElement(<AlertRulesPage />) },
+      { path: "token-savings", element: protectedElement(<TokenSavingsPage />) },
+      { path: "tools", element: protectedElement(<ToolRegistryPage />) },
+      { path: "tools/config", element: protectedElement(<ToolConfigurationPage />) },
+      { path: "knowledge", element: protectedElement(<KnowledgePage />) },
+      { path: "evals", element: protectedElement(<EvalHarnessPage />) },
+      { path: "help", element: protectedElement(<HelpCenterPage />) },
+      { path: "help/troubleshooting", element: protectedElement(<HelpCenterPage />) },
+      { path: "settings/models", element: protectedElement(<ModelSettingsPage />) },
+      { path: "settings/secrets", element: protectedElement(<SecretVaultPage />) },
+      { path: "settings/policies", element: protectedElement(<PolicySettingsPage />) },
+      { path: "settings/users", element: protectedElement(<UserManagementPage />) },
+      { path: "settings/api-keys", element: protectedElement(<ApiKeysPage />) },
+      { path: "settings/audit", element: protectedElement(<AuditLogPage />) },
+      { path: "settings/data-management", element: protectedElement(<DataManagementPage />) },
+      { path: "settings/frontend-errors", element: protectedElement(<FrontendErrorsPage />) },
     ],
   },
 ]);
 
 function routeElement(element: ReactNode) {
   return <Suspense fallback={<RouteSkeleton />}>{element}</Suspense>;
+}
+
+function protectedElement(element: ReactNode) {
+  return <RequireAuth>{routeElement(element)}</RequireAuth>;
+}
+
+export function RequireAuth({ children }: { children: ReactNode }) {
+  const auth = useAuth();
+  const location = useLocation();
+  const next = `${location.pathname}${location.search}${location.hash}`;
+  if (auth.loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
+        正在验证登录状态...
+      </div>
+    );
+  }
+  if (!auth.user) {
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+  }
+  return <>{children}</>;
 }
 
 function OnboardingGate() {

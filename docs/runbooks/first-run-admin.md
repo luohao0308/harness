@@ -6,13 +6,20 @@ must use JWTs or API keys.
 
 ## Required Secrets
 
-Generate a JWT signing secret before starting the API:
+Generate the startup secrets before starting the API:
 
 ```bash
-openssl rand -hex 32
+python3 scripts/generate-runtime-secrets.py
 ```
 
-Set it as `AUTH_JWT_SECRET`. The API refuses to boot when the value is missing,
+Set `AUTH_JWT_SECRET`, `HARNESS_SECRET_ENCRYPTION_KEY`, and
+`HARNESS_SECRET_ENCRYPTION_KEY_ID` in the API runtime environment. The JWT
+secret signs login tokens; the Harness secret-encryption key encrypts business
+integration secrets stored in `stored_secrets`. Generate and store both on the
+server or deployment secret manager side. Do not generate or expose
+`HARNESS_SECRET_ENCRYPTION_KEY` in the Agent Console frontend.
+
+The API refuses to boot when `AUTH_JWT_SECRET` is missing,
 shorter than 32 characters, or still equals the example placeholder
 `replace-with-openssl-rand-hex-32`.
 
@@ -22,7 +29,8 @@ For an empty `users` table, set one initial owner account before the first API
 startup:
 
 ```bash
-AUTH_JWT_SECRET="$(openssl rand -hex 32)"
+eval "$(python3 scripts/generate-runtime-secrets.py)"
+export AUTH_JWT_SECRET HARNESS_SECRET_ENCRYPTION_KEY HARNESS_SECRET_ENCRYPTION_KEY_ID
 HARNESS_INITIAL_ADMIN_EMAIL=admin@example.com
 HARNESS_INITIAL_ADMIN_PASSWORD='replace-with-a-strong-password'
 ```
@@ -39,7 +47,9 @@ second admin.
 After the first successful login, remove or clear
 `HARNESS_INITIAL_ADMIN_EMAIL` and `HARNESS_INITIAL_ADMIN_PASSWORD`, then restart
 the API container. Keep `AUTH_JWT_SECRET` stable or existing JWTs and signed
-pagination cursors become invalid.
+pagination cursors become invalid. Keep `HARNESS_SECRET_ENCRYPTION_KEY` stable
+or previously stored business secrets cannot be decrypted without a rotation
+and re-encryption migration.
 
 ## Login And Smoke Tokens
 

@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Github, Loader2, LogIn } from "lucide-react";
 
@@ -6,16 +7,28 @@ import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { useAuth } from "../AuthProvider";
-import { startOAuth } from "../../tasks/api";
+import { getAuthConfig, startOAuth } from "../../tasks/api";
+
+const supportedOAuthProviders = ["github", "google"] as const;
+type SupportedOAuthProvider = (typeof supportedOAuthProviders)[number];
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { loginWithPassword } = useAuth();
+  const authConfig = useQuery({
+    queryKey: ["auth", "config"],
+    queryFn: getAuthConfig,
+    retry: false,
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const publicRegistrationEnabled = authConfig.data?.public_registration_enabled === true;
+  const oauthProviders = supportedOAuthProviders.filter((provider) =>
+    authConfig.data?.oauth_providers.includes(provider),
+  );
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -31,7 +44,7 @@ export function LoginPage() {
     }
   }
 
-  async function launchOAuth(provider: "github" | "google") {
+  async function launchOAuth(provider: SupportedOAuthProvider) {
     setPending(true);
     setError("");
     try {
@@ -82,21 +95,30 @@ export function LoginPage() {
             登录
           </Button>
         </form>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <Button type="button" variant="secondary" disabled={pending} onClick={() => void launchOAuth("github")}>
-            <Github className="h-3.5 w-3.5" />
-            GitHub
-          </Button>
-          <Button type="button" variant="secondary" disabled={pending} onClick={() => void launchOAuth("google")}>
-            Google
-          </Button>
-        </div>
-        <div className="mt-4 text-center text-xs text-slate-500">
-          还没有账号？{" "}
-          <Link className="font-medium text-slate-900 hover:underline" to="/register">
-            创建工作区
-          </Link>
-        </div>
+        {oauthProviders.length > 0 ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {oauthProviders.map((provider) => (
+              <Button
+                key={provider}
+                type="button"
+                variant="secondary"
+                disabled={pending}
+                onClick={() => void launchOAuth(provider)}
+              >
+                {provider === "github" ? <Github className="h-3.5 w-3.5" /> : null}
+                {provider === "github" ? "GitHub" : "Google"}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        {publicRegistrationEnabled ? (
+          <div className="mt-4 text-center text-xs text-slate-500">
+            还没有账号？{" "}
+            <Link className="font-medium text-slate-900 hover:underline" to="/register">
+              创建工作区
+            </Link>
+          </div>
+        ) : null}
       </Card>
     </main>
   );

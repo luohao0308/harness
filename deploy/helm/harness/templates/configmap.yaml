@@ -4,6 +4,7 @@ metadata:
   name: harness-config
 data:
   APP_ENV: {{ .Values.env.appEnv | quote }}
+  AUTH_PUBLIC_REGISTRATION_ENABLED: {{ .Values.env.authPublicRegistrationEnabled | quote }}
   API_BASE_URL: {{ .Values.env.apiBaseUrl | quote }}
   CONSOLE_BASE_URL: {{ .Values.env.consoleBaseUrl | quote }}
   APP_BASE_URL: {{ .Values.env.websiteBaseUrl | quote }}

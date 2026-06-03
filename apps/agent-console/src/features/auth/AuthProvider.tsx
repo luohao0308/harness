@@ -10,15 +10,18 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
+  AUTH_SESSION_EXPIRED_EVENT,
   clearAuthTokens,
   getMe,
   getStoredAccessToken,
   getStoredRefreshToken,
+  isDevAuthFallbackEnabled,
   login,
   logout,
   refreshAuthToken,
   register,
   setAuthTokens,
+  uploadCurrentUserAvatar,
   type AuthMeResponse,
   type AuthTokenResponse,
   type OrganizationSummary,
@@ -39,6 +42,7 @@ export type AuthContextValue = {
     organization_name?: string | null;
   }) => Promise<AuthMeResponse>;
   logoutCurrentUser: () => Promise<void>;
+  uploadAvatar: (file: File) => Promise<AuthMeResponse>;
   switchOrganization: (organizationId: string) => Promise<AuthMeResponse>;
 };
 
@@ -49,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthMeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isUsingDevToken, setIsUsingDevToken] = useState(() => !getStoredAccessToken());
+  const [isUsingDevToken, setIsUsingDevToken] = useState(isDevAuthFallbackEnabled);
 
   const loadMe = useCallback(async () => {
     setLoading(true);
@@ -57,10 +61,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const next = await getMe();
       setUser(next);
-      setIsUsingDevToken(!getStoredAccessToken());
+      setIsUsingDevToken(isDevAuthFallbackEnabled());
       return next;
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "无法加载当前用户";
+      if (getStoredAccessToken()) {
+        clearAuthTokens();
+      }
+      setIsUsingDevToken(isDevAuthFallbackEnabled());
       setError(message);
       setUser(null);
       return null;
@@ -72,6 +80,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadMe();
   }, [loadMe]);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      clearAuthTokens();
+      setUser(null);
+      setError("登录已过期，请重新登录");
+      setIsUsingDevToken(isDevAuthFallbackEnabled());
+      setLoading(false);
+      void queryClient.invalidateQueries();
+    };
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+  }, [queryClient]);
 
   const applyTokensAndLoad = useCallback(
     async (tokens: AuthTokenResponse) => {
@@ -104,10 +125,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await logout();
         } finally {
           clearAuthTokens();
-          setIsUsingDevToken(true);
+          setIsUsingDevToken(isDevAuthFallbackEnabled());
           await loadMe();
           await queryClient.invalidateQueries();
         }
+      },
+      uploadAvatar: async (file) => {
+        const next = await uploadCurrentUserAvatar(file);
+        setUser(next);
+        await queryClient.invalidateQueries();
+        return next;
       },
       switchOrganization: async (organizationId) => {
         if (organizationId === user?.organization_id) {

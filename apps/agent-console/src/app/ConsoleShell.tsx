@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   Box,
   Brain,
   BrainCircuit,
+  Camera,
   ChevronDown,
   CircleHelp,
   Database,
@@ -27,6 +28,7 @@ import {
   Settings2,
   ShieldCheck,
   Store,
+  UserCircle,
   UserRound,
   Users,
 } from "lucide-react";
@@ -35,6 +37,7 @@ import { Button } from "../components/ui/button";
 import { FeedbackToastViewport } from "../components/ui/feedback-toast";
 import { QuickActionFAB } from "../components/ui/QuickActionFAB";
 import { WorkspaceSwitcher } from "../components/WorkspaceSwitcher";
+import { prepareAvatarUpload } from "../features/auth/avatarUpload";
 import { useOptionalAuth } from "../features/auth/AuthProvider";
 import { AlertBell } from "../features/observability/components/AlertBell";
 import { useConsoleStore } from "../stores/consoleStore";
@@ -71,6 +74,16 @@ export const consoleNavItems = consoleNavEntries.map((item) => ({
   icon: navIconByKey[item.iconKey],
 }));
 
+function initialsForName(name: string | undefined, email: string | undefined) {
+  const source = (name || email || "Dev User").trim();
+  if (!source) return "DU";
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+  }
+  return source.slice(0, 2).toUpperCase();
+}
+
 export function ConsoleShell({ children, title }: { children: ReactNode; title: string }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -78,11 +91,18 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const auth = useOptionalAuth();
   const isUsingDevToken = auth?.isUsingDevToken ?? true;
   const logoutCurrentUser = auth?.logoutCurrentUser;
+  const uploadAvatar = auth?.uploadAvatar;
   const user = auth?.user ?? null;
+  const currentOrganization = auth?.currentOrganization ?? null;
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const isTeamRoute = /^\/teams(?:\/|$)/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
   const [isNarrowShell, setIsNarrowShell] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [avatarUploadPending, setAvatarUploadPending] = useState(false);
+  const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  const avatarFileInputRef = useRef<HTMLInputElement>(null);
   const sidebarForceCollapsed = isWorkspaceRoute || isTeamRoute || isNarrowShell;
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarForceCollapsed;
   const canToggleSidebar = !sidebarForceCollapsed;
@@ -106,6 +126,67 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
   }, []);
+
+  useEffect(() => {
+    setAccountMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const handlePointer = (event: MouseEvent | TouchEvent) => {
+      const element = accountMenuRef.current;
+      if (!element) {
+        setAccountMenuOpen(false);
+        return;
+      }
+      const target = event.target;
+      if (target instanceof Node && element.contains(target)) return;
+      setAccountMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAccountMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("touchstart", handlePointer);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("touchstart", handlePointer);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [accountMenuOpen]);
+
+  const displayName = user?.name || "Dev User";
+  const displayEmail = user?.email || "dev-token";
+  const displayRole = user?.role || currentOrganization?.role || "engineer";
+  const displayOrganization = currentOrganization?.name || currentOrganization?.slug || user?.organization_id || "开发工作区";
+  const initials = initialsForName(user?.name, user?.email);
+  const avatarDataUrl = user?.avatar_data_url ?? null;
+
+  async function handleLogout() {
+    setAccountMenuOpen(false);
+    await logoutCurrentUser?.();
+    navigate("/login", { replace: true });
+  }
+
+  async function handleAvatarSelected(file: File | undefined) {
+    if (!file || !uploadAvatar) return;
+    setAvatarUploadPending(true);
+    setAvatarUploadError(null);
+    try {
+      const preparedFile = await prepareAvatarUpload(file);
+      await uploadAvatar(preparedFile);
+    } catch (error) {
+      setAvatarUploadError(error instanceof Error ? error.message : "头像上传失败");
+    } finally {
+      setAvatarUploadPending(false);
+      if (avatarFileInputRef.current) {
+        avatarFileInputRef.current.value = "";
+      }
+    }
+  }
 
   return (
     <div
@@ -272,26 +353,117 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 <Plus className="h-3.5 w-3.5" /> 新对话
               </Button>
             ) : null}
-            <div
-              className="ml-1 hidden max-w-40 items-center gap-2 rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-700 sm:flex"
-              title={user?.email ?? "dev-token"}
-            >
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200">
-                <UserRound className="h-3 w-3" />
-              </span>
-              <span className="truncate">{user?.name ?? "Dev User"}</span>
-              {isUsingDevToken ? <span className="font-mono text-[10px] text-slate-400">dev</span> : null}
-            </div>
-            {!isUsingDevToken ? (
-              <Button
-                variant="ghost"
-                className="h-7 w-7 px-0"
-                title="退出登录"
-                onClick={() => void logoutCurrentUser?.()}
+            <div ref={accountMenuRef} className="relative ml-1">
+              <button
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={accountMenuOpen}
+                aria-label="账号菜单"
+                title={displayEmail}
+                onClick={() => setAccountMenuOpen((value) => !value)}
+                className="flex h-8 min-w-8 max-w-44 items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 text-left text-[11px] text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 sm:min-w-36 sm:px-2"
               >
-                <LogOut className="h-3.5 w-3.5" />
-              </Button>
-            ) : null}
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-[10px] font-semibold text-white">
+                  {avatarDataUrl ? (
+                    <img src={avatarDataUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    initials
+                  )}
+                </span>
+                <span className="hidden min-w-0 flex-1 sm:block">
+                  <span className="block truncate font-medium text-slate-800">{displayName}</span>
+                  {isUsingDevToken ? (
+                    <span className="block truncate font-mono text-[10px] text-slate-400">dev-token</span>
+                  ) : null}
+                </span>
+                <ChevronDown className="hidden h-3.5 w-3.5 shrink-0 text-slate-400 sm:block" />
+              </button>
+              {accountMenuOpen ? (
+                <div
+                  role="menu"
+                  aria-label="账号菜单"
+                  className="absolute right-0 top-full z-40 mt-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white p-1 text-sm shadow-xl"
+                >
+                  <div className="border-b border-slate-100 px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-xs font-semibold text-white">
+                        {avatarDataUrl ? (
+                          <img src={avatarDataUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          initials
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-slate-900">{displayName}</div>
+                        <div className="truncate text-xs text-slate-500">{displayEmail}</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+                      <span className="text-slate-400">组织</span>
+                      <span className="truncate text-slate-700">{displayOrganization}</span>
+                      <span className="text-slate-400">角色</span>
+                      <span className="truncate font-medium text-slate-700">{displayRole}</span>
+                    </div>
+                    {isUsingDevToken ? (
+                      <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
+                        <UserCircle className="h-3 w-3" />
+                        开发令牌会话
+                      </div>
+                    ) : null}
+                  </div>
+                  {!isUsingDevToken ? (
+                    <div className="border-b border-slate-100 px-3 py-2">
+                      <input
+                        ref={avatarFileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        aria-label="上传头像文件"
+                        className="hidden"
+                        onChange={(event) => void handleAvatarSelected(event.target.files?.[0])}
+                      />
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md px-0 py-1.5 text-left text-xs font-medium text-slate-700 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={avatarUploadPending}
+                        onClick={() => avatarFileInputRef.current?.click()}
+                      >
+                        <Camera className="h-3.5 w-3.5 text-slate-500" />
+                        {avatarUploadPending ? "上传中..." : "上传头像"}
+                      </button>
+                      {avatarUploadError ? (
+                        <div className="mt-1 rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
+                          {avatarUploadError}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {isUsingDevToken ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        navigate("/login");
+                      }}
+                    >
+                      <UserRound className="h-3.5 w-3.5 text-slate-500" />
+                      使用账号登录
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={() => void handleLogout()}
+                    >
+                      <LogOut className="h-3.5 w-3.5 text-slate-500" />
+                      退出登录
+                    </button>
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
         <div
