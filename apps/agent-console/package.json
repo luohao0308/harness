@@ -42,7 +42,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitest/ui": "^3.0.0",
+    "@vitest/ui": "^4.1.8",
     "autoprefixer": "^10.4.20",
     "fast-check": "^3.23.0",
     "jsdom": "^25.0.1",
