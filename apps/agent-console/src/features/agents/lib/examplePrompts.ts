@@ -21,7 +21,7 @@ export type ExamplePrompt = {
 export const EXAMPLE_PROMPTS: readonly ExamplePrompt[] = [
   {
     id: "ask-help",
-    zh: "你能帮我做些什么？简单介绍一下 Harness 最常用的几个使用场景。",
+    zh: "你能帮我做些什么？简单介绍一下这个运行平台最常用的几个使用场景。",
     en: "What can you help with? Give me a short tour of Harness's most common workflows.",
   },
   {
@@ -31,17 +31,17 @@ export const EXAMPLE_PROMPTS: readonly ExamplePrompt[] = [
   },
   {
     id: "create-plan-run",
-    zh: "帮我创建一个 Plan-Act 运行，用来分析 services/api-server 最近的错误日志。",
+    zh: "帮我创建一个规划后执行运行，用来分析 services/api-server 最近的错误日志。",
     en: "Create a Plan-Act Run to analyze the latest error logs in services/api-server.",
   },
   {
     id: "save-eval-case",
-    zh: "把当前这段对话保存成评测用例，打上 regression 标签并放到默认 rubric 下。",
+    zh: "把当前这段对话保存成评测用例，打上回归标签并放到默认评分规则下。",
     en: "Save this conversation as an Eval Case with the regression tag under the default rubric.",
   },
   {
     id: "view-failed-trace",
-    zh: "打开观测，定位最近一条失败的 Trace，并简要说明失败原因。",
+    zh: "打开观测，定位最近一条失败的追踪链路，并简要说明失败原因。",
     en: "Open observability, locate the latest failed trace, and summarize what went wrong.",
   },
 ] as const;

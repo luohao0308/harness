@@ -7,6 +7,8 @@ Tags: `agent-knowledge-harness`, `release`, `demo`, `knowledge-grounding`, `brow
 
 Agent Knowledge Harness P7 is completed, split into atomic commits, and pushed to `origin/p7-release-demo-hardening` through `c404603`.
 
+The same branch also has a follow-up console UI hardening commit through `a5d046b`: shared accessible selectors replaced the remaining native/one-off dropdowns, required English terms now carry small Chinese explanations, and the review fixes were validated and pushed.
+
 P7 keeps the private handoff release gate current while preserving P1-P6 evidence boundaries. It adds deterministic local demo seed data through public Knowledge APIs, a service-level Knowledge/RAG migration/restore smoke, and mocked release browser coverage across Agent Studio, Workspace, Run Detail, Eval, and Observability.
 
 ## Delivered
@@ -26,6 +28,11 @@ P7 keeps the private handoff release gate current while preserving P1-P6 evidenc
 - Updated `apps/agent-console/e2e/eval-page.smoke.spec.ts` for P6 regression-delta fields so the release gate stays compatible with groundedness metrics.
 - Updated deployment, troubleshooting, and web-research runbooks for P7 seed/readback, service-level migration/restore smoke, release browser smoke, and the local-fixture versus live-provider boundary.
 - Updated `docs/ai/task-progress.yaml`, `docs/task-progress.md`, [[agent-knowledge-harness-roadmap]], and [[project-handoff-current-state]].
+- Added follow-up console UI hardening:
+  - new shared `MenuSelect` for model, knowledge, run, and settings selectors;
+  - keyboard/focus behavior, disabled-option skipping, grouping, top/bottom placement, and exact selector test coverage;
+  - `TermHint` small-text explanations for required English terms such as MCP, RAG, API, Trace, WarmPool, JSON, Markdown, Prompt, and Provider;
+  - Chinese-first copy across Agent Studio, Workspace, Eval, Observability, Run Detail, Sandboxes, Tool Registry, and settings surfaces.
 
 ## Validation
 
@@ -68,6 +75,25 @@ returned knowledge_grounding: Local knowledge grounded the answer.
 
 git push -u origin p7-release-demo-hardening
 pushed branch through c404603
+
+cd apps/agent-console && npm run lint
+passed after the selector/term UI follow-up
+
+cd apps/agent-console && npm test
+30 files / 148 tests passed after the selector/term UI follow-up
+
+cd apps/agent-console && npm run build
+passed after the selector/term UI follow-up
+
+git diff --check
+passed after the selector/term UI follow-up
+
+git push origin p7-release-demo-hardening
+pushed branch through a5d046b
+
+Local service check after restart on a non-default frontend port:
+frontend http://127.0.0.1:18082/ -> ok
+API http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
 ```
 
 The first release-smoke attempt failed because Playwright's configured webServer did not leave a reachable page on `127.0.0.1:5177`; all failures were `ERR_CONNECTION_REFUSED`. Manual Vite startup on the same port plus rerun passed. A second failure exposed an existing Eval smoke fixture gap for P6 regression-delta fields; after fixture repair, the release smoke passed.
@@ -75,6 +101,7 @@ The first release-smoke attempt failed because Playwright's configured webServer
 Push commits:
 
 ```text
+a5d046b Make console selectors and terms usable for Chinese-first UI
 c404603 Record P7 release demo handoff
 40026b3 Add P7 release demo review report
 f8ba7cf Document P7 release demo runbooks
@@ -96,3 +123,4 @@ https://github.com/luohao0308/harness/pull/new/p7-release-demo-hardening
 - Browser smoke is mocked route-fixture coverage and does not consume live seeded backend rows.
 - P7 does not introduce new Knowledge/RAG, Eval, Observability, or provider semantics beyond release/demo hardening.
 - P7 fixtures and runbooks must not reintroduce raw forbidden evidence snippet payloads.
+- The `a5d046b` UI follow-up is presentation/accessibility hardening only; it does not change Knowledge/RAG, Eval, Observability, provider, or release-gate semantics.

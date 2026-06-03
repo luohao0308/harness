@@ -19,6 +19,7 @@ import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Input, Textarea } from "../../../components/ui/input";
+import { MenuSelect } from "../../../components/ui/menu-select";
 import { useI18n } from "../../../lib/i18n";
 import {
   archiveAgentKnowledgeSource,
@@ -259,17 +260,28 @@ function KnowledgeCreateDialog({
           onChange={(event) => setName(event.target.value)}
           placeholder={text("知识源名称", "Source name")}
         />
-        <select
-          aria-label={text("知识源作用域", "Knowledge source scope")}
-          className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+        <MenuSelect
+          ariaLabel={text("知识源作用域", "Knowledge source scope")}
           value={scope}
-          onChange={(event) => setScope(event.target.value as "agent" | "org")}
-        >
-          <option value="agent">agent</option>
-          <option value="org" disabled={!canCreateOrgScope}>
-            org
-          </option>
-        </select>
+          onChange={(value) => setScope(value as "agent" | "org")}
+          placeholder={text("请选择作用域", "Select scope")}
+          className="min-w-0"
+          buttonClassName="h-9 rounded-md px-3 py-2 shadow-none"
+          menuClassName="w-[280px]"
+          options={[
+            {
+              value: "agent",
+              label: text("智能体作用域", "Agent scope"),
+              description: text("仅当前智能体可见", "Visible only in this agent"),
+            },
+            {
+              value: "org",
+              label: text("组织作用域", "Org scope"),
+              description: text("组织内共享，管理员可用", "Shared across the org, admin only"),
+              disabled: !canCreateOrgScope,
+            },
+          ]}
+        />
       </div>
       <Input
         aria-label={text("知识源说明", "Knowledge source description")}
@@ -798,24 +810,27 @@ function KnowledgeDocumentVersionHistory({
         <RefreshCw className="h-4 w-4" />
         {text("重新导入", "Reingest")}
       </div>
-      <select
-        aria-label={text("选择重新导入文档", "Select document to reingest")}
-        className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+      <MenuSelect
+        ariaLabel={text("选择重新导入文档", "Select document to reingest")}
         value={documentId}
-        onChange={(event) => {
-          const nextId = event.target.value;
+        onChange={(nextId) => {
           setDocumentId(nextId);
           setTitle(indexedDocuments.find((document) => document.id === nextId)?.title ?? "");
           setSelectedFile(null);
           setContent("");
         }}
-      >
-        {indexedDocuments.map((document) => (
-          <option key={document.id} value={document.id}>
-            {document.title} · v{document.version}
-          </option>
-        ))}
-      </select>
+        placeholder={text("暂无可选文档", "No documents available")}
+        className="w-full"
+        buttonClassName="h-9 rounded-md px-3 py-2 shadow-none"
+        menuClassName="w-full"
+        disabled={indexedDocuments.length === 0}
+        options={indexedDocuments.map((document) => ({
+          value: document.id,
+          label: document.title,
+          description: text(`版本 ${document.version}`, `Version ${document.version}`),
+          meta: `v${document.version}`,
+        }))}
+      />
       <Input
         aria-label={text("重新导入标题", "Reingest title")}
         value={title}

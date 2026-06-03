@@ -99,7 +99,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             )}
           >
             <div className="text-sm font-semibold tracking-tight text-slate-900">Harness</div>
-            <div className="-mt-0.5 text-[10px] text-slate-500">acme-prod · vpc-east</div>
+            <div className="-mt-0.5 text-[10px] text-slate-500">智能体运行平台 · acme-prod · vpc-east</div>
           </div>
           <Button
             variant="ghost"

@@ -16,8 +16,10 @@ import {
   type ChangeEvent,
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
+  Brain,
   ChevronRight,
   ListChecks,
   Paperclip,
@@ -27,6 +29,8 @@ import {
 } from "lucide-react";
 
 import { useI18n } from "../../../lib/i18n";
+import { TermHint } from "../../../components/ui/term";
+import { cn } from "../../../lib/utils";
 import {
   useWorkspaceStore,
   type ConversationNode,
@@ -460,7 +464,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 
     if (workspaceMode === "plan") {
       const message = text(
-        "确认创建 Plan-Act 运行？此操作会触发可执行运行。",
+        "确认创建规划后执行运行？此操作会触发可执行运行。",
         "Create a Plan-Act Run? This triggers an executable run.",
       );
       if (!window.confirm(message)) return;
@@ -1202,7 +1206,13 @@ function ComposerSettingsPanel({
       />
       <ToolActionRow
         icon={<PlugZap aria-hidden="true" className="h-3.5 w-3.5" />}
-        label={text("插件 / MCP", "Plugins / MCP")}
+        ariaLabel={text("插件 / MCP（模型上下文协议）", "Plugins / MCP")}
+        label={
+          <>
+            {text("插件 / ", "Plugins / ")}
+            <TermHint description="模型上下文协议，用于接入外部工具">MCP</TermHint>
+          </>
+        }
         trailing={
           <ChevronRight
             aria-hidden="true"
@@ -1218,7 +1228,7 @@ function ComposerSettingsPanel({
         <div className="ml-5 mt-0.5 max-h-24 overflow-y-auto border-l border-slate-200 pl-1.5">
           {mcpTools.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-slate-500">
-              {text("暂无 MCP 功能", "No MCP capabilities")}
+              {text("暂无外部协议功能。", "No MCP capabilities")}
             </p>
           ) : (
             mcpTools.map((tool) => (
@@ -1306,7 +1316,7 @@ function BottomModelPanel({
       tabIndex={-1}
       aria-label={text("切换模型", "Switch model")}
       onKeyDown={handleKeyDown}
-      className="flex max-h-36 flex-col gap-0.5 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      className="flex max-h-48 flex-col gap-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
     >
       {providers.map((option, index) => {
         const selected =
@@ -1322,21 +1332,34 @@ function BottomModelPanel({
             onMouseEnter={() => setActiveIndex(index)}
             aria-pressed={selected}
             className={[
-              "flex items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+              "flex items-start gap-3 rounded-xl px-3 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
               selected || active
-                ? "bg-slate-100 font-medium text-slate-900"
+                ? "bg-slate-900 font-medium text-white"
                 : "text-slate-700 hover:bg-slate-50",
             ].join(" ")}
           >
-            <span className="min-w-0">
-              <span className="block truncate">{option.providerLabel}</span>
-              <span className="block truncate text-slate-500">{option.modelLabel}</span>
+            <span
+              className={cn(
+                "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                selected || active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600",
+              )}
+            >
+              <Brain className="h-4 w-4" />
             </span>
-            {selected && (
-              <span className="shrink-0 rounded-full bg-slate-900 px-1 py-0.5 text-[10px] font-normal text-white">
-                {text("当前", "Current")}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold">{option.modelLabel}</span>
+              <span className={cn("block truncate text-[11px] leading-4", selected || active ? "text-slate-300" : "text-slate-500")}>
+                {option.providerLabel}
               </span>
-            )}
+            </span>
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-2 py-0.5 text-[11px]",
+                selected || active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500",
+              )}
+            >
+              {selected ? text("当前", "Current") : option.providerLabel}
+            </span>
           </button>
         );
       })}
@@ -1359,20 +1382,23 @@ function formatMcpCapability(tool: ToolMetadata): string {
 
 function ToolActionRow({
   icon,
+  ariaLabel,
   label,
   trailing = null,
   onClick,
 }: {
   icon: JSX.Element;
-  label: string;
+  ariaLabel?: string;
+  label: ReactNode;
   trailing?: JSX.Element | null;
   onClick: () => void;
 }): JSX.Element {
   return (
     <button
       type="button"
+      aria-label={ariaLabel}
       onClick={onClick}
-      className="flex h-7 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+      className="flex min-h-7 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
     >
       <span className="text-slate-500">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -1565,7 +1591,7 @@ function composerPlaceholder(
       );
     case "plan":
       return text(
-        "描述目标，创建 Plan-Act 运行",
+        "描述目标，创建规划后执行运行",
         "Describe a goal; creates a Plan-Act Run",
       );
     default: {

@@ -8,7 +8,9 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
+import { MenuSelect } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
@@ -250,22 +252,23 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               </Button>
               {run && (run.status === "COMPLETED" || run.status === "FAILED") && (
                 <div className="flex items-center gap-2">
-                  <select
-                    aria-label={text("选择数据集", "Select Dataset")}
+                  <MenuSelect
+                    ariaLabel={text("选择数据集", "Select Dataset")}
                     value={selectedEvalDatasetValue}
-                    onChange={(event) => {
-                      setSelectedEvalDatasetId(event.target.value);
+                    onChange={(value) => {
+                      setSelectedEvalDatasetId(value);
                       setSaveEvalSuccess(false);
                     }}
                     disabled={saveEvalCase.isPending || datasetsQuery.isLoading}
-                    className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
-                  >
-                    {evalDatasetOptions.map((dataset) => (
-                      <option key={dataset.id} value={dataset.id}>
-                        {dataset.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder={text("选择数据集", "Select dataset")}
+                    className="w-[15rem]"
+                    buttonClassName="h-8 rounded-md px-2 py-1.5 shadow-none"
+                    menuClassName="w-[15rem]"
+                    options={evalDatasetOptions.map((dataset) => ({
+                      value: dataset.id,
+                      label: dataset.name,
+                    }))}
+                  />
                   <Button
                     disabled={
                       saveEvalCase.isPending ||
@@ -306,10 +309,10 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   <Metric label="向量" value={grounding.vector_capability} />
                   <Metric label="命中" value={String(grounding.retrieval_hits.length)} />
                   <Metric label="已依据" value={grounding.grounded ? "是" : "否"} />
-                  <Metric label="Provider" value={grounding.grounding_provider} />
-                  <Metric label="Fixture evidence" value={grounding.fixture_grounded ? "是" : "否"} />
-                  <Metric label="Source-bound" value={grounding.verified_grounded ? "是" : "否"} />
-                  <Metric label="Citation count" value={String(grounding.citations.length)} />
+                  <Metric label={<TermHint description="提供依据校验的后端或模型">Provider</TermHint>} value={grounding.grounding_provider} />
+                  <Metric label={<TermHint description="夹具证据，仅用于测试或演示">Fixture evidence</TermHint>} value={grounding.fixture_grounded ? "是" : "否"} />
+                  <Metric label={<TermHint description="答案是否绑定到真实来源">Source-bound</TermHint>} value={grounding.verified_grounded ? "是" : "否"} />
+                  <Metric label={<TermHint description="引用条数">Citation count</TermHint>} value={String(grounding.citations.length)} />
                 </div>
                 <div className="truncate font-mono text-[11px] text-slate-500" title={grounding.grounding_verification_reason}>
                   {grounding.grounding_verification_reason}
@@ -317,13 +320,13 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 <p className="text-xs text-slate-500">{grounding.evidence_summary}</p>
                 {grounding.inferred_fallback && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-                    fallback {grounding.fallback_reason ?? "latest"} · retrieval{" "}
+                    后备原因 {grounding.fallback_reason ?? "latest"} · 检索会话{" "}
                     {grounding.selected_retrieval_session_id ?? "n/a"}
                   </div>
                 )}
                 {grounding.prompt_manifest && (
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-slate-700">Prompt 组装审计</div>
+                    <div className="text-xs font-medium text-slate-700">提示词组装审计</div>
                     <div className="rounded-md border border-slate-100 bg-slate-50 p-2 text-xs">
                       <div className="font-mono text-[11px] text-slate-500">
                         manifest {grounding.prompt_manifest.id}
@@ -450,20 +453,20 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
               </CardHeader>
               <div className="space-y-3 p-3 text-sm">
                 <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-                  <Metric label="Manifest" value={contextAssembly.id} />
-                  <Metric label="Prompt manifest" value={contextAssembly.prompt_manifest_id ?? "n/a"} />
-                  <Metric label="Included" value={String(contextAssembly.included_refs_json.length)} />
-                  <Metric label="Omitted" value={String(contextAssembly.omitted_refs_json.length)} />
+                  <Metric label={<TermHint description="上下文组装清单">Manifest</TermHint>} value={contextAssembly.id} />
+                  <Metric label={<TermHint description="提示词组装清单">Prompt manifest</TermHint>} value={contextAssembly.prompt_manifest_id ?? "n/a"} />
+                  <Metric label={<TermHint description="已纳入上下文的引用数">Included</TermHint>} value={String(contextAssembly.included_refs_json.length)} />
+                  <Metric label={<TermHint description="因预算或策略省略的引用数">Omitted</TermHint>} value={String(contextAssembly.omitted_refs_json.length)} />
                   <Metric
-                    label="Estimator"
+                    label={<TermHint description="标记数估算器">Estimator</TermHint>}
                     value={String(contextAssembly.token_budget_json.estimator ?? "n/a")}
                   />
                   <Metric
-                    label="Budget"
+                    label={<TermHint description="请求的上下文标记预算">Budget</TermHint>}
                     value={String(contextAssembly.token_budget_json.requested_max_tokens ?? "n/a")}
                   />
-                  <Metric label="Sections" value={String(contextAssembly.sections_json.length)} />
-                  <Metric label="Hash" value={contextAssembly.context_text_sha256.slice(0, 12)} />
+                  <Metric label={<TermHint description="上下文分段数量">Sections</TermHint>} value={String(contextAssembly.sections_json.length)} />
+                  <Metric label={<TermHint description="上下文内容摘要哈希">Hash</TermHint>} value={contextAssembly.context_text_sha256.slice(0, 12)} />
                 </div>
                 {contextAssembly.omitted_refs_json.length > 0 && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
@@ -481,7 +484,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <GitBranch className="h-4 w-4" />
-                计划 DAG
+                计划 <TermHint description="有向无环图，表示步骤依赖">DAG</TermHint>
               </div>
               <span className="text-xs text-slate-500">
                 {data?.plan ? `${data.plan.steps.length} 个步骤` : text("暂无计划", "No Plan")}
@@ -583,13 +586,13 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                     {call.prompt_tokens + call.completion_tokens} 标记 · {call.duration_ms}ms
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
-                    <Metric label="Attempt" value={String(call.attempt_index)} />
-                    <Metric label="Terminal" value={call.terminal_status ?? "n/a"} />
-                    <Metric label="Prompt manifest" value={call.prompt_manifest_id ?? "n/a"} />
-                    <Metric label="Context manifest" value={call.context_manifest_id ?? "n/a"} />
-                    <Metric label="Correlation" value={call.grounding_correlation_id ?? "n/a"} />
-                    <Metric label="Request hash" value={call.model_request_sha256 ?? "n/a"} />
-                    <Metric label="Hash audit" value={call.hash_recomputability_status} />
+                    <Metric label={<TermHint description="第几次调用尝试">Attempt</TermHint>} value={String(call.attempt_index)} />
+                    <Metric label={<TermHint description="最终状态">Terminal</TermHint>} value={call.terminal_status ?? "n/a"} />
+                    <Metric label={<TermHint description="提示词组装清单">Prompt manifest</TermHint>} value={call.prompt_manifest_id ?? "n/a"} />
+                    <Metric label={<TermHint description="上下文组装清单">Context manifest</TermHint>} value={call.context_manifest_id ?? "n/a"} />
+                    <Metric label={<TermHint description="依据链路关联 ID">Correlation</TermHint>} value={call.grounding_correlation_id ?? "n/a"} />
+                    <Metric label={<TermHint description="请求内容摘要哈希">Request hash</TermHint>} value={call.model_request_sha256 ?? "n/a"} />
+                    <Metric label={<TermHint description="哈希可复算审计状态">Hash audit</TermHint>} value={call.hash_recomputability_status} />
                   </div>
                   <div className="mt-1 truncate font-mono text-[11px] text-slate-400" title={call.request_message_hashes_sha256 ?? undefined}>
                     schema v{call.model_request_hash_schema_version} · messages{" "}
@@ -729,9 +732,15 @@ function ToolCallsTable({ toolCalls }: { toolCalls: ToolCall[] }) {
             <Th>工具</Th>
             <Th>状态</Th>
             <Th>风险</Th>
-            <Th>Capability</Th>
-            <Th>Content hash</Th>
-            <Th>Config hash</Th>
+            <Th>
+              <TermHint description="工具能力版本">Capability</TermHint>
+            </Th>
+            <Th>
+              <TermHint description="工具能力内容哈希">Content hash</TermHint>
+            </Th>
+            <Th>
+              <TermHint description="工具能力配置哈希">Config hash</TermHint>
+            </Th>
             <Th>延迟</Th>
             <Th>输出摘要</Th>
           </tr>
@@ -844,7 +853,7 @@ function EventRow({ event }: { event: AgentEvent }) {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: React.ReactNode; value: string }) {
   return (
     <div className="rounded-md border border-slate-100 bg-slate-50 p-2">
       <div className="text-[10px] text-slate-500">{label}</div>

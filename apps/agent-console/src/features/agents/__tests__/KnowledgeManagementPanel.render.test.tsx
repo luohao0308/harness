@@ -124,7 +124,7 @@ describe("KnowledgeManagementPanel", () => {
     expect(screen.getAllByText("agent").length).toBeGreaterThan(0);
     await screen.findAllByText("Engineering Manual");
     expect(screen.getAllByText("Engineering Manual").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("v1 · INDEXED").length).toBeGreaterThan(0);
+    expect(await screen.findByText("v1 · INDEXED", { selector: "span" })).toBeInTheDocument();
     expect(screen.getAllByText("0123456789").length).toBeGreaterThan(0);
   });
 

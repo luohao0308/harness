@@ -195,7 +195,7 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.getByRole("button", { name: "添加照片和文件" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Include IDE context" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "计划模式" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "插件 / MCP" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "插件 / MCP（模型上下文协议）" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /@read_file/ })).not.toBeInTheDocument();
   });
 
@@ -219,7 +219,7 @@ describe("ChatSurface Workspace shell integration", () => {
 
     await user.click(
       screen.getByRole("button", {
-        name: "工具/MCP: 2 个可用",
+        name: "工具/MCP（模型上下文协议）: 2 个可用",
       }),
     );
     expect(screen.getByRole("dialog", { name: "工具" })).toBeInTheDocument();
@@ -311,13 +311,13 @@ describe("ChatSurface Workspace shell integration", () => {
     const user = userEvent.setup();
     renderSurface();
 
-    await user.click(screen.getByRole("button", { name: "工具/MCP: 2 个可用" }));
+    await user.click(screen.getByRole("button", { name: "工具/MCP（模型上下文协议）: 2 个可用" }));
     await user.click(screen.getByRole("button", { name: /@read_file/ }));
 
     expect(screen.getByPlaceholderText("直接与智能体对话")).toHaveValue("@read_file ");
 
     await user.click(screen.getByRole("button", { name: "打开输入设置" }));
-    await user.click(screen.getByRole("button", { name: "插件 / MCP" }));
+    await user.click(screen.getByRole("button", { name: "插件 / MCP（模型上下文协议）" }));
     expect(screen.getByText("github.search")).toBeInTheDocument();
     const githubButtons = screen.getAllByRole("button", { name: /@github_search/ });
     await user.click(githubButtons[githubButtons.length - 1]);

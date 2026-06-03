@@ -41,7 +41,7 @@ Read these first:
 15. [[session-2026-05-17-agent-knowledge-p3-web-research]] if the next work touches real web research, Tavily, source-bound web citations, URL policy, fake-provider hardening, or web research Run Detail evidence.
 16. [[session-2026-05-17-agent-knowledge-p4-context-assembly]] and `.omx/plans/ralplan-agent-knowledge-harness-p4-memory-context-router-v2.md` if the next work touches backend context assembly, long-term memory records, context manifests, token budgeting, pinned context, or model-call context binding.
 17. `.omx/plans/prd-private-deployment-experience.md` and `.omx/plans/test-spec-private-deployment-experience.md` if the next work touches private deployment handoff.
-18. [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] if the next work touches deterministic demo seeds, Knowledge/RAG migration/restore smoke, release browser smoke, or local fixture versus live provider evidence boundaries.
+18. [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] if the next work touches deterministic demo seeds, Knowledge/RAG migration/restore smoke, release browser smoke, local fixture versus live provider evidence boundaries, Chinese-first console wording, or shared selector UI.
 
 ## Current State
 
@@ -61,6 +61,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Agent Knowledge Harness P5 MCP/Skills productization is completed and pushed through `f05816e`: runtime tool authority is now `CapabilityRegistry -> AgentCapabilityAttachment -> immutable CapabilityVersion -> ToolRunner metadata snapshot`, legacy `Agent.tools_json` is only deterministic migration/seed backfill input with no runtime lazy backfill, ToolRunner fails closed without Agent attachment scope, executing test invocation is agent-scoped, admin validation is non-executing, approval decisions resume or fail runs correctly, console tool cards refresh after approval, and Run/ModelCall/ToolCall/Eval artifacts carry capability snapshot refs/hashes.
 - Agent Knowledge Harness P6 groundedness Eval and Observability is completed and pushed through `83c8eee`: Eval now owns `GroundingTraceV1`, forbidden evidence leak judgment, grounding metrics, regression deltas/gates, and failure reasons; Observability has a read-only grounding-quality projection; Run Detail saves objective evidence selectors without inferring required/forbidden snippets or unsupported markers; Eval API responses scrub forbidden snippet payloads.
 - Agent Knowledge Harness P7 release and demo hardening is completed and pushed to `origin/p7-release-demo-hardening` through `c404603`: deterministic Knowledge/RAG demo seed uses public APIs only and includes an agent grounding support document for the backend `min_hits=2` threshold; service-level migration/restore smoke verifies Knowledge/RAG tables and selector continuity; release browser smoke covers Agent Studio, Workspace, Run Detail, Eval, and Observability demo projections; runbooks now distinguish local fixture evidence from optional credential-gated live provider validation.
+- Console Chinese-first selector/terminology hardening is completed and pushed on the same branch through `a5d046b`: shared `MenuSelect` now covers model, knowledge, run, and settings dropdowns with keyboard/focus behavior, grouping, disabled-option skipping, and placement support; required English terms such as MCP, RAG, API, Trace, WarmPool, JSON, Markdown, Prompt, and Provider keep their original names with adjacent small Chinese explanations.
 - Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
 - P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
 
@@ -74,6 +75,7 @@ Evidence from `docs/task-progress.md`:
 - P4 memory/context router V2 is recorded as completed with backend context assembly tests, model-call binding tests, ruff, frontend build/lint/test evidence, docs validation, and final pushed commits through `6c4a95d`.
 - P5 MCP/Skills productization is recorded as completed with capability registry storage, attachment-only runtime authority, approval resume fixes, console feedback, targeted backend/frontend tests, ruff, lint, and final pushed commits through `f05816e`.
 - P7 release/demo hardening is recorded as completed and pushed with seed-plan py_compile/print-plan checks, non-default local API seed/readback/idempotency, chat-stream demo grounding proof, service-level migration/restore smoke, backend ruff/targeted tests, frontend lint/build/unit tests, release browser smoke, compose config, docs validation, whitespace checks, and branch push evidence through `c404603`.
+- The latest console UI follow-up is recorded with frontend lint, full Vitest, production build, whitespace check, non-default frontend service check on `18082`, and push evidence through `a5d046b`.
 
 Evidence from the current codebase:
 
@@ -101,6 +103,41 @@ The gap this wiki closes is discoverability. A new session can now start from th
 The accepted next-phase goal was a privately deployable enterprise internal-test platform that proves a complete Harness chain end to end. The target is not Kubernetes, full multi-tenant RBAC, polished marketing, or SaaS commercialization. See [[deep-interview-private-harness-chain]] for the binding chain.
 
 ## Most Recent Completed Work
+
+Console Chinese-first selector/terminology follow-up:
+
+```text
+apps/agent-console/src/components/ui/menu-select.tsx
+apps/agent-console/src/components/ui/term.tsx
+apps/agent-console/src/components/ui/__tests__/menu-select.test.tsx
+apps/agent-console/src/features/agents/components/ModelPicker.tsx
+apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx
+apps/agent-console/src/features/agents/pages/AgentListPage.tsx
+apps/agent-console/src/features/runs/pages/RunDetailPage.tsx
+apps/agent-console/src/features/settings/pages/ModelSettingsPage.tsx
+apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx
+apps/agent-console/src/features/tools/pages/ToolRegistryPage.tsx
+docs/ai/task-progress.yaml
+docs/task-progress.md
+docs/human/10-task-progress.md
+```
+
+Console UI verification summary:
+
+```text
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm test -> 30 files / 148 tests passed
+cd apps/agent-console && npm run build -> passed
+git diff --check -> passed
+frontend http://127.0.0.1:18082/ -> ok
+API http://127.0.0.1:8000/health -> ok
+```
+
+Console UI commit pushed to `origin/p7-release-demo-hardening`:
+
+```text
+a5d046b Make console selectors and terms usable for Chinese-first UI
+```
 
 P7 pushed branch work:
 
@@ -136,6 +173,7 @@ git diff --check -> passed
 P7 commits pushed to `origin/p7-release-demo-hardening`:
 
 ```text
+a5d046b Make console selectors and terms usable for Chinese-first UI
 c404603 Record P7 release demo handoff
 40026b3 Add P7 release demo review report
 f8ba7cf Document P7 release demo runbooks
@@ -244,13 +282,14 @@ Captured in wiki:
 
 ## Next Known Work
 
-The latest completed Agent Knowledge Harness lane is **P7 Release And Demo Hardening**, pushed to `origin/p7-release-demo-hardening` through `c404603`.
+The latest completed Agent Knowledge Harness lane is **P7 Release And Demo Hardening**, with a follow-up console Chinese-first selector/terminology hardening commit pushed to `origin/p7-release-demo-hardening` through `a5d046b`.
 
 Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 
 - keep groundedness/citation/unsupported-claim Eval and Observability surfaces regression-tested;
 - keep Docker Compose release and demo validation current.
 - keep deterministic local P7 seed separate from optional credential-gated Tavily/live provider validation.
+- keep the shared `MenuSelect` keyboard/focus contract and adjacent small Chinese explanations when adding new selectors or required English terms.
 
 Useful follow-up rules:
 

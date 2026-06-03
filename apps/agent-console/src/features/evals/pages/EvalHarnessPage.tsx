@@ -7,6 +7,7 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
@@ -102,7 +103,7 @@ export function EvalHarnessPage() {
   }
 
   return (
-    <ConsoleShell title={text("评测 Harness", "Eval Harness")}>
+    <ConsoleShell title={text("评测中心", "Eval Harness")}>
       <div className="mx-auto grid max-w-[1500px] grid-cols-[320px_minmax(0,1fr)_360px] gap-4 p-6">
         <section className="space-y-4">
           <Card>
@@ -207,7 +208,7 @@ export function EvalHarnessPage() {
                 {text("回归门禁", "Regression Gate")}
               </div>
               <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
-                {latestRun?.status === "COMPLETED" ? "API 已接入" : "等待中"}
+                {latestRun?.status === "COMPLETED" ? "接口已接入" : "等待中"}
               </Badge>
             </CardHeader>
             <div className="space-y-2 p-3 text-xs">
@@ -218,7 +219,7 @@ export function EvalHarnessPage() {
               />
               <EvalReadiness
                 icon={<GitCompare className="h-3.5 w-3.5" />}
-                label="A/B"
+                label={<TermHint description="双版本对比评测">A/B</TermHint>}
                 status={text("未启用", "Disabled")}
                 disabled
               />
@@ -271,7 +272,7 @@ function EvalReadiness({
   disabled = false,
 }: {
   icon: React.ReactNode;
-  label: string;
+  label: React.ReactNode;
   status: string;
   disabled?: boolean;
 }) {

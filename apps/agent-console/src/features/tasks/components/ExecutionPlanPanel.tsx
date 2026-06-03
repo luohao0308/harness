@@ -5,6 +5,7 @@ import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Dot, statusTone } from "../../../components/ui/badge";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import {
   eventLabel,
@@ -157,7 +158,9 @@ export function ExecutionPlanPanel({
             <Badge tone={plan.quality_score >= 80 ? "success" : plan.quality_score >= 60 ? "warning" : "failed"}>
               {plan.quality_score}
             </Badge>
-            <span>Prompt 版本 {plan.planner_prompt_version}</span>
+            <span>
+              <TermHint description="提示词">Prompt</TermHint> 版本 {plan.planner_prompt_version}
+            </span>
             {Object.entries(plan.quality_gates).map(([gate, passed]) => (
               <Badge key={gate} tone={passed ? "success" : "warning"}>
                 {text(qualityGateLabel(gate), qualityGateLabelEn(gate))}{" "}

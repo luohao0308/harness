@@ -5,6 +5,7 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel, timeoutCategoryLabel, toolOutputKindLabel } from "../../../lib/labels";
 import type { ModelCall, ToolCall, ToolCallFilters } from "../../tasks/api";
@@ -62,9 +63,9 @@ export function ModelCallPanel({
           onChange={(event) => updateFilter("risk_level", event.target.value)}
         />
         <Input
-          aria-label={text("Trace ID", "Trace ID")}
+          aria-label={text("追踪标识", "Trace ID")}
           className="h-8 text-xs"
-          placeholder={text("Trace ID（追踪标识）", "Trace ID")}
+          placeholder={text("追踪标识", "Trace ID")}
           value={toolCallFilters.trace_id ?? ""}
           onChange={(event) => updateFilter("trace_id", event.target.value)}
         />
@@ -79,7 +80,7 @@ export function ModelCallPanel({
             <Th>{text("名称", "Name")}</Th>
             <Th>{text("状态", "Status")}</Th>
             <Th>{text("耗时", "Latency")}</Th>
-            <Th>{text("详情", "Details")}</Th>
+              <Th>{text("详情", "Details")}</Th>
           </tr>
         </thead>
         <tbody>
@@ -104,7 +105,7 @@ export function ModelCallPanel({
                     to={`/observability?trace_id=${encodeURIComponent(call.trace_id)}`}
                     className="mt-0.5 block text-[10px] text-slate-500 hover:text-slate-900"
                   >
-                    Trace {call.trace_id.slice(0, 8)}
+                    <TermHint description="跨服务追踪标识">Trace</TermHint> {call.trace_id.slice(0, 8)}
                   </Link>
                 ) : null}
               </Td>
@@ -134,7 +135,7 @@ export function ModelCallPanel({
                       to={`/observability?trace_id=${encodeURIComponent(call.trace_id)}`}
                       className="hover:text-slate-900"
                     >
-                      Trace {call.trace_id.slice(0, 8)}
+                      <TermHint description="跨服务追踪标识">Trace</TermHint> {call.trace_id.slice(0, 8)}
                     </Link>
                   )}
                 </div>

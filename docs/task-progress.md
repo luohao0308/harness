@@ -21,6 +21,30 @@ The website remains present as a public information shell. Console execution foc
 - Status: `completed`
 - Updated at: `2026-05-18`
 
+## Completed: P7 Console Chinese Selector Polish
+
+Date: 2026-05-18
+
+Status: `UI review fixes verified and pushed`
+
+Changes:
+- Added shared `MenuSelect` for model, knowledge, run, and settings dropdowns, replacing native and bespoke selectors.
+- Preserved selector accessibility with keyboard/focus behavior, disabled-option skipping, grouping, top/bottom placement, and a focused component regression test.
+- Added `TermHint` small-text explanations for required English terms such as MCP, RAG, API, Trace, WarmPool, JSON, Markdown, Prompt, and Provider.
+- Reworked Agent Studio capability layout and model/knowledge selector presentation for a Chinese-first console.
+- Updated Workspace, Eval, Observability, Run Detail, Sandboxes, Tool Registry, and Model Settings wording so required English technical values keep adjacent Chinese explanations.
+
+Verification:
+```text
+cd apps/agent-console && npm run lint -> passed
+cd apps/agent-console && npm test -> 30 files / 148 tests passed
+cd apps/agent-console && npm run build -> passed
+git diff --check -> passed
+frontend http://127.0.0.1:18082/ -> ok
+API http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+git push origin p7-release-demo-hardening -> pushed through a5d046b
+```
+
 ## Completed: P7 Release And Demo Hardening
 
 Date: 2026-05-18

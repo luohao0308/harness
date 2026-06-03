@@ -291,7 +291,10 @@ export function ComposerOptionsPopover({
             className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <Download aria-hidden="true" className="h-3.5 w-3.5" />
-            Markdown
+            <span className="inline-flex flex-col leading-tight">
+              <span>Markdown</span>
+              <span className="text-[10px] text-slate-400">轻量标记文本</span>
+            </span>
           </button>
           <button
             type="button"
@@ -299,7 +302,10 @@ export function ComposerOptionsPopover({
             className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <Download aria-hidden="true" className="h-3.5 w-3.5" />
-            JSON
+            <span className="inline-flex flex-col leading-tight">
+              <span>JSON</span>
+              <span className="text-[10px] text-slate-400">结构化数据</span>
+            </span>
           </button>
         </div>
         <button

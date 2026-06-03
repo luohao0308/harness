@@ -183,13 +183,13 @@ export async function readBodyPreview(res: Response, maxBytes = 256): Promise<st
 export const ERROR_COPY_KEYS = {
   HTTP_PREFIX: ["HTTP 错误", "HTTP error"],
   NETWORK_UNREACHABLE: ["无法连接 Harness 后端", "Cannot reach Harness backend"],
-  NON_SSE: ["响应不是 SSE 流", "Response is not an SSE stream"],
-  STREAM_CLOSED: ["SSE 流意外中断", "SSE stream closed unexpectedly"],
+  NON_SSE: ["响应不是 SSE 服务端事件流", "Response is not an SSE stream"],
+  STREAM_CLOSED: ["SSE 服务端事件流意外中断", "SSE stream closed unexpectedly"],
   AUTH: ["鉴权失败，请重新登录", "Authentication failed. Please sign in again."],
   NOT_FOUND: ["目标 Agent 不存在", "Target agent not found"],
   SERVER: ["后端内部错误", "Backend internal error"],
   RATE_LIMITED: [
-    "模型触发限流 (429)，请稍后再试或在设置里切换 Provider",
+    "模型触发限流 (429)，请稍后再试或在设置里切换供应商",
     "Model rate-limited (429). Try again later or switch provider in Settings.",
   ],
   RETRY: ["重试", "Retry"],

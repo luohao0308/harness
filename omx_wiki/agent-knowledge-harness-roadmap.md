@@ -112,7 +112,7 @@ Verified-baseline evidence:
 
 ### P2: Productize Local Knowledge Management
 
-Status: completed / pushed to `origin/p7-release-demo-hardening` through `c404603`.
+Status: completed / pushed.
 
 Goal: make local knowledge usable beyond an inline demo form.
 
@@ -253,7 +253,7 @@ Verification evidence:
 
 ### P7: Release And Demo Hardening
 
-Status: completed.
+Status: completed / pushed to `origin/p7-release-demo-hardening` through `a5d046b`.
 
 Goal: preserve the private handoff quality while new capability layers grow.
 
@@ -265,6 +265,11 @@ Delivered scope:
 - service-level Knowledge/RAG migration/restore smoke for required tables and selector continuity;
 - mocked release browser smoke covering Agent Studio knowledge, Workspace grounding, Run Detail knowledge evidence, Eval grounding metrics, and Observability grounding quality;
 - updated deployment, troubleshooting, and web-research runbooks for seed/readback, migration/restore, browser smoke, and provider-boundary diagnosis.
+- Chinese-first console UI follow-up:
+  - shared accessible `MenuSelect` replaces native and bespoke selectors across model, knowledge, run, and settings surfaces;
+  - keyboard selection, disabled-option skipping, grouping, and top/bottom placement are covered by a focused component test;
+  - required English terms keep their original names with adjacent small Chinese explanations;
+  - Agent Studio capability layout, Workspace selector/menu rows, Eval/Observability/Run Detail/Sandbox/Tool Registry terminology, and settings protocol selector were polished.
 
 Verification evidence:
 
@@ -283,7 +288,12 @@ Verification evidence:
 - `docker compose --env-file deploy/docker-compose/.env.example -f deploy/docker-compose/docker-compose.yml config` -> passed.
 - `python3 scripts/validate-docs.py` -> passed.
 - `git diff --check` -> passed.
-- Pushed branch `p7-release-demo-hardening` to `origin` through `c404603`.
+- Follow-up console UI validation: `cd apps/agent-console && npm run lint` -> passed.
+- Follow-up console UI validation: `cd apps/agent-console && npm test` -> `30 files / 148 tests passed`.
+- Follow-up console UI validation: `cd apps/agent-console && npm run build` -> passed.
+- Follow-up console UI validation: `git diff --check` -> passed.
+- Follow-up local service check: frontend `http://127.0.0.1:18082/` -> ok; API `http://127.0.0.1:8000/health` -> ok.
+- Pushed branch `p7-release-demo-hardening` to `origin` through `a5d046b`.
 
 ## Boundaries
 

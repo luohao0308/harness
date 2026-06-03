@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-05-18T05:20:00Z
+last_updated_at: 2026-05-18T12:17:00Z
 last_updated_by: Harness Agent
 execution_mode: spec_first_stage_gated_vertical_slice
 product: AI Harness Platform
@@ -116,6 +116,28 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: p7-console-chinese-selector-polish
+    date: 2026-05-18
+    status: ui_review_fixes_verified_and_pushed
+    demo: Console selector UI and required English terminology are Chinese-first, accessible, and consistent across Agent Studio, Workspace, Run Detail, Eval, Observability, Tools, Sandboxes, and Settings.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm run lint
+      - cd apps/agent-console && npm test
+      - cd apps/agent-console && npm run build
+      - git diff --check
+      - frontend http://127.0.0.1:18082/ health check
+      - API http://127.0.0.1:8000/health
+      - git push origin p7-release-demo-hardening
+    acceptance_notes:
+      - Added shared MenuSelect for model, knowledge, run, and settings dropdowns with keyboard/focus behavior, disabled-option skipping, grouping, and top/bottom placement.
+      - Added MenuSelect regression coverage for keyboard selection while skipping disabled options.
+      - Added TermHint for required English terms with small adjacent Chinese explanations, including MCP, RAG, API, Trace, WarmPool, JSON, Markdown, Prompt, Provider, and related protocol/product terms.
+      - Reworked Agent Studio capability layout and model/knowledge selectors so the console stays Chinese-first while preserving original technical values.
+      - Updated Workspace, Eval, Observability, Run Detail, Sandboxes, Tool Registry, and Model Settings copy to avoid unexplained English-first UI.
+      - Full frontend validation passed with 30 test files and 148 tests.
+      - Branch p7-release-demo-hardening was pushed to origin through a5d046b.
+
   - id: p7-release-demo-hardening
     date: 2026-05-18
     status: release_demo_hardening_verified_and_pushed

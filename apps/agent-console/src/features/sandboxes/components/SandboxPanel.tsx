@@ -1,6 +1,7 @@
 import { Box } from "lucide-react";
 
 import { Card, CardHeader } from "../../../components/ui/card";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 
 export function SandboxPanel({ enabled = false }: { enabled?: boolean }) {
@@ -28,7 +29,9 @@ export function SandboxPanel({ enabled = false }: { enabled?: boolean }) {
           <span className="text-red-600">{text("默认关闭", "Off by default")}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-500">WarmPool 预热池</span>
+          <span className="text-slate-500">
+            <TermHint description="沙箱预热池，减少冷启动等待">WarmPool</TermHint>
+          </span>
           <span className="font-mono text-slate-800">{text("目标 50ms", "target 50ms")}</span>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -19,6 +19,7 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { enabledLabel, eventLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
@@ -197,7 +198,7 @@ export function ObservabilityPage() {
   };
   const downloadExport = async (item: ObservabilityExportItem) => {
     if (item.name === "trace_json" && !activeTraceId) {
-      setExportStatus(text("请先输入 Trace ID", "Enter a Trace ID first"));
+      setExportStatus(text("请先输入追踪标识", "Enter a Trace ID first"));
       return;
     }
     setExportStatus(text("正在导出...", "Exporting..."));
@@ -275,7 +276,8 @@ export function ObservabilityPage() {
               className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900"
               href={`${API_BASE_URL}/metrics`}
             >
-              {text("Prometheus 指标", "Prometheus metrics")} /metrics <ExternalLink className="h-3 w-3" />
+              <TermHint description="指标采集与告警系统">Prometheus</TermHint>
+              {text("指标", "metrics")} /metrics <ExternalLink className="h-3 w-3" />
             </a>
           </CardHeader>
           <div className="grid grid-cols-6 gap-3 p-3 text-xs">
@@ -292,11 +294,12 @@ export function ObservabilityPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Gauge className="h-4 w-4" /> Grounding Quality
+              <Gauge className="h-4 w-4" />
+              <TermHint description="依据质量，衡量回答是否绑定到来源">Grounding Quality</TermHint>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Input
-                aria-label="Eval Run ID"
+                aria-label="评测运行 ID"
                 value={draftGroundingFilters.eval_run_id}
                 onChange={(event) =>
                   setDraftGroundingFilters((current) => ({
@@ -308,7 +311,7 @@ export function ObservabilityPage() {
                 className="h-8 w-36"
               />
               <Input
-                aria-label="Dataset ID"
+                aria-label="数据集 ID"
                 value={draftGroundingFilters.dataset_id}
                 onChange={(event) =>
                   setDraftGroundingFilters((current) => ({
@@ -320,7 +323,7 @@ export function ObservabilityPage() {
                 className="h-8 w-36"
               />
               <Input
-                aria-label="Failure Type"
+                aria-label="失败类型"
                 value={draftGroundingFilters.failure_type}
                 onChange={(event) =>
                   setDraftGroundingFilters((current) => ({
@@ -338,27 +341,27 @@ export function ObservabilityPage() {
           </CardHeader>
           <div className="grid grid-cols-2 gap-3 border-b border-slate-100 p-3 text-xs md:grid-cols-3 xl:grid-cols-6">
             <Metric
-              label="Grounding pass"
+              label={<TermHint description="依据校验通过率">Grounding pass</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.grounding_pass_rate)}
             />
             <Metric
-              label="Citation coverage"
+              label={<TermHint description="引用覆盖率">Citation coverage</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.citation_coverage_rate)}
             />
             <Metric
-              label="Forbidden leak"
+              label={<TermHint description="禁止证据泄漏率">Forbidden leak</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.forbidden_evidence_leak_rate)}
             />
             <Metric
-              label="Fallback mismatch"
+              label={<TermHint description="后备路径预期与实际不一致率">Fallback mismatch</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.fallback_mismatch_rate)}
             />
             <Metric
-              label="Unsupported"
+              label={<TermHint description="不支持标记出现率">Unsupported</TermHint>}
               value={formatRate(groundingQuality.data?.metrics.unsupported_marker_rate)}
             />
             <Metric
-              label="Failures"
+              label={text("失败总数", "Failures")}
               value={formatNumber(groundingQuality.data?.metrics.grounding_failure_total)}
             />
           </div>
@@ -389,7 +392,7 @@ export function ObservabilityPage() {
           />
           <QueuePanel
             title={text("智能体分配队列", "Agent Assignment Queue")}
-            subtitle={text("多智能体编排 worker 状态；Agent Assignment 是后端分配对象名。", "Multi-agent orchestration worker state")}
+            subtitle={text("多智能体编排工作进程状态；后端分配对象名按原始值展示。", "Multi-agent orchestration worker state")}
             queue={data?.assignment_queue}
           />
         </div>
@@ -398,7 +401,8 @@ export function ObservabilityPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Box className="h-4 w-4" /> {text("WarmPool 预热池", "WarmPool")}
+                <Box className="h-4 w-4" />
+                <TermHint description="沙箱预热池，减少冷启动等待">WarmPool</TermHint>
               </div>
               <span className="text-xs text-slate-500">
                 {enabledLabel(Boolean(data?.warm_pool.enabled))}
@@ -424,7 +428,7 @@ export function ObservabilityPage() {
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <Gauge className="h-4 w-4" /> {text("沙箱状态", "Sandbox Status")}
               </div>
-              <span className="text-xs text-slate-500">{text("Docker 沙箱实例分布", "Docker sandbox instance distribution")}</span>
+              <span className="text-xs text-slate-500">{text("容器沙箱实例分布", "Docker sandbox instance distribution")}</span>
             </CardHeader>
             <DistributionTable items={data?.sandboxes_by_status ?? []} emptyText={text("暂无沙箱实例", "No sandbox instances")} />
           </Card>
@@ -437,7 +441,7 @@ export function ObservabilityPage() {
             </div>
             <span className="text-xs text-slate-500">
               {exportStatus ||
-                text("导出日志、Trace 链路、Grafana 看板和服务健康快照", "Export logs, traces, dashboards, and health snapshots")}
+                text("导出日志、追踪链路、可视化看板和服务健康快照", "Export logs, traces, dashboards, and health snapshots")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-4 gap-3 p-3">
@@ -505,7 +509,7 @@ export function ObservabilityPage() {
             <Metric label={text("涉及任务", "Tasks")} value={formatNumber(recovery.data?.task_total)} />
             <Metric label={text("扫描子代理", "Scanned")} value={formatNumber(recovery.data?.scanned_total)} />
             <Metric label={text("恢复子代理", "Recovered")} value={formatNumber(recovery.data?.recovered_total)} />
-            <Metric label={text("恢复锁跳过", "Lock Skips")} value={formatNumber(recovery.data?.lock_skipped_total)} />
+              <Metric label={text("恢复锁跳过", "Lock Skips")} value={formatNumber(recovery.data?.lock_skipped_total)} />
             <Metric
               label={text("动作类型", "Actions")}
               value={formatNumber(Object.keys(recovery.data?.action_counts ?? {}).length)}
@@ -643,7 +647,7 @@ export function ObservabilityPage() {
                 <Activity className="h-4 w-4" /> {text("观测服务健康", "Observability Service Health")}
               </div>
               <span className="text-xs text-slate-500">
-                {text("Prometheus、Grafana、Loki、OTel、Tempo 服务探活", "Prometheus / Grafana / Loki / OTel / Tempo")}
+                {text("指标采集、可视化看板、日志、遥测和链路服务探活", "Prometheus / Grafana / Loki / OTel / Tempo")}
               </span>
             </CardHeader>
             <Table>
@@ -695,9 +699,11 @@ export function ObservabilityPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Gauge className="h-4 w-4" /> {text("Grafana 看板", "Grafana Dashboard")}
+                <Gauge className="h-4 w-4" />
+                <TermHint description="可视化监控看板">Grafana</TermHint>
+                {text("看板", "Dashboard")}
               </div>
-              <span className="text-xs text-slate-500">{text("后端代理返回 dashboard 深链，dashboard 是 Grafana 看板链接。", "Backend proxy returns dashboard deep links")}</span>
+              <span className="text-xs text-slate-500">{text("后端代理返回可视化看板深链。", "Backend proxy returns dashboard deep links")}</span>
             </CardHeader>
             <div className="space-y-2 p-3">
               {(dashboards.data?.items ?? []).map((dashboard) => (
@@ -716,10 +722,10 @@ export function ObservabilityPage() {
                 <div className="py-8 text-center text-xs text-slate-500">
                   {dashboards.error
                     ? text(
-                        `Grafana 访问受限：${dashboards.error.message}`,
+                        `可视化看板访问受限：${dashboards.error.message}`,
                         `Grafana access limited: ${dashboards.error.message}`,
                       )
-                    : text("暂无 Grafana 看板", "No Grafana dashboards")}
+                    : text("暂无可视化看板", "No Grafana dashboards")}
               </div>
             )}
           </div>
@@ -729,10 +735,13 @@ export function ObservabilityPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Logs className="h-4 w-4" /> {text("日志与 Trace 深链查询", "Logs & Trace Deep Search")}
+              <Logs className="h-4 w-4" />
+              {text("日志与 ", "Logs & ")}
+              <TermHint description="跨服务追踪链路">Trace</TermHint>
+              {text("链路查询", "Deep Search")}
             </div>
             <span className="text-xs text-slate-500">
-              {text("按任务、Trace、服务和事件筛选；Trace ID 可直接联动右侧链路。Trace 是跨服务追踪标识。", "Filter by task, trace, service, and event; trace IDs can drive the chain view.")}
+              {text("按任务、追踪标识、服务和事件筛选；追踪标识可直接联动右侧链路。", "Filter by task, trace, service, and event; trace IDs can drive the chain view.")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 p-3">
@@ -746,9 +755,9 @@ export function ObservabilityPage() {
               }
             />
             <Input
-              aria-label={text("Trace ID", "Trace ID")}
+              aria-label={text("追踪标识", "Trace ID")}
               className="h-8 text-xs"
-              placeholder={text("Trace ID（追踪标识）", "Trace ID")}
+              placeholder={text("追踪标识", "Trace ID")}
               value={draftLogFilters.trace_id}
               onChange={(event) =>
                 setDraftLogFilters((filters) => ({ ...filters, trace_id: event.target.value }))
@@ -777,17 +786,17 @@ export function ObservabilityPage() {
           </div>
           <div className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-100 p-3">
             <Input
-              aria-label={text("Trace 查询", "Trace Search")}
+              aria-label={text("链路查询", "Trace Search")}
               className="h-8 text-xs"
-              placeholder={text("输入 Trace ID 查询链路", "Enter Trace ID to query chain")}
+              placeholder={text("输入追踪标识查询链路", "Enter Trace ID to query chain")}
               value={draftTraceId}
               onChange={(event) => setDraftTraceId(event.target.value)}
             />
-            <Button onClick={() => queryTrace()}>{text("查询 Trace", "Search Trace")}</Button>
+            <Button onClick={() => queryTrace()}>{text("查询追踪链路", "Search Trace")}</Button>
           </div>
           <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 border-t border-slate-100 p-3">
             <Input
-              aria-label={text("Trace 服务", "Trace Service")}
+              aria-label={text("追踪服务", "Trace Service")}
               className="h-8 text-xs"
               placeholder={text("服务", "Service")}
               value={draftTraceFilters.service}
@@ -796,9 +805,9 @@ export function ObservabilityPage() {
               }
             />
             <Input
-              aria-label={text("Span 名称", "Span Name")}
+              aria-label={text("链路片段名称", "Span Name")}
               className="h-8 text-xs"
-              placeholder={text("Span 名称", "Span name")}
+              placeholder={text("链路片段名称", "Span name")}
               value={draftTraceFilters.span_name}
               onChange={(event) =>
                 setDraftTraceFilters((filters) => ({ ...filters, span_name: event.target.value }))
@@ -823,7 +832,7 @@ export function ObservabilityPage() {
               }
             />
             <Button onClick={() => setTraceFilters(draftTraceFilters)}>
-              {text("筛选 Span", "Filter Spans")}
+              {text("筛选片段", "Filter Spans")}
             </Button>
           </div>
         </Card>
@@ -858,7 +867,9 @@ export function ObservabilityPage() {
                 <tr>
                   <Th>{text("事件", "Event")}</Th>
                   <Th>{text("任务", "Task")}</Th>
-                  <Th>{text("Trace 追踪", "Trace")}</Th>
+                  <Th>
+                    <TermHint description="跨服务追踪标识">Trace</TermHint>
+                  </Th>
                   <Th>{text("级别", "Level")}</Th>
                 </tr>
               </thead>
@@ -906,10 +917,12 @@ export function ObservabilityPage() {
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <GitBranch className="h-4 w-4" /> {text("Trace 链路", "Trace Chain")}
+                <GitBranch className="h-4 w-4" />
+                <TermHint description="跨服务追踪链路">Trace</TermHint>
+                {text("链路", "Chain")}
               </div>
               <span className="font-mono text-xs text-slate-500">
-              {activeTraceId ? activeTraceId.slice(0, 16) : text("等待 Trace", "Waiting for trace")}
+              {activeTraceId ? activeTraceId.slice(0, 16) : text("等待追踪链路", "Waiting for trace")}
               </span>
             </CardHeader>
             <div className="space-y-2 p-3">
@@ -958,7 +971,7 @@ export function ObservabilityPage() {
               ))}
               {!trace.isLoading && (trace.data?.spans.length ?? 0) === 0 && (
                 <div className="py-8 text-center text-xs text-slate-500">
-                  {text("暂无 Trace span；span 是一次链路片段", "No trace spans")}
+                  {text("暂无链路片段；片段是一次跨服务追踪记录。", "No trace spans")}
                 </div>
               )}
             </div>
@@ -969,7 +982,7 @@ export function ObservabilityPage() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: ReactNode; value: string }) {
   return (
     <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
       <div className="text-slate-500">{label}</div>
@@ -1154,12 +1167,20 @@ function GroundingQualityTable({
     <Table>
       <thead className="bg-slate-50 text-slate-500">
         <tr>
-          <Th>Eval</Th>
-          <Th>Dataset</Th>
+          <Th>
+            <TermHint description="评测运行">Eval</TermHint>
+          </Th>
+          <Th>
+            <TermHint description="评测数据集">Dataset</TermHint>
+          </Th>
           <Th>{text("状态", "Status")}</Th>
-          <Th>Grounding</Th>
+          <Th>
+            <TermHint description="依据校验结果">Grounding</TermHint>
+          </Th>
           <Th>{text("失败原因", "Failures")}</Th>
-          <Th>Forbidden</Th>
+          <Th>
+            <TermHint description="禁止证据泄漏检查">Forbidden</TermHint>
+          </Th>
           <Th>{text("证据索引", "Evidence Indexes")}</Th>
           <Th>{text("任务", "Task")}</Th>
         </tr>
@@ -1188,27 +1209,27 @@ function GroundingQualityTable({
             </Td>
             <Td>
               <Badge tone={item.grounding_passed ? "success" : "failed"}>
-                {item.grounding_passed ? "passed" : "failed"}
+                {item.grounding_passed ? "通过" : "失败"}
               </Badge>
               {item.fallback_expected !== item.fallback_observed && (
                 <Badge tone="warning" className="ml-1">
-                  fallback mismatch
+                  后备路径不匹配
                 </Badge>
               )}
               {item.unsupported_marker_present && (
                 <Badge tone="warning" className="ml-1">
-                  unsupported
+                  不支持标记
                 </Badge>
               )}
             </Td>
             <Td className="max-w-xs">
               <div className="truncate font-mono text-[11px] text-slate-600">
-                {item.grounding_failures.join(", ") || "none"}
+                {item.grounding_failures.join(", ") || "无"}
               </div>
             </Td>
             <Td>
               <Badge tone={item.forbidden_evidence_leaked ? "failed" : "success"}>
-                {item.forbidden_evidence_leaked ? "leaked" : "clear"}
+                {item.forbidden_evidence_leaked ? "已泄漏" : "通过"}
               </Badge>
               <div className="mt-1 flex flex-wrap gap-1">
                 {item.forbidden_leak_sources.map((source) => (
@@ -1220,10 +1241,10 @@ function GroundingQualityTable({
             </Td>
             <Td className="max-w-xs">
               <div className="truncate font-mono text-[11px] text-slate-500">
-                citations {item.citation_keys.join(", ") || "none"}
+                引用 {item.citation_keys.join(", ") || "无"}
               </div>
               <div className="truncate font-mono text-[11px] text-slate-500">
-                hits {item.citation_hit_ids.join(", ") || "none"}
+                命中 {item.citation_hit_ids.join(", ") || "无"}
               </div>
             </Td>
             <Td>
@@ -1243,7 +1264,7 @@ function GroundingQualityTable({
         {!isLoading && items.length === 0 && (
           <tr className="border-t border-slate-100">
             <Td colSpan={8} className="py-8 text-center text-slate-500">
-              {text("暂无 grounding quality 数据", "No grounding quality data")}
+              {text("暂无依据质量数据", "No grounding quality data")}
             </Td>
           </tr>
         )}

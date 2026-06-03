@@ -94,17 +94,19 @@ function ExportMenu({ onExport }: ExportMenuProps): JSX.Element {
             type="button"
             role="menuitem"
             onClick={() => handleSelect("markdown")}
-            className="flex w-full items-center rounded-xl px-2 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-slate-50"
+            className="flex w-full flex-col items-start rounded-xl px-2 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-slate-50"
           >
-            Markdown
+            <span>Markdown</span>
+            <span className="text-[10px] text-slate-400">轻量标记文本</span>
           </button>
           <button
             type="button"
             role="menuitem"
             onClick={() => handleSelect("json")}
-            className="flex w-full items-center rounded-xl px-2 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-slate-50"
+            className="flex w-full flex-col items-start rounded-xl px-2 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-slate-50"
           >
-            JSON
+            <span>JSON</span>
+            <span className="text-[10px] text-slate-400">结构化数据</span>
           </button>
         </div>
       )}

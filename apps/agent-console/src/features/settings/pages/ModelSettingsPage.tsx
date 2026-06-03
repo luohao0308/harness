@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Check, GitBranch, Plus, Save, Star, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -8,7 +8,9 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
+import { MenuSelect } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
+import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
@@ -69,7 +71,7 @@ const providerPresets: ProviderConfig[] = [
   },
   {
     name: "openai-compatible",
-    label: "OpenAI Compatible",
+    label: "OpenAI 兼容",
     model: "gpt-4.1-mini",
     api_format: "openai",
     base_url: "https://api.openai.com/v1",
@@ -81,7 +83,7 @@ const providerPresets: ProviderConfig[] = [
   },
   {
     name: "qwen",
-    label: "Qwen DashScope Compatible",
+    label: "Qwen DashScope 兼容",
     model: "qwen-plus",
     api_format: "openai",
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -107,7 +109,7 @@ const providerPresets: ProviderConfig[] = [
 
 const emptyProvider: ProviderConfig = {
   name: "custom-openai-compatible",
-  label: "Custom OpenAI Compatible",
+  label: "自定义 OpenAI 兼容",
   model: "default",
   api_format: "openai",
   base_url: "",
@@ -239,8 +241,8 @@ export function ModelSettingsPage() {
             <Metric label={text("默认供应商", "Default Provider")} value={settings.data?.default_provider ?? "..."} />
             <Metric label={text("默认模型", "Default Model")} value={settings.data?.default_model ?? "..."} />
             <Metric label={text("健康状态", "Health")} value={statusLabel(String(settings.data?.health.status ?? "..."))} />
-            <Metric label="RPM 限流" value={formatLimit(settings.data?.rate_limits.rpm, "rpm")} />
-            <Metric label="TPM 限流" value={formatLimit(settings.data?.rate_limits.tpm, "tpm")} />
+            <Metric label={<TermHint description="每分钟请求数">RPM</TermHint>} value={formatLimit(settings.data?.rate_limits.rpm, "rpm")} />
+            <Metric label={<TermHint description="每分钟标记数">TPM</TermHint>} value={formatLimit(settings.data?.rate_limits.tpm, "tpm")} />
             <Metric
               label={text("熔断规则", "Circuit Breaker")}
               value={`${String(settings.data?.circuit_breaker.failure_threshold ?? "...")} 次失败 / ${String(
@@ -248,7 +250,7 @@ export function ModelSettingsPage() {
               )} 秒`}
             />
             <Metric
-              label={text("Fallback 切换", "Fallback")}
+              label={<TermHint description="主模型失败后的后备切换">Fallback</TermHint>}
               value={String(fallbacks.data?.fallback_total ?? "...")}
             />
           </div>
@@ -261,7 +263,7 @@ export function ModelSettingsPage() {
                   {text("模型切换", "Model Switch")}
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {text("像 cc switch 一样添加预置或自定义模型，并设为智能体默认模型", "Add presets or custom models and switch the Agent default model.")}
+                  {text("添加预置或自定义模型，并设为智能体默认模型", "Add presets or custom models and switch the Agent default model.")}
                 </div>
               </div>
               <span className="text-[11px] text-slate-500">
@@ -313,13 +315,17 @@ export function ModelSettingsPage() {
                   {text("自定义模型", "Custom Model")}
                 </div>
                 <div className="mt-1 text-xs text-slate-500">
-                  {text("支持任何 OpenAI-compatible /chat/completions 接口", "Any OpenAI-compatible /chat/completions endpoint.")}
+                  <>
+                    {text("支持 ", "Any ")}
+                    <TermHint description="兼容 OpenAI 接口形态">OpenAI-compatible</TermHint>
+                    {text(" 的聊天补全接口。", " /chat/completions endpoint.")}
+                  </>
                 </div>
               </div>
             </CardHeader>
             <form onSubmit={submitCustomProvider} className="grid gap-3 p-3 text-xs">
               <div className="grid grid-cols-2 gap-3">
-                <Field label={text("供应商 ID", "Provider ID")}>
+                <Field label={text("供应商标识", "Provider ID")}>
                   <Input
                     value={draftProvider.name}
                     onChange={(event) => setDraftProvider({ ...draftProvider, name: event.target.value })}
@@ -338,23 +344,35 @@ export function ModelSettingsPage() {
                   />
                 </Field>
                 <Field label={text("协议", "Protocol")}>
-                  <select
-                    className="h-9 rounded-md border border-slate-200 bg-white px-3 text-xs outline-none transition focus:border-slate-400"
+                  <MenuSelect
+                    ariaLabel={text("协议", "Protocol")}
                     value={String(draftProvider.api_format ?? "openai")}
-                    onChange={(event) => setDraftProvider({ ...draftProvider, api_format: event.target.value })}
-                  >
-                    <option value="openai">OpenAI /chat/completions</option>
-                    <option value="anthropic">Anthropic /v1/messages</option>
-                  </select>
+                    onChange={(value) => setDraftProvider({ ...draftProvider, api_format: value })}
+                    placeholder={text("选择协议", "Select protocol")}
+                    buttonClassName="h-9 rounded-md px-3 py-2 shadow-none text-xs"
+                    menuClassName="w-[280px]"
+                    options={[
+                      {
+                        value: "openai",
+                        label: text("OpenAI 兼容", "OpenAI compatible"),
+                        description: "/chat/completions",
+                      },
+                      {
+                        value: "anthropic",
+                        label: text("Anthropic 兼容", "Anthropic compatible"),
+                        description: "/v1/messages",
+                      },
+                    ]}
+                  />
                 </Field>
-                <Field label="Base URL">
+                <Field label={<TermHint description="接口基础地址">Base URL</TermHint>}>
                   <Input
                     value={String(draftProvider.base_url ?? "")}
                     placeholder="https://api.example.com/v1"
                     onChange={(event) => setDraftProvider({ ...draftProvider, base_url: event.target.value })}
                   />
                 </Field>
-                <Field label="API Key">
+                <Field label={<TermHint description="接口访问密钥">API Key</TermHint>}>
                   <Input
                     type="password"
                     value={String(draftProvider.api_key ?? "")}
@@ -362,7 +380,7 @@ export function ModelSettingsPage() {
                     onChange={(event) => setDraftProvider({ ...draftProvider, api_key: event.target.value })}
                   />
                 </Field>
-                <Field label={text("API Key 环境变量", "API Key Env")}>
+                <Field label={<TermHint description="保存 API Key 的环境变量">API Key 环境变量</TermHint>}>
                   <Input
                     value={String(draftProvider.api_key_env ?? "")}
                     placeholder="DEEPSEEK_API_KEY"
@@ -381,7 +399,7 @@ export function ModelSettingsPage() {
                     }
                   />
                 </Field>
-                <Field label="RPM">
+                <Field label={<TermHint description="每分钟请求数">RPM</TermHint>}>
                   <Input
                     type="number"
                     value={Number(draftProvider.rate_limit_rpm ?? 300)}
@@ -390,7 +408,7 @@ export function ModelSettingsPage() {
                     }
                   />
                 </Field>
-                <Field label="TPM">
+                <Field label={<TermHint description="每分钟标记数">TPM</TermHint>}>
                   <Input
                     type="number"
                     value={Number(draftProvider.rate_limit_tpm ?? 120000)}
@@ -427,10 +445,12 @@ export function ModelSettingsPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <GitBranch className="h-4 w-4" /> {text("Fallback 策略观测", "Fallback Observability")}
+              <GitBranch className="h-4 w-4" />
+              <TermHint description="主模型失败后的后备切换">Fallback</TermHint>
+              {text("策略观测", "Observability")}
             </div>
             <span className="text-xs text-slate-500">
-              {text("Fallback 是主模型失败后的后备切换；这里展示供应商分布和最近切换事件", "Shows primary failures, fallback provider distribution, and recent switch events")}
+              {text("后备切换展示供应商分布和最近切换事件", "Shows primary failures, fallback provider distribution, and recent switch events")}
             </span>
           </CardHeader>
           <div className="grid grid-cols-3 gap-3 p-3 text-xs">
@@ -453,9 +473,13 @@ export function ModelSettingsPage() {
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 <Th>{text("主模型", "Primary")}</Th>
-                <Th>{text("Fallback 后备模型", "Fallback")}</Th>
+                <Th>
+                  <TermHint description="主模型失败后的后备模型">Fallback</TermHint>
+                </Th>
                 <Th>{text("原因", "Reason")}</Th>
-                <Th>{text("Trace 追踪", "Trace")}</Th>
+                <Th>
+                  <TermHint description="跨服务追踪标识">Trace</TermHint>
+                </Th>
                 <Th>{text("时间", "Time")}</Th>
               </tr>
             </thead>
@@ -487,7 +511,7 @@ export function ModelSettingsPage() {
               {!fallbacks.isLoading && (fallbacks.data?.recent_events ?? []).length === 0 && (
                 <tr>
                   <Td colSpan={5} className="py-8 text-center text-slate-500">
-                    {text("暂无模型 fallback 事件", "No model fallback events")}
+                    {text("暂无模型后备切换事件", "No model fallback events")}
                   </Td>
                 </tr>
               )}
@@ -632,7 +656,7 @@ function formatLatency(value?: number) {
   return `${value.toLocaleString("zh-CN")} ms`;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value }: { label: ReactNode; value: string }) {
   return (
     <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
       <div className="text-slate-500">{label}</div>
@@ -641,7 +665,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <label className="grid gap-1.5 text-slate-700">
       <span>{label}</span>
