@@ -18,6 +18,7 @@ from app.core.logging import JsonFormatter
 from app.db.models import (
     AgentAssignment,
     AgentRun,
+    ContextAssemblyManifest,
     EvalCase,
     EvalDataset,
     EvalResult,
@@ -27,6 +28,7 @@ from app.db.models import (
     SandboxInstance,
     Task,
     ToolCall,
+    WorkspaceContextCache,
     utc_now,
 )
 from app.events.event_store import EventStore
@@ -835,3 +837,316 @@ def test_observability_services_health_requires_operator_role() -> None:
     response = TestClient(app).get("/api/observability/services/health", headers=AUTH_HEADERS)
 
     assert response.status_code == 403
+
+
+def test_observability_summary_projects_token_optimization_evidence(
+    db_session: Session,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Token evidence",
+        goal="Record optimization",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    db_session.add(
+        ContextAssemblyManifest(
+            organization_id="dev-org",
+            agent_id="default",
+            run_id=task.id,
+            mode="authoritative",
+            token_budget_json={
+                "pruning_applied": True,
+                    "optimized_vs_baseline": {"estimated_saved_tokens": 44},
+                    "retrieval_cache": {"hit_count": 3, "miss_count": 1},
+                    "context_cache": {
+                        "hit_count": 3,
+                        "miss_count": 1,
+                        "stale_count": 1,
+                        "sources": [
+                            {
+                                "cache_source": "compression_summary",
+                                "label": "摘要缓存",
+                                "hit_count": 2,
+                                "miss_count": 1,
+                                "stale_count": 0,
+                                "estimated_saved_tokens": 20,
+                            },
+                            {
+                                "cache_source": "rag_retrieval",
+                                "label": "RAG 检索",
+                                "hit_count": 1,
+                                "miss_count": 0,
+                                "stale_count": 1,
+                                "estimated_saved_tokens": 24,
+                            },
+                        ],
+                    },
+                },
+            sections_json=[],
+            included_refs_json=[],
+            omitted_refs_json=[],
+            policy_decisions_json=[],
+            tombstoned_refs_json=[],
+            context_text_sha256="empty",
+            metadata_json={},
+            created_at=utc_now(),
+        )
+    )
+    db_session.add(
+        ModelCall(
+            task_id=task.id,
+            model_provider="openai-compatible",
+            model_name="cheap-model",
+            status="SUCCESS",
+            prompt_tokens=20,
+            completion_tokens=5,
+            request_json={"low_cost_route": True},
+            response_json={},
+            created_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    response = TestClient(app).get("/api/observability/summary", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    token_optimization = response.json()["token_optimization"]
+    assert token_optimization["actual_total_tokens"] == 25
+    assert token_optimization["estimated_saved_tokens"] == 44
+    assert token_optimization["pruning_manifest_count"] == 1
+    assert token_optimization["retrieval_cache_hit_count"] == 3
+    assert token_optimization["retrieval_cache_miss_count"] == 1
+    assert token_optimization["retrieval_cache_stale_count"] == 1
+    assert token_optimization["cache_sources"][0]["cache_source"] == "compression_summary"
+    assert token_optimization["low_cost_route_count"] == 1
+
+
+def test_token_savings_page_projects_recent_run_evidence(db_session: Session) -> None:
+    task = Task(
+        organization_id="dev-org",
+        agent_id="default",
+        created_by="dev-engineer",
+        title="Balanced optimizer run",
+        goal="Show saved tokens",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    other = Task(
+        organization_id="other-org",
+        agent_id="default",
+        created_by="other",
+        title="Other optimizer run",
+        goal="Should not leak",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add_all([task, other])
+    db_session.flush()
+    db_session.add_all(
+        [
+            ContextAssemblyManifest(
+                id="manifest-token-savings",
+                organization_id="dev-org",
+                agent_id="default",
+                run_id=task.id,
+                mode="authoritative",
+                token_budget_json={
+                    "pruning_applied": True,
+                    "estimated_candidate_tokens": 1000,
+                    "estimated_included_tokens": 600,
+                    "estimated_omitted_tokens": 400,
+                    "optimized_vs_baseline": {
+                        "estimated_saved_tokens": 400,
+                        "estimated_savings_percent": 40,
+                    },
+                    "retrieval_cache": {"hit_count": 2, "miss_count": 1},
+                    "context_cache": {
+                        "hit_count": 2,
+                        "miss_count": 1,
+                        "stale_count": 0,
+                        "sources": [
+                            {
+                                "cache_source": "compression_summary",
+                                "label": "摘要缓存",
+                                "hit_count": 1,
+                                "miss_count": 1,
+                                "stale_count": 0,
+                                "estimated_saved_tokens": 80,
+                            },
+                            {
+                                "cache_source": "long_term_memory",
+                                "label": "长期记忆",
+                                "hit_count": 1,
+                                "miss_count": 0,
+                                "stale_count": 0,
+                                "estimated_saved_tokens": 24,
+                            },
+                        ],
+                    },
+                    "optimizer_capability_version_ids": ["balanced-version-1"],
+                    "optimizer_policy_hash": "policy-hash",
+                    "optimizer_decisions": [
+                        {
+                            "decision": "optimizer_applied",
+                            "package_name": "builtin-token-optimizer-balanced",
+                        }
+                    ],
+                },
+                sections_json=[],
+                included_refs_json=[{"section_id": "recent-1"}],
+                omitted_refs_json=[
+                    {
+                        "section_id": "rag-1",
+                        "omission_reason": "optimizer_budget",
+                    },
+                    {
+                        "section_id": "memory-1",
+                        "omission_reason": "optimizer_section_limit",
+                    },
+                    {
+                        "section_id": "memory-2",
+                        "omission_reason": "optimizer_section_limit",
+                    },
+                ],
+                policy_decisions_json=[],
+                tombstoned_refs_json=[],
+                context_text_sha256="empty",
+                metadata_json={},
+                created_at=utc_now(),
+            ),
+            ContextAssemblyManifest(
+                organization_id="other-org",
+                agent_id="default",
+                run_id=other.id,
+                mode="authoritative",
+                token_budget_json={
+                    "optimized_vs_baseline": {"estimated_saved_tokens": 9000}
+                },
+                sections_json=[],
+                included_refs_json=[],
+                omitted_refs_json=[],
+                policy_decisions_json=[],
+                tombstoned_refs_json=[],
+                context_text_sha256="empty",
+                metadata_json={},
+                created_at=utc_now(),
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            ModelCall(
+                id="call-token-savings",
+                task_id=task.id,
+                model_provider="openai-compatible",
+                model_name="cheap-model",
+                status="SUCCESS",
+                prompt_tokens=550,
+                completion_tokens=50,
+                request_json={"low_cost_routing_reason": "balanced summarization under budget"},
+                response_json={},
+                created_at=utc_now(),
+            ),
+            ModelCall(
+                task_id=other.id,
+                model_provider="openai-compatible",
+                model_name="default",
+                status="SUCCESS",
+                prompt_tokens=9000,
+                completion_tokens=1,
+                request_json={},
+                response_json={},
+                created_at=utc_now(),
+            ),
+        ]
+    )
+    db_session.add(
+        WorkspaceContextCache(
+            organization_id="dev-org",
+            agent_id="default",
+            cache_source="compression_summary",
+            cache_key_hash="summary-cache-hit",
+            schema_version="workspace-context-cache-v1",
+            status="active",
+            payload_json={},
+            metadata_json={"reason": "compression_summary_accepted"},
+            hit_count=3,
+            miss_count=1,
+            stale_count=0,
+            estimated_saved_tokens=96,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    response = TestClient(app).get("/api/observability/token-savings", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["estimated_saved_tokens"] == 400
+    assert payload["summary"]["estimated_savings_percent"] == 40
+    assert payload["summary"]["actual_total_tokens"] == 600
+    assert payload["summary"]["optimizer_labels"] == ["均衡"]
+    assert payload["summary"]["retrieval_cache_hit_count"] == 5
+    assert payload["summary"]["retrieval_cache_miss_count"] == 2
+    assert [item["cache_source"] for item in payload["summary"]["cache_sources"][:3]] == [
+        "compression_summary",
+        "rag_retrieval",
+        "long_term_memory",
+    ]
+    summary_cache = payload["summary"]["cache_sources"][0]
+    assert summary_cache["hit_count"] == 4
+    assert summary_cache["miss_count"] == 2
+    assert summary_cache["hit_rate"] == 66.67
+    assert len(payload["runs"]) == 1
+    run = payload["runs"][0]
+    assert run["run_id"] == task.id
+    assert run["context_manifest_id"] == "manifest-token-savings"
+    assert run["estimated_saved_tokens"] == 400
+    assert run["actual_prompt_tokens"] == 550
+    assert run["optimizer_labels"] == ["均衡"]
+    assert run["optimizer_decision_count"] == 1
+    assert run["cache_sources"][0]["cache_source"] == "compression_summary"
+    assert run["cache_sources"][0]["hit_rate"] == 50
+    assert [item["cache_source"] for item in run["cache_sources"]] == [
+        "compression_summary",
+        "rag_retrieval",
+        "long_term_memory",
+    ]
+    assert run["low_cost_routes"] == [
+        {
+            "model_call_id": "call-token-savings",
+            "model_name": "cheap-model",
+            "reason": "balanced summarization under budget",
+        }
+    ]
+    assert run["omission_reasons"] == [
+        {"reason": "optimizer_section_limit", "count": 2},
+        {"reason": "optimizer_budget", "count": 1},
+    ]

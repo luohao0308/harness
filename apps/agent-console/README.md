@@ -34,7 +34,9 @@ npm run e2e:smoke:release        # mocked browser release gate
 npm run e2e:live                 # live backend validation
 ```
 
-Quick smoke covers Workspace shell behavior, Workspace success perception, and Run Detail proof. Release smoke adds Agent Studio, Eval, Observability, Tools, Sandboxes, and navigation resilience. Live validation uses `HARNESS_E2E_RUN_ID` and remains outside mocked smoke.
+Quick smoke covers Workspace shell behavior, Workspace success perception, Run Detail proof, and Team Mode smoke. Release smoke adds Agent Studio, Eval, Observability, Tools, Sandboxes, Team Mode, and navigation resilience. Live validation uses `HARNESS_E2E_RUN_ID` and remains outside mocked smoke.
+
+The release handoff flow also has a Phase 0b vertical-spine evidence check for package staging, Agent attachment, connector sync, Workspace orchestration, and Run Detail token/cost evidence. The independent checker lives at `scripts/check-release-spine-evidence.py`; release smoke requires `.omx/reports/complete-harness-validation-flow/phase0b-release-spine-evidence.json` unless `HARNESS_ALLOW_MISSING_PHASE0B_EVIDENCE=1` is set for a local partial run.
 
 ## Streaming smoke / 流式验证
 

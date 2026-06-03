@@ -38,6 +38,7 @@ const modeGen: fc.Arbitrary<WorkspaceMode> = fc.constantFrom(
   "chat",
   "markdown_plan",
   "plan",
+  "goal",
 );
 
 const roleGen: fc.Arbitrary<ConversationRole> = fc.constantFrom(

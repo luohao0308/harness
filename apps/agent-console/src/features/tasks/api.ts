@@ -1,13 +1,80 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const DEFAULT_API_BASE_URL = "/";
+
+function stripTrailingSlash(value: string) {
+  return value.replace(/\/$/, "");
+}
+
+function isLoopbackHost(hostname: string) {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "0.0.0.0" || normalized === "::1";
+}
+
+function hostForUrl(hostname: string) {
+  return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+}
+
+export function resolveApiBaseUrl(
+  configured = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
+  pageHostname = typeof window === "undefined" ? null : window.location.hostname,
+) {
+  const baseUrl = configured.trim() || DEFAULT_API_BASE_URL;
+  if (baseUrl.startsWith("/")) {
+    return stripTrailingSlash(baseUrl);
+  }
+
+  if (!pageHostname) {
+    return stripTrailingSlash(baseUrl);
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    const pageHost = pageHostname;
+    if (isLoopbackHost(url.hostname) && !isLoopbackHost(pageHost)) {
+      url.hostname = hostForUrl(pageHost);
+    }
+    return stripTrailingSlash(url.toString());
+  } catch {
+    return stripTrailingSlash(baseUrl);
+  }
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
 const DEV_ADMIN_BEARER_TOKEN =
   import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? "dev-admin-token";
 export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
+const KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS = 12_000;
 
 function authHeaders(token = DEV_BEARER_TOKEN): HeadersInit {
   return {
     Authorization: `Bearer ${token}`,
   };
+}
+
+function apiRequestUrls(path: string) {
+  const primary = `${API_BASE_URL}${path}`;
+  if (!API_BASE_URL || API_BASE_URL.startsWith("/")) {
+    return [primary];
+  }
+  return primary === path ? [primary] : [primary, path];
+}
+
+async function fetchApi(path: string, init?: RequestInit) {
+  const urls = apiRequestUrls(path);
+  let lastError: unknown = null;
+  for (const url of urls) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw apiConnectionError(lastError, urls);
+}
+
+function apiConnectionError(error: unknown, urls = [API_BASE_URL || "/"]) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`无法连接 API (${urls.join(" -> ")})：${detail}`);
 }
 
 export type TaskStatus =
@@ -72,8 +139,20 @@ export type AgentDefinition = {
   tools_json: string[];
   routing_tags: string[];
   max_parallel_assignments: number;
+  capability_attachments?: AgentCapabilityAttachmentSummary[];
   created_at: string;
   updated_at: string;
+};
+
+export type AgentCapabilityAttachmentSummary = {
+  attachment_id: string;
+  capability_id: string;
+  capability_key: string;
+  capability_version_id: string;
+  capability_type: string;
+  enabled: boolean;
+  priority: number;
+  status: string;
 };
 
 export type AgentAssignment = {
@@ -110,6 +189,158 @@ export type AgentOrchestrateResult = {
   assignments: AgentAssignment[];
   handoffs: AgentHandoff[];
   message: string;
+};
+
+export type TeamAgent = {
+  id: string;
+  team_id: string;
+  slot_id: string;
+  agent_id: string;
+  role: "leader" | "teammate";
+  agent_name: string;
+  status: "pending" | "idle" | "active" | "completed" | "failed";
+  model_provider: string;
+  model_name: string;
+  conversation_id: string | null;
+  session_id: string | null;
+  session_messages: AgentMessage[];
+  metadata_json: Record<string, unknown>;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type TeamMailboxMessage = {
+  id: string;
+  team_id: string;
+  to_agent_slot_id: string;
+  from_agent_slot_id: string;
+  type: string;
+  content: string;
+  summary: string | null;
+  read: boolean;
+  files_json: string[];
+  metadata_json: Record<string, unknown>;
+  created_at: string | null;
+};
+
+export type TeamTask = {
+  id: string;
+  team_id: string;
+  subject: string;
+  description: string;
+  owner_slot_id: string | null;
+  status: "pending" | "in_progress" | "completed" | "deleted";
+  blocked_by_json: string[];
+  blocks_json: string[];
+  metadata_json: Record<string, unknown>;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type Team = {
+  id: string;
+  organization_id: string | null;
+  name: string;
+  status: string;
+  workspace: string;
+  workspace_mode: "shared" | "isolated";
+  leader_slot_id: string;
+  created_by: string | null;
+  agents: TeamAgent[];
+  messages: TeamMailboxMessage[];
+  tasks: TeamTask[];
+  unread_counts: Record<string, number>;
+  team_tools: string[];
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type TeamEvent = {
+  id: string;
+  team_id: string;
+  sequence: number;
+  event_type: string;
+  payload_json: Record<string, unknown>;
+  actor_type: string;
+  actor_id: string | null;
+  created_at: string | null;
+};
+
+export type TeamWakeStreamEvent =
+  | { type: "status"; agent: TeamAgent }
+  | { type: "delta"; slot_id: string; content: string }
+  | { type: "done"; agent: TeamAgent; message?: AgentMessage; follow_up_slot_ids?: string[] }
+  | { type: "error"; message: string; agent?: TeamAgent; slot_id?: string };
+
+export type TeamMessageMode = "chat" | "markdown_plan" | "plan" | "goal";
+
+export type TeamToolCallPayload = {
+  from_agent_slot_id?: string | null;
+  args?: Record<string, unknown>;
+};
+
+export type TeamToolCallResult = {
+  tool_name: string;
+  from_agent_slot_id: string | null;
+  result: string;
+};
+
+export type TeamCreatePayload = {
+  name: string;
+  workspace?: string;
+  workspace_mode?: "shared" | "isolated";
+  leader_agent_id?: string;
+  leader_name?: string;
+  seed_messages?: Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+    created_at?: string | null;
+    metadata_json?: Record<string, unknown>;
+  }>;
+};
+
+export type TeamAgentCreatePayload = {
+  agent_id: string;
+  agent_name: string;
+  role: "teammate";
+  model_provider?: string | null;
+  model_name?: string | null;
+};
+
+export type TeamAgentUpdatePayload = {
+  agent_name?: string | null;
+  model_provider?: string | null;
+  model_name?: string | null;
+};
+
+export type TeamMessageCreatePayload = {
+  target: "leader" | "team" | string;
+  content: string;
+  from_agent_slot_id?: string;
+  type?: string;
+  summary?: string | null;
+  files?: string[];
+  mode?: TeamMessageMode;
+};
+
+export type TeamTaskCreatePayload = {
+  subject: string;
+  description?: string;
+  owner?: string | null;
+  ownerSlotId?: string | null;
+  owner_slot_id?: string | null;
+  blockedBy?: string[];
+  blocked_by?: string[];
+};
+
+export type TeamTaskUpdatePayload = {
+  status?: "pending" | "in_progress" | "completed" | "deleted";
+  owner?: string | null;
+  ownerSlotId?: string | null;
+  owner_slot_id?: string | null;
+  description?: string | null;
+  blockedBy?: string[];
+  blocked_by?: string[];
 };
 
 export type AgentSession = {
@@ -186,6 +417,7 @@ export type AgentAttachmentPayload = {
 
 export type AgentChatStreamPayload = {
   mode?: "chat" | "markdown_plan" | "plan";
+  orchestration_mode?: "auto" | "none" | "multi_agent" | "subagent";
   goal?: string | null;
   model_provider?: string | null;
   model_name?: string | null;
@@ -217,6 +449,9 @@ export type AgentCompressedContext = {
   compression_prompt_version: string;
   compressor_provider: string;
   compressor_model: string;
+  estimated_original_tokens?: number | null;
+  estimated_summary_tokens?: number | null;
+  cache_status?: "accepted" | "recomputed" | "stale_rejected" | "error" | null;
 };
 
 export type WorkspaceContextCompressionPayload = {
@@ -255,6 +490,13 @@ export type WorkspaceContextCompressionResponse = {
 export type AgentChatStreamEvent =
   | { type: "delta"; content: string }
   | { type: "think_delta"; content: string }
+  | {
+      type: "orchestration";
+      mode: string;
+      run_id: string;
+      message: string;
+      payload: Record<string, unknown>;
+    }
   | {
       type: "run_created";
       run_id: string;
@@ -495,6 +737,84 @@ export type ObservabilitySummary = {
   model_call_total: number;
   tool_call_total: number;
   sandbox_total: number;
+  token_optimization: Record<string, unknown>;
+};
+
+export type TokenSavingsSummary = {
+  actual_prompt_tokens: number;
+  actual_completion_tokens: number;
+  actual_total_tokens: number;
+  estimated_candidate_tokens: number;
+  estimated_included_tokens: number;
+  estimated_omitted_tokens: number;
+  estimated_saved_tokens: number;
+  estimated_savings_percent: number;
+  context_manifest_count: number;
+  pruning_manifest_count: number;
+  retrieval_cache_hit_count: number;
+  retrieval_cache_miss_count: number;
+  retrieval_cache_stale_count: number;
+  cache_sources: CacheSourceSummary[];
+  low_cost_route_count: number;
+  optimizer_capability_version_ids: string[];
+  optimizer_labels: string[];
+  optimizer_decision_count: number;
+};
+
+export type CacheSourceSummary = {
+  cache_source: string;
+  label: string;
+  hit_count: number;
+  miss_count: number;
+  stale_count: number;
+  estimated_saved_tokens: number;
+  hit_rate: number;
+  reason?: string | null;
+};
+
+export type TokenSavingsRunItem = {
+  run_id: string;
+  agent_id: string | null;
+  title: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  context_manifest_id: string;
+  estimated_candidate_tokens: number;
+  estimated_included_tokens: number;
+  estimated_omitted_tokens: number;
+  estimated_saved_tokens: number;
+  estimated_savings_percent: number;
+  actual_prompt_tokens: number;
+  actual_completion_tokens: number;
+  actual_total_tokens: number;
+  included_count: number;
+  omitted_count: number;
+  pruning_applied: boolean;
+  retrieval_cache_hit_count: number;
+  retrieval_cache_miss_count: number;
+  retrieval_cache_stale_count: number;
+  cache_sources: CacheSourceSummary[];
+  low_cost_routes: Array<{
+    model_call_id: string;
+    model_name: string;
+    reason: string;
+  }>;
+  optimizer_capability_version_ids: string[];
+  optimizer_labels: string[];
+  optimizer_policy_hash: string | null;
+  optimizer_decision_count: number;
+  omission_reasons: Array<{
+    reason: string;
+    count: number;
+  }>;
+};
+
+export type TokenSavingsPage = {
+  generated_at: string;
+  summary: TokenSavingsSummary;
+  runs: TokenSavingsRunItem[];
+  next_cursor: string | null;
 };
 
 export type ObservabilityGroundingQualityItem = {
@@ -874,6 +1194,12 @@ export type KnowledgeSource = {
   last_indexed_at: string | null;
   last_ingestion_error: string | null;
   health_status: string;
+  connector_provider?: string | null;
+  connector_release_state?: "usable" | "configured-but-unavailable" | "preview-not-counted" | null;
+  connector_counts_toward_complete_usable?: boolean | null;
+  connector_validation_status?: "ready" | "configured" | "preview" | "invalid";
+  connector_validation_messages?: string[];
+  connector_secret_configured?: boolean;
   settings_json: Record<string, unknown>;
   metadata_json: Record<string, unknown>;
   idempotency_key: string | null;
@@ -887,19 +1213,23 @@ export type KnowledgeSourceCreatePayload = {
   name: string;
   description?: string;
   scope?: "agent" | "org";
-  source_type?: "text" | "markdown" | "document";
+  source_type?: "text" | "markdown" | "document" | "connector";
   title: string;
   content: string;
   uri?: string | null;
   mime_type?: string;
   idempotency_key?: string | null;
   expires_at?: string | null;
+  connector_settings_json?: Record<string, unknown>;
+  connector_secret_value?: string | null;
 };
 
 export type KnowledgeSourceUpdatePayload = {
   name?: string;
   description?: string;
   expires_at?: string | null;
+  connector_settings_json?: Record<string, unknown> | null;
+  connector_secret_value?: string | null;
 };
 
 export type KnowledgeSourceActionPayload = {
@@ -1022,6 +1352,7 @@ export type KnowledgeGrounding = {
   verified_grounded: boolean;
   grounding_verification_reason: string;
   evidence_summary: string;
+  evidence_message: string;
   inferred_fallback: boolean;
   fallback_reason: string | null;
   selected_retrieval_session_id: string | null;
@@ -1034,6 +1365,7 @@ export type AgentRunWorkspace = {
   events: AgentEvent[];
   knowledge_grounding: KnowledgeGrounding | null;
   context_assembly: ContextAssemblyManifest | null;
+  token_optimization: Record<string, unknown>;
   subagents: Subagent[];
   tool_calls: ToolCall[];
   model_calls: ModelCall[];
@@ -1258,6 +1590,164 @@ export type ToolRegistry = {
   sources: string[];
 };
 
+export type CapabilityValidationRequest = {
+  content: Record<string, unknown>;
+  config: Record<string, unknown>;
+};
+
+export type CapabilityValidationResponse = {
+  status: string;
+  schema_version: number;
+  content_sha256: string;
+  config_sha256: string;
+  redacted_payload: Record<string, unknown>;
+  validation_mode?: string;
+  activation_allowed?: boolean;
+  issues?: Array<Record<string, unknown>>;
+  risk_preview?: Record<string, unknown>;
+};
+
+export type CapabilityTestInvocationPayload = {
+  agent_id: string;
+  tool_name: string;
+  input_json: Record<string, unknown>;
+};
+
+export type CapabilityPackage = {
+  id: string;
+  organization_id: string | null;
+  package_key: string;
+  package_type: string;
+  source_kind: string;
+  source_uri: string | null;
+  source_sha256: string;
+  pinned_ref: string | null;
+  status: string;
+  risk_level: string;
+  manifest_json: Record<string, unknown>;
+  validation_json: Record<string, unknown>;
+  provenance_json: Record<string, unknown>;
+  audit_json: Record<string, unknown>;
+  capability_id: string | null;
+  capability_version_id: string | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+};
+
+export type CapabilityPackagePage = {
+  items: CapabilityPackage[];
+};
+
+export type CapabilityPackageStagePayload = {
+  manifest: Record<string, unknown>;
+  content?: Record<string, unknown>;
+};
+
+export type CapabilityPublicPackageStagePayload = CapabilityPackageStagePayload & {
+  source_kind: "public_url" | "public_git";
+  source_uri: string;
+  pinned_ref: string;
+};
+
+export type CapabilityPackageAttachPayload = {
+  agent_id: string;
+  enabled?: boolean;
+  priority?: number;
+};
+
+export type CapabilitySimpleInstallPayload = {
+  source_uri?: string;
+  pinned_ref?: string | null;
+  package_type?:
+    | "agent_template"
+    | "skill_pack"
+    | "tool_definition"
+    | "mcp_server"
+    | "prompt_template"
+    | "knowledge_connector"
+    | "context_optimizer";
+  display_name?: string;
+  description?: string;
+  agent_id?: string | null;
+  permissions?: string[];
+  secret_refs?: string[];
+  manifest?: Record<string, unknown> | null;
+  content?: Record<string, unknown>;
+};
+
+export type CapabilitySimpleInstallResponse = {
+  package: CapabilityPackage;
+  validation_summary: Record<string, unknown>;
+  ready_state: string;
+  next_step_label: string;
+  staged_capability_id: string | null;
+  capability_id: string | null;
+  capability_version_id: string | null;
+  attachment: CapabilityPackageAttachment | null;
+};
+
+export type CapabilityPackageAttachment = {
+  attachment_id: string;
+  agent_id: string;
+  capability_id: string;
+  capability_version_id: string;
+  enabled: boolean;
+  priority: number;
+};
+
+export type AgentUpsertPayload = {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  model_provider: string;
+  model_name: string;
+  system_prompt: string;
+  tools_json: string[];
+  routing_tags: string[];
+  max_parallel_assignments: number;
+  token_budget?: number;
+  template_id?: string | null;
+};
+
+export type AgentClonePayload = {
+  source_agent_id: string;
+  id: string;
+  name: string;
+};
+
+export type AgentCapabilityAttachmentPayload = {
+  capability_id: string;
+  capability_version_id?: string | null;
+  enabled: boolean;
+  priority: number;
+};
+
+export type TokenOptimizerPresetId = "off" | "conservative" | "balanced" | "aggressive";
+
+export type TokenOptimizerPreset = {
+  preset_id: TokenOptimizerPresetId;
+  display_name: string;
+  description: string;
+  enabled: boolean;
+  priority: number | null;
+};
+
+export type TokenOptimizerPresetPage = {
+  items: TokenOptimizerPreset[];
+};
+
+export type TokenOptimizerSelectionResponse = {
+  status: string;
+  preset_id: TokenOptimizerPresetId;
+  attachment_id: string | null;
+  capability_id: string | null;
+  capability_version_id: string | null;
+  enabled: boolean;
+  priority: number | null;
+};
+
 export type EvalDataset = {
   id: string;
   organization_id: string | null;
@@ -1309,12 +1799,34 @@ export type EvalRun = {
   results: EvalResult[];
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const { headers, ...requestInit } = init ?? {};
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...requestInit,
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...headers },
-  });
+async function request<T>(
+  path: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<T> {
+  const { timeoutMs = 0, signal, headers, ...requestInit } = init ?? {};
+  const controller =
+    timeoutMs > 0 && !signal ? new AbortController() : null;
+  const timeout =
+    controller === null
+      ? null
+      : globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetchApi(path, {
+      ...requestInit,
+      signal: signal ?? controller?.signal,
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...headers },
+    });
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw new Error(`请求超时：API ${Math.round(timeoutMs / 1000)} 秒内未响应`);
+    }
+    throw error instanceof Error ? error : apiConnectionError(error, apiRequestUrls(path));
+  } finally {
+    if (timeout !== null) {
+      globalThis.clearTimeout(timeout);
+    }
+  }
   if (!response.ok) {
     let detail = "";
     try {
@@ -1325,6 +1837,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(`请求失败 ${response.status}${detail}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return response.json() as Promise<T>;
 }
 
@@ -1333,11 +1848,16 @@ async function requestMultipart<T>(
   body: FormData,
   token = DEV_BEARER_TOKEN,
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST",
-    headers: authHeaders(token),
-    body,
-  });
+  let response: Response;
+  try {
+    response = await fetchApi(path, {
+      method: "POST",
+      headers: authHeaders(token),
+      body,
+    });
+  } catch (error) {
+    throw error instanceof Error ? error : apiConnectionError(error, apiRequestUrls(path));
+  }
   if (!response.ok) {
     let detail = "";
     try {
@@ -1386,6 +1906,271 @@ export async function listAgents() {
   return request<{ items: AgentDefinition[]; next_cursor: string | null }>("/api/agents");
 }
 
+export async function listTokenOptimizerPresets() {
+  return request<TokenOptimizerPresetPage>("/api/agents/token-optimizer/presets");
+}
+
+export async function selectAgentTokenOptimizer(
+  agentId: string,
+  presetId: TokenOptimizerPresetId,
+) {
+  return request<TokenOptimizerSelectionResponse>(`/api/agents/${agentId}/token-optimizer`, {
+    method: "POST",
+    body: JSON.stringify({ preset_id: presetId }),
+  });
+}
+
+export async function listTeams() {
+  return request<{ items: Team[]; next_cursor: string | null }>("/api/teams");
+}
+
+export async function createTeam(payload: TeamCreatePayload) {
+  return request<Team>("/api/teams", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getTeam(teamId: string) {
+  return request<Team>(`/api/teams/${teamId}`);
+}
+
+export async function renameTeam(teamId: string, name: string) {
+  return request<Team>(`/api/teams/${teamId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function archiveTeam(teamId: string) {
+  return request<Team>(`/api/teams/${teamId}`, { method: "DELETE" });
+}
+
+export async function addTeamAgent(teamId: string, payload: TeamAgentCreatePayload) {
+  return request<TeamAgent>(`/api/teams/${teamId}/agents`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTeamAgent(
+  teamId: string,
+  slotId: string,
+  payload: TeamAgentUpdatePayload,
+) {
+  return request<TeamAgent>(`/api/teams/${teamId}/agents/${slotId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function renameTeamAgent(teamId: string, slotId: string, agentName: string) {
+  return updateTeamAgent(teamId, slotId, { agent_name: agentName });
+}
+
+export async function removeTeamAgent(teamId: string, slotId: string) {
+  return request<TeamAgent>(`/api/teams/${teamId}/agents/${slotId}`, { method: "DELETE" });
+}
+
+export async function wakeTeamAgent(teamId: string, slotId: string) {
+  return request<TeamAgent>(`/api/teams/${teamId}/agents/${slotId}/wake`, { method: "POST" });
+}
+
+export async function cancelWakeTeamAgent(teamId: string, slotId: string) {
+  return request<TeamAgent>(`/api/teams/${teamId}/agents/${slotId}/wake/cancel`, { method: "POST" });
+}
+
+export async function sendTeamMessage(teamId: string, payload: TeamMessageCreatePayload) {
+  return request<TeamMailboxMessage>(`/api/teams/${teamId}/messages`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function readTeamMailbox(teamId: string, slotId: string) {
+  return request<TeamMailboxMessage[]>(`/api/teams/${teamId}/agents/${slotId}/mailbox/read`, {
+    method: "POST",
+  });
+}
+
+export async function callTeamTool(teamId: string, toolName: string, payload: TeamToolCallPayload) {
+  return request<TeamToolCallResult>(`/api/teams/${teamId}/tools/${toolName}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listTeamTasks(teamId: string) {
+  return request<TeamTask[]>(`/api/teams/${teamId}/tasks`);
+}
+
+export async function createTeamTask(teamId: string, payload: TeamTaskCreatePayload) {
+  return request<TeamTask>(`/api/teams/${teamId}/tasks`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateTeamTask(teamId: string, taskId: string, payload: TeamTaskUpdatePayload) {
+  return request<TeamTask>(`/api/teams/${teamId}/tasks/${taskId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listTeamEvents(teamId: string, afterSequence?: number) {
+  const suffix = afterSequence !== undefined ? `?after_sequence=${afterSequence}` : "";
+  return request<TeamEvent[]>(`/api/teams/${teamId}/events${suffix}`);
+}
+
+function parseTeamSseFrame(frame: string): TeamEvent | null {
+  const dataLine = frame
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("data: "));
+  if (!dataLine) return null;
+  const payload = dataLine.slice("data: ".length);
+  try {
+    return JSON.parse(payload) as TeamEvent;
+  } catch {
+    return null;
+  }
+}
+
+function parseNamedSseFrame(frame: string): { event: string; payload: Record<string, unknown> } | null {
+  const lines = frame.split("\n").map((line) => line.trim());
+  const event = lines.find((line) => line.startsWith("event: "))?.slice("event: ".length) ?? "message";
+  const dataLine = lines.find((line) => line.startsWith("data: "));
+  if (!dataLine) return null;
+  try {
+    const payload = JSON.parse(dataLine.slice("data: ".length)) as unknown;
+    return { event, payload: payload && typeof payload === "object" ? payload as Record<string, unknown> : {} };
+  } catch {
+    return null;
+  }
+}
+
+function parseTeamWakeSseFrame(frame: string): TeamWakeStreamEvent | null {
+  const parsed = parseNamedSseFrame(frame);
+  if (!parsed) return null;
+  const { event, payload } = parsed;
+  if (event === "status" && payload.agent) {
+    return { type: "status", agent: payload.agent as TeamAgent };
+  }
+  if (event === "delta" && typeof payload.content === "string" && typeof payload.slot_id === "string") {
+    return { type: "delta", slot_id: payload.slot_id, content: payload.content };
+  }
+  if (event === "done" && payload.agent) {
+    return {
+      type: "done",
+      agent: payload.agent as TeamAgent,
+      message: payload.message as AgentMessage | undefined,
+      follow_up_slot_ids: Array.isArray(payload.follow_up_slot_ids)
+        ? payload.follow_up_slot_ids.filter((value): value is string => typeof value === "string")
+        : undefined,
+    };
+  }
+  if (event === "error") {
+    return {
+      type: "error",
+      message: typeof payload.message === "string" ? payload.message : "Team wake stream failed",
+      agent: payload.agent as TeamAgent | undefined,
+      slot_id: typeof payload.slot_id === "string" ? payload.slot_id : undefined,
+    };
+  }
+  return null;
+}
+
+function isTerminalTeamWakeEvent(event: TeamWakeStreamEvent) {
+  return event.type === "done" || event.type === "error";
+}
+
+export async function streamTeamEvents(
+  teamId: string,
+  onEvent: (event: TeamEvent) => void,
+  signal?: AbortSignal,
+) {
+  let response: Response;
+  try {
+    const path = `/api/teams/${teamId}/stream`;
+    response = await fetchApi(path, {
+      method: "GET",
+      headers: authHeaders(),
+      signal,
+    });
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : apiConnectionError(error, apiRequestUrls(`/api/teams/${teamId}/stream`));
+  }
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败 ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const event = parseTeamSseFrame(frame);
+      if (event) onEvent(event);
+    }
+  }
+  const finalEvent = parseTeamSseFrame(buffer);
+  if (finalEvent) onEvent(finalEvent);
+}
+
+export async function streamWakeTeamAgent(
+  teamId: string,
+  slotId: string,
+  onEvent: (event: TeamWakeStreamEvent) => void,
+  signal?: AbortSignal,
+) {
+  const path = `/api/teams/${teamId}/agents/${slotId}/wake/stream`;
+  let response: Response;
+  try {
+    response = await fetchApi(path, {
+      method: "POST",
+      headers: authHeaders(),
+      signal,
+    });
+  } catch (error) {
+    throw error instanceof Error ? error : apiConnectionError(error, apiRequestUrls(path));
+  }
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败 ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const event = parseTeamWakeSseFrame(frame);
+      if (!event) continue;
+      onEvent(event);
+      if (isTerminalTeamWakeEvent(event)) {
+        await reader.cancel().catch(() => undefined);
+        return;
+      }
+    }
+  }
+  const finalEvent = parseTeamWakeSseFrame(buffer);
+  if (!finalEvent) return;
+  onEvent(finalEvent);
+  if (isTerminalTeamWakeEvent(finalEvent)) {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
 export async function getAgent(agentId: string) {
   return request<AgentDefinition>(`/api/agents/${agentId}`);
 }
@@ -1401,6 +2186,8 @@ export async function createAgentKnowledgeSource(
   return request<KnowledgeSource>(`/api/agents/${agentId}/knowledge/sources`, {
     method: "POST",
     headers: payload.scope === "org" ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+    timeoutMs:
+      payload.source_type === "connector" ? KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS : 0,
     body: JSON.stringify(payload),
   });
 }
@@ -1482,6 +2269,17 @@ export async function archiveAgentKnowledgeSource(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function deleteAgentKnowledgeSource(
+  agentId: string,
+  sourceId: string,
+  options: { admin?: boolean } = {},
+) {
+  return request<void>(`/api/agents/${agentId}/knowledge/sources/${sourceId}`, {
+    method: "DELETE",
+    headers: options.admin ? authHeaders(DEV_ADMIN_BEARER_TOKEN) : undefined,
+  });
 }
 
 export async function changeAgentKnowledgeSourceScope(
@@ -1858,6 +2656,125 @@ export async function getToolRegistry() {
   return request<ToolRegistry>("/api/tools/registry");
 }
 
+export async function validateCapabilityPackage(payload: CapabilityValidationRequest) {
+  return request<CapabilityValidationResponse>("/api/tools/capabilities/admin-validate", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listCapabilityPackages() {
+  return request<CapabilityPackagePage>("/api/tools/capabilities/packages");
+}
+
+export async function stagePrivateCapabilityPackage(payload: CapabilityPackageStagePayload) {
+  return request<CapabilityPackage>("/api/tools/capabilities/packages/private", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function stagePublicCapabilityPackage(payload: CapabilityPublicPackageStagePayload) {
+  return request<CapabilityPackage>("/api/tools/capabilities/packages/public", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function approveCapabilityPackage(packageId: string, reason: string) {
+  return request<CapabilityPackage>(`/api/tools/capabilities/packages/${packageId}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function enableStagedCapability(packageId: string, reason: string) {
+  return request<CapabilitySimpleInstallResponse>(`/api/tools/capabilities/staged/${packageId}/enable`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function attachCapabilityPackage(packageId: string, payload: CapabilityPackageAttachPayload) {
+  return request<CapabilityPackageAttachment>(`/api/tools/capabilities/packages/${packageId}/attachments`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function rollbackCapabilityPackage(packageId: string, capabilityVersionId: string, reason: string) {
+  return request<CapabilityPackage>(`/api/tools/capabilities/packages/${packageId}/rollback`, {
+    method: "POST",
+    body: JSON.stringify({ capability_version_id: capabilityVersionId, reason }),
+  });
+}
+
+export async function uninstallCapabilityPackage(packageId: string) {
+  return request<CapabilityPackage>(`/api/tools/capabilities/packages/${packageId}/uninstall`, {
+    method: "POST",
+  });
+}
+
+export async function updateCapabilityPackageAttachment(attachmentId: string, enabled: boolean) {
+  return request<CapabilityPackageAttachment>(`/api/tools/capabilities/attachments/${attachmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function installTrustedUrlCapability(payload: CapabilitySimpleInstallPayload) {
+  return request<CapabilitySimpleInstallResponse>("/api/tools/capabilities/install/trusted-url", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function preflightPublicUrlCapability(payload: CapabilitySimpleInstallPayload) {
+  return request<CapabilitySimpleInstallResponse>("/api/tools/capabilities/preflight/public-url", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function installUploadedCapability(payload: CapabilitySimpleInstallPayload) {
+  return request<CapabilitySimpleInstallResponse>("/api/tools/capabilities/install/upload", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function capabilityDependencyPreflight() {
+  return request<Record<string, unknown>>("/api/tools/capabilities/dependency-preflight");
+}
+
+export async function testInvokeCapability(payload: CapabilityTestInvocationPayload) {
+  return request<ToolExecuteResult>("/api/tools/capabilities/test-invoke", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createAgentDefinition(payload: AgentUpsertPayload) {
+  return request<AgentDefinition>("/api/agents", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function cloneAgentDefinition(payload: AgentClonePayload) {
+  return request<AgentDefinition>(`/api/agents/${payload.source_agent_id}/clone`, {
+    method: "POST",
+    body: JSON.stringify({ id: payload.id, name: payload.name }),
+  });
+}
+
+export async function attachAgentCapability(agentId: string, payload: AgentCapabilityAttachmentPayload) {
+  return request<{ status: string }>(`/api/agents/${agentId}/capabilities/attachments`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function listTaskToolApprovals(taskId: string, params?: { status?: string }) {
   const searchParams = new URLSearchParams();
   if (params?.status) {
@@ -2062,6 +2979,15 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
       },
     };
   }
+  if (eventType === "orchestration") {
+    return {
+      type: "orchestration",
+      mode: String(payload.mode ?? "unknown"),
+      run_id: String(payload.run_id ?? ""),
+      message: String(payload.message ?? ""),
+      payload,
+    };
+  }
   if (eventType === "tool_call_requested") {
     return {
       type: "tool_call_requested",
@@ -2201,6 +3127,10 @@ export async function listSandboxQuotaHistory(limit = 100) {
 
 export async function getObservabilitySummary() {
   return request<ObservabilitySummary>("/api/observability/summary");
+}
+
+export async function getTokenSavings(limit = 50) {
+  return request<TokenSavingsPage>(`/api/observability/token-savings?limit=${limit}`);
 }
 
 export async function getObservabilityGroundingQuality(params?: {

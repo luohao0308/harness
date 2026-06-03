@@ -155,6 +155,25 @@ cd apps/agent-console && npm run e2e:smoke:release
 
 The mocked browser smoke proves Agent Studio knowledge projection, Workspace local grounding indicator, Run Detail retrieval/citation/manifest evidence, Eval grounding metrics, and Observability grounding quality without consuming live seeded backend rows.
 
+For the full Phase 0b vertical spine gate, the release flow also accepts an OMX-independent evidence JSON under the validation report directory at:
+
+```text
+.omx/reports/complete-harness-validation-flow/phase0b-release-spine-evidence.json
+```
+
+`scripts/validate-harness-flow.sh --full-infra` requires that file and validates it with `scripts/check-release-spine-evidence.py` before the handoff is considered complete. Local partial runs may use `--local-dev`, which writes the matching template to `.omx/reports/complete-harness-validation-flow/phase0b-release-spine-evidence.template.json` and explicitly reports the Phase 0b evidence as skipped until a real JSON is supplied.
+
+### Phase 0b Complete Capability Spine Evidence
+
+The complete Agent capability product release gate must not close from browser fixture projection alone. Record one concrete Phase 0b evidence JSON after the integrated lanes are available, then validate it with the OMX-independent checker:
+
+```bash
+python3 scripts/check-release-spine-evidence.py --write-template .omx/reports/complete-harness-validation-flow/phase0b-release-spine-evidence.template.json
+python3 scripts/check-release-spine-evidence.py .omx/reports/complete-harness-validation-flow/phase0b-release-spine-evidence.json
+```
+
+The evidence JSON must prove the single operator path: private package staging, public URL/Git package staging with no package-code execution during validation, Agent creation or clone, MCP/Skill/Tool/knowledge connector attachments, usable connector sync or reindex, Workspace multi-agent orchestration, inspectable subagent run, Run Detail capability snapshot, orchestration evidence, knowledge evidence, context manifest, and token/cost panel. Keep this checker independent of OMX state, tmux panes, and worker mailboxes so it can run in local release CI or during a private handoff.
+
 ### Shutdown / Cleanup
 
 ```bash

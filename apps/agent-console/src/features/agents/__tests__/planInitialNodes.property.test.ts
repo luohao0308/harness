@@ -23,6 +23,7 @@ const modeGen: fc.Arbitrary<WorkspaceMode> = fc.constantFrom(
   "chat",
   "markdown_plan",
   "plan",
+  "goal",
 );
 
 describe("Property 4: Initial node structure", () => {

@@ -12,7 +12,7 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 
 const STABLE_RUN_ID = "e2e-run-detail-00000000-0000-0000-0000-000000000002";
 const STABLE_TASK_ID = STABLE_RUN_ID; // Run and task share the same id in this system
@@ -415,7 +415,7 @@ test.describe("Run Detail mocked product proof", () => {
     await expect(page.getByText("知识依据")).toBeVisible();
     await expect(page.getByText("local_knowledge")).toBeVisible();
     await expect(page.getByText("local_evidence_sufficient")).toBeVisible();
-    await expect(page.getByText("Prompt 组装审计")).toBeVisible();
+    await expect(page.getByText("提示词组装审计")).toBeVisible();
     await expect(page.getByText("pm-detail-001").first()).toBeVisible();
     await expect(
       page.getByText("Harness chain evidence with persisted citations.").first(),
@@ -449,7 +449,8 @@ test.describe("Run Detail mocked product proof", () => {
   }) => {
     await page.goto(`/runs/${STABLE_RUN_ID}`);
 
-    await page.getByLabel("选择数据集").selectOption("dataset-smoke");
+    await page.getByLabel("选择数据集").click();
+    await page.getByRole("option", { name: "Smoke Dataset" }).click();
     await page.getByRole("button", { name: "保存为评测用例" }).click();
 
     await expect(page.getByRole("button", { name: /Saved|已保存/ })).toBeVisible();

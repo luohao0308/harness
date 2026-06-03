@@ -6,7 +6,7 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -105,8 +105,8 @@ test.describe("Sandboxes page mocked smoke tests", () => {
     await expect(page.getByText("2 / 5").first()).toBeVisible();
 
     // WarmPool description mentions min_ready=2 and max_ready=5
-    await expect(page.getByText("min_ready=2")).toBeVisible();
-    await expect(page.getByText("max_ready=5")).toBeVisible();
+    await expect(page.getByText("默认预热下限 2、上限 5")).toBeVisible();
+    await expect(page.getByText("2 / 5").first()).toBeVisible();
   });
 
   test("Sandbox instances render with lifecycle state", async ({ page }) => {
@@ -134,12 +134,12 @@ test.describe("Sandboxes page mocked smoke tests", () => {
     await expect(page.getByText("多租户隔离")).toBeVisible();
 
     // Status shows Chinese API-backed state (because organization_id is present)
-    await expect(page.getByText("API 已接入").first()).toBeVisible();
+    await expect(page.getByText("接口已接入").first()).toBeVisible();
 
     // Description mentions organization_id scoping
-    await expect(page.getByText("organization_id")).toBeVisible();
+    await expect(page.getByText("按组织标识")).toBeVisible();
     await expect(page.getByText("API 网关")).toBeVisible();
-    await expect(page.getByText("WarmPool 基准测试")).toBeVisible();
+    await expect(page.getByRole("button", { name: "运行基准测试" })).toBeVisible();
   });
 });
 

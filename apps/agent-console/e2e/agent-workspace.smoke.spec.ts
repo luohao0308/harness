@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 const CHAT_STREAM_RE =
   /http:\/\/127\.0\.0\.1:8000\/api\/agents\/default\/runs\/chat\/stream/;
 
@@ -90,7 +90,7 @@ test.describe("Agent Workspace browser smoke", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openWorkspace(page);
 
-    await expect(page.getByText("模型 + Harness = 智能体")).toBeVisible();
+    await expect(page.getByText("模型加运行平台组成智能体")).toBeVisible();
     await expect(page.getByText("Default Agent").first()).toBeVisible();
     await expect(composer(page)).toBeVisible();
     await expect(page.getByLabel("运行未创建")).toBeVisible();
@@ -108,7 +108,7 @@ test.describe("Agent Workspace browser smoke", () => {
     ).toBeVisible();
     await expect(composerModelList).toBeHidden();
 
-    await page.getByRole("button", { name: "工具/MCP: 2 个可用" }).click();
+    await page.getByRole("button", { name: /工具\/MCP（模型上下文协议）: 2 个可用/ }).click();
     const toolsDialog = page.getByRole("dialog", { name: "工具" });
     await expect(toolsDialog).toBeVisible();
     await expect(toolsDialog.getByRole("button", { name: /@read_file/ })).toBeVisible();
@@ -167,7 +167,7 @@ test.describe("Agent Workspace browser smoke", () => {
       page.getByRole("button", { name: "Current model: deepseek-v4-flash" }),
     ).toHaveCount(0);
     await expect(page.getByRole("button", { name: "deepseek-v4-flash" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "工具/MCP: 2 个可用" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /工具\/MCP（模型上下文协议）: 2 个可用/ })).toBeVisible();
     await expect(page.getByRole("button", { name: "打开输入设置" })).toBeVisible();
 
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
@@ -179,7 +179,7 @@ test.describe("Agent Workspace browser smoke", () => {
     ).resolves.toBe(true);
     await page.mouse.click(20, 20);
 
-    await page.getByRole("button", { name: "工具/MCP: 2 个可用" }).click();
+    await page.getByRole("button", { name: /工具\/MCP（模型上下文协议）: 2 个可用/ }).click();
     await expect(page.getByRole("dialog", { name: "工具" })).toBeVisible();
     await expect(
       locatorInsideViewport(page, page.getByRole("dialog", { name: "工具" })),

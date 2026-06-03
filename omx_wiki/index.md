@@ -4,6 +4,8 @@ Persistent project knowledge for the AI Harness Platform.
 
 ## Start Here
 
+- `docs/ai/agent-startup-context.md` - Low-token startup context for new agent sessions before implementation.
+- `docs/ai/context-index.json` - Machine-readable task-to-context route index used by `scripts/agent-context-brief.py`.
 - [[project-handoff-current-state]] - Canonical handoff page for new sessions and incoming agents.
 - [[deep-interview-private-harness-chain]] - Accepted project-wide target from `$deep-interview`.
 - [[agent-knowledge-harness-roadmap]] - Current final target and replanned progress for the Agent Knowledge Harness capability stack.
@@ -26,6 +28,10 @@ Persistent project knowledge for the AI Harness Platform.
 - [[session-2026-05-17-agent-knowledge-p5-capability-registry]] - P5 MCP/Skills productization record through `f05816e`: capability registry, Agent attachments, immutable capability versions, fail-closed ToolRunner, approval resume, console feedback, tests, report, and push evidence.
 - [[session-2026-05-18-agent-knowledge-p6-groundedness-eval-observability]] - P6 groundedness Eval and Observability record through `83c8eee`: Eval-owned grounding traces, forbidden leak boundaries, Observability projection, Run Detail selector saves, tests, report, and push evidence.
 - [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] - P7 release/demo hardening record through `a5d046b` on `origin/p7-release-demo-hardening`: deterministic Knowledge seed, grounding support document, service-level migration/restore smoke, release browser smoke, runbooks, Chinese-first selector/terminology UI follow-up, validation evidence, service check, and push evidence.
+- [[session-2026-05-23-agent-startup-context-loop]] - Low-token startup context, task-to-context index, brief script, progress write-back rule, validation evidence, and subagent acceptance record for new-session handoff.
+- [[session-2026-05-25-agent-knowledge-context-optimizer]] - Agent-level declarative `context_optimizer` capability packages, backend context assembly overlays, manifest evidence, Run Detail and Observability projection, UI status, validation evidence, and safety boundaries.
+- [[session-2026-05-26-knowledge-workbench-modal-ui]] - `/knowledge` workbench modal configuration UI: source creation, source editing, add-document, and reingest flows moved out of inline page forms, with frontend tests, lint/build, and Playwright zero-overflow evidence.
+- [[session-2026-05-26-mcp-skill-tool-modal-config]] - Tool Registry and Agent Studio MCP/Skill/Tool configuration moved behind click-open modal dialogs, with frontend tests, lint, and build evidence.
 - [[agent-knowledge-harness-roadmap]] - Agent Knowledge Harness phase roadmap from P1 grounding through P7 release/demo hardening.
 
 ## Categories
@@ -78,3 +84,5 @@ Persistent project knowledge for the AI Harness Platform.
 - `migration`
 - `selector-ui`
 - `chinese-first`
+- `startup-context`
+- `context-index`

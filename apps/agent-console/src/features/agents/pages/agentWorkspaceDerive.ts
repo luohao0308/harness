@@ -9,6 +9,7 @@ import type {
   AgentDefinition,
   AgentRunWorkspace,
   ModelSettings,
+  TeamCreatePayload,
 } from "../../tasks/api";
 import type { ConversationNode } from "../../../stores/workspaceStore";
 import type { UsageSummary } from "../components/InspectorDrawer";
@@ -37,6 +38,37 @@ export function buildActivePath(
 
 export function isNodeVisibleInPath(path: readonly ConversationNode[], nodeId: string): boolean {
   return path.some((node) => node.id === nodeId);
+}
+
+export function buildTeamSeedMessagesFromPath(
+  path: readonly ConversationNode[],
+  agentId: string,
+): NonNullable<TeamCreatePayload["seed_messages"]> {
+  return path
+    .filter(isTeamSeedableNode)
+    .slice(-200)
+    .map((node) => ({
+      role: node.role,
+      content: node.content,
+      created_at: node.created_at,
+      metadata_json: {
+        workspace_node_id: node.id,
+        source_agent_id: agentId,
+        source_run_id: node.run_id,
+        workspace_mode: node.metadata.workspace_mode ?? "chat",
+        tool_calls: node.tool_calls,
+        artifacts: node.artifacts,
+      },
+    }));
+}
+
+function isTeamSeedableNode(
+  node: ConversationNode,
+): node is ConversationNode & { role: "user" | "assistant" | "system" } {
+  return (
+    (node.role === "user" || node.role === "assistant" || node.role === "system") &&
+    node.content.trim().length > 0
+  );
 }
 
 /**

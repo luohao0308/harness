@@ -59,7 +59,7 @@ export function ContextMaxTokensSlider({
         </label>
         <span className="font-mono text-[11px] text-slate-600">{formatTokenCount(value)}</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         <input
           id={rangeId}
           type="range"
@@ -69,7 +69,7 @@ export function ContextMaxTokensSlider({
           value={value}
           onChange={(event) => apply(parseInput(event.target.value))}
           aria-label={ariaLabel}
-          className="h-1 flex-1 accent-slate-900"
+          className="h-1 min-w-0 flex-1 accent-slate-900"
         />
         <label htmlFor={numberId} className="sr-only">
           {ariaLabel}
@@ -83,7 +83,7 @@ export function ContextMaxTokensSlider({
           value={value}
           onChange={(event) => apply(parseInput(event.target.value))}
           aria-label={ariaLabel}
-          className="h-7 w-[76px] rounded-md border border-slate-200 bg-white px-1.5 text-right font-mono text-[11px] text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+          className="h-7 w-14 shrink-0 rounded-md border border-slate-200 bg-white px-1 text-right font-mono text-[11px] text-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
         />
       </div>
       <p className="text-[10px] leading-4 text-slate-500">

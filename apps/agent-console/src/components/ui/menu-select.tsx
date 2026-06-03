@@ -31,6 +31,7 @@ export type MenuSelectProps = {
   disabled?: boolean;
   openRequestSeq?: number;
   placement?: "bottom" | "top";
+  size?: "default" | "compact";
   className?: string;
   buttonClassName?: string;
   menuClassName?: string;
@@ -46,6 +47,7 @@ export function MenuSelect({
   disabled = false,
   openRequestSeq,
   placement = "bottom",
+  size = "default",
   className,
   buttonClassName,
   menuClassName,
@@ -247,17 +249,30 @@ export function MenuSelect({
         onClick={() => setOpen((prev) => !prev)}
         onKeyDown={handleTriggerKeyDown}
         className={cn(
-          "flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50",
+          "flex w-full items-center rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50",
+          size === "compact" ? "gap-2 px-2.5 py-1.5" : "gap-3 px-4 py-3",
           buttonClassName,
         )}
       >
         {selectedLeading ? (
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+          <span
+            className={cn(
+              "flex shrink-0 items-center justify-center bg-slate-100 text-slate-600",
+              size === "compact" ? "h-6 w-6 rounded-lg" : "h-8 w-8 rounded-xl",
+            )}
+          >
             {selectedLeading}
           </span>
         ) : null}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-slate-900">{selectedLabel}</span>
+          <span
+            className={cn(
+              "block truncate font-semibold text-slate-900",
+              size === "compact" ? "text-xs" : "text-sm",
+            )}
+          >
+            {selectedLabel}
+          </span>
           {selectedDescription ? (
             <span className="mt-0.5 block truncate text-[11px] leading-4 text-slate-500">
               {selectedDescription}
@@ -314,7 +329,7 @@ export function MenuSelect({
                     }
                   }}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+                    "flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
                     active ? "bg-slate-900 text-white" : "hover:bg-slate-50",
                     highlighted && !active && "bg-slate-100",
                     option.disabled && "cursor-not-allowed opacity-40",
@@ -322,7 +337,7 @@ export function MenuSelect({
                 >
                   <span
                     className={cn(
-                      "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                      "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
                       active ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600",
                     )}
                   >

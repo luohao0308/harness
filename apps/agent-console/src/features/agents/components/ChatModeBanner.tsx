@@ -35,12 +35,16 @@ export function ChatModeBanner({
   onOpenCreateRun,
 }: ChatModeBannerProps): JSX.Element {
   const { text } = useI18n();
-  const isPlan = mode === "plan";
+  const isPlan = mode === "plan" || mode === "goal";
 
   const copy = isPlan
     ? text(
-        "当前是规划后执行运行模式，提交会创建可执行运行。切回对话或确认创建。",
-        "Currently in Plan-Act Run mode — submitting will create an executable Run. Switch back to Chat or confirm creation.",
+        mode === "goal"
+          ? "当前是追求目标模式，提交会创建可执行运行并持续推进目标。"
+          : "当前是规划后执行运行模式，提交会创建可执行运行。切回对话或确认创建。",
+        mode === "goal"
+          ? "Currently in Goal pursuit mode — submitting will create an executable Run and pursue the goal."
+          : "Currently in Plan-Act Run mode — submitting will create an executable Run. Switch back to Chat or confirm creation.",
       )
     : text(
         "当前是规划文本模式，不执行工具。切回对话或去创建规划后执行运行。",

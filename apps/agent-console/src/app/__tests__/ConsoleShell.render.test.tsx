@@ -26,4 +26,17 @@ describe("ConsoleShell", () => {
     expect(sidebarToggle).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByLabelText("搜索")).toBeInTheDocument();
   });
+
+  it("shows the knowledge base navigation item", () => {
+    render(
+      <MemoryRouter initialEntries={["/knowledge"]}>
+        <ConsoleShell title="知识库">
+          <div>知识库内容</div>
+        </ConsoleShell>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("知识库内容")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "知识库" })).toHaveAttribute("href", "/knowledge");
+  });
 });

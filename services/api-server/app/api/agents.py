@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.agents.context_router import (
@@ -31,12 +31,17 @@ from app.agents.orchestrator import MultiAgentOrchestrator
 from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
 from app.agents.registry import ensure_default_agents
 from app.agents.schemas import ExecutionPlan as ExecutionPlanSchema
+from app.agents.subagent_manager import SubagentLimitExceededError, SubagentManager
 from app.api.schemas import (
     AgentAssignmentResponse,
     AgentAutoResponse,
+    AgentCapabilityAttachmentRequest,
+    AgentCapabilityAttachmentResponse,
     AgentChatRequest,
     AgentChatResponse,
     AgentChatStreamRequest,
+    AgentCloneRequest,
+    AgentCreateRequest,
     AgentHandoffResponse,
     AgentMemoryActionRequest,
     AgentMemoryCreateRequest,
@@ -53,6 +58,10 @@ from app.api.schemas import (
     AgentSessionCreateRequest,
     AgentSessionPage,
     AgentSessionResponse,
+    AgentTokenOptimizerPreset,
+    AgentTokenOptimizerPresetPage,
+    AgentTokenOptimizerSelectionResponse,
+    AgentTokenOptimizerSelectRequest,
     ContextAssemblyManifestResponse,
     EventResponse,
     KnowledgeCitationResponse,
@@ -82,14 +91,18 @@ from app.api.schemas import (
     WorkspaceContextCompressionResponse,
 )
 from app.db.models import (
+    AdminAuditEvent,
     Agent,
     AgentAssignment,
+    AgentCapabilityAttachment,
     AgentEvent,
     AgentHandoff,
     AgentMemoryRecord,
     AgentMessage,
     AgentRun,
     AgentSession,
+    Capability,
+    CapabilityVersion,
     CitationRecord,
     ContextAssemblyManifest,
     ExecutionPlan,
@@ -106,6 +119,7 @@ from app.db.models import (
     ToolApproval,
     ToolCall,
     WebResearchSource,
+    WorkspaceContextCache,
     utc_now,
 )
 from app.db.session import get_db_session
@@ -118,6 +132,7 @@ from app.knowledge import (
     SOURCE_STATUS_DISABLED,
     KnowledgeGroundingResult,
     KnowledgeIngestionError,
+    connector_validation_status,
     create_knowledge_lifecycle_audit,
     get_visible_knowledge_source,
     ground_query,
@@ -125,8 +140,24 @@ from app.knowledge import (
     knowledge_source_lifecycle_snapshot,
     list_knowledge_sources,
 )
+from app.knowledge_connectors import (
+    connector_counts_toward_complete_usable,
+    connector_provider_key,
+    connector_release_state,
+    normalize_connector_settings,
+)
+from app.knowledge_dify import (
+    read_connector_secret_ref,
+    secret_ref_looks_like_raw_secret,
+    store_connector_secret_ref,
+)
 from app.security.auth import Principal, require_role
-from app.tools.capabilities import CapabilityRegistry
+from app.tools.capabilities import (
+    CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
+    CapabilityRegistry,
+    stable_json_sha256,
+    tool_capability_key,
+)
 from app.tools.registry import ToolMetadata, ToolRegistry
 from app.tools.runner import ToolExecution, ToolRunner
 
@@ -141,6 +172,78 @@ KNOWLEDGE_UPLOAD_MAX_BYTES = 120_000
 KNOWLEDGE_UPLOAD_MAX_MULTIPART_BYTES = KNOWLEDGE_UPLOAD_MAX_BYTES + 20_000
 KNOWLEDGE_UPLOAD_MIME_TYPES = {"text/plain", "text/markdown"}
 KNOWLEDGE_UPLOAD_EXTENSIONS = {".txt", ".md"}
+TOKEN_OPTIMIZER_PRESET_PRIORITY = 5
+CONTEXT_CACHE_SCHEMA_VERSION = "workspace-context-cache-v1"
+CACHE_SOURCE_COMPRESSION_SUMMARY = "compression_summary"
+TOKEN_OPTIMIZER_PRESETS: dict[str, dict] = {
+    "off": {
+        "display_name": "关闭",
+        "description": "不启用额外 Token Optimizer，只使用默认上下文策略。",
+        "optimizer": {},
+    },
+    "conservative": {
+        "display_name": "保守省 Token",
+        "description": "轻量裁剪低相关证据，优先保持最近对话和记忆。",
+        "optimizer": {
+            "mode": "budget_overlay",
+            "max_candidate_tokens_ratio": 0.9,
+            "section_limits": {
+                "recent_window": 16,
+                "long_term_memory": 10,
+                "rag_evidence": 8,
+            },
+            "drop_order": [
+                "rag_evidence_low_relevance_first",
+                "long_term_memory_low_score_first",
+                "recent_window_oldest_first",
+            ],
+            "prefer_valid_compressed_summary": True,
+            "low_cost_route_hint": "conservative summarization under budget",
+        },
+    },
+    "balanced": {
+        "display_name": "均衡",
+        "description": "推荐默认方案，在上下文质量和成本之间取得平衡。",
+        "optimizer": {
+            "mode": "budget_overlay",
+            "max_candidate_tokens_ratio": 0.8,
+            "section_limits": {
+                "recent_window": 12,
+                "long_term_memory": 8,
+                "rag_evidence": 6,
+            },
+            "drop_order": [
+                "rag_evidence_low_relevance_first",
+                "long_term_memory_low_score_first",
+                "compressed_summary_if_stale",
+                "recent_window_oldest_first",
+            ],
+            "prefer_valid_compressed_summary": True,
+            "low_cost_route_hint": "balanced summarization under budget",
+        },
+    },
+    "aggressive": {
+        "display_name": "强力省 Token",
+        "description": "更积极限制候选上下文，适合长对话和成本敏感任务。",
+        "optimizer": {
+            "mode": "budget_overlay",
+            "max_candidate_tokens_ratio": 0.6,
+            "section_limits": {
+                "recent_window": 8,
+                "long_term_memory": 4,
+                "rag_evidence": 4,
+            },
+            "drop_order": [
+                "rag_evidence_low_relevance_first",
+                "long_term_memory_low_score_first",
+                "compressed_summary_if_stale",
+                "recent_window_oldest_first",
+            ],
+            "prefer_valid_compressed_summary": True,
+            "low_cost_route_hint": "aggressive summarization under budget",
+        },
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +278,217 @@ def list_agents(session: DbSession, principal: Principal) -> AgentPage:
     ensure_default_agents(session, principal.organization_id)
     session.commit()
     agents = list(session.execute(select(Agent).order_by(Agent.id.asc())).scalars())
-    return AgentPage(items=agents)
+    return AgentPage(items=[_agent_response(agent, session=session) for agent in agents])
+
+
+@router.post(
+    "",
+    response_model=AgentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="创建 Agent 定义",
+)
+def create_agent_definition(
+    request: AgentCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AgentResponse:
+    require_role(principal, {"admin", "engineer"})
+    existing = session.get(Agent, request.id)
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent already exists")
+    now = utc_now()
+    agent = Agent(
+        id=request.id,
+        organization_id=principal.organization_id,
+        name=request.name,
+        description=request.description,
+        role=request.role,
+        status="ACTIVE",
+        model_provider=request.model_provider,
+        model_name=request.model_name,
+        system_prompt=request.system_prompt,
+        tools_json=list(request.tools_json),
+        routing_tags=list(request.routing_tags),
+        max_parallel_assignments=request.max_parallel_assignments,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(agent)
+    session.commit()
+    session.refresh(agent)
+    return _agent_response(agent, session=session)
+
+
+@router.post(
+    "/{agent_id}/clone",
+    response_model=AgentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="克隆 Agent 定义",
+)
+def clone_agent_definition(
+    agent_id: str,
+    request: AgentCloneRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AgentResponse:
+    require_role(principal, {"admin", "engineer"})
+    source = _get_agent(agent_id=agent_id, session=session, principal=principal)
+    if session.get(Agent, request.id) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agent already exists")
+    now = utc_now()
+    clone = Agent(
+        id=request.id,
+        organization_id=principal.organization_id,
+        name=request.name,
+        description=source.description,
+        role=source.role,
+        status="ACTIVE",
+        model_provider=source.model_provider,
+        model_name=source.model_name,
+        system_prompt=source.system_prompt,
+        tools_json=list(source.tools_json),
+        routing_tags=list(source.routing_tags),
+        max_parallel_assignments=source.max_parallel_assignments,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(clone)
+    session.commit()
+    session.refresh(clone)
+    return _agent_response(clone, session=session)
+
+
+@router.post(
+    "/{agent_id}/capabilities/attachments",
+    response_model=AgentCapabilityAttachmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="为 Agent 附加能力",
+)
+def attach_agent_capability(
+    agent_id: str,
+    request: AgentCapabilityAttachmentRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AgentCapabilityAttachmentResponse:
+    require_role(principal, {"admin", "engineer"})
+    agent = _get_agent(agent_id=agent_id, session=session, principal=principal)
+    capability, version = _resolve_agent_capability_attachment(
+        request=request,
+        session=session,
+        principal=principal,
+    )
+    existing = session.execute(
+        select(AgentCapabilityAttachment).where(
+            AgentCapabilityAttachment.agent_id == agent.id,
+            AgentCapabilityAttachment.capability_version_id == version.id,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        attachment = AgentCapabilityAttachment(
+            organization_id=agent.organization_id or principal.organization_id,
+            agent_id=agent.id,
+            capability_id=capability.id,
+            capability_version_id=version.id,
+            enabled=request.enabled,
+            priority=request.priority,
+            attached_by=principal.user_id,
+            attached_at=utc_now(),
+        )
+        session.add(attachment)
+    else:
+        attachment = existing
+        attachment.enabled = request.enabled
+        attachment.priority = request.priority
+    legacy_tool_name = _legacy_tool_name_for_capability(capability, request.capability_id)
+    if legacy_tool_name and legacy_tool_name not in agent.tools_json:
+        agent.tools_json = [*agent.tools_json, legacy_tool_name]
+    agent.updated_at = utc_now()
+    session.commit()
+    return AgentCapabilityAttachmentResponse(
+        status="attached",
+        attachment_id=attachment.id,
+        agent_id=attachment.agent_id,
+        capability_id=attachment.capability_id,
+        capability_version_id=attachment.capability_version_id,
+        enabled=attachment.enabled,
+        priority=attachment.priority,
+    )
+
+
+@router.get(
+    "/token-optimizer/presets",
+    response_model=AgentTokenOptimizerPresetPage,
+    summary="查询内置 Token Optimizer 方案",
+)
+def list_token_optimizer_presets(principal: Principal) -> AgentTokenOptimizerPresetPage:
+    require_role(principal, {"admin", "engineer", "operator"})
+    return AgentTokenOptimizerPresetPage(
+        items=[
+            AgentTokenOptimizerPreset(
+                preset_id=preset_id,
+                display_name=config["display_name"],
+                description=config["description"],
+                enabled=preset_id != "off",
+                priority=TOKEN_OPTIMIZER_PRESET_PRIORITY if preset_id != "off" else None,
+            )
+            for preset_id, config in TOKEN_OPTIMIZER_PRESETS.items()
+        ]
+    )
+
+
+@router.post(
+    "/{agent_id}/token-optimizer",
+    response_model=AgentTokenOptimizerSelectionResponse,
+    summary="选择 Agent 内置 Token Optimizer 方案",
+)
+def select_agent_token_optimizer(
+    agent_id: str,
+    request: AgentTokenOptimizerSelectRequest,
+    session: DbSession,
+    principal: Principal,
+) -> AgentTokenOptimizerSelectionResponse:
+    require_role(principal, {"admin", "engineer"})
+    agent = _get_agent(agent_id=agent_id, session=session, principal=principal)
+    if request.preset_id == "off":
+        disabled_attachment_id = _disable_agent_token_optimizer_attachments(
+            agent=agent,
+            session=session,
+        )
+        agent.updated_at = utc_now()
+        session.commit()
+        return AgentTokenOptimizerSelectionResponse(
+            status="disabled",
+            preset_id="off",
+            attachment_id=disabled_attachment_id,
+            capability_id=None,
+            capability_version_id=None,
+            enabled=False,
+            priority=None,
+        )
+
+    capability, version = _ensure_token_optimizer_preset_capability(
+        preset_id=request.preset_id,
+        session=session,
+        principal=principal,
+    )
+    attachment = _upsert_agent_token_optimizer_attachment(
+        agent=agent,
+        capability=capability,
+        version=version,
+        session=session,
+        principal=principal,
+    )
+    agent.updated_at = utc_now()
+    session.commit()
+    return AgentTokenOptimizerSelectionResponse(
+        status="selected",
+        preset_id=request.preset_id,
+        attachment_id=attachment.id,
+        capability_id=capability.id,
+        capability_version_id=version.id,
+        enabled=attachment.enabled,
+        priority=attachment.priority,
+    )
 
 
 @router.get(
@@ -296,6 +609,7 @@ def create_agent_knowledge_source(
             mime_type=request.mime_type,
             created_by=principal.user_id,
             idempotency_key=request.idempotency_key,
+            connector_settings_json=request.connector_settings_json,
             create_new_logical_document=True,
         )
     except KnowledgeIngestionError as error:
@@ -307,11 +621,20 @@ def create_agent_knowledge_source(
             before=None,
             idempotency_key=request.idempotency_key,
         )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     before_snapshot = None
     if request.expires_at is not None:
         before_snapshot = knowledge_source_lifecycle_snapshot(source)
         source.expires_at = request.expires_at
         source.updated_at = utc_now()
+    if request.connector_secret_value is not None:
+        _store_knowledge_connector_secret(
+            session=session,
+            principal=principal,
+            source=source,
+            secret_value=request.connector_secret_value,
+        )
     _record_knowledge_ingestion_events(
         session=session,
         principal=principal,
@@ -403,6 +726,32 @@ def update_agent_knowledge_source(
         source.description = request.description
     if "expires_at" in request.model_fields_set:
         source.expires_at = request.expires_at
+    if request.connector_settings_json is not None:
+        if source.source_type != "connector":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "connector_settings_json can only be updated for connector "
+                    "knowledge sources"
+                ),
+            )
+        try:
+            source.settings_json = normalize_connector_settings(
+                request.connector_settings_json,
+                source_type=source.source_type,
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(error),
+            ) from error
+    if request.connector_secret_value is not None:
+        _store_knowledge_connector_secret(
+            session=session,
+            principal=principal,
+            source=source,
+            secret_value=request.connector_secret_value,
+        )
     source.updated_at = utc_now()
     create_knowledge_lifecycle_audit(
         session,
@@ -484,6 +833,33 @@ def archive_agent_knowledge_source(
         principal=principal,
         action="archived",
         status_value=SOURCE_STATUS_ARCHIVED,
+    )
+
+
+@router.delete(
+    "/{agent_id}/knowledge/sources/{source_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="永久删除知识源",
+)
+def delete_agent_knowledge_source(
+    agent_id: str,
+    source_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> None:
+    require_role(principal, {"admin", "engineer"})
+    _get_agent(agent_id=agent_id, session=session, principal=principal)
+    source = _visible_knowledge_source_or_404(
+        session=session,
+        principal=principal,
+        agent_id=agent_id,
+        source_id=source_id,
+    )
+    _require_org_source_admin(source=source, principal=principal)
+    _delete_knowledge_source(
+        source=source,
+        session=session,
+        principal=principal,
     )
 
 
@@ -1377,6 +1753,16 @@ def stream_agent_chat_run(
                 },
             },
         )
+        orchestration_payload = _apply_workspace_orchestration(
+            run=run,
+            agent_id=agent_id,
+            goal=query_goal,
+            request=request,
+            session=session,
+            principal=principal,
+        )
+        if orchestration_payload is not None:
+            yield sse("orchestration", orchestration_payload)
         content_accumulator = ""
         usage: dict = {}
         first_delta_at: float | None = None
@@ -1447,6 +1833,11 @@ def stream_agent_chat_run(
                     usage.update(chunk.usage)
 
             content = _require_normal_chat_content(content_accumulator)
+            content = _grounding_evidence_fallback_answer(
+                content=content,
+                grounding=grounding,
+            )
+            content_accumulator = content
             normalized_content = _normalize_grounding_citations(
                 content=content,
                 grounding=grounding,
@@ -1549,6 +1940,7 @@ def stream_agent_chat_run(
                         mode="chat" if request.mode == "chat" else "markdown_plan",
                         model_provider=request.model_provider,
                         model_name=request.model_name,
+                        max_subagents=_workspace_max_subagents(request),
                     )
                 )
                 if request.tool_mentions:
@@ -1625,6 +2017,7 @@ def stream_agent_chat_run(
                         mode="markdown_plan",
                         model_provider=request.model_provider,
                         model_name=request.model_name,
+                        max_subagents=_workspace_max_subagents(request),
                     )
                     if request.tool_mentions:
                         yield from workspace_tool_only_events(
@@ -1658,6 +2051,7 @@ def stream_agent_chat_run(
                         mode="chat",
                         model_provider=request.model_provider,
                         model_name=request.model_name,
+                        max_subagents=_workspace_max_subagents(request),
                     )
                     if request.tool_mentions:
                         yield from workspace_tool_only_events(
@@ -1788,6 +2182,13 @@ def compress_agent_workspace_context(
     ]
     coverage_node_ids = [node.id for node in eligible]
     coverage_path_hash = _workspace_context_path_hash(eligible)
+    pinned_path_hash = _workspace_context_path_hash(
+        [
+            node
+            for node in request.messages
+            if node.id in pinned_ids and node.role in {"user", "assistant", "system"}
+        ]
+    )
     estimated_original_tokens = _estimate_nodes_tokens(eligible)
     estimated_uncovered_tokens = _estimate_nodes_tokens(
         [
@@ -1797,6 +2198,14 @@ def compress_agent_workspace_context(
             and node.id not in set(coverage_node_ids)
             and node.content.strip()
         ]
+    )
+    cache_key_hash = _workspace_summary_cache_key_hash(
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+        provider=provider,
+        model=model,
+        coverage_path_hash=coverage_path_hash,
+        pinned_path_hash=pinned_path_hash,
     )
 
     validation_status: Literal["ok", "missing_raw_nodes", "hash_mismatch"] = "ok"
@@ -1816,13 +2225,24 @@ def compress_agent_workspace_context(
         elif prior_provider != provider or prior_model != model:
             validation_status = "hash_mismatch"
 
-    if (
-        validation_status == "ok"
-        and request.existing_summary
-        and request.prior_coverage_node_ids == coverage_node_ids
-        and request.prior_coverage_path_hash == coverage_path_hash
-    ):
-        summary = request.existing_summary.strip()
+    cached_summary = _workspace_summary_cache_lookup(
+        session=session,
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+        cache_key_hash=cache_key_hash,
+        now=now,
+    )
+    if cached_summary is not None:
+        payload = (
+            cached_summary.payload_json
+            if isinstance(cached_summary.payload_json, dict)
+            else {}
+        )
+        cached_summary.hit_count += 1
+        cached_summary.last_hit_at = now
+        cached_summary.updated_at = now
+        session.commit()
+        summary = str(payload.get("summary") or "")
         return WorkspaceContextCompressionResponse(
             status="ok",
             cache_status="accepted",
@@ -1835,9 +2255,9 @@ def compress_agent_workspace_context(
             compressor_provider=provider,
             compressor_model=model,
             estimated_original_tokens=estimated_original_tokens,
-            estimated_summary_tokens=max(1, len(summary) // 4) if summary else 0,
+            estimated_summary_tokens=int(payload.get("estimated_summary_tokens") or 0),
             estimated_uncovered_tokens=estimated_uncovered_tokens,
-            created_at=now,
+            created_at=cached_summary.created_at,
             updated_at=now,
             error=None,
         )
@@ -1917,6 +2337,7 @@ def compress_agent_workspace_context(
         )
 
     summary = response.content.strip()
+    summary_tokens = max(1, len(summary) // 4) if summary else 0
     audit_task.status = "COMPLETED"
     audit_task.completed_at = utc_now()
     audit_task.updated_at = audit_task.completed_at
@@ -1926,6 +2347,24 @@ def compress_agent_workspace_context(
     status = validation_status
     cache_status: Literal["accepted", "recomputed", "stale_rejected", "error"]
     cache_status = "recomputed" if validation_status == "ok" else "stale_rejected"
+    _record_workspace_summary_cache(
+        session=session,
+        organization_id=principal.organization_id,
+        agent_id=agent_id,
+        cache_key_hash=cache_key_hash,
+        summary=summary,
+        coverage_node_ids=coverage_node_ids,
+        coverage_path_hash=coverage_path_hash,
+        pinned_path_hash=pinned_path_hash,
+        provider=_normalize_model_id(response.model_provider or provider),
+        model=_normalize_model_id(response.model_name or model),
+        estimated_original_tokens=estimated_original_tokens,
+        estimated_summary_tokens=summary_tokens,
+        estimated_uncovered_tokens=estimated_uncovered_tokens,
+        status=cache_status,
+        now=utc_now(),
+    )
+    session.commit()
     return WorkspaceContextCompressionResponse(
         status=status,
         cache_status=cache_status,
@@ -1938,7 +2377,7 @@ def compress_agent_workspace_context(
         compressor_provider=_normalize_model_id(response.model_provider or provider),
         compressor_model=_normalize_model_id(response.model_name or model),
         estimated_original_tokens=estimated_original_tokens,
-        estimated_summary_tokens=max(1, len(summary) // 4) if summary else 0,
+        estimated_summary_tokens=summary_tokens,
         estimated_uncovered_tokens=estimated_uncovered_tokens,
         created_at=now,
         updated_at=utc_now(),
@@ -2283,6 +2722,10 @@ def get_agent_run_workspace(
             if context_manifest is not None
             else None
         ),
+        token_optimization=_workspace_token_optimization_response(
+            context_manifest=context_manifest,
+            model_calls=model_calls,
+        ),
         subagents=[SubagentResponse.model_validate(subagent) for subagent in subagents],
         tool_calls=[
             _tool_call_response(call, trace_id=trace_ids.get(("tool", call.id)))
@@ -2479,9 +2922,287 @@ def list_agent_run_handoffs(
     summary="查询 Agent 详情",
     description="返回指定具名 Agent 的模型、工具、角色和路由标签。",
 )
-def get_agent(agent_id: str, session: DbSession, principal: Principal) -> Agent:
+def get_agent(agent_id: str, session: DbSession, principal: Principal) -> AgentResponse:
     require_role(principal, {"admin", "engineer", "operator"})
-    return _get_agent(agent_id=agent_id, session=session, principal=principal)
+    agent = _get_agent(agent_id=agent_id, session=session, principal=principal)
+    return _agent_response(agent, session=session)
+
+
+def _resolve_agent_capability_attachment(
+    *,
+    request: AgentCapabilityAttachmentRequest,
+    session: Session,
+    principal: Principal,
+) -> tuple[Capability, CapabilityVersion]:
+    CapabilityRegistry(session, principal.organization_id).ensure_builtin_capabilities()
+    if request.capability_version_id:
+        version = session.get(CapabilityVersion, request.capability_version_id)
+        if version is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Capability version not found",
+            )
+        capability = _visible_capability_or_404(
+            capability_id=version.capability_id,
+            session=session,
+            principal=principal,
+        )
+        accepted_ids = {
+            capability.id,
+            capability.capability_key,
+            capability.capability_key.removeprefix("tool:"),
+        }
+        if request.capability_id not in accepted_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Capability version does not match capability_id",
+            )
+        return capability, version
+
+    capability = _find_visible_capability(
+        capability_ref=request.capability_id,
+        session=session,
+        principal=principal,
+    )
+    if capability is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capability not found")
+    if not capability.current_version_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Capability has no current version",
+        )
+    version = session.get(CapabilityVersion, capability.current_version_id)
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Capability current version not found",
+        )
+    return capability, version
+
+
+def _token_optimizer_manifest(preset_id: str) -> dict:
+    config = TOKEN_OPTIMIZER_PRESETS[preset_id]
+    return {
+        "name": f"builtin-token-optimizer-{preset_id}",
+        "version": "1.0.0",
+        "description": config["description"],
+        "package_type": "context_optimizer",
+        "schema_version": "context-optimizer-v1",
+        "display_name": config["display_name"],
+        "risk_level": "low",
+        "permissions": ["context:optimize"],
+        "provenance": {"source": "builtin_preset", "preset_id": preset_id},
+        "optimizer": config["optimizer"],
+        "secret_refs": [],
+    }
+
+
+def _ensure_token_optimizer_preset_capability(
+    *,
+    preset_id: str,
+    session: Session,
+    principal: Principal,
+) -> tuple[Capability, CapabilityVersion]:
+    if preset_id not in TOKEN_OPTIMIZER_PRESETS or preset_id == "off":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown preset")
+    capability_key = f"builtin:context-optimizer:{preset_id}"
+    capability = session.execute(
+        select(Capability).where(
+            Capability.organization_id == principal.organization_id,
+            Capability.capability_key == capability_key,
+        )
+    ).scalar_one_or_none()
+    now = utc_now()
+    if capability is None:
+        capability = Capability(
+            organization_id=principal.organization_id,
+            capability_key=capability_key,
+            type=CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
+            status="active",
+            schema_version=1,
+            created_by=principal.user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(capability)
+        session.flush()
+
+    version = session.execute(
+        select(CapabilityVersion).where(
+            CapabilityVersion.capability_id == capability.id,
+            CapabilityVersion.version == 1,
+        )
+    ).scalar_one_or_none()
+    manifest = _token_optimizer_manifest(preset_id)
+    content = {"package_manifest": manifest, "package_provenance": manifest["provenance"]}
+    config = {
+        "secret_refs": [],
+        "permissions": manifest["permissions"],
+        "source_kind": "builtin_preset",
+        "source_uri": None,
+        "pinned_ref": f"builtin:{preset_id}:v1",
+        "package_id": f"builtin-context-optimizer-{preset_id}",
+    }
+    if version is None:
+        version = CapabilityVersion(
+            id=f"{capability.id}-v1",
+            capability_id=capability.id,
+            version=1,
+            type=CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
+            status="active",
+            content_json=content,
+            config_json=config,
+            content_sha256=stable_json_sha256(content),
+            config_sha256=stable_json_sha256(config),
+            schema_version=1,
+            created_by=principal.user_id,
+            created_at=now,
+        )
+        session.add(version)
+        session.flush()
+    capability.current_version_id = version.id
+    capability.status = "active"
+    capability.updated_at = now
+    return capability, version
+
+
+def _disable_agent_token_optimizer_attachments(
+    *,
+    agent: Agent,
+    session: Session,
+) -> str | None:
+    disabled_id: str | None = None
+    rows = list(
+        session.execute(
+            select(AgentCapabilityAttachment)
+            .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+            .where(
+                AgentCapabilityAttachment.agent_id == agent.id,
+                Capability.type == CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
+            )
+        ).scalars()
+    )
+    for attachment in rows:
+        attachment.enabled = False
+        disabled_id = disabled_id or attachment.id
+    return disabled_id
+
+
+def _upsert_agent_token_optimizer_attachment(
+    *,
+    agent: Agent,
+    capability: Capability,
+    version: CapabilityVersion,
+    session: Session,
+    principal: Principal,
+) -> AgentCapabilityAttachment:
+    _disable_agent_token_optimizer_attachments(agent=agent, session=session)
+    attachment = session.execute(
+        select(AgentCapabilityAttachment).where(
+            AgentCapabilityAttachment.agent_id == agent.id,
+            AgentCapabilityAttachment.capability_version_id == version.id,
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        attachment = AgentCapabilityAttachment(
+            organization_id=agent.organization_id or principal.organization_id,
+            agent_id=agent.id,
+            capability_id=capability.id,
+            capability_version_id=version.id,
+            enabled=True,
+            priority=TOKEN_OPTIMIZER_PRESET_PRIORITY,
+            attached_by=principal.user_id,
+            attached_at=utc_now(),
+        )
+        session.add(attachment)
+        session.flush()
+    else:
+        attachment.enabled = True
+        attachment.priority = TOKEN_OPTIMIZER_PRESET_PRIORITY
+    return attachment
+
+
+def _agent_response(agent: Agent, *, session: DbSession) -> AgentResponse:
+    payload = AgentResponse.model_validate(agent)
+    attachments = list(
+        session.execute(
+            select(AgentCapabilityAttachment, Capability, CapabilityVersion)
+            .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+            .join(
+                CapabilityVersion,
+                AgentCapabilityAttachment.capability_version_id == CapabilityVersion.id,
+            )
+            .where(AgentCapabilityAttachment.agent_id == agent.id)
+            .order_by(
+                AgentCapabilityAttachment.priority.asc(),
+                AgentCapabilityAttachment.attached_at.asc(),
+            )
+        ).all()
+    )
+    payload.capability_attachments = [
+        {
+            "attachment_id": attachment.id,
+            "capability_id": attachment.capability_id,
+            "capability_key": capability.capability_key,
+            "capability_version_id": attachment.capability_version_id,
+            "capability_type": version.type,
+            "enabled": attachment.enabled,
+            "priority": attachment.priority,
+            "status": capability.status,
+        }
+        for attachment, capability, version in attachments
+    ]
+    return payload
+
+
+def _find_visible_capability(
+    *,
+    capability_ref: str,
+    session: Session,
+    principal: Principal,
+) -> Capability | None:
+    refs = {
+        capability_ref,
+        tool_capability_key(capability_ref),
+    }
+    return session.execute(
+        select(Capability).where(
+            or_(
+                Capability.id == capability_ref,
+                Capability.capability_key.in_(refs),
+            ),
+            or_(
+                Capability.organization_id == principal.organization_id,
+                Capability.organization_id.is_(None),
+            ),
+        )
+    ).scalar_one_or_none()
+
+
+def _visible_capability_or_404(
+    *,
+    capability_id: str,
+    session: Session,
+    principal: Principal,
+) -> Capability:
+    capability = session.execute(
+        select(Capability).where(
+            Capability.id == capability_id,
+            or_(
+                Capability.organization_id == principal.organization_id,
+                Capability.organization_id.is_(None),
+            ),
+        )
+    ).scalar_one_or_none()
+    if capability is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capability not found")
+    return capability
+
+
+def _legacy_tool_name_for_capability(capability: Capability, fallback: str) -> str:
+    if capability.capability_key.startswith("tool:"):
+        return capability.capability_key.removeprefix("tool:")
+    return fallback
 
 
 def _complete_plan_prompt(*, task: Task, session: Session) -> str:
@@ -2536,6 +3257,95 @@ def _repair_plan_prompt(*, task: Task, invalid_content: str, session: Session) -
     return response.content
 
 
+def _workspace_max_subagents(request: AgentChatStreamRequest) -> int:
+    return 5 if request.orchestration_mode in {"auto", "multi_agent", "subagent"} else 0
+
+
+def _workspace_auto_orchestration_mode(*, goal: str, request: AgentChatStreamRequest) -> str:
+    if request.orchestration_mode != "auto":
+        return request.orchestration_mode
+    normalized = goal.lower()
+    subagent_terms = ("subagent", "sub-agent", "子agent", "子代理")
+    multi_agent_terms = ("multi-agent", "multi agent", "多agent", "多代理", "多智能体")
+    if any(term in normalized for term in subagent_terms):
+        return "subagent"
+    if any(term in normalized for term in multi_agent_terms):
+        return "multi_agent"
+    return "none"
+
+
+def _apply_workspace_orchestration(
+    *,
+    run: Task,
+    agent_id: str,
+    goal: str,
+    request: AgentChatStreamRequest,
+    session: Session,
+    principal: Principal,
+) -> dict | None:
+    mode = _workspace_auto_orchestration_mode(goal=goal, request=request)
+    if mode == "none":
+        return None
+    if mode == "multi_agent":
+        ensure_default_agents(session, principal.organization_id)
+        orchestrator = MultiAgentOrchestrator(session)
+        assignments, handoffs = orchestrator.orchestrate(run=run, entry_agent_id=agent_id)
+        session.flush()
+        return {
+            "mode": mode,
+            "run_id": run.id,
+            "strategy": orchestrator.routing_strategy(run=run),
+            "routing_reasoning": orchestrator.routing_reasoning(run=run),
+            "assignment_ids": [assignment.id for assignment in assignments],
+            "selected_agent_ids": [assignment.agent_id for assignment in assignments],
+            "handoff_ids": [handoff.id for handoff in handoffs],
+            "message": "Workspace chat created inspectable multi-agent orchestration evidence.",
+        }
+    if mode == "subagent":
+        try:
+            subagent = SubagentManager(session).spawn(
+                task=run,
+                parent_agent_id=agent_id,
+                assignment={
+                    "label": "Workspace forced subagent",
+                    "goal": goal,
+                    "description": "Forced from Workspace chat orchestration mode.",
+                    "step_key": "workspace_forced_subagent",
+                    "source": "workspace_chat",
+                    "orchestration_mode": mode,
+                },
+                enqueue=False,
+            )
+        except SubagentLimitExceededError as exc:
+            EventStore(session).append(
+                task_id=run.id,
+                event_type=EventType.SUBAGENT_FAILED,
+                payload_json={
+                    "run_id": run.id,
+                    "reason": "subagent_concurrency_limit",
+                    "error": str(exc),
+                },
+            )
+            session.flush()
+            return {
+                "mode": mode,
+                "run_id": run.id,
+                "status": "failed",
+                "reason": "subagent_concurrency_limit",
+                "message": "Workspace chat could not spawn subagent because concurrency is full.",
+            }
+        session.flush()
+        return {
+            "mode": mode,
+            "run_id": run.id,
+            "subagent_id": subagent.id,
+            "status": subagent.status,
+            "agent_type": subagent.agent_type,
+            "message": "Workspace chat spawned an inspectable subagent run.",
+        }
+    return None
+
+
 def _create_workspace_chat_run(
     *,
     agent_id: str,
@@ -2545,6 +3355,7 @@ def _create_workspace_chat_run(
     mode: Literal["chat", "markdown_plan", "context_compression"] = "chat",
     model_provider: str | None = None,
     model_name: str | None = None,
+    max_subagents: int = 0,
 ) -> Task:
     task = Task(
         organization_id=principal.organization_id,
@@ -2556,7 +3367,7 @@ def _create_workspace_chat_run(
         model_provider=model_provider or "default",
         model_name=model_name or "default",
         max_runtime_seconds=1800,
-        max_subagents=0,
+        max_subagents=max_subagents,
         enable_sandbox=False,
         enable_network=False,
         created_at=utc_now(),
@@ -2580,7 +3391,8 @@ def _create_workspace_chat_run(
         actor_type="user",
         actor_id=principal.user_id,
     )
-    session.flush()
+    session.commit()
+    session.refresh(task)
     return task
 
 
@@ -2720,6 +3532,131 @@ def _workspace_context_path_hash(nodes: list) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _workspace_summary_cache_key_hash(
+    *,
+    organization_id: str | None,
+    agent_id: str,
+    provider: str,
+    model: str,
+    coverage_path_hash: str,
+    pinned_path_hash: str,
+) -> str:
+    payload = {
+        "schema_version": CONTEXT_CACHE_SCHEMA_VERSION,
+        "cache_source": CACHE_SOURCE_COMPRESSION_SUMMARY,
+        "organization_id": organization_id,
+        "agent_id": agent_id,
+        "provider": provider,
+        "model": model,
+        "coverage_path_hash": coverage_path_hash,
+        "pinned_path_hash": pinned_path_hash,
+        "summary_schema_version": SUMMARY_SCHEMA_VERSION,
+        "compression_prompt_version": COMPRESSION_PROMPT_VERSION,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _workspace_summary_cache_lookup(
+    *,
+    session: Session,
+    organization_id: str | None,
+    agent_id: str,
+    cache_key_hash: str,
+    now,
+) -> WorkspaceContextCache | None:
+    return session.execute(
+        select(WorkspaceContextCache).where(
+            WorkspaceContextCache.organization_id == organization_id,
+            WorkspaceContextCache.agent_id == agent_id,
+            WorkspaceContextCache.cache_source == CACHE_SOURCE_COMPRESSION_SUMMARY,
+            WorkspaceContextCache.cache_key_hash == cache_key_hash,
+            WorkspaceContextCache.status == "active",
+            or_(
+                WorkspaceContextCache.expires_at.is_(None),
+                WorkspaceContextCache.expires_at > now,
+            ),
+        )
+    ).scalar_one_or_none()
+
+
+def _record_workspace_summary_cache(
+    *,
+    session: Session,
+    organization_id: str | None,
+    agent_id: str,
+    cache_key_hash: str,
+    summary: str,
+    coverage_node_ids: list[str],
+    coverage_path_hash: str,
+    pinned_path_hash: str,
+    provider: str,
+    model: str,
+    estimated_original_tokens: int,
+    estimated_summary_tokens: int,
+    estimated_uncovered_tokens: int,
+    status: str,
+    now,
+) -> None:
+    row = session.execute(
+        select(WorkspaceContextCache).where(
+            WorkspaceContextCache.organization_id == organization_id,
+            WorkspaceContextCache.cache_source == CACHE_SOURCE_COMPRESSION_SUMMARY,
+            WorkspaceContextCache.cache_key_hash == cache_key_hash,
+        )
+    ).scalar_one_or_none()
+    saved_tokens = max(0, estimated_original_tokens - estimated_summary_tokens)
+    payload = {
+        "summary": summary,
+        "coverage_node_ids": coverage_node_ids,
+        "coverage_path_hash": coverage_path_hash,
+        "pinned_path_hash": pinned_path_hash,
+        "summary_schema_version": SUMMARY_SCHEMA_VERSION,
+        "compression_prompt_version": COMPRESSION_PROMPT_VERSION,
+        "compressor_provider": provider,
+        "compressor_model": model,
+        "estimated_original_tokens": estimated_original_tokens,
+        "estimated_summary_tokens": estimated_summary_tokens,
+        "estimated_uncovered_tokens": estimated_uncovered_tokens,
+        "estimated_saved_tokens": saved_tokens,
+    }
+    metadata = {"reason": f"compression_summary_{status}"}
+    if row is None:
+        session.add(
+            WorkspaceContextCache(
+                organization_id=organization_id,
+                agent_id=agent_id,
+                owner_user_id=None,
+                cache_source=CACHE_SOURCE_COMPRESSION_SUMMARY,
+                cache_key_hash=cache_key_hash,
+                schema_version=CONTEXT_CACHE_SCHEMA_VERSION,
+                status="active",
+                payload_json=payload,
+                metadata_json=metadata,
+                hit_count=1 if status == "accepted" else 0,
+                miss_count=1 if status == "recomputed" else 0,
+                stale_count=1 if status == "stale_rejected" else 0,
+                estimated_saved_tokens=saved_tokens,
+                last_hit_at=now if status == "accepted" else None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    else:
+        row.payload_json = payload
+        row.metadata_json = metadata
+        row.estimated_saved_tokens = saved_tokens
+        row.updated_at = now
+        if status == "accepted":
+            row.hit_count += 1
+            row.last_hit_at = now
+        elif status == "recomputed":
+            row.miss_count += 1
+        elif status == "stale_rejected":
+            row.stale_count += 1
+    session.flush()
 
 
 def _estimate_nodes_tokens(nodes: list) -> int:
@@ -2970,6 +3907,48 @@ def _visible_knowledge_source_or_404(
     return source
 
 
+def _store_knowledge_connector_secret(
+    *,
+    session: Session,
+    principal: Principal,
+    source: KnowledgeSource,
+    secret_value: str,
+) -> None:
+    settings = source.settings_json if isinstance(source.settings_json, dict) else {}
+    provider = connector_provider_key(settings, source_type=source.source_type)
+    secret_ref = str(settings.get("secret_ref") or settings.get("auth_secret_ref") or "").strip()
+    try:
+        store_connector_secret_ref(
+            session,
+            organization_id=principal.organization_id,
+            actor_id=principal.user_id,
+            secret_ref=secret_ref,
+            provider=provider,
+            secret_value=secret_value,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    session.add(
+        AdminAuditEvent(
+            organization_id=principal.organization_id,
+            actor_id=principal.user_id,
+            event_type="knowledge_connector.secret_saved",
+            resource_type="knowledge_source",
+            resource_id=source.id,
+            action="connector_secret_saved",
+            payload_json={
+                "schema_version": "knowledge-connector-secret-v1",
+                "source_id": source.id,
+                "provider": provider,
+                "secret_ref": secret_ref,
+                "secret_configured": True,
+                "secret_value_present": bool(secret_value.strip()),
+            },
+            created_at=utc_now(),
+        )
+    )
+
+
 def _active_knowledge_source_or_409(
     *,
     session: Session,
@@ -3169,6 +4148,90 @@ def _transition_knowledge_source(
     return _knowledge_source_response(session, source)
 
 
+def _delete_knowledge_source(
+    *,
+    source: KnowledgeSource,
+    session: Session,
+    principal: Principal,
+) -> None:
+    before = knowledge_source_lifecycle_snapshot(source)
+    document_ids = list(
+        session.execute(
+            select(KnowledgeDocument.id).where(KnowledgeDocument.source_id == source.id)
+        ).scalars()
+    )
+    chunk_ids = list(
+        session.execute(
+            select(KnowledgeChunk.id).where(KnowledgeChunk.source_id == source.id)
+        ).scalars()
+    )
+    create_knowledge_lifecycle_audit(
+        session,
+        organization_id=principal.organization_id,
+        actor_id=principal.user_id,
+        action="deleted",
+        source=source,
+        before=before,
+        after={
+            "status": "DELETED",
+            "agent_id": source.agent_id,
+            "reason": "permanent_delete",
+            "deleted_document_count": len(document_ids),
+            "deleted_chunk_count": len(chunk_ids),
+        },
+    )
+    if chunk_ids:
+        session.execute(
+            update(CitationRecord)
+            .where(CitationRecord.chunk_id.in_(chunk_ids))
+            .values(chunk_id=None)
+        )
+        session.execute(
+            update(RetrievalHit)
+            .where(RetrievalHit.chunk_id.in_(chunk_ids))
+            .values(chunk_id=None)
+        )
+    if document_ids:
+        session.execute(
+            update(RetrievalHit)
+            .where(RetrievalHit.document_id.in_(document_ids))
+            .values(document_id=None)
+        )
+    session.execute(
+        update(WorkspaceContextCache)
+        .where(
+            WorkspaceContextCache.organization_id == principal.organization_id,
+            WorkspaceContextCache.cache_source == "rag_retrieval",
+            WorkspaceContextCache.status == "active",
+        )
+        .values(
+            status="stale",
+            metadata_json={
+                "reason": "knowledge_source_deleted",
+                "source_id": source.id,
+            },
+            updated_at=utc_now(),
+        )
+    )
+    session.execute(
+        delete(KnowledgeEmbedding).where(
+            KnowledgeEmbedding.chunk_id.in_(
+                select(KnowledgeChunk.id).where(KnowledgeChunk.source_id == source.id)
+            )
+        )
+    )
+    session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.source_id == source.id))
+    if document_ids:
+        session.execute(
+            update(KnowledgeDocument)
+            .where(KnowledgeDocument.supersedes_document_id.in_(document_ids))
+            .values(supersedes_document_id=None)
+        )
+    session.execute(delete(KnowledgeDocument).where(KnowledgeDocument.source_id == source.id))
+    session.delete(source)
+    session.commit()
+
+
 def _commit_failed_knowledge_ingestion(
     *,
     session: Session,
@@ -3284,6 +4347,65 @@ def _missing_grounding_citation_suffix(
     return "\n\nSources: " + ", ".join(missing_keys)
 
 
+def _grounding_evidence_fallback_answer(
+    *,
+    content: str,
+    grounding: KnowledgeGroundingResult | None,
+) -> str:
+    if grounding is None or not grounding.grounded or not grounding.citations:
+        return content
+    if not _looks_like_grounding_evidence_ignored(content):
+        return content
+    evidence_lines: list[str] = []
+    for citation in grounding.citations[:3]:
+        quoted_text = (citation.quoted_text or "").strip()
+        if not quoted_text:
+            continue
+        evidence_lines.append(f"- {quoted_text} {citation.citation_key}")
+    if not evidence_lines:
+        return content
+    return "根据已检索到的知识库记录：\n\n" + "\n".join(evidence_lines)
+
+
+def _looks_like_grounding_evidence_ignored(content: str) -> bool:
+    text = unicodedata.normalize("NFKC", content).strip().lower()
+    if not text:
+        return False
+    company_context_terms = ("公司名", "公司名称", "哪家公司", "具体公司", "具体是哪家公司")
+    missing_context_terms = (
+        "没有指明",
+        "未指明",
+        "没有提到",
+        "未提到",
+        "没有提供",
+        "未提供",
+        "补充",
+        "无法给出",
+        "无法确定",
+        "暂时无法",
+    )
+    if any(term in text for term in company_context_terms) and any(
+        term in text for term in missing_context_terms
+    ):
+        return True
+    clarification_patterns = (
+        "没有指明具体是哪家公司",
+        "未指明具体是哪家公司",
+        "没有提到具体是哪家公司",
+        "未提到具体是哪家公司",
+        "还没有提到具体是哪家公司",
+        "补充一下公司名称",
+        "请提供公司名称",
+        "告诉我公司名称",
+        "方便告诉我公司名称",
+        "无法确定是哪家公司",
+        "which company",
+        "what company",
+        "company name",
+    )
+    return any(pattern in text for pattern in clarification_patterns)
+
+
 def _normalize_grounding_citations(
     *,
     content: str,
@@ -3312,6 +4434,10 @@ def _knowledge_source_response(
     source: KnowledgeSource,
 ) -> KnowledgeSourceResponse:
     latest_documents = _knowledge_document_responses(session, source, limit=5)
+    validation_status, validation_messages = connector_validation_status(source)
+    settings_json = source.settings_json if isinstance(source.settings_json, dict) else {}
+    response_settings_json = _safe_connector_settings_for_response(settings_json)
+    secret_ref = str(settings_json.get("secret_ref") or settings_json.get("auth_secret_ref") or "")
     return KnowledgeSourceResponse(
         id=source.id,
         organization_id=source.organization_id,
@@ -3328,7 +4454,28 @@ def _knowledge_source_response(
         last_indexed_at=source.last_indexed_at,
         last_ingestion_error=source.last_ingestion_error,
         health_status=source.health_status,
-        settings_json=source.settings_json if isinstance(source.settings_json, dict) else {},
+        connector_provider=connector_provider_key(
+            settings_json,
+            source_type=source.source_type,
+        ),
+        connector_release_state=connector_release_state(
+            settings_json,
+            source_type=source.source_type,
+        ),
+        connector_counts_toward_complete_usable=connector_counts_toward_complete_usable(
+            settings_json,
+            source_type=source.source_type,
+        ),
+        connector_validation_status=validation_status,
+        connector_validation_messages=validation_messages,
+        connector_secret_configured=bool(
+            read_connector_secret_ref(
+                session,
+                organization_id=source.organization_id,
+                secret_ref=secret_ref,
+            )
+        ),
+        settings_json=response_settings_json,
         metadata_json=source.metadata_json if isinstance(source.metadata_json, dict) else {},
         idempotency_key=source.idempotency_key,
         created_by=source.created_by,
@@ -3336,6 +4483,15 @@ def _knowledge_source_response(
         updated_at=source.updated_at,
         latest_documents=latest_documents,
     )
+
+
+def _safe_connector_settings_for_response(settings: dict) -> dict:
+    safe_settings = dict(settings)
+    secret_ref = str(safe_settings.get("secret_ref") or "").strip()
+    if secret_ref_looks_like_raw_secret(secret_ref):
+        safe_settings["secret_ref"] = "[REDACTED_RAW_SECRET_REF]"
+        safe_settings["secret_ref_invalid"] = True
+    return safe_settings
 
 
 def _knowledge_document_responses(
@@ -3463,21 +4619,7 @@ def _knowledge_grounding_response(
         ).scalars()
     )
     evidence_summary = "Local knowledge grounded the answer."
-    if retrieval_session.local_status != "sufficient":
-        evidence_summary = (
-            "Local knowledge is insufficient; no web research provider is configured."
-        )
-        if web_sources:
-            evidence_summary = (
-                "Local knowledge is insufficient; controlled web research grounded the answer."
-            )
-    is_grounded = bool(citations) and (
-        retrieval_session.local_status == "sufficient" or bool(web_sources)
-    )
-    if is_grounded and prompt_manifest is not None:
-        evidence_summary = str(
-            prompt_manifest.metadata_json.get("evidence_message") or evidence_summary
-        )
+    connector_hits = [hit for hit in hits if hit.source_kind.endswith("_connector")]
     outcome_source = (
         prompt_manifest.metadata_json
         if prompt_manifest is not None and isinstance(prompt_manifest.metadata_json, dict)
@@ -3485,6 +4627,36 @@ def _knowledge_grounding_response(
         if isinstance(retrieval_session.metadata_json, dict)
         else {}
     )
+    if retrieval_session.local_status != "sufficient":
+        evidence_summary = str(
+            outcome_source.get("evidence_message")
+            or "Local knowledge is insufficient; no web research provider is configured."
+        )
+        if connector_hits:
+            provider = str(
+                (
+                    connector_hits[0].metadata_json
+                    if isinstance(connector_hits[0].metadata_json, dict)
+                    else {}
+            ).get("connector_provider")
+                or "dify"
+            ).strip().lower()
+            label = "Coze" if provider == "coze" else "Dify"
+            evidence_summary = (
+                f"Local knowledge is insufficient; {label} connector grounded the answer."
+            )
+        elif web_sources:
+            evidence_summary = (
+                "Local knowledge is insufficient; controlled web research grounded the answer."
+            )
+    is_grounded = bool(citations) and (
+        retrieval_session.local_status == "sufficient" or bool(web_sources) or bool(connector_hits)
+    )
+    if is_grounded and prompt_manifest is not None:
+        evidence_summary = str(
+            prompt_manifest.metadata_json.get("evidence_message") or evidence_summary
+        )
+    evidence_message = str(outcome_source.get("evidence_message") or evidence_summary)
     return KnowledgeGroundingResponse(
         retrieval_session=RetrievalSessionResponse.model_validate(retrieval_session),
         retrieval_hits=[KnowledgeRetrievalHitResponse.model_validate(hit) for hit in hits],
@@ -3508,6 +4680,7 @@ def _knowledge_grounding_response(
             outcome_source.get("grounding_verification_reason") or "no_verified_evidence"
         ),
         evidence_summary=evidence_summary,
+        evidence_message=evidence_message,
         inferred_fallback=inferred_fallback,
         fallback_reason=fallback_reason,
         selected_retrieval_session_id=retrieval_session.id,
@@ -3716,6 +4889,79 @@ def _workspace_tool_status(status_value: str) -> str:
         "PENDING_APPROVAL": "pending_approval",
         "RUNNING": "running",
     }.get(status_value, status_value.lower())
+
+
+def _workspace_token_optimization_response(
+    *,
+    context_manifest: ContextAssemblyManifest | None,
+    model_calls: list[ModelCall],
+) -> dict:
+    token_budget = (
+        context_manifest.token_budget_json
+        if context_manifest is not None and isinstance(context_manifest.token_budget_json, dict)
+        else {}
+    )
+    optimized_vs_baseline = token_budget.get("optimized_vs_baseline", {})
+    if not isinstance(optimized_vs_baseline, dict):
+        optimized_vs_baseline = {}
+    retrieval_cache = token_budget.get("retrieval_cache", {})
+    if not isinstance(retrieval_cache, dict):
+        retrieval_cache = {}
+    context_cache = token_budget.get("context_cache", {})
+    if not isinstance(context_cache, dict):
+        context_cache = {}
+    actual_prompt_tokens = sum(int(call.prompt_tokens or 0) for call in model_calls)
+    actual_completion_tokens = sum(int(call.completion_tokens or 0) for call in model_calls)
+    low_cost_routes = [
+        {
+            "model_call_id": call.id,
+            "model_name": call.model_name,
+            "reason": reason,
+        }
+        for call in model_calls
+        for reason in [_workspace_low_cost_route_reason(call)]
+        if reason is not None
+    ]
+    included_refs = context_manifest.included_refs_json if context_manifest is not None else []
+    omitted_refs = context_manifest.omitted_refs_json if context_manifest is not None else []
+    return {
+        "context_manifest_id": context_manifest.id if context_manifest is not None else None,
+        "mode": context_manifest.mode if context_manifest is not None else None,
+        "requested_max_tokens": token_budget.get("requested_max_tokens"),
+        "estimated_candidate_tokens": token_budget.get("estimated_candidate_tokens", 0),
+        "estimated_included_tokens": token_budget.get("estimated_included_tokens", 0),
+        "estimated_omitted_tokens": token_budget.get("estimated_omitted_tokens", 0),
+        "estimated_saved_tokens": optimized_vs_baseline.get("estimated_saved_tokens", 0),
+        "estimated_savings_percent": optimized_vs_baseline.get("estimated_savings_percent", 0),
+        "actual_prompt_tokens": actual_prompt_tokens,
+        "actual_completion_tokens": actual_completion_tokens,
+        "actual_total_tokens": actual_prompt_tokens + actual_completion_tokens,
+        "included_count": len(included_refs or []),
+        "omitted_count": len(omitted_refs or []),
+        "pruning_applied": bool(token_budget.get("pruning_applied")),
+        "retrieval_cache": retrieval_cache,
+        "context_cache": context_cache,
+        "low_cost_routes": low_cost_routes,
+        "optimizer_capability_version_ids": token_budget.get(
+            "optimizer_capability_version_ids", []
+        ),
+        "optimizer_policy_hash": token_budget.get("optimizer_policy_hash"),
+        "optimizer_decisions": token_budget.get("optimizer_decisions", []),
+        "effective_strategy": token_budget.get("effective_strategy", {}),
+        "optimized_vs_baseline": optimized_vs_baseline,
+    }
+
+
+def _workspace_low_cost_route_reason(call: ModelCall) -> str | None:
+    for payload in (call.request_json, call.response_json):
+        if not isinstance(payload, dict):
+            continue
+        reason = payload.get("low_cost_routing_reason") or payload.get("model_routing_reason")
+        if reason:
+            return str(reason)
+        if payload.get("low_cost_route") is True:
+            return "low_cost_route"
+    return None
 
 
 def _model_call_response(

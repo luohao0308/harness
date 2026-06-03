@@ -31,7 +31,7 @@ import type {
   AgentChatStreamPayload,
   ToolMetadata,
 } from "../../tasks/api";
-import { parseChatSseFrame } from "../../tasks/api";
+import { API_BASE_URL, parseChatSseFrame } from "../../tasks/api";
 import { useWorkspaceStore } from "../../../stores/workspaceStore";
 import type { ConversationArtifact, ConversationNode } from "../../../stores/workspaceStore";
 import { mergeToolCallEvent } from "../streamEvents";
@@ -54,13 +54,6 @@ import {
 import type { WorkspaceMode } from "../lib/types";
 import { useStreamFlush } from "./useStreamFlush";
 
-/**
- * API base URL used for the chat stream request. Mirrors the expression in
- * `features/tasks/api.ts`; duplicated here rather than imported because the
- * constant is module-private there and this hook must not widen that file's
- * public surface (see design.md §Wrapping streamAgentChatRun).
- */
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const DEV_BEARER_TOKEN = import.meta.env.VITE_DEV_BEARER_TOKEN ?? "dev-engineer-token";
 
 /** 10 seconds — no server byte within this window aborts the stream. */
@@ -175,6 +168,14 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         }
       };
 
+      const releaseActiveStream = (): void => {
+        clearWatchdog();
+        if (controllerRef.current !== abort) return;
+        controllerRef.current = null;
+        useWorkspaceStore.getState().setActiveStream(null);
+        abort.abort(new DOMException("terminal stream event", "AbortError"));
+      };
+
       watchdogRef.current = setTimeout(() => {
         watchdogTimedOutRef.current = true;
         abort.abort(new DOMException("connection timeout", "AbortError"));
@@ -209,6 +210,16 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
             useWorkspaceStore
               .getState()
               .appendContent(assistantNodeId, `<think>${event.content}</think>`);
+            clearWatchdog();
+            return;
+          }
+          case "orchestration": {
+            store.updateNode(assistantNodeId, {
+              metadata: {
+                ...current.metadata,
+                orchestration: event.payload,
+              },
+            });
             clearWatchdog();
             return;
           }
@@ -261,6 +272,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
                 knowledge_grounding: event.knowledge_grounding,
               },
             });
+            releaseActiveStream();
             return;
           }
           case "error": {
@@ -278,6 +290,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
               state: "error",
               metadata: mergeErrorMeta(current.metadata, meta),
             });
+            releaseActiveStream();
             return;
           }
           default: {
@@ -347,6 +360,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       const activePath = store.activePath();
       const toolMentions = extractToolMentions(input.goal, tools);
       const mode = toolAwareWorkspaceMode(input.mode, toolMentions.length);
+      const backendMode = backendWorkspaceMode(mode);
       const branchKey = contextCompressionBranchKey(
         store.currentConversationId,
         store.activeLeafId,
@@ -360,7 +374,8 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         modelId: selectedModelId,
       });
       return {
-        mode,
+        mode: backendMode,
+        orchestration_mode: mode === "goal" ? "auto" : undefined,
         goal: input.goal,
         model_provider: selectedProviderId,
         model_name: selectedModelId,
@@ -389,6 +404,9 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
                 compression_prompt_version: COMPRESSION_PROMPT_VERSION,
                 compressor_provider: summary.compressorProvider,
                 compressor_model: summary.compressorModel,
+                estimated_original_tokens: summary.estimatedOriginalTokens,
+                estimated_summary_tokens: summary.estimatedSummaryTokens,
+                cache_status: summary.cacheStatus ?? null,
               },
       };
     },
@@ -579,6 +597,10 @@ function toolAwareWorkspaceMode(mode: WorkspaceMode, toolMentionCount: number): 
   return mode === "markdown_plan" && toolMentionCount > 0 ? "chat" : mode;
 }
 
+function backendWorkspaceMode(mode: WorkspaceMode): AgentChatStreamPayload["mode"] {
+  return mode === "goal" ? "plan" : mode;
+}
+
 /**
  * Fetch + SSE pump. Throws `SseError` for every classified failure (HTTP
  * non-2xx, Content-Type mismatch, reader closed before `done`). Network
@@ -649,6 +671,10 @@ async function runStream(opts: {
   }
 
   const reader = response.body.getReader();
+  const cancelReaderOnAbort = (): void => {
+    void reader.cancel(opts.signal.reason);
+  };
+  opts.signal.addEventListener("abort", cancelReaderOnAbort, { once: true });
   const decoder = new TextDecoder();
   let buffer = "";
   let sawDone = false;
@@ -662,19 +688,29 @@ async function runStream(opts: {
   // The reader loop intentionally mirrors `streamAgentChatRun` in
   // `features/tasks/api.ts` so SSE framing stays consistent across the
   // codebase.
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() ?? "";
-    for (const frame of frames) {
-      const event = parseChatSseFrame(frame);
-      if (!event) continue;
-      if (event.type === "done") sawDone = true;
-      if (event.type === "error") sawError = true;
-      opts.onEvent(event);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const event = parseChatSseFrame(frame);
+        if (!event) continue;
+        if (event.type === "done") sawDone = true;
+        if (event.type === "error") sawError = true;
+        opts.onEvent(event);
+      }
     }
+  } finally {
+    opts.signal.removeEventListener("abort", cancelReaderOnAbort);
+  }
+
+  if (opts.signal.aborted) {
+    throw opts.signal.reason instanceof Error
+      ? opts.signal.reason
+      : new DOMException("stream aborted", "AbortError");
   }
   const tail = parseChatSseFrame(buffer);
   if (tail) {
@@ -742,6 +778,10 @@ function writeTerminalState(
 
   if (context.aborted && !context.watchdogTimedOut) {
     // User pressed pause. Req 4.7.
+    if (isEmptyAssistantPlaceholder(current)) {
+      store.removeLeafNode(assistantNodeId);
+      return;
+    }
     store.updateNode(assistantNodeId, { state: "paused" });
     return;
   }
@@ -769,6 +809,15 @@ function writeTerminalState(
     state: "error",
     metadata: mergeErrorMeta(current.metadata, meta),
   });
+}
+
+function isEmptyAssistantPlaceholder(node: ConversationNode): boolean {
+  return (
+    node.role === "assistant" &&
+    node.content.trim().length === 0 &&
+    node.tool_calls.length === 0 &&
+    node.artifacts.length === 0
+  );
 }
 
 /**

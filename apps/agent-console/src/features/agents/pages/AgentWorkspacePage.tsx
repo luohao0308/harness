@@ -14,8 +14,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { useI18n } from "../../../lib/i18n";
@@ -25,10 +25,12 @@ import {
   type ConversationNode,
 } from "../../../stores/workspaceStore";
 import {
+  createTeam,
   getAgent,
   getAgentRunWorkspace,
   getModelSettings,
   getToolRegistry,
+  listTeams,
   type ModelSettings,
   type ToolCall,
 } from "../../tasks/api";
@@ -56,8 +58,10 @@ import {
 } from "../lib/conversationHistory";
 import { clearSnapshot, loadSnapshot } from "../lib/localPersistence";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
+import { nextAvailableTeamName } from "../../teams/pages/TeamCreateModal";
 import {
   buildActivePath,
+  buildTeamSeedMessagesFromPath,
   deriveModelLabel,
   isNodeVisibleInPath,
   summarizeUsage,
@@ -65,6 +69,8 @@ import {
 
 export function AgentWorkspacePage() {
   const { text } = useI18n();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { agentId = "default" } = useParams();
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
@@ -84,6 +90,7 @@ export function AgentWorkspacePage() {
   const agent = useQuery({ queryKey: ["agents", agentId], queryFn: () => getAgent(agentId) });
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
   const toolsQuery = useQuery({ queryKey: ["tools", "registry"], queryFn: getToolRegistry });
+  const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams });
 
   const workspace = useQuery({
     queryKey: ["agent-run-workspace", activeRunId],
@@ -133,6 +140,24 @@ export function AgentWorkspacePage() {
     () => buildActivePath(nodesById, activeLeafId, rootNodeId),
     [nodesById, activeLeafId, rootNodeId],
   );
+  const createTeamFromConversation = useMutation({
+    mutationFn: async () => {
+      const teams =
+        teamsQuery.data?.items ??
+        (await queryClient.fetchQuery({ queryKey: ["teams"], queryFn: listTeams })).items;
+      return createTeam({
+        name: nextAvailableTeamName(teams, `${agent.data?.name ?? agentId} 团队`),
+        leader_agent_id: agentId,
+        leader_name: agent.data?.name ?? "Leader",
+        workspace_mode: "shared",
+        seed_messages: buildTeamSeedMessagesFromPath(activePath, agentId),
+      });
+    },
+    onSuccess: async (team) => {
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+      navigate(`/teams/${team.id}`);
+    },
+  });
 
   // v3 conversation store wiring
   const conversations = useWorkspaceStore((s) => s.conversations);
@@ -303,6 +328,7 @@ export function AgentWorkspacePage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
     const query = window.matchMedia("(max-width: 767px)");
     const apply = (): void => {
       setHistoryNarrow(query.matches);
@@ -444,6 +470,8 @@ export function AgentWorkspacePage() {
           modelPickerOpenSeq={modelPickerOpenSeq}
           onRequestModelPicker={handleRequestModelPicker}
           jumpTarget={jumpTarget}
+          onCreateTeamFromConversation={() => createTeamFromConversation.mutate()}
+          isCreatingTeam={createTeamFromConversation.isPending}
         />
         <InspectorDrawer
           section={inspectorSection}

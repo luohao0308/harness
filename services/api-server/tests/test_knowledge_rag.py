@@ -35,6 +35,7 @@ from app.db.models import (
     SystemSetting,
     Task,
     WebResearchSource,
+    WorkspaceContextCache,
     utc_now,
 )
 from app.events.event_types import EventType
@@ -1000,6 +1001,102 @@ def test_scope_change_updates_source_document_chunk_and_embedding_scope(
         headers=ADMIN_HEADERS,
     )
     assert source_id in {item["id"] for item in researcher_sources.json()["items"]}
+
+
+def test_delete_source_removes_index_rows_and_keeps_historical_evidence_snapshots(
+    db_session: Session,
+) -> None:
+    _ensure_agent(db_session, "default")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=AUTH_HEADERS,
+        json={
+            "name": "Delete Handbook",
+            "description": "Delete consistency",
+            "source_type": "markdown",
+            "title": "Delete Handbook",
+            "content": _two_chunk_content("delete consistency beacon"),
+            "mime_type": "text/markdown",
+            "idempotency_key": "delete-consistency",
+        },
+    )
+    assert created.status_code == 201
+    source_id = created.json()["id"]
+
+    grounded = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=None,
+        query="delete consistency beacon",
+    )
+    assert grounded.local_status == "sufficient"
+    assert grounded.retrieval_hits
+    historical_retrieval_session_id = grounded.retrieval_session.id
+    historical_hit_ids = {hit.id for hit in grounded.retrieval_hits}
+
+    deleted = client.delete(
+        f"/api/agents/default/knowledge/sources/{source_id}",
+        headers=AUTH_HEADERS,
+    )
+    assert deleted.status_code == 204
+    assert deleted.text == ""
+    assert db_session.get(KnowledgeSource, source_id) is None
+    assert (
+        db_session.scalar(
+            select(func.count()).select_from(KnowledgeDocument).where(
+                KnowledgeDocument.source_id == source_id
+            )
+        )
+        == 0
+    )
+    assert (
+        db_session.scalar(
+            select(func.count()).select_from(KnowledgeChunk).where(
+                KnowledgeChunk.source_id == source_id
+            )
+        )
+        == 0
+    )
+    assert db_session.scalar(select(func.count()).select_from(KnowledgeEmbedding)) == 0
+    listed = client.get("/api/agents/default/knowledge/sources", headers=AUTH_HEADERS)
+    assert listed.status_code == 200
+    assert source_id not in {item["id"] for item in listed.json()["items"]}
+
+    historical_hits = list(
+        db_session.execute(
+            select(RetrievalHit).where(
+                RetrievalHit.retrieval_session_id == historical_retrieval_session_id
+            )
+        ).scalars()
+    )
+    assert {hit.id for hit in historical_hits} == historical_hit_ids
+    assert {hit.chunk_id for hit in historical_hits} == {None}
+    assert {hit.document_id for hit in historical_hits} == {None}
+    historical_citations = list(
+        db_session.execute(
+            select(CitationRecord).where(
+                CitationRecord.retrieval_session_id == historical_retrieval_session_id
+            )
+        ).scalars()
+    )
+    assert historical_citations
+    assert {citation.chunk_id for citation in historical_citations} == {None}
+    assert any(
+        citation.metadata_json.get("source_snapshot", {}).get("source_id") == source_id
+        for citation in historical_citations
+    )
+    audit = db_session.execute(
+        select(AdminAuditEvent).where(
+            AdminAuditEvent.resource_id == source_id,
+            AdminAuditEvent.action == "deleted",
+        )
+    ).scalar_one()
+    assert audit.payload_json["after"]["status"] == "DELETED"
+    assert audit.payload_json["after"]["deleted_document_count"] == 1
+    assert audit.payload_json["after"]["deleted_chunk_count"] >= 2
 
 
 def test_multipart_text_file_import_creates_source_and_document(
@@ -2661,6 +2758,63 @@ def test_run_detail_grounding_uses_exact_selectors_and_marks_latest_fallback(
         },
     )
     assert conflict_response.status_code == 409
+
+
+def test_rag_cache_reuses_hits_with_new_retrieval_session(db_session: Session) -> None:
+    _ensure_agent(db_session)
+    first_task = _task(db_session)
+    second_task = _task(db_session)
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Cache Facts",
+        description="Cache facts",
+        source_type="text",
+        title="Facts",
+        content=_two_chunk_content("cache beacon"),
+        uri=None,
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="cache-facts",
+    )
+
+    first = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=first_task.id,
+        query="cache beacon",
+    )
+    second = ground_query(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        run_id=second_task.id,
+        query="cache beacon",
+    )
+
+    assert first.retrieval_session is not None
+    assert second.retrieval_session is not None
+    assert first.retrieval_session.id != second.retrieval_session.id
+    assert first.prompt_manifest is not None
+    assert second.prompt_manifest is not None
+    assert second.prompt_manifest.metadata_json["cache_status"] == "hit"
+    assert second.prompt_manifest.metadata_json["cache_source"] == "rag_retrieval"
+    assert {hit.chunk_id for hit in first.retrieval_hits} == {
+        hit.chunk_id for hit in second.retrieval_hits
+    }
+    assert {hit.id for hit in first.retrieval_hits}.isdisjoint(
+        {hit.id for hit in second.retrieval_hits}
+    )
+    cache = db_session.execute(
+        select(WorkspaceContextCache).where(
+            WorkspaceContextCache.cache_source == "rag_retrieval",
+            WorkspaceContextCache.organization_id == "dev-org",
+        )
+    ).scalar_one()
+    assert cache.hit_count == 1
+    assert cache.miss_count == 1
 
 
 def test_run_detail_rejects_foreign_run_prompt_manifest_selector(

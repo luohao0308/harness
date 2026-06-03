@@ -50,6 +50,23 @@ Latest post-stage completion: private deployment experience
 Active next lane: pending fresh planning
 ```
 
+## Agent Startup Context
+
+New agent sessions use a low-token context path before implementation:
+
+```text
+AGENTS.md
+docs/ai/agent-startup-context.md
+python3 scripts/agent-context-brief.py --task "<user task>"
+```
+
+The root `AGENTS.md` is the new-session entrypoint. The startup file summarizes
+the project target and current progress. The brief routes the task to the
+smallest relevant `omx_wiki/`, `.omx/plans/`, and `.omx/context/` files. The
+required completion write-back path is
+`docs/ai/task-progress.yaml` plus a relevant `omx_wiki/` session or handoff
+page.
+
 Completed in the current focused pass:
 
 - Agent Run creation API: `POST /api/agents/{agent_id}/runs`

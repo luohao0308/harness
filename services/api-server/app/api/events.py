@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.schemas import EventPage
 from app.api.tasks import get_owned_task
@@ -64,7 +64,12 @@ def stream_task_events(
     after_sequence: Annotated[int | None, Query()] = None,
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
-    get_owned_task(task_id, session, principal.organization_id)
+    bind = session.get_bind()
+    try:
+        get_owned_task(task_id, session, principal.organization_id)
+    finally:
+        session.close()
+    poll_session_factory = sessionmaker(bind=bind, autoflush=False, autocommit=False)
 
     def starting_after_sequence() -> int | None:
         if after_sequence is not None:
@@ -94,11 +99,12 @@ def stream_task_events(
         current_sequence = starting_after_sequence()
         idle_polls = 0
         while True:
-            events = EventStore(session).list_by_task(
-                task_id=task_id,
-                after_sequence=current_sequence,
-                limit=100,
-            )
+            with poll_session_factory() as poll_session:
+                events = EventStore(poll_session).list_by_task(
+                    task_id=task_id,
+                    after_sequence=current_sequence,
+                    limit=100,
+                )
             if events:
                 idle_polls = 0
                 for event in events:

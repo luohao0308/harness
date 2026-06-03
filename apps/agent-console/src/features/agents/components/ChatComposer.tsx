@@ -10,10 +10,11 @@ import {
   type RefObject,
 } from "react";
 
-import { FileText, Pause, Play, Send, SlidersHorizontal, X } from "lucide-react";
+import { ArrowUp, FileText, SlidersHorizontal, Square, Target, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
+import { cn } from "../../../lib/utils";
 import {
   MAX_COMPOSER_HEIGHT,
   MIN_COMPOSER_HEIGHT,
@@ -33,9 +34,7 @@ export type ChatComposerProps = {
   onDraftChange: (next: string) => void;
   onSubmit: () => void;
   onPause: () => void;
-  onResume: () => void;
   isStreaming: boolean;
-  canResume: boolean;
   mode: WorkspaceMode;
   onChangeMode: (m: WorkspaceMode) => void;
   placeholder: string;
@@ -45,6 +44,8 @@ export type ChatComposerProps = {
   metadata?: ReactNode;
   /** Rendered in the bottom action row, immediately beside the Send button. */
   bottomCenter?: ReactNode;
+  containerClassName?: string;
+  goalModeToggleVisible?: boolean;
   attachments?: ComposerAttachment[];
   onRemoveAttachment?: (id: string) => void;
   /**
@@ -61,6 +62,7 @@ export type ChatComposerProps = {
    * menu but no-ops on confirm.
    */
   onSlashDispatch?: (command: SlashCommand, args: string) => void;
+  slashCommandsEnabled?: boolean;
 };
 
 export type ComposerAttachment = {
@@ -123,19 +125,22 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       onDraftChange,
       onSubmit,
       onPause,
-      onResume,
       isStreaming,
-      canResume,
+      mode,
+      onChangeMode,
       placeholder,
       optionsOpen = false,
       onOptionsToggle,
       optionsTriggerRef,
       metadata = null,
       bottomCenter = null,
+      containerClassName,
+      goalModeToggleVisible = true,
       attachments = [],
       onRemoveAttachment,
       isEditLocked = false,
       onSlashDispatch,
+      slashCommandsEnabled = true,
     },
     forwardedRef,
   ) {
@@ -143,7 +148,10 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
     // ── v3: slash command state ─────────────────────────────────────────
-    const slashState = useMemo(() => parseSlashCommand(draft), [draft]);
+    const slashState = useMemo(
+      () => (slashCommandsEnabled ? parseSlashCommand(draft) : { kind: "none" as const }),
+      [draft, slashCommandsEnabled],
+    );
     const candidates = useMemo(() => {
       if (slashState.kind === "matching") return slashState.candidates;
       if (slashState.kind === "confirmed") {
@@ -174,6 +182,9 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     }, [candidates.length]);
 
     const sendDisabled = !draft.trim() || isStreaming || isEditLocked || slashOpen;
+    const primaryDisabled = isStreaming ? false : sendDisabled;
+    const goalModeActive = mode === "goal";
+    const primaryLabel = isStreaming ? text("停止生成", "Stop generation") : text("发送", "Send");
 
     function assignTextareaRef(node: HTMLTextAreaElement | null) {
       textareaRef.current = node;
@@ -192,7 +203,11 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     }, [draft]);
 
     function dispatchSlash(cmd: SlashCommand, args: string): void {
-      if (onSlashDispatch !== undefined) onSlashDispatch(cmd, args);
+      if (onSlashDispatch !== undefined) {
+        onSlashDispatch(cmd, args);
+        textareaRef.current?.focus();
+        return;
+      }
       // For `tool`, parent replaces draft with `@tool-name ` via
       // `onInsertMention`; for the other commands the parent also clears
       // the draft explicitly so we don't race. We still clear here to
@@ -287,7 +302,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
 
     return (
       <div className="w-full">
-        <div className="mx-auto w-full max-w-3xl px-3 sm:px-4 lg:px-6">
+        <div className={cn("mx-auto w-full max-w-3xl px-3 sm:px-4 lg:px-6", containerClassName)}>
           <div className="relative rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-slate-300">
             <SlashCommandMenu
               open={slashOpen}
@@ -326,8 +341,8 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
               className="w-full resize-none overflow-hidden border-0 bg-transparent px-3 py-0.5 text-[15px] text-slate-800 outline-none placeholder:text-slate-400 focus:outline-none"
               autoFocus
             />
-            <div className="mt-1.5 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+            <div className="mt-1.5 flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
+              <div className="flex shrink-0 items-center gap-2">
                 {onOptionsToggle !== undefined && (
                   <button
                     ref={optionsTriggerRef}
@@ -342,47 +357,56 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                     <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
                   </button>
                 )}
-                {isStreaming ? (
-                  <Button
+                {goalModeToggleVisible ? (
+                  <button
                     type="button"
-                    variant="ghost"
-                    onClick={onPause}
-                    aria-label={text("暂停生成", "Pause generation")}
+                    onClick={() => onChangeMode(goalModeActive ? "chat" : "goal")}
+                    aria-pressed={goalModeActive}
+                    aria-label={text("追求目标模式", "Goal pursuit mode")}
+                    title={text("追求目标模式", "Goal pursuit mode")}
+                    className={[
+                      "inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+                      goalModeActive
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                    ].join(" ")}
                   >
-                    <Pause className="h-3.5 w-3.5" />
-                    {text("暂停", "Pause")}
-                  </Button>
-                ) : null}
-                {!isStreaming && canResume ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={onResume}
-                    aria-label={text("继续生成", "Resume generation")}
-                  >
-                    <Play className="h-3.5 w-3.5" />
-                    {text("继续", "Resume")}
-                  </Button>
+                    <Target aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
                 ) : null}
               </div>
-              <div className="flex min-w-0 items-center gap-2">
+              <div
+                className={cn(
+                  "flex flex-1 items-end justify-end gap-2",
+                  bottomCenter === null ? "min-w-0" : "min-w-[11rem]",
+                )}
+              >
                 {bottomCenter}
                 <Button
                   type="button"
                   variant="primary"
-                  className="h-9 w-9 rounded-full px-0"
+                  className="h-9 w-9 shrink-0 rounded-full px-0"
                   onClick={() => {
+                    if (isStreaming) {
+                      onPause();
+                      textareaRef.current?.focus();
+                      return;
+                    }
                     if (sendDisabled) return;
                     onSubmit();
                     onDraftChange("");
                     textareaRef.current?.focus();
                   }}
-                  disabled={sendDisabled}
-                  aria-label={text("发送", "Send")}
-                  title={text("发送", "Send")}
+                  disabled={primaryDisabled}
+                  aria-label={primaryLabel}
+                  title={primaryLabel}
                 >
-                  <Send className="h-4 w-4" />
-                  <span className="sr-only">{text("发送", "Send")}</span>
+                  {isStreaming ? (
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  ) : (
+                    <ArrowUp className="h-4 w-4" />
+                  )}
+                  <span className="sr-only">{primaryLabel}</span>
                 </Button>
               </div>
             </div>

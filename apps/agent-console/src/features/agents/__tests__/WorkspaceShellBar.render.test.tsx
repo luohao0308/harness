@@ -71,7 +71,6 @@ function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]>
     onModelChange: vi.fn(),
     onInsertToolMention: vi.fn(),
     onOpenInspector: vi.fn(),
-    onStop: vi.fn(),
     ...overrides,
   };
 
@@ -142,5 +141,15 @@ describe("WorkspaceShellBar", () => {
 
     expect(props.onModelChange).not.toHaveBeenCalled();
     expect(props.onInsertToolMention).toHaveBeenCalledWith("read_file");
+  });
+
+  it("shows the Team Mode launcher when supplied by the workspace page", () => {
+    useConsoleStore.getState().setLocale("en-US");
+    const onCreateTeamFromConversation = vi.fn();
+    renderShell({ onCreateTeamFromConversation });
+
+    fireEvent.click(screen.getByRole("button", { name: "新开团队模式" }));
+
+    expect(onCreateTeamFromConversation).toHaveBeenCalledTimes(1);
   });
 });

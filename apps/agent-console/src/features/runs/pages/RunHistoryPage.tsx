@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Bot, Clock, GitBranch, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Bot, History } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -24,31 +24,28 @@ export function RunHistoryPage() {
   return (
     <ConsoleShell title={text("智能体运行历史", "Agent Runs")}>
       <div className="space-y-4 p-4">
-        <section className="grid grid-cols-12 gap-4">
-          <Card className="col-span-8 p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
-                  <GitBranch className="h-4 w-4" />
-                  {text("智能体运行审计历史", "Agent Run Audit History")}
-                </div>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                  {text(
-                    "这里只展示智能体工作台产生的运行记录。底层 tasks 表保留为兼容存储，产品语义统一为智能体运行。",
-                    "This page shows runs produced by Agent Workspace. The tasks table remains only as compatibility storage; product language is Agent Run.",
-                  )}
-                </p>
-              </div>
-              <Link to="/agents/default/workspace">
-                <Button variant="primary">
-                  <Bot className="h-3.5 w-3.5" />
-                  {text("打开智能体工作台", "Open Agent Workspace")}
-                </Button>
-              </Link>
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-slate-600">
+              <History className="h-4 w-4" />
             </div>
-          </Card>
-          <MetricCard label={text("运行中", "Running")} value={String(running)} icon={<Clock className="h-4 w-4" />} />
-          <MetricCard label={text("失败", "Failed")} value={String(failed)} icon={<ShieldCheck className="h-4 w-4" />} />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-950">
+                {text("运行历史", "Run History")}
+              </div>
+              <div className="mt-0.5 flex flex-wrap gap-3 text-xs text-slate-500">
+                <span>{text(`${items.length} 个运行`, `${items.length} runs`)}</span>
+                <span>{text(`运行中 ${running}`, `${running} running`)}</span>
+                <span>{text(`失败 ${failed}`, `${failed} failed`)}</span>
+              </div>
+            </div>
+          </div>
+          <Link to="/agents/default/workspace">
+            <Button variant="primary">
+              <Bot className="h-3.5 w-3.5" />
+              {text("工作台", "Workspace")}
+            </Button>
+          </Link>
         </section>
 
         <Card className="overflow-hidden">
@@ -129,25 +126,5 @@ function RunRow({ run }: { run: Task }) {
         </Link>
       </Td>
     </tr>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <Card className="col-span-2 p-4">
-      <div className="flex items-center justify-between text-slate-500">
-        <span className="text-xs">{label}</span>
-        {icon}
-      </div>
-      <div className="mt-2 font-mono text-2xl text-slate-950">{value}</div>
-    </Card>
   );
 }

@@ -78,6 +78,138 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class Team(Base):
+    __tablename__ = "teams"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name", name="teams_org_name_uidx"),
+        Index("ix_teams_org_updated", "organization_id", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE", index=True)
+    workspace: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    workspace_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="shared")
+    leader_slot_id: Mapped[str] = mapped_column(String(64), nullable=False, default="leader")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    agents: Mapped[list[TeamAgent]] = relationship(
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+    messages: Mapped[list[TeamMailboxMessage]] = relationship(
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+    tasks: Mapped[list[TeamTask]] = relationship(
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+    events: Mapped[list[TeamEvent]] = relationship(
+        back_populates="team",
+        cascade="all, delete-orphan",
+    )
+
+
+class TeamAgent(Base):
+    __tablename__ = "team_agents"
+    __table_args__ = (
+        UniqueConstraint("team_id", "slot_id", name="team_agents_team_slot_uidx"),
+        Index("ix_team_agents_org_team", "organization_id", "team_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    slot_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="teammate", index=True)
+    agent_name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle", index=True)
+    model_provider: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    model_name: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_sessions.id"),
+        nullable=True,
+        index=True,
+    )
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    team: Mapped[Team] = relationship(back_populates="agents")
+
+
+class TeamMailboxMessage(Base):
+    __tablename__ = "team_mailbox_messages"
+    __table_args__ = (
+        Index("ix_team_mailbox_team_to_read", "team_id", "to_agent_slot_id", "read"),
+        Index("ix_team_mailbox_team_created", "team_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    to_agent_slot_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    from_agent_slot_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String(32), nullable=False, default="message", index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    files_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    team: Mapped[Team] = relationship(back_populates="messages")
+
+
+class TeamTask(Base):
+    __tablename__ = "team_tasks"
+    __table_args__ = (
+        Index("ix_team_tasks_team_status", "team_id", "status"),
+        Index("ix_team_tasks_team_owner", "team_id", "owner_slot_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    owner_slot_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    blocked_by_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    blocks_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    team: Mapped[Team] = relationship(back_populates="tasks")
+
+
+class TeamEvent(Base):
+    __tablename__ = "team_events"
+    __table_args__ = (
+        UniqueConstraint("team_id", "sequence", name="team_events_team_sequence_uidx"),
+        Index("ix_team_events_team_created", "team_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    actor_type: Mapped[str] = mapped_column(String(64), nullable=False, default="system")
+    actor_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    team: Mapped[Team] = relationship(back_populates="events")
+
+
 class Capability(Base):
     __tablename__ = "capabilities"
     __table_args__ = (
@@ -121,7 +253,6 @@ class CapabilityVersion(Base):
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
-
 class AgentCapabilityAttachment(Base):
     __tablename__ = "agent_capability_attachments"
     __table_args__ = (
@@ -161,6 +292,48 @@ class CapabilitySnapshot(Base):
     snapshot_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class CapabilityPackage(Base):
+    __tablename__ = "capability_packages"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "package_key",
+            "source_sha256",
+            name="capability_packages_org_key_source_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    package_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    package_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    source_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    pinned_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="staged", index=True)
+    risk_level: Mapped[str] = mapped_column(String(32), nullable=False, default="medium")
+    manifest_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    validation_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provenance_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    audit_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    capability_id: Mapped[str | None] = mapped_column(
+        ForeignKey("capabilities.id"),
+        nullable=True,
+        index=True,
+    )
+    capability_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("capability_versions.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AgentSession(Base):
@@ -904,6 +1077,43 @@ class ContextAssemblyManifestLifecycle(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class WorkspaceContextCache(Base):
+    __tablename__ = "workspace_context_caches"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "cache_source",
+            "cache_key_hash",
+            name="workspace_context_caches_org_source_key_uidx",
+        ),
+        Index(
+            "ix_workspace_context_caches_org_source_agent",
+            "organization_id",
+            "cache_source",
+            "agent_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    cache_source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    cache_key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    miss_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stale_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_saved_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

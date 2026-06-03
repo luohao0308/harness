@@ -41,6 +41,7 @@ function baseWorkspace(): AgentRunWorkspace {
     events: [],
     knowledge_grounding: null,
     context_assembly: null,
+    token_optimization: {},
     subagents: [],
     tool_calls: [toolCall],
     model_calls: [],

@@ -102,7 +102,27 @@ describe("Property P14: confirmed results strip the /command prefix", () => {
     const result = parseSlashCommand("/plan-md ");
     expect(result.kind).toBe("confirmed");
     if (result.kind === "confirmed") {
-      expect(result.command.name).toBe("Harness Agent");
+      expect(result.command.name).toBe("plan");
+    }
+
+    const legacyHarness Agent = parseSlashCommand("/Harness Agent ");
+    expect(legacyHarness Agent.kind).toBe("confirmed");
+    if (legacyHarness Agent.kind === "confirmed") {
+      expect(legacyHarness Agent.command.name).toBe("plan");
+    }
+  });
+
+  it("goal aliases resolve to the canonical command", () => {
+    const goal = parseSlashCommand("/goal ");
+    expect(goal.kind).toBe("confirmed");
+    if (goal.kind === "confirmed") {
+      expect(goal.command.name).toBe("goal");
+    }
+
+    const pursue = parseSlashCommand("/pursue ");
+    expect(pursue.kind).toBe("confirmed");
+    if (pursue.kind === "confirmed") {
+      expect(pursue.command.name).toBe("goal");
     }
   });
 });
@@ -120,13 +140,30 @@ describe("filterCommandsByPrefix: case-insensitive + alias aware", () => {
 
   it("prefix matches alias", () => {
     const out = filterCommandsByPrefix("plan-");
-    expect(out.map((c) => c.name)).toContain("Harness Agent");
+    expect(out.map((c) => c.name)).toContain("plan");
+  });
+
+  it("prefix matches executable run command and aliases", () => {
+    expect(filterCommandsByPrefix("ru").map((command) => command.name)).toContain("run");
+    expect(filterCommandsByPrefix("act").map((command) => command.name)).toContain("run");
+  });
+
+  it("prefix matches goal command and alias", () => {
+    expect(filterCommandsByPrefix("go").map((command) => command.name)).toContain("goal");
+    expect(filterCommandsByPrefix("pur").map((command) => command.name)).toContain("goal");
+  });
+
+  it("prefix matches context compression command and aliases", () => {
+    expect(filterCommandsByPrefix("com").map((command) => command.name)).toContain("compress");
+    expect(filterCommandsByPrefix("compact").map((command) => command.name)).toContain("compress");
+    expect(filterCommandsByPrefix("context").map((command) => command.name)).toContain("compress");
   });
 });
 
 describe("replaceSlashPrefix: retains trailing arguments", () => {
   it("replaces the first /xxx segment keeping any trailing text", () => {
     expect(replaceSlashPrefix("/pl", "plan")).toBe("/plan ");
+    expect(replaceSlashPrefix("/ru", "run")).toBe("/run ");
     expect(replaceSlashPrefix("/pl curl", "tool")).toBe("/tool curl");
     expect(replaceSlashPrefix("", "plan")).toBe("/plan ");
     expect(replaceSlashPrefix("no-slash", "plan")).toBe("/plan ");

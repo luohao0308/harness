@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-23T11:28:14Z",
+  "purpose": "Low-token task-to-context routing for new agent sessions.",
+  "entrypoint": "docs/ai/agent-startup-context.md",
+  "machine_progress": "docs/ai/task-progress.yaml",
+  "read_order": [
+    "docs/ai/agent-startup-context.md",
+    "docs/ai/task-progress.yaml",
+    "matched read_first wiki pages",
+    "matched deep_read plans and context snapshots"
+  ],
+  "progress_write_targets": [
+    "docs/ai/task-progress.yaml",
+    "omx_wiki/session-YYYY-MM-DD-*.md or the relevant omx_wiki handoff page",
+    "omx_wiki/index.md when adding a wiki page",
+    "omx_wiki/log.md"
+  ],
+  "routes": [
+    {
+      "id": "agent-startup-context-loop",
+      "summary": "Low-token startup context, task-to-context route index, brief script, validation guardrails, and progress write-back loop.",
+      "keywords": [
+        "agent startup context",
+        "startup context",
+        "context index",
+        "agent context brief",
+        "agent-context-brief",
+        "context-index",
+        "new session",
+        "write-back",
+        "writeback",
+        "low-token",
+        "brief script"
+      ],
+      "read_first": [
+        "docs/ai/agent-startup-context.md",
+        "docs/ai/context-index.json",
+        "omx_wiki/session-2026-05-23-agent-startup-context-loop.md"
+      ],
+      "deep_read": [
+        "scripts/agent-context-brief.py",
+        "scripts/validate-docs.py",
+        "docs/ai/00-execution-protocol.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-2026-05-23-agent-startup-context-loop.md",
+        "omx_wiki/index.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "project-handoff",
+      "summary": "Canonical project target, current state, authoritative reading order, and latest handoff.",
+      "keywords": [
+        "handoff",
+        "current state",
+        "current progress",
+        "new session",
+        "roadmap",
+        "next work",
+        "project target",
+        "agent knowledge harness"
+      ],
+      "read_first": [
+        "omx_wiki/project-handoff-current-state.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md",
+        "omx_wiki/deep-interview-private-harness-chain.md"
+      ],
+      "deep_read": [
+        ".omx/specs/deep-interview-agent-knowledge-harness-memory-rag.md",
+        ".omx/specs/deep-interview-project-positioning-orchestration.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/project-handoff-current-state.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "knowledge-rag-grounding",
+      "summary": "Local Knowledge/RAG, retrieval, citations, prompt manifests, policy audits, selectors, and source-bound web research.",
+      "keywords": [
+        "knowledge",
+        "rag",
+        "grounding",
+        "citation",
+        "retrieval",
+        "prompt manifest",
+        "policy audit",
+        "selector",
+        "cjk",
+        "web research",
+        "tavily",
+        "source-bound",
+        "knowledge source"
+      ],
+      "read_first": [
+        "omx_wiki/session-2026-05-16-agent-knowledge-p1-grounding-audit.md",
+        "omx_wiki/session-2026-05-17-agent-knowledge-p3-web-research.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md"
+      ],
+      "deep_read": [
+        ".omx/plans/prd-agent-knowledge-harness-memory-rag.md",
+        ".omx/plans/ralplan-agent-knowledge-harness-p2-local-knowledge-management.md",
+        ".omx/plans/ralplan-agent-knowledge-harness-p3-real-policy-gated-web-research.md",
+        ".omx/context/agent-knowledge-harness-memory-rag-20260514T131623Z.md",
+        ".omx/context/agent-knowledge-harness-p3-real-policy-gated-web-research-20260517T010946Z.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-agent-knowledge-*.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "context-router-memory",
+      "summary": "Backend-owned context assembly, token budgeting, pinned context, compressed summaries, scoped memory, and model-call binding.",
+      "keywords": [
+        "context",
+        "context router",
+        "context assembly",
+        "memory",
+        "token",
+        "token budget",
+        "pinned",
+        "compressed summary",
+        "model call",
+        "context manifest",
+        "long-term memory"
+      ],
+      "read_first": [
+        "omx_wiki/session-2026-05-17-agent-knowledge-p4-context-assembly.md",
+        "omx_wiki/agent-workspace-execution-evidence-architecture.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md"
+      ],
+      "deep_read": [
+        ".omx/plans/ralplan-agent-knowledge-harness-p4-memory-context-router-v2.md",
+        ".omx/context/agent-knowledge-harness-p4-memory-context-router-v2-20260517T063103Z.md",
+        ".omx/specs/deep-interview-context-compression.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-agent-knowledge-*.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "mcp-skills-capabilities",
+      "summary": "Capability registry, MCP/Skills productization, Agent attachments, immutable versions, approvals, and ToolRunner authority.",
+      "keywords": [
+        "mcp",
+        "skill",
+        "skills",
+        "capability",
+        "capability registry",
+        "toolrunner",
+        "tools_json",
+        "tool",
+        "approval",
+        "agent attachment",
+        "capability version"
+      ],
+      "read_first": [
+        "omx_wiki/session-2026-05-17-agent-knowledge-p5-capability-registry.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md"
+      ],
+      "deep_read": [
+        ".omx/plans/prd-agent-knowledge-harness-p5-mcp-skills-productization.md",
+        ".omx/plans/ralplan-agent-knowledge-harness-p5-mcp-skills-productization.md",
+        ".omx/context/agent-knowledge-harness-p5-mcp-skills-productization-20260517T135902Z.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-agent-knowledge-*.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "eval-observability-groundedness",
+      "summary": "Groundedness Eval, forbidden leak boundaries, regression deltas, Run Detail selectors, and Observability projection.",
+      "keywords": [
+        "eval",
+        "groundedness",
+        "observability",
+        "forbidden leak",
+        "regression",
+        "regression delta",
+        "grounding quality",
+        "run detail grounding",
+        "run detail",
+        "eval case",
+        "trace grader"
+      ],
+      "read_first": [
+        "omx_wiki/session-2026-05-18-agent-knowledge-p6-groundedness-eval-observability.md",
+        "omx_wiki/agent-workspace-execution-evidence-architecture.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md"
+      ],
+      "deep_read": [
+        ".omx/plans/ralplan-agent-knowledge-harness-p6-groundedness-eval-observability.md",
+        ".omx/context/agent-knowledge-harness-p6-groundedness-eval-observability-20260517T173624Z.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-agent-knowledge-*.md",
+        "omx_wiki/agent-knowledge-harness-roadmap.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "release-demo-private-deploy",
+      "summary": "P7 release/demo hardening, deterministic seed data, migration/restore smoke, private deployment handoff, and release browser smoke.",
+      "keywords": [
+        "release",
+        "demo",
+        "p7",
+        "seed",
+        "private deploy",
+        "private deployment",
+        "docker compose",
+        "migration",
+        "restore",
+        "browser smoke",
+        "runbook",
+        "handoff"
+      ],
+      "read_first": [
+        "omx_wiki/session-2026-05-18-agent-knowledge-p7-release-demo-hardening.md",
+        "omx_wiki/workspace-demo-ready-constraints.md",
+        "omx_wiki/project-handoff-current-state.md"
+      ],
+      "deep_read": [
+        ".omx/plans/ralplan-agent-knowledge-harness-p7-release-demo-hardening.md",
+        ".omx/plans/prd-agent-knowledge-harness-p7-release-demo-hardening.md",
+        ".omx/plans/test-spec-agent-knowledge-harness-p7-release-demo-hardening.md",
+        ".omx/context/agent-knowledge-harness-p7-release-demo-hardening-20260517T191008Z.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-2026-05-18-agent-knowledge-p7-release-demo-hardening.md",
+        "omx_wiki/project-handoff-current-state.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "frontend-ui-console",
+      "summary": "Agent Console UI, Chinese-first terminology, selectors, Workspace, Run Detail, Agent Studio, and release smoke surfaces.",
+      "keywords": [
+        "frontend",
+        "ui",
+        "console",
+        "selector",
+        "menu",
+        "chinese",
+        "terminology",
+        "agent studio",
+        "workspace",
+        "run detail",
+        "playwright",
+        "vitest"
+      ],
+      "read_first": [
+        "omx_wiki/session-2026-05-18-agent-knowledge-p7-release-demo-hardening.md",
+        "omx_wiki/workspace-demo-ready-constraints.md",
+        "omx_wiki/session-2026-05-13-workspace-browser-smoke.md"
+      ],
+      "deep_read": [
+        ".omx/context/ui-dropdown-selector-unification-20260518T105434Z.md",
+        ".omx/specs/deep-interview-console-chinese-terminology.md",
+        ".omx/plans/prd-console-chinese-terminology.md",
+        ".omx/plans/test-spec-console-chinese-terminology.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-frontend-*.md",
+        "omx_wiki/log.md"
+      ]
+    },
+    {
+      "id": "local-dev-debugging",
+      "summary": "Local backend startup, ports, CORS, PostgreSQL/Alembic, Eval dataset migration, and service recovery traps.",
+      "keywords": [
+        "local dev",
+        "backend",
+        "port",
+        "cors",
+        "postgres",
+        "alembic",
+        "migration",
+        "dataset",
+        "baseline_run_id",
+        "startup",
+        "health"
+      ],
+      "read_first": [
+        "omx_wiki/local-dev-backend-port-cors.md",
+        "omx_wiki/local-dev-eval-dataset-migration.md",
+        "omx_wiki/project-handoff-current-state.md"
+      ],
+      "deep_read": [
+        "docs/runbooks/local-development.md",
+        "docs/runbooks/migrations.md",
+        "docs/runbooks/troubleshooting.md"
+      ],
+      "progress_write_targets": [
+        "docs/ai/task-progress.yaml",
+        "omx_wiki/session-YYYY-MM-DD-local-dev-*.md",
+        "omx_wiki/log.md"
+      ]
+    }
+  ]
+}

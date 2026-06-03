@@ -50,6 +50,11 @@ Thumbs.db
 *.log
 logs/
 *.db
+.omc/
+.vscode/
+.tmp*.png
+pnpm-lock.yaml
+pnpm-workspace.yaml
 
 tmp/
 artifacts/

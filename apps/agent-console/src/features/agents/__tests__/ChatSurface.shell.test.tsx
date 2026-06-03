@@ -195,8 +195,38 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.getByRole("button", { name: "添加照片和文件" })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Include IDE context" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "计划模式" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "追踪目标模式" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "追求目标模式" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "插件 / MCP（模型上下文协议）" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /@read_file/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the composer primary action as Send instead of Resume after a paused answer", () => {
+    const store = useWorkspaceStore.getState();
+    const userNodeId = store.appendNode({
+      parent_id: store.rootNodeId,
+      role: "user",
+      content: "hello",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    store.appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "partial",
+      state: "paused",
+      run_id: "run-paused",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+
+    renderSurface();
+
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "继续生成" })).not.toBeInTheDocument();
   });
 
   it("keeps the model picker beside send and top tools panel in the shell", async () => {
@@ -353,6 +383,34 @@ describe("ChatSurface Workspace shell integration", () => {
     );
   });
 
+  it("uses goal pursuit mode from the compact settings switch", async () => {
+    const user = userEvent.setup();
+    const stream = streamController();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const props = renderSurface({ stream });
+
+    await user.click(screen.getByRole("button", { name: "打开输入设置" }));
+    const goalSwitch = screen.getByRole("switch", { name: "追踪目标模式" });
+    expect(goalSwitch).toHaveClass("inline-flex", "shrink-0");
+    await user.click(goalSwitch);
+    expect(props.onWorkspaceModeChange).toHaveBeenCalledWith("goal");
+
+    await user.type(
+      screen.getByPlaceholderText("描述目标，持续规划并推进执行"),
+      "ship the goal",
+    );
+    await user.keyboard("{Enter}");
+
+    expect(stream.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "ship the goal",
+        mode: "goal",
+      }),
+    );
+    expect(confirmSpy).toHaveBeenCalledWith("确认进入追求目标模式并创建可执行运行？");
+    confirmSpy.mockRestore();
+  });
+
   it("opens a working model picker from slash /model", async () => {
     const user = userEvent.setup();
     const props = renderSurface();
@@ -464,8 +522,13 @@ describe("ChatSurface Workspace shell integration", () => {
   it("compresses context from the usage ring without mutating the token budget", async () => {
     const user = userEvent.setup();
     let compressedNodeId = "";
-    const fetchMock = vi.fn(async () =>
-      new Response(
+    let resolveCompression!: () => void;
+    const compressionPending = new Promise<void>((resolve) => {
+      resolveCompression = resolve;
+    });
+    const fetchMock = vi.fn(async () => {
+      await compressionPending;
+      return new Response(
         JSON.stringify({
           status: "ok",
           cache_status: "recomputed",
@@ -485,8 +548,8 @@ describe("ChatSurface Workspace shell integration", () => {
           error: null,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
     useWorkspaceStore.getState().setContextMaxTokens(1_000_000);
     compressedNodeId = useWorkspaceStore.getState().appendNode({
@@ -507,11 +570,19 @@ describe("ChatSurface Workspace shell integration", () => {
     );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("正在压缩上下文...")).toBeInTheDocument();
+    expect(screen.getByText("摘要中")).toBeInTheDocument();
+    resolveCompression();
     expect(useWorkspaceStore.getState().contextMaxTokens).toBe(1_000_000);
-    expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
-      summary: "compressed summary",
-      status: "ready",
-    });
+    await waitFor(() =>
+      expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
+        summary: "compressed summary",
+        status: "ready",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("正在压缩上下文...")).not.toBeInTheDocument(),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("button", {
@@ -519,6 +590,53 @@ describe("ChatSurface Workspace shell integration", () => {
         }),
       ).toBeInTheDocument(),
     );
+  });
+
+  it("compresses context from the slash command menu", async () => {
+    const user = userEvent.setup();
+    let compressedNodeId = "";
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          cache_status: "recomputed",
+          summary: "slash compressed summary",
+          coverage_node_ids: [compressedNodeId],
+          coverage_path_hash: "c".repeat(64),
+          last_covered_node_id: compressedNodeId,
+          summary_schema_version: "workspace-context-summary-v1",
+          compression_prompt_version: "workspace-context-compression-v1",
+          compressor_provider: "deepseek-flash",
+          compressor_model: "deepseek-v4-flash",
+          estimated_original_tokens: 20,
+          estimated_summary_tokens: 4,
+          estimated_uncovered_tokens: 0,
+          created_at: "2026-05-14T00:00:00Z",
+          updated_at: "2026-05-14T00:00:00Z",
+          error: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    compressedNodeId = useWorkspaceStore.getState().appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "node compressed by slash",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    renderSurface();
+
+    await user.type(screen.getByRole("textbox"), "/compress{Enter}");
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
+      summary: "slash compressed summary",
+      status: "ready",
+    });
   });
 
   it("keeps a compression result for its original branch after the active branch changes", async () => {

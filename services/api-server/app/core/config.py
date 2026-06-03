@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     model_gateway_api_key: str = Field(default="replace-me", alias="MODEL_GATEWAY_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
+    dify_api_key: str = Field(default="", alias="DIFY_API_KEY")
     docker_host: str = Field(default="unix:///var/run/docker.sock", alias="DOCKER_HOST")
     prometheus_base_url: AnyHttpUrl = Field(
         default="http://localhost:9091",
@@ -50,6 +51,18 @@ class Settings(BaseSettings):
         default=90,
         alias="CONTEXT_MANIFEST_RETENTION_DAYS",
     )
+    feature_flags: str = Field(
+        default=(
+            "trusted_url_install,file_upload_install,dify_connector,file_knowledge_upload,"
+            "workspace_auto_orchestration,token_estimated_baseline"
+        ),
+        alias="FEATURE_FLAGS",
+    )
+    capability_trusted_hosts: str = Field(
+        default="github.com,raw.githubusercontent.com,example.com",
+        alias="CAPABILITY_TRUSTED_HOSTS",
+    )
+    mcp_remote_allowed_hosts: str = Field(default="", alias="MCP_REMOTE_ALLOWED_HOSTS")
 
     model_config = SettingsConfigDict(
         case_sensitive=True,

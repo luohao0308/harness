@@ -50,8 +50,9 @@ export type ConversationNode = {
     duration_ms?: number;
     model_call_id?: string | null;
     active_branch_id?: string | null;
-    workspace_mode?: "chat" | "markdown_plan" | "plan";
+    workspace_mode?: "chat" | "markdown_plan" | "plan" | "goal";
     knowledge_grounding?: string | null;
+    orchestration?: Record<string, unknown>;
     error?: ConversationErrorMeta;
     // v2 additive (Design §Data Models → ConversationNode)
     streaming_diagnostic?: "possible_buffering";
@@ -111,6 +112,7 @@ type WorkspaceState = {
   setContextWindowTurns: (turns: number) => void;
   setActiveStream: (stream: WorkspaceStream | null) => void;
   appendNode: (node: Omit<ConversationNode, "id" | "children_ids" | "created_at">) => string;
+  removeLeafNode: (nodeId: string) => void;
   updateNode: (nodeId: string, patch: Partial<ConversationNode>) => void;
   appendContent: (nodeId: string, content: string) => void;
   appendArtifact: (nodeId: string, artifact: ConversationArtifact) => void;
@@ -272,6 +274,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
     return node.id;
   },
+  removeLeafNode: (nodeIdToRemove) =>
+    set((state) => {
+      const node = state.nodesById[nodeIdToRemove];
+      if (!node || node.children_ids.length > 0 || node.id === state.rootNodeId) return state;
+      const nextNodesById = { ...state.nodesById };
+      delete nextNodesById[nodeIdToRemove];
+      const parentId = node.parent_id;
+      if (parentId !== null) {
+        const parent = nextNodesById[parentId];
+        if (parent) {
+          nextNodesById[parentId] = {
+            ...parent,
+            children_ids: parent.children_ids.filter((id) => id !== nodeIdToRemove),
+          };
+        }
+      }
+      return {
+        nodesById: nextNodesById,
+        activeLeafId:
+          state.activeLeafId === nodeIdToRemove
+            ? parentId ?? state.rootNodeId
+            : state.activeLeafId,
+        pinnedNodeIds: state.pinnedNodeIds.filter((id) => id !== nodeIdToRemove),
+        dismissedPlanNodeIds: state.dismissedPlanNodeIds.filter((id) => id !== nodeIdToRemove),
+      };
+    }),
   updateNode: (nodeIdToUpdate, patch) =>
     set((state) => ({
       nodesById: {

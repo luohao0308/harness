@@ -4,7 +4,7 @@ from base64 import b64encode
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib import error, request
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.agents.planner import PLANNER_PROMPT_VERSION
 from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT
 from app.api.schemas import (
+    CacheSourceSummary,
     CountItem,
     EventSourcingArchitectureResponse,
     GrafanaDashboardPage,
@@ -40,6 +41,11 @@ from app.api.schemas import (
     PlannerExecutorArchitectureResponse,
     RuntimeArchitectureResponse,
     SubagentArchitectureResponse,
+    TokenSavingsLowCostRoute,
+    TokenSavingsOmissionReason,
+    TokenSavingsPage,
+    TokenSavingsRunItem,
+    TokenSavingsSummary,
     WarmPoolArchitectureResponse,
     WarmPoolResponse,
 )
@@ -50,6 +56,7 @@ from app.db.models import (
     AgentEvent,
     AgentHandoff,
     AgentRun,
+    ContextAssemblyManifest,
     EvalResult,
     EvalRun,
     ExecutionPlan,
@@ -59,6 +66,7 @@ from app.db.models import (
     Task,
     TaskSnapshot,
     ToolCall,
+    WorkspaceContextCache,
 )
 from app.db.session import get_db_session
 from app.events.event_store import SNAPSHOT_FREQUENCY_EVENTS
@@ -67,6 +75,7 @@ from app.security.auth import Principal, require_role
 from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 
 router = APIRouter(prefix="/observability", tags=["observability"])
+DEFAULT_CONTEXT_CACHE_SOURCES = ("compression_summary", "rag_retrieval", "long_term_memory")
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 
@@ -151,7 +160,519 @@ def get_observability_summary(
             session,
             select(func.count(SandboxInstance.id)).where(SandboxInstance.task_id.in_(task_ids)),
         ),
+        token_optimization=_token_optimization_summary(session=session, task_ids=task_ids),
     )
+
+
+@router.get(
+    "/token-savings",
+    response_model=TokenSavingsPage,
+    summary="查询 Token 节省页面数据",
+    description="返回当前组织的 Token Optimizer 汇总和最近运行证据。",
+)
+def get_token_savings(
+    session: DbSession,
+    principal: Principal,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> TokenSavingsPage:
+    task_ids = select(Task.id).where(Task.organization_id == principal.organization_id)
+    runs = _token_savings_runs(session=session, task_ids=task_ids, limit=limit)
+    summary = _token_savings_summary(
+        session=session,
+        task_ids=task_ids,
+        organization_id=principal.organization_id,
+    )
+    return TokenSavingsPage(
+        generated_at=datetime.now(UTC),
+        summary=summary,
+        runs=runs,
+        next_cursor=None,
+    )
+
+
+def _token_optimization_summary(session: Session, task_ids: object) -> dict:
+    model_rows = list(
+        session.execute(select(ModelCall).where(ModelCall.task_id.in_(task_ids))).scalars()
+    )
+    manifests = list(
+        session.execute(
+            select(ContextAssemblyManifest).where(ContextAssemblyManifest.run_id.in_(task_ids))
+        ).scalars()
+    )
+    prompt_tokens = sum(row.prompt_tokens for row in model_rows)
+    completion_tokens = sum(row.completion_tokens for row in model_rows)
+    saved_tokens = 0
+    cache_hits = 0
+    cache_misses = 0
+    cache_stale = 0
+    cache_sources: dict[str, dict] = {}
+    pruning_manifest_count = 0
+    optimizer_version_ids: set[str] = set()
+    optimizer_decision_count = 0
+    for manifest in manifests:
+        token_budget = (
+            manifest.token_budget_json if isinstance(manifest.token_budget_json, dict) else {}
+        )
+        optimized = token_budget.get("optimized_vs_baseline", {})
+        if isinstance(optimized, dict):
+            saved_tokens += int(optimized.get("estimated_saved_tokens") or 0)
+        if token_budget.get("pruning_applied"):
+            pruning_manifest_count += 1
+        context_cache = _context_cache_from_budget(token_budget)
+        cache_hits += _int_value(context_cache.get("hit_count"))
+        cache_misses += _int_value(context_cache.get("miss_count"))
+        cache_stale += _int_value(context_cache.get("stale_count"))
+        _merge_cache_sources(cache_sources, context_cache.get("sources"))
+        for version_id in token_budget.get("optimizer_capability_version_ids", []):
+            if version_id:
+                optimizer_version_ids.add(str(version_id))
+        decisions = token_budget.get("optimizer_decisions", [])
+        if isinstance(decisions, list):
+            optimizer_decision_count += len(decisions)
+    low_cost_routes = [
+        row
+        for row in model_rows
+        if isinstance(row.request_json, dict)
+        and (
+            row.request_json.get("low_cost_route") is True
+            or row.request_json.get("low_cost_routing_reason")
+        )
+    ]
+    return {
+        "actual_prompt_tokens": prompt_tokens,
+        "actual_completion_tokens": completion_tokens,
+        "actual_total_tokens": prompt_tokens + completion_tokens,
+        "estimated_saved_tokens": saved_tokens,
+        "context_manifest_count": len(manifests),
+        "pruning_manifest_count": pruning_manifest_count,
+        "retrieval_cache_hit_count": cache_hits,
+        "retrieval_cache_miss_count": cache_misses,
+        "retrieval_cache_stale_count": cache_stale,
+        "cache_sources": _cache_source_summary_models(cache_sources),
+        "low_cost_route_count": len(low_cost_routes),
+        "optimizer_capability_version_ids": sorted(optimizer_version_ids),
+        "optimizer_decision_count": optimizer_decision_count,
+    }
+
+
+def _token_savings_summary(
+    session: Session,
+    task_ids: object,
+    organization_id: str | None,
+) -> TokenSavingsSummary:
+    model_rows = list(
+        session.execute(select(ModelCall).where(ModelCall.task_id.in_(task_ids))).scalars()
+    )
+    manifests = list(
+        session.execute(
+            select(ContextAssemblyManifest).where(ContextAssemblyManifest.run_id.in_(task_ids))
+        ).scalars()
+    )
+    prompt_tokens = sum(int(row.prompt_tokens or 0) for row in model_rows)
+    completion_tokens = sum(int(row.completion_tokens or 0) for row in model_rows)
+    saved_tokens = 0
+    candidate_tokens = 0
+    included_tokens = 0
+    omitted_tokens = 0
+    cache_hits = 0
+    cache_misses = 0
+    cache_stale = 0
+    cache_sources: dict[str, dict] = {}
+    pruning_manifest_count = 0
+    optimizer_version_ids: set[str] = set()
+    optimizer_labels: set[str] = set()
+    optimizer_decision_count = 0
+    for manifest in manifests:
+        token_budget = _dict_or_empty(manifest.token_budget_json)
+        token_counts = _token_budget_counts(token_budget)
+        saved_tokens += token_counts["saved"]
+        candidate_tokens += token_counts["candidate"]
+        included_tokens += token_counts["included"]
+        omitted_tokens += token_counts["omitted"]
+        if token_budget.get("pruning_applied"):
+            pruning_manifest_count += 1
+        context_cache = _context_cache_from_budget(token_budget)
+        cache_hits += _int_value(context_cache.get("hit_count"))
+        cache_misses += _int_value(context_cache.get("miss_count"))
+        cache_stale += _int_value(context_cache.get("stale_count"))
+        _merge_cache_sources(cache_sources, context_cache.get("sources"))
+        for version_id in _string_list(token_budget.get("optimizer_capability_version_ids")):
+            optimizer_version_ids.add(version_id)
+        optimizer_labels.update(_optimizer_labels(token_budget))
+        decisions = token_budget.get("optimizer_decisions", [])
+        if isinstance(decisions, list):
+            optimizer_decision_count += len(decisions)
+    persisted_cache = _workspace_context_cache_sources(
+        session=session,
+        organization_id=organization_id,
+    )
+    cache_hits += _int_value(persisted_cache.get("hit_count"))
+    cache_misses += _int_value(persisted_cache.get("miss_count"))
+    cache_stale += _int_value(persisted_cache.get("stale_count"))
+    _merge_cache_sources(cache_sources, persisted_cache.get("sources"))
+    low_cost_routes = [
+        row
+        for row in model_rows
+        if isinstance(row.request_json, dict)
+        and (
+            row.request_json.get("low_cost_route") is True
+            or row.request_json.get("low_cost_routing_reason")
+        )
+    ]
+    savings_percent = round((saved_tokens / candidate_tokens) * 100, 2) if candidate_tokens else 0
+    return TokenSavingsSummary(
+        actual_prompt_tokens=prompt_tokens,
+        actual_completion_tokens=completion_tokens,
+        actual_total_tokens=prompt_tokens + completion_tokens,
+        estimated_candidate_tokens=candidate_tokens,
+        estimated_included_tokens=included_tokens,
+        estimated_omitted_tokens=omitted_tokens,
+        estimated_saved_tokens=saved_tokens,
+        estimated_savings_percent=savings_percent,
+        context_manifest_count=len(manifests),
+        pruning_manifest_count=pruning_manifest_count,
+        retrieval_cache_hit_count=cache_hits,
+        retrieval_cache_miss_count=cache_misses,
+        retrieval_cache_stale_count=cache_stale,
+        cache_sources=_cache_source_summary_models(cache_sources),
+        low_cost_route_count=len(low_cost_routes),
+        optimizer_capability_version_ids=sorted(optimizer_version_ids),
+        optimizer_labels=sorted(optimizer_labels),
+        optimizer_decision_count=optimizer_decision_count,
+    )
+
+
+def _token_savings_runs(
+    *,
+    session: Session,
+    task_ids: object,
+    limit: int,
+) -> list[TokenSavingsRunItem]:
+    rows = list(
+        session.execute(
+            select(Task, ContextAssemblyManifest)
+            .join(ContextAssemblyManifest, ContextAssemblyManifest.run_id == Task.id)
+            .where(Task.id.in_(task_ids))
+            .order_by(ContextAssemblyManifest.created_at.desc(), ContextAssemblyManifest.id.desc())
+            .limit(limit)
+        ).all()
+    )
+    if not rows:
+        return []
+    run_ids = [task.id for task, _manifest in rows]
+    model_calls_by_run: dict[str, list[ModelCall]] = {run_id: [] for run_id in run_ids}
+    model_calls = list(
+        session.execute(select(ModelCall).where(ModelCall.task_id.in_(run_ids))).scalars()
+    )
+    for call in model_calls:
+        model_calls_by_run.setdefault(call.task_id, []).append(call)
+
+    items: list[TokenSavingsRunItem] = []
+    for task, manifest in rows:
+        token_budget = _dict_or_empty(manifest.token_budget_json)
+        token_counts = _token_budget_counts(token_budget)
+        context_cache = _context_cache_from_budget(token_budget)
+        run_model_calls = model_calls_by_run.get(task.id, [])
+        prompt_tokens = sum(int(call.prompt_tokens or 0) for call in run_model_calls)
+        completion_tokens = sum(int(call.completion_tokens or 0) for call in run_model_calls)
+        version_ids = _string_list(token_budget.get("optimizer_capability_version_ids"))
+        labels = _optimizer_labels(token_budget)
+        decisions = token_budget.get("optimizer_decisions", [])
+        items.append(
+            TokenSavingsRunItem(
+                run_id=task.id,
+                agent_id=task.agent_id,
+                title=task.title,
+                status=task.status,
+                created_at=task.created_at,
+                updated_at=task.updated_at,
+                context_manifest_id=manifest.id,
+                estimated_candidate_tokens=token_counts["candidate"],
+                estimated_included_tokens=token_counts["included"],
+                estimated_omitted_tokens=token_counts["omitted"],
+                estimated_saved_tokens=token_counts["saved"],
+                estimated_savings_percent=token_counts["percent"],
+                actual_prompt_tokens=prompt_tokens,
+                actual_completion_tokens=completion_tokens,
+                actual_total_tokens=prompt_tokens + completion_tokens,
+                included_count=len(manifest.included_refs_json or []),
+                omitted_count=len(manifest.omitted_refs_json or []),
+                pruning_applied=bool(token_budget.get("pruning_applied")),
+                retrieval_cache_hit_count=_int_value(context_cache.get("hit_count")),
+                retrieval_cache_miss_count=_int_value(context_cache.get("miss_count")),
+                retrieval_cache_stale_count=_int_value(context_cache.get("stale_count")),
+                cache_sources=_cache_source_summary_models_from_context(context_cache),
+                low_cost_routes=_low_cost_routes_for_calls(run_model_calls),
+                optimizer_capability_version_ids=version_ids,
+                optimizer_labels=labels,
+                optimizer_policy_hash=token_budget.get("optimizer_policy_hash"),
+                optimizer_decision_count=len(decisions) if isinstance(decisions, list) else 0,
+                omission_reasons=_omission_reasons(manifest.omitted_refs_json),
+            )
+        )
+    return items
+
+
+def _token_budget_counts(token_budget: dict) -> dict[str, int | float]:
+    optimized = _dict_or_empty(token_budget.get("optimized_vs_baseline"))
+    saved = _int_value(optimized.get("estimated_saved_tokens"))
+    omitted = _int_value(token_budget.get("estimated_omitted_tokens")) or saved
+    included = _int_value(token_budget.get("estimated_included_tokens")) or _int_value(
+        optimized.get("optimized_estimated_tokens")
+    )
+    candidate = _int_value(token_budget.get("estimated_candidate_tokens")) or _int_value(
+        optimized.get("baseline_estimated_tokens")
+    )
+    if not candidate and included + omitted:
+        candidate = included + omitted
+    if not included and candidate:
+        included = max(candidate - omitted, 0)
+    percent = _float_value(optimized.get("estimated_savings_percent"))
+    if not percent and candidate:
+        percent = round((saved / candidate) * 100, 2)
+    return {
+        "candidate": candidate,
+        "included": included,
+        "omitted": omitted,
+        "saved": saved,
+        "percent": percent,
+    }
+
+
+def _dict_or_empty(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _context_cache_from_budget(token_budget: dict) -> dict:
+    context_cache = _dict_or_empty(token_budget.get("context_cache"))
+    if context_cache:
+        return context_cache
+    retrieval_cache = _dict_or_empty(token_budget.get("retrieval_cache"))
+    if not retrieval_cache:
+        return {}
+    return {
+        "hit_count": _int_value(retrieval_cache.get("hit_count")),
+        "miss_count": _int_value(retrieval_cache.get("miss_count")),
+        "stale_count": _int_value(retrieval_cache.get("stale_count")),
+        "status_counts": _dict_or_empty(retrieval_cache.get("status_counts")),
+        "sources": [
+            {
+                "cache_source": "legacy_retrieval_cache",
+                "label": "上下文缓存",
+                "hit_count": _int_value(retrieval_cache.get("hit_count")),
+                "miss_count": _int_value(retrieval_cache.get("miss_count")),
+                "stale_count": _int_value(retrieval_cache.get("stale_count")),
+                "estimated_saved_tokens": 0,
+                "reason": None,
+            }
+        ],
+    }
+
+
+def _merge_cache_sources(target: dict[str, dict], sources: object) -> None:
+    if not isinstance(sources, list):
+        return
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        key = str(source.get("cache_source") or "unknown")
+        row = target.setdefault(
+            key,
+            {
+                "cache_source": key,
+                "label": str(source.get("label") or _cache_source_label(key)),
+                "hit_count": 0,
+                "miss_count": 0,
+                "stale_count": 0,
+                "estimated_saved_tokens": 0,
+                "reason": None,
+            },
+        )
+        row["hit_count"] += _int_value(source.get("hit_count"))
+        row["miss_count"] += _int_value(source.get("miss_count"))
+        row["stale_count"] += _int_value(source.get("stale_count"))
+        row["estimated_saved_tokens"] += _int_value(source.get("estimated_saved_tokens"))
+        if source.get("reason"):
+            row["reason"] = str(source["reason"])
+
+
+def _workspace_context_cache_sources(
+    *,
+    session: Session,
+    organization_id: str | None,
+) -> dict[str, Any]:
+    rows = list(
+        session.execute(
+            select(WorkspaceContextCache).where(
+                WorkspaceContextCache.organization_id == organization_id,
+                WorkspaceContextCache.status == "active",
+            )
+        ).scalars()
+    )
+    sources = []
+    for row in rows:
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        sources.append(
+            {
+                "cache_source": row.cache_source,
+                "label": _cache_source_label(row.cache_source),
+                "hit_count": row.hit_count,
+                "miss_count": row.miss_count,
+                "stale_count": row.stale_count,
+                "estimated_saved_tokens": row.estimated_saved_tokens,
+                "reason": metadata.get("reason"),
+            }
+        )
+    return {
+        "hit_count": sum(row.hit_count for row in rows),
+        "miss_count": sum(row.miss_count for row in rows),
+        "stale_count": sum(row.stale_count for row in rows),
+        "sources": sources,
+    }
+
+
+def _cache_source_summary_models_from_context(context_cache: dict) -> list[CacheSourceSummary]:
+    rows: dict[str, dict] = {}
+    _merge_cache_sources(rows, context_cache.get("sources"))
+    return _cache_source_summary_models(rows)
+
+
+def _cache_source_summary_models(rows: dict[str, dict]) -> list[CacheSourceSummary]:
+    for source in DEFAULT_CONTEXT_CACHE_SOURCES:
+        rows.setdefault(
+            source,
+            {
+                "cache_source": source,
+                "label": _cache_source_label(source),
+                "hit_count": 0,
+                "miss_count": 0,
+                "stale_count": 0,
+                "estimated_saved_tokens": 0,
+                "reason": None,
+            },
+        )
+    out = []
+    ordered_keys = [
+        *DEFAULT_CONTEXT_CACHE_SOURCES,
+        *sorted(key for key in rows if key not in DEFAULT_CONTEXT_CACHE_SOURCES),
+    ]
+    for key in ordered_keys:
+        row = rows[key]
+        hit_count = _int_value(row.get("hit_count"))
+        miss_count = _int_value(row.get("miss_count"))
+        stale_count = _int_value(row.get("stale_count"))
+        total = hit_count + miss_count + stale_count
+        hit_rate = round((hit_count / total) * 100, 2) if total else 0
+        out.append(
+            CacheSourceSummary(
+                cache_source=key,
+                label=str(row.get("label") or _cache_source_label(key)),
+                hit_count=hit_count,
+                miss_count=miss_count,
+                stale_count=stale_count,
+                estimated_saved_tokens=_int_value(row.get("estimated_saved_tokens")),
+                hit_rate=hit_rate,
+                reason=str(row["reason"]) if row.get("reason") else None,
+            )
+        )
+    return out
+
+
+def _cache_source_label(source: str) -> str:
+    return {
+        "compression_summary": "摘要缓存",
+        "rag_retrieval": "RAG 检索",
+        "long_term_memory": "长期记忆",
+        "legacy_retrieval_cache": "上下文缓存",
+    }.get(source, source)
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value: object) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item]
+
+
+def _optimizer_labels(token_budget: dict) -> list[str]:
+    labels: set[str] = set()
+    decisions = token_budget.get("optimizer_decisions", [])
+    if isinstance(decisions, list):
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                continue
+            package_name = str(decision.get("package_name") or "")
+            for preset_id, label in _optimizer_preset_labels().items():
+                if f"builtin-token-optimizer-{preset_id}" == package_name:
+                    labels.add(label)
+    version_ids = _string_list(token_budget.get("optimizer_capability_version_ids"))
+    if version_ids and not labels:
+        labels.add("自定义优化器")
+    return sorted(labels)
+
+
+def _optimizer_preset_labels() -> dict[str, str]:
+    return {
+        "conservative": "保守省 Token",
+        "balanced": "均衡",
+        "aggressive": "强力省 Token",
+    }
+
+
+def _low_cost_routes_for_calls(model_calls: list[ModelCall]) -> list[TokenSavingsLowCostRoute]:
+    routes: list[TokenSavingsLowCostRoute] = []
+    for call in model_calls:
+        reason = _low_cost_route_reason(call)
+        if reason is None:
+            continue
+        routes.append(
+            TokenSavingsLowCostRoute(
+                model_call_id=call.id,
+                model_name=call.model_name,
+                reason=reason,
+            )
+        )
+    return routes
+
+
+def _low_cost_route_reason(call: ModelCall) -> str | None:
+    for payload in (call.request_json, call.response_json):
+        if not isinstance(payload, dict):
+            continue
+        reason = payload.get("low_cost_routing_reason") or payload.get("model_routing_reason")
+        if reason:
+            return str(reason)
+        if payload.get("low_cost_route") is True:
+            return "low_cost_route"
+    return None
+
+
+def _omission_reasons(omitted_refs: object) -> list[TokenSavingsOmissionReason]:
+    counts: dict[str, int] = {}
+    if not isinstance(omitted_refs, list):
+        return []
+    for ref in omitted_refs:
+        if not isinstance(ref, dict):
+            continue
+        reason = str(ref.get("omission_reason") or "token_budget")
+        counts[reason] = counts.get(reason, 0) + 1
+    return [
+        TokenSavingsOmissionReason(reason=reason, count=count)
+        for reason, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 
 @router.get(

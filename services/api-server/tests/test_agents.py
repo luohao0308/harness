@@ -6,19 +6,25 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.agents.model_gateway import ModelGatewayError, ModelResponse, ModelStreamChunk
 from app.agents.planner import DeterministicPlanner
-from app.api.agents import _normalize_grounding_citations
+from app.api.agents import _create_workspace_chat_run, _normalize_grounding_citations
 from app.db.models import (
+    AdminAuditEvent,
     Agent,
     AgentAssignment,
     AgentCapabilityAttachment,
     AgentEvent,
+    AgentRun,
+    Capability,
+    CapabilityVersion,
     CitationRecord,
     ContextAssemblyManifest,
     ExecutionPlan,
+    KnowledgeDocument,
+    KnowledgeSource,
     ModelCall,
     SandboxInstance,
     SystemSetting,
@@ -28,11 +34,14 @@ from app.db.models import (
     ToolCall,
     utc_now,
 )
+from app.knowledge import KnowledgeIngestionError, ingest_knowledge_source
+from app.knowledge_dify import DifyRetrievalResult
 from app.main import app
 from app.sandbox.docker_manager import SandboxCommandResult
 from app.tools.capabilities import CapabilityRegistry
 from app.workers.agent_assignment_worker import execute_agent_assignment
 from tests.conftest import AUTH_HEADERS
+from tests.test_knowledge_rag import _ensure_agent, _two_chunk_content
 
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
@@ -65,6 +74,300 @@ def test_normalize_grounding_citations_supports_web_citation_keys() -> None:
     assert "[W1]" in normalized
     assert "[W999]" not in normalized
     assert "[unsupported-citation]" in normalized
+
+
+def test_agent_studio_create_clone_and_attach_builtin_capability(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents",
+        headers=AUTH_HEADERS,
+        json={
+            "id": "studio-agent",
+            "name": "Studio Agent",
+            "description": "Created from Agent Studio",
+            "role": "researcher",
+            "model_provider": "default",
+            "model_name": "default",
+            "system_prompt": "Answer with grounded evidence.",
+            "tools_json": ["read_file"],
+            "routing_tags": ["workspace"],
+            "max_parallel_assignments": 2,
+            "token_budget": 4096,
+            "template_id": "research-template",
+        },
+    )
+    cloned = client.post(
+        "/api/agents/studio-agent/clone",
+        headers=AUTH_HEADERS,
+        json={"id": "studio-agent-clone", "name": "Studio Agent Clone"},
+    )
+    attached = client.post(
+        "/api/agents/studio-agent/capabilities/attachments",
+        headers=AUTH_HEADERS,
+        json={
+            "capability_id": "mcp_context_search",
+            "capability_version_id": None,
+            "enabled": True,
+            "priority": 10,
+        },
+    )
+
+    assert created.status_code == 201
+    assert created.json()["id"] == "studio-agent"
+    assert cloned.status_code == 201
+    assert cloned.json()["id"] == "studio-agent-clone"
+    assert cloned.json()["tools_json"] == ["read_file"]
+    assert attached.status_code == 201
+    assert attached.json()["status"] == "attached"
+    assert attached.json()["agent_id"] == "studio-agent"
+    assert attached.json()["enabled"] is True
+    assert attached.json()["priority"] == 10
+
+    agent = db_session.get(Agent, "studio-agent")
+    assert agent is not None
+    assert "mcp_context_search" in agent.tools_json
+    attachment = db_session.execute(
+        select(AgentCapabilityAttachment).where(
+            AgentCapabilityAttachment.agent_id == "studio-agent",
+        )
+    ).scalar_one()
+    assert attachment.capability_version_id == attached.json()["capability_version_id"]
+
+
+def test_agent_studio_attach_rejects_mismatched_capability_version(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    client.get("/api/agents", headers=AUTH_HEADERS)
+    read_file_version = CapabilityRegistry(db_session, "dev-org").ensure_builtin_capabilities()[
+        "read_file"
+    ]
+    db_session.commit()
+
+    response = client.post(
+        "/api/agents/default/capabilities/attachments",
+        headers=AUTH_HEADERS,
+        json={
+            "capability_id": "list_files",
+            "capability_version_id": read_file_version.id,
+            "enabled": True,
+            "priority": 10,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Capability version does not match capability_id"
+
+
+def test_agent_token_optimizer_presets_are_builtin_and_manifest_free() -> None:
+    response = TestClient(app).get(
+        "/api/agents/token-optimizer/presets",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200
+    presets = response.json()["items"]
+    assert [preset["preset_id"] for preset in presets] == [
+        "off",
+        "conservative",
+        "balanced",
+        "aggressive",
+    ]
+    assert {preset["display_name"] for preset in presets} >= {
+        "关闭",
+        "保守省 Token",
+        "均衡",
+        "强力省 Token",
+    }
+    assert all("optimizer" not in preset for preset in presets)
+    assert next(preset for preset in presets if preset["preset_id"] == "off")["enabled"] is False
+    assert next(preset for preset in presets if preset["preset_id"] == "balanced")[
+        "priority"
+    ] == 5
+
+
+def test_agent_token_optimizer_selects_builtin_preset_attachment(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+
+    selected = client.post(
+        "/api/agents/default/token-optimizer",
+        headers=AUTH_HEADERS,
+        json={"preset_id": "balanced"},
+    )
+    agent_response = client.get("/api/agents/default", headers=AUTH_HEADERS)
+
+    assert selected.status_code == 200
+    payload = selected.json()
+    assert payload["status"] == "selected"
+    assert payload["preset_id"] == "balanced"
+    assert payload["enabled"] is True
+    assert payload["priority"] == 5
+    assert payload["capability_id"]
+    assert payload["capability_version_id"]
+
+    capability = db_session.get(Capability, payload["capability_id"])
+    version = db_session.get(CapabilityVersion, payload["capability_version_id"])
+    attachment = db_session.get(AgentCapabilityAttachment, payload["attachment_id"])
+    assert capability is not None
+    assert capability.capability_key == "builtin:context-optimizer:balanced"
+    assert capability.type == "context_optimizer"
+    assert capability.current_version_id == payload["capability_version_id"]
+    assert version is not None
+    assert version.capability_id == capability.id
+    assert version.content_json["package_manifest"]["optimizer"][
+        "max_candidate_tokens_ratio"
+    ] == 0.8
+    assert attachment is not None
+    assert attachment.agent_id == "default"
+    assert attachment.enabled is True
+    assert attachment.priority == 5
+
+    assert agent_response.status_code == 200
+    attachments = agent_response.json()["capability_attachments"]
+    assert any(
+        item["capability_key"] == "builtin:context-optimizer:balanced"
+        and item["enabled"] is True
+        and item["capability_type"] == "context_optimizer"
+        for item in attachments
+    )
+
+
+def test_agent_token_optimizer_switches_presets_and_disables_previous(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    assert client.post(
+        "/api/agents/default/token-optimizer",
+        headers=AUTH_HEADERS,
+        json={"preset_id": "balanced"},
+    ).status_code == 200
+
+    selected = client.post(
+        "/api/agents/default/token-optimizer",
+        headers=AUTH_HEADERS,
+        json={"preset_id": "aggressive"},
+    )
+
+    assert selected.status_code == 200
+    rows = list(
+        db_session.execute(
+            select(AgentCapabilityAttachment, Capability)
+            .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+            .where(
+                AgentCapabilityAttachment.agent_id == "default",
+                Capability.type == "context_optimizer",
+            )
+        ).all()
+    )
+    by_key = {capability.capability_key: attachment for attachment, capability in rows}
+    assert by_key["builtin:context-optimizer:balanced"].enabled is False
+    assert by_key["builtin:context-optimizer:aggressive"].enabled is True
+    assert by_key["builtin:context-optimizer:aggressive"].priority == 5
+
+
+def test_agent_token_optimizer_off_disables_optimizer_attachments(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    assert client.post(
+        "/api/agents/default/token-optimizer",
+        headers=AUTH_HEADERS,
+        json={"preset_id": "conservative"},
+    ).status_code == 200
+
+    disabled = client.post(
+        "/api/agents/default/token-optimizer",
+        headers=AUTH_HEADERS,
+        json={"preset_id": "off"},
+    )
+
+    assert disabled.status_code == 200
+    assert disabled.json()["status"] == "disabled"
+    assert disabled.json()["enabled"] is False
+    rows = list(
+        db_session.execute(
+            select(AgentCapabilityAttachment)
+            .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+            .where(
+                AgentCapabilityAttachment.agent_id == "default",
+                Capability.type == "context_optimizer",
+            )
+        ).scalars()
+    )
+    assert rows
+    assert all(row.enabled is False for row in rows)
+
+
+def test_knowledge_ingestion_error_is_audited_before_value_error_fallback(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_ingest(session: Session, **kwargs):
+        source = KnowledgeSource(
+            organization_id=kwargs["organization_id"],
+            agent_id=kwargs["agent_id"],
+            name=kwargs["name"],
+            description=kwargs["description"],
+            source_type=kwargs["source_type"],
+            status="ACTIVE",
+            health_status="ERROR",
+            last_ingestion_error="fixture ingestion failed",
+            created_by=kwargs["created_by"],
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        session.add(source)
+        session.flush()
+        document = KnowledgeDocument(
+            source_id=source.id,
+            organization_id=kwargs["organization_id"],
+            agent_id=kwargs["agent_id"],
+            title=kwargs["title"],
+            uri=kwargs["uri"],
+            content_sha256="a" * 64,
+            mime_type=kwargs["mime_type"],
+            status="FAILED",
+            ingestion_error="fixture ingestion failed",
+            created_by=kwargs["created_by"],
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        session.add(document)
+        session.flush()
+        raise KnowledgeIngestionError(
+            "fixture ingestion failed",
+            source=source,
+            document=document,
+        )
+
+    monkeypatch.setattr("app.api.agents.ingest_knowledge_source", fake_ingest)
+
+    response = TestClient(app).post(
+        "/api/agents/default/knowledge/sources",
+        headers=AUTH_HEADERS,
+        json={
+            "name": "broken-source",
+            "description": "",
+            "source_type": "text",
+            "title": "Broken",
+            "content": "will fail after source/document creation",
+            "uri": "broken.txt",
+            "mime_type": "text/plain",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "fixture ingestion failed"
+    audit = db_session.execute(
+        select(AdminAuditEvent).where(AdminAuditEvent.action == "document_import_failed")
+    ).scalar_one()
+    assert audit.payload_json["document_id"] is not None
+    assert audit.payload_json["after"]["error"] == "fixture ingestion failed"
 
 
 class FakeWarmPoolManager:
@@ -132,6 +435,17 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
 
     monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
 
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.context_assembly_v2_enabled",
+            value_json={"enabled": False},
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
     client = TestClient(app)
     response = client.post(
         "/api/agents/default/runs/chat/stream",
@@ -192,6 +506,215 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
     }
 
 
+def test_agent_workspace_chat_stream_surfaces_dify_connector_secret_failure(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.knowledge.resolve_connector_secret_ref", lambda *_args, **_kwargs: "")
+    client = TestClient(app)
+    assert client.get("/api/agents/default", headers=AUTH_HEADERS).status_code == 200
+    ingest_knowledge_source(
+        db_session,
+        organization_id="dev-org",
+        agent_id="default",
+        name="Dify Connector",
+        description="Dify runtime connector",
+        source_type="connector",
+        title="Dify API Connector",
+        content="Dify connector config only",
+        uri="https://api.dify.ai/v1",
+        mime_type="text/markdown",
+        created_by="dev-engineer",
+        idempotency_key="dify-secret-failure",
+        connector_settings_json={
+            "provider": "dify",
+            "secret_ref": "secret://dify",
+            "endpoint": "https://api.dify.ai/v1",
+            "dataset_id": "dataset-123",
+        },
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "only Dify can answer this runtime question",
+            "messages": [
+                {
+                    "id": "user-dify-secret-failure",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "only Dify can answer this runtime question",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-dify-secret-failure",
+            "active_branch_id": "branch-dify-secret-failure",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    done = next(payload for event, payload in events if event == "done")
+    assert "Dify connector is configured" in done["knowledge_grounding"]
+    assert "API Key secret value" in done["knowledge_grounding"]
+    workspace = client.get(
+        f"/api/agents/runs/{done['run_id']}/workspace",
+        headers=AUTH_HEADERS,
+    )
+    assert workspace.status_code == 200
+    grounding = workspace.json()["knowledge_grounding"]
+    assert "Dify connector is configured" in grounding["evidence_message"]
+    assert grounding["retrieval_session"]["metadata_json"]["connector_attempt_count"] == 1
+    assert grounding["retrieval_session"]["metadata_json"]["connector_secret_resolved"] is False
+    assert [
+        audit
+        for audit in grounding["policy_audits"]
+        if audit["source_kind"] == "dify_connector"
+    ]
+
+
+def test_agent_workspace_chat_stream_falls_back_when_model_ignores_dify_evidence(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ensure_agent(db_session, "default")
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.context_assembly_v2_enabled",
+            value_json={"enabled": False},
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    client = TestClient(app)
+    created = client.post(
+        "/api/agents/default/knowledge/sources",
+        headers=ADMIN_HEADERS,
+        json={
+            "name": "dify-company-vision",
+            "description": "Dify runtime retrieval",
+            "source_type": "connector",
+            "title": "Dify Company Vision",
+            "content": _two_chunk_content("dify config only beacon"),
+            "mime_type": "text/markdown",
+            "connector_settings_json": {
+                "provider": "dify",
+                "secret_ref": "secret://dify",
+                "endpoint": "https://api.dify.ai/v1",
+                "dataset_id": "dataset-123",
+            },
+        },
+    )
+    assert created.status_code == 201
+
+    class Adapter:
+        provider = "dify"
+
+        def retrieve(self, **kwargs):
+            return [
+                DifyRetrievalResult(
+                    content=(
+                        "企业愿景\n"
+                        "> **成为客户最信赖的视觉创意伙伴，用设计创造商业价值**"
+                    ),
+                    rank=1,
+                    score=0.91,
+                    dataset_id="dataset-123",
+                    segment_id="segment-1",
+                    document_id="dify-document-1",
+                    document_name="Dify Doc",
+                    position=1,
+                ),
+                DifyRetrievalResult(
+                    content=(
+                        "长期愿景\n"
+                        "- 成为具有国际影响力的创意设计公司\n"
+                        "- 打造中国设计行业的标杆\n"
+                        "- 推动中国设计走向世界"
+                    ),
+                    rank=2,
+                    score=0.88,
+                    dataset_id="dataset-123",
+                    segment_id="segment-2",
+                    document_id="dify-document-2",
+                    document_name="Dify Doc",
+                    position=2,
+                ),
+            ]
+
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        yield ModelStreamChunk(
+            text=(
+                "由于你没有指明具体是哪家公司，我暂时无法给出准确的愿景和价值观表述。"
+                "如果你是在问当前这个 **AI Harness Workspace Pro** 平台背后公司的信息，"
+                "我目前的知识库中也没有收录到相关的公开资料。\n\n"
+                "如果你能补充一下公司名称或提供更多背景，我可以尝试为你查找或整理对应的内容。"
+            )
+        )
+        yield ModelStreamChunk(
+            usage={"prompt_tokens": 12, "completion_tokens": 8},
+            raw_response={"mode": "test-chat"},
+            done=True,
+        )
+
+    monkeypatch.setattr(
+        "app.knowledge.resolve_connector_secret_ref",
+        lambda *_args, **_kwargs: "resolved-dify-key",
+    )
+    monkeypatch.setattr("app.knowledge.get_dify_retrieval_adapter", lambda provider: Adapter())
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+
+    response = client.post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "goal": "公司的愿景与价值观是什么",
+            "messages": [
+                {
+                    "id": "user-dify-grounding-fallback",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "公司的愿景与价值观是什么",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-dify-grounding-fallback",
+            "active_branch_id": "branch-dify-grounding-fallback",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    full_answer = "".join(payload["content"] for event, payload in events if event == "delta")
+    done = next(payload for event, payload in events if event == "done")
+
+    assert "没有指明具体是哪家公司" not in full_answer
+    assert "补充一下公司名称" not in full_answer
+    assert "成为客户最信赖的视觉创意伙伴" in full_answer
+    assert "打造中国设计行业的标杆" in full_answer
+    assert "[D1]" in full_answer
+    assert "[D2]" in full_answer
+    assert done["knowledge_grounding"] == (
+        "Local knowledge is insufficient; Dify connector grounded the answer."
+    )
+
+
 def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
     db_session: Session,
     monkeypatch,
@@ -207,6 +730,17 @@ def test_agent_workspace_chat_stream_rewrites_unbound_citation_keys(
         )
 
     monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.context_assembly_v2_enabled",
+            value_json={"enabled": False},
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
 
     client = TestClient(app)
     response = client.post(
@@ -396,6 +930,235 @@ def test_agent_workspace_context_compression_endpoint_excludes_pinned_and_hashes
     assert "这条必须 raw 注入" not in prompt
 
 
+def test_agent_workspace_context_compression_uses_server_cache(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    calls = {"count": 0}
+
+    def fake_complete(self, request_payload):
+        calls["count"] += 1
+        return ModelResponse(
+            content="server cached summary",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 40, "completion_tokens": 8},
+            raw_response={"mode": "compression-cache-test"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    body = {
+        "model_provider": "default",
+        "model_name": "default",
+        "messages": [
+            {
+                "id": "old-user-cache",
+                "parent_id": None,
+                "children_ids": [],
+                "role": "user",
+                "content": "cache this compression",
+                "state": "done",
+                "metadata": {},
+                "tool_calls": [],
+                "artifacts": [],
+                "created_at": "2026-05-14T00:00:00Z",
+            },
+        ],
+        "pinned_node_ids": [],
+        "summary_schema_version": "workspace-context-summary-v1",
+        "compression_prompt_version": "workspace-context-compression-v1",
+    }
+    client = TestClient(app)
+
+    first = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+    second = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["cache_status"] == "recomputed"
+    assert second.json()["cache_status"] == "accepted"
+    assert second.json()["summary"] == "server cached summary"
+    assert calls["count"] == 1
+
+
+def test_agent_workspace_context_compression_does_not_trust_client_summary(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    calls = {"count": 0}
+
+    def fake_complete(self, request_payload):
+        calls["count"] += 1
+        return ModelResponse(
+            content="server recomputed summary",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 40, "completion_tokens": 8},
+            raw_response={"mode": "compression-client-hint-test"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    body = {
+        "model_provider": "default",
+        "model_name": "default",
+        "messages": [
+            {
+                "id": "old-user-client-hint",
+                "parent_id": None,
+                "children_ids": [],
+                "role": "user",
+                "content": "client hint must not seed trusted cache",
+                "state": "done",
+                "metadata": {},
+                "tool_calls": [],
+                "artifacts": [],
+                "created_at": "2026-05-14T00:00:00Z",
+            },
+        ],
+        "pinned_node_ids": [],
+        "existing_summary": "untrusted client supplied summary",
+        "prior_coverage_node_ids": ["old-user-client-hint"],
+        "summary_schema_version": "workspace-context-summary-v1",
+        "compression_prompt_version": "workspace-context-compression-v1",
+        "compressor_provider": "default",
+        "compressor_model": "default",
+    }
+    client = TestClient(app)
+
+    body["prior_coverage_path_hash"] = ""
+    first = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+    assert first.status_code == 200
+    coverage_hash = first.json()["coverage_path_hash"]
+
+    body["prior_coverage_path_hash"] = coverage_hash
+    second = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+
+    assert second.status_code == 200
+    assert second.json()["cache_status"] == "accepted"
+    assert second.json()["summary"] == "server recomputed summary"
+    assert second.json()["summary"] != "untrusted client supplied summary"
+    assert calls["count"] == 1
+
+
+def test_agent_workspace_context_compression_server_cache_ignores_stale_client_hint(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    calls = {"count": 0}
+
+    def fake_complete(self, request_payload):
+        calls["count"] += 1
+        return ModelResponse(
+            content="server cache wins over stale hint",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 40, "completion_tokens": 8},
+            raw_response={"mode": "compression-stale-client-hint-test"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    body = {
+        "model_provider": "default",
+        "model_name": "default",
+        "messages": [
+            {
+                "id": "old-user-stale-hint",
+                "parent_id": None,
+                "children_ids": [],
+                "role": "user",
+                "content": "server cache should ignore stale client hint",
+                "state": "done",
+                "metadata": {},
+                "tool_calls": [],
+                "artifacts": [],
+                "created_at": "2026-05-14T00:00:00Z",
+            },
+        ],
+        "pinned_node_ids": [],
+        "summary_schema_version": "workspace-context-summary-v1",
+        "compression_prompt_version": "workspace-context-compression-v1",
+    }
+    client = TestClient(app)
+
+    first = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+    stale_hint_body = {
+        **body,
+        "existing_summary": "stale client supplied summary",
+        "prior_coverage_node_ids": ["old-user-stale-hint"],
+        "prior_coverage_path_hash": "not-the-current-path-hash",
+        "compressor_provider": "default",
+        "compressor_model": "default",
+    }
+    second = client.post(
+        "/api/agents/default/context/compress",
+        headers=AUTH_HEADERS,
+        json=stale_hint_body,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["cache_status"] == "recomputed"
+    assert second.json()["cache_status"] == "accepted"
+    assert second.json()["summary"] == "server cache wins over stale hint"
+    assert calls["count"] == 1
+
+
+def test_agent_workspace_context_compression_cache_survives_session_close(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    calls = {"count": 0}
+
+    def fake_complete(self, request_payload):
+        calls["count"] += 1
+        return ModelResponse(
+            content="persisted server cached summary",
+            model_provider=request_payload.model_provider,
+            model_name=request_payload.model_name,
+            usage={"prompt_tokens": 40, "completion_tokens": 8},
+            raw_response={"mode": "compression-cache-persist-test"},
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    body = {
+        "model_provider": "default",
+        "model_name": "default",
+        "messages": [
+            {
+                "id": "old-user-persist-cache",
+                "parent_id": None,
+                "children_ids": [],
+                "role": "user",
+                "content": "persist this compression cache",
+                "state": "done",
+                "metadata": {},
+                "tool_calls": [],
+                "artifacts": [],
+                "created_at": "2026-05-14T00:00:00Z",
+            },
+        ],
+        "pinned_node_ids": [],
+        "summary_schema_version": "workspace-context-summary-v1",
+        "compression_prompt_version": "workspace-context-compression-v1",
+    }
+    client = TestClient(app)
+
+    first = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+    db_session.rollback()
+    second = client.post("/api/agents/default/context/compress", headers=AUTH_HEADERS, json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["cache_status"] == "recomputed"
+    assert second.json()["cache_status"] == "accepted"
+    assert second.json()["summary"] == "persisted server cached summary"
+    assert calls["count"] == 1
+
+
 def test_agent_workspace_chat_prompt_orders_compressed_pinned_recent(
     db_session: Session,
     monkeypatch,
@@ -413,6 +1176,17 @@ def test_agent_workspace_chat_prompt_orders_compressed_pinned_recent(
         )
 
     monkeypatch.setattr("app.api.agents.AuditedModelGateway.complete", fake_complete)
+
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.context_assembly_v2_enabled",
+            value_json={"enabled": False},
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
 
     client = TestClient(app)
     response = client.post(
@@ -812,6 +1586,107 @@ def test_agent_workspace_pro_markdown_plan_streams_markdown_plan_without_plan_ac
     assert db_session.execute(select(ToolCall)).scalar_one_or_none() is None
 
 
+
+
+def test_agent_workspace_chat_force_multi_agent_persists_router_projection(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "orchestration_mode": "multi_agent",
+            "goal": "Coordinate a multi-agent review of the current plan",
+            "messages": [
+                {
+                    "id": "user-force-multi",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "Coordinate a multi-agent review of the current plan",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-force-multi",
+            "active_branch_id": "branch-force-multi",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    orchestration = next(payload for event, payload in events if event == "orchestration")
+    assert orchestration["mode"] == "multi_agent"
+    assert orchestration["assignment_ids"]
+    assert "default" in orchestration["selected_agent_ids"]
+    assert orchestration["handoff_ids"]
+    run_id = orchestration["run_id"]
+
+    workspace = TestClient(app).get(f"/api/agents/runs/{run_id}/workspace", headers=AUTH_HEADERS)
+    assert workspace.status_code == 200
+    payload = workspace.json()
+    assert payload["assignments"]
+    assert payload["handoffs"]
+    assert any(event["event_type"] == "AGENT_SELECTED" for event in payload["events"])
+
+
+def test_agent_workspace_chat_force_subagent_persists_inspectable_agent_run(
+    db_session: Session,
+) -> None:
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "chat",
+            "orchestration_mode": "subagent",
+            "goal": "Use a subagent to inspect the release checklist",
+            "messages": [
+                {
+                    "id": "user-force-subagent",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "Use a subagent to inspect the release checklist",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-force-subagent",
+            "active_branch_id": "branch-force-subagent",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    events = parse_sse_events(response.text)
+    orchestration = next(payload for event, payload in events if event == "orchestration")
+    assert orchestration["mode"] == "subagent"
+    assert orchestration["agent_type"] == "subagent"
+    assert orchestration["status"] == "PENDING"
+    subagent_id = orchestration["subagent_id"]
+    run_id = orchestration["run_id"]
+
+    subagent = db_session.get(AgentRun, subagent_id)
+    assert subagent is not None
+    assert subagent.agent_type == "subagent"
+    assert subagent.task_id == run_id
+    assert subagent.context_json["source"] == "workspace_chat"
+
+    workspace = TestClient(app).get(f"/api/agents/runs/{run_id}/workspace", headers=AUTH_HEADERS)
+    assert workspace.status_code == 200
+    payload = workspace.json()
+    assert [item["id"] for item in payload["subagents"]] == [subagent_id]
+    assert any(event["event_type"] == "SUBAGENT_SPAWNED" for event in payload["events"])
+
+
 def test_agent_workspace_pro_chat_stream_plan_mode_forces_plan_act(
     db_session: Session,
 ) -> None:
@@ -997,7 +1872,19 @@ def test_agent_run_workspace_returns_latest_context_assembly(
         agent_id="default",
         run_id=run.id,
         mode="authoritative",
-        token_budget_json={"estimator": "chars_div_4", "requested_max_tokens": 2048},
+        token_budget_json={
+            "estimator": "chars_div_4",
+            "requested_max_tokens": 2048,
+            "estimated_candidate_tokens": 1800,
+            "estimated_included_tokens": 1200,
+            "estimated_omitted_tokens": 600,
+            "pruning_applied": True,
+            "optimized_vs_baseline": {
+                "estimated_saved_tokens": 600,
+                "estimated_savings_percent": 33.33,
+            },
+            "retrieval_cache": {"hit_count": 2, "miss_count": 1},
+        },
         sections_json=[{"section_id": "authority:0", "section_type": "system_developer"}],
         included_refs_json=[{"section_id": "authority:0", "type": "system"}],
         omitted_refs_json=[{"section_id": "rag:1", "omission_reason": "token_budget"}],
@@ -1008,6 +1895,23 @@ def test_agent_run_workspace_returns_latest_context_assembly(
         created_at=utc_now(),
     )
     db_session.add(manifest)
+    db_session.add(
+        ModelCall(
+            task_id=run.id,
+            model_provider="openai-compatible",
+            model_name="cheap-model",
+            status="SUCCESS",
+            prompt_tokens=1000,
+            completion_tokens=200,
+            context_manifest_id=manifest.id,
+            request_json={
+                "low_cost_route": True,
+                "low_cost_routing_reason": "summary compression",
+            },
+            response_json={},
+            created_at=utc_now(),
+        )
+    )
     db_session.commit()
 
     response = TestClient(app).get(
@@ -1021,6 +1925,11 @@ def test_agent_run_workspace_returns_latest_context_assembly(
     assert payload["context_assembly"]["mode"] == "authoritative"
     assert payload["context_assembly"]["included_refs_json"][0]["section_id"] == "authority:0"
     assert payload["context_assembly"]["omitted_refs_json"][0]["omission_reason"] == "token_budget"
+    assert payload["token_optimization"]["estimated_saved_tokens"] == 600
+    assert payload["token_optimization"]["estimated_savings_percent"] == 33.33
+    assert payload["token_optimization"]["actual_total_tokens"] == 1200
+    assert payload["token_optimization"]["retrieval_cache"]["hit_count"] == 2
+    assert payload["token_optimization"]["low_cost_routes"][0]["reason"] == "summary compression"
 
 
 def test_agent_run_memory_scope_requires_owned_run(
@@ -1133,6 +2042,17 @@ def test_workspace_context_manifest_binding_tracks_authoritative_mode(
         lambda self, _provider: StubGateway(),
     )
 
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.context_assembly_v2_enabled",
+            value_json={"enabled": False},
+            updated_by="dev-admin",
+            updated_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
     client = TestClient(app)
     shadow_response = client.post(
         "/api/agents/default/runs/chat/stream",
@@ -1176,15 +2096,14 @@ def test_workspace_context_manifest_binding_tracks_authoritative_mode(
     assert shadow_call.context_manifest_id is None
     assert shadow_manifest.mode == "shadow"
 
-    db_session.add(
-        SystemSetting(
-            organization_id="dev-org",
-            key="settings.context_assembly_v2_enabled",
-            value_json={"enabled": True},
-            updated_by="dev-admin",
-            updated_at=utc_now(),
+    setting = db_session.execute(
+        select(SystemSetting).where(
+            SystemSetting.organization_id == "dev-org",
+            SystemSetting.key == "settings.context_assembly_v2_enabled",
         )
-    )
+    ).scalar_one()
+    setting.value_json = {"enabled": True}
+    setting.updated_at = utc_now()
     db_session.commit()
 
     authoritative_response = client.post(
@@ -1307,6 +2226,44 @@ def test_agent_workspace_pro_chat_stream_continue_preserves_run_identity(
     assert done["run_id"] == run_id
     assert done["active_branch_id"] == "branch-a"
     assert done["continue_from_node_id"] == "assistant-paused"
+
+
+def test_workspace_chat_run_is_visible_immediately_after_creation(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        Agent(
+            id="default",
+            organization_id="dev-org",
+            name="Default Agent",
+            description="Test agent",
+            role="generalist",
+            status="ACTIVE",
+            model_provider="default",
+            model_name="default",
+            system_prompt="Test agent.",
+            tools_json=["read_file"],
+            routing_tags=[],
+            max_parallel_assignments=1,
+        )
+    )
+    db_session.flush()
+
+    principal = SimpleNamespace(organization_id="dev-org", user_id="dev-engineer")
+    run = _create_workspace_chat_run(
+        agent_id="default",
+        goal="Keep the run visible before stream completion",
+        session=db_session,
+        principal=principal,
+    )
+
+    fresh_session = sessionmaker(bind=db_session.get_bind())()
+    try:
+        persisted = fresh_session.get(Task, run.id)
+        assert persisted is not None
+        assert persisted.status == "CREATED"
+    finally:
+        fresh_session.close()
 
 
 def test_agent_workspace_chat_run_can_be_promoted_to_full_harness_execution(
@@ -1587,6 +2544,70 @@ def test_get_agent_returns_named_agent_detail(db_session: Session) -> None:
     assert payload["name"] == "Coder Agent"
     assert payload["model_provider"] == "default"
     assert "run_tests" in payload["tools_json"]
+
+
+def test_agent_studio_create_clone_and_attach_capability_contract(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/agents",
+        headers=AUTH_HEADERS,
+        json={
+            "id": "studio-agent",
+            "name": "Studio Agent",
+            "description": "Created from Agent Studio",
+            "role": "researcher",
+            "model_provider": "default",
+            "model_name": "default",
+            "system_prompt": "Use attached capabilities only.",
+            "tools_json": [],
+            "routing_tags": ["workspace"],
+            "max_parallel_assignments": 2,
+            "token_budget": 4096,
+            "template_id": "research-template",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["id"] == "studio-agent"
+
+    cloned = client.post(
+        "/api/agents/studio-agent/clone",
+        headers=AUTH_HEADERS,
+        json={"id": "studio-agent-clone", "name": "Studio Agent Clone"},
+    )
+    assert cloned.status_code == 201
+    assert cloned.json()["tools_json"] == []
+
+    attached = client.post(
+        "/api/agents/studio-agent/capabilities/attachments",
+        headers=AUTH_HEADERS,
+        json={
+            "capability_id": "mcp_context_search",
+            "capability_version_id": None,
+            "enabled": True,
+            "priority": 10,
+        },
+    )
+    assert attached.status_code == 201
+    attachment_payload = attached.json()
+    assert attachment_payload["status"] == "attached"
+    assert attachment_payload["agent_id"] == "studio-agent"
+    assert attachment_payload["capability_version_id"]
+
+    agent = db_session.get(Agent, "studio-agent")
+    assert agent is not None
+    assert "mcp_context_search" in agent.tools_json
+    persisted = db_session.execute(
+        select(AgentCapabilityAttachment).where(
+            AgentCapabilityAttachment.agent_id == "studio-agent",
+            AgentCapabilityAttachment.capability_version_id
+            == attachment_payload["capability_version_id"],
+        )
+    ).scalar_one()
+    assert persisted.enabled is True
+    assert persisted.priority == 10
 
 
 def test_agent_chat_session_persists_messages(db_session: Session) -> None:

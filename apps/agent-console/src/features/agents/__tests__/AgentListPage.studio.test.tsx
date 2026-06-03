@@ -1,0 +1,184 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { AgentListPage } from "../pages/AgentListPage";
+
+const apiBaseUrl = "http://127.0.0.1:8000";
+
+function jsonResponse(payload: unknown, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function agent() {
+  return {
+    id: "default",
+    name: "Default Agent",
+    description: "Default entry agent",
+    role: "planner",
+    status: "ACTIVE",
+    model_provider: "default",
+    model_name: "default",
+    system_prompt: "Plan with evidence",
+    tools_json: ["mcp_context_search"],
+    routing_tags: ["default"],
+    max_parallel_assignments: 2,
+    capability_attachments: [
+      {
+        attachment_id: "attachment-optimizer",
+        capability_id: "cap-optimizer",
+        capability_key: "builtin:context-optimizer:balanced",
+        capability_version_id: "builtin-balanced-version-1",
+        capability_type: "context_optimizer",
+        enabled: true,
+        priority: 5,
+        status: "active",
+      },
+    ],
+    created_at: "2026-05-18T00:00:00Z",
+    updated_at: "2026-05-18T00:00:00Z",
+  };
+}
+
+function tokenOptimizerPresets() {
+  return {
+    items: [
+      {
+        preset_id: "off",
+        display_name: "关闭",
+        description: "不启用额外 Token Optimizer，只使用默认上下文策略。",
+        enabled: false,
+        priority: null,
+      },
+      {
+        preset_id: "conservative",
+        display_name: "保守省 Token",
+        description: "轻量裁剪低相关证据，优先保持最近对话和记忆。",
+        enabled: true,
+        priority: 5,
+      },
+      {
+        preset_id: "balanced",
+        display_name: "均衡",
+        description: "推荐默认方案，在上下文质量和成本之间取得平衡。",
+        enabled: true,
+        priority: 5,
+      },
+      {
+        preset_id: "aggressive",
+        display_name: "强力省 Token",
+        description: "更积极限制候选上下文，适合长对话和成本敏感任务。",
+        enabled: true,
+        priority: 5,
+      },
+    ],
+  };
+}
+
+function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
+  vi.stubGlobal("fetch", fetchMock);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  return render(
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <AgentListPage />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("AgentListPage Studio controls", () => {
+  it("renders create/clone/readiness controls and calls Agent capability APIs", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
+      if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
+      if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
+      if (path === "/api/agents" && init?.method === "POST") return jsonResponse({ ...agent(), id: "research-agent", name: "Research Agent" });
+      if (path === "/api/agents/default/clone" && init?.method === "POST") return jsonResponse({ ...agent(), id: "default-clone", name: "Default Clone" });
+      if (path === "/api/agents/default/capabilities/attachments" && init?.method === "POST") return jsonResponse({ status: "attached" });
+      if (path === "/api/agents/default/token-optimizer" && init?.method === "POST") {
+        return jsonResponse({
+          status: "selected",
+          preset_id: "aggressive",
+          attachment_id: "attachment-aggressive",
+          capability_id: "cap-aggressive",
+          capability_version_id: "version-aggressive",
+          enabled: true,
+          priority: 5,
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("Default Agent")).toBeInTheDocument();
+    expect(screen.getByText("能力附件与就绪检查")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /均衡/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /关闭/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /保守省 Token/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /强力省 Token/ })).toBeInTheDocument();
+    expect(screen.queryByLabelText("能力名称")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /创建 Agent|Create Agent/ }));
+    await user.click(screen.getByRole("button", { name: /配置能力附件|Configure attachment/ }));
+    const capabilityDialog = await screen.findByRole("dialog", { name: "配置能力附件" });
+    expect(within(capabilityDialog).getByLabelText("能力名称")).toBeInTheDocument();
+    await user.click(within(capabilityDialog).getByRole("button", { name: /附加到当前 Agent|Attach to selected Agent/ }));
+    await user.click(screen.getByRole("button", { name: /强力省 Token/ }));
+
+    await waitFor(() => {
+      const paths = fetchMock.mock.calls.map(([input]) => String(input));
+      expect(paths).toContain("/api/agents");
+      expect(paths).toContain("/api/agents/default/capabilities/attachments");
+      expect(paths).toContain("/api/agents/default/token-optimizer");
+    });
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input) === "/api/agents" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+      id: "research-agent",
+      token_budget: 4096,
+      tools_json: ["mcp_context_search"],
+    });
+    const attachCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith("/capabilities/attachments"));
+    expect(JSON.parse(String(attachCall?.[1]?.body))).toMatchObject({
+      capability_id: "mcp_context_search",
+      enabled: true,
+    });
+    const optimizerCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input) === "/api/agents/default/token-optimizer" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(optimizerCall?.[1]?.body))).toEqual({
+      preset_id: "aggressive",
+    });
+  });
+
+  it("does not mark the knowledge connector ready without indexed sources", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
+      if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
+      if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("Default Agent")).toBeInTheDocument();
+    expect(await screen.findByText(/没有已索引知识源|No indexed knowledge source/)).toBeInTheDocument();
+    expect(screen.getByText(/待配置|Needs setup/)).toBeInTheDocument();
+  });
+});

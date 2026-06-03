@@ -28,6 +28,7 @@ import { AlertTriangle, Check, Copy, RotateCw } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
+import { API_BASE_URL } from "../../tasks/api";
 import { copyText } from "../lib/clipboard";
 import { renderMarkdown } from "../lib/markdown";
 import {
@@ -36,11 +37,6 @@ import {
   type ConversationErrorMeta,
 } from "../lib/sseErrors";
 import type { ConversationNode } from "../../../stores/workspaceStore";
-
-// Match apps/agent-console/src/features/tasks/api.ts fallback exactly so the
-// network-error description points to the same URL the fetcher actually uses.
-const API_BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
 
 /**
  * Serialise the user-facing error context into a multi-line plain-text

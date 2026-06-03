@@ -13,6 +13,7 @@ from app.api.sandboxes import router as sandboxes_router
 from app.api.settings import router as settings_router
 from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
+from app.api.teams import router as teams_router
 from app.api.tools import router as tools_router
 from app.core.config import get_settings
 from app.core.logging import configure_json_logging
@@ -21,7 +22,7 @@ from app.core.tracing import OpenTelemetryTraceMiddleware
 configure_json_logging()
 settings = get_settings()
 
-DEV_CONSOLE_PORTS = range(5173, 5180)
+DEV_CONSOLE_PORTS = tuple(range(5173, 5180)) + (15174,)
 
 
 def build_cors_origins() -> list[str]:
@@ -41,11 +42,25 @@ def build_cors_origins() -> list[str]:
         origins.add(urlunsplit((parsed.scheme, netloc, "", "", "")))
 
     if settings.app_env == "development":
-        for host in ("localhost", "127.0.0.1"):
+        for host in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]"):
             for port in DEV_CONSOLE_PORTS:
                 origins.add(f"http://{host}:{port}")
 
     return sorted(origins)
+
+
+def build_cors_origin_regex() -> str | None:
+    if settings.app_env != "development":
+        return None
+
+    ports = "|".join(str(port) for port in DEV_CONSOLE_PORTS)
+    local_hosts = (
+        r"localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|"
+        r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+        r"192\.168\.\d{1,3}\.\d{1,3}|"
+        r"172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+    )
+    return rf"^https?://(?:{local_hosts})(?::(?:{ports}))?$"
 
 
 app = FastAPI(
@@ -57,6 +72,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=build_cors_origins(),
+    allow_origin_regex=build_cors_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,6 +90,7 @@ app.include_router(metrics_router)
 app.include_router(agents_router, prefix="/api")
 app.include_router(evals_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
+app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")

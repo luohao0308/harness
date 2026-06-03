@@ -5,9 +5,9 @@ import {
   ArrowLeft,
   Bot,
   GitBranch,
+  Loader2,
   MessageSquareText,
   Sparkles,
-  Square,
   Wrench,
 } from "lucide-react";
 
@@ -33,7 +33,8 @@ export type WorkspaceShellBarProps = {
   onModelChange: (providerId: string, modelId: string) => void;
   onInsertToolMention: (toolName: string) => void;
   onOpenInspector: (section: InspectorSection) => void;
-  onStop: () => void;
+  onCreateTeamFromConversation?: () => void;
+  isCreatingTeam?: boolean;
   summaryManager?: ReactNode;
 };
 
@@ -46,7 +47,8 @@ export function WorkspaceShellBar({
   isStreaming,
   onInsertToolMention,
   onOpenInspector,
-  onStop,
+  onCreateTeamFromConversation,
+  isCreatingTeam = false,
   summaryManager = null,
 }: WorkspaceShellBarProps): JSX.Element {
   const { text } = useI18n();
@@ -90,6 +92,25 @@ export function WorkspaceShellBar({
 
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {summaryManager}
+
+          {onCreateTeamFromConversation ? (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onCreateTeamFromConversation}
+              disabled={isCreatingTeam}
+              aria-label={text("新开团队模式", "Create Team Mode")}
+              title={text("新开团队模式", "Create Team Mode")}
+              className="h-8 px-2"
+            >
+              {isCreatingTeam ? (
+                <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden lg:inline">{text("团队模式", "Team Mode")}</span>
+            </Button>
+          ) : null}
 
           <div ref={toolsPickerRef} className="relative">
             <button
@@ -145,20 +166,6 @@ export function WorkspaceShellBar({
               <Sparkles aria-hidden="true" className="h-3 w-3" />
               {text("生成中", "Streaming")}
             </Badge>
-          )}
-
-          {isStreaming && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onStop}
-              aria-label={text("停止生成", "Stop generation")}
-              title={text("停止生成", "Stop generation")}
-              className="h-8 px-2"
-            >
-              <Square aria-hidden="true" className="h-3.5 w-3.5" />
-              <span className="hidden lg:inline">{text("停止", "Stop")}</span>
-            </Button>
           )}
 
           {activeRunId ? (

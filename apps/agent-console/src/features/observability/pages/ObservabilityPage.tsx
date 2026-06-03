@@ -287,6 +287,18 @@ export function ObservabilityPage() {
             <Metric label={text("模型调用", "Model Calls")} value={formatNumber(data?.model_call_total)} />
             <Metric label={text("工具调用", "Tool Calls")} value={formatNumber(data?.tool_call_total)} />
             <Metric label={text("沙箱总数", "Sandboxes")} value={formatNumber(data?.sandbox_total)} />
+            <Metric
+              label={<TermHint description="上下文剪枝估算节省的标记数">Token saved</TermHint>}
+              value={formatNumber(tokenOptimizationNumber(data?.token_optimization, "estimated_saved_tokens"))}
+            />
+            <Metric
+              label={<TermHint description="模型调用实际消耗标记数">Actual tokens</TermHint>}
+              value={formatNumber(tokenOptimizationNumber(data?.token_optimization, "actual_total_tokens"))}
+            />
+            <Metric
+              label={<TermHint description="低成本模型路由次数">Low-cost routes</TermHint>}
+              value={formatNumber(tokenOptimizationNumber(data?.token_optimization, "low_cost_route_count"))}
+            />
           </div>
           <StatusLine isLoading={summary.isLoading} error={summary.error} />
         </Card>
@@ -1345,6 +1357,14 @@ function StatusLine({ isLoading, error }: { isLoading: boolean; error: Error | n
 
 function formatNumber(value: number | undefined) {
   return value === undefined ? "..." : new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function tokenOptimizationNumber(
+  tokenOptimization: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = tokenOptimization?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function formatRate(value: number | undefined) {

@@ -6,7 +6,7 @@
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-const API_RE = /http:\/\/127\.0\.0\.1:8000\/api\/.*/;
+const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -162,7 +162,7 @@ test.describe("Eval Harness page mocked smoke tests", () => {
     // Regression delta section — Chinese: "回归对比"
     await expect(page.getByText("回归对比")).toBeVisible();
     await expect(page.getByText("回归门禁")).toBeVisible();
-    await expect(page.getByText("API 已接入").first()).toBeVisible();
+    await expect(page.getByText("接口已接入").first()).toBeVisible();
     await expect(page.getByText("已启用").first()).toBeVisible();
 
     // Regression warning with data-regression attribute

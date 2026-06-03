@@ -22,9 +22,12 @@ from app.agents.model_gateway import (
 )
 from app.core.config import get_settings
 from app.db.models import (
+    AgentCapabilityAttachment,
     AgentEvent,
     AgentMemoryRecord,
     AgentRun,
+    Capability,
+    CapabilityVersion,
     ContextAssemblyManifest,
     ContextAssemblyManifestLifecycle,
     ExecutionPlan,
@@ -33,15 +36,26 @@ from app.db.models import (
     SystemSetting,
     Task,
     ToolCall,
+    WorkspaceContextCache,
     utc_now,
 )
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.tools.capabilities import (
+    CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
+    stable_json_sha256,
+    validate_package_manifest,
+)
 
 CONTEXT_ASSEMBLY_SETTINGS_KEY = "settings.context_assembly_v2_enabled"
 POLICY_SETTINGS_KEY = "settings.policies"
 CONTEXT_MANIFEST_SCHEMA_VERSION = "context-assembly-v1"
 CURRENT_SUMMARY_SCHEMA_VERSION = "workspace-context-summary-v1"
+CONTEXT_CACHE_SCHEMA_VERSION = "workspace-context-cache-v1"
+CACHE_SOURCE_COMPRESSION_SUMMARY = "compression_summary"
+CACHE_SOURCE_RAG_RETRIEVAL = "rag_retrieval"
+CACHE_SOURCE_LONG_TERM_MEMORY = "long_term_memory"
+DEFAULT_CONTEXT_ASSEMBLY_V2_ENABLED = True
 MAX_SNIPPET_CHARS = 240
 MAX_SECTIONS_PER_MANIFEST = 64
 MAX_OMITTED_REFS_LOGGED = 128
@@ -111,6 +125,33 @@ class ContextAssemblyResult:
     omitted_refs: list[dict[str, Any]]
 
 
+@dataclass
+class OptimizerContext:
+    capability_version_ids: list[str]
+    policy_hash: str | None
+    decisions: list[dict[str, Any]]
+    effective_strategy: dict[str, Any]
+    low_cost_route_hint: str | None = None
+
+
+BASELINE_OPTIMIZER_STRATEGY: dict[str, Any] = {
+    "schema_version": "context-optimizer-internal-v1",
+    "protected_section_types": ["system_developer", "pinned"],
+    "protected_ref_types": ["current_user_goal"],
+    "drop_order": [
+        "system_developer",
+        "pinned",
+        "recent_window_oldest_first",
+        "attachments_summary",
+        "long_term_memory_low_score_first",
+        "compressed_summary",
+        "rag_evidence_low_relevance_first",
+    ],
+    "section_limits": {},
+    "prefer_valid_compressed_summary": False,
+}
+
+
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -131,7 +172,7 @@ class ContextAssemblyService:
 
     def context_assembly_v2_enabled(self, *, organization_id: str | None) -> bool:
         if organization_id is None:
-            return False
+            return DEFAULT_CONTEXT_ASSEMBLY_V2_ENABLED
         for key in (CONTEXT_ASSEMBLY_SETTINGS_KEY, POLICY_SETTINGS_KEY):
             setting = self.session.execute(
                 select(SystemSetting).where(
@@ -143,8 +184,11 @@ class ContextAssemblyService:
                 continue
             value = setting.value_json
             if isinstance(value, dict):
-                return bool(value.get("enabled") or value.get("context_assembly_v2_enabled"))
-        return False
+                if key == CONTEXT_ASSEMBLY_SETTINGS_KEY and "enabled" in value:
+                    return bool(value["enabled"])
+                if "context_assembly_v2_enabled" in value:
+                    return bool(value["context_assembly_v2_enabled"])
+        return DEFAULT_CONTEXT_ASSEMBLY_V2_ENABLED
 
     def assemble_workspace_chat(
         self,
@@ -171,10 +215,16 @@ class ContextAssemblyService:
             goal=goal,
             prompt_manifest=prompt_manifest,
         )
+        optimizer_context = self._optimizer_context(
+            agent_id=agent_id,
+            organization_id=task.organization_id,
+            requested_budget=budget,
+        )
         included, omitted = self._apply_budget(
             sections=sections,
             estimator=estimator,
             budget=budget,
+            optimizer_context=optimizer_context,
         )
         messages = [ModelMessage(role=section.role, content=section.text) for section in included]
         rendered_context = "\n\n".join(f"{section.role}:{section.text}" for section in included)
@@ -185,6 +235,13 @@ class ContextAssemblyService:
             and any(section.section_type == "rag_evidence" for section in included)
             else None
         )
+        included_tokens = sum(estimator.estimate(section.text) for section in included)
+        omitted_tokens = sum(estimator.estimate(section.text) for section in omitted)
+        candidate_tokens = included_tokens + omitted_tokens
+        token_savings_percent = (
+            round((omitted_tokens / candidate_tokens) * 100, 2) if candidate_tokens else 0
+        )
+        context_cache = self._context_cache_summary(included + omitted)
         manifest = ContextAssemblyManifest(
             organization_id=task.organization_id,
             agent_id=agent_id,
@@ -207,9 +264,33 @@ class ContextAssemblyService:
                     "compressed_summary",
                     "rag_evidence_low_relevance_first",
                 ],
-                "estimated_included_tokens": sum(
-                    estimator.estimate(section.text) for section in included
-                ),
+                "estimated_included_tokens": included_tokens,
+                "estimated_omitted_tokens": omitted_tokens,
+                "estimated_candidate_tokens": candidate_tokens,
+                "pruning_applied": bool(omitted),
+                "baseline_strategy": BASELINE_OPTIMIZER_STRATEGY,
+                "effective_strategy": optimizer_context.effective_strategy,
+                "optimizer_capability_version_ids": optimizer_context.capability_version_ids,
+                "optimizer_policy_hash": optimizer_context.policy_hash,
+                "optimizer_decisions": optimizer_context.decisions,
+                "optimized_vs_baseline": {
+                    "baseline_estimated_tokens": candidate_tokens,
+                    "optimized_estimated_tokens": included_tokens,
+                    "estimated_saved_tokens": omitted_tokens,
+                    "estimated_savings_percent": token_savings_percent,
+                },
+                "actual_usage": {
+                    "prompt_tokens": None,
+                    "completion_tokens": None,
+                    "source": "model_call_binding_pending",
+                },
+                "retrieval_cache": {
+                    "hit_count": context_cache["hit_count"],
+                    "miss_count": context_cache["miss_count"],
+                    "stale_count": context_cache["stale_count"],
+                    "status_counts": context_cache["status_counts"],
+                },
+                "context_cache": context_cache,
             },
             sections_json=self._sections_manifest(included + omitted)[:MAX_SECTIONS_PER_MANIFEST],
             included_refs_json=[self._included_ref(section, estimator) for section in included],
@@ -397,6 +478,10 @@ class ContextAssemblyService:
             metadata={
                 "prompt_manifest_version": metadata.get("prompt_manifest_version")
                 or metadata.get("schema_version"),
+                **self._cache_metadata_from_mapping(
+                    metadata,
+                    default_source=CACHE_SOURCE_RAG_RETRIEVAL,
+                ),
             },
         )
 
@@ -473,35 +558,11 @@ class ContextAssemblyService:
         owner_user_id: str,
     ) -> list[ContextSection]:
         now = utc_now()
-        rows = list(
-            self.session.execute(
-                select(AgentMemoryRecord)
-                .where(
-                    AgentMemoryRecord.organization_id == task.organization_id,
-                    AgentMemoryRecord.lifecycle_status == "active",
-                    or_(
-                        AgentMemoryRecord.expires_at.is_(None),
-                        AgentMemoryRecord.expires_at > now,
-                    ),
-                    or_(
-                        AgentMemoryRecord.scope == "org",
-                        and_(
-                            AgentMemoryRecord.scope == "agent",
-                            AgentMemoryRecord.agent_id == agent_id,
-                        ),
-                        and_(
-                            AgentMemoryRecord.scope == "user",
-                            AgentMemoryRecord.owner_user_id == owner_user_id,
-                        ),
-                        and_(
-                            AgentMemoryRecord.scope == "run",
-                            AgentMemoryRecord.run_id == task.id,
-                        ),
-                    ),
-                )
-                .order_by(AgentMemoryRecord.score.desc(), AgentMemoryRecord.created_at.desc())
-                .limit(12)
-            ).scalars()
+        rows, cache_metadata = self._memory_candidate_rows(
+            task=task,
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            now=now,
         )
         sections: list[ContextSection] = []
         for index, row in enumerate(rows):
@@ -541,10 +602,339 @@ class ContextAssemblyService:
                     },
                     drop_order=index,
                     score=row.score,
-                    metadata={"policy_decisions": decisions, "trust": trust, "policy_flags": flags},
+                    metadata={
+                        "policy_decisions": decisions,
+                        "trust": trust,
+                        "policy_flags": flags,
+                        **cache_metadata,
+                    },
                 )
             )
         return sections
+
+    def _memory_candidate_rows(
+        self,
+        *,
+        task: Task,
+        agent_id: str,
+        owner_user_id: str,
+        now: datetime,
+    ) -> tuple[list[AgentMemoryRecord], dict[str, Any]]:
+        if self._has_run_scoped_memory(task=task, now=now):
+            return self._query_memory_rows(
+                task=task,
+                agent_id=agent_id,
+                owner_user_id=owner_user_id,
+                now=now,
+                include_run_scope=True,
+            ), {}
+
+        cache_lookup = self._memory_cache_lookup(
+            task=task,
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            now=now,
+        )
+        cache_row, cache_key_hash, signature = cache_lookup
+        if cache_row is not None:
+            cached_rows = self._memory_rows_from_cache(
+                cache_row=cache_row,
+                task=task,
+                agent_id=agent_id,
+                owner_user_id=owner_user_id,
+                now=now,
+            )
+            if cached_rows is not None:
+                cache_metadata = self._memory_cache_metadata(
+                    cache_lookup=cache_lookup,
+                    task=task,
+                    agent_id=agent_id,
+                    owner_user_id=owner_user_id,
+                    memory_ids=[row.id for row in cached_rows],
+                    now=now,
+                )
+                return cached_rows, cache_metadata
+            cache_row.stale_count += 1
+            cache_row.updated_at = now
+
+        rows = self._query_memory_rows(
+            task=task,
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            now=now,
+            include_run_scope=False,
+        )
+        if not rows:
+            return rows, {}
+        cache_metadata = self._memory_cache_metadata(
+            cache_lookup=(cache_row, cache_key_hash, signature),
+            task=task,
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            memory_ids=[row.id for row in rows],
+            now=now,
+            recompute_reason=(
+                "memory_candidates_stale_recomputed"
+                if cache_row is not None
+                else "memory_candidates_computed"
+            ),
+        )
+        return rows, cache_metadata
+
+    def _has_run_scoped_memory(self, *, task: Task, now: datetime) -> bool:
+        count = self.session.execute(
+            select(func.count(AgentMemoryRecord.id)).where(
+                AgentMemoryRecord.organization_id == task.organization_id,
+                AgentMemoryRecord.scope == "run",
+                AgentMemoryRecord.run_id == task.id,
+                AgentMemoryRecord.lifecycle_status == "active",
+                or_(
+                    AgentMemoryRecord.expires_at.is_(None),
+                    AgentMemoryRecord.expires_at > now,
+                ),
+            )
+        ).scalar_one()
+        return int(count or 0) > 0
+
+    def _query_memory_rows(
+        self,
+        *,
+        task: Task,
+        agent_id: str,
+        owner_user_id: str,
+        now: datetime,
+        include_run_scope: bool,
+    ) -> list[AgentMemoryRecord]:
+        scope_filters = [
+            AgentMemoryRecord.scope == "org",
+            and_(
+                AgentMemoryRecord.scope == "agent",
+                AgentMemoryRecord.agent_id == agent_id,
+            ),
+            and_(
+                AgentMemoryRecord.scope == "user",
+                AgentMemoryRecord.owner_user_id == owner_user_id,
+            ),
+        ]
+        if include_run_scope:
+            scope_filters.append(
+                and_(
+                    AgentMemoryRecord.scope == "run",
+                    AgentMemoryRecord.run_id == task.id,
+                )
+            )
+        return list(
+            self.session.execute(
+                select(AgentMemoryRecord)
+                .where(
+                    AgentMemoryRecord.organization_id == task.organization_id,
+                    AgentMemoryRecord.lifecycle_status == "active",
+                    or_(
+                        AgentMemoryRecord.expires_at.is_(None),
+                        AgentMemoryRecord.expires_at > now,
+                    ),
+                    or_(*scope_filters),
+                )
+                .order_by(AgentMemoryRecord.score.desc(), AgentMemoryRecord.created_at.desc())
+                .limit(12)
+            ).scalars()
+        )
+
+    def _memory_rows_from_cache(
+        self,
+        *,
+        cache_row: WorkspaceContextCache,
+        task: Task,
+        agent_id: str,
+        owner_user_id: str,
+        now: datetime,
+    ) -> list[AgentMemoryRecord] | None:
+        payload = cache_row.payload_json if isinstance(cache_row.payload_json, dict) else {}
+        memory_ids = [str(item) for item in payload.get("memory_ids", []) if item]
+        if not memory_ids:
+            return None
+        rows = list(
+            self.session.execute(
+                select(AgentMemoryRecord).where(
+                    AgentMemoryRecord.id.in_(memory_ids),
+                    AgentMemoryRecord.organization_id == task.organization_id,
+                    AgentMemoryRecord.lifecycle_status == "active",
+                    or_(
+                        AgentMemoryRecord.expires_at.is_(None),
+                        AgentMemoryRecord.expires_at > now,
+                    ),
+                    or_(
+                        AgentMemoryRecord.scope == "org",
+                        and_(
+                            AgentMemoryRecord.scope == "agent",
+                            AgentMemoryRecord.agent_id == agent_id,
+                        ),
+                        and_(
+                            AgentMemoryRecord.scope == "user",
+                            AgentMemoryRecord.owner_user_id == owner_user_id,
+                        ),
+                    ),
+                )
+            ).scalars()
+        )
+        by_id = {row.id: row for row in rows}
+        if any(memory_id not in by_id for memory_id in memory_ids):
+            return None
+        return [by_id[memory_id] for memory_id in memory_ids]
+
+    def _memory_cache_lookup(
+        self,
+        *,
+        task: Task,
+        agent_id: str,
+        owner_user_id: str,
+        now: datetime,
+    ) -> tuple[WorkspaceContextCache | None, str, str]:
+        signature = self._memory_cache_signature(
+            organization_id=task.organization_id,
+            agent_id=agent_id,
+            owner_user_id=owner_user_id,
+            now=now,
+        )
+        cache_key_hash = _sha256_text(signature)
+        row = self.session.execute(
+            select(WorkspaceContextCache).where(
+                WorkspaceContextCache.organization_id == task.organization_id,
+                WorkspaceContextCache.cache_source == CACHE_SOURCE_LONG_TERM_MEMORY,
+                WorkspaceContextCache.cache_key_hash == cache_key_hash,
+                WorkspaceContextCache.status == "active",
+                or_(
+                    WorkspaceContextCache.expires_at.is_(None),
+                    WorkspaceContextCache.expires_at > now,
+                ),
+            )
+        ).scalar_one_or_none()
+        return row, cache_key_hash, signature
+
+    def _memory_cache_signature(
+        self,
+        *,
+        organization_id: str | None,
+        agent_id: str,
+        owner_user_id: str,
+        now: datetime,
+    ) -> str:
+        rows = list(
+            self.session.execute(
+                select(AgentMemoryRecord)
+                .where(
+                    AgentMemoryRecord.organization_id == organization_id,
+                    AgentMemoryRecord.lifecycle_status == "active",
+                    or_(
+                        AgentMemoryRecord.expires_at.is_(None),
+                        AgentMemoryRecord.expires_at > now,
+                    ),
+                    or_(
+                        AgentMemoryRecord.scope == "org",
+                        and_(
+                            AgentMemoryRecord.scope == "agent",
+                            AgentMemoryRecord.agent_id == agent_id,
+                        ),
+                        and_(
+                            AgentMemoryRecord.scope == "user",
+                            AgentMemoryRecord.owner_user_id == owner_user_id,
+                        ),
+                    ),
+                ),
+            ).scalars()
+        )
+        high_water = max((row.updated_at for row in rows), default=None)
+        snapshot = [
+            {
+                "id": row.id,
+                "scope": row.scope,
+                "agent_id": row.agent_id,
+                "owner_user_id": row.owner_user_id,
+                "content_sha256": row.content_sha256,
+                "score": row.score,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+            }
+            for row in sorted(rows, key=lambda item: item.id)
+        ]
+        payload = {
+            "schema_version": CONTEXT_CACHE_SCHEMA_VERSION,
+            "cache_source": CACHE_SOURCE_LONG_TERM_MEMORY,
+            "organization_id": organization_id,
+            "agent_id": agent_id,
+            "owner_user_id": owner_user_id,
+            "memory_high_water_mark": high_water.isoformat() if high_water else None,
+            "memory_snapshot_sha256": _sha256_text(
+                json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            ),
+            "active_memory_count": len(rows),
+            "scope_policy": ["org", "agent", "user"],
+            "limit": 12,
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _memory_cache_metadata(
+        self,
+        *,
+        cache_lookup: tuple[WorkspaceContextCache | None, str, str],
+        task: Task,
+        agent_id: str,
+        owner_user_id: str,
+        memory_ids: list[str],
+        now: datetime,
+        recompute_reason: str = "memory_candidates_computed",
+    ) -> dict[str, Any]:
+        row, cache_key_hash, signature = cache_lookup
+        is_hit = row is not None and recompute_reason == "memory_candidates_computed"
+        status = "hit" if is_hit else "miss"
+        reason = "memory_candidates_reused" if is_hit else recompute_reason
+        estimated_saved_tokens = 0
+        if is_hit and row is not None:
+            row.hit_count += 1
+            row.last_hit_at = now
+            row.updated_at = now
+            payload = row.payload_json if isinstance(row.payload_json, dict) else {}
+            estimated_saved_tokens = int(payload.get("estimated_saved_tokens") or 0)
+        else:
+            estimated_saved_tokens = max(0, len(memory_ids) * 8)
+            payload_json = {
+                "memory_ids": memory_ids,
+                "signature_sha256": _sha256_text(signature),
+                "estimated_saved_tokens": estimated_saved_tokens,
+            }
+            if row is None:
+                self.session.add(
+                    WorkspaceContextCache(
+                        organization_id=task.organization_id,
+                        agent_id=agent_id,
+                        owner_user_id=owner_user_id,
+                        cache_source=CACHE_SOURCE_LONG_TERM_MEMORY,
+                        cache_key_hash=cache_key_hash,
+                        schema_version=CONTEXT_CACHE_SCHEMA_VERSION,
+                        status="active",
+                        payload_json=payload_json,
+                        metadata_json={"reason": reason},
+                        hit_count=0,
+                        miss_count=1,
+                        stale_count=0,
+                        estimated_saved_tokens=estimated_saved_tokens,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                row.payload_json = payload_json
+                row.metadata_json = {"reason": reason}
+                row.miss_count += 1
+                row.estimated_saved_tokens = estimated_saved_tokens
+                row.updated_at = now
+        return {
+            "cache_status": status,
+            "cache_source": CACHE_SOURCE_LONG_TERM_MEMORY,
+            "cache_key_hash": cache_key_hash,
+            "cache_reason": reason,
+            "cache_estimated_saved_tokens": estimated_saved_tokens,
+        }
 
     def _compressed_summary_section(
         self,
@@ -567,6 +957,27 @@ class ContextAssemblyService:
             "coverage_path_hash": str(getattr(compressed, "coverage_path_hash", "") or ""),
             "active_branch_id": active_branch_id,
         }
+        cache_status = str(getattr(compressed, "cache_status", "") or "")
+        if cache_status in {"accepted", "recomputed", "stale_rejected", "error"}:
+            original_tokens = int(getattr(compressed, "estimated_original_tokens", None) or 0)
+            summary_tokens = int(getattr(compressed, "estimated_summary_tokens", None) or 0)
+            metadata["cache_status"] = cache_status
+            metadata["cache_source"] = CACHE_SOURCE_COMPRESSION_SUMMARY
+            metadata["cache_reason"] = f"compression_summary_{cache_status}"
+            metadata["cache_estimated_saved_tokens"] = max(0, original_tokens - summary_tokens)
+            metadata["cache_key_hash"] = _sha256_text(
+                json.dumps(
+                    {
+                        "organization_id": organization_id,
+                        "branch_id": metadata["branch_id"],
+                        "coverage_path_hash": metadata["coverage_path_hash"],
+                        "schema_version": schema_version,
+                        "producer_model": metadata["producer_model"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
         base_ref = {"type": "compressed_summary", **metadata}
         if schema_version != CURRENT_SUMMARY_SCHEMA_VERSION:
             return ContextSection(
@@ -612,6 +1023,7 @@ class ContextAssemblyService:
             ),
             priority=5,
             ref=base_ref,
+            metadata=metadata,
         )
 
     def _producer_model_allowed(
@@ -727,40 +1139,335 @@ class ContextAssemblyService:
         sections: list[ContextSection],
         estimator: TokenEstimator,
         budget: int,
+        optimizer_context: OptimizerContext | None = None,
     ) -> tuple[list[ContextSection], list[ContextSection]]:
+        if optimizer_context is None:
+            optimizer_context = OptimizerContext(
+                capability_version_ids=[],
+                policy_hash=None,
+                decisions=[],
+                effective_strategy=dict(BASELINE_OPTIMIZER_STRATEGY),
+            )
         eligible = [section for section in sections if section.text.strip()]
         omitted = [section for section in sections if not section.text.strip()]
+        eligible, limit_omitted = self._apply_optimizer_section_limits(
+            sections=eligible,
+            optimizer_context=optimizer_context,
+        )
+        omitted.extend(limit_omitted)
         if budget <= 0:
             return eligible, omitted
         included = list(eligible)
+        effective_budget = self._optimizer_budget(
+            budget=budget,
+            candidate_tokens=sum(estimator.estimate(section.text) for section in included),
+            optimizer_context=optimizer_context,
+        )
 
         def total_tokens() -> int:
             return sum(estimator.estimate(section.text) for section in included)
 
-        while included and total_tokens() > budget:
-            candidates = [section for section in included if section.priority > 0]
+        while included and total_tokens() > effective_budget:
+            candidates = [section for section in included if self._section_can_be_omitted(section)]
             if not candidates:
                 break
-            victim = max(
-                candidates,
-                key=lambda section: (
-                    section.priority,
-                    (
-                        -section.score
-                        if section.section_type in {"long_term_memory", "rag_evidence"}
-                        else 0
-                    ),
-                    (
-                        -section.drop_order
-                        if section.section_type == "recent_window"
-                        else section.drop_order
-                    ),
-                ),
+            victim = self._select_budget_victim(
+                candidates=candidates,
+                optimizer_context=optimizer_context,
             )
             included.remove(victim)
+            victim.metadata = {
+                **(victim.metadata or {}),
+                "omission_reason": self._optimizer_budget_omission_reason(optimizer_context),
+                **self._optimizer_ref_metadata(optimizer_context),
+            }
             omitted.append(victim)
         included.sort(key=lambda section: (section.priority, section.drop_order))
         return included, omitted
+
+    def _optimizer_context(
+        self,
+        *,
+        agent_id: str,
+        organization_id: str | None,
+        requested_budget: int,
+    ) -> OptimizerContext:
+        versions = self._context_optimizer_versions(
+            agent_id=agent_id,
+            organization_id=organization_id,
+        )
+        effective_strategy: dict[str, Any] = {
+            **BASELINE_OPTIMIZER_STRATEGY,
+            "section_limits": {},
+        }
+        decisions: list[dict[str, Any]] = []
+        active_version_ids: list[str] = []
+        low_cost_route_hint: str | None = None
+        for version in versions:
+            manifest = self._package_manifest_for_version(version)
+            validation = validate_package_manifest(manifest)
+            if validation["status"] != "valid":
+                decisions.append(
+                    {
+                        "decision": "optimizer_rejected",
+                        "capability_version_id": version.id,
+                        "reason": "invalid_context_optimizer_manifest",
+                        "errors": validation.get("errors", []),
+                    }
+                )
+                continue
+            optimizer = manifest.get("optimizer") if isinstance(manifest, dict) else None
+            if not isinstance(optimizer, dict) or optimizer.get("mode") != "budget_overlay":
+                decisions.append(
+                    {
+                        "decision": "optimizer_rejected",
+                        "capability_version_id": version.id,
+                        "reason": "invalid_context_optimizer_manifest",
+                    }
+                )
+                continue
+            active_version_ids.append(version.id)
+            candidate_ratio = optimizer.get("max_candidate_tokens_ratio")
+            if isinstance(candidate_ratio, (int, float)) and not isinstance(candidate_ratio, bool):
+                ratio = max(0.05, min(1.0, float(candidate_ratio)))
+                current_ratio = effective_strategy.get("max_candidate_tokens_ratio")
+                effective_strategy["max_candidate_tokens_ratio"] = (
+                    min(float(current_ratio), ratio) if current_ratio is not None else ratio
+                )
+            if isinstance(optimizer.get("section_limits"), dict):
+                section_limits = dict(effective_strategy.get("section_limits") or {})
+                for section_type, limit in optimizer["section_limits"].items():
+                    if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 0:
+                        current_limit = section_limits.get(section_type)
+                        section_limits[section_type] = (
+                            min(int(current_limit), limit)
+                            if isinstance(current_limit, int)
+                            else limit
+                        )
+                effective_strategy["section_limits"] = section_limits
+            if isinstance(optimizer.get("drop_order"), list):
+                effective_strategy["drop_order"] = [
+                    str(item) for item in optimizer["drop_order"] if isinstance(item, str)
+                ]
+            if optimizer.get("prefer_valid_compressed_summary") is True:
+                effective_strategy["prefer_valid_compressed_summary"] = True
+            if isinstance(optimizer.get("low_cost_route_hint"), str):
+                low_cost_route_hint = optimizer["low_cost_route_hint"][:200]
+                effective_strategy["low_cost_route_hint"] = low_cost_route_hint
+            decisions.append(
+                {
+                    "decision": "optimizer_applied",
+                    "capability_version_id": version.id,
+                    "capability_type": version.type,
+                    "package_name": manifest.get("name"),
+                    "mode": optimizer.get("mode"),
+                }
+            )
+        policy_hash = (
+            stable_json_sha256(
+                {
+                    "version_ids": active_version_ids,
+                    "effective_strategy": effective_strategy,
+                    "requested_budget": requested_budget,
+                }
+            )
+            if active_version_ids
+            else None
+        )
+        return OptimizerContext(
+            capability_version_ids=active_version_ids,
+            policy_hash=policy_hash,
+            decisions=decisions,
+            effective_strategy=effective_strategy,
+            low_cost_route_hint=low_cost_route_hint,
+        )
+
+    def _context_optimizer_versions(
+        self,
+        *,
+        agent_id: str,
+        organization_id: str | None,
+    ) -> list[CapabilityVersion]:
+        return list(
+            self.session.execute(
+                select(CapabilityVersion)
+                .join(
+                    AgentCapabilityAttachment,
+                    AgentCapabilityAttachment.capability_version_id == CapabilityVersion.id,
+                )
+                .join(Capability, AgentCapabilityAttachment.capability_id == Capability.id)
+                .where(
+                    AgentCapabilityAttachment.agent_id == agent_id,
+                    AgentCapabilityAttachment.enabled.is_(True),
+                    Capability.status == "active",
+                    CapabilityVersion.status == "active",
+                    CapabilityVersion.type == CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
+                    or_(
+                        AgentCapabilityAttachment.organization_id == organization_id,
+                        AgentCapabilityAttachment.organization_id.is_(None),
+                    ),
+                    or_(
+                        Capability.organization_id == organization_id,
+                        Capability.organization_id.is_(None),
+                    ),
+                )
+                .order_by(
+                    AgentCapabilityAttachment.priority.asc(),
+                    AgentCapabilityAttachment.attached_at.asc(),
+                )
+            ).scalars()
+        )
+
+    def _package_manifest_for_version(self, version: CapabilityVersion) -> dict[str, Any]:
+        content = version.content_json if isinstance(version.content_json, dict) else {}
+        manifest = content.get("package_manifest")
+        return manifest if isinstance(manifest, dict) else {}
+
+    def _optimizer_budget(
+        self,
+        *,
+        budget: int,
+        candidate_tokens: int,
+        optimizer_context: OptimizerContext,
+    ) -> int:
+        ratio = optimizer_context.effective_strategy.get("max_candidate_tokens_ratio")
+        if isinstance(ratio, (int, float)) and not isinstance(ratio, bool):
+            bounded_ratio = max(0.05, min(1.0, float(ratio)))
+            candidate_budget = int(math.floor(candidate_tokens * bounded_ratio))
+            return max(1, min(budget, candidate_budget))
+        return budget
+
+    def _section_can_be_omitted(self, section: ContextSection) -> bool:
+        if section.priority <= 0:
+            return False
+        if section.section_type == "pinned":
+            return False
+        if section.ref.get("type") == "current_user_goal":
+            return False
+        return True
+
+    def _apply_optimizer_section_limits(
+        self,
+        *,
+        sections: list[ContextSection],
+        optimizer_context: OptimizerContext,
+    ) -> tuple[list[ContextSection], list[ContextSection]]:
+        section_limits = optimizer_context.effective_strategy.get("section_limits")
+        if not isinstance(section_limits, dict) or not section_limits:
+            return sections, []
+        limited_by_type: dict[str, set[str]] = {}
+        for section_type, raw_limit in section_limits.items():
+            if not isinstance(raw_limit, int) or isinstance(raw_limit, bool):
+                continue
+            candidates = [
+                section
+                for section in sections
+                if section.section_type == section_type and self._section_can_be_omitted(section)
+            ]
+            if len(candidates) <= raw_limit:
+                continue
+            kept = sorted(candidates, key=self._section_limit_keep_sort_key)[:raw_limit]
+            limited_by_type[section_type] = {section.section_id for section in kept}
+
+        included: list[ContextSection] = []
+        omitted: list[ContextSection] = []
+        for section in sections:
+            limit = section_limits.get(section.section_type)
+            if (
+                isinstance(limit, int)
+                and not isinstance(limit, bool)
+                and self._section_can_be_omitted(section)
+            ):
+                keep_ids = limited_by_type.get(section.section_type)
+                if keep_ids is not None and section.section_id not in keep_ids:
+                    section.metadata = {
+                        **(section.metadata or {}),
+                        "omission_reason": "optimizer_section_limit",
+                        **self._optimizer_ref_metadata(optimizer_context),
+                    }
+                    omitted.append(section)
+                    continue
+            included.append(section)
+        return included, omitted
+
+    def _section_limit_keep_sort_key(self, section: ContextSection) -> tuple:
+        if section.section_type == "recent_window":
+            return (-section.drop_order, -section.score)
+        if section.section_type in {"long_term_memory", "rag_evidence"}:
+            return (-section.score, section.drop_order)
+        return (section.drop_order, -section.score)
+
+    def _select_budget_victim(
+        self,
+        *,
+        candidates: list[ContextSection],
+        optimizer_context: OptimizerContext,
+    ) -> ContextSection:
+        if not optimizer_context.capability_version_ids:
+            return max(candidates, key=self._default_budget_sort_key)
+        drop_order = optimizer_context.effective_strategy.get("drop_order")
+        if isinstance(drop_order, list):
+            for rule in drop_order:
+                matching = [
+                    section
+                    for section in candidates
+                    if self._section_matches_optimizer_drop_rule(section, str(rule))
+                ]
+                if matching:
+                    return max(matching, key=self._default_budget_sort_key)
+        return max(candidates, key=self._default_budget_sort_key)
+
+    def _section_matches_optimizer_drop_rule(self, section: ContextSection, rule: str) -> bool:
+        return (
+            (rule == "rag_evidence_low_relevance_first" and section.section_type == "rag_evidence")
+            or (
+                rule == "long_term_memory_low_score_first"
+                and section.section_type == "long_term_memory"
+            )
+            or (rule == "compressed_summary" and section.section_type == "compressed_summary")
+            or (
+                rule == "compressed_summary_if_stale"
+                and section.section_type == "compressed_summary"
+            )
+            or (rule == "attachments_summary" and section.section_type == "attachments_summary")
+            or (
+                rule == "recent_window_oldest_first"
+                and section.section_type == "recent_window"
+            )
+        )
+
+    def _default_budget_sort_key(self, section: ContextSection) -> tuple:
+        score_rank = (
+            -section.score if section.section_type in {"long_term_memory", "rag_evidence"} else 0
+        )
+        drop_rank = (
+            -section.drop_order
+            if section.section_type == "recent_window"
+            else section.drop_order
+        )
+        return (
+            section.priority,
+            score_rank,
+            drop_rank,
+        )
+
+    def _optimizer_budget_omission_reason(self, optimizer_context: OptimizerContext) -> str:
+        return (
+            "optimizer_budget"
+            if optimizer_context.capability_version_ids
+            else "token_budget"
+        )
+
+    def _optimizer_ref_metadata(self, optimizer_context: OptimizerContext) -> dict[str, Any]:
+        if not optimizer_context.capability_version_ids:
+            return {}
+        metadata: dict[str, Any] = {
+            "optimizer_capability_version_ids": optimizer_context.capability_version_ids,
+            "optimizer_policy_hash": optimizer_context.policy_hash,
+        }
+        if optimizer_context.low_cost_route_hint:
+            metadata["low_cost_routing_reason"] = optimizer_context.low_cost_route_hint
+        return metadata
 
     def _sections_manifest(self, sections: list[ContextSection]) -> list[dict[str, Any]]:
         rows = []
@@ -785,11 +1492,26 @@ class ContextAssemblyService:
         return rows
 
     def _included_ref(self, section: ContextSection, estimator: TokenEstimator) -> dict[str, Any]:
+        metadata = section.metadata or {}
         return {
             **section.ref,
             "section_id": section.section_id,
             "section_type": section.section_type,
             "estimated_tokens": estimator.estimate(section.text),
+            **{
+                key: metadata[key]
+                for key in (
+                    "optimizer_capability_version_ids",
+                    "optimizer_policy_hash",
+                    "low_cost_routing_reason",
+                    "cache_source",
+                    "cache_status",
+                    "cache_key_hash",
+                    "cache_reason",
+                    "cache_estimated_saved_tokens",
+                )
+                if key in metadata
+            },
         }
 
     def _omitted_ref(
@@ -805,7 +1527,105 @@ class ContextAssemblyService:
             "section_type": section.section_type,
             "estimated_tokens": estimator.estimate(section.text),
             "omission_reason": metadata.get("omission_reason") or default_reason,
+            **{
+                key: metadata[key]
+                for key in (
+                    "optimizer_capability_version_ids",
+                    "optimizer_policy_hash",
+                    "low_cost_routing_reason",
+                    "cache_source",
+                    "cache_status",
+                    "cache_key_hash",
+                    "cache_reason",
+                    "cache_estimated_saved_tokens",
+                )
+                if key in metadata
+            },
         }
+
+    def _cache_metadata_from_mapping(
+        self,
+        mapping: dict[str, Any],
+        *,
+        default_source: str,
+    ) -> dict[str, Any]:
+        status = str(mapping.get("cache_status") or "")
+        if status not in {"hit", "miss", "accepted", "recomputed", "stale", "stale_rejected"}:
+            return {}
+        out: dict[str, Any] = {
+            "cache_status": status,
+            "cache_source": str(mapping.get("cache_source") or default_source),
+        }
+        for key in ("cache_key_hash", "cache_reason", "cache_estimated_saved_tokens"):
+            if key in mapping:
+                out[key] = mapping[key]
+        return out
+
+    def _context_cache_summary(self, sections: list[ContextSection]) -> dict[str, Any]:
+        sources: dict[str, dict[str, Any]] = {}
+        status_counts: Counter[str] = Counter()
+        seen_events: set[tuple[str, str, str]] = set()
+        for section in sections:
+            metadata = section.metadata or {}
+            status = metadata.get("cache_status")
+            if status is None:
+                continue
+            status_text = str(status)
+            source = str(metadata.get("cache_source") or "unknown")
+            cache_key_hash = str(metadata.get("cache_key_hash") or section.section_id)
+            event_key = (source, status_text, cache_key_hash)
+            if event_key in seen_events:
+                continue
+            seen_events.add(event_key)
+            status_counts[status_text] += 1
+            row = sources.setdefault(
+                source,
+                {
+                    "cache_source": source,
+                    "label": self._cache_source_label(source),
+                    "hit_count": 0,
+                    "miss_count": 0,
+                    "stale_count": 0,
+                    "estimated_saved_tokens": 0,
+                    "reason": None,
+                },
+            )
+            if status_text in {"hit", "accepted"}:
+                row["hit_count"] += 1
+            elif status_text in {"miss", "recomputed"}:
+                row["miss_count"] += 1
+            elif status_text in {"stale", "stale_rejected"}:
+                row["stale_count"] += 1
+            row["estimated_saved_tokens"] += int(metadata.get("cache_estimated_saved_tokens") or 0)
+            if metadata.get("cache_reason"):
+                row["reason"] = str(metadata["cache_reason"])
+        hit_count = sum(int(row["hit_count"]) for row in sources.values())
+        miss_count = sum(int(row["miss_count"]) for row in sources.values())
+        stale_count = sum(int(row["stale_count"]) for row in sources.values())
+        return {
+            "schema_version": CONTEXT_CACHE_SCHEMA_VERSION,
+            "hit_count": hit_count,
+            "miss_count": miss_count,
+            "stale_count": stale_count,
+            "status_counts": dict(status_counts),
+            "sources": sorted(sources.values(), key=lambda item: str(item["cache_source"])),
+        }
+
+    def _retrieval_cache_summary(self, sections: list[ContextSection]) -> dict[str, Any]:
+        summary = self._context_cache_summary(sections)
+        return {
+            "hit_count": summary["hit_count"],
+            "miss_count": summary["miss_count"],
+            "stale_count": summary["stale_count"],
+            "status_counts": summary["status_counts"],
+        }
+
+    def _cache_source_label(self, source: str) -> str:
+        return {
+            CACHE_SOURCE_COMPRESSION_SUMMARY: "摘要缓存",
+            CACHE_SOURCE_RAG_RETRIEVAL: "RAG 检索",
+            CACHE_SOURCE_LONG_TERM_MEMORY: "长期记忆",
+        }.get(source, source)
 
     def render_manifest_memory_refs(
         self,
@@ -874,6 +1694,9 @@ class RunContextRouter:
             "model_routing": routing,
             "latest_agent_router": self._latest_agent_router(events=events),
             "context_assembly": self._latest_context_assembly(task=task),
+            "token_optimization": self._token_optimization_evidence(
+                task=task, model_calls=model_calls
+            ),
         }
         if persist_events:
             self._append_context_events(
@@ -1120,9 +1943,27 @@ class RunContextRouter:
             "status_counts": dict(status_counts),
             "prompt_tokens": sum(call.prompt_tokens for call in model_calls),
             "completion_tokens": sum(call.completion_tokens for call in model_calls),
+            "token_total": sum(call.prompt_tokens + call.completion_tokens for call in model_calls),
+            "estimated_cost_usd": self._model_call_cost(model_calls),
             "tool_latency_ms": sum(call.duration_ms for call in tool_calls),
             "model_latency_ms": sum(call.duration_ms for call in model_calls),
         }
+
+
+    def _model_call_cost(self, model_calls: list[ModelCall]) -> float:
+        total = 0.0
+        for call in model_calls:
+            for payload in (call.response_json, call.request_json):
+                if not isinstance(payload, dict):
+                    continue
+                raw = payload.get("cost_usd")
+                if raw is None and isinstance(payload.get("usage"), dict):
+                    raw = payload["usage"].get("cost_usd")
+                try:
+                    total += float(raw or 0)
+                except (TypeError, ValueError):
+                    continue
+        return round(total, 6)
 
     def _route_model(self, *, task: Task, task_type: str) -> dict[str, Any]:
         request_payload = ModelRequest(
@@ -1299,6 +2140,67 @@ class RunContextRouter:
                 or 0
             )
         }
+
+
+    def _token_optimization_evidence(
+        self, *, task: Task, model_calls: list[ModelCall]
+    ) -> dict[str, Any]:
+        latest = self._latest_context_assembly(task=task)
+        token_budget = latest.get("token_budget") if latest else {}
+        optimized_vs_baseline = (
+            token_budget.get("optimized_vs_baseline", {}) if isinstance(token_budget, dict) else {}
+        )
+        prompt_tokens = sum(call.prompt_tokens for call in model_calls)
+        completion_tokens = sum(call.completion_tokens for call in model_calls)
+        low_cost_routes = [
+            {
+                "model_call_id": call.id,
+                "model_name": call.model_name,
+                "reason": self._low_cost_route_reason(call),
+            }
+            for call in model_calls
+            if self._low_cost_route_reason(call) is not None
+        ]
+        return {
+            "requested_max_tokens": token_budget.get("requested_max_tokens")
+            if isinstance(token_budget, dict)
+            else None,
+            "actual_prompt_tokens": prompt_tokens,
+            "actual_completion_tokens": completion_tokens,
+            "actual_total_tokens": prompt_tokens + completion_tokens,
+            "estimated_saved_tokens": optimized_vs_baseline.get("estimated_saved_tokens", 0),
+            "estimated_savings_percent": optimized_vs_baseline.get("estimated_savings_percent", 0),
+            "retrieval_cache": token_budget.get("retrieval_cache", {})
+            if isinstance(token_budget, dict)
+            else {},
+            "low_cost_routes": low_cost_routes,
+            "optimizer_capability_version_ids": token_budget.get(
+                "optimizer_capability_version_ids", []
+            )
+            if isinstance(token_budget, dict)
+            else [],
+            "optimizer_policy_hash": token_budget.get("optimizer_policy_hash")
+            if isinstance(token_budget, dict)
+            else None,
+            "optimizer_decisions": token_budget.get("optimizer_decisions", [])
+            if isinstance(token_budget, dict)
+            else [],
+            "effective_strategy": token_budget.get("effective_strategy", {})
+            if isinstance(token_budget, dict)
+            else {},
+            "optimized_vs_baseline": optimized_vs_baseline,
+        }
+
+    def _low_cost_route_reason(self, call: ModelCall) -> str | None:
+        for payload in (call.request_json, call.response_json):
+            if not isinstance(payload, dict):
+                continue
+            reason = payload.get("low_cost_routing_reason") or payload.get("model_routing_reason")
+            if reason:
+                return str(reason)
+            if payload.get("low_cost_route") is True:
+                return "low_cost_route"
+        return None
 
     def _latest_context_assembly(self, *, task: Task) -> dict[str, Any] | None:
         manifest = self.session.execute(

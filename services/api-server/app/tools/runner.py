@@ -73,7 +73,14 @@ class ToolRunner:
                 source="tool_execute",
             )
         except PermissionError as exc:
-            metadata = self._metadata(tool_name)
+            organization_id = task.organization_id if task is not None else None
+            capability_registry = self.capability_registry or CapabilityRegistry(
+                self.session,
+                organization_id=organization_id,
+            )
+            metadata = capability_registry.metadata_for_tool_name(tool_name) or self._metadata(
+                tool_name
+            )
             return self._deny(
                 task_id=task_id,
                 agent_run_id=agent_run_id,
@@ -402,7 +409,9 @@ class ToolRunner:
                 source=source,
             )
         except CapabilityResolutionError as exc:
-            metadata = self.registry.tools.get(tool_name)
+            metadata = registry.metadata_for_tool_name(tool_name) or self.registry.tools.get(
+                tool_name
+            )
             if metadata is None:
                 raise ValueError(f"unknown tool: {tool_name}") from exc
             raise PermissionError(str(exc)) from exc
@@ -609,6 +618,12 @@ class ToolRunner:
                 "mcp_server": result.server,
                 "mcp_method": result.method,
                 "result": result.output_json,
+            }
+        if metadata.name not in self.registry.tools:
+            return {
+                "package_tool": metadata.name,
+                "status": "validated_noop",
+                "input_echo": redact_secrets(input_json),
             }
         if metadata.name == "read_file":
             result = filesystem.read_file(str(input_json["path"]))
