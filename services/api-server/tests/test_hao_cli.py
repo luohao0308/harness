@@ -199,10 +199,19 @@ def test_hao_bridge_pair_once_registers_and_reports_fake_task(tmp_path: Path, mo
     bridge_state = tmp_path / "bridge.json"
     assert bridge_state.exists()
     assert bridge_state.stat().st_mode & 0o777 == 0o600
+    persisted = bridge_state.read_text(encoding="utf-8")
+    assert '"cwd"' not in persisted
+    assert "device-token-1" not in persisted
+    assert "device_token_ref" in persisted
+    assert str(tmp_path) not in persisted
+    token_file = tmp_path / "bridge.device-token"
+    assert token_file.read_text(encoding="utf-8") == "device-token-1"
+    assert token_file.stat().st_mode & 0o777 == 0o600
     assert [name for name, _payload in calls].count("event") == 2
     register = next(payload for name, payload in calls if name == "register")
     assert register["adapter_kind"] == "fake"
     assert register["pair_token"] == "pair-token"
+    assert register["workspace_root"] == str(tmp_path)
     heartbeat = next(payload for name, payload in calls if name == "heartbeat")
     assert heartbeat["connection_id"] == "connection-1"
     ack = next(payload for name, payload in calls if name == "ack")
@@ -261,10 +270,43 @@ def test_hao_bridge_daemon_uses_protected_state_without_device_token_argv(
     assert exit_code == 0
     bridge_state = tmp_path / "bridge.json"
     assert bridge_state.stat().st_mode & 0o777 == 0o600
-    assert "device-token-secret" in bridge_state.read_text(encoding="utf-8")
+    persisted = bridge_state.read_text(encoding="utf-8")
+    assert "device-token-secret" not in persisted
+    assert "device_token_ref" in persisted
+    assert '"cwd"' not in persisted
+    assert str(tmp_path) not in persisted
+    token_file = tmp_path / "bridge.device-token"
+    assert token_file.read_text(encoding="utf-8") == "device-token-secret"
+    assert token_file.stat().st_mode & 0o777 == 0o600
     command = popen_commands[0]
     assert "--device-token" not in command
     assert "device-token-secret" not in command
+    assert "--cwd" in command
+    assert str(tmp_path) in command
+
+
+def test_hao_bridge_state_migrates_raw_device_token_out_of_bridge_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    config = load_config()
+    (tmp_path / "bridge.json").write_text(
+        '{"api_url": "http://127.0.0.1:8000", "connection_id": "connection-1", '
+        '"device_token": "legacy-device-token", "adapter_kind": "fake"}',
+        encoding="utf-8",
+    )
+
+    state = hao_main_module._load_bridge_state(config)
+
+    assert state["device_token"] == "legacy-device-token"
+    bridge_json = (tmp_path / "bridge.json").read_text(encoding="utf-8")
+    assert "legacy-device-token" not in bridge_json
+    assert "device_token_ref" in bridge_json
+    token_file = tmp_path / "bridge.device-token"
+    assert token_file.read_text(encoding="utf-8") == "legacy-device-token"
+    assert token_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_hao_session_store_persists_messages_and_tool_events(tmp_path: Path) -> None:

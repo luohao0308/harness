@@ -736,6 +736,171 @@ class LocalAgentBridgeEventReceipt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class LocalAgentToolRequest(Base):
+    __tablename__ = "local_agent_tool_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "tool_request_id",
+            name="local_agent_tool_requests_connection_request_uidx",
+        ),
+        UniqueConstraint("tool_call_id", name="local_agent_tool_requests_tool_call_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    tool_request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_call_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_calls.id"),
+        nullable=False,
+        index=True,
+    )
+    approval_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tool_approvals.id"),
+        nullable=True,
+        index=True,
+    )
+    tool_name: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    execution_target: Mapped[str] = mapped_column(String(32), nullable=False, default="host")
+    risk_level: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    permission_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="confirm")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="requested", index=True)
+    input_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    policy_decision_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    decision_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    decision_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentCommand(Base):
+    __tablename__ = "local_agent_commands"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "command_id",
+            name="local_agent_commands_connection_command_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    local_agent_tool_request_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_tool_requests.id"),
+        nullable=False,
+        index=True,
+    )
+    tool_request_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    command_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    command: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending", index=True)
+    retry_of_command_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_summary_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    event_receipts_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentPendingChange(Base):
+    __tablename__ = "local_agent_pending_changes"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "change_id",
+            name="local_agent_pending_changes_connection_change_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    local_agent_tool_request_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_tool_requests.id"),
+        nullable=False,
+        index=True,
+    )
+    tool_request_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    command_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tool_approvals.id"),
+        nullable=True,
+        index=True,
+    )
+    change_id: Mapped[str] = mapped_column(Text, nullable=False)
+    target_paths_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    diff_sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    preview_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="previewed", index=True)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    denied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ExecutionPlan(Base):
     __tablename__ = "execution_plans"
 

@@ -2,6 +2,7 @@
 
 # ruff: noqa: F401,F403,F405,I001,UP037
 import secrets
+import sys
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Header
@@ -21,6 +22,57 @@ DEVICE_TOKEN_BYTES = 32
 PAIR_TOKEN_BYTES = 32
 PAIR_CODE_DIGITS = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOCAL_AGENT_OFFLINE_AFTER_SECONDS = 30
+LOCAL_AGENT_TOOL_DECISION_TTL_MINUTES = 30
+LOCAL_AGENT_TOOL_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "denied", "expired"}
+LOCAL_AGENT_TOOL_ACTIVE_STATUSES = {"approval_required", "approved", "allowed", "running"}
+LOCAL_AGENT_COMMAND_TERMINAL_STATUSES = {"success", "failed", "timeout", "cancelled"}
+LOCAL_AGENT_COMMAND_ACTIVE_STATUSES = {"pending", "running"}
+LOCAL_AGENT_SIDE_EFFECT_TOOLS = {
+    "run_shell",
+    "run_tests",
+    "write_file",
+    "apply_patch",
+    "commit_write_file",
+    "commit_apply_patch",
+    "git",
+    "git_commit",
+    "network",
+    "env_read",
+    "secret_read",
+    "delete_file",
+    "move_file",
+}
+LOCAL_AGENT_COMMAND_TOOLS = {"run_shell", "run_tests", "git"}
+LOCAL_AGENT_PENDING_CHANGE_TERMINAL_STATUSES = {"committed", "denied", "failed"}
+LOCAL_AGENT_PENDING_CHANGE_ACTIVE_STATUSES = {
+    "previewed",
+    "approval_required",
+    "approved",
+    "allowed",
+}
+LOCAL_AGENT_PENDING_CHANGE_TOOLS = {
+    "write_file",
+    "apply_patch",
+    "commit_write_file",
+    "commit_apply_patch",
+}
+LOCAL_AGENT_CAPABILITY_TOOL_ALIASES = {
+    "apply_patch": "write_file",
+    "commit_write_file": "write_file",
+    "commit_apply_patch": "write_file",
+    "git": "git_command",
+    "git_commit": "git_command",
+    "network": "network_request",
+}
+LOCAL_AGENT_SAFE_TOOLS = {"fake.noop", "local_status", "read_metadata"}
+LOCAL_AGENT_NETWORK_PATTERNS = re.compile(
+    r"\b(curl|wget|ssh|scp|git\s+remote|npm\s+install|pip\s+install|pnpm\s+install|yarn\s+add)\b",
+    re.IGNORECASE,
+)
+LOCAL_AGENT_SECRET_PATTERNS = re.compile(
+    r"\b(printenv|env|cat\s+\.env|cat\s+.*(secret|token|key)|export\s+\w*(TOKEN|SECRET|KEY))\b",
+    re.IGNORECASE,
+)
 
 
 def _sha256_secret(value: str) -> str:
@@ -44,6 +96,9 @@ def _redact_path(value: str | None) -> str | None:
     if not normalized:
         return None
     parts = normalized.replace("\\", "/").split("/")
+    if len(parts) >= 4 and parts[1] in {"Users", "home"}:
+        safe_tail = [part for part in parts[3:] if part]
+        return f".../{'/'.join(safe_tail[-2:])}" if safe_tail else "..."
     if len(parts) <= 2:
         return normalized
     return f".../{'/'.join(parts[-2:])}"
@@ -329,7 +384,7 @@ def register_local_agent_connection(
         protocol_version=request.protocol_version,
         bridge_version=request.bridge_version,
         status="online",
-        workspace_root=request.workspace_root,
+        workspace_root=_redact_path(request.workspace_root),
         capabilities_json=_normalized_capabilities(request),
         risk_capabilities_json=list(request.risk_capabilities),
         metadata_json=_safe_metadata(request.metadata),
@@ -470,6 +525,46 @@ def revoke_local_agent_connection(
     connection.status = "revoked"
     connection.revoked_at = now
     connection.updated_at = now
+    revoke_reason = "local agent connection revoked"
+    active_requests = list(
+        session.execute(
+            select(LocalAgentToolRequest)
+            .where(
+                LocalAgentToolRequest.connection_id == connection.id,
+                LocalAgentToolRequest.status.in_(LOCAL_AGENT_TOOL_ACTIVE_STATUSES),
+            )
+            .order_by(LocalAgentToolRequest.created_at.asc(), LocalAgentToolRequest.id.asc())
+        ).scalars()
+    )
+    for local_request in active_requests:
+        _terminalize_local_tool_request(
+            local_request,
+            session=session,
+            terminal_status="cancelled",
+            tool_status="CANCELLED",
+            reason=revoke_reason,
+            event_type=EventType.LOCAL_AGENT_COMMAND_CANCELLED,
+            actor_type="user",
+            actor_id=principal.user_id,
+        )
+    unfinished_tasks = list(
+        session.execute(
+            select(LocalAgentBridgeTask)
+            .where(
+                LocalAgentBridgeTask.connection_id == connection.id,
+                ~LocalAgentBridgeTask.status.in_(("completed", "failed", "cancelled")),
+            )
+            .order_by(LocalAgentBridgeTask.created_at.asc(), LocalAgentBridgeTask.id.asc())
+        ).scalars()
+    )
+    for bridge_task in unfinished_tasks:
+        _cancel_local_agent_bridge_task(
+            bridge_task=bridge_task,
+            session=session,
+            reason=revoke_reason,
+            actor_type="user",
+            actor_id=principal.user_id,
+        )
     _record_local_agent_audit(
         session=session,
         organization_id=connection.organization_id,
@@ -925,6 +1020,826 @@ def record_local_agent_bridge_event(
     )
 
 
+@router.post(
+    "/local-agent/bridge/tool-requests",
+    response_model=LocalAgentToolDecisionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Bridge 申请本地工具执行授权",
+)
+def create_local_agent_tool_request(
+    request: LocalAgentToolRequestCreateRequest,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentToolDecisionResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    existing = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.connection_id == connection.id,
+            LocalAgentToolRequest.tool_request_id == request.tool_request_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return _local_tool_decision_response(existing, session=session)
+    bridge_task = _owned_bridge_task(
+        bridge_task_id=request.bridge_task_id,
+        connection=connection,
+        session=session,
+    )
+    if bridge_task.status in {"completed", "failed", "cancelled"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent bridge task is already terminal",
+        )
+    classification = _classify_local_tool_request(request)
+    resolved_tool = None
+    capability_snapshot = {
+        "source": "local_agent_bridge",
+        "server_execution": False,
+        "connection_id": connection.id,
+        "bridge_task_id": bridge_task.id,
+        "adapter_kind": connection.adapter_kind,
+        "workspace_root": _redact_path(connection.workspace_root),
+        "execution_target": request.execution_target,
+        "server_risk": classification["risk_level"],
+        "bridge_risk": request.risk_level,
+        "permission_mode": request.permission_mode,
+    }
+    capability_tool_name = _capability_tool_name(request.tool_name)
+    if (
+        classification["decision"] != "denied"
+        and _local_tool_requires_capability(request.tool_name)
+    ):
+        try:
+            resolved_tool = CapabilityRegistry(
+                session,
+                connection.organization_id,
+            ).resolve_tool(
+                agent_id=connection.agent_id,
+                tool_name=capability_tool_name,
+                task_id=bridge_task.task_id,
+                source="local_agent_bridge",
+            )
+        except CapabilityResolutionError as exc:
+            classification = {
+                **classification,
+                "decision": "denied",
+                "risk_level": "unknown",
+                "reason": f"local tool capability is not attached: {exc}",
+                "capability_attached": False,
+            }
+            capability_snapshot["capability_attached"] = False
+        else:
+            capability_snapshot = {
+                **capability_snapshot,
+                **resolved_tool.snapshot_json,
+                "source": "local_agent_bridge",
+                "server_execution": False,
+                "connection_id": connection.id,
+                "bridge_task_id": bridge_task.id,
+                "adapter_kind": connection.adapter_kind,
+                "workspace_root": _redact_path(connection.workspace_root),
+                "execution_target": request.execution_target,
+                "local_tool_name": request.tool_name,
+                "capability_tool_name": capability_tool_name,
+                "server_risk": classification["risk_level"],
+                "bridge_risk": request.risk_level,
+                "permission_mode": request.permission_mode,
+                "capability_attached": True,
+            }
+            classification = {
+                **classification,
+                "capability_attached": True,
+                "capability_id": resolved_tool.capability.id,
+                "capability_version_id": resolved_tool.version.id,
+                "capability_type": resolved_tool.version.type,
+            }
+    now = utc_now()
+    safe_input = _redact_mapping(request.input_json)
+    safe_preview = (
+        _redact_mapping(request.pending_change_preview)
+        if isinstance(request.pending_change_preview, dict)
+        else {}
+    )
+    safe_metadata = _safe_metadata(request.metadata)
+    executable_input_sha256 = _executable_input_sha256(safe_input)
+    initial_status = {
+        "allowed": "APPROVED",
+        "approval_required": "PENDING_APPROVAL",
+        "denied": "DENIED",
+    }[classification["decision"]]
+    tool_call = ToolCall(
+        task_id=bridge_task.task_id,
+        agent_run_id=None,
+        tool_name=request.tool_name,
+        status=initial_status,
+        risk_level=classification["risk_level"],
+        capability_id=resolved_tool.capability.id if resolved_tool is not None else None,
+        capability_version_id=resolved_tool.version.id if resolved_tool is not None else None,
+        capability_type=resolved_tool.version.type if resolved_tool is not None else None,
+        capability_content_sha256=resolved_tool.version.content_sha256
+        if resolved_tool is not None
+        else None,
+        capability_config_sha256=resolved_tool.version.config_sha256
+        if resolved_tool is not None
+        else None,
+        capability_schema_version=resolved_tool.version.schema_version
+        if resolved_tool is not None
+        else None,
+        capability_snapshot_json=capability_snapshot,
+        requires_sandbox=False,
+        duration_ms=0,
+        input_json=safe_input,
+        output_json={},
+        error_message=classification["reason"] if classification["decision"] == "denied" else None,
+        created_at=now,
+    )
+    session.add(tool_call)
+    session.flush()
+    approval: ToolApproval | None = None
+    expires_at = now + timedelta(minutes=LOCAL_AGENT_TOOL_DECISION_TTL_MINUTES)
+    decision_json = {
+        "decision": classification["decision"],
+        "reason": classification["reason"],
+        "server_execution": False,
+        "auto_allowed": classification["decision"] == "allowed",
+        "input_json": safe_input,
+        "executable_input_sha256": executable_input_sha256,
+        "metadata": safe_metadata,
+        "pending_change_preview": safe_preview,
+        "cwd": _redact_path(request.cwd),
+        "expires_at": expires_at.isoformat(),
+    }
+    local_status = classification["decision"]
+    if classification["decision"] == "approval_required":
+        approval = ToolApproval(
+            task_id=bridge_task.task_id,
+            tool_call_id=tool_call.id,
+            organization_id=connection.organization_id,
+            requested_by=connection.owner_user_id,
+            status="PENDING",
+            risk_level=classification["risk_level"],
+            reason=classification["reason"],
+            request_json={
+                "source": "local_agent_bridge",
+                "server_execution": False,
+                "tool_request_id": request.tool_request_id,
+                "bridge_task_id": bridge_task.id,
+                "connection_id": connection.id,
+                "tool_name": request.tool_name,
+                "input_json": safe_input,
+                "executable_input_sha256": executable_input_sha256,
+                "metadata": safe_metadata,
+                "pending_change_preview": safe_preview,
+                "cwd": _redact_path(request.cwd),
+                "policy_decision": classification,
+            },
+            decision_json={},
+            created_at=now,
+        )
+        session.add(approval)
+        session.flush()
+        decision_json["approval_id"] = approval.id
+        run = session.get(Task, bridge_task.task_id)
+        if run is not None:
+            run.status = "WAITING_APPROVAL"
+            run.updated_at = now
+    elif classification["decision"] == "denied":
+        tool_call.output_json = {"denied": True, "reason": classification["reason"]}
+    local_request = LocalAgentToolRequest(
+        organization_id=connection.organization_id,
+        connection_id=connection.id,
+        binding_id=bridge_task.binding_id,
+        bridge_task_id=bridge_task.id,
+        task_id=bridge_task.task_id,
+        tool_request_id=request.tool_request_id,
+        tool_call_id=tool_call.id,
+        approval_id=approval.id if approval is not None else None,
+        tool_name=request.tool_name,
+        execution_target=request.execution_target,
+        risk_level=classification["risk_level"],
+        permission_mode=request.permission_mode,
+        status=local_status,
+        input_json=safe_input,
+        policy_decision_json=classification,
+        decision_json=decision_json,
+        result_json={},
+        decision_expires_at=expires_at
+        if classification["decision"] in {"allowed", "approval_required"}
+        else None,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(local_request)
+    session.flush()
+    if safe_preview:
+        _record_pending_change_preview(
+            local_request=local_request,
+            approval=approval,
+            request=request,
+            preview=safe_preview,
+            status="approval_required"
+            if classification["decision"] == "approval_required"
+            else classification["decision"],
+            session=session,
+        )
+    _append_local_tool_request_events(
+        connection=connection,
+        bridge_task=bridge_task,
+        local_request=local_request,
+        approval=approval,
+        classification=classification,
+        session=session,
+    )
+    session.commit()
+    session.refresh(local_request)
+    return _local_tool_decision_response(local_request, session=session)
+
+
+@router.get(
+    "/local-agent/bridge/tool-requests/{tool_request_id}/decision",
+    response_model=LocalAgentToolDecisionResponse,
+    summary="Bridge 查询本地工具授权决定",
+)
+def get_local_agent_tool_decision(
+    tool_request_id: str,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentToolDecisionResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    local_request = _owned_local_tool_request(
+        tool_request_id=tool_request_id,
+        connection=connection,
+        session=session,
+    )
+    _expire_local_tool_request_if_needed(local_request, session=session)
+    session.commit()
+    session.refresh(local_request)
+    return _local_tool_decision_response(local_request, session=session)
+
+
+@router.get(
+    "/local-agent/bridge/tool-requests/pending",
+    response_model=LocalAgentPendingToolRequestPage,
+    summary="Bridge 查询服务端未决本地工具请求",
+)
+def list_pending_local_agent_tool_requests(
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentPendingToolRequestPage:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    rows = list(
+        session.execute(
+            select(LocalAgentToolRequest)
+            .where(
+                LocalAgentToolRequest.connection_id == connection.id,
+                LocalAgentToolRequest.status.in_(("approval_required", "approved", "allowed")),
+            )
+            .order_by(
+                LocalAgentToolRequest.created_at.asc(),
+                LocalAgentToolRequest.id.asc(),
+            )
+        ).scalars()
+    )
+    for row in rows:
+        _expire_local_tool_request_if_needed(row, session=session)
+    session.commit()
+    live_rows = [row for row in rows if row.status in {"approval_required", "approved", "allowed"}]
+    return LocalAgentPendingToolRequestPage(
+        items=[_local_tool_decision_response(row, session=session) for row in live_rows]
+    )
+
+
+@router.post(
+    "/local-agent/bridge/tool-requests/{tool_request_id}/result",
+    response_model=LocalAgentToolDecisionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bridge 上报已授权本地工具结果",
+)
+def record_local_agent_tool_result(
+    tool_request_id: str,
+    request: LocalAgentToolResultRequest,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentToolDecisionResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    existing_receipt = session.execute(
+        select(LocalAgentBridgeEventReceipt).where(
+            LocalAgentBridgeEventReceipt.connection_id == connection.id,
+            LocalAgentBridgeEventReceipt.event_id == request.event_id,
+        )
+    ).scalar_one_or_none()
+    local_request = _owned_local_tool_request(
+        tool_request_id=tool_request_id,
+        connection=connection,
+        session=session,
+    )
+    if existing_receipt is not None:
+        return _local_tool_decision_response(local_request, session=session)
+    _require_executable_local_tool_request(
+        local_request,
+        session=session,
+        detail="Local Agent tool request is not executable",
+    )
+    now = utc_now()
+    result_status = _normalized_tool_status(request.status)
+    terminal_status = {
+        "SUCCESS": "succeeded",
+        "FAILED": "failed",
+        "TIMEOUT": "failed",
+        "DENIED": "denied",
+        "CANCELLED": "cancelled",
+    }.get(request.status, "failed")
+    tool_call = session.get(ToolCall, local_request.tool_call_id)
+    if tool_call is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ToolCall not found")
+    command = _validated_result_command(
+        local_request=local_request,
+        command_id=request.command_id,
+        result_status=request.status,
+        session=session,
+    )
+    try:
+        pending_change = _validate_pending_change_result(
+            local_request=local_request,
+            request=request,
+            session=session,
+        )
+    except HTTPException:
+        session.commit()
+        raise
+    result_change_id = pending_change.change_id if pending_change is not None else request.change_id
+    safe_output = _redact_mapping(request.output_json)
+    tool_call.status = result_status
+    tool_call.output_json = safe_output
+    tool_call.duration_ms = request.duration_ms
+    tool_call.error_message = _bounded_text(request.error_message)
+    local_request.status = terminal_status
+    local_request.result_json = {
+        "event_id": request.event_id,
+        "status": request.status,
+        "output_json": safe_output,
+        "duration_ms": request.duration_ms,
+        "command_id": command.command_id if command is not None else None,
+        "change_id": result_change_id,
+        "diff_sha256": request.diff_sha256,
+        "metadata": _redact_mapping(request.metadata),
+    }
+    local_request.completed_at = now
+    local_request.updated_at = now
+    event_type = {
+        "SUCCESS": EventType.TOOL_RESULT_RECEIVED,
+        "FAILED": EventType.TOOL_FAILED,
+        "TIMEOUT": EventType.TOOL_TIMEOUT,
+        "DENIED": EventType.TOOL_DENIED_BY_POLICY,
+        "CANCELLED": EventType.LOCAL_AGENT_COMMAND_CANCELLED,
+    }.get(request.status, EventType.TOOL_FAILED)
+    agent_event = EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=event_type,
+        payload_json={
+            "source": "local_agent_bridge",
+            "connection_id": connection.id,
+            "bridge_task_id": local_request.bridge_task_id,
+            "tool_request_id": local_request.tool_request_id,
+            "tool_call_id": tool_call.id,
+            "tool_name": tool_call.tool_name,
+            "status": tool_call.status,
+            "server_execution": False,
+            "command_id": command.command_id if command is not None else None,
+            "change_id": result_change_id,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    session.add(
+        LocalAgentBridgeEventReceipt(
+            organization_id=connection.organization_id,
+            connection_id=connection.id,
+            bridge_task_id=local_request.bridge_task_id,
+            task_id=local_request.task_id,
+            event_id=request.event_id,
+            sequence=None,
+            event_type="tool_result",
+            payload_json={
+                "tool_request_id": local_request.tool_request_id,
+                "status": request.status,
+                "metadata": _redact_mapping(request.metadata),
+            },
+            agent_event_id=agent_event.id,
+            tool_call_id=tool_call.id,
+            created_at=now,
+        )
+    )
+    session.commit()
+    session.refresh(local_request)
+    return _local_tool_decision_response(local_request, session=session)
+
+
+@router.post(
+    "/local-agent/bridge/commands/{command_id}/events",
+    response_model=LocalAgentCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bridge 上报本地命令生命周期",
+)
+def record_local_agent_command_event(
+    command_id: str,
+    request: LocalAgentCommandEventRequest,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentCommandResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    local_request = _owned_local_tool_request(
+        tool_request_id=request.tool_request_id,
+        connection=connection,
+        session=session,
+    )
+    _require_executable_local_tool_request(
+        local_request,
+        session=session,
+        detail="Local Agent command is not authorized",
+    )
+    command = session.execute(
+        select(LocalAgentCommand).where(
+            LocalAgentCommand.connection_id == connection.id,
+            LocalAgentCommand.command_id == command_id,
+        )
+    ).scalar_one_or_none()
+    now = utc_now()
+    if command is not None and command.local_agent_tool_request_id != local_request.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command does not belong to tool request",
+        )
+    if command is None:
+        if request.event_type != "started":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent command must start before output or terminal events",
+            )
+        if not request.command:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent command start requires command text",
+            )
+        expected_command = _approved_command_for_request(local_request)
+        _validate_command_start_payload(
+            local_request=local_request,
+            request=request,
+            expected_command=expected_command,
+        )
+        command = LocalAgentCommand(
+            organization_id=connection.organization_id,
+            connection_id=connection.id,
+            binding_id=local_request.binding_id,
+            bridge_task_id=local_request.bridge_task_id,
+            task_id=local_request.task_id,
+            local_agent_tool_request_id=local_request.id,
+            tool_request_id=local_request.tool_request_id,
+            command_id=command_id,
+            tool_name=local_request.tool_name,
+            command=expected_command,
+            status="pending",
+            retry_of_command_id=request.retry_of_command_id,
+            output_summary_json={},
+            event_receipts_json={},
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(command)
+        session.flush()
+    else:
+        _validate_existing_command_against_request(
+            local_request=local_request,
+            command=command,
+            request=request,
+        )
+        if request.event_type == "started":
+            expected_command = _approved_command_for_request(local_request)
+            _validate_command_start_payload(
+                local_request=local_request,
+                request=request,
+                expected_command=expected_command,
+            )
+    receipts = command.event_receipts_json if isinstance(command.event_receipts_json, dict) else {}
+    if request.event_id in receipts:
+        return _local_command_response(command)
+    if command.status in LOCAL_AGENT_COMMAND_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command is already terminal",
+        )
+    if request.event_type == "started" and command.started_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command already started",
+        )
+    if request.event_type in {"output", "finished", "timeout", "cancelled"} and (
+        command.status != "running" or command.started_at is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command must be running before output or terminal events",
+        )
+    receipts[request.event_id] = request.event_type
+    command.event_receipts_json = receipts
+    event_type = EventType.LOCAL_AGENT_COMMAND_OUTPUT
+    if request.event_type == "started":
+        command.status = "running"
+        command.started_at = command.started_at or now
+        local_request.status = "running"
+        local_request.started_at = local_request.started_at or now
+        event_type = EventType.LOCAL_AGENT_COMMAND_STARTED
+    elif request.event_type == "output":
+        command.status = "running"
+        summary = (
+            command.output_summary_json if isinstance(command.output_summary_json, dict) else {}
+        )
+        summary["stdout_tail"] = _bounded_text(request.stdout, limit=2000)
+        summary["stderr_tail"] = _bounded_text(request.stderr, limit=2000)
+        command.output_summary_json = summary
+    else:
+        command.status = {
+            "finished": request.status or "success",
+            "timeout": "timeout",
+            "cancelled": "cancelled",
+        }.get(request.event_type, "failed")
+        if command.status not in LOCAL_AGENT_COMMAND_TERMINAL_STATUSES:
+            command.status = "failed"
+        command.finished_at = now
+        command.exit_code = request.exit_code
+        command.duration_ms = request.duration_ms
+        command.error_message = _bounded_text(request.error_message)
+        event_type = (
+            EventType.LOCAL_AGENT_COMMAND_CANCELLED
+            if command.status == "cancelled"
+            else EventType.LOCAL_AGENT_COMMAND_FINISHED
+        )
+    command.updated_at = now
+    local_request.updated_at = now
+    EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=event_type,
+        payload_json={
+            "source": "local_agent_bridge",
+            "connection_id": connection.id,
+            "bridge_task_id": local_request.bridge_task_id,
+            "tool_request_id": local_request.tool_request_id,
+            "command_id": command.command_id,
+            "status": command.status,
+            "stdout_tail": _bounded_text(request.stdout, limit=2000),
+            "stderr_tail": _bounded_text(request.stderr, limit=2000),
+            "exit_code": request.exit_code,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    session.commit()
+    session.refresh(command)
+    return _local_command_response(command)
+
+
+@router.get(
+    "/local-agent/bridge/commands/{command_id}",
+    response_model=LocalAgentCommandResponse,
+    summary="Bridge 查询本地命令状态",
+)
+def get_local_agent_command_status(
+    command_id: str,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentCommandResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    command = _owned_local_agent_command(
+        command_id=command_id,
+        connection=connection,
+        session=session,
+    )
+    return _local_command_response(command)
+
+
+@router.post(
+    "/local-agent/bridge/commands/{command_id}/cancel-ack",
+    response_model=LocalAgentCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bridge 确认本地命令取消",
+)
+def ack_local_agent_command_cancel(
+    command_id: str,
+    request: LocalAgentCommandCancelAckRequest,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentCommandResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    command = _owned_local_agent_command(
+        command_id=command_id,
+        connection=connection,
+        session=session,
+    )
+    if command.status in LOCAL_AGENT_COMMAND_TERMINAL_STATUSES:
+        if command.cancel_requested_at is not None and command.status == request.status:
+            return _local_command_response(command)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command is already terminal",
+        )
+    if command.cancel_requested_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command cancellation was not requested",
+        )
+    local_request = session.get(LocalAgentToolRequest, command.local_agent_tool_request_id)
+    if local_request is None or local_request.connection_id != connection.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command parent request is invalid",
+        )
+    now = utc_now()
+    command.status = request.status
+    command.finished_at = now
+    command.error_message = _bounded_text(request.error_message or request.status)
+    command.updated_at = now
+    local_request.status = "cancelled" if request.status == "cancelled" else "failed"
+    local_request.completed_at = now
+    local_request.updated_at = now
+    tool_call = session.get(ToolCall, local_request.tool_call_id)
+    if tool_call is not None:
+        tool_call.status = "CANCELLED" if request.status == "cancelled" else "FAILED"
+        tool_call.error_message = command.error_message
+        tool_call.output_json = {
+            "cancelled": request.status == "cancelled",
+            "command_id": command.command_id,
+            "error": command.error_message,
+        }
+    EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=EventType.LOCAL_AGENT_COMMAND_CANCELLED,
+        payload_json={
+            "source": "local_agent_bridge",
+            "connection_id": connection.id,
+            "bridge_task_id": local_request.bridge_task_id,
+            "tool_request_id": local_request.tool_request_id,
+            "command_id": command.command_id,
+            "status": command.status,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    session.commit()
+    session.refresh(command)
+    return _local_command_response(command)
+
+
+@router.post(
+    "/local-agent/bindings/{binding_id}/commands/{command_id}/cancel",
+    response_model=LocalAgentCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="请求取消本地命令",
+)
+def cancel_local_agent_command(
+    binding_id: str,
+    command_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> LocalAgentCommandResponse:
+    require_role(principal, {"admin", "engineer"})
+    binding = session.get(LocalAgentConversationBinding, binding_id)
+    if binding is None or binding.organization_id != principal.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local Agent binding not found",
+        )
+    if binding.owner_user_id != principal.user_id and "admin" not in principal.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owner or admin can cancel",
+        )
+    command = session.execute(
+        select(LocalAgentCommand).where(
+            LocalAgentCommand.binding_id == binding.id,
+            LocalAgentCommand.command_id == command_id,
+        )
+    ).scalar_one_or_none()
+    if command is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local Agent command not found",
+        )
+    if command.status in LOCAL_AGENT_COMMAND_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command is terminal",
+        )
+    command.cancel_requested_at = utc_now()
+    command.updated_at = utc_now()
+    session.commit()
+    session.refresh(command)
+    return _local_command_response(command)
+
+
+@router.post(
+    "/local-agent/bindings/{binding_id}/commands/{command_id}/retry",
+    response_model=LocalAgentCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="请求重试本地命令",
+)
+def retry_local_agent_command(
+    binding_id: str,
+    command_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> LocalAgentCommandResponse:
+    require_role(principal, {"admin", "engineer"})
+    binding = session.get(LocalAgentConversationBinding, binding_id)
+    if binding is None or binding.organization_id != principal.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local Agent binding not found",
+        )
+    if binding.owner_user_id != principal.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owner can retry local commands",
+        )
+    command = session.execute(
+        select(LocalAgentCommand).where(
+            LocalAgentCommand.binding_id == binding.id,
+            LocalAgentCommand.command_id == command_id,
+        )
+    ).scalar_one_or_none()
+    if command is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local Agent command not found",
+        )
+    if command.status not in {"failed", "timeout", "cancelled"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command retry requires failed, timeout, or cancelled status",
+        )
+    local_request = session.get(LocalAgentToolRequest, command.local_agent_tool_request_id)
+    if local_request is None or local_request.binding_id != binding.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command parent request is invalid",
+        )
+    if local_request.tool_name not in LOCAL_AGENT_COMMAND_TOOLS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command retry is only valid for command tools",
+        )
+    if local_request.status in {"denied", "expired", "succeeded"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command parent request is not retryable",
+        )
+    terminal_status = "cancelled" if command.status == "cancelled" else "failed"
+    tool_status = {
+        "cancelled": "CANCELLED",
+        "timeout": "TIMEOUT",
+        "failed": "FAILED",
+    }[command.status]
+    event_type = {
+        "cancelled": EventType.LOCAL_AGENT_COMMAND_CANCELLED,
+        "timeout": EventType.TOOL_TIMEOUT,
+        "failed": EventType.TOOL_FAILED,
+    }[command.status]
+    _terminalize_local_tool_request(
+        local_request,
+        session=session,
+        terminal_status=terminal_status,
+        tool_status=tool_status,
+        reason="local command retry requested",
+        event_type=event_type,
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    retry_request, retry_command = _create_retry_local_tool_request(
+        original_request=local_request,
+        original_command=command,
+        session=session,
+        actor_id=principal.user_id,
+    )
+    EventStore(session).append(
+        task_id=retry_request.task_id,
+        event_type=EventType.LOCAL_AGENT_TOOL_DECISION_READY,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": retry_request.tool_request_id,
+            "tool_call_id": retry_request.tool_call_id,
+            "command_id": retry_command.command_id,
+            "retry_of_command_id": command.command_id,
+            "retry_of_tool_request_id": local_request.tool_request_id,
+            "decision": retry_request.status,
+            "server_execution": False,
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    session.commit()
+    session.refresh(retry_command)
+    return _local_command_response(retry_command)
+
+
 def _resolve_or_create_agent_session(
     *,
     connection: LocalAgentConnection,
@@ -975,6 +1890,1010 @@ def _owned_bridge_task(
             status_code=status.HTTP_404_NOT_FOUND, detail="Local Agent bridge task not found"
         )
     return bridge_task
+
+
+def _owned_local_tool_request(
+    *,
+    tool_request_id: str,
+    connection: LocalAgentConnection,
+    session: Session,
+) -> LocalAgentToolRequest:
+    local_request = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.connection_id == connection.id,
+            LocalAgentToolRequest.tool_request_id == tool_request_id,
+        )
+    ).scalar_one_or_none()
+    if local_request is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local Agent tool request not found",
+        )
+    return local_request
+
+
+def _owned_local_agent_command(
+    *,
+    command_id: str,
+    connection: LocalAgentConnection,
+    session: Session,
+) -> LocalAgentCommand:
+    command = session.execute(
+        select(LocalAgentCommand).where(
+            LocalAgentCommand.connection_id == connection.id,
+            LocalAgentCommand.command_id == command_id,
+        )
+    ).scalar_one_or_none()
+    if command is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Local Agent command not found",
+        )
+    return command
+
+
+def _terminalize_local_tool_request(
+    local_request: LocalAgentToolRequest,
+    *,
+    session: Session,
+    terminal_status: str,
+    tool_status: str,
+    reason: str,
+    event_type: EventType,
+    actor_type: str,
+    actor_id: str | None,
+) -> bool:
+    if local_request.status in LOCAL_AGENT_TOOL_TERMINAL_STATUSES:
+        return False
+    now = utc_now()
+    safe_reason = _bounded_text(reason)
+    local_request.status = terminal_status
+    local_request.completed_at = local_request.completed_at or now
+    local_request.updated_at = now
+    decision_json = (
+        local_request.decision_json if isinstance(local_request.decision_json, dict) else {}
+    )
+    local_request.decision_json = {
+        **decision_json,
+        "terminal_status": terminal_status,
+        "terminal_reason": safe_reason,
+        "terminalized_at": now.isoformat(),
+        "server_execution": False,
+    }
+    local_request.result_json = {
+        "status": tool_status,
+        "reason": safe_reason,
+        "server_execution": False,
+    }
+    tool_call = session.get(ToolCall, local_request.tool_call_id)
+    if tool_call is not None and tool_call.status not in {
+        "SUCCESS",
+        "FAILED",
+        "TIMEOUT",
+        "DENIED",
+        "CANCELLED",
+    }:
+        tool_call.status = tool_status
+        tool_call.error_message = safe_reason
+        tool_call.output_json = {
+            "status": tool_status,
+            "reason": safe_reason,
+            "server_execution": False,
+            "tool_request_id": local_request.tool_request_id,
+        }
+    approval = (
+        session.get(ToolApproval, local_request.approval_id)
+        if local_request.approval_id
+        else None
+    )
+    if approval is not None and approval.status == "PENDING":
+        approval.status = "EXPIRED" if terminal_status == "expired" else "DENIED"
+        approval.decided_by = actor_id
+        approval.decided_at = now
+        approval.decision_json = {
+            "decision": approval.status,
+            "reason": safe_reason,
+            "server_execution": False,
+        }
+    pending_changes = list(
+        session.execute(
+            select(LocalAgentPendingChange).where(
+                LocalAgentPendingChange.local_agent_tool_request_id == local_request.id,
+                LocalAgentPendingChange.status.in_(LOCAL_AGENT_PENDING_CHANGE_ACTIVE_STATUSES),
+            )
+        ).scalars()
+    )
+    for change in pending_changes:
+        if terminal_status == "failed":
+            change.status = "failed"
+            change.error_message = safe_reason
+        else:
+            change.status = "denied"
+            change.denied_at = now
+            change.error_message = safe_reason if terminal_status == "expired" else None
+        change.updated_at = now
+    active_commands = list(
+        session.execute(
+            select(LocalAgentCommand).where(
+                LocalAgentCommand.local_agent_tool_request_id == local_request.id,
+                LocalAgentCommand.status.in_(LOCAL_AGENT_COMMAND_ACTIVE_STATUSES),
+            )
+        ).scalars()
+    )
+    for command in active_commands:
+        if terminal_status == "cancelled":
+            command.status = "cancelled"
+        elif tool_status == "TIMEOUT":
+            command.status = "timeout"
+        else:
+            command.status = "failed"
+        command.finished_at = command.finished_at or now
+        command.error_message = safe_reason
+        command.updated_at = now
+    _refresh_waiting_local_task(
+        task_id=local_request.task_id,
+        session=session,
+        now=now,
+    )
+    EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=event_type,
+        payload_json={
+            "source": "local_agent_bridge",
+            "connection_id": local_request.connection_id,
+            "bridge_task_id": local_request.bridge_task_id,
+            "tool_request_id": local_request.tool_request_id,
+            "tool_call_id": local_request.tool_call_id,
+            "tool_name": local_request.tool_name,
+            "status": tool_status,
+            "terminal_status": terminal_status,
+            "reason": safe_reason,
+            "server_execution": False,
+        },
+        actor_type=actor_type,
+        actor_id=actor_id,
+    )
+    return True
+
+
+def _refresh_waiting_local_task(
+    *,
+    task_id: str,
+    session: Session,
+    now: datetime,
+) -> None:
+    task = session.get(Task, task_id)
+    if task is None or task.status != "WAITING_APPROVAL":
+        return
+    pending_approvals = session.execute(
+        select(func.count(ToolApproval.id)).where(
+            ToolApproval.task_id == task.id,
+            ToolApproval.status == "PENDING",
+        )
+    ).scalar_one()
+    if pending_approvals:
+        return
+    task.status = "RUNNING"
+    task.completed_at = None
+    task.updated_at = now
+
+
+def _cancel_local_agent_bridge_task(
+    *,
+    bridge_task: LocalAgentBridgeTask,
+    session: Session,
+    reason: str,
+    actor_type: str,
+    actor_id: str | None,
+) -> bool:
+    if bridge_task.status in {"completed", "failed", "cancelled"}:
+        return False
+    now = utc_now()
+    safe_reason = _bounded_text(reason)
+    bridge_task.status = "cancelled"
+    bridge_task.completed_at = bridge_task.completed_at or now
+    bridge_task.updated_at = now
+    run = session.get(Task, bridge_task.task_id)
+    if run is not None and run.status not in {"COMPLETED", "FAILED", "CANCELLED"}:
+        run.status = "CANCELLED"
+        run.completed_at = run.completed_at or now
+        run.updated_at = now
+    EventStore(session).append(
+        task_id=bridge_task.task_id,
+        event_type=EventType.TASK_CANCELLED,
+        payload_json={
+            "source": "local_agent_bridge",
+            "connection_id": bridge_task.connection_id,
+            "bridge_task_id": bridge_task.id,
+            "reason": safe_reason,
+        },
+        actor_type=actor_type,
+        actor_id=actor_id,
+    )
+    return True
+
+
+def _retry_identifier(prefix: str) -> str:
+    suffix = secrets.token_hex(4)
+    return f"{prefix[:120]}:retry:{suffix}"
+
+
+def _create_retry_local_tool_request(
+    *,
+    original_request: LocalAgentToolRequest,
+    original_command: LocalAgentCommand,
+    session: Session,
+    actor_id: str | None,
+) -> tuple[LocalAgentToolRequest, LocalAgentCommand]:
+    original_tool_call = session.get(ToolCall, original_request.tool_call_id)
+    if original_tool_call is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ToolCall not found")
+    now = utc_now()
+    expires_at = now + timedelta(minutes=LOCAL_AGENT_TOOL_DECISION_TTL_MINUTES)
+    retry_tool_request_id = _retry_identifier(original_request.tool_request_id)
+    retry_command_id = _retry_identifier(original_command.command_id)
+    retry_input = _approved_input_for_request(original_request)
+    retry_input_sha256 = _executable_input_sha256(retry_input)
+    original_snapshot = (
+        original_tool_call.capability_snapshot_json
+        if isinstance(original_tool_call.capability_snapshot_json, dict)
+        else {}
+    )
+    tool_call = ToolCall(
+        task_id=original_request.task_id,
+        agent_run_id=original_tool_call.agent_run_id,
+        tool_name=original_request.tool_name,
+        status="APPROVED",
+        risk_level=original_request.risk_level,
+        capability_id=original_tool_call.capability_id,
+        capability_version_id=original_tool_call.capability_version_id,
+        capability_type=original_tool_call.capability_type,
+        capability_content_sha256=original_tool_call.capability_content_sha256,
+        capability_config_sha256=original_tool_call.capability_config_sha256,
+        capability_schema_version=original_tool_call.capability_schema_version,
+        capability_snapshot_json={
+            **original_snapshot,
+            "source": "local_agent_bridge",
+            "server_execution": False,
+            "retry": True,
+            "retry_of_tool_request_id": original_request.tool_request_id,
+            "retry_of_command_id": original_command.command_id,
+            "retry_requested_by": actor_id,
+        },
+        requires_sandbox=False,
+        duration_ms=0,
+        input_json=retry_input,
+        output_json={},
+        error_message=None,
+        created_at=now,
+    )
+    session.add(tool_call)
+    session.flush()
+    decision_json = (
+        original_request.decision_json
+        if isinstance(original_request.decision_json, dict)
+        else {}
+    )
+    retry_decision_json = {
+        key: value
+        for key, value in decision_json.items()
+        if key not in {"terminal_status", "terminal_reason", "terminalized_at"}
+    }
+    retry_request = LocalAgentToolRequest(
+        organization_id=original_request.organization_id,
+        connection_id=original_request.connection_id,
+        binding_id=original_request.binding_id,
+        bridge_task_id=original_request.bridge_task_id,
+        task_id=original_request.task_id,
+        tool_request_id=retry_tool_request_id,
+        tool_call_id=tool_call.id,
+        approval_id=None,
+        tool_name=original_request.tool_name,
+        execution_target=original_request.execution_target,
+        risk_level=original_request.risk_level,
+        permission_mode=original_request.permission_mode,
+        status="approved",
+        input_json=retry_input,
+        policy_decision_json=original_request.policy_decision_json,
+        decision_json={
+            **retry_decision_json,
+            "decision": "approved",
+            "reason": "local command retry requested",
+            "server_execution": False,
+            "input_json": retry_input,
+            "executable_input_sha256": retry_input_sha256,
+            "retry": True,
+            "retry_of_tool_request_id": original_request.tool_request_id,
+            "retry_of_tool_call_id": original_request.tool_call_id,
+            "retry_of_command_id": original_command.command_id,
+            "retry_requested_by": actor_id,
+            "retry_requested_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        },
+        result_json={},
+        decision_expires_at=expires_at,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(retry_request)
+    session.flush()
+    retry_command = LocalAgentCommand(
+        organization_id=original_command.organization_id,
+        connection_id=original_command.connection_id,
+        binding_id=original_command.binding_id,
+        bridge_task_id=original_command.bridge_task_id,
+        task_id=original_command.task_id,
+        local_agent_tool_request_id=retry_request.id,
+        tool_request_id=retry_request.tool_request_id,
+        command_id=retry_command_id,
+        tool_name=original_command.tool_name,
+        command=_approved_command_for_request(retry_request),
+        status="pending",
+        retry_of_command_id=original_command.command_id,
+        output_summary_json={},
+        event_receipts_json={},
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(retry_command)
+    session.flush()
+    EventStore(session).append(
+        task_id=retry_request.task_id,
+        event_type=EventType.TOOL_CALLED,
+        payload_json={
+            "source": "local_agent_bridge",
+            "connection_id": retry_request.connection_id,
+            "bridge_task_id": retry_request.bridge_task_id,
+            "tool_request_id": retry_request.tool_request_id,
+            "tool_call_id": retry_request.tool_call_id,
+            "tool_name": retry_request.tool_name,
+            "status": retry_request.status,
+            "retry": True,
+            "retry_of_tool_request_id": original_request.tool_request_id,
+            "retry_of_command_id": original_command.command_id,
+            "server_execution": False,
+        },
+        actor_type="user",
+        actor_id=actor_id,
+    )
+    return retry_request, retry_command
+
+
+def _classify_local_tool_request(request: LocalAgentToolRequestCreateRequest) -> dict:
+    tool_name = request.tool_name.strip()
+    command = ""
+    if isinstance(request.input_json, dict):
+        command = str(request.input_json.get("command") or "")
+    target_paths = [str(path) for path in request.target_paths if str(path).strip()]
+    bridge_risk = request.risk_level
+    server_risk = "low"
+    decision = "allowed"
+    reason = "safe-listed local metadata request"
+    if request.execution_target != "host":
+        return {
+            "decision": "denied",
+            "risk_level": "high",
+            "reason": "local bridge may only request host execution in V3",
+            "bridge_risk": bridge_risk,
+        }
+    if tool_name in LOCAL_AGENT_SAFE_TOOLS:
+        server_risk = "low"
+        decision = "allowed"
+    elif tool_name in LOCAL_AGENT_SIDE_EFFECT_TOOLS or tool_name.startswith(
+        ("run_", "write_", "commit_")
+    ):
+        server_risk = "high"
+        decision = "approval_required"
+        reason = "local host side-effect tools require Harness approval"
+    elif tool_name in {"read_file", "search_files", "list_files"}:
+        server_risk = "medium"
+        decision = "approval_required"
+        reason = "local filesystem reads require Harness approval in V3"
+    else:
+        server_risk = "unknown"
+        decision = "denied"
+        reason = "unknown local tool is denied by default"
+    if command and LOCAL_AGENT_NETWORK_PATTERNS.search(command):
+        server_risk = "critical"
+        decision = "approval_required"
+        reason = "network or package-install command requires approval"
+    if command and LOCAL_AGENT_SECRET_PATTERNS.search(command):
+        server_risk = "critical"
+        decision = "approval_required"
+        reason = "secret/env read command requires approval"
+    if request.requires_network or request.requires_secret_read:
+        server_risk = "critical"
+        if decision != "denied":
+            decision = "approval_required"
+        reason = "network or secret access requires approval"
+    if target_paths and any(path.startswith(("~", "/")) for path in target_paths):
+        if decision != "denied":
+            decision = "approval_required"
+        server_risk = "high" if server_risk not in {"critical"} else server_risk
+        reason = "absolute or home target paths require approval"
+    return {
+        "decision": decision,
+        "risk_level": server_risk,
+        "reason": reason,
+        "bridge_risk": bridge_risk,
+        "bridge_permission_mode": request.permission_mode,
+        "target_paths": [_redact_path(path) for path in target_paths],
+        "requires_network": request.requires_network,
+        "requires_secret_read": request.requires_secret_read,
+    }
+
+
+def _capability_tool_name(tool_name: str) -> str:
+    return LOCAL_AGENT_CAPABILITY_TOOL_ALIASES.get(tool_name, tool_name)
+
+
+def _local_tool_requires_capability(tool_name: str) -> bool:
+    return tool_name not in LOCAL_AGENT_SAFE_TOOLS
+
+
+def _local_tool_decision_response(
+    local_request: LocalAgentToolRequest,
+    *,
+    session: Session,
+) -> LocalAgentToolDecisionResponse:
+    decision_json = (
+        local_request.decision_json if isinstance(local_request.decision_json, dict) else {}
+    )
+    input_json = decision_json.get("input_json")
+    if not isinstance(input_json, dict):
+        input_json = local_request.input_json
+    executable = local_request.status in {"allowed", "approved"}
+    if local_request.decision_expires_at is not None and _as_aware_utc(
+        local_request.decision_expires_at
+    ) < _as_aware_utc(utc_now()):
+        executable = False
+    if local_request.status in {"denied", "expired", "succeeded", "failed", "cancelled"}:
+        executable = False
+    approval = (
+        session.get(ToolApproval, local_request.approval_id)
+        if local_request.approval_id
+        else None
+    )
+    decision = local_request.status
+    if (
+        approval is not None
+        and approval.status == "PENDING"
+        and local_request.status == "approval_required"
+    ):
+        decision = "approval_required"
+    return LocalAgentToolDecisionResponse(
+        tool_request_id=local_request.tool_request_id,
+        bridge_task_id=local_request.bridge_task_id,
+        tool_call_id=local_request.tool_call_id,
+        approval_id=local_request.approval_id,
+        decision=decision,
+        status=local_request.status,
+        executable=executable,
+        server_execution=False,
+        tool_name=local_request.tool_name,
+        input_json=input_json,
+        reason=str(decision_json.get("reason") or ""),
+        decision_json=decision_json,
+        expires_at=local_request.decision_expires_at,
+    )
+
+
+def _require_executable_local_tool_request(
+    local_request: LocalAgentToolRequest,
+    *,
+    session: Session,
+    detail: str,
+) -> None:
+    _expire_local_tool_request_if_needed(local_request, session=session)
+    if local_request.status in LOCAL_AGENT_TOOL_TERMINAL_STATUSES:
+        if local_request.status == "expired":
+            session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent tool request is already terminal",
+        )
+    if local_request.status not in {"allowed", "approved", "running"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+    if local_request.decision_expires_at is not None and _as_aware_utc(
+        local_request.decision_expires_at
+    ) < _as_aware_utc(utc_now()):
+        _terminalize_local_tool_request(
+            local_request,
+            session=session,
+            terminal_status="expired",
+            tool_status="DENIED",
+            reason="local tool decision expired",
+            event_type=EventType.TOOL_DENIED_BY_POLICY,
+            actor_type="system",
+            actor_id=None,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent tool decision expired",
+        )
+
+
+def _expire_local_tool_request_if_needed(
+    local_request: LocalAgentToolRequest,
+    *,
+    session: Session,
+) -> None:
+    if local_request.status in LOCAL_AGENT_TOOL_TERMINAL_STATUSES:
+        return
+    if local_request.decision_expires_at is None:
+        return
+    if _as_aware_utc(local_request.decision_expires_at) >= _as_aware_utc(utc_now()):
+        return
+    _terminalize_local_tool_request(
+        local_request,
+        session=session,
+        terminal_status="expired",
+        tool_status="DENIED",
+        reason="local tool decision expired",
+        event_type=EventType.TOOL_DENIED_BY_POLICY,
+        actor_type="system",
+        actor_id=None,
+    )
+
+
+def _append_local_tool_request_events(
+    *,
+    connection: LocalAgentConnection,
+    bridge_task: LocalAgentBridgeTask,
+    local_request: LocalAgentToolRequest,
+    approval: ToolApproval | None,
+    classification: dict,
+    session: Session,
+) -> None:
+    event_store = EventStore(session)
+    base_payload = {
+        "source": "local_agent_bridge",
+        "connection_id": connection.id,
+        "bridge_task_id": bridge_task.id,
+        "tool_request_id": local_request.tool_request_id,
+        "tool_call_id": local_request.tool_call_id,
+        "tool_name": local_request.tool_name,
+        "server_execution": False,
+    }
+    event_store.append(
+        task_id=bridge_task.task_id,
+        event_type=EventType.TOOL_CALLED,
+        payload_json={
+            **base_payload,
+            "status": local_request.status,
+            "risk_level": local_request.risk_level,
+            "input_json": local_request.input_json,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    event_store.append(
+        task_id=bridge_task.task_id,
+        event_type=EventType.POLICY_CHECKED,
+        payload_json={
+            **base_payload,
+            "decision": classification["decision"],
+            "server_risk": classification["risk_level"],
+            "bridge_risk": classification.get("bridge_risk"),
+            "reason": classification["reason"],
+            "policy_id": "local_agent_tool_safety_v3",
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    if approval is not None:
+        event_store.append(
+            task_id=bridge_task.task_id,
+            event_type=EventType.TOOL_APPROVAL_REQUESTED,
+            payload_json={
+                **base_payload,
+                "approval_id": approval.id,
+                "risk_level": approval.risk_level,
+                "reason": approval.reason,
+            },
+            actor_type="local_agent",
+            actor_id=connection.id,
+        )
+    elif classification["decision"] == "denied":
+        event_store.append(
+            task_id=bridge_task.task_id,
+            event_type=EventType.TOOL_DENIED_BY_POLICY,
+            payload_json={**base_payload, "reason": classification["reason"]},
+            actor_type="local_agent",
+            actor_id=connection.id,
+        )
+
+
+def _record_pending_change_preview(
+    *,
+    local_request: LocalAgentToolRequest,
+    approval: ToolApproval | None,
+    request: LocalAgentToolRequestCreateRequest,
+    preview: dict,
+    status: str,
+    session: Session,
+) -> None:
+    change_id = str(preview.get("change_id") or request.tool_request_id)
+    target_paths = request.target_paths or preview.get("target_paths") or []
+    if not isinstance(target_paths, list):
+        target_paths = []
+    diff_sha256 = str(preview.get("diff_sha256") or preview.get("diff_hash") or "")
+    row = LocalAgentPendingChange(
+        organization_id=local_request.organization_id,
+        connection_id=local_request.connection_id,
+        binding_id=local_request.binding_id,
+        bridge_task_id=local_request.bridge_task_id,
+        task_id=local_request.task_id,
+        local_agent_tool_request_id=local_request.id,
+        tool_request_id=local_request.tool_request_id,
+        approval_id=approval.id if approval is not None else None,
+        change_id=change_id,
+        target_paths_json=[_redact_path(str(path)) for path in target_paths],
+        diff_sha256=diff_sha256,
+        preview_json=preview,
+        status=status if status in {"approval_required", "allowed", "denied"} else "previewed",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    session.add(row)
+    EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=EventType.LOCAL_AGENT_PENDING_CHANGE_PREVIEWED,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_request.tool_request_id,
+            "change_id": change_id,
+            "target_paths": row.target_paths_json,
+            "diff_sha256": diff_sha256,
+            "status": row.status,
+        },
+        actor_type="local_agent",
+        actor_id=local_request.connection_id,
+    )
+
+
+def _validate_pending_change_result(
+    *,
+    local_request: LocalAgentToolRequest,
+    request: LocalAgentToolResultRequest,
+    session: Session,
+) -> LocalAgentPendingChange | None:
+    change: LocalAgentPendingChange | None = None
+    if request.change_id:
+        change = session.execute(
+            select(LocalAgentPendingChange).where(
+                LocalAgentPendingChange.connection_id == local_request.connection_id,
+                LocalAgentPendingChange.change_id == request.change_id,
+            )
+        ).scalar_one_or_none()
+        if change is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Unknown pending change",
+            )
+    elif local_request.tool_name in LOCAL_AGENT_PENDING_CHANGE_TOOLS:
+        change = session.execute(
+            select(LocalAgentPendingChange)
+            .where(LocalAgentPendingChange.local_agent_tool_request_id == local_request.id)
+            .order_by(LocalAgentPendingChange.created_at.asc(), LocalAgentPendingChange.id.asc())
+        ).scalar_one_or_none()
+        if change is None and request.status == "SUCCESS":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Pending change evidence is required for local write result",
+            )
+    if change is None:
+        return None
+    if change.local_agent_tool_request_id != local_request.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pending change does not belong to tool request",
+        )
+    if change.status in LOCAL_AGENT_PENDING_CHANGE_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pending change is already terminal",
+        )
+    now = utc_now()
+    if request.status == "SUCCESS" and local_request.tool_name in LOCAL_AGENT_PENDING_CHANGE_TOOLS:
+        if not request.diff_sha256 or not change.diff_sha256:
+            _fail_pending_change_result(
+                local_request=local_request,
+                change=change,
+                reason="pending change diff hash is required",
+                session=session,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Pending change diff hash is required",
+            )
+        if request.diff_sha256 != change.diff_sha256:
+            _fail_pending_change_result(
+                local_request=local_request,
+                change=change,
+                reason="pending change diff hash mismatch",
+                session=session,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Pending change diff hash mismatch",
+            )
+    elif request.diff_sha256 and change.diff_sha256 and request.diff_sha256 != change.diff_sha256:
+        _fail_pending_change_result(
+            local_request=local_request,
+            change=change,
+            reason="pending change diff hash mismatch",
+            session=session,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Pending change diff hash mismatch",
+        )
+    if request.status == "SUCCESS":
+        change.status = "committed"
+        change.committed_at = now
+    elif request.status in {"DENIED", "CANCELLED"}:
+        change.status = "denied"
+        change.denied_at = now
+    else:
+        change.status = "failed"
+        change.error_message = _bounded_text(request.error_message)
+    change.updated_at = now
+    return change
+
+
+def _fail_pending_change_result(
+    *,
+    local_request: LocalAgentToolRequest,
+    change: LocalAgentPendingChange,
+    reason: str,
+    session: Session,
+) -> None:
+    now = utc_now()
+    change.status = "failed"
+    change.error_message = reason
+    change.updated_at = now
+    local_request.status = "failed"
+    local_request.completed_at = now
+    local_request.updated_at = now
+    local_request.result_json = {
+        "status": "FAILED",
+        "change_id": change.change_id,
+        "error": reason,
+    }
+    tool_call = session.get(ToolCall, local_request.tool_call_id)
+    if tool_call is not None:
+        tool_call.status = "FAILED"
+        tool_call.error_message = reason
+        tool_call.output_json = {
+            "failed": True,
+            "change_id": change.change_id,
+            "error": reason,
+        }
+    EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=EventType.TOOL_FAILED,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_request.tool_request_id,
+            "tool_call_id": local_request.tool_call_id,
+            "change_id": change.change_id,
+            "status": "FAILED",
+            "reason": reason,
+            "server_execution": False,
+        },
+        actor_type="local_agent",
+        actor_id=local_request.connection_id,
+    )
+
+
+def _validated_result_command(
+    *,
+    local_request: LocalAgentToolRequest,
+    command_id: str | None,
+    result_status: str,
+    session: Session,
+) -> LocalAgentCommand | None:
+    if local_request.tool_name not in LOCAL_AGENT_COMMAND_TOOLS:
+        if command_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent non-command tool result cannot include command_id",
+            )
+        return None
+    if not command_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command result requires command_id",
+        )
+    command = session.execute(
+        select(LocalAgentCommand).where(
+            LocalAgentCommand.connection_id == local_request.connection_id,
+            LocalAgentCommand.command_id == command_id,
+        )
+    ).scalar_one_or_none()
+    if command is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command not found for result",
+        )
+    if command.local_agent_tool_request_id != local_request.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent result command does not belong to tool request",
+        )
+    if (
+        command.task_id != local_request.task_id
+        or command.binding_id != local_request.binding_id
+        or command.bridge_task_id != local_request.bridge_task_id
+        or command.connection_id != local_request.connection_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent result command ownership chain mismatch",
+        )
+    _validate_existing_command_against_request(
+        local_request=local_request,
+        command=command,
+        request=None,
+    )
+    if command.status not in LOCAL_AGENT_COMMAND_TERMINAL_STATUSES or command.finished_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent result command is not terminal",
+        )
+    if result_status == "SUCCESS" and command.status != "success":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Successful local tool result requires successful terminal command",
+        )
+    if result_status == "CANCELLED" and command.status != "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cancelled local tool result requires cancelled terminal command",
+        )
+    if result_status == "TIMEOUT" and command.status != "timeout":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Timeout local tool result requires timed-out terminal command",
+        )
+    if result_status == "FAILED" and command.status == "success":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Failed local tool result cannot bind a successful command",
+        )
+    return command
+
+
+def _approved_input_for_request(local_request: LocalAgentToolRequest) -> dict:
+    decision_json = (
+        local_request.decision_json if isinstance(local_request.decision_json, dict) else {}
+    )
+    input_json = decision_json.get("input_json")
+    if not isinstance(input_json, dict):
+        input_json = local_request.input_json
+    return input_json if isinstance(input_json, dict) else {}
+
+
+def _executable_input_sha256(input_json: dict) -> str:
+    return stable_json_sha256(input_json if isinstance(input_json, dict) else {})
+
+
+def _approved_command_for_request(local_request: LocalAgentToolRequest) -> str:
+    if local_request.tool_name not in LOCAL_AGENT_COMMAND_TOOLS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command events are only valid for command tools",
+        )
+    input_json = _approved_input_for_request(local_request)
+    command = str(input_json.get("command") or input_json.get("cmd") or "").strip()
+    if local_request.tool_name == "run_tests":
+        command = command or "pytest"
+        command = _normalize_local_agent_shell_command(command)
+    if local_request.tool_name == "git":
+        if not command:
+            args = input_json.get("args") if isinstance(input_json.get("args"), list) else []
+            command = f"git {' '.join(map(str, args))}".strip()
+        if command and not command.startswith("git"):
+            command = f"git {command}"
+    if local_request.tool_name == "run_shell":
+        command = _normalize_local_agent_shell_command(command)
+    if not command:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approved command input is missing command",
+        )
+    return _bounded_text(command)
+
+
+def _normalize_local_agent_shell_command(command: str) -> str:
+    if command == "python":
+        return sys.executable
+    if command.startswith("python "):
+        return f"{sys.executable} {command.removeprefix('python ')}"
+    return command
+
+
+def _validate_command_start_payload(
+    *,
+    local_request: LocalAgentToolRequest,
+    request: LocalAgentCommandEventRequest,
+    expected_command: str,
+) -> None:
+    if request.tool_name is not None and request.tool_name != local_request.tool_name:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command tool_name does not match approved tool request",
+        )
+    if _bounded_text(request.command) != expected_command:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command does not match approved executable input",
+        )
+    decision_json = (
+        local_request.decision_json if isinstance(local_request.decision_json, dict) else {}
+    )
+    expected_hash = decision_json.get("executable_input_sha256")
+    if expected_hash and expected_hash != _executable_input_sha256(
+        _approved_input_for_request(local_request)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent executable input hash mismatch",
+        )
+
+
+def _validate_existing_command_against_request(
+    *,
+    local_request: LocalAgentToolRequest,
+    command: LocalAgentCommand,
+    request: LocalAgentCommandEventRequest | None = None,
+) -> None:
+    if local_request.tool_name not in LOCAL_AGENT_COMMAND_TOOLS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command is not valid for non-command tool request",
+        )
+    expected_command = _approved_command_for_request(local_request)
+    if command.tool_name != local_request.tool_name or command.command != expected_command:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command no longer matches approved executable input",
+        )
+    if (
+        request is not None
+        and request.retry_of_command_id is not None
+        and command.retry_of_command_id != request.retry_of_command_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent retry source does not match command record",
+        )
+
+
+def _local_command_response(command: LocalAgentCommand) -> LocalAgentCommandResponse:
+    return LocalAgentCommandResponse(
+        command_id=command.command_id,
+        tool_request_id=command.tool_request_id,
+        status=command.status,
+        cancel_requested=command.cancel_requested_at is not None,
+    )
+
+
+def _has_unresolved_local_tool_state(
+    *,
+    bridge_task: LocalAgentBridgeTask,
+    session: Session,
+) -> bool:
+    count = session.execute(
+        select(func.count(LocalAgentToolRequest.id)).where(
+            LocalAgentToolRequest.bridge_task_id == bridge_task.id,
+            LocalAgentToolRequest.status.in_(
+                ("approval_required", "approved", "allowed", "running")
+            ),
+        )
+    ).scalar_one()
+    return bool(count)
 
 
 def _existing_bridge_task_response(
@@ -1080,6 +2999,11 @@ def _apply_bridge_event(
             actor_id=connection.id,
         )
     elif request.event_type == "assistant_done":
+        if _has_unresolved_local_tool_state(bridge_task=bridge_task, session=session):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent assistant_done cannot bypass unresolved local tool state",
+            )
         assistant = AgentMessage(
             session_id=bridge_task.agent_session_id,
             agent_id=connection.agent_id,
@@ -1121,6 +3045,11 @@ def _apply_bridge_event(
             actor_id=connection.id,
         )
     elif request.event_type == "assistant_error":
+        if _has_unresolved_local_tool_state(bridge_task=bridge_task, session=session):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent assistant_error cannot bypass unresolved local tool state",
+            )
         bridge_task.status = "failed"
         bridge_task.completed_at = now
         bridge_task.updated_at = now
@@ -1141,14 +3070,22 @@ def _apply_bridge_event(
             actor_id=connection.id,
         )
     elif request.event_type == "tool_result":
+        if _legacy_tool_result_requires_authorization(request):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent side-effect tool results require an authorized tool request",
+            )
         tool_call = ToolCall(
             task_id=bridge_task.task_id,
             agent_run_id=None,
             tool_name=request.tool_name or "local_agent.tool",
-            status=_normalized_tool_status(request.status),
-            risk_level=request.risk_level,
+            status="DENIED"
+            if _normalized_tool_status(request.status) == "SUCCESS"
+            else _normalized_tool_status(request.status),
+            risk_level="low" if request.risk_level == "unknown" else request.risk_level,
             capability_snapshot_json={
                 "source": "local_agent_bridge",
+                "authorized": False,
                 "connection_id": connection.id,
                 "bridge_task_id": bridge_task.id,
                 "adapter_kind": connection.adapter_kind,
@@ -1181,6 +3118,27 @@ def _apply_bridge_event(
         )
     session.flush()
     return agent_event, tool_call
+
+
+def _legacy_tool_result_requires_authorization(request: LocalAgentBridgeEventRequest) -> bool:
+    tool_name = (request.tool_name or "").strip()
+    normalized_status = _normalized_tool_status(request.status)
+    if normalized_status == "SUCCESS" and tool_name not in LOCAL_AGENT_SAFE_TOOLS:
+        return True
+    if tool_name in LOCAL_AGENT_SIDE_EFFECT_TOOLS:
+        return True
+    if tool_name in {"read_file", "search_files", "list_files"}:
+        return True
+    command = ""
+    if isinstance(request.input_json, dict):
+        command = str(request.input_json.get("command") or "")
+    return bool(
+        command
+        and (
+            LOCAL_AGENT_NETWORK_PATTERNS.search(command)
+            or LOCAL_AGENT_SECRET_PATTERNS.search(command)
+        )
+    )
 
 
 def _default_local_agent_name(adapter_kind: str) -> str:
@@ -1226,21 +3184,35 @@ def _bounded_text(value: str | None, limit: int = 4000) -> str:
 
 
 def _redact_mapping(value: dict, *, max_items: int = 50) -> dict:
-    output: dict = {}
-    for index, (key, item) in enumerate((value or {}).items()):
-        if index >= max_items:
-            output["[truncated]"] = True
-            break
-        key_text = str(key)
-        if _looks_secret_key(key_text):
-            output[key_text] = "[REDACTED]"
-        elif isinstance(item, str):
-            output[key_text] = _bounded_text(item)
-        elif isinstance(item, dict):
-            output[key_text] = _redact_mapping(item, max_items=max_items)
-        else:
-            output[key_text] = item
-    return output
+    redacted = _redact_value(value if isinstance(value, dict) else {}, max_items=max_items)
+    return redacted if isinstance(redacted, dict) else {}
+
+
+def _redact_value(value, *, max_items: int = 50, key: str | None = None):
+    if key is not None and _looks_secret_key(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        output: dict = {}
+        for index, (item_key, item) in enumerate(value.items()):
+            if index >= max_items:
+                output["[truncated]"] = True
+                break
+            key_text = str(item_key)
+            output[key_text] = _redact_value(item, max_items=max_items, key=key_text)
+        return output
+    if isinstance(value, list):
+        output = []
+        for index, item in enumerate(value):
+            if index >= max_items:
+                output.append("[truncated]")
+                break
+            output.append(_redact_value(item, max_items=max_items, key=key))
+        return output
+    if isinstance(value, str):
+        if key is not None and _looks_path_key(key):
+            return _redact_path(value)
+        return _bounded_text(value)
+    return value
 
 
 def _looks_secret_key(value: str) -> bool:
@@ -1251,14 +3223,51 @@ def _looks_secret_key(value: str) -> bool:
     )
 
 
+def _looks_path_key(value: str) -> bool:
+    lowered = value.lower()
+    normalized = lowered.replace("-", "_")
+    return any(
+        marker in normalized
+        for marker in (
+            "cwd",
+            "workspace_root",
+            "path",
+            "paths",
+            "target_path",
+            "target_paths",
+        )
+    )
+
+
 def _redact_secret_text(value: str) -> str:
     redacted = re.sub(r"(sk|hk|pat|sat)[_-][A-Za-z0-9_\-]{8,}", "[REDACTED]", value)
     redacted = re.sub(r"(?i)(api[_-]?key|token|secret|password)=\S+", r"\1=[REDACTED]", redacted)
+    redacted = re.sub(
+        r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API[_-]?KEY)[A-Z0-9_]*\s*=\s*)"
+        r"(?:'[^']*'|\"[^\"]*\"|[^\s;,&|]+)",
+        r"\1[REDACTED]",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)\b(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=\-]+",
+        r"\1[REDACTED]",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=\-]{8,}",
+        r"\1[REDACTED]",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?<!\.)/(?:Users|home)/[^\s'\";:&|`]+",
+        lambda match: _redact_path(match.group(0)) or "[REDACTED_PATH]",
+        redacted,
+    )
     return redacted
 
 
 def _normalized_tool_status(value: str | None) -> str:
     normalized = (value or "SUCCESS").upper()
-    if normalized in {"SUCCESS", "FAILED", "TIMEOUT", "DENIED", "PENDING_APPROVAL"}:
+    if normalized in {"SUCCESS", "FAILED", "TIMEOUT", "DENIED", "PENDING_APPROVAL", "CANCELLED"}:
         return normalized
     return "FAILED"
