@@ -117,6 +117,27 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: local-agent-claude-code-adapter-v5
+    date: 2026-06-05
+    status: plan_reviewed
+    demo: Local Agent Claude Code Adapter V5 is planned as a constrained assistant-response local-agent adapter using headless bare Claude Code, no built-in tools, no session persistence, isolated config state, forced context replay, and existing Harness Run/Event/Message authority.
+    verification_result: passed
+    verification_commands:
+      - architecture/protocol reviewer final verdict PASS
+      - security/test reviewer final verdict PASS
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V5 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-claude-code-adapter-v5.md` and `.omx/plans/test-spec-local-agent-claude-code-adapter-v5.md`.
+      - V5 will enable `adapter_kind=claude_code` only as an assistant-response local-agent adapter; implementation is not complete yet.
+      - Claude Code V5 must use the existing local-agent pairing, bridge task, event projection, binding, Workspace ChatSurface, pending/offline, and API/DB truth paths.
+      - Required command shape is `claude --bare -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --permission-mode default --tools ""`.
+      - V5 forbids host tools, native resume, MCP/plugin/hook/subagent/browser/remote-control surfaces, `--settings`, `--setting-sources`, `apiKeyHelper`, permission bypass modes, raw prompt argv, raw workspace root argv, and secret-bearing argv.
+      - Subprocess execution must use stdin or private mode `0600` input, private temp cwd, temp `HOME`, temp `CLAUDE_CONFIG_DIR`, and no paired workspace file exposure.
+      - Server-normalized capabilities must force `supports_resume=false`, `supports_cancel=false`, `host_tools_authorized=false`, and `resume_mode=context_replay_new_session`.
+      - Assistant success projection requires `system/init` or equivalent proof of empty tools/MCP/plugins/hooks/custom-agent surfaces.
+      - Deterministic V5 smoke will use mocked Claude subprocess fixtures; live Claude credential smoke remains optional manual evidence.
+
   - id: local-agent-codex-adapter-v4
     date: 2026-06-04
     status: completed
