@@ -111,6 +111,7 @@ class HarnessApiClient:
         capabilities: dict,
         risk_capabilities: list[str],
         bridge_version: str,
+        metadata: dict | None = None,
     ) -> dict:
         url = f"{self.api_url}/api/agents/local-agent/connections/register"
         payload = {
@@ -123,6 +124,7 @@ class HarnessApiClient:
             "workspace_root": workspace_root,
             "capabilities": capabilities,
             "risk_capabilities": risk_capabilities,
+            "metadata": metadata or {},
         }
         with self._client(timeout=self.timeout) as client:
             response = client.post(url, headers={"Accept": "application/json"}, json=payload)

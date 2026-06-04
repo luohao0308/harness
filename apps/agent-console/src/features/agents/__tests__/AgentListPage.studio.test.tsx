@@ -217,6 +217,7 @@ describe("AgentListPage Studio controls", () => {
 
   it("generates a local Agent pairing command, discovers local bridges, and revokes one", async () => {
     const user = userEvent.setup();
+    const pairingBodies: Array<Record<string, unknown>> = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
@@ -225,12 +226,19 @@ describe("AgentListPage Studio controls", () => {
       if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
       if (path === "/api/agents/local-agent/connections" && !init?.method) return jsonResponse({ items: [localAgentConnection()], next_cursor: null });
       if (path === "/api/agents/local-agent/pairing-tokens" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        pairingBodies.push(body);
+        const scope = body.scope as { adapters?: string[] } | undefined;
+        const adapterKind = scope?.adapters?.[0] ?? "hao";
         return jsonResponse({
           id: "pair-1",
           agent_id: "default",
           pair_code: "ABC123",
           pair_token: "plain-pair-token",
-          command: "hao bridge pair --api http://127.0.0.1:8000 --pair-token plain-pair-token --pair-code ABC123",
+          command: [
+            "hao bridge pair --api http://127.0.0.1:8000 --pair-token plain-pair-token --pair-code ABC123",
+            adapterKind === "codex" ? "--adapter codex" : "",
+          ].filter(Boolean).join(" "),
           status: "active",
           expires_at: "2026-06-03T00:10:00Z",
           created_at: "2026-06-03T00:00:00Z",
@@ -252,6 +260,20 @@ describe("AgentListPage Studio controls", () => {
     expect(within(dialog).getByText("Claude Code")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: /生成连接命令|Generate command/ }));
     expect((await within(dialog).findAllByText(/ABC123/)).length).toBeGreaterThan(0);
+    expect(pairingBodies[0]).toMatchObject({
+      agent_id: "default",
+      scope: { executable: true, adapters: ["hao"] },
+    });
+    expect(within(dialog).queryByText(/--adapter codex/)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /本地 Agent 类型|Local Agent adapter/ }));
+    await user.click(await screen.findByRole("option", { name: /Codex CLI/ }));
+    await user.click(within(dialog).getByRole("button", { name: /生成连接命令|Generate command/ }));
+    await waitFor(() => expect(pairingBodies).toHaveLength(2));
+    expect(pairingBodies[1]).toMatchObject({
+      agent_id: "default",
+      scope: { executable: true, adapters: ["codex"] },
+    });
+    expect(await within(dialog).findByText(/--adapter codex/)).toBeInTheDocument();
     expect(within(dialog).getByText("Fake Local Agent")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /接入 fake bridge|Connect fake bridge/ })).not.toBeInTheDocument();
     await user.click(within(dialog).getAllByRole("button", { name: /撤销|Revoke/ })[0]);

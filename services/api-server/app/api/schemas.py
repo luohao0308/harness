@@ -2618,6 +2618,7 @@ class LocalAgentBridgeEventRequest(BaseModel):
     bridge_task_id: str = Field(min_length=1, description="bridge 任务 ID")
     sequence: int | None = Field(default=None, ge=0, description="bridge 侧序号")
     event_type: Literal[
+        "adapter_started",
         "assistant_delta",
         "assistant_done",
         "assistant_error",

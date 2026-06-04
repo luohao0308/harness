@@ -1,9 +1,10 @@
 # Wiki Index
 
-> 10 pages | Last updated: 2026-06-04T13:21:17Z
+> 11 pages | Last updated: 2026-06-04T16:47:55Z
 
 ## session-log
 
+- [Local Agent Codex Adapter V4](session-2026-06-04-local-agent-codex-adapter-v4.md) — Codex CLI local-agent adapter with forced context replay, read-only subprocess execution, workspace identity enforcement, disabled host tools, and final review closeout evidence.
 - [Local Agent Tool Safety V3](session-2026-06-04-local-agent-tool-safety-v3.md) — Local Agent Tool Safety V3 is verified with authorization-bound host tool results, separate local approval, bridge-state privacy, device-token split, retry, TTL/revoke cleanup, and deterministic smoke evidence.
 - [Local Agent Workspace Chat V2](session-2026-06-04-local-agent-workspace-chat-v2.md) — Local Agent Workspace Chat V2 plan docs are入库, API-owned pending projection is reviewed, and connections bind/resume sessions inside the existing ChatSurface.
 - [Local Agent Bridge Conversation V1](session-2026-06-04-local-agent-bridge-conversation-v1.md) — Local Agent pairing, bridge daemon entrypoint, terminal task safety, Agent Studio wizard, and Workspace-owned run/event/tool/session projection.
@@ -11,9 +12,6 @@
 - [Frontend Login And Runtime Secret Generation](session-2026-06-03-frontend-login-runtime-secret-generation.md) — Login/register policy, avatar logout menu, and deployment-side startup secret generation path.
 - [User Scoped Encrypted Secret Vault V1](session-2026-06-03-user-scoped-encrypted-secret-vault-v1.md) — User/org scoped encrypted DB secret vault for business integration keys.
 - [LangGraph/LangChain Compatibility Harness V1](session-2026-06-02-langgraph-langchain-compatibility-harness-v1.md) — LangGraph workflow import, LangChain adapters, and Eval contrast experiment V1 evidence.
-- [Session Log 2026-06-01](session-log-2026-06-01-5-69o4gu.md) — # Session Log 2026-06-01
-- [Session Log 2026-06-01](session-log-2026-06-01-8-xcwjww.md) — # Session Log 2026-06-01
-- [Session Log 2026-06-01](session-log-2026-06-01-9-9lz9l2.md) — # Session Log 2026-06-01
 
 ## reference
 

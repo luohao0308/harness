@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-04T13:21:17Z
+last_updated_at: 2026-06-04T16:47:55Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,44 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: local-agent-codex-adapter-v4
+    date: 2026-06-04
+    status: completed
+    demo: Local Agent Codex CLI Adapter V4 adds Codex as a constrained local-agent adapter with adapter-scoped pairing, read-only assistant projection, forced context replay, workspace identity enforcement, and disabled host-tool side effects.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -k "bridge or codex or adapter or pending_state_file"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-unavailable
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-readonly-reply
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-resume-mode
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-side-effect-rejected
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V4 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-codex-adapter-v4.md` and `.omx/plans/test-spec-local-agent-codex-adapter-v4.md`.
+      - `adapter_kind=codex` is now supported while `adapter_kind=claude_code` remains disabled future scope.
+      - Agent Studio can generate adapter-scoped local pairing commands; the Codex path sends `scope.adapters=["codex"]` and the returned command includes `--adapter codex`.
+      - Backend validates explicit `scope.adapters` before token consumption, keeping rejected adapter attempts replay-safe.
+      - Codex bridge capabilities are server-normalized to `supports_resume=false`, `supports_cancel=false`, `host_tools_authorized=false`, and `resume_mode=context_replay_new_session`.
+      - Codex host write, shell mutation, git mutation, network, package install, and env/secret read stay disabled.
+      - Claude Code remains disabled future scope.
+      - `hao bridge pair/run --adapter codex` probes Codex CLI support, uses stdin prompt input, forbids dangerous sandbox bypass args, and launches `codex exec --json --output-last-message ... -C <workspace> --sandbox read-only -`.
+      - Codex subprocess probe/runtime env is allowlisted; runtime uses isolated temp `HOME` and `CODEX_HOME`, strips provider keys, device tokens, Harness tokens, and proxy env.
+      - Raw device tokens persist only in `bridge.device-token`; raw Codex workspace root persists only in `bridge.workspace-root`; `bridge.json` stores refs and hashes only.
+      - API bridge events now include `LOCAL_AGENT_ADAPTER_STARTED`; Codex assistant delta/done/error events project into Harness-owned Run/Event/Message state.
+      - Codex legacy `tool_result` events are rejected before `ToolCall` or bridge receipt creation.
+      - Codex workspace execution now compares the sidecar root hash with the server task `workspace_identity_hash`; mismatches fail before subprocess spawn, and `hao bridge run --adapter codex --cwd` cannot rewrite a paired workspace to a different identity.
+      - Deterministic V4 smoke covers Codex unavailable, read-only reply, forced context replay, and side-effect rejection.
+      - Initial implementation review found one architecture BLOCK for mutable local workspace identity; the closeout fixed it with server-payload hash enforcement and regression coverage.
+      - Final architecture review returned WATCH with no blockers; the native-resume test-spec wording was aligned to V4's forced `context_replay_new_session` contract.
+      - Final code/security review returned APPROVE after the stale `omx_wiki/log.md` EOF whitespace blocker was fixed and `git diff --check` passed.
+
   - id: local-agent-tool-safety-v3
     date: 2026-06-04
     status: completed

@@ -3178,13 +3178,13 @@ export async function selectAgentTokenOptimizer(
   });
 }
 
-export async function createLocalAgentPairingToken(agentId: string) {
+export async function createLocalAgentPairingToken(agentId: string, adapterKind: string = "hao") {
   return request<LocalAgentPairing>("/api/agents/local-agent/pairing-tokens", {
     method: "POST",
     body: JSON.stringify({
       agent_id: agentId,
       ttl_minutes: 10,
-      scope: { executable: true, adapters: ["fake", "hao"] },
+      scope: { executable: true, adapters: [adapterKind] },
     }),
   });
 }
