@@ -198,3 +198,123 @@ class HarnessApiClient:
             )
             response.raise_for_status()
             return response.json()
+
+    def create_local_agent_tool_request(
+        self,
+        *,
+        device_token: str,
+        payload: dict,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/tool-requests"
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def get_local_agent_tool_decision(
+        self,
+        *,
+        device_token: str,
+        tool_request_id: str,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/"
+            f"{tool_request_id}/decision"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def list_pending_local_agent_tool_requests(
+        self,
+        *,
+        device_token: str,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/pending"
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def report_local_agent_tool_result(
+        self,
+        *,
+        device_token: str,
+        tool_request_id: str,
+        payload: dict,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/"
+            f"{tool_request_id}/result"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def get_local_agent_command_status(
+        self,
+        *,
+        device_token: str,
+        command_id: str,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/commands/{command_id}"
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def ack_local_agent_command_cancel(
+        self,
+        *,
+        device_token: str,
+        command_id: str,
+        payload: dict,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/commands/"
+            f"{command_id}/cancel-ack"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def report_local_agent_command_event(
+        self,
+        *,
+        device_token: str,
+        command_id: str,
+        payload: dict,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/commands/{command_id}/events"
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()

@@ -2644,6 +2644,105 @@ class LocalAgentBridgeEventResponse(BaseModel):
     tool_call_id: str | None = Field(default=None, description="ToolCall ID")
 
 
+class LocalAgentToolRequestCreateRequest(BaseModel):
+    tool_request_id: str = Field(min_length=1, max_length=160, description="bridge 工具请求幂等 ID")
+    bridge_task_id: str = Field(min_length=1, description="bridge 任务 ID")
+    tool_name: str = Field(min_length=1, max_length=160, description="工具名称")
+    input_json: dict = Field(default_factory=dict, description="工具输入")
+    execution_target: Literal["host", "sandbox"] = Field(default="host", description="执行目标")
+    risk_level: Literal["low", "medium", "high", "critical", "unknown"] = Field(
+        default="unknown",
+        description="bridge 自报风险，仅作遥测",
+    )
+    permission_mode: Literal["confirm", "auto-edit", "full-auto"] = Field(
+        default="confirm",
+        description="bridge 自报权限模式，仅作遥测",
+    )
+    cwd: str | None = Field(default=None, max_length=512, description="bridge 工作目录")
+    target_paths: list[str] = Field(default_factory=list, description="目标路径遥测")
+    requires_network: bool = Field(default=False, description="bridge 自报是否需要网络")
+    requires_secret_read: bool = Field(default=False, description="bridge 自报是否读取 secret")
+    pending_change_preview: dict | None = Field(default=None, description="diff-first 变更预览")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentToolDecisionResponse(BaseModel):
+    tool_request_id: str = Field(description="bridge 工具请求 ID")
+    bridge_task_id: str = Field(description="bridge 任务 ID")
+    tool_call_id: str = Field(description="ToolCall ID")
+    approval_id: str | None = Field(default=None, description="ToolApproval ID")
+    decision: Literal[
+        "allowed",
+        "approval_required",
+        "approved",
+        "denied",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "expired",
+    ] = Field(description="服务端决策/状态")
+    status: str = Field(description="本地工具请求状态")
+    executable: bool = Field(description="bridge 当前是否可执行")
+    server_execution: bool = Field(default=False, description="是否由服务器执行")
+    tool_name: str = Field(description="工具名称")
+    input_json: dict = Field(default_factory=dict, description="可执行输入")
+    reason: str = Field(default="", description="原因")
+    decision_json: dict = Field(default_factory=dict, description="决策载荷")
+    expires_at: datetime | None = Field(default=None, description="决策过期时间")
+
+
+class LocalAgentPendingToolRequestPage(BaseModel):
+    items: list[LocalAgentToolDecisionResponse] = Field(
+        description="Bridge 可恢复的未决本地工具请求"
+    )
+
+
+class LocalAgentToolResultRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160, description="结果幂等事件 ID")
+    status: Literal["SUCCESS", "FAILED", "TIMEOUT", "DENIED", "CANCELLED"] = Field(
+        default="SUCCESS",
+        description="执行结果",
+    )
+    output_json: dict = Field(default_factory=dict, description="工具输出")
+    duration_ms: int = Field(default=0, ge=0, description="耗时")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
+    command_id: str | None = Field(default=None, max_length=160, description="本地命令 ID")
+    change_id: str | None = Field(default=None, max_length=160, description="pending change ID")
+    diff_sha256: str | None = Field(default=None, max_length=64, description="提交 diff hash")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentCommandEventRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160, description="命令事件幂等 ID")
+    tool_request_id: str = Field(min_length=1, max_length=160, description="父工具请求 ID")
+    event_type: Literal["started", "output", "finished", "timeout", "cancelled"] = Field(
+        description="命令生命周期事件",
+    )
+    tool_name: str | None = Field(default=None, max_length=160, description="工具名称")
+    command: str | None = Field(default=None, max_length=4000, description="命令文本")
+    stdout: str | None = Field(default=None, max_length=120_000, description="stdout 片段")
+    stderr: str | None = Field(default=None, max_length=120_000, description="stderr 片段")
+    status: str | None = Field(default=None, max_length=64, description="命令状态")
+    exit_code: int | None = Field(default=None, description="退出码")
+    duration_ms: int = Field(default=0, ge=0, description="耗时")
+    retry_of_command_id: str | None = Field(default=None, max_length=160, description="重试来源")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentCommandResponse(BaseModel):
+    command_id: str = Field(description="bridge 命令 ID")
+    tool_request_id: str = Field(description="父工具请求 ID")
+    status: str = Field(description="命令状态")
+    cancel_requested: bool = Field(default=False, description="是否请求取消")
+
+
+class LocalAgentCommandCancelAckRequest(BaseModel):
+    status: Literal["cancelled", "failed"] = Field(default="cancelled", description="取消确认状态")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
+
+
 class AdapterMetadataResponse(BaseModel):
     slug: str = Field(description="Adapter slug")
     server_label: str = Field(description="Adapter server label")

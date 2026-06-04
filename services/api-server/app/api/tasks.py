@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -40,6 +41,8 @@ from app.db.models import (
     AgentEvent,
     AgentRun,
     ExecutionPlan,
+    LocalAgentPendingChange,
+    LocalAgentToolRequest,
     ModelCall,
     SandboxInstance,
     Task,
@@ -59,7 +62,7 @@ from app.observability.metrics import (
 )
 from app.sandbox.docker_manager import DockerManager
 from app.security.auth import Principal, require_role
-from app.tools.capabilities import CapabilityRegistry, redact_secrets
+from app.tools.capabilities import CapabilityRegistry, redact_secrets, stable_json_sha256
 from app.tools.runner import ToolRunner
 
 RUN_COMPATIBILITY_DESCRIPTION = (
@@ -884,7 +887,26 @@ def _decide_tool_approval(
     if tool_call is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工具调用未找到")
 
+    local_tool_request = _local_agent_tool_request_for_approval(
+        approval=approval,
+        tool_call=tool_call,
+        session=session,
+    )
+    if local_tool_request is not None:
+        _expire_local_agent_approval_if_needed(
+            task=task,
+            tool_call=tool_call,
+            approval=approval,
+            local_tool_request=local_tool_request,
+            session=session,
+        )
     if modified_input_json is not None:
+        if local_tool_request is not None:
+            _validate_local_agent_approval_modify(
+                approval=approval,
+                local_tool_request=local_tool_request,
+                modified_input_json=modified_input_json,
+            )
         safe_modified_input_json = redact_secrets(modified_input_json)
         request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
         approval.request_json = {
@@ -901,6 +923,7 @@ def _decide_tool_approval(
         "reason": request.reason,
         "decision": decision,
         "modified": modified_input_json is not None,
+        "server_execution": False if local_tool_request is not None else True,
     }
     tool_call.status = "APPROVED" if decision == "APPROVED" else "DENIED"
     tool_call.error_message = None if decision == "APPROVED" else request.reason or approval.reason
@@ -919,10 +942,32 @@ def _decide_tool_approval(
             "decision": decision,
             "reason": request.reason,
             "modified": modified_input_json is not None,
+            "server_execution": False if local_tool_request is not None else True,
         },
         actor_type="user",
         actor_id=principal.user_id,
     )
+    if local_tool_request is not None:
+        _decide_local_agent_tool_request(
+            task=task,
+            tool_call=tool_call,
+            approval=approval,
+            local_tool_request=local_tool_request,
+            decision=decision,
+            reason=request.reason,
+            modified_input_json=modified_input_json,
+            session=session,
+            principal=principal,
+        )
+        session.commit()
+        approvals = list(
+            session.execute(
+                select(ToolApproval)
+                .where(ToolApproval.task_id == task.id)
+                .order_by(ToolApproval.created_at.desc())
+            ).scalars()
+        )
+        return ToolApprovalPage(items=approvals)
     if decision == "APPROVED":
         _execute_approved_tool_call(
             task=task,
@@ -949,6 +994,288 @@ def _decide_tool_approval(
         ).scalars()
     )
     return ToolApprovalPage(items=approvals)
+
+
+def _local_agent_tool_request_for_approval(
+    *,
+    approval: ToolApproval,
+    tool_call: ToolCall,
+    session: Session,
+) -> LocalAgentToolRequest | None:
+    snapshot = tool_call.capability_snapshot_json
+    if not isinstance(snapshot, dict) or snapshot.get("source") != "local_agent_bridge":
+        return None
+    return session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_call_id == tool_call.id,
+            LocalAgentToolRequest.approval_id == approval.id,
+        )
+    ).scalar_one_or_none()
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _expire_local_agent_approval_if_needed(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    session: Session,
+) -> None:
+    if local_tool_request.decision_expires_at is None:
+        return
+    now = utc_now()
+    if _as_aware_utc(local_tool_request.decision_expires_at) >= _as_aware_utc(now):
+        return
+    reason = "local tool decision expired"
+    local_tool_request.status = "expired"
+    local_tool_request.completed_at = now
+    local_tool_request.updated_at = now
+    decision_json = (
+        local_tool_request.decision_json
+        if isinstance(local_tool_request.decision_json, dict)
+        else {}
+    )
+    local_tool_request.decision_json = {
+        **decision_json,
+        "terminal_status": "expired",
+        "terminal_reason": reason,
+        "terminalized_at": now.isoformat(),
+        "server_execution": False,
+    }
+    local_tool_request.result_json = {
+        "status": "DENIED",
+        "reason": reason,
+        "server_execution": False,
+    }
+    tool_call.status = "DENIED"
+    tool_call.error_message = reason
+    tool_call.output_json = {
+        "status": "DENIED",
+        "reason": reason,
+        "server_execution": False,
+        "tool_request_id": local_tool_request.tool_request_id,
+    }
+    approval.status = "EXPIRED"
+    approval.decided_at = now
+    approval.decision_json = {
+        "decision": "EXPIRED",
+        "reason": reason,
+        "server_execution": False,
+    }
+    pending_changes = list(
+        session.execute(
+            select(LocalAgentPendingChange).where(
+                LocalAgentPendingChange.local_agent_tool_request_id == local_tool_request.id,
+                LocalAgentPendingChange.status.in_(
+                    ("previewed", "approval_required", "approved", "allowed")
+                ),
+            )
+        ).scalars()
+    )
+    for change in pending_changes:
+        change.status = "denied"
+        change.denied_at = now
+        change.error_message = reason
+        change.updated_at = now
+    task.status = "RUNNING"
+    task.completed_at = None
+    task.updated_at = now
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.TOOL_DENIED_BY_POLICY,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_tool_request.tool_request_id,
+            "tool_call_id": tool_call.id,
+            "approval_id": approval.id,
+            "status": "DENIED",
+            "terminal_status": "expired",
+            "reason": reason,
+            "server_execution": False,
+        },
+        actor_type="system",
+        actor_id=None,
+    )
+    session.commit()
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Local Agent tool decision expired",
+    )
+
+
+def _validate_local_agent_approval_modify(
+    *,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    modified_input_json: dict,
+) -> None:
+    request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
+    original_input = request_json.get("input_json")
+    if not isinstance(original_input, dict):
+        original_input = local_tool_request.input_json
+    if not isinstance(original_input, dict):
+        original_input = {}
+    modified_keys = {str(key) for key in modified_input_json}
+    original_keys = {str(key) for key in original_input}
+    added_keys = modified_keys - original_keys
+    if added_keys:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approval modify cannot add new input keys",
+        )
+    protected_keys = {
+        "args",
+        "capability_id",
+        "capability_type",
+        "capability_version_id",
+        "change_id",
+        "cmd",
+        "command",
+        "cwd",
+        "diff",
+        "diff_hash",
+        "diff_sha256",
+        "execution_target",
+        "patch",
+        "path",
+        "paths",
+        "permission_mode",
+        "requires_network",
+        "requires_secret_read",
+        "risk_level",
+        "target_path",
+        "target_paths",
+        "tool_name",
+        "workspace_root",
+    }
+    pending_change_preview = request_json.get("pending_change_preview")
+    if isinstance(pending_change_preview, dict) and pending_change_preview:
+        protected_keys.add("content")
+    for key in protected_keys & modified_keys:
+        if modified_input_json.get(key) != original_input.get(key):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Local Agent approval modify cannot change protected field: {key}",
+            )
+    for key in modified_keys:
+        original_value = original_input.get(key)
+        modified_value = modified_input_json.get(key)
+        if modified_value == original_value:
+            continue
+        if modified_value == redact_secrets(original_value):
+            continue
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approval modify can only redact or preserve existing input",
+        )
+
+
+def _decide_local_agent_tool_request(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    decision: str,
+    reason: str,
+    modified_input_json: dict | None,
+    session: Session,
+    principal,
+) -> None:
+    now = utc_now()
+    if local_tool_request.status not in {"approval_required"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent tool request is not waiting for approval",
+        )
+    request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
+    original_input = request_json.get("input_json")
+    if not isinstance(original_input, dict):
+        original_input = local_tool_request.input_json
+    executable_input = (
+        redact_secrets(modified_input_json) if modified_input_json is not None else original_input
+    )
+    executable_input_sha256 = stable_json_sha256(
+        executable_input if isinstance(executable_input, dict) else {}
+    )
+    previous_decision_json = (
+        local_tool_request.decision_json
+        if isinstance(local_tool_request.decision_json, dict)
+        else {}
+    )
+    metadata = previous_decision_json.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = (
+            request_json.get("metadata") if isinstance(request_json.get("metadata"), dict) else {}
+        )
+    pending_change_preview = previous_decision_json.get("pending_change_preview")
+    if not isinstance(pending_change_preview, dict):
+        pending_change_preview = (
+            request_json.get("pending_change_preview")
+            if isinstance(request_json.get("pending_change_preview"), dict)
+            else {}
+        )
+    local_status = "approved" if decision == "APPROVED" else "denied"
+    local_tool_request.status = local_status
+    local_tool_request.input_json = executable_input
+    local_tool_request.decision_json = {
+        "decision": "approved" if decision == "APPROVED" else "denied",
+        "reason": reason,
+        "modified": modified_input_json is not None,
+        "server_execution": False,
+        "input_json": executable_input,
+        "executable_input_sha256": executable_input_sha256,
+        "approval_id": approval.id,
+        "metadata": metadata,
+        "pending_change_preview": pending_change_preview,
+        "decided_by": principal.user_id,
+        "decided_at": now.isoformat(),
+        "expires_at": local_tool_request.decision_expires_at.isoformat()
+        if local_tool_request.decision_expires_at is not None
+        else None,
+    }
+    local_tool_request.updated_at = now
+    pending_changes = list(
+        session.execute(
+            select(LocalAgentPendingChange).where(
+                LocalAgentPendingChange.local_agent_tool_request_id == local_tool_request.id,
+                LocalAgentPendingChange.status.in_(("previewed", "approval_required")),
+            )
+        ).scalars()
+    )
+    for change in pending_changes:
+        if decision == "APPROVED":
+            change.status = "approved"
+            change.approval_id = approval.id
+        else:
+            change.status = "denied"
+            change.denied_at = now
+        change.updated_at = now
+    task.status = "RUNNING"
+    task.completed_at = None
+    task.updated_at = now
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.LOCAL_AGENT_TOOL_DECISION_READY,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_tool_request.tool_request_id,
+            "tool_call_id": tool_call.id,
+            "approval_id": approval.id,
+            "decision": local_tool_request.status,
+            "server_execution": False,
+            "modified": modified_input_json is not None,
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    session.flush()
 
 
 def _execute_approved_tool_call(

@@ -10,6 +10,7 @@ import time
 import tomllib
 import uuid
 from dataclasses import dataclass
+from hashlib import sha256
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -24,6 +25,7 @@ from .session_store import SessionStore
 
 GIT_STATUS_CONTEXT_LIMIT = 8
 PACKAGE_DISTRIBUTION_NAME = "agent-harness-api-server"
+BRIDGE_DEVICE_TOKEN_REF = "bridge.device-token"
 
 
 def _hao_version() -> str:
@@ -53,6 +55,21 @@ class HeadlessRunResult:
     status: str
     stdout_json: dict[str, Any]
     stderr: str = ""
+
+
+@dataclass(frozen=True)
+class BridgeToolContext:
+    bridge_task_id: str
+    device_token: str
+
+
+@dataclass(frozen=True)
+class BridgeToolHandlingResult:
+    status: str
+    result: ToolExecutionResult | None = None
+    backend_tool_call_id: str | None = None
+    pending_tool: dict[str, Any] | None = None
+    error_message: str = ""
 
 
 def _store() -> SessionStore:
@@ -454,6 +471,11 @@ def _bridge_state_path(config: Any) -> Path:
     return config.home / "bridge.json"
 
 
+def _bridge_device_token_path(config: Any, token_ref: str | None = None) -> Path:
+    ref = Path(str(token_ref or BRIDGE_DEVICE_TOKEN_REF)).name
+    return config.home / ref
+
+
 def _bridge_version() -> str:
     return f"hao-{_hao_version()}"
 
@@ -463,7 +485,7 @@ def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
         "adapter_kind": adapter_kind,
         "supports_resume": adapter_kind == "hao",
         "supports_streaming": True,
-        "supports_cancel": False,
+        "supports_cancel": adapter_kind == "hao",
         "protocol_version": "local-agent-v1",
     }
 
@@ -474,10 +496,57 @@ def _bridge_risk_capabilities(adapter_kind: str) -> list[str]:
     return []
 
 
+def _save_bridge_device_token(config: Any, device_token: str) -> str:
+    config.home.mkdir(parents=True, exist_ok=True)
+    token_ref = BRIDGE_DEVICE_TOKEN_REF
+    path = _bridge_device_token_path(config, token_ref)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(device_token)
+    os.chmod(path, 0o600)
+    return token_ref
+
+
+def _load_bridge_device_token(config: Any, state: dict[str, Any]) -> str:
+    token_ref = str(state.get("device_token_ref") or BRIDGE_DEVICE_TOKEN_REF)
+    try:
+        return _bridge_device_token_path(config, token_ref).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _bridge_state_for_disk(state: dict[str, Any]) -> dict[str, Any]:
+    allowed_scalar_keys = {
+        "api_url",
+        "connection_id",
+        "device_token_ref",
+        "adapter_kind",
+        "display_name",
+    }
+    safe = {
+        key: str(state[key])
+        for key in allowed_scalar_keys
+        if state.get(key) not in (None, "")
+    }
+    pending = [
+        item
+        for item in (
+            _safe_bridge_pending_tool_state(candidate)
+            for candidate in _bridge_pending_tools(state)
+        )
+        if item
+    ]
+    if pending:
+        safe["pending_tool_requests"] = pending
+    return safe
+
+
 def _save_bridge_state(config: Any, state: dict[str, Any]) -> None:
     config.home.mkdir(parents=True, exist_ok=True)
+    if state.get("device_token"):
+        state["device_token_ref"] = _save_bridge_device_token(config, str(state["device_token"]))
     path = _bridge_state_path(config)
-    data = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True)
+    data = json.dumps(_bridge_state_for_disk(state), ensure_ascii=False, indent=2, sort_keys=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(data)
@@ -492,7 +561,405 @@ def _load_bridge_state(config: Any) -> dict[str, Any]:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return loaded if isinstance(loaded, dict) else {}
+    if not isinstance(loaded, dict):
+        return {}
+    if loaded.get("device_token"):
+        loaded["device_token_ref"] = _save_bridge_device_token(config, str(loaded["device_token"]))
+        _save_bridge_state(config, loaded)
+    else:
+        token = _load_bridge_device_token(config, loaded)
+        if token:
+            loaded["device_token"] = token
+    return loaded
+
+
+def _bridge_pending_tools(state: dict[str, Any]) -> list[dict[str, Any]]:
+    items = state.get("pending_tool_requests")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _safe_bridge_command_mode(value: Any) -> str:
+    command = str(value or "act").strip()
+    return command if command in {"act", "chat,plan", "chat", "plan"} else "act"
+
+
+def _safe_bridge_pending_tool_state(pending: dict[str, Any]) -> dict[str, Any]:
+    tool_request_id = str(pending.get("tool_request_id") or "")
+    bridge_task_id = str(pending.get("bridge_task_id") or "")
+    if not tool_request_id or not bridge_task_id:
+        return {}
+    safe: dict[str, Any] = {
+        "tool_request_id": tool_request_id,
+        "bridge_task_id": bridge_task_id,
+        "command": _safe_bridge_command_mode(pending.get("command")),
+    }
+    for key in (
+        "tool_name",
+        "tool_call_id",
+        "backend_tool_call_id",
+        "approval_id",
+        "local_session_id",
+        "run_id",
+        "agent_id",
+        "risk_level",
+        "permission_mode",
+        "change_id",
+        "diff_sha256",
+    ):
+        value = pending.get(key)
+        if value not in (None, ""):
+            safe[key] = str(value)
+    return safe
+
+
+def _upsert_bridge_pending_tool(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    pending: dict[str, Any],
+) -> None:
+    pending_state = _safe_bridge_pending_tool_state(pending)
+    tool_request_id = str(pending_state.get("tool_request_id") or "")
+    if not tool_request_id:
+        return
+    items = [
+        item
+        for item in _bridge_pending_tools(state)
+        if str(item.get("tool_request_id") or "") != tool_request_id
+    ]
+    items.append(pending_state)
+    state["pending_tool_requests"] = items
+    _save_bridge_state(config, state)
+
+
+def _remove_bridge_pending_tool(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    tool_request_id: str,
+) -> None:
+    state["pending_tool_requests"] = [
+        item
+        for item in _bridge_pending_tools(state)
+        if str(item.get("tool_request_id") or "") != tool_request_id
+    ]
+    _save_bridge_state(config, state)
+
+
+def _bridge_tool_request_id(
+    *,
+    bridge_task_id: str,
+    tool_call_id: str | None,
+    tool_name: str,
+) -> str:
+    raw = f"{bridge_task_id}:{tool_call_id or tool_name}".strip(":")
+    if 1 <= len(raw) <= 150:
+        return raw
+    return f"{bridge_task_id}:tool:{sha256(raw.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _sha256_text(value: str) -> str:
+    return sha256(value.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _tool_target_paths(
+    tool_name: str,
+    input_json: dict[str, Any],
+    output_json: dict | None,
+) -> list[str]:
+    if output_json is not None and isinstance(output_json.get("target_paths"), list):
+        return [str(path) for path in output_json["target_paths"]]
+    if tool_name in {"write_file", "read_file"} and input_json.get("path"):
+        return [str(input_json["path"])]
+    return []
+
+
+def _requires_network(tool_name: str, input_json: dict[str, Any]) -> bool:
+    command = str(input_json.get("command") or input_json.get("cmd") or "")
+    lowered = command.lower()
+    return tool_name == "network" or any(
+        pattern in lowered
+        for pattern in (
+            "curl ",
+            "wget ",
+            "ssh ",
+            "scp ",
+            "git remote",
+            "npm install",
+            "pnpm install",
+            "yarn add",
+            "pip install",
+        )
+    )
+
+
+def _requires_secret_read(tool_name: str, input_json: dict[str, Any]) -> bool:
+    command = str(input_json.get("command") or input_json.get("cmd") or "")
+    lowered = command.lower()
+    return tool_name in {"env_read", "secret_read"} or any(
+        pattern in lowered
+        for pattern in ("printenv", "cat .env", "token", "secret", "api_key")
+    )
+
+
+def _bridge_pending_tool_from_decision(decision: dict[str, Any]) -> dict[str, Any] | None:
+    tool_request_id = str(decision.get("tool_request_id") or "")
+    bridge_task_id = str(decision.get("bridge_task_id") or "")
+    if not tool_request_id or not bridge_task_id:
+        return None
+    decision_json = (
+        decision.get("decision_json") if isinstance(decision.get("decision_json"), dict) else {}
+    )
+    metadata = (
+        decision_json.get("metadata") if isinstance(decision_json.get("metadata"), dict) else {}
+    )
+    preview = (
+        decision_json.get("pending_change_preview")
+        if isinstance(decision_json.get("pending_change_preview"), dict)
+        else {}
+    )
+    return {
+        "tool_request_id": tool_request_id,
+        "bridge_task_id": bridge_task_id,
+        "tool_call_id": metadata.get("tool_call_id") or decision.get("tool_call_id"),
+        "backend_tool_call_id": decision.get("tool_call_id"),
+        "approval_id": decision.get("approval_id"),
+        "tool_name": decision.get("tool_name") or metadata.get("tool_name") or "tool",
+        "local_session_id": metadata.get("local_session_id"),
+        "run_id": metadata.get("run_id"),
+        "agent_id": metadata.get("agent_id"),
+        "command": metadata.get("command") or "act",
+        "risk_level": metadata.get("risk_level") or "high",
+        "permission_mode": metadata.get("permission_mode") or "confirm",
+        "change_id": preview.get("change_id"),
+        "diff_sha256": preview.get("diff_sha256") or preview.get("diff_hash"),
+    }
+
+
+def _sync_bridge_pending_tools_from_api(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+) -> None:
+    list_pending = getattr(client, "list_pending_local_agent_tool_requests", None)
+    if not callable(list_pending):
+        return
+    page = list_pending(device_token=device_token)
+    items = page.get("items") if isinstance(page, dict) else []
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        pending = _bridge_pending_tool_from_decision(item)
+        if pending is None:
+            continue
+        existing = {
+            str(candidate.get("tool_request_id") or ""): candidate
+            for candidate in _bridge_pending_tools(state)
+        }.get(str(pending["tool_request_id"]))
+        if existing is not None:
+            for key in (
+                "local_session_id",
+                "run_id",
+                "agent_id",
+                "command",
+                "risk_level",
+                "permission_mode",
+                "change_id",
+                "diff_sha256",
+            ):
+                if pending.get(key) in (None, "") and existing.get(key) not in (None, ""):
+                    pending[key] = existing[key]
+        _upsert_bridge_pending_tool(config=config, state=state, pending=pending)
+
+
+def _bridge_command_cancel_check(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+) -> Any:
+    get_status = getattr(client, "get_local_agent_command_status", None)
+    if not callable(get_status):
+        return None
+    last_poll: dict[str, float] = {}
+    cached: dict[str, bool] = {}
+
+    def _check(command_id: str) -> bool:
+        now = time.monotonic()
+        if now - last_poll.get(command_id, 0.0) < 0.25:
+            return cached.get(command_id, False)
+        last_poll[command_id] = now
+        try:
+            status_payload = get_status(
+                device_token=device_token,
+                command_id=command_id,
+            )
+        except Exception:
+            return cached.get(command_id, False)
+        cancel_requested = bool(
+            isinstance(status_payload, dict) and status_payload.get("cancel_requested")
+        )
+        cached[command_id] = cancel_requested
+        return cancel_requested
+
+    return _check
+
+
+def _bridge_tool_result_status(result: ToolExecutionResult) -> str:
+    command_status = ""
+    if isinstance(result.output_json, dict):
+        command_status = str(result.output_json.get("command_status") or "").lower()
+    if command_status == "cancelled":
+        return "CANCELLED"
+    return result.status
+
+
+def _ack_bridge_command_cancel_if_needed(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    result: ToolExecutionResult,
+) -> None:
+    if _bridge_tool_result_status(result) != "CANCELLED":
+        return
+    output = result.output_json if isinstance(result.output_json, dict) else {}
+    command_id = str(output.get("command_id") or "")
+    if not command_id:
+        return
+    ack_cancel = getattr(client, "ack_local_agent_command_cancel", None)
+    if not callable(ack_cancel):
+        return
+    ack_cancel(
+        device_token=device_token,
+        command_id=command_id,
+        payload={
+            "status": "cancelled",
+            "error_message": result.error_message or str(output.get("error") or "cancelled"),
+        },
+    )
+
+
+class BridgeReportingSessionStore:
+    def __init__(
+        self,
+        *,
+        delegate: SessionStore,
+        client: HarnessApiClient,
+        device_token: str,
+        tool_request_id: str,
+    ) -> None:
+        self._delegate = delegate
+        self._client = client
+        self._device_token = device_token
+        self._tool_request_id = tool_request_id
+        self._output_counters: dict[str, int] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def start_command(self, command_id: str) -> dict[str, Any]:
+        command = self._delegate.start_command(command_id)
+        self._report_command_event(
+            command_id=command_id,
+            payload={
+                "event_id": f"{self._tool_request_id}:{command_id}:started",
+                "tool_request_id": self._tool_request_id,
+                "event_type": "started",
+                "tool_name": command["tool_name"],
+                "command": command["command"],
+            },
+        )
+        return command
+
+    def record_command_output(self, command_id: str, *, stream: str, chunk: str) -> None:
+        self._delegate.record_command_output(command_id, stream=stream, chunk=chunk)
+        counter = self._output_counters.get(command_id, 0) + 1
+        self._output_counters[command_id] = counter
+        payload: dict[str, Any] = {
+            "event_id": f"{self._tool_request_id}:{command_id}:output:{counter}",
+            "tool_request_id": self._tool_request_id,
+            "event_type": "output",
+        }
+        if stream == "stderr":
+            payload["stderr"] = chunk
+        else:
+            payload["stdout"] = chunk
+        self._report_command_event(command_id=command_id, payload=payload)
+
+    def record_command_output_truncated(
+        self,
+        command_id: str,
+        *,
+        stream: str,
+        limit_bytes: int,
+    ) -> None:
+        self._delegate.record_command_output_truncated(
+            command_id,
+            stream=stream,
+            limit_bytes=limit_bytes,
+        )
+        counter = self._output_counters.get(command_id, 0) + 1
+        self._output_counters[command_id] = counter
+        self._report_command_event(
+            command_id=command_id,
+            payload={
+                "event_id": f"{self._tool_request_id}:{command_id}:output:{counter}",
+                "tool_request_id": self._tool_request_id,
+                "event_type": "output",
+                "metadata": {
+                    "stream": stream,
+                    "truncated": True,
+                    "limit_bytes": limit_bytes,
+                },
+            },
+        )
+
+    def finish_command(
+        self,
+        command_id: str,
+        *,
+        status: str,
+        exit_code: int | None,
+        stdout_truncated: bool,
+        stderr_truncated: bool,
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        command = self._delegate.finish_command(
+            command_id,
+            status=status,
+            exit_code=exit_code,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
+            error_message=error_message,
+        )
+        event_type = {
+            "timeout": "timeout",
+            "cancelled": "cancelled",
+        }.get(status, "finished")
+        self._report_command_event(
+            command_id=command_id,
+            payload={
+                "event_id": f"{self._tool_request_id}:{command_id}:{event_type}",
+                "tool_request_id": self._tool_request_id,
+                "event_type": event_type,
+                "status": status,
+                "exit_code": exit_code,
+                "error_message": error_message,
+            },
+        )
+        return command
+
+    def _report_command_event(self, *, command_id: str, payload: dict[str, Any]) -> None:
+        self._client.report_local_agent_command_event(
+            device_token=self._device_token,
+            command_id=command_id,
+            payload=payload,
+        )
 
 
 def _run_bridge_pair(args: argparse.Namespace) -> int:
@@ -640,6 +1107,12 @@ def _run_bridge_loop_from_state(
             bridge_version=_bridge_version(),
             capabilities=capabilities,
         )
+        _resume_bridge_pending_tools(
+            config=config,
+            state=state,
+            client=client,
+            device_token=device_token,
+        )
         page = client.pull_local_agent_bridge_tasks(device_token=device_token)
         for task in page.get("items", []):
             _handle_bridge_task(
@@ -748,6 +1221,10 @@ def _handle_hao_bridge_task(
             agent_id=agent_id,
             model_provider="default",
             model_name="default",
+            bridge_context=BridgeToolContext(
+                bridge_task_id=task_id,
+                device_token=device_token,
+            ),
         )
     except Exception as exc:
         client.report_local_agent_bridge_event(
@@ -762,6 +1239,8 @@ def _handle_hao_bridge_task(
         )
         return
     if result.exit_code != 0:
+        if _finalize_pending_bridge_result(config=config, state=state, result=result):
+            return
         client.report_local_agent_bridge_event(
             device_token=device_token,
             payload={
@@ -774,17 +1253,502 @@ def _handle_hao_bridge_task(
         )
         return
     assistant = str(result.stdout_json.get("assistant") or "").strip()
+    _report_bridge_assistant_done(
+        client=client,
+        device_token=device_token,
+        bridge_task_id=task_id,
+        local_session_id=local_session.id,
+        content=assistant or "hao completed without assistant text.",
+        status=result.status,
+    )
+
+
+def _finalize_pending_bridge_result(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    result: HeadlessRunResult,
+) -> bool:
+    pending_tool = result.stdout_json.get("pending_tool")
+    if not isinstance(pending_tool, dict):
+        return False
+    _upsert_bridge_pending_tool(config=config, state=state, pending=pending_tool)
+    return True
+
+
+def _report_bridge_assistant_done(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    bridge_task_id: str,
+    local_session_id: str,
+    content: str,
+    status: str,
+) -> None:
     client.report_local_agent_bridge_event(
         device_token=device_token,
         payload={
-            "event_id": f"{task_id}:done:{uuid.uuid4().hex}",
-            "bridge_task_id": task_id,
+            "event_id": f"{bridge_task_id}:done:{uuid.uuid4().hex}",
+            "bridge_task_id": bridge_task_id,
             "event_type": "assistant_done",
-            "content": assistant or "hao completed without assistant text.",
+            "content": content,
             "sequence": 1,
             "metadata": {
-                "local_session_id": local_session.id,
-                "headless_status": result.status,
+                "local_session_id": local_session_id,
+                "headless_status": status,
+            },
+        },
+    )
+
+
+def _resume_bridge_pending_tools(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+) -> None:
+    _sync_bridge_pending_tools_from_api(
+        config=config,
+        state=state,
+        client=client,
+        device_token=device_token,
+    )
+    for pending in list(_bridge_pending_tools(state)):
+        tool_request_id = str(pending.get("tool_request_id") or "")
+        bridge_task_id = str(pending.get("bridge_task_id") or "")
+        if not tool_request_id or not bridge_task_id:
+            continue
+        decision = client.get_local_agent_tool_decision(
+            device_token=device_token,
+            tool_request_id=tool_request_id,
+        )
+        if decision.get("decision") == "approval_required":
+            continue
+        if not decision.get("executable"):
+            _remove_bridge_pending_tool(
+                config=config,
+                state=state,
+                tool_request_id=tool_request_id,
+            )
+            client.report_local_agent_bridge_event(
+                device_token=device_token,
+                payload={
+                    "event_id": f"{bridge_task_id}:error:{tool_request_id}:{uuid.uuid4().hex}",
+                    "bridge_task_id": bridge_task_id,
+                    "event_type": "assistant_error",
+                    "error_message": decision.get("reason") or decision.get("decision") or "denied",
+                    "sequence": 1,
+                },
+            )
+            continue
+        store = SessionStore(config.session_db_path, config.sessions_dir)
+        session_id = str(pending.get("local_session_id") or "")
+        local_session = store.get_session(session_id) if session_id else None
+        if local_session is None:
+            _remove_bridge_pending_tool(
+                config=config,
+                state=state,
+                tool_request_id=tool_request_id,
+            )
+            client.report_local_agent_bridge_event(
+                device_token=device_token,
+                payload={
+                    "event_id": f"{bridge_task_id}:error:{tool_request_id}:{uuid.uuid4().hex}",
+                    "bridge_task_id": bridge_task_id,
+                    "event_type": "assistant_error",
+                    "error_message": f"local session not found for pending tool: {session_id}",
+                    "sequence": 1,
+                },
+            )
+            continue
+        cwd = Path(str(pending.get("cwd") or local_session.cwd)).expanduser().resolve()
+        executed = _execute_approved_bridge_pending_tool(
+            pending=pending,
+            decision=decision,
+            client=client,
+            device_token=device_token,
+            store=store,
+            local_session_id=local_session.id,
+            cwd=cwd,
+        )
+        if executed.status != "executed":
+            _remove_bridge_pending_tool(
+                config=config,
+                state=state,
+                tool_request_id=tool_request_id,
+            )
+            client.report_local_agent_bridge_event(
+                device_token=device_token,
+                payload={
+                    "event_id": f"{bridge_task_id}:error:{tool_request_id}:{uuid.uuid4().hex}",
+                    "bridge_task_id": bridge_task_id,
+                    "event_type": "assistant_error",
+                    "error_message": executed.error_message or executed.status,
+                    "sequence": 1,
+                },
+            )
+            continue
+        if executed.result is not None:
+            _record_headless_tool_result(
+                store=store,
+                session_id=local_session.id,
+                result=executed.result,
+                run_id=str(pending.get("run_id") or local_session.run_id or ""),
+                tool_call_id=str(pending.get("tool_call_id") or ""),
+                api_client=client,
+                risk_level=str(pending.get("risk_level") or "high"),
+                command=str(pending.get("command") or "act"),
+                cwd=cwd,
+                target="host",
+                permission_mode=str(pending.get("permission_mode") or "confirm"),
+                backend_tool_call_id=executed.backend_tool_call_id,
+                audit_host=False,
+            )
+        _remove_bridge_pending_tool(
+            config=config,
+            state=state,
+            tool_request_id=tool_request_id,
+        )
+        followup = run_headless_once(
+            command=str(pending.get("command") or "act"),
+            prompt="Continue using the approved local tool result.",
+            cwd=cwd,
+            session_store=store,
+            session_id=local_session.id,
+            permission_mode=str(pending.get("permission_mode") or "confirm"),
+            target="host",
+            max_auto_turns=3,
+            api_client=client,
+            agent_id=str(pending.get("agent_id") or local_session.agent_id),
+            model_provider="default",
+            model_name="default",
+            bridge_context=BridgeToolContext(
+                bridge_task_id=bridge_task_id,
+                device_token=device_token,
+            ),
+        )
+        if _finalize_pending_bridge_result(config=config, state=state, result=followup):
+            continue
+        if followup.exit_code != 0:
+            client.report_local_agent_bridge_event(
+                device_token=device_token,
+                payload={
+                    "event_id": f"{bridge_task_id}:error:{uuid.uuid4().hex}",
+                    "bridge_task_id": bridge_task_id,
+                    "event_type": "assistant_error",
+                    "error_message": followup.stderr or followup.status,
+                    "sequence": 1,
+                },
+            )
+            continue
+        assistant = str(followup.stdout_json.get("assistant") or "").strip()
+        _report_bridge_assistant_done(
+            client=client,
+            device_token=device_token,
+            bridge_task_id=bridge_task_id,
+            local_session_id=local_session.id,
+            content=assistant or "hao completed without assistant text.",
+            status=followup.status,
+        )
+
+
+def _handle_bridge_host_tool_request(
+    *,
+    client: HarnessApiClient,
+    bridge_context: BridgeToolContext,
+    store: SessionStore,
+    session_id: str,
+    run_id: str | None,
+    agent_id: str,
+    command: str,
+    cwd: Path,
+    tool_name: str,
+    tool_call_id: str | None,
+    input_json: dict[str, Any],
+    risk_level: str,
+    permission_mode: str,
+) -> BridgeToolHandlingResult:
+    tool_request_id = _bridge_tool_request_id(
+        bridge_task_id=bridge_context.bridge_task_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+    )
+    preview_result: ToolExecutionResult | None = None
+    pending_change_preview: dict[str, Any] | None = None
+    target_paths = _tool_target_paths(tool_name, input_json, None)
+    if tool_name in {"write_file", "apply_patch"}:
+        preview_result = execute_local_tool(
+            tool_name,
+            input_json,
+            cwd,
+            session_store=store,
+            session_id=session_id,
+            pending_change_metadata={
+                "source": "local_agent_bridge",
+                "bridge_task_id": bridge_context.bridge_task_id,
+                "tool_request_id": tool_request_id,
+                "run_id": run_id,
+                "permission_mode": permission_mode,
+            },
+        )
+        if preview_result.status != "SUCCESS":
+            return BridgeToolHandlingResult(
+                status="failed",
+                result=preview_result,
+                error_message=preview_result.error_message or "pending change preview failed",
+            )
+        target_paths = _tool_target_paths(
+            tool_name,
+            input_json,
+            preview_result.output_json,
+        )
+        diff = str(preview_result.output_json.get("diff") or "")
+        pending_change_preview = {
+            "change_id": preview_result.output_json.get("change_id"),
+            "operation": tool_name,
+            "target_paths": target_paths,
+            "diff_sha256": _sha256_text(diff),
+            "preview_bytes": len(diff.encode("utf-8", errors="replace")),
+        }
+    decision = client.create_local_agent_tool_request(
+        device_token=bridge_context.device_token,
+        payload={
+            "tool_request_id": tool_request_id,
+            "bridge_task_id": bridge_context.bridge_task_id,
+            "tool_name": tool_name,
+            "input_json": input_json,
+            "execution_target": "host",
+            "risk_level": risk_level,
+            "permission_mode": permission_mode,
+            "cwd": str(cwd),
+            "target_paths": target_paths,
+            "requires_network": _requires_network(tool_name, input_json),
+            "requires_secret_read": _requires_secret_read(tool_name, input_json),
+            "pending_change_preview": pending_change_preview,
+            "metadata": {
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "local_session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "command": command,
+                "cwd": str(cwd),
+                "risk_level": risk_level,
+                "permission_mode": permission_mode,
+            },
+        },
+    )
+    if decision.get("decision") == "approval_required":
+        return BridgeToolHandlingResult(
+            status="pending_approval",
+            backend_tool_call_id=str(decision.get("tool_call_id") or ""),
+            pending_tool=_safe_bridge_pending_tool_state(
+                {
+                "tool_request_id": tool_request_id,
+                "bridge_task_id": bridge_context.bridge_task_id,
+                "tool_call_id": tool_call_id,
+                "backend_tool_call_id": decision.get("tool_call_id"),
+                "approval_id": decision.get("approval_id"),
+                "tool_name": tool_name,
+                "local_session_id": session_id,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "command": command,
+                "risk_level": risk_level,
+                "permission_mode": permission_mode,
+                "change_id": pending_change_preview.get("change_id")
+                if pending_change_preview
+                else None,
+                "diff_sha256": pending_change_preview.get("diff_sha256")
+                if pending_change_preview
+                else None,
+                }
+            ),
+        )
+    if not decision.get("executable"):
+        result = ToolExecutionResult(
+            tool_name=tool_name,
+            status="DENIED",
+            input_json=input_json,
+            output_json={
+                "denied": True,
+                "reason": decision.get("reason") or decision.get("decision") or "denied",
+                "tool_request_id": tool_request_id,
+            },
+            duration_ms=0,
+            error_message=str(decision.get("reason") or "denied"),
+        )
+        return BridgeToolHandlingResult(
+            status="denied",
+            result=result,
+            backend_tool_call_id=str(decision.get("tool_call_id") or ""),
+            error_message=result.error_message or "denied",
+        )
+    pending = {
+        "tool_request_id": tool_request_id,
+        "bridge_task_id": bridge_context.bridge_task_id,
+        "tool_call_id": tool_call_id,
+        "backend_tool_call_id": decision.get("tool_call_id"),
+        "tool_name": tool_name,
+        "input_json": (
+            decision.get("input_json")
+            if isinstance(decision.get("input_json"), dict)
+            else input_json
+        ),
+        "local_session_id": session_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "command": command,
+        "cwd": str(cwd),
+        "risk_level": risk_level,
+        "permission_mode": permission_mode,
+        "change_id": pending_change_preview.get("change_id") if pending_change_preview else None,
+        "diff_sha256": (
+            pending_change_preview.get("diff_sha256") if pending_change_preview else None
+        ),
+    }
+    return _execute_approved_bridge_pending_tool(
+        pending=pending,
+        decision=decision,
+        client=client,
+        device_token=bridge_context.device_token,
+        store=store,
+        local_session_id=session_id,
+        cwd=cwd,
+    )
+
+
+def _execute_approved_bridge_pending_tool(
+    *,
+    pending: dict[str, Any],
+    decision: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+    store: SessionStore,
+    local_session_id: str,
+    cwd: Path,
+) -> BridgeToolHandlingResult:
+    tool_request_id = str(pending["tool_request_id"])
+    tool_name = str(pending["tool_name"])
+    input_json = (
+        decision.get("input_json") if isinstance(decision.get("input_json"), dict) else None
+    )
+    if input_json is None:
+        return BridgeToolHandlingResult(
+            status="failed",
+            error_message="approved local tool decision is missing executable input",
+        )
+    permission_mode = str(pending.get("permission_mode") or "confirm")
+    local_decision = PermissionEngine(permission_mode).decide(
+        tool_name,
+        input_json,
+        target="host",
+    )
+    if local_decision.denied:
+        result = ToolExecutionResult(
+            tool_name=tool_name,
+            status="DENIED",
+            input_json=input_json,
+            output_json={"denied": True, "reason": local_decision.reason},
+            duration_ms=0,
+            error_message=local_decision.reason,
+        )
+    else:
+        try:
+            if tool_name in {"write_file", "apply_patch"}:
+                change_id = str(pending.get("change_id") or "")
+                commit_tool = _headless_commit_tool_name(tool_name)
+                if not change_id or commit_tool is None:
+                    raise ValueError("approved pending change is missing change_id")
+                result = execute_local_tool(
+                    commit_tool,
+                    {"change_id": change_id},
+                    cwd,
+                    session_store=store,
+                    session_id=local_session_id,
+                )
+            elif tool_name in SHELL_COMMAND_TOOLS:
+                reporting_store = BridgeReportingSessionStore(
+                    delegate=store,
+                    client=client,
+                    device_token=device_token,
+                    tool_request_id=tool_request_id,
+                )
+                cancel_check = _bridge_command_cancel_check(
+                    client=client,
+                    device_token=device_token,
+                )
+                result = execute_local_tool(
+                    tool_name,
+                    input_json,
+                    cwd,
+                    session_store=reporting_store,
+                    session_id=local_session_id,
+                    cancel_check=cancel_check,
+                )
+            else:
+                result = execute_local_tool(tool_name, input_json, cwd)
+        except Exception as exc:
+            result = ToolExecutionResult(
+                tool_name=tool_name,
+                status="FAILED",
+                input_json=input_json,
+                output_json={"error": str(exc)},
+                duration_ms=0,
+                error_message=str(exc),
+            )
+    try:
+        response = _report_bridge_tool_result(
+            client=client,
+            device_token=device_token,
+            tool_request_id=tool_request_id,
+            result=result,
+            pending=pending,
+        )
+        _ack_bridge_command_cancel_if_needed(
+            client=client,
+            device_token=device_token,
+            result=result,
+        )
+    except Exception as exc:
+        return BridgeToolHandlingResult(
+            status="failed",
+            result=result,
+            error_message=f"local tool result audit failed: {exc}",
+        )
+    return BridgeToolHandlingResult(
+        status="executed",
+        result=result,
+        backend_tool_call_id=str(
+            response.get("tool_call_id") or pending.get("backend_tool_call_id") or ""
+        ),
+    )
+
+
+def _report_bridge_tool_result(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    tool_request_id: str,
+    result: ToolExecutionResult,
+    pending: dict[str, Any],
+) -> dict:
+    output = result.output_json if isinstance(result.output_json, dict) else {}
+    return client.report_local_agent_tool_result(
+        device_token=device_token,
+        tool_request_id=tool_request_id,
+        payload={
+            "event_id": f"{tool_request_id}:result",
+            "status": _bridge_tool_result_status(result),
+            "output_json": output,
+            "duration_ms": result.duration_ms,
+            "error_message": result.error_message,
+            "command_id": output.get("command_id"),
+            "change_id": output.get("change_id") or pending.get("change_id"),
+            "diff_sha256": pending.get("diff_sha256"),
+            "metadata": {
+                "local_session_id": pending.get("local_session_id"),
+                "tool_call_id": pending.get("tool_call_id"),
             },
         },
     )
@@ -1123,6 +2087,7 @@ def run_headless_once(
     agent_id: str = "default",
     model_provider: str = "default",
     model_name: str = "default",
+    bridge_context: BridgeToolContext | None = None,
 ) -> HeadlessRunResult:
     session = session_store.get_session(session_id) if session_id else None
     if session_id is not None and session is None:
@@ -1205,6 +2170,62 @@ def run_headless_once(
                     target=target,
                 )
                 tool_call_id = str(event.data.get("tool_call_id") or tool_name)
+                if bridge_context is not None and target == "host":
+                    handled = _handle_bridge_host_tool_request(
+                        client=api_client,
+                        bridge_context=bridge_context,
+                        store=store,
+                        session_id=session.id,
+                        run_id=run_id,
+                        agent_id=session.agent_id,
+                        command=command,
+                        cwd=cwd,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        input_json=input_json,
+                        risk_level=decision.risk_level,
+                        permission_mode=permission_mode,
+                    )
+                    if handled.status == "pending_approval":
+                        status = "pending_approval"
+                        pending_tool = handled.pending_tool
+                        break
+                    if handled.result is not None:
+                        tool_event_id, stored_result = _record_headless_tool_result(
+                            store=store,
+                            session_id=session.id,
+                            result=handled.result,
+                            run_id=run_id,
+                            tool_call_id=tool_call_id,
+                            api_client=api_client,
+                            risk_level=decision.risk_level,
+                            command=command,
+                            cwd=cwd,
+                            target=target,
+                            permission_mode=permission_mode,
+                            backend_tool_call_id=handled.backend_tool_call_id,
+                            audit_host=False,
+                        )
+                        tool_summaries.append(
+                            {
+                                "tool_event_id": tool_event_id,
+                                "tool_name": stored_result.tool_name,
+                                "status": stored_result.status,
+                            }
+                        )
+                        if handled.status != "executed" or stored_result.status == "DENIED":
+                            status = "failed"
+                            stderr = (
+                                handled.error_message
+                                or stored_result.error_message
+                                or stored_result.status
+                            )
+                            break
+                        executed_results.append(stored_result)
+                        continue
+                    status = "failed"
+                    stderr = handled.error_message or handled.status
+                    break
                 if decision.denied:
                     result = ToolExecutionResult(
                         tool_name=tool_name,
