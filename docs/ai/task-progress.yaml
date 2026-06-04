@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-04T05:38:05Z
+last_updated_at: 2026-06-04T06:12:06Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,25 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: local-agent-tool-safety-v3-plan
+    date: 2026-06-04
+    status: planned
+    demo: Local Agent Tool Safety V3 is planned as the next local Agent slice, covering host tool request authorization, approval, command lifecycle, pending change, cancel/retry, and audit fail-closed before execution.
+    verification_result: plan_review_passed
+    verification_commands:
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V3 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-tool-safety-v3.md` and `.omx/plans/test-spec-local-agent-tool-safety-v3.md`.
+      - V3 closes the V1/V2 WATCH by making side-effect local `tool_result` evidence require an authorized `tool_request_id` and `tool_call_id`.
+      - The local host approval path must not call server `_execute_approved_tool_call()` or `ToolRunner.execute_approved_call()`; approval only unlocks bridge decision polling.
+      - Bridge-reported risk, permission, network, secret, and path fields are advisory only; server classification remains deny-by-default.
+      - Planned data model covers `LocalAgentToolRequest`, `LocalAgentCommand`, and `LocalAgentPendingChange` while preserving `ToolCall`, `ToolApproval`, Run, Event, and `AgentSession` authority.
+      - Planned tests cover unauthorized side-effect results, approval TTL/revoke late results, cross-owner invariants, terminal immutability, command lifecycle, pending-change hash guards, cancel/retry, privacy redaction, and deterministic fake/hao smoke.
+      - Aristotle architecture review returned PASS with implementation watch items only.
+      - Parfit security/test review returned PASS with implementation watch items only.
+      - V3 implementation branch is `feature/local-agent-tool-safety-v3`; new functionality remains off `main` until implementation review, verification, commit, and push are complete.
+
   - id: local-agent-workspace-chat-v2
     date: 2026-06-04
     status: completed
