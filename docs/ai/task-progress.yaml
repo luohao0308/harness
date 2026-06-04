@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-03T17:34:42Z
+last_updated_at: 2026-06-04T05:38:05Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,62 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: local-agent-workspace-chat-v2
+    date: 2026-06-04
+    status: completed
+    demo: Local Agent connections now bind or resume API-owned sessions inside the existing Workspace ChatSurface, with server-backed history, pending/offline state, and local bridge task queue sends.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "bridge_pair_once or api_client_ignores or bridge_daemon"
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py alembic/versions/20260611_0038_create_local_agent_connections.py
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx ChatSurface.shell.test.tsx AgentWorkspacePage.team-launch.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V2 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-workspace-chat-v2.md` and `.omx/plans/test-spec-local-agent-workspace-chat-v2.md`.
+      - Workspace now lists current-Agent local connections and can switch into local Agent mode without leaving the existing ChatSurface.
+      - Local mode creates or resumes a `LocalAgentConversationBinding`, loads the API-owned `AgentSession` messages, and projects them into the existing conversation tree/history rail.
+      - Sending from Workspace calls `POST /api/agents/local-agent/bindings/{binding_id}/messages`, appends pending local assistant state, and links the resulting Workspace Run.
+      - Offline local connections remain readable and can show queued pending state; bridge completion still comes from authoritative API/DB `AgentMessage` projection.
+      - Backend v2 coverage now includes binding-list ownership/admin/operator behavior and stale-heartbeat offline projection.
+      - API-owned pending task projection now lets Workspace recover queued local assistant state after reload/offline instead of relying on browser memory.
+      - Final code/security review returned APPROVE; final architecture review returned WATCH with no blockers. The WATCH is deferred to V3 tool safety: bridge-reported tool results remain observations, not policy authority.
+
+  - id: local-agent-bridge-conversation-v1
+    date: 2026-06-04
+    status: completed
+    demo: Agent Studio now supports local Agent pairing into the existing Workspace conversation model, with API-owned sessions/runs/events/tool audit and a hao bridge entrypoint for fake and hao adapters.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "bridge_pair_once or api_client_ignores or bridge_daemon"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py -q -k "agent_studio_create_clone"
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py alembic/versions/20260611_0038_create_local_agent_connections.py
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-local-agent-0038.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min HARNESS_SECRET_ENCRYPTION_KEY=test-harness-secret-encryption-key-32-min .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `LocalAgentPairingToken`, `LocalAgentConnection`, `LocalAgentConversationBinding`, `LocalAgentBridgeTask`, and `LocalAgentBridgeEventReceipt` with Alembic revision `20260611_0038`.
+      - Pair tokens are high-entropy, hash-stored, TTL-bound, single-use, and short pair codes remain UX-only.
+      - Bridge device credentials are hash-stored and required for heartbeat, task pull, ack, and event report; revoked connections cannot continue.
+      - Bridge events are idempotently received through receipts and projected into `AgentEvent`, `AgentMessage`, `Task`, and `ToolCall`; bridge cannot write generic messages directly.
+      - Local Agent message send binds an `AgentSession`, creates/uses a Workspace `Task` Run, queues a bridge task, and limits executable sends to the device owner.
+      - Browser UI no longer performs bridge registration; Agent Studio only generates the command, shows discovery/status, and can revoke connections.
+      - Agent Studio exposes "选择职业模板" and "接入本地 Agent" while omitting "新建云端 Agent"; fake/hao are enabled and Codex/Claude are disabled future adapters.
+      - `hao bridge pair --daemon` registers the local bridge, persists `~/.hao/bridge.json`, and starts a background bridge loop; `--once` supports deterministic test/smoke execution.
+      - The fake adapter proves pair/register/heartbeat/pull/ack/delta/done without executing host commands.
+      - The hao adapter reuses existing `run_headless_once` and reports success/error through the bridge protocol; without a valid hao API token it fails closed through `assistant_error` instead of faking completion.
+      - Final review fixes added binding-scoped message idempotency, atomic local sends, pair-token locking plus uniqueness, lifecycle audit, protected daemon state, API-owned pending task projection, terminal bridge-event immutability, and terminal ack immutability.
+      - Final code/security review returned APPROVE; final architecture review returned WATCH with no blockers. The WATCH is V3 scope: local tool result evidence must become policy/approval/audit governed before it is treated as Harness-authorized execution.
+
   - id: product-reference-cleanup-and-history-hygiene
     date: 2026-06-03
     status: verified

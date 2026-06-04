@@ -388,6 +388,80 @@ export type AgentCapabilityAttachmentSummary = {
   status: string;
 };
 
+export type LocalAgentPairing = {
+  id: string;
+  agent_id: string;
+  pair_code: string;
+  pair_token: string | null;
+  command: string | null;
+  status: string;
+  expires_at: string;
+  created_at: string;
+};
+
+export type LocalAgentConnection = {
+  id: string;
+  agent_id: string;
+  owner_user_id: string;
+  display_name: string;
+  adapter_kind: string;
+  protocol_version: string;
+  bridge_version: string;
+  status: string;
+  workspace_root: string | null;
+  capabilities_json: Record<string, unknown>;
+  risk_capabilities_json: string[];
+  last_seen_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentConnectionPage = {
+  items: LocalAgentConnection[];
+};
+
+export type LocalAgentConversationBinding = {
+  id: string;
+  connection_id: string;
+  agent_id: string;
+  agent_session_id: string;
+  adapter_session_id: string | null;
+  resume_mode: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentConversationBindingPage = {
+  items: LocalAgentConversationBinding[];
+};
+
+export type LocalAgentSendMessageResponse = {
+  bridge_task_id: string;
+  run_id: string;
+  agent_session_id: string;
+  user_message_id: string;
+  status: string;
+};
+
+export type LocalAgentBindingTask = {
+  id: string;
+  connection_id: string;
+  binding_id: string;
+  agent_session_id: string;
+  run_id: string;
+  user_message_id: string;
+  client_message_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentBindingTaskPage = {
+  items: LocalAgentBindingTask[];
+};
+
 export type AgentAssignment = {
   id: string;
   run_id: string;
@@ -668,7 +742,7 @@ export type AgentMessage = {
   id: string;
   session_id: string;
   agent_id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   metadata_json: Record<string, unknown>;
   created_at: string;
@@ -3102,6 +3176,76 @@ export async function selectAgentTokenOptimizer(
     method: "POST",
     body: JSON.stringify({ preset_id: presetId }),
   });
+}
+
+export async function createLocalAgentPairingToken(agentId: string) {
+  return request<LocalAgentPairing>("/api/agents/local-agent/pairing-tokens", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: agentId,
+      ttl_minutes: 10,
+      scope: { executable: true, adapters: ["fake", "hao"] },
+    }),
+  });
+}
+
+export async function listLocalAgentConnections() {
+  return request<LocalAgentConnectionPage>("/api/agents/local-agent/connections");
+}
+
+export async function revokeLocalAgentConnection(connectionId: string) {
+  return request<LocalAgentConnection>(`/api/agents/local-agent/connections/${connectionId}/revoke`, {
+    method: "POST",
+  });
+}
+
+export async function listLocalAgentConversationBindings(connectionId: string) {
+  return request<LocalAgentConversationBindingPage>(
+    `/api/agents/local-agent/connections/${connectionId}/bindings`,
+  );
+}
+
+export async function bindLocalAgentConversation(
+  connectionId: string,
+  payload: {
+    agent_session_id?: string | null;
+    title?: string | null;
+    adapter_session_id?: string | null;
+    resume_mode?: "native_resume" | "context_replay_new_session";
+  } = {},
+) {
+  return request<LocalAgentConversationBinding>(
+    `/api/agents/local-agent/connections/${connectionId}/bindings`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function listAgentSessionMessages(sessionId: string) {
+  return request<{ items: AgentMessage[]; next_cursor: string | null }>(
+    `/api/agents/sessions/${sessionId}/messages`,
+  );
+}
+
+export async function listLocalAgentBindingTasks(bindingId: string) {
+  return request<LocalAgentBindingTaskPage>(
+    `/api/agents/local-agent/bindings/${bindingId}/tasks`,
+  );
+}
+
+export async function sendLocalAgentMessage(
+  bindingId: string,
+  payload: { content: string; client_message_id: string },
+) {
+  return request<LocalAgentSendMessageResponse>(
+    `/api/agents/local-agent/bindings/${bindingId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function listTeams() {

@@ -110,6 +110,9 @@ export type ChatSurfaceProps = {
   jumpTarget?: { nodeId: string; seq: number } | null;
   onCreateTeamFromConversation?: () => void;
   isCreatingTeam?: boolean;
+  localAgentPanel?: ReactNode;
+  localAgentPending?: boolean;
+  onLocalAgentSubmit?: (goal: string) => Promise<void> | void;
 };
 
 export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
@@ -135,6 +138,9 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     onOpenShortcut,
     onCreateTeamFromConversation,
     isCreatingTeam = false,
+    localAgentPanel = null,
+    localAgentPending = false,
+    onLocalAgentSubmit,
   } = props;
 
   const { text } = useI18n();
@@ -512,7 +518,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const handleSubmit = useCallback(async (): Promise<void> => {
     const goal = draft.trim();
     if (goal.length === 0) return;
-    if (stream.isStreaming) return;
+    if (stream.isStreaming || localAgentPending) return;
 
     if (workspaceMode === "plan" || workspaceMode === "goal") {
       const confirmed = await confirm({
@@ -541,6 +547,15 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     }
 
     chatListRef.current?.notifyUserSubmit();
+    if (onLocalAgentSubmit !== undefined) {
+      await onLocalAgentSubmit(goal);
+      setAttachments((current) => {
+        for (const attachment of current) revokeAttachmentPreview(attachment);
+        return [];
+      });
+      return;
+    }
+
     void stream.start({
       goal,
       mode: workspaceMode,
@@ -561,6 +576,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     compressCurrentContext,
     contextUsageRatio,
     draft,
+    localAgentPending,
+    onLocalAgentSubmit,
     pinnedNodeIds,
     selectedModelId,
     selectedProviderId,
@@ -968,6 +985,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         }
       />
 
+      {localAgentPanel}
+
       <ChatMessageList
         ref={chatListRef}
         activePath={activePath}
@@ -1100,7 +1119,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               }
               attachments={attachments}
               onRemoveAttachment={handleRemoveAttachment}
-              isEditLocked={editingNodeId !== null}
+              isEditLocked={editingNodeId !== null || localAgentPending}
               onSlashDispatch={handleSlashDispatch}
             />
           </div>

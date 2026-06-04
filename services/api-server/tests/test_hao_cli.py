@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -133,6 +134,137 @@ def test_hao_api_client_ignores_environment_proxy_for_local_calls(monkeypatch) -
         {"timeout": 5, "trust_env": False},
         {"timeout": None, "trust_env": False},
     ]
+
+
+def test_hao_bridge_pair_once_registers_and_reports_fake_task(tmp_path: Path, monkeypatch) -> None:
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {
+                "connection": {"id": "connection-1"},
+                "device_token": "device-token-1",
+            }
+
+        def heartbeat_local_agent_connection(self, **payload) -> dict:
+            calls.append(("heartbeat", payload))
+            return {"connection": {"id": payload["connection_id"]}}
+
+        def pull_local_agent_bridge_tasks(self, **payload) -> dict:
+            calls.append(("pull", payload))
+            return {
+                "items": [
+                    {
+                        "id": "bridge-task-1",
+                        "payload": {"message": "hello local"},
+                    }
+                ]
+            }
+
+        def ack_local_agent_bridge_task(self, **payload) -> dict:
+            calls.append(("ack", payload))
+            return {"id": payload["bridge_task_id"]}
+
+        def report_local_agent_bridge_event(self, **payload) -> dict:
+            calls.append(("event", payload))
+            return {"receipt_id": payload["payload"]["event_id"], "duplicate": False}
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "fake",
+            "--cwd",
+            str(tmp_path),
+            "--once",
+        ]
+    )
+
+    assert exit_code == 0
+    bridge_state = tmp_path / "bridge.json"
+    assert bridge_state.exists()
+    assert bridge_state.stat().st_mode & 0o777 == 0o600
+    assert [name for name, _payload in calls].count("event") == 2
+    register = next(payload for name, payload in calls if name == "register")
+    assert register["adapter_kind"] == "fake"
+    assert register["pair_token"] == "pair-token"
+    heartbeat = next(payload for name, payload in calls if name == "heartbeat")
+    assert heartbeat["connection_id"] == "connection-1"
+    ack = next(payload for name, payload in calls if name == "ack")
+    assert ack["bridge_task_id"] == "bridge-task-1"
+    done = [payload for name, payload in calls if name == "event"][-1]["payload"]
+    assert done["event_type"] == "assistant_done"
+    assert "hello local" in done["content"]
+
+
+def test_hao_bridge_daemon_uses_protected_state_without_device_token_argv(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+    popen_commands: list[list[str]] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {
+                "connection": {"id": "connection-1"},
+                "device_token": "device-token-secret",
+            }
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            popen_commands.append(command)
+            calls.append(("popen", kwargs))
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "fake",
+            "--cwd",
+            str(tmp_path),
+            "--daemon",
+        ]
+    )
+
+    assert exit_code == 0
+    bridge_state = tmp_path / "bridge.json"
+    assert bridge_state.stat().st_mode & 0o777 == 0o600
+    assert "device-token-secret" in bridge_state.read_text(encoding="utf-8")
+    command = popen_commands[0]
+    assert "--device-token" not in command
+    assert "device-token-secret" not in command
 
 
 def test_hao_session_store_persists_messages_and_tool_events(tmp_path: Path) -> None:

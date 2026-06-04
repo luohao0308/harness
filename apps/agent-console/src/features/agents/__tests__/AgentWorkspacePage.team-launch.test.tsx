@@ -88,6 +88,9 @@ describe("AgentWorkspacePage Team launcher", () => {
       if (path === "/api/tools/registry" && method === "GET") {
         return jsonResponse({ items: [], categories: [], sources: [] });
       }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
       if (path === "/api/teams" && method === "GET") {
         return jsonResponse({
           items: [
@@ -119,5 +122,123 @@ describe("AgentWorkspacePage Team launcher", () => {
       });
     });
     expect(await screen.findByText("Team opened")).toBeInTheDocument();
+  });
+
+  it("sends through a local Agent binding inside the Workspace chat surface", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "conn-local-1",
+              agent_id: "default",
+              owner_user_id: "dev-user",
+              display_name: "hao Local",
+              adapter_kind: "hao",
+              protocol_version: "local-agent-v1",
+              bridge_version: "0.1.0",
+              status: "online",
+              workspace_root: ".../agent_workspace/harness",
+              capabilities_json: { supports_resume: true, supports_streaming: true },
+              risk_capabilities_json: ["shell"],
+              last_seen_at: now,
+              revoked_at: null,
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: [] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "POST"
+      ) {
+        return jsonResponse(
+          {
+            id: "binding-1",
+            connection_id: "conn-local-1",
+            agent_id: "default",
+            agent_session_id: "session-1",
+            adapter_session_id: null,
+            resume_mode: "native_resume",
+            status: "active",
+            created_at: now,
+            updated_at: now,
+          },
+          201,
+        );
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/messages" && method === "POST") {
+        return jsonResponse(
+          {
+            bridge_task_id: "bridge-task-1",
+            run_id: "run-local-1",
+            agent_session_id: "session-1",
+            user_message_id: "message-user-1",
+            status: "pending",
+          },
+          202,
+        );
+      }
+      if (path === "/api/agents/runs/run-local-1/workspace" && method === "GET") {
+        return jsonResponse({
+          run: { id: "run-local-1", status: "RUNNING", created_at: now },
+          events: [],
+          model_calls: [],
+          tool_calls: [],
+          approvals: [],
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await user.click(await screen.findByLabelText("本地 Agent"));
+    await screen.findByText("Session session-1");
+
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "继续检查本地项目");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/local-agent/bindings/binding-1/messages" &&
+          init?.method === "POST",
+      );
+      expect(JSON.parse(String(sendCall?.[1]?.body))).toMatchObject({
+        content: "继续检查本地项目",
+      });
+    });
+    expect(await screen.findByText("等待本地 Agent 响应...")).toBeInTheDocument();
   });
 });
