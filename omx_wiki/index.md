@@ -1,9 +1,11 @@
 # Wiki Index
 
-> 7 pages | Last updated: 2026-06-03T10:38:47Z
+> 9 pages | Last updated: 2026-06-04T05:38:05Z
 
 ## session-log
 
+- [Local Agent Workspace Chat V2](session-2026-06-04-local-agent-workspace-chat-v2.md) — Local Agent Workspace Chat V2 plan docs are入库, API-owned pending projection is reviewed, and connections bind/resume sessions inside the existing ChatSurface.
+- [Local Agent Bridge Conversation V1](session-2026-06-04-local-agent-bridge-conversation-v1.md) — Local Agent pairing, bridge daemon entrypoint, terminal task safety, Agent Studio wizard, and Workspace-owned run/event/tool/session projection.
 - [User Avatar DB Persistence](session-2026-06-03-user-avatar-db-persistence.md) — User avatar upload stored on the users table with DB-backed auth/profile evidence.
 - [Frontend Login And Runtime Secret Generation](session-2026-06-03-frontend-login-runtime-secret-generation.md) — Login/register policy, avatar logout menu, and deployment-side startup secret generation path.
 - [User Scoped Encrypted Secret Vault V1](session-2026-06-03-user-scoped-encrypted-secret-vault-v1.md) — User/org scoped encrypted DB secret vault for business integration keys.

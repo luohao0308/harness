@@ -445,6 +445,7 @@ class CapabilityVersion(Base):
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
+
 class AgentCapabilityAttachment(Base):
     __tablename__ = "agent_capability_attachments"
     __table_args__ = (
@@ -555,6 +556,183 @@ class AgentMessage(Base):
     role: Mapped[str] = mapped_column(String(64), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentPairingToken(Base):
+    __tablename__ = "local_agent_pairing_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="local_agent_pairing_tokens_hash_uidx"),
+        Index("ix_local_agent_pairing_org_user", "organization_id", "user_id"),
+        Index("ix_local_agent_pairing_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    pair_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentConnection(Base):
+    __tablename__ = "local_agent_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_token_hash",
+            name="local_agent_connections_device_token_hash_uidx",
+        ),
+        UniqueConstraint(
+            "pairing_token_id",
+            name="local_agent_connections_pairing_token_uidx",
+        ),
+        Index("ix_local_agent_connections_org_user", "organization_id", "owner_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    pairing_token_id: Mapped[str | None] = mapped_column(
+        ForeignKey("local_agent_pairing_tokens.id"),
+        nullable=True,
+        index=True,
+    )
+    device_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    adapter_kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    protocol_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    bridge_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="online", index=True)
+    workspace_root: Mapped[str | None] = mapped_column(Text, nullable=True)
+    capabilities_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    risk_capabilities_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentConversationBinding(Base):
+    __tablename__ = "local_agent_conversation_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "agent_session_id",
+            name="local_agent_bindings_connection_session_uidx",
+        ),
+        Index("ix_local_agent_bindings_org_user", "organization_id", "owner_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    agent_session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    adapter_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resume_mode: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="native_resume",
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentBridgeTask(Base):
+    __tablename__ = "local_agent_bridge_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "binding_id",
+            "client_message_id",
+            name="local_agent_bridge_tasks_binding_message_uidx",
+        ),
+        Index("ix_local_agent_bridge_tasks_connection_status", "connection_id", "status"),
+        Index("ix_local_agent_bridge_tasks_task", "task_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    agent_session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    user_message_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_messages.id"),
+        nullable=False,
+        index=True,
+    )
+    client_message_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentBridgeEventReceipt(Base):
+    __tablename__ = "local_agent_bridge_event_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "event_id",
+            name="local_agent_bridge_receipts_connection_event_uidx",
+        ),
+        Index("ix_local_agent_bridge_receipts_task", "task_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=True,
+        index=True,
+    )
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    agent_event_id: Mapped[str | None] = mapped_column(ForeignKey("agent_events.id"), nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -697,9 +875,7 @@ class SpecialistSelectionDecision(Base):
 
 class SpecialistMarketplaceListing(Base):
     __tablename__ = "specialist_marketplace_listings"
-    __table_args__ = (
-        UniqueConstraint("slug", name="specialist_marketplace_listings_slug_uidx"),
-    )
+    __table_args__ = (UniqueConstraint("slug", name="specialist_marketplace_listings_slug_uidx"),)
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
     slug: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
@@ -1564,9 +1740,7 @@ class EvalResult(Base):
 
 class EvalExperiment(Base):
     __tablename__ = "eval_experiments"
-    __table_args__ = (
-        Index("ix_eval_experiments_org_created", "organization_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_eval_experiments_org_created", "organization_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     dataset_id: Mapped[str] = mapped_column(

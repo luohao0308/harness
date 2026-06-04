@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 import tomllib
+import uuid
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -139,6 +142,40 @@ def build_parser() -> argparse.ArgumentParser:
     auth_sub.add_parser("status", help="Show credential status")
 
     subparsers.add_parser("sessions", help="List local sessions")
+
+    bridge = subparsers.add_parser("bridge", help="Run the Harness local Agent bridge")
+    bridge_sub = bridge.add_subparsers(dest="bridge_command", required=True)
+    bridge_pair = bridge_sub.add_parser("pair", help="Pair and optionally run a local Agent bridge")
+    bridge_pair.add_argument("--api", "--api-url", dest="api_url", default=None)
+    bridge_pair.add_argument("--pair-token", required=True)
+    bridge_pair.add_argument("--pair-code", required=True)
+    bridge_pair.add_argument(
+        "--adapter",
+        "--adapter-kind",
+        dest="adapter_kind",
+        choices=["fake", "hao"],
+        default="hao",
+    )
+    bridge_pair.add_argument("--display-name", default=None)
+    bridge_pair.add_argument("--cwd", default=".")
+    bridge_pair.add_argument("--daemon", action="store_true")
+    bridge_pair.add_argument("--once", action="store_true")
+    bridge_pair.add_argument("--interval", type=float, default=2.0)
+
+    bridge_run = bridge_sub.add_parser("run", help="Run a previously paired local Agent bridge")
+    bridge_run.add_argument("--api", "--api-url", dest="api_url", default=None)
+    bridge_run.add_argument("--connection-id", default=None)
+    bridge_run.add_argument("--device-token", default=None)
+    bridge_run.add_argument(
+        "--adapter",
+        "--adapter-kind",
+        dest="adapter_kind",
+        choices=["fake", "hao"],
+        default="hao",
+    )
+    bridge_run.add_argument("--cwd", default=".")
+    bridge_run.add_argument("--once", action="store_true")
+    bridge_run.add_argument("--interval", type=float, default=2.0)
 
     resume = subparsers.add_parser("resume", help="Resume a local session")
     resume.add_argument("session_id", nargs="?")
@@ -411,6 +448,346 @@ def _normalize_headless_args(args: argparse.Namespace) -> None:
         args.prompt = " ".join(args.prompt).strip()
     if not getattr(args, "resume_session_id", None):
         args.resume_session_id = None
+
+
+def _bridge_state_path(config: Any) -> Path:
+    return config.home / "bridge.json"
+
+
+def _bridge_version() -> str:
+    return f"hao-{_hao_version()}"
+
+
+def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
+    return {
+        "adapter_kind": adapter_kind,
+        "supports_resume": adapter_kind == "hao",
+        "supports_streaming": True,
+        "supports_cancel": False,
+        "protocol_version": "local-agent-v1",
+    }
+
+
+def _bridge_risk_capabilities(adapter_kind: str) -> list[str]:
+    if adapter_kind == "hao":
+        return ["host_read", "host_write", "shell", "git", "network"]
+    return []
+
+
+def _save_bridge_state(config: Any, state: dict[str, Any]) -> None:
+    config.home.mkdir(parents=True, exist_ok=True)
+    path = _bridge_state_path(config)
+    data = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(data)
+    os.chmod(path, 0o600)
+
+
+def _load_bridge_state(config: Any) -> dict[str, Any]:
+    path = _bridge_state_path(config)
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _run_bridge_pair(args: argparse.Namespace) -> int:
+    config = load_config()
+    api_url = args.api_url or config.api_url
+    cwd = Path(args.cwd).expanduser().resolve()
+    client = HarnessApiClient(api_url, config.token)
+    display_name = args.display_name or (
+        "hao Local Agent" if args.adapter_kind == "hao" else "Fake Local Agent"
+    )
+    registered = client.register_local_agent_connection(
+        pair_token=args.pair_token,
+        pair_code=args.pair_code,
+        adapter_kind=args.adapter_kind,
+        display_name=display_name,
+        workspace_root=str(cwd),
+        capabilities=_bridge_capabilities(args.adapter_kind),
+        risk_capabilities=_bridge_risk_capabilities(args.adapter_kind),
+        bridge_version=_bridge_version(),
+    )
+    connection = registered["connection"]
+    state = {
+        "api_url": api_url,
+        "connection_id": connection["id"],
+        "device_token": registered["device_token"],
+        "adapter_kind": args.adapter_kind,
+        "cwd": str(cwd),
+        "display_name": display_name,
+    }
+    _save_bridge_state(config, state)
+    print(
+        json.dumps(
+            {
+                "status": "paired",
+                "connection_id": connection["id"],
+                "adapter_kind": args.adapter_kind,
+                "state_path": str(_bridge_state_path(config)),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    if args.daemon:
+        return _spawn_bridge_daemon(args=args, state=state)
+    if args.once:
+        return _run_bridge_loop_from_state(
+            config=config,
+            state=state,
+            once=True,
+            interval=args.interval,
+        )
+    return 0
+
+
+def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> int:
+    command = [
+        sys.executable,
+        "-m",
+        "app.cli.hao.main",
+        "bridge",
+        "run",
+        "--api",
+        str(state["api_url"]),
+        "--connection-id",
+        str(state["connection_id"]),
+        "--adapter",
+        str(state["adapter_kind"]),
+        "--cwd",
+        str(state["cwd"]),
+        "--interval",
+        str(args.interval),
+    ]
+    subprocess.Popen(  # noqa: S603
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    print(
+        json.dumps(
+            {
+                "status": "daemon_started",
+                "connection_id": state["connection_id"],
+                "adapter_kind": state["adapter_kind"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _run_bridge(args: argparse.Namespace) -> int:
+    config = load_config()
+    state = _load_bridge_state(config)
+    if args.api_url:
+        state["api_url"] = args.api_url
+    if args.connection_id:
+        state["connection_id"] = args.connection_id
+    if args.device_token:
+        state["device_token"] = args.device_token
+    state["adapter_kind"] = args.adapter_kind or state.get("adapter_kind") or "hao"
+    state["cwd"] = str(Path(args.cwd or state.get("cwd") or ".").expanduser().resolve())
+    missing = [key for key in ("api_url", "connection_id", "device_token") if not state.get(key)]
+    if missing:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": f"missing bridge state: {', '.join(missing)}",
+                    "state_path": str(_bridge_state_path(config)),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    return _run_bridge_loop_from_state(
+        config=config,
+        state=state,
+        once=args.once,
+        interval=args.interval,
+    )
+
+
+def _run_bridge_loop_from_state(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    once: bool,
+    interval: float,
+) -> int:
+    client = HarnessApiClient(str(state["api_url"]), config.token, timeout=30.0)
+    adapter_kind = str(state.get("adapter_kind") or "hao")
+    device_token = str(state["device_token"])
+    connection_id = str(state["connection_id"])
+    capabilities = _bridge_capabilities(adapter_kind)
+    while True:
+        client.heartbeat_local_agent_connection(
+            connection_id=connection_id,
+            device_token=device_token,
+            status="online",
+            bridge_version=_bridge_version(),
+            capabilities=capabilities,
+        )
+        page = client.pull_local_agent_bridge_tasks(device_token=device_token)
+        for task in page.get("items", []):
+            _handle_bridge_task(
+                config=config,
+                state=state,
+                client=client,
+                device_token=device_token,
+                adapter_kind=adapter_kind,
+                task=task,
+            )
+        if once:
+            return 0
+        time.sleep(max(0.5, interval))
+
+
+def _handle_bridge_task(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+    adapter_kind: str,
+    task: dict[str, Any],
+) -> None:
+    task_id = str(task["id"])
+    client.ack_local_agent_bridge_task(
+        bridge_task_id=task_id,
+        device_token=device_token,
+        status="running",
+    )
+    if adapter_kind == "fake":
+        content = str(task.get("payload", {}).get("message") or "")
+        reply = f"fake bridge received: {content}".strip()
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:delta:1",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_delta",
+                "content": reply,
+                "sequence": 1,
+            },
+        )
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:done",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_done",
+                "content": reply,
+                "sequence": 2,
+            },
+        )
+        return
+    _handle_hao_bridge_task(
+        config=config,
+        state=state,
+        client=client,
+        device_token=device_token,
+        task=task,
+    )
+
+
+def _handle_hao_bridge_task(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+    task: dict[str, Any],
+) -> None:
+    task_id = str(task["id"])
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    prompt = str(payload.get("message") or "").strip()
+    run_id = str(payload.get("run_id") or "")
+    agent_id = str(payload.get("agent_id") or "default")
+    adapter_session_id = payload.get("adapter_session_id")
+    cwd = Path(str(state.get("cwd") or payload.get("workspace_root") or ".")).expanduser().resolve()
+    store = SessionStore(config.session_db_path, config.sessions_dir)
+    local_session = (
+        store.get_session(str(adapter_session_id))
+        if isinstance(adapter_session_id, str) and adapter_session_id.strip()
+        else None
+    )
+    if local_session is None:
+        local_session = store.create_session(
+            cwd=str(cwd),
+            agent_id=agent_id,
+            mode="confirm",
+            cli_mode="act",
+            target="host",
+        )
+    if run_id:
+        store.update_run_id(local_session.id, run_id)
+    try:
+        result = run_headless_once(
+            command="act",
+            prompt=prompt,
+            cwd=cwd,
+            session_store=store,
+            session_id=local_session.id,
+            permission_mode="confirm",
+            target="host",
+            max_auto_turns=3,
+            api_client=client,
+            agent_id=agent_id,
+            model_provider="default",
+            model_name="default",
+        )
+    except Exception as exc:
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:error:{uuid.uuid4().hex}",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_error",
+                "error_message": str(exc),
+                "sequence": 1,
+            },
+        )
+        return
+    if result.exit_code != 0:
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:error:{uuid.uuid4().hex}",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_error",
+                "error_message": result.stderr or result.status,
+                "sequence": 1,
+            },
+        )
+        return
+    assistant = str(result.stdout_json.get("assistant") or "").strip()
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:done:{uuid.uuid4().hex}",
+            "bridge_task_id": task_id,
+            "event_type": "assistant_done",
+            "content": assistant or "hao completed without assistant text.",
+            "sequence": 1,
+            "metadata": {
+                "local_session_id": local_session.id,
+                "headless_status": result.status,
+            },
+        },
+    )
 
 
 def _build_workflow_metadata(command: str) -> dict[str, Any]:
@@ -1176,6 +1553,11 @@ def main(argv: list[str] | None = None) -> int:
             return _save_login(args)
         if args.auth_command == "status":
             return _print_auth_status()
+    if args.command == "bridge":
+        if args.bridge_command == "pair":
+            return _run_bridge_pair(args)
+        if args.bridge_command == "run":
+            return _run_bridge(args)
     if args.command == "sessions":
         return _print_sessions()
     if args.command == "resume":

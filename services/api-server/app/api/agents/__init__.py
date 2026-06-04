@@ -13,6 +13,7 @@ from . import agent_messages as agent_messages  # noqa: E402,F401
 from . import agent_runs as agent_runs  # noqa: E402,F401
 from . import agent_chat as agent_chat  # noqa: E402,F401
 from . import agent_cli as agent_cli  # noqa: E402,F401
+from . import agent_local as agent_local  # noqa: E402,F401
 from . import agent_context as agent_context  # noqa: E402,F401
 from . import agent_manifest as agent_manifest  # noqa: E402,F401
 from . import agent_get as agent_get  # noqa: E402,F401

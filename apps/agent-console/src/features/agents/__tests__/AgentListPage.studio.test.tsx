@@ -80,6 +80,31 @@ function tokenOptimizerPresets() {
   };
 }
 
+function localAgentConnection(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "local-1",
+    agent_id: "default",
+    owner_user_id: "dev-engineer",
+    display_name: "Fake Local Agent",
+    adapter_kind: "fake",
+    protocol_version: "local-agent-v1",
+    bridge_version: "agent-console-test",
+    status: "online",
+    workspace_root: ".../agent-console/test",
+    capabilities_json: {
+      supports_resume: true,
+      supports_streaming: true,
+      supports_cancel: false,
+    },
+    risk_capabilities_json: [],
+    last_seen_at: "2026-06-03T00:00:00Z",
+    revoked_at: null,
+    created_at: "2026-06-03T00:00:00Z",
+    updated_at: "2026-06-03T00:00:00Z",
+    ...overrides,
+  };
+}
+
 function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
   vi.stubGlobal("fetch", fetchMock);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -105,6 +130,7 @@ describe("AgentListPage Studio controls", () => {
       if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
       if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
       if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
+      if (path === "/api/agents/local-agent/connections" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
       if (path === "/api/agents" && init?.method === "POST") return jsonResponse({ ...agent(), id: "research-agent", name: "研究智能体" });
       if (path === "/api/agents/default/clone" && init?.method === "POST") return jsonResponse({ ...agent(), id: "default-clone", name: "默认智能体克隆副本" });
       if (path === "/api/agents/default/capabilities/attachments" && init?.method === "POST") return jsonResponse({ status: "attached" });
@@ -178,6 +204,7 @@ describe("AgentListPage Studio controls", () => {
       if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
       if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
       if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
+      if (path === "/api/agents/local-agent/connections" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
       return jsonResponse({ detail: `unexpected ${path}` }, 404);
     });
 
@@ -186,5 +213,55 @@ describe("AgentListPage Studio controls", () => {
     expect((await screen.findAllByText("默认智能体")).length).toBeGreaterThan(0);
     expect(await screen.findByText(/没有已索引知识源|No indexed knowledge source/)).toBeInTheDocument();
     expect(screen.getByText(/待配置|Needs setup/)).toBeInTheDocument();
+  });
+
+  it("generates a local Agent pairing command, discovers local bridges, and revokes one", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
+      if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
+      if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
+      if (path === "/api/agents/local-agent/connections" && !init?.method) return jsonResponse({ items: [localAgentConnection()], next_cursor: null });
+      if (path === "/api/agents/local-agent/pairing-tokens" && init?.method === "POST") {
+        return jsonResponse({
+          id: "pair-1",
+          agent_id: "default",
+          pair_code: "ABC123",
+          pair_token: "plain-pair-token",
+          command: "hao bridge pair --api http://127.0.0.1:8000 --pair-token plain-pair-token --pair-code ABC123",
+          status: "active",
+          expires_at: "2026-06-03T00:10:00Z",
+          created_at: "2026-06-03T00:00:00Z",
+        }, 201);
+      }
+      if (path === "/api/agents/local-agent/connections/local-1/revoke" && init?.method === "POST") {
+        return jsonResponse(localAgentConnection({ status: "revoked", revoked_at: "2026-06-03T00:01:00Z" }));
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("接入本地 Agent")).toBeInTheDocument();
+    expect(screen.queryByText("新建云端 Agent")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /打开接入向导|Open connection wizard/ }));
+    const dialog = await screen.findByRole("dialog", { name: "接入本地 Agent" });
+    expect(within(dialog).getByText("Codex CLI")).toBeInTheDocument();
+    expect(within(dialog).getByText("Claude Code")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /生成连接命令|Generate command/ }));
+    expect((await within(dialog).findAllByText(/ABC123/)).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Fake Local Agent")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /接入 fake bridge|Connect fake bridge/ })).not.toBeInTheDocument();
+    await user.click(within(dialog).getAllByRole("button", { name: /撤销|Revoke/ })[0]);
+    expect(await screen.findByText("本地 Agent 已撤销")).toBeInTheDocument();
+
+    await waitFor(() => {
+      const paths = fetchMock.mock.calls.map(([input]) => String(input));
+      expect(paths).toContain("/api/agents/local-agent/pairing-tokens");
+      expect(paths).toContain("/api/agents/local-agent/connections/local-1/revoke");
+      expect(paths).not.toContain("/api/agents/local-agent/connections/register");
+    });
   });
 });

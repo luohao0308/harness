@@ -4,14 +4,19 @@ import {
   Bot,
   Brain,
   ChevronRight,
+  Copy,
   Database,
   GitBranch,
   Package,
   PackagePlus,
   Gauge,
+  Monitor,
+  PlugZap,
+  RefreshCw,
   ScrollText,
   Settings,
   Shield,
+  Terminal,
   Wrench,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -31,16 +36,22 @@ import {
   attachAgentCapability,
   cloneAgentDefinition,
   createAgentDefinition,
+  createLocalAgentPairingToken,
   listTokenOptimizerPresets,
   listAgentKnowledgeSources,
+  listLocalAgentConnections,
   listAgents,
+  revokeLocalAgentConnection,
   selectAgentTokenOptimizer,
   type AgentCapabilityAttachmentSummary,
   type AgentDefinition,
   type KnowledgeSource,
+  type LocalAgentConnection,
+  type LocalAgentPairing,
   type TokenOptimizerPresetId,
 } from "../../tasks/api";
 import { KnowledgeManagementPanel } from "../components/KnowledgeManagementPanel";
+import { copyText } from "../lib/clipboard";
 
 export function AgentListPage() {
   const { text } = useI18n();
@@ -54,9 +65,17 @@ export function AgentListPage() {
   const [capabilityName, setCapabilityName] = useState("mcp_context_search");
   const [capabilityKind, setCapabilityKind] = useState("mcp_server");
   const [capabilityDialogOpen, setCapabilityDialogOpen] = useState(false);
+  const [localAgentDialogOpen, setLocalAgentDialogOpen] = useState(false);
+  const [localAgentPairing, setLocalAgentPairing] = useState<LocalAgentPairing | null>(null);
+  const [pairCommandCopied, setPairCommandCopied] = useState(false);
   const selectedKnowledgeSources = useQuery({
     queryKey: ["agent-knowledge", selectedAgentId],
     queryFn: () => listAgentKnowledgeSources(selectedAgentId),
+  });
+  const localAgentConnections = useQuery({
+    queryKey: ["local-agent-connections"],
+    queryFn: listLocalAgentConnections,
+    refetchInterval: localAgentDialogOpen ? 3000 : false,
   });
   const tokenOptimizerPresets = useQuery({
     queryKey: ["token-optimizer-presets"],
@@ -165,6 +184,43 @@ export function AgentListPage() {
       });
     },
   });
+  const createLocalAgentPairingMutation = useMutation({
+    mutationFn: () => createLocalAgentPairingToken(selectedAgentId),
+    onSuccess: (pairing) => {
+      setLocalAgentPairing(pairing);
+      setPairCommandCopied(false);
+      notifyFeedback({
+        tone: "success",
+        title: text("连接命令已生成", "Connection command generated"),
+        description: text("请在本地终端执行命令，执行后会自动出现在识别列表。", "Run it in a local terminal; the connection will appear in discovery."),
+      });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("连接命令生成失败", "Pairing command failed"),
+        description: feedbackErrorMessage(error, text("请检查当前智能体和权限。", "Check the selected Agent and permissions.")),
+      });
+    },
+  });
+  const revokeLocalAgentConnectionMutation = useMutation({
+    mutationFn: (connectionId: string) => revokeLocalAgentConnection(connectionId),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("本地 Agent 已撤销", "Local Agent revoked"),
+        description: text("该设备不能继续拉取新任务。", "This device can no longer pull new tasks."),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["local-agent-connections"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("撤销失败", "Revoke failed"),
+        description: feedbackErrorMessage(error, text("请检查设备状态和权限。", "Check device status and permissions.")),
+      });
+    },
+  });
   const selectedAgent = useMemo(
     () => agents.data?.items.find((agent) => agent.id === selectedAgentId) ?? null,
     [agents.data?.items, selectedAgentId],
@@ -196,6 +252,10 @@ export function AgentListPage() {
     : knowledgeConnectorReady
       ? text(`${activeKnowledgeSources.length} 个已索引知识源`, `${activeKnowledgeSources.length} indexed source(s)`)
       : text("没有已索引知识源", "No indexed knowledge source");
+  const selectedLocalAgentConnections =
+    localAgentConnections.data?.items.filter((connection) => connection.agent_id === selectedAgentId) ?? [];
+  const activeLocalAgentCount = selectedLocalAgentConnections.filter((connection) => connection.status !== "revoked").length;
+  const onlineLocalAgentCount = selectedLocalAgentConnections.filter((connection) => connection.status === "online" || connection.status === "busy").length;
 
   useEffect(() => {
     if (
@@ -235,12 +295,12 @@ export function AgentListPage() {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <section className="grid grid-cols-1 gap-3 xl:grid-cols-3">
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <PackagePlus className="h-4 w-4" />
-                {text("创建 / 克隆智能体", "Create / clone Agent")}
+                {text("选择职业模板", "Choose role template")}
               </div>
               <Badge tone={createAgentMutation.isSuccess || cloneAgentMutation.isSuccess ? "success" : "info"}>
                 {text("API 支撑", "API-backed")}
@@ -276,6 +336,55 @@ export function AgentListPage() {
               {(createAgentMutation.error instanceof Error || cloneAgentMutation.error instanceof Error) ? (
                 <div className="text-red-700">{(createAgentMutation.error as Error | null)?.message ?? (cloneAgentMutation.error as Error).message}</div>
               ) : null}
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                <PlugZap className="h-4 w-4" />
+                {text("接入本地 Agent", "Connect local Agent")}
+              </div>
+              <Badge tone={onlineLocalAgentCount > 0 ? "success" : activeLocalAgentCount > 0 ? "warning" : "neutral"}>
+                {onlineLocalAgentCount > 0
+                  ? text("在线", "Online")
+                  : activeLocalAgentCount > 0
+                    ? text("待恢复", "Recoverable")
+                    : text("未接入", "Not connected")}
+              </Badge>
+            </CardHeader>
+            <div className="grid gap-3 p-3 text-xs">
+              <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-700">{selectedAgentLabel}</span>
+                  <Badge tone="neutral">{selectedAgentId}</Badge>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <ReadinessCheck label={text("fake", "fake")} ok={Boolean(selectedLocalAgentConnections.some((connection) => connection.adapter_kind === "fake" && connection.status !== "revoked"))} />
+                  <ReadinessCheck label={text("hao", "hao")} ok={Boolean(selectedLocalAgentConnections.some((connection) => connection.adapter_kind === "hao" && connection.status !== "revoked"))} />
+                  <ReadinessCheck label={text("恢复", "Resume")} ok={Boolean(selectedLocalAgentConnections.some(localAgentSupportsResume))} />
+                </div>
+              </div>
+              <Button type="button" onClick={() => setLocalAgentDialogOpen(true)}>
+                <Terminal className="h-3.5 w-3.5" /> {text("打开接入向导", "Open connection wizard")}
+              </Button>
+              {selectedLocalAgentConnections.length > 0 ? (
+                <div className="grid gap-1">
+                  {selectedLocalAgentConnections.slice(0, 2).map((connection) => (
+                    <LocalAgentConnectionRow
+                      key={connection.id}
+                      connection={connection}
+                      compact
+                      onRevoke={(connectionId) => revokeLocalAgentConnectionMutation.mutate(connectionId)}
+                      revokePending={revokeLocalAgentConnectionMutation.isPending}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-100 bg-white p-2 leading-5 text-slate-500">
+                  {text("首次配对后会在这里显示本地设备、工作目录和恢复能力。", "After pairing, local devices, workspace roots, and resume support appear here.")}
+                </div>
+              )}
             </div>
           </Card>
 
@@ -480,6 +589,130 @@ export function AgentListPage() {
         )}
 
         <ConfigDialog
+          open={localAgentDialogOpen}
+          title={text("接入本地 Agent", "Connect local Agent")}
+          description={text("生成连接命令，在本地执行后由 bridge 自动注册；云端只负责会话、事件、权限和审计。", "Generate a pairing command, run it locally, then let the bridge register itself; Harness owns sessions, events, policy, and audit.")}
+          onClose={() => setLocalAgentDialogOpen(false)}
+          className="max-w-3xl"
+        >
+          <div className="grid gap-4 text-xs">
+            <div className="grid grid-cols-3 gap-2">
+              <WizardStep index="1" title={text("生成连接命令", "Generate command")} active={Boolean(localAgentPairing)} />
+              <WizardStep index="2" title={text("本地执行", "Run locally")} active={Boolean(localAgentPairing?.command)} />
+              <WizardStep index="3" title={text("自动识别", "Auto discovery")} active={selectedLocalAgentConnections.length > 0} />
+            </div>
+
+            <div className="rounded-md border border-slate-100 bg-slate-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-medium text-slate-800">{text("当前目标智能体", "Selected target Agent")}</div>
+                  <div className="mt-1 text-slate-500">{selectedAgentLabel} · {selectedAgentId}</div>
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => createLocalAgentPairingMutation.mutate()}
+                  disabled={createLocalAgentPairingMutation.isPending}
+                >
+                  <PlugZap className="h-3.5 w-3.5" />
+                  {localAgentPairing ? text("重新生成", "Regenerate") : text("生成连接命令", "Generate command")}
+                </Button>
+              </div>
+
+              {localAgentPairing?.command ? (
+                <div className="mt-3 grid gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Badge tone="info">{text("配对码", "Pair code")} · {localAgentPairing.pair_code}</Badge>
+                    <Badge tone="warning">{text("10 分钟内有效，单次使用", "Valid for 10 minutes, one use")}</Badge>
+                  </div>
+                  <pre className="max-h-36 overflow-auto rounded-md border border-slate-200 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100">
+                    {localAgentPairing.command}
+                  </pre>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await copyText(localAgentPairing.command ?? "");
+                        setPairCommandCopied(ok);
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      {pairCommandCopied ? text("已复制", "Copied") : text("复制命令", "Copy command")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => void localAgentConnections.refetch()}
+                      disabled={localAgentConnections.isFetching}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      {text("刷新识别", "Refresh discovery")}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-md border border-slate-200 bg-white p-3 leading-5 text-slate-500">
+                  {text("点击生成后复制命令到本地终端。前台终端关闭不影响已作为 daemon 运行的 bridge。", "Generate and copy the command into a local terminal. Closing the foreground terminal does not stop a bridge already running as a daemon.")}
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-medium text-slate-800">{text("自动识别列表", "Auto discovery")}</div>
+                <Badge tone={localAgentConnections.isFetching ? "running" : "neutral"}>
+                  {localAgentConnections.isFetching ? text("刷新中", "Refreshing") : text("实时状态", "Live status")}
+                </Badge>
+              </div>
+              <div className="grid gap-2">
+                {LOCAL_AGENT_ADAPTERS.map((adapter) => {
+                  const matches = selectedLocalAgentConnections.filter((connection) => connection.adapter_kind === adapter.kind);
+                  return (
+                    <div key={adapter.kind} className="rounded-md border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <adapter.icon className="h-4 w-4 text-slate-500" />
+                            <span className="font-medium text-slate-900">{adapter.label}</span>
+                            <Badge tone={adapter.enabled ? "success" : "neutral"}>
+                              {adapter.enabled ? text("v1 启用", "v1 enabled") : text("后续接入", "Future")}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 leading-5 text-slate-500">{text(adapter.zh, adapter.en)}</div>
+                        </div>
+                        <Badge tone={matches.some((connection) => connection.status === "online" || connection.status === "busy") ? "success" : matches.length ? "warning" : "pending"}>
+                          {matches.some((connection) => connection.status === "online" || connection.status === "busy")
+                            ? text("在线", "Online")
+                            : matches.length
+                              ? text("可恢复", "Recoverable")
+                              : adapter.enabled
+                                ? text("未识别", "Not detected")
+                                : text("禁用", "Disabled")}
+                        </Badge>
+                      </div>
+                      {matches.length > 0 ? (
+                        <div className="mt-3 grid gap-2">
+                          {matches.map((connection) => (
+                            <LocalAgentConnectionRow
+                              key={connection.id}
+                              connection={connection}
+                              onRevoke={(connectionId) => revokeLocalAgentConnectionMutation.mutate(connectionId)}
+                              revokePending={revokeLocalAgentConnectionMutation.isPending}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              {localAgentConnections.error instanceof Error ? (
+                <div className="text-red-700">{localAgentConnections.error.message}</div>
+              ) : null}
+            </div>
+          </div>
+        </ConfigDialog>
+
+        <ConfigDialog
           open={capabilityDialogOpen}
           title={text("配置能力附件", "Configure capability attachment")}
           description={text("为当前智能体附加 MCP、技能或工具能力；保存后刷新就绪检查。", "Attach an MCP, Skill, or tool capability to the current Agent; readiness refreshes after save.")}
@@ -524,6 +757,130 @@ function ReadinessCheck({ label, ok, detail }: { label: string; ok: boolean; det
         <Badge tone={ok ? "success" : "warning"}>{ok ? "已就绪" : "待处理"}</Badge>
       </div>
       {detail ? <div className="mt-1 text-[11px] text-slate-500">{detail}</div> : null}
+    </div>
+  );
+}
+
+function WizardStep({ index, title, active }: { index: string; title: string; active: boolean }) {
+  return (
+    <div className={cn(
+      "rounded-md border p-3",
+      active ? "border-slate-900 bg-slate-50 text-slate-950" : "border-slate-200 bg-white text-slate-500",
+    )}>
+      <div className="flex items-center gap-2">
+        <span className={cn(
+          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
+          active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500",
+        )}>
+          {index}
+        </span>
+        <span className="font-medium">{title}</span>
+      </div>
+    </div>
+  );
+}
+
+const LOCAL_AGENT_ADAPTERS = [
+  {
+    kind: "fake",
+    label: "fake bridge",
+    enabled: true,
+    icon: Monitor,
+    zh: "用于验证配对、注册、心跳和一次回复，不执行本地命令。",
+    en: "Validates pairing, registration, heartbeat, and one reply without local command execution.",
+  },
+  {
+    kind: "hao",
+    label: "hao",
+    enabled: true,
+    icon: Terminal,
+    zh: "v1 真实本地 Agent 适配器，支持本地会话恢复和审计回传。",
+    en: "The v1 real local Agent adapter with local session resume and audit reporting.",
+  },
+  {
+    kind: "codex",
+    label: "Codex CLI",
+    enabled: false,
+    icon: Bot,
+    zh: "后续切片按相同 bridge protocol 接入；不支持的能力会在 UI 禁用。",
+    en: "Future slice on the same bridge protocol; unsupported capabilities stay disabled.",
+  },
+  {
+    kind: "claude_code",
+    label: "Claude Code",
+    enabled: false,
+    icon: Brain,
+    zh: "后续切片接入；v1 不发放可执行适配器。",
+    en: "Future adapter slice; v1 does not issue executable support.",
+  },
+] as const;
+
+function localAgentSupportsResume(connection: LocalAgentConnection) {
+  return connection.capabilities_json.supports_resume === true;
+}
+
+function localAgentStatusTone(connection: LocalAgentConnection) {
+  if (connection.status === "online" || connection.status === "busy") return "success";
+  if (connection.status === "revoked") return "failed";
+  return "warning";
+}
+
+function localAgentStatusLabel(connection: LocalAgentConnection) {
+  if (connection.status === "online") return "在线";
+  if (connection.status === "busy") return "运行中";
+  if (connection.status === "revoked") return "已撤销";
+  return "离线可恢复";
+}
+
+function LocalAgentConnectionRow({
+  connection,
+  compact = false,
+  onRevoke,
+  revokePending,
+}: {
+  connection: LocalAgentConnection;
+  compact?: boolean;
+  onRevoke: (connectionId: string) => void;
+  revokePending: boolean;
+}) {
+  const { text } = useI18n();
+  const supportsResume = localAgentSupportsResume(connection);
+  return (
+    <div className="rounded-md border border-slate-100 bg-white p-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate font-medium text-slate-800">{connection.display_name}</span>
+            <Badge tone={localAgentStatusTone(connection)}>{text(localAgentStatusLabel(connection), connection.status)}</Badge>
+            <Badge tone={supportsResume ? "success" : "warning"}>
+              {supportsResume ? text("原生恢复", "Native resume") : text("上下文重放", "Context replay")}
+            </Badge>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-slate-500">
+            <span>{connection.adapter_kind}</span>
+            {connection.workspace_root ? <span>{connection.workspace_root}</span> : null}
+            {!compact && connection.last_seen_at ? <span>{new Date(connection.last_seen_at).toLocaleString()}</span> : null}
+          </div>
+          {!compact && connection.risk_capabilities_json.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {connection.risk_capabilities_json.map((capability) => (
+                <Badge key={capability} tone="warning">{capability}</Badge>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {connection.status !== "revoked" ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="shrink-0"
+            onClick={() => onRevoke(connection.id)}
+            disabled={revokePending}
+          >
+            {text("撤销", "Revoke")}
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
