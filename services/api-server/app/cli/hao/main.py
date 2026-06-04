@@ -37,6 +37,13 @@ CODEX_SECRET_PATTERN = re.compile(
     r"(sk-[A-Za-z0-9_-]{12,}|sat-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{12,})",
     re.IGNORECASE,
 )
+CLAUDE_SUBPROCESS_TIMEOUT_SECONDS = 120
+CLAUDE_OUTPUT_LIMIT_BYTES = 64_000
+CLAUDE_WORKSPACE_HASH_PREFIX = "harness-local-agent-claude-code-v5:"
+CLAUDE_SECRET_PATTERN = re.compile(
+    r"(sk-ant-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{12,}|sat-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{12,})",
+    re.IGNORECASE,
+)
 
 
 def _hao_version() -> str:
@@ -123,6 +130,58 @@ class CodexCliProbe:
 
 @dataclass(frozen=True)
 class CodexRunResult:
+    status: str
+    content: str = ""
+    error_message: str = ""
+    session_id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ClaudeCodeCliProbe:
+    installed: bool
+    executable: str = ""
+    version: str = ""
+    help_text: str = ""
+    print_help: str = ""
+    error_message: str = ""
+
+    @property
+    def supports_bare(self) -> bool:
+        return "--bare" in self.help_text or "--bare" in self.print_help
+
+    @property
+    def supports_print(self) -> bool:
+        return "-p" in self.help_text or "--print" in self.help_text or "-p" in self.print_help
+
+    @property
+    def supports_stream_json(self) -> bool:
+        text = f"{self.help_text}\n{self.print_help}"
+        return "--output-format" in text and "stream-json" in text
+
+    @property
+    def supports_include_partial_messages(self) -> bool:
+        text = f"{self.help_text}\n{self.print_help}"
+        return "--include-partial-messages" in text
+
+    @property
+    def supports_no_session_persistence(self) -> bool:
+        text = f"{self.help_text}\n{self.print_help}"
+        return "--no-session-persistence" in text
+
+    @property
+    def supports_permission_mode(self) -> bool:
+        text = f"{self.help_text}\n{self.print_help}"
+        return "--permission-mode" in text
+
+    @property
+    def supports_tools(self) -> bool:
+        text = f"{self.help_text}\n{self.print_help}"
+        return "--tools" in text
+
+
+@dataclass(frozen=True)
+class ClaudeCodeRunResult:
     status: str
     content: str = ""
     error_message: str = ""
@@ -228,7 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--adapter",
         "--adapter-kind",
         dest="adapter_kind",
-        choices=["fake", "hao", "codex"],
+        choices=["fake", "hao", "codex", "claude_code"],
         default="hao",
     )
     bridge_pair.add_argument("--display-name", default=None)
@@ -245,7 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--adapter",
         "--adapter-kind",
         dest="adapter_kind",
-        choices=["fake", "hao", "codex"],
+        choices=["fake", "hao", "codex", "claude_code"],
         default=None,
     )
     bridge_run.add_argument("--cwd", default=None)
@@ -547,6 +606,9 @@ def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
     if adapter_kind == "codex":
         probe = _probe_codex_cli()
         return _codex_bridge_capabilities(probe)
+    if adapter_kind == "claude_code":
+        probe = _probe_claude_code_cli()
+        return _claude_code_bridge_capabilities(probe)
     return {
         "adapter_kind": adapter_kind,
         "supports_resume": adapter_kind == "hao",
@@ -561,6 +623,8 @@ def _bridge_risk_capabilities(adapter_kind: str) -> list[str]:
         return ["host_read", "host_write", "shell", "git", "network"]
     if adapter_kind == "codex":
         return ["workspace_read_constrained"]
+    if adapter_kind == "claude_code":
+        return []
     return []
 
 
@@ -661,6 +725,23 @@ def _codex_bridge_capabilities(probe: CodexCliProbe) -> dict[str, Any]:
     }
 
 
+def _claude_code_bridge_capabilities(probe: ClaudeCodeCliProbe) -> dict[str, Any]:
+    return {
+        "adapter_kind": "claude_code",
+        "installed": probe.installed,
+        "version": probe.version,
+        "supports_streaming": probe.installed and probe.supports_stream_json,
+        "supports_resume": False,
+        "supports_cancel": False,
+        "host_tools_authorized": False,
+        "resume_mode": "context_replay_new_session",
+        "protocol_version": "local-agent-v1",
+        "enabled_in_v5": True,
+        "execution_mode": "headless_bare_no_session_no_tools",
+        "probe_error": probe.error_message,
+    }
+
+
 def _redact_local_path_text(value: str) -> str:
     def redact(match: re.Match[str]) -> str:
         parts = match.group(0).replace("\\", "/").split("/")
@@ -686,6 +767,22 @@ def _redact_codex_text(value: str, *, limit: int = CODEX_OUTPUT_LIMIT_BYTES) -> 
     return _redact_local_path_text(redacted)
 
 
+def _redact_claude_text(value: str, *, limit: int = CLAUDE_OUTPUT_LIMIT_BYTES) -> str:
+    if not value:
+        return ""
+    bounded = value.encode("utf-8", errors="replace")[:limit].decode(
+        "utf-8",
+        errors="replace",
+    )
+    redacted = CLAUDE_SECRET_PATTERN.sub("[REDACTED]", bounded)
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|token|secret|password)=\S+",
+        r"\1=[REDACTED]",
+        redacted,
+    )
+    return _redact_local_path_text(redacted)
+
+
 def _safe_codex_metadata(value: dict[str, Any]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for index, (key, item) in enumerate(value.items()):
@@ -703,6 +800,26 @@ def _safe_codex_metadata(value: dict[str, Any]) -> dict[str, Any]:
             safe[key_text] = None
         else:
             safe[key_text] = _redact_codex_text(json.dumps(item, ensure_ascii=False), limit=4000)
+    return safe
+
+
+def _safe_claude_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for index, (key, item) in enumerate(value.items()):
+        if index >= 20:
+            safe["truncated"] = True
+            break
+        key_text = str(key)
+        if any(marker in key_text.lower() for marker in ("token", "secret", "key", "password")):
+            safe[key_text] = "[REDACTED]"
+        elif isinstance(item, str):
+            safe[key_text] = _redact_claude_text(item, limit=4000)
+        elif isinstance(item, bool | int | float):
+            safe[key_text] = item
+        elif item is None:
+            safe[key_text] = None
+        else:
+            safe[key_text] = _redact_claude_text(json.dumps(item, ensure_ascii=False), limit=4000)
     return safe
 
 
@@ -744,8 +861,147 @@ def _codex_prompt_for_task(payload: dict[str, Any]) -> str:
     )
 
 
+def _claude_code_prompt_for_task(payload: dict[str, Any]) -> str:
+    message = _redact_claude_text(str(payload.get("message") or "").strip(), limit=4000)
+    resume_mode = str(payload.get("resume_mode") or "context_replay_new_session")
+    context_lines: list[str] = []
+    context = payload.get("conversation_context")
+    if isinstance(context, list):
+        for item in context:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = _redact_claude_text(
+                str(item.get("content") or "").strip(),
+                limit=CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT,
+            )
+            if content:
+                context_lines.append(f"{role}: {content}")
+    context_block = (
+        "Harness conversation context from prior turns:\n"
+        + "\n".join(context_lines)
+        + "\n\n"
+        if context_lines
+        else ""
+    )
+    return (
+        "You are running under the AI Harness local-agent bridge as the Claude Code adapter.\n"
+        "Harness owns the conversation, run, events, approvals, and audit records.\n"
+        "For this V5 adapter, do not modify files, run side-effect commands, mutate git, "
+        "install packages, read env/secrets, use MCP/plugins/hooks/subagents, or initiate "
+        "network access. If the task needs those capabilities, explain the needed permission "
+        "instead of performing it.\n"
+        f"Resume mode: {resume_mode}.\n\n"
+        f"{context_block}"
+        "User message:\n"
+        f"{message}\n"
+    )
+
+
 def _codex_subprocess_env(*, executable: str, temp_dir: Path) -> dict[str, str]:
     return _codex_safe_env(executable=executable, temp_dir=temp_dir)
+
+
+def _claude_code_safe_env(*, executable: str, temp_dir: Path | None = None) -> dict[str, str]:
+    source = os.environ
+    path_parts = [
+        str(Path(executable).resolve().parent),
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    env: dict[str, str] = {
+        "PATH": os.pathsep.join(dict.fromkeys(path_parts)),
+    }
+    if temp_dir is not None:
+        env["TMPDIR"] = str(temp_dir)
+        isolated_home = temp_dir / "home"
+        isolated_config = temp_dir / "claude-config"
+        isolated_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        isolated_config.mkdir(mode=0o700, parents=True, exist_ok=True)
+        env["HOME"] = str(isolated_home)
+        env["CLAUDE_CONFIG_DIR"] = str(isolated_config)
+        env["CLAUDE_CODE_SKIP_PROMPT_HISTORY"] = "1"
+        env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+        env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] = "1"
+        if (
+            source.get("HAO_CLAUDE_CODE_ALLOW_ANTHROPIC_API_KEY") == "1"
+            and source.get("ANTHROPIC_API_KEY")
+        ):
+            env["ANTHROPIC_API_KEY"] = str(source["ANTHROPIC_API_KEY"])
+    for key in ("LANG", "LC_ALL", "LC_CTYPE", "TERM"):
+        value = source.get(key)
+        if value:
+            env[key] = value
+    return env
+
+
+def _run_claude_probe_command(
+    command: list[str],
+    *,
+    timeout: float = 5.0,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(  # noqa: S603
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+        env=_claude_code_safe_env(executable=command[0]),
+    )
+
+
+def _probe_claude_code_cli() -> ClaudeCodeCliProbe:
+    executable = shutil.which("claude")
+    if not executable:
+        return ClaudeCodeCliProbe(installed=False, error_message="claude executable not found")
+    try:
+        version_result = _run_claude_probe_command([executable, "--version"])
+        help_result = _run_claude_probe_command([executable, "--help"])
+        print_help_result = _run_claude_probe_command([executable, "-p", "--help"])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return ClaudeCodeCliProbe(
+            installed=False,
+            executable=executable,
+            error_message=f"claude probe failed: {exc}",
+        )
+    help_text = f"{help_result.stdout}\n{help_result.stderr}"
+    print_help = f"{print_help_result.stdout}\n{print_help_result.stderr}"
+    probe = ClaudeCodeCliProbe(
+        installed=True,
+        executable=executable,
+        version=(version_result.stdout or version_result.stderr).strip(),
+        help_text=help_text,
+        print_help=print_help,
+    )
+    if not (
+        probe.supports_bare
+        and probe.supports_print
+        and probe.supports_stream_json
+        and probe.supports_include_partial_messages
+        and probe.supports_no_session_persistence
+        and probe.supports_permission_mode
+        and probe.supports_tools
+    ):
+        return ClaudeCodeCliProbe(
+            installed=False,
+            executable=executable,
+            version=probe.version,
+            help_text=help_text,
+            print_help=print_help,
+            error_message=(
+                "claude lacks required "
+                "--bare/-p/stream-json/partial/no-session/permission/tools support"
+            ),
+        )
+    return probe
+
+
+def _claude_code_subprocess_env(*, executable: str, temp_dir: Path) -> dict[str, str]:
+    return _claude_code_safe_env(executable=executable, temp_dir=temp_dir)
 
 
 def _codex_command(
@@ -776,6 +1032,56 @@ def _codex_command(
     return command
 
 
+def _claude_code_command(*, probe: ClaudeCodeCliProbe) -> list[str]:
+    command = [
+        probe.executable,
+        "--bare",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--no-session-persistence",
+        "--permission-mode",
+        "default",
+        "--tools",
+        "",
+    ]
+    forbidden = {
+        "--dangerously-skip-permissions",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--continue",
+        "-c",
+        "--resume",
+        "-r",
+        "--session-id",
+        "--add-dir",
+        "--remote",
+        "--remote-control",
+        "--mcp-config",
+        "--plugin-dir",
+        "--plugin-url",
+        "--agents",
+        "--allowedTools",
+        "--settings",
+        "--setting-sources",
+        "--include-hook-events",
+        "bypassPermissions",
+        "acceptEdits",
+        "auto",
+        "dontAsk",
+    }
+    if any(item in forbidden for item in command):
+        raise ValueError("unsafe claude command generated")
+    try:
+        tools_index = command.index("--tools")
+    except ValueError as exc:
+        raise ValueError("claude command must disable tools") from exc
+    if tools_index + 1 >= len(command) or command[tools_index + 1] != "":
+        raise ValueError("claude command must use empty tools")
+    return command
+
+
 def _extract_codex_session_id(record: dict[str, Any]) -> str | None:
     for key in ("session_id", "sessionId", "conversation_id", "conversationId"):
         value = record.get(key)
@@ -786,6 +1092,22 @@ def _extract_codex_session_id(record: dict[str, Any]) -> str | None:
         value = session.get("id")
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return None
+
+
+def _extract_claude_session_id(record: dict[str, Any]) -> str | None:
+    for key in ("session_id", "sessionId", "conversation_id", "conversationId"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    session = record.get("session")
+    if isinstance(session, dict):
+        value = session.get("id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    message = record.get("message")
+    if isinstance(message, dict):
+        return _extract_claude_session_id(message)
     return None
 
 
@@ -825,6 +1147,132 @@ def _extract_codex_text(record: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_claude_text(record: dict[str, Any]) -> str:
+    record_type = str(record.get("type") or record.get("event") or "").lower()
+    role = str(record.get("role") or "").lower()
+    if role and role not in {"assistant", "model"}:
+        return ""
+    assistant_record = role in {"assistant", "model"} or record_type in {
+        "assistant",
+        "assistant_message",
+        "assistant_delta",
+        "message_delta",
+        "content_block_delta",
+        "text_delta",
+    }
+    if record_type == "result" and isinstance(record.get("result"), str):
+        return str(record["result"])
+    delta = record.get("delta")
+    if isinstance(delta, dict):
+        text = delta.get("text") or delta.get("content")
+        if isinstance(text, str):
+            return text
+    elif isinstance(delta, str) and assistant_record:
+        return delta
+    for nested_key in ("message", "item", "data"):
+        nested = record.get(nested_key)
+        if isinstance(nested, dict):
+            text = _extract_claude_text(nested)
+            if text:
+                return text
+    content = record.get("content")
+    if isinstance(content, str) and assistant_record:
+        return content
+    if assistant_record and isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    chunks.append(text)
+                elif isinstance(item.get("delta"), dict):
+                    delta_text = item["delta"].get("text")
+                    if isinstance(delta_text, str):
+                        chunks.append(delta_text)
+            elif isinstance(item, str):
+                chunks.append(item)
+        return "".join(chunks)
+    for key in ("text", "output"):
+        value = record.get(key)
+        if isinstance(value, str) and assistant_record:
+            return value
+    return ""
+
+
+def _claude_record_indicates_init(record: dict[str, Any]) -> bool:
+    record_type = str(record.get("type") or record.get("event") or "").lower()
+    subtype = str(record.get("subtype") or record.get("kind") or "").lower()
+    return (
+        record_type in {"system", "system/init", "init"}
+        and (not subtype or subtype == "init")
+    ) or record_type == "system_init"
+
+
+def _nonempty_capability_value(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list | tuple | set | dict):
+        return bool(value)
+    return bool(value)
+
+
+def _claude_init_safety_error(record: dict[str, Any]) -> str | None:
+    unsafe_keys = (
+        "tools",
+        "available_tools",
+        "availableTools",
+        "mcp_servers",
+        "mcpServers",
+        "plugins",
+        "loaded_plugins",
+        "loadedPlugins",
+        "hooks",
+        "hook_events",
+        "hookEvents",
+        "agents",
+        "subagents",
+        "sub_agents",
+        "custom_agents",
+        "customAgents",
+        "browser",
+        "remote_control",
+        "remoteControl",
+        "session_path",
+        "sessionPath",
+        "transcript_path",
+        "transcriptPath",
+    )
+    for key in unsafe_keys:
+        if _nonempty_capability_value(record.get(key)):
+            return f"claude unsafe system/init capability surface: {key}"
+    return None
+
+
+def _claude_record_safety_error(record: dict[str, Any]) -> str | None:
+    record_type = str(record.get("type") or record.get("event") or "").lower()
+    if any(
+        marker in record_type
+        for marker in (
+            "tool",
+            "mcp",
+            "plugin",
+            "hook",
+            "subagent",
+            "browser",
+            "remote",
+        )
+    ):
+        return f"claude unsafe stream event: {record_type or 'unknown'}"
+    if _claude_record_indicates_init(record):
+        return _claude_init_safety_error(record)
+    for key in ("tools", "mcp_servers", "plugins", "hooks", "agents", "subagents"):
+        if _nonempty_capability_value(record.get(key)):
+            return f"claude unsafe stream field: {key}"
+    return None
+
+
 def _parse_codex_output(stdout: str, final_message: str) -> CodexRunResult:
     deltas: list[str] = []
     session_id: str | None = None
@@ -858,6 +1306,65 @@ def _parse_codex_output(stdout: str, final_message: str) -> CodexRunResult:
     )
 
 
+def _parse_claude_code_output(stdout: str) -> ClaudeCodeRunResult:
+    deltas: list[str] = []
+    session_id: str | None = None
+    malformed = False
+    safety_proven = False
+    safety_metadata: dict[str, Any] = {}
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            malformed = True
+            continue
+        if not isinstance(record, dict):
+            continue
+        safety_error = _claude_record_safety_error(record)
+        if safety_error:
+            return ClaudeCodeRunResult(status="error", error_message=safety_error)
+        if _claude_record_indicates_init(record):
+            safety_proven = True
+            safety_metadata = {
+                "system_init_safe": True,
+                "tools_count": len(record.get("tools") or []),
+                "mcp_servers_count": len(
+                    record.get("mcp_servers") or record.get("mcpServers") or []
+                ),
+            }
+        session_id = _extract_claude_session_id(record) or session_id
+        text = _extract_claude_text(record)
+        if text:
+            deltas.append(_redact_claude_text(text))
+    if malformed and not deltas:
+        return ClaudeCodeRunResult(status="error", error_message="claude emitted malformed JSONL")
+    if not safety_proven:
+        return ClaudeCodeRunResult(
+            status="error",
+            error_message="claude output missing empty-tool system/init safety proof",
+        )
+    content = "".join(deltas).strip()
+    if not content:
+        return ClaudeCodeRunResult(
+            status="error",
+            error_message="claude returned empty assistant output",
+            metadata=safety_metadata,
+        )
+    return ClaudeCodeRunResult(
+        status="completed",
+        content=content,
+        session_id=session_id,
+        metadata={
+            **safety_metadata,
+            "delta_count": len(deltas),
+            "used_fallback": False,
+        },
+    )
+
+
 def _run_codex_cli(
     *,
     config: Any,
@@ -875,7 +1382,7 @@ def _run_codex_cli(
         )
     if not workspace_root.exists() or not workspace_root.is_dir():
         return CodexRunResult(status="error", error_message="codex workspace root is unavailable")
-    actual_workspace_hash = _workspace_identity_hash(workspace_root)
+    actual_workspace_hash = _workspace_identity_hash(workspace_root, adapter_kind="codex")
     server_workspace_hash = str(payload.get("workspace_identity_hash") or "")
     if not server_workspace_hash or server_workspace_hash != actual_workspace_hash:
         return CodexRunResult(
@@ -934,6 +1441,81 @@ def _run_codex_cli(
         )
 
 
+def _run_claude_code_cli(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> ClaudeCodeRunResult:
+    probe = _probe_claude_code_cli()
+    if not probe.installed:
+        return ClaudeCodeRunResult(status="error", error_message=probe.error_message)
+    workspace_root = _load_bridge_workspace_root(config, state)
+    if workspace_root is None:
+        return ClaudeCodeRunResult(
+            status="error",
+            error_message="claude workspace root sidecar missing or mismatched",
+        )
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        return ClaudeCodeRunResult(
+            status="error",
+            error_message="claude workspace root is unavailable",
+        )
+    actual_workspace_hash = _workspace_identity_hash(workspace_root, adapter_kind="claude_code")
+    server_workspace_hash = str(payload.get("workspace_identity_hash") or "")
+    if not server_workspace_hash or server_workspace_hash != actual_workspace_hash:
+        return ClaudeCodeRunResult(
+            status="error",
+            error_message="claude workspace identity does not match server task",
+            metadata={"workspace_identity_hash": actual_workspace_hash},
+        )
+    prompt = _claude_code_prompt_for_task(payload)
+    with tempfile.TemporaryDirectory(prefix="harness-claude-code-") as temp_name:
+        temp_dir = Path(temp_name)
+        private_cwd = temp_dir / "cwd"
+        private_cwd.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            command = _claude_code_command(probe=probe)
+        except ValueError as exc:
+            return ClaudeCodeRunResult(status="error", error_message=str(exc))
+        try:
+            completed = subprocess.run(  # noqa: S603
+                command,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=CLAUDE_SUBPROCESS_TIMEOUT_SECONDS,
+                cwd=str(private_cwd),
+                env=_claude_code_subprocess_env(executable=probe.executable, temp_dir=temp_dir),
+            )
+        except subprocess.TimeoutExpired:
+            return ClaudeCodeRunResult(status="error", error_message="claude subprocess timed out")
+        except OSError as exc:
+            return ClaudeCodeRunResult(
+                status="error",
+                error_message=f"claude subprocess failed: {exc}",
+            )
+        if completed.returncode != 0:
+            error_text = _redact_claude_text(completed.stderr or completed.stdout)
+            return ClaudeCodeRunResult(
+                status="error",
+                error_message=error_text or f"claude exited with {completed.returncode}",
+                metadata={"exit_code": completed.returncode},
+            )
+        result = _parse_claude_code_output(completed.stdout)
+        metadata = dict(result.metadata or {})
+        metadata["exit_code"] = completed.returncode
+        metadata["workspace_identity_hash"] = actual_workspace_hash
+        return ClaudeCodeRunResult(
+            status=result.status,
+            content=result.content,
+            error_message=result.error_message,
+            session_id=result.session_id,
+            metadata=metadata,
+        )
+
+
 def _save_bridge_device_token(config: Any, device_token: str) -> str:
     config.home.mkdir(parents=True, exist_ok=True)
     token_ref = BRIDGE_DEVICE_TOKEN_REF
@@ -953,9 +1535,14 @@ def _load_bridge_device_token(config: Any, state: dict[str, Any]) -> str:
         return ""
 
 
-def _workspace_identity_hash(cwd: Path) -> str:
+def _workspace_identity_hash(cwd: Path, *, adapter_kind: str = "codex") -> str:
     canonical = str(cwd.expanduser().resolve())
-    return sha256(f"{CODEX_WORKSPACE_HASH_PREFIX}{canonical}".encode()).hexdigest()
+    prefix = (
+        CLAUDE_WORKSPACE_HASH_PREFIX
+        if adapter_kind == "claude_code"
+        else CODEX_WORKSPACE_HASH_PREFIX
+    )
+    return sha256(f"{prefix}{canonical}".encode()).hexdigest()
 
 
 def _save_bridge_workspace_root(config: Any, cwd: Path) -> str:
@@ -979,7 +1566,8 @@ def _load_bridge_workspace_root(config: Any, state: dict[str, Any]) -> Path | No
         return None
     cwd = Path(raw).expanduser().resolve()
     expected_hash = str(state.get("workspace_identity_hash") or "")
-    if expected_hash and _workspace_identity_hash(cwd) != expected_hash:
+    adapter_kind = str(state.get("adapter_kind") or "codex")
+    if expected_hash and _workspace_identity_hash(cwd, adapter_kind=adapter_kind) != expected_hash:
         return None
     return cwd
 
@@ -1453,15 +2041,37 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+    if args.adapter_kind == "claude_code":
+        probe = _probe_claude_code_cli()
+        if not probe.installed:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "adapter_kind": "claude_code",
+                        "error": probe.error_message or "claude unavailable",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 1
     client = HarnessApiClient(api_url, config.token)
     display_name = args.display_name or (
         "hao Local Agent"
         if args.adapter_kind == "hao"
         else "Codex CLI"
         if args.adapter_kind == "codex"
+        else "Claude Code"
+        if args.adapter_kind == "claude_code"
         else "Fake Local Agent"
     )
-    workspace_identity_hash = _workspace_identity_hash(cwd) if args.adapter_kind == "codex" else ""
+    workspace_identity_hash = (
+        _workspace_identity_hash(cwd, adapter_kind=args.adapter_kind)
+        if args.adapter_kind in {"codex", "claude_code"}
+        else ""
+    )
     registered = client.register_local_agent_connection(
         pair_token=args.pair_token,
         pair_code=args.pair_code,
@@ -1475,7 +2085,7 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
             "workspace_identity_hash": workspace_identity_hash,
             "workspace_root_ref": BRIDGE_WORKSPACE_ROOT_REF,
         }
-        if args.adapter_kind == "codex"
+        if args.adapter_kind in {"codex", "claude_code"}
         else {},
     )
     connection = registered["connection"]
@@ -1486,7 +2096,7 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
         "adapter_kind": args.adapter_kind,
         "display_name": display_name,
     }
-    if args.adapter_kind == "codex":
+    if args.adapter_kind in {"codex", "claude_code"}:
         state["workspace_root_ref"] = _save_bridge_workspace_root(config, cwd)
         state["workspace_identity_hash"] = workspace_identity_hash
     else:
@@ -1532,7 +2142,7 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
         "--interval",
         str(args.interval),
     ]
-    if state.get("adapter_kind") != "codex":
+    if state.get("adapter_kind") not in {"codex", "claude_code"}:
         command.extend(["--cwd", str(state["cwd"])])
     popen_kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
@@ -1540,7 +2150,7 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
         "stderr": subprocess.DEVNULL,
         "start_new_session": True,
     }
-    if state.get("adapter_kind") == "codex":
+    if state.get("adapter_kind") in {"codex", "claude_code"}:
         popen_kwargs["cwd"] = str(Path(__file__).resolve().parents[3])
     subprocess.Popen(  # noqa: S603
         command,
@@ -1585,17 +2195,23 @@ def _run_bridge(args: argparse.Namespace) -> int:
         )
         return 1
     state["adapter_kind"] = args.adapter_kind or saved_adapter_kind or "hao"
-    if state["adapter_kind"] == "codex":
+    if state["adapter_kind"] in {"codex", "claude_code"}:
         if args.cwd:
             cwd = Path(args.cwd).expanduser().resolve()
-            workspace_identity_hash = _workspace_identity_hash(cwd)
+            workspace_identity_hash = _workspace_identity_hash(
+                cwd,
+                adapter_kind=str(state["adapter_kind"]),
+            )
             existing_workspace_hash = str(state.get("workspace_identity_hash") or "")
             if existing_workspace_hash and existing_workspace_hash != workspace_identity_hash:
                 print(
                     json.dumps(
                         {
                             "status": "failed",
-                            "error": "codex cwd does not match paired workspace identity",
+                            "error": (
+                                f"{state['adapter_kind']} cwd does not match "
+                                "paired workspace identity"
+                            ),
                             "state_path": str(_bridge_state_path(config)),
                         },
                         ensure_ascii=False,
@@ -1651,7 +2267,7 @@ def _run_bridge_loop_from_state(
             bridge_version=_bridge_version(),
             capabilities=capabilities,
         )
-        if adapter_kind != "codex":
+        if adapter_kind not in {"codex", "claude_code"}:
             _resume_bridge_pending_tools(
                 config=config,
                 state=state,
@@ -1714,6 +2330,15 @@ def _handle_bridge_task(
         return
     if adapter_kind == "codex":
         _handle_codex_bridge_task(
+            config=config,
+            state=state,
+            client=client,
+            device_token=device_token,
+            task=task,
+        )
+        return
+    if adapter_kind == "claude_code":
+        _handle_claude_code_bridge_task(
             config=config,
             state=state,
             client=client,
@@ -1798,6 +2423,79 @@ def _handle_codex_bridge_task(
                 "adapter_session_id": result.session_id,
                 "resume_mode": "context_replay_new_session",
                 **_safe_codex_metadata(result.metadata or {}),
+            },
+        },
+    )
+
+
+def _handle_claude_code_bridge_task(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+    task: dict[str, Any],
+) -> None:
+    task_id = str(task["id"])
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:claude_code:started",
+            "bridge_task_id": task_id,
+            "event_type": "adapter_started",
+            "sequence": 1,
+            "metadata": {
+                "adapter_kind": "claude_code",
+                "command_mode": "headless_bare_no_session_no_tools",
+                "supports_resume": False,
+                "resume_mode": "context_replay_new_session",
+                "workspace_identity_hash": state.get("workspace_identity_hash"),
+            },
+        },
+    )
+    result = _run_claude_code_cli(config=config, state=state, payload=payload)
+    if result.status != "completed":
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:claude_code:error",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_error",
+                "error_message": result.error_message or "claude code adapter failed",
+                "sequence": 2,
+                "metadata": {
+                    "adapter_kind": "claude_code",
+                    **_safe_claude_metadata(result.metadata or {}),
+                },
+            },
+        )
+        return
+    content = result.content.strip()
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:claude_code:delta:1",
+            "bridge_task_id": task_id,
+            "event_type": "assistant_delta",
+            "content": content,
+            "sequence": 2,
+            "metadata": {"adapter_kind": "claude_code"},
+        },
+    )
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:claude_code:done",
+            "bridge_task_id": task_id,
+            "event_type": "assistant_done",
+            "content": content,
+            "sequence": 3,
+            "metadata": {
+                "adapter_kind": "claude_code",
+                "adapter_session_id": result.session_id,
+                "resume_mode": "context_replay_new_session",
+                **_safe_claude_metadata(result.metadata or {}),
             },
         },
     )

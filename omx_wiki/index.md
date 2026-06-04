@@ -1,10 +1,10 @@
 # Wiki Index
 
-> 12 pages | Last updated: 2026-06-04T17:30:00Z
+> 12 pages | Last updated: 2026-06-04T18:35:51Z
 
 ## session-log
 
-- [Local Agent Claude Code Adapter V5](session-2026-06-05-local-agent-claude-code-adapter-v5.md) — Claude Code local-agent adapter plan with headless bare no-tools execution, config isolation, forced context replay, and two-agent PASS review.
+- [Local Agent Claude Code Adapter V5](session-2026-06-05-local-agent-claude-code-adapter-v5.md) — Claude Code local-agent adapter implemented with headless bare no-tools execution, config isolation, forced context replay, API-side safety proof, deterministic smoke, and final review closeout.
 - [Local Agent Codex Adapter V4](session-2026-06-04-local-agent-codex-adapter-v4.md) — Codex CLI local-agent adapter with forced context replay, read-only subprocess execution, workspace identity enforcement, disabled host tools, and final review closeout evidence.
 - [Local Agent Tool Safety V3](session-2026-06-04-local-agent-tool-safety-v3.md) — Local Agent Tool Safety V3 is verified with authorization-bound host tool results, separate local approval, bridge-state privacy, device-token split, retry, TTL/revoke cleanup, and deterministic smoke evidence.
 - [Local Agent Workspace Chat V2](session-2026-06-04-local-agent-workspace-chat-v2.md) — Local Agent Workspace Chat V2 plan docs are入库, API-owned pending projection is reviewed, and connections bind/resume sessions inside the existing ChatSurface.
