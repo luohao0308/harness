@@ -66,6 +66,7 @@ export function AgentListPage() {
   const [capabilityKind, setCapabilityKind] = useState("mcp_server");
   const [capabilityDialogOpen, setCapabilityDialogOpen] = useState(false);
   const [localAgentDialogOpen, setLocalAgentDialogOpen] = useState(false);
+  const [localAgentPairingAdapter, setLocalAgentPairingAdapter] = useState("hao");
   const [localAgentPairing, setLocalAgentPairing] = useState<LocalAgentPairing | null>(null);
   const [pairCommandCopied, setPairCommandCopied] = useState(false);
   const selectedKnowledgeSources = useQuery({
@@ -185,7 +186,7 @@ export function AgentListPage() {
     },
   });
   const createLocalAgentPairingMutation = useMutation({
-    mutationFn: () => createLocalAgentPairingToken(selectedAgentId),
+    mutationFn: () => createLocalAgentPairingToken(selectedAgentId, localAgentPairingAdapter),
     onSuccess: (pairing) => {
       setLocalAgentPairing(pairing);
       setPairCommandCopied(false);
@@ -608,14 +609,36 @@ export function AgentListPage() {
                   <div className="font-medium text-slate-800">{text("当前目标智能体", "Selected target Agent")}</div>
                   <div className="mt-1 text-slate-500">{selectedAgentLabel} · {selectedAgentId}</div>
                 </div>
-                <Button
-                  type="button"
-                  onClick={() => createLocalAgentPairingMutation.mutate()}
-                  disabled={createLocalAgentPairingMutation.isPending}
-                >
-                  <PlugZap className="h-3.5 w-3.5" />
-                  {localAgentPairing ? text("重新生成", "Regenerate") : text("生成连接命令", "Generate command")}
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <MenuSelect
+                    ariaLabel={text("本地 Agent 类型", "Local Agent adapter")}
+                    value={localAgentPairingAdapter}
+                    onChange={(value) => {
+                      setLocalAgentPairingAdapter(value);
+                      setLocalAgentPairing(null);
+                      setPairCommandCopied(false);
+                    }}
+                    size="compact"
+                    buttonClassName="min-w-36"
+                    menuClassName="min-w-48"
+                    options={LOCAL_AGENT_ADAPTERS.map((adapter) => ({
+                      value: adapter.kind,
+                      label: adapter.label,
+                      description: text(adapter.zh, adapter.en),
+                      disabled: !adapter.enabled,
+                      leading: <adapter.icon className="h-4 w-4" />,
+                      meta: text(adapter.badgeZh, adapter.badgeEn),
+                    }))}
+                  />
+                  <Button
+                    type="button"
+                    onClick={() => createLocalAgentPairingMutation.mutate()}
+                    disabled={createLocalAgentPairingMutation.isPending}
+                  >
+                    <PlugZap className="h-3.5 w-3.5" />
+                    {localAgentPairing ? text("重新生成", "Regenerate") : text("生成连接命令", "Generate command")}
+                  </Button>
+                </div>
               </div>
 
               {localAgentPairing?.command ? (
@@ -674,7 +697,7 @@ export function AgentListPage() {
                             <adapter.icon className="h-4 w-4 text-slate-500" />
                             <span className="font-medium text-slate-900">{adapter.label}</span>
                             <Badge tone={adapter.enabled ? "success" : "neutral"}>
-                              {adapter.enabled ? text("v1 启用", "v1 enabled") : text("后续接入", "Future")}
+                              {text(adapter.badgeZh, adapter.badgeEn)}
                             </Badge>
                           </div>
                           <div className="mt-1 leading-5 text-slate-500">{text(adapter.zh, adapter.en)}</div>
@@ -785,6 +808,8 @@ const LOCAL_AGENT_ADAPTERS = [
     kind: "fake",
     label: "fake bridge",
     enabled: true,
+    badgeZh: "v1 启用",
+    badgeEn: "v1 enabled",
     icon: Monitor,
     zh: "用于验证配对、注册、心跳和一次回复，不执行本地命令。",
     en: "Validates pairing, registration, heartbeat, and one reply without local command execution.",
@@ -793,6 +818,8 @@ const LOCAL_AGENT_ADAPTERS = [
     kind: "hao",
     label: "hao",
     enabled: true,
+    badgeZh: "v1 启用",
+    badgeEn: "v1 enabled",
     icon: Terminal,
     zh: "v1 真实本地 Agent 适配器，支持本地会话恢复和审计回传。",
     en: "The v1 real local Agent adapter with local session resume and audit reporting.",
@@ -800,18 +827,22 @@ const LOCAL_AGENT_ADAPTERS = [
   {
     kind: "codex",
     label: "Codex CLI",
-    enabled: false,
+    enabled: true,
+    badgeZh: "v4 启用",
+    badgeEn: "v4 enabled",
     icon: Bot,
-    zh: "后续切片按相同 bridge protocol 接入；不支持的能力会在 UI 禁用。",
-    en: "Future slice on the same bridge protocol; unsupported capabilities stay disabled.",
+    zh: "v4 受限本地 Agent 适配器，支持只读 assistant 回复；本地主机工具默认禁用。",
+    en: "The v4 constrained local Agent adapter for read-only assistant replies; host tools stay disabled.",
   },
   {
     kind: "claude_code",
     label: "Claude Code",
     enabled: false,
+    badgeZh: "后续接入",
+    badgeEn: "Future",
     icon: Brain,
-    zh: "后续切片接入；v1 不发放可执行适配器。",
-    en: "Future adapter slice; v1 does not issue executable support.",
+    zh: "后续切片接入；v4 不发放可执行适配器。",
+    en: "Future adapter slice; v4 does not issue executable support.",
   },
 ] as const;
 
@@ -855,6 +886,9 @@ function LocalAgentConnectionRow({
             <Badge tone={supportsResume ? "success" : "warning"}>
               {supportsResume ? text("原生恢复", "Native resume") : text("上下文重放", "Context replay")}
             </Badge>
+            {connection.capabilities_json.host_tools_authorized === false ? (
+              <Badge tone="neutral">{text("本地工具禁用", "Host tools disabled")}</Badge>
+            ) : null}
           </div>
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-slate-500">
             <span>{connection.adapter_kind}</span>

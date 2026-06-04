@@ -12,8 +12,9 @@ from .common import *
 from ._workspace_chat_helpers import _create_workspace_chat_run
 
 LOCAL_AGENT_PROTOCOL_VERSION = "local-agent-v1"
-LOCAL_AGENT_SUPPORTED_ADAPTERS = {"fake", "hao"}
-LOCAL_AGENT_DISABLED_ADAPTERS = {"codex", "claude_code"}
+LOCAL_AGENT_SUPPORTED_ADAPTERS = {"fake", "hao", "codex"}
+LOCAL_AGENT_DISABLED_ADAPTERS = {"claude_code"}
+LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS = ["fake", "hao", "codex"]
 LOCAL_AGENT_COMMAND = (
     "hao bridge pair "
     "--api {api_url} --pair-token {pair_token} --pair-code {pair_code} --daemon"
@@ -65,6 +66,7 @@ LOCAL_AGENT_CAPABILITY_TOOL_ALIASES = {
     "network": "network_request",
 }
 LOCAL_AGENT_SAFE_TOOLS = {"fake.noop", "local_status", "read_metadata"}
+LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES = {"workspace_read_constrained"}
 LOCAL_AGENT_NETWORK_PATTERNS = re.compile(
     r"\b(curl|wget|ssh|scp|git\s+remote|npm\s+install|pip\s+install|pnpm\s+install|yarn\s+add)\b",
     re.IGNORECASE,
@@ -73,6 +75,9 @@ LOCAL_AGENT_SECRET_PATTERNS = re.compile(
     r"\b(printenv|env|cat\s+\.env|cat\s+.*(secret|token|key)|export\s+\w*(TOKEN|SECRET|KEY))\b",
     re.IGNORECASE,
 )
+LOCAL_AGENT_CODEX_CONTEXT_MAX_MESSAGES = 8
+LOCAL_AGENT_CODEX_CONTEXT_MESSAGE_CHARS = 2000
+LOCAL_AGENT_CODEX_CONTEXT_TOTAL_CHARS = 12000
 
 
 def _sha256_secret(value: str) -> str:
@@ -109,11 +114,14 @@ def _pairing_response(
 ) -> LocalAgentPairingResponse:
     command = None
     if pair_token is not None:
+        adapter_kind = _pairing_command_adapter(token.scope_json)
         command = LOCAL_AGENT_COMMAND.format(
             api_url="http://127.0.0.1:8000",
             pair_token=pair_token,
             pair_code=token.pair_code,
         )
+        if adapter_kind != "hao":
+            command = f"{command} --adapter {adapter_kind}"
     return LocalAgentPairingResponse(
         id=token.id,
         agent_id=token.agent_id,
@@ -215,6 +223,14 @@ def _bridge_connection(
     return connection
 
 
+def _ensure_host_tool_protocol_allowed(connection: LocalAgentConnection) -> None:
+    if connection.adapter_kind == "codex":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Codex adapter cannot use local host tool protocol in v4",
+        )
+
+
 def _get_local_target_agent(
     *,
     agent_id: str,
@@ -256,7 +272,8 @@ def create_local_agent_pairing_token(
         agent_id=request.agent_id,
         token_hash=_sha256_secret(pair_token),
         pair_code=_new_pair_code(),
-        scope_json=request.scope or {"executable": True, "adapters": ["fake", "hao"]},
+        scope_json=request.scope
+        or {"executable": True, "adapters": LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS},
         status="active",
         expires_at=now + timedelta(minutes=request.ttl_minutes),
         created_at=now,
@@ -334,7 +351,7 @@ def register_local_agent_connection(
         )
     if request.adapter_kind in LOCAL_AGENT_DISABLED_ADAPTERS:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Adapter is not enabled in v1"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Adapter is not enabled"
         )
     if request.adapter_kind not in LOCAL_AGENT_SUPPORTED_ADAPTERS:
         raise HTTPException(
@@ -371,6 +388,7 @@ def register_local_agent_connection(
         raise HTTPException(
             status_code=status.HTTP_410_GONE, detail="Local Agent pairing token expired"
         )
+    _validate_pairing_scope_for_adapter(token.scope_json, request.adapter_kind)
 
     device_token = secrets.token_urlsafe(DEVICE_TOKEN_BYTES)
     connection = LocalAgentConnection(
@@ -385,8 +403,14 @@ def register_local_agent_connection(
         bridge_version=request.bridge_version,
         status="online",
         workspace_root=_redact_path(request.workspace_root),
-        capabilities_json=_normalized_capabilities(request),
-        risk_capabilities_json=list(request.risk_capabilities),
+        capabilities_json=_normalized_capabilities(
+            request.adapter_kind,
+            request.capabilities,
+        ),
+        risk_capabilities_json=_normalized_risk_capabilities(
+            request.adapter_kind,
+            request.risk_capabilities,
+        ),
         metadata_json=_safe_metadata(request.metadata),
         last_seen_at=now,
         created_at=now,
@@ -478,7 +502,10 @@ def heartbeat_local_agent_connection(
     connection.protocol_version = request.protocol_version
     connection.bridge_version = request.bridge_version
     if request.capabilities is not None:
-        connection.capabilities_json = request.capabilities
+        connection.capabilities_json = _normalized_capabilities(
+            connection.adapter_kind,
+            request.capabilities,
+        )
     connection.last_seen_at = now
     connection.updated_at = now
     _record_local_agent_audit(
@@ -615,15 +642,23 @@ def bind_local_agent_conversation(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        resume_mode = _normalized_resume_mode(
+            connection=connection,
+            requested_resume_mode=request.resume_mode,
+        )
         existing.status = "active"
         existing.adapter_session_id = request.adapter_session_id or existing.adapter_session_id
-        existing.resume_mode = request.resume_mode
+        existing.resume_mode = resume_mode
         existing.updated_at = utc_now()
         session.commit()
         session.refresh(existing)
         return _binding_response(existing)
 
     now = utc_now()
+    resume_mode = _normalized_resume_mode(
+        connection=connection,
+        requested_resume_mode=request.resume_mode,
+    )
     binding = LocalAgentConversationBinding(
         organization_id=principal.organization_id,
         owner_user_id=principal.user_id,
@@ -631,11 +666,14 @@ def bind_local_agent_conversation(
         agent_id=connection.agent_id,
         agent_session_id=agent_session.id,
         adapter_session_id=request.adapter_session_id,
-        resume_mode=request.resume_mode,
+        resume_mode=resume_mode,
         status="active",
         metadata_json={
             "adapter_kind": connection.adapter_kind,
             "supports_resume": bool(connection.capabilities_json.get("supports_resume", True)),
+            "workspace_identity_hash": (connection.metadata_json or {}).get(
+                "workspace_identity_hash"
+            ),
         },
         created_at=now,
         updated_at=now,
@@ -731,6 +769,14 @@ def send_local_agent_message(
     if agent_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent Session not found")
     now = utc_now()
+    conversation_context = (
+        _codex_conversation_context(
+            agent_session_id=agent_session.id,
+            session=session,
+        )
+        if connection.adapter_kind == "codex"
+        else []
+    )
     user_message = AgentMessage(
         session_id=agent_session.id,
         agent_id=binding.agent_id,
@@ -755,6 +801,21 @@ def send_local_agent_message(
         max_subagents=0,
         commit=False,
     )
+    bridge_payload = {
+        "protocol_version": LOCAL_AGENT_PROTOCOL_VERSION,
+        "adapter_kind": connection.adapter_kind,
+        "adapter_session_id": binding.adapter_session_id,
+        "resume_mode": binding.resume_mode,
+        "message": request.content,
+        "agent_id": binding.agent_id,
+        "agent_session_id": agent_session.id,
+        "run_id": run.id,
+        "workspace_root": connection.workspace_root,
+        "capabilities": connection.capabilities_json,
+        "workspace_identity_hash": (connection.metadata_json or {}).get("workspace_identity_hash"),
+    }
+    if conversation_context:
+        bridge_payload["conversation_context"] = conversation_context
     bridge_task = LocalAgentBridgeTask(
         organization_id=principal.organization_id,
         owner_user_id=principal.user_id,
@@ -765,18 +826,7 @@ def send_local_agent_message(
         user_message_id=user_message.id,
         client_message_id=request.client_message_id,
         status="pending",
-        payload_json={
-            "protocol_version": LOCAL_AGENT_PROTOCOL_VERSION,
-            "adapter_kind": connection.adapter_kind,
-            "adapter_session_id": binding.adapter_session_id,
-            "resume_mode": binding.resume_mode,
-            "message": request.content,
-            "agent_id": binding.agent_id,
-            "agent_session_id": agent_session.id,
-            "run_id": run.id,
-            "workspace_root": connection.workspace_root,
-            "capabilities": connection.capabilities_json,
-        },
+        payload_json=bridge_payload,
         created_at=now,
         updated_at=now,
     )
@@ -941,6 +991,7 @@ def ack_local_agent_bridge_task(
         payload_json={
             "connection_id": connection.id,
             "bridge_task_id": bridge_task.id,
+            "adapter_kind": connection.adapter_kind,
             "status": bridge_task.status,
             "error_message": request.error_message,
         },
@@ -1032,6 +1083,7 @@ def create_local_agent_tool_request(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentToolDecisionResponse:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     existing = session.execute(
         select(LocalAgentToolRequest).where(
             LocalAgentToolRequest.connection_id == connection.id,
@@ -1266,6 +1318,7 @@ def get_local_agent_tool_decision(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentToolDecisionResponse:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     local_request = _owned_local_tool_request(
         tool_request_id=tool_request_id,
         connection=connection,
@@ -1287,6 +1340,7 @@ def list_pending_local_agent_tool_requests(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentPendingToolRequestPage:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     rows = list(
         session.execute(
             select(LocalAgentToolRequest)
@@ -1322,6 +1376,7 @@ def record_local_agent_tool_result(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentToolDecisionResponse:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     existing_receipt = session.execute(
         select(LocalAgentBridgeEventReceipt).where(
             LocalAgentBridgeEventReceipt.connection_id == connection.id,
@@ -1448,6 +1503,7 @@ def record_local_agent_command_event(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentCommandResponse:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     local_request = _owned_local_tool_request(
         tool_request_id=request.tool_request_id,
         connection=connection,
@@ -1609,6 +1665,7 @@ def get_local_agent_command_status(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentCommandResponse:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     command = _owned_local_agent_command(
         command_id=command_id,
         connection=connection,
@@ -1630,6 +1687,7 @@ def ack_local_agent_command_cancel(
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentCommandResponse:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
     command = _owned_local_agent_command(
         command_id=command_id,
         connection=connection,
@@ -1713,6 +1771,9 @@ def cancel_local_agent_command(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner or admin can cancel",
         )
+    connection = session.get(LocalAgentConnection, binding.connection_id)
+    if connection is not None:
+        _ensure_host_tool_protocol_allowed(connection)
     command = session.execute(
         select(LocalAgentCommand).where(
             LocalAgentCommand.binding_id == binding.id,
@@ -1760,6 +1821,9 @@ def retry_local_agent_command(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner can retry local commands",
         )
+    connection = session.get(LocalAgentConnection, binding.connection_id)
+    if connection is not None:
+        _ensure_host_tool_protocol_allowed(connection)
     command = session.execute(
         select(LocalAgentCommand).where(
             LocalAgentCommand.binding_id == binding.id,
@@ -2985,15 +3049,31 @@ def _apply_bridge_event(
     now = utc_now()
     agent_event: AgentEvent | None = None
     tool_call: ToolCall | None = None
-    if request.event_type == "assistant_delta":
+    if request.event_type == "adapter_started":
+        agent_event = EventStore(session).append(
+            task_id=bridge_task.task_id,
+            event_type=EventType.LOCAL_AGENT_ADAPTER_STARTED,
+            payload_json={
+                "connection_id": connection.id,
+                "bridge_task_id": bridge_task.id,
+                "adapter_kind": connection.adapter_kind,
+                "sequence": request.sequence,
+                "metadata": _safe_metadata(request.metadata),
+            },
+            actor_type="local_agent",
+            actor_id=connection.id,
+        )
+    elif request.event_type == "assistant_delta":
         agent_event = EventStore(session).append(
             task_id=bridge_task.task_id,
             event_type=EventType.LOCAL_AGENT_DELTA_RECEIVED,
             payload_json={
                 "connection_id": connection.id,
                 "bridge_task_id": bridge_task.id,
+                "adapter_kind": connection.adapter_kind,
                 "content": _bounded_text(request.content),
                 "sequence": request.sequence,
+                "metadata": _safe_metadata(request.metadata),
             },
             actor_type="local_agent",
             actor_id=connection.id,
@@ -3063,13 +3143,20 @@ def _apply_bridge_event(
             payload_json={
                 "connection_id": connection.id,
                 "bridge_task_id": bridge_task.id,
+                "adapter_kind": connection.adapter_kind,
                 "error_message": _bounded_text(request.error_message),
                 "sequence": request.sequence,
+                "metadata": _safe_metadata(request.metadata),
             },
             actor_type="local_agent",
             actor_id=connection.id,
         )
     elif request.event_type == "tool_result":
+        if connection.adapter_kind == "codex":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Codex adapter cannot report legacy tool_result events in v4",
+            )
         if _legacy_tool_result_requires_authorization(request):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -3150,13 +3237,71 @@ def _default_local_agent_name(adapter_kind: str) -> str:
     }.get(adapter_kind, adapter_kind)
 
 
-def _normalized_capabilities(request: LocalAgentConnectionRegisterRequest) -> dict:
-    capabilities = dict(request.capabilities or {})
+def _validate_pairing_scope_for_adapter(scope: dict, adapter_kind: str) -> None:
+    adapters = scope.get("adapters") if isinstance(scope, dict) else None
+    if adapters is None:
+        if isinstance(scope, dict) and scope:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Local Agent pairing token requires explicit adapter scope",
+            )
+        return
+    if not isinstance(adapters, list) or adapter_kind not in {str(item) for item in adapters}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local Agent pairing token is not scoped for this adapter",
+        )
+
+
+def _pairing_command_adapter(scope: dict) -> str:
+    adapters = scope.get("adapters") if isinstance(scope, dict) else None
+    if isinstance(adapters, list) and len(adapters) == 1:
+        adapter = str(adapters[0])
+        if adapter in LOCAL_AGENT_SUPPORTED_ADAPTERS:
+            return adapter
+    return "hao"
+
+
+def _normalized_resume_mode(
+    *,
+    connection: LocalAgentConnection,
+    requested_resume_mode: str,
+) -> str:
+    if connection.adapter_kind == "codex":
+        return "context_replay_new_session"
+    return requested_resume_mode
+
+
+def _normalized_capabilities(adapter_kind: str, reported: dict | None) -> dict:
+    capabilities = dict(reported or {})
+    if adapter_kind == "codex":
+        return {
+            **capabilities,
+            "adapter_kind": "codex",
+            "supports_streaming": bool(capabilities.get("supports_streaming", True)),
+            "supports_resume": False,
+            "supports_cancel": False,
+            "enabled_in_v1": True,
+            "enabled_in_v4": True,
+            "host_tools_authorized": False,
+            "resume_mode": "context_replay_new_session",
+        }
+    capabilities.setdefault("adapter_kind", adapter_kind)
     capabilities.setdefault("supports_streaming", True)
-    capabilities.setdefault("supports_resume", request.adapter_kind == "hao")
-    capabilities.setdefault("supports_cancel", request.adapter_kind == "hao")
-    capabilities.setdefault("enabled_in_v1", request.adapter_kind in LOCAL_AGENT_SUPPORTED_ADAPTERS)
+    capabilities.setdefault("supports_resume", adapter_kind == "hao")
+    capabilities.setdefault("supports_cancel", adapter_kind == "hao")
+    capabilities.setdefault("enabled_in_v1", adapter_kind in LOCAL_AGENT_SUPPORTED_ADAPTERS)
     return capabilities
+
+
+def _normalized_risk_capabilities(adapter_kind: str, reported: list[str]) -> list[str]:
+    if adapter_kind == "codex":
+        return [
+            str(capability)
+            for capability in reported
+            if str(capability) in LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES
+        ]
+    return list(reported)
 
 
 def _safe_metadata(value: dict) -> dict:
@@ -3172,6 +3317,7 @@ def _safe_bridge_payload(request: LocalAgentBridgeEventRequest) -> dict:
         "tool_name": request.tool_name,
         "status": request.status,
         "risk_level": request.risk_level,
+        "error_message": _bounded_text(request.error_message),
         "metadata": _redact_mapping(request.metadata, max_items=20),
     }
 
@@ -3181,6 +3327,38 @@ def _bounded_text(value: str | None, limit: int = 4000) -> str:
         return ""
     redacted = _redact_secret_text(value)
     return redacted[:limit] + ("...[truncated]" if len(redacted) > limit else "")
+
+
+def _codex_conversation_context(
+    *,
+    agent_session_id: str,
+    session: Session,
+) -> list[dict[str, str]]:
+    rows = list(
+        session.execute(
+            select(AgentMessage)
+            .where(
+                AgentMessage.session_id == agent_session_id,
+                AgentMessage.role.in_(("user", "assistant")),
+            )
+            .order_by(AgentMessage.created_at.desc(), AgentMessage.id.desc())
+            .limit(LOCAL_AGENT_CODEX_CONTEXT_MAX_MESSAGES)
+        ).scalars()
+    )
+    context: list[dict[str, str]] = []
+    total_chars = 0
+    for message in reversed(rows):
+        content = _bounded_text(message.content, limit=LOCAL_AGENT_CODEX_CONTEXT_MESSAGE_CHARS)
+        if not content:
+            continue
+        remaining = LOCAL_AGENT_CODEX_CONTEXT_TOTAL_CHARS - total_chars
+        if remaining <= 0:
+            break
+        if len(content) > remaining:
+            content = content[:remaining] + "...[truncated]"
+        context.append({"role": message.role, "content": content})
+        total_chars += len(content)
+    return context
 
 
 def _redact_mapping(value: dict, *, max_items: int = 50) -> dict:

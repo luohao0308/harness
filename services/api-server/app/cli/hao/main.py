@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 import uuid
@@ -26,6 +28,15 @@ from .session_store import SessionStore
 GIT_STATUS_CONTEXT_LIMIT = 8
 PACKAGE_DISTRIBUTION_NAME = "agent-harness-api-server"
 BRIDGE_DEVICE_TOKEN_REF = "bridge.device-token"
+BRIDGE_WORKSPACE_ROOT_REF = "bridge.workspace-root"
+CODEX_SUBPROCESS_TIMEOUT_SECONDS = 120
+CODEX_OUTPUT_LIMIT_BYTES = 64_000
+CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT = 4000
+CODEX_WORKSPACE_HASH_PREFIX = "harness-local-agent-codex-v4:"
+CODEX_SECRET_PATTERN = re.compile(
+    r"(sk-[A-Za-z0-9_-]{12,}|sat-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{12,})",
+    re.IGNORECASE,
+)
 
 
 def _hao_version() -> str:
@@ -70,6 +81,53 @@ class BridgeToolHandlingResult:
     backend_tool_call_id: str | None = None
     pending_tool: dict[str, Any] | None = None
     error_message: str = ""
+
+
+@dataclass(frozen=True)
+class CodexCliProbe:
+    installed: bool
+    executable: str = ""
+    version: str = ""
+    exec_help: str = ""
+    resume_help: str = ""
+    error_message: str = ""
+
+    @property
+    def supports_json(self) -> bool:
+        return "--json" in self.exec_help
+
+    @property
+    def supports_output_last_message(self) -> bool:
+        return "--output-last-message" in self.exec_help
+
+    @property
+    def supports_cd(self) -> bool:
+        return "-C" in self.exec_help or "--cd" in self.exec_help
+
+    @property
+    def supports_read_only_sandbox(self) -> bool:
+        return "--sandbox" in self.exec_help and "read-only" in self.exec_help
+
+    @property
+    def supports_resume(self) -> bool:
+        return "resume" in self.resume_help
+
+    @property
+    def resume_supports_read_only_sandbox(self) -> bool:
+        return "--sandbox" in self.resume_help and "read-only" in self.resume_help
+
+    @property
+    def resume_supports_config(self) -> bool:
+        return "-c" in self.resume_help or "--config" in self.resume_help
+
+
+@dataclass(frozen=True)
+class CodexRunResult:
+    status: str
+    content: str = ""
+    error_message: str = ""
+    session_id: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 def _store() -> SessionStore:
@@ -170,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--adapter",
         "--adapter-kind",
         dest="adapter_kind",
-        choices=["fake", "hao"],
+        choices=["fake", "hao", "codex"],
         default="hao",
     )
     bridge_pair.add_argument("--display-name", default=None)
@@ -187,10 +245,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--adapter",
         "--adapter-kind",
         dest="adapter_kind",
-        choices=["fake", "hao"],
-        default="hao",
+        choices=["fake", "hao", "codex"],
+        default=None,
     )
-    bridge_run.add_argument("--cwd", default=".")
+    bridge_run.add_argument("--cwd", default=None)
     bridge_run.add_argument("--once", action="store_true")
     bridge_run.add_argument("--interval", type=float, default=2.0)
 
@@ -476,11 +534,19 @@ def _bridge_device_token_path(config: Any, token_ref: str | None = None) -> Path
     return config.home / ref
 
 
+def _bridge_workspace_root_path(config: Any, root_ref: str | None = None) -> Path:
+    ref = Path(str(root_ref or BRIDGE_WORKSPACE_ROOT_REF)).name
+    return config.home / ref
+
+
 def _bridge_version() -> str:
     return f"hao-{_hao_version()}"
 
 
 def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
+    if adapter_kind == "codex":
+        probe = _probe_codex_cli()
+        return _codex_bridge_capabilities(probe)
     return {
         "adapter_kind": adapter_kind,
         "supports_resume": adapter_kind == "hao",
@@ -493,7 +559,379 @@ def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
 def _bridge_risk_capabilities(adapter_kind: str) -> list[str]:
     if adapter_kind == "hao":
         return ["host_read", "host_write", "shell", "git", "network"]
+    if adapter_kind == "codex":
+        return ["workspace_read_constrained"]
     return []
+
+
+def _codex_safe_env(*, executable: str, temp_dir: Path | None = None) -> dict[str, str]:
+    source = os.environ
+    path_parts = [
+        str(Path(executable).resolve().parent),
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    env: dict[str, str] = {
+        "PATH": os.pathsep.join(dict.fromkeys(path_parts)),
+    }
+    if temp_dir is not None:
+        env["TMPDIR"] = str(temp_dir)
+        isolated_home = temp_dir / "home"
+        isolated_codex_home = temp_dir / "codex-home"
+        isolated_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        isolated_codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        env["HOME"] = str(isolated_home)
+        env["CODEX_HOME"] = str(isolated_codex_home)
+    for key in ("LANG", "LC_ALL", "LC_CTYPE", "TERM"):
+        value = source.get(key)
+        if value:
+            env[key] = value
+    return env
+
+
+def _run_probe_command(command: list[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess:
+    return subprocess.run(  # noqa: S603
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+        env=_codex_safe_env(executable=command[0]),
+    )
+
+
+def _probe_codex_cli() -> CodexCliProbe:
+    executable = shutil.which("codex")
+    if not executable:
+        return CodexCliProbe(installed=False, error_message="codex executable not found")
+    try:
+        version_result = _run_probe_command([executable, "--version"])
+        exec_help_result = _run_probe_command([executable, "exec", "--help"])
+        resume_help_result = _run_probe_command([executable, "exec", "resume", "--help"])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return CodexCliProbe(
+            installed=False,
+            executable=executable,
+            error_message=f"codex probe failed: {exc}",
+        )
+    exec_help = f"{exec_help_result.stdout}\n{exec_help_result.stderr}"
+    resume_help = f"{resume_help_result.stdout}\n{resume_help_result.stderr}"
+    probe = CodexCliProbe(
+        installed=True,
+        executable=executable,
+        version=(version_result.stdout or version_result.stderr).strip(),
+        exec_help=exec_help,
+        resume_help=resume_help,
+    )
+    if not (
+        probe.supports_json
+        and probe.supports_output_last_message
+        and probe.supports_cd
+        and probe.supports_read_only_sandbox
+    ):
+        return CodexCliProbe(
+            installed=False,
+            executable=executable,
+            version=probe.version,
+            exec_help=exec_help,
+            resume_help=resume_help,
+            error_message="codex exec lacks required --json/output/-C/read-only sandbox support",
+        )
+    return probe
+
+
+def _codex_bridge_capabilities(probe: CodexCliProbe) -> dict[str, Any]:
+    return {
+        "adapter_kind": "codex",
+        "installed": probe.installed,
+        "version": probe.version,
+        "supports_streaming": probe.installed and probe.supports_json,
+        "supports_resume": False,
+        "supports_cancel": False,
+        "host_tools_authorized": False,
+        "resume_mode": "context_replay_new_session",
+        "protocol_version": "local-agent-v1",
+        "enabled_in_v4": True,
+        "deterministic_session_id": False,
+        "resume_sandbox_read_only": False,
+        "resume_config_read_only_smoke_passed": False,
+        "probe_error": probe.error_message,
+    }
+
+
+def _redact_local_path_text(value: str) -> str:
+    def redact(match: re.Match[str]) -> str:
+        parts = match.group(0).replace("\\", "/").split("/")
+        safe_tail = [part for part in parts[3:] if part]
+        return f".../{'/'.join(safe_tail[-2:])}" if safe_tail else "..."
+
+    return re.sub(r"(?<!\.)/(?:Users|home)/[^\s'\";:&|`]+", redact, value)
+
+
+def _redact_codex_text(value: str, *, limit: int = CODEX_OUTPUT_LIMIT_BYTES) -> str:
+    if not value:
+        return ""
+    bounded = value.encode("utf-8", errors="replace")[:limit].decode(
+        "utf-8",
+        errors="replace",
+    )
+    redacted = CODEX_SECRET_PATTERN.sub("[REDACTED]", bounded)
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|token|secret|password)=\S+",
+        r"\1=[REDACTED]",
+        redacted,
+    )
+    return _redact_local_path_text(redacted)
+
+
+def _safe_codex_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for index, (key, item) in enumerate(value.items()):
+        if index >= 20:
+            safe["truncated"] = True
+            break
+        key_text = str(key)
+        if any(marker in key_text.lower() for marker in ("token", "secret", "key", "password")):
+            safe[key_text] = "[REDACTED]"
+        elif isinstance(item, str):
+            safe[key_text] = _redact_codex_text(item, limit=4000)
+        elif isinstance(item, bool | int | float):
+            safe[key_text] = item
+        elif item is None:
+            safe[key_text] = None
+        else:
+            safe[key_text] = _redact_codex_text(json.dumps(item, ensure_ascii=False), limit=4000)
+    return safe
+
+
+def _codex_prompt_for_task(payload: dict[str, Any]) -> str:
+    message = _redact_codex_text(str(payload.get("message") or "").strip(), limit=4000)
+    resume_mode = str(payload.get("resume_mode") or "context_replay_new_session")
+    context_lines: list[str] = []
+    context = payload.get("conversation_context")
+    if isinstance(context, list):
+        for item in context:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = _redact_codex_text(
+                str(item.get("content") or "").strip(),
+                limit=CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT,
+            )
+            if content:
+                context_lines.append(f"{role}: {content}")
+    context_block = (
+        "Harness conversation context from prior turns:\n"
+        + "\n".join(context_lines)
+        + "\n\n"
+        if context_lines
+        else ""
+    )
+    return (
+        "You are running under the AI Harness local-agent bridge as the Codex CLI adapter.\n"
+        "Harness owns the conversation, run, events, approvals, and audit records.\n"
+        "For this V4 adapter, do not modify files, run side-effect commands, mutate git, "
+        "install packages, read env/secrets, or initiate network access. If the task needs "
+        "those capabilities, explain the needed permission instead of performing it.\n"
+        f"Resume mode: {resume_mode}.\n\n"
+        f"{context_block}"
+        "User message:\n"
+        f"{message}\n"
+    )
+
+
+def _codex_subprocess_env(*, executable: str, temp_dir: Path) -> dict[str, str]:
+    return _codex_safe_env(executable=executable, temp_dir=temp_dir)
+
+
+def _codex_command(
+    *,
+    probe: CodexCliProbe,
+    workspace_root: Path,
+    output_last_message: Path,
+) -> list[str]:
+    command = [
+        probe.executable,
+        "exec",
+        "--json",
+        "--output-last-message",
+        str(output_last_message),
+        "-C",
+        str(workspace_root),
+        "--sandbox",
+        "read-only",
+        "-",
+    ]
+    forbidden = {
+        "--dangerously-bypass-approvals-and-sandbox",
+        "danger-full-access",
+        "--last",
+    }
+    if any(item in forbidden for item in command):
+        raise ValueError("unsafe codex command generated")
+    return command
+
+
+def _extract_codex_session_id(record: dict[str, Any]) -> str | None:
+    for key in ("session_id", "sessionId", "conversation_id", "conversationId"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    session = record.get("session")
+    if isinstance(session, dict):
+        value = session.get("id")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _extract_codex_text(record: dict[str, Any]) -> str:
+    record_type = str(record.get("type") or record.get("event") or "").lower()
+    role = str(record.get("role") or "").lower()
+    if role and role != "assistant":
+        return ""
+    assistant_record = role == "assistant" or any(
+        marker in record_type for marker in ("assistant", "agent_message")
+    )
+    for nested_key in ("message", "item", "data"):
+        nested = record.get(nested_key)
+        if isinstance(nested, dict):
+            text = _extract_codex_text(nested)
+            if text:
+                return text
+    candidate_keys = ("delta", "content", "text", "message", "output")
+    if assistant_record or record_type in {"delta", "message_delta"}:
+        for key in candidate_keys:
+            value = record.get(key)
+            if isinstance(value, str):
+                return value
+    elif any(key in record for key in candidate_keys):
+        return ""
+    content = record.get("content")
+    if assistant_record and isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    chunks.append(text)
+            elif isinstance(item, str):
+                chunks.append(item)
+        return "".join(chunks)
+    return ""
+
+
+def _parse_codex_output(stdout: str, final_message: str) -> CodexRunResult:
+    deltas: list[str] = []
+    session_id: str | None = None
+    malformed = False
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            malformed = True
+            continue
+        if not isinstance(record, dict):
+            continue
+        session_id = _extract_codex_session_id(record) or session_id
+        text = _extract_codex_text(record)
+        if text:
+            deltas.append(_redact_codex_text(text))
+    fallback = _redact_codex_text(final_message.strip())
+    content = fallback or "".join(deltas).strip()
+    if malformed and not content:
+        return CodexRunResult(status="error", error_message="codex emitted malformed JSONL")
+    if not content:
+        return CodexRunResult(status="error", error_message="codex returned empty assistant output")
+    return CodexRunResult(
+        status="completed",
+        content=content,
+        session_id=session_id,
+        metadata={"delta_count": len(deltas), "used_fallback": bool(fallback)},
+    )
+
+
+def _run_codex_cli(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> CodexRunResult:
+    probe = _probe_codex_cli()
+    if not probe.installed:
+        return CodexRunResult(status="error", error_message=probe.error_message)
+    workspace_root = _load_bridge_workspace_root(config, state)
+    if workspace_root is None:
+        return CodexRunResult(
+            status="error",
+            error_message="codex workspace root sidecar missing or mismatched",
+        )
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        return CodexRunResult(status="error", error_message="codex workspace root is unavailable")
+    actual_workspace_hash = _workspace_identity_hash(workspace_root)
+    server_workspace_hash = str(payload.get("workspace_identity_hash") or "")
+    if not server_workspace_hash or server_workspace_hash != actual_workspace_hash:
+        return CodexRunResult(
+            status="error",
+            error_message="codex workspace identity does not match server task",
+            metadata={"workspace_identity_hash": actual_workspace_hash},
+        )
+    prompt = _codex_prompt_for_task(payload)
+    with tempfile.TemporaryDirectory(prefix="harness-codex-") as temp_name:
+        temp_dir = Path(temp_name)
+        output_last_message = temp_dir / "last-message.txt"
+        try:
+            command = _codex_command(
+                probe=probe,
+                workspace_root=workspace_root,
+                output_last_message=output_last_message,
+            )
+        except ValueError as exc:
+            return CodexRunResult(status="error", error_message=str(exc))
+        try:
+            completed = subprocess.run(  # noqa: S603
+                command,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=CODEX_SUBPROCESS_TIMEOUT_SECONDS,
+                cwd=str(workspace_root),
+                env=_codex_subprocess_env(executable=probe.executable, temp_dir=temp_dir),
+            )
+        except subprocess.TimeoutExpired:
+            return CodexRunResult(status="error", error_message="codex subprocess timed out")
+        except OSError as exc:
+            return CodexRunResult(status="error", error_message=f"codex subprocess failed: {exc}")
+        try:
+            final_message = output_last_message.read_text(encoding="utf-8")
+        except OSError:
+            final_message = ""
+        if completed.returncode != 0:
+            error_text = _redact_codex_text(completed.stderr or completed.stdout)
+            return CodexRunResult(
+                status="error",
+                error_message=error_text or f"codex exited with {completed.returncode}",
+                metadata={"exit_code": completed.returncode},
+            )
+        result = _parse_codex_output(completed.stdout, final_message)
+        metadata = dict(result.metadata or {})
+        metadata["exit_code"] = completed.returncode
+        metadata["workspace_identity_hash"] = actual_workspace_hash
+        return CodexRunResult(
+            status=result.status,
+            content=result.content,
+            error_message=result.error_message,
+            session_id=result.session_id,
+            metadata=metadata,
+        )
 
 
 def _save_bridge_device_token(config: Any, device_token: str) -> str:
@@ -515,6 +953,37 @@ def _load_bridge_device_token(config: Any, state: dict[str, Any]) -> str:
         return ""
 
 
+def _workspace_identity_hash(cwd: Path) -> str:
+    canonical = str(cwd.expanduser().resolve())
+    return sha256(f"{CODEX_WORKSPACE_HASH_PREFIX}{canonical}".encode()).hexdigest()
+
+
+def _save_bridge_workspace_root(config: Any, cwd: Path) -> str:
+    config.home.mkdir(parents=True, exist_ok=True)
+    root_ref = BRIDGE_WORKSPACE_ROOT_REF
+    path = _bridge_workspace_root_path(config, root_ref)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(str(cwd.expanduser().resolve()))
+    os.chmod(path, 0o600)
+    return root_ref
+
+
+def _load_bridge_workspace_root(config: Any, state: dict[str, Any]) -> Path | None:
+    root_ref = str(state.get("workspace_root_ref") or BRIDGE_WORKSPACE_ROOT_REF)
+    try:
+        raw = _bridge_workspace_root_path(config, root_ref).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    cwd = Path(raw).expanduser().resolve()
+    expected_hash = str(state.get("workspace_identity_hash") or "")
+    if expected_hash and _workspace_identity_hash(cwd) != expected_hash:
+        return None
+    return cwd
+
+
 def _bridge_state_for_disk(state: dict[str, Any]) -> dict[str, Any]:
     allowed_scalar_keys = {
         "api_url",
@@ -522,6 +991,8 @@ def _bridge_state_for_disk(state: dict[str, Any]) -> dict[str, Any]:
         "device_token_ref",
         "adapter_kind",
         "display_name",
+        "workspace_root_ref",
+        "workspace_identity_hash",
     }
     safe = {
         key: str(state[key])
@@ -966,10 +1437,31 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
     config = load_config()
     api_url = args.api_url or config.api_url
     cwd = Path(args.cwd).expanduser().resolve()
+    if args.adapter_kind == "codex":
+        probe = _probe_codex_cli()
+        if not probe.installed:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "adapter_kind": "codex",
+                        "error": probe.error_message or "codex unavailable",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return 1
     client = HarnessApiClient(api_url, config.token)
     display_name = args.display_name or (
-        "hao Local Agent" if args.adapter_kind == "hao" else "Fake Local Agent"
+        "hao Local Agent"
+        if args.adapter_kind == "hao"
+        else "Codex CLI"
+        if args.adapter_kind == "codex"
+        else "Fake Local Agent"
     )
+    workspace_identity_hash = _workspace_identity_hash(cwd) if args.adapter_kind == "codex" else ""
     registered = client.register_local_agent_connection(
         pair_token=args.pair_token,
         pair_code=args.pair_code,
@@ -979,6 +1471,12 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
         capabilities=_bridge_capabilities(args.adapter_kind),
         risk_capabilities=_bridge_risk_capabilities(args.adapter_kind),
         bridge_version=_bridge_version(),
+        metadata={
+            "workspace_identity_hash": workspace_identity_hash,
+            "workspace_root_ref": BRIDGE_WORKSPACE_ROOT_REF,
+        }
+        if args.adapter_kind == "codex"
+        else {},
     )
     connection = registered["connection"]
     state = {
@@ -986,9 +1484,13 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
         "connection_id": connection["id"],
         "device_token": registered["device_token"],
         "adapter_kind": args.adapter_kind,
-        "cwd": str(cwd),
         "display_name": display_name,
     }
+    if args.adapter_kind == "codex":
+        state["workspace_root_ref"] = _save_bridge_workspace_root(config, cwd)
+        state["workspace_identity_hash"] = workspace_identity_hash
+    else:
+        state["cwd"] = str(cwd)
     _save_bridge_state(config, state)
     print(
         json.dumps(
@@ -1027,17 +1529,22 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
         str(state["connection_id"]),
         "--adapter",
         str(state["adapter_kind"]),
-        "--cwd",
-        str(state["cwd"]),
         "--interval",
         str(args.interval),
     ]
+    if state.get("adapter_kind") != "codex":
+        command.extend(["--cwd", str(state["cwd"])])
+    popen_kwargs: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "start_new_session": True,
+    }
+    if state.get("adapter_kind") == "codex":
+        popen_kwargs["cwd"] = str(Path(__file__).resolve().parents[3])
     subprocess.Popen(  # noqa: S603
         command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **popen_kwargs,
     )
     print(
         json.dumps(
@@ -1056,14 +1563,51 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
 def _run_bridge(args: argparse.Namespace) -> int:
     config = load_config()
     state = _load_bridge_state(config)
+    saved_adapter_kind = str(state.get("adapter_kind") or "")
     if args.api_url:
         state["api_url"] = args.api_url
     if args.connection_id:
         state["connection_id"] = args.connection_id
     if args.device_token:
         state["device_token"] = args.device_token
-    state["adapter_kind"] = args.adapter_kind or state.get("adapter_kind") or "hao"
-    state["cwd"] = str(Path(args.cwd or state.get("cwd") or ".").expanduser().resolve())
+    if args.adapter_kind and saved_adapter_kind and args.adapter_kind != saved_adapter_kind:
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": "bridge adapter does not match paired adapter identity",
+                    "state_path": str(_bridge_state_path(config)),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    state["adapter_kind"] = args.adapter_kind or saved_adapter_kind or "hao"
+    if state["adapter_kind"] == "codex":
+        if args.cwd:
+            cwd = Path(args.cwd).expanduser().resolve()
+            workspace_identity_hash = _workspace_identity_hash(cwd)
+            existing_workspace_hash = str(state.get("workspace_identity_hash") or "")
+            if existing_workspace_hash and existing_workspace_hash != workspace_identity_hash:
+                print(
+                    json.dumps(
+                        {
+                            "status": "failed",
+                            "error": "codex cwd does not match paired workspace identity",
+                            "state_path": str(_bridge_state_path(config)),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
+            state["workspace_root_ref"] = _save_bridge_workspace_root(config, cwd)
+            state["workspace_identity_hash"] = workspace_identity_hash
+    else:
+        state["cwd"] = str(Path(args.cwd or state.get("cwd") or ".").expanduser().resolve())
     missing = [key for key in ("api_url", "connection_id", "device_token") if not state.get(key)]
     if missing:
         print(
@@ -1107,12 +1651,13 @@ def _run_bridge_loop_from_state(
             bridge_version=_bridge_version(),
             capabilities=capabilities,
         )
-        _resume_bridge_pending_tools(
-            config=config,
-            state=state,
-            client=client,
-            device_token=device_token,
-        )
+        if adapter_kind != "codex":
+            _resume_bridge_pending_tools(
+                config=config,
+                state=state,
+                client=client,
+                device_token=device_token,
+            )
         page = client.pull_local_agent_bridge_tasks(device_token=device_token)
         for task in page.get("items", []):
             _handle_bridge_task(
@@ -1167,12 +1712,94 @@ def _handle_bridge_task(
             },
         )
         return
+    if adapter_kind == "codex":
+        _handle_codex_bridge_task(
+            config=config,
+            state=state,
+            client=client,
+            device_token=device_token,
+            task=task,
+        )
+        return
     _handle_hao_bridge_task(
         config=config,
         state=state,
         client=client,
         device_token=device_token,
         task=task,
+    )
+
+
+def _handle_codex_bridge_task(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+    task: dict[str, Any],
+) -> None:
+    task_id = str(task["id"])
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:codex:started",
+            "bridge_task_id": task_id,
+            "event_type": "adapter_started",
+            "sequence": 1,
+            "metadata": {
+                "adapter_kind": "codex",
+                "command_mode": "exec_json_read_only_stdin",
+                "supports_resume": False,
+                "resume_mode": "context_replay_new_session",
+                "workspace_identity_hash": state.get("workspace_identity_hash"),
+            },
+        },
+    )
+    result = _run_codex_cli(config=config, state=state, payload=payload)
+    if result.status != "completed":
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:codex:error",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_error",
+                "error_message": result.error_message or "codex adapter failed",
+                "sequence": 2,
+                "metadata": {
+                    "adapter_kind": "codex",
+                    **_safe_codex_metadata(result.metadata or {}),
+                },
+            },
+        )
+        return
+    content = result.content.strip()
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:codex:delta:1",
+            "bridge_task_id": task_id,
+            "event_type": "assistant_delta",
+            "content": content,
+            "sequence": 2,
+            "metadata": {"adapter_kind": "codex"},
+        },
+    )
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:codex:done",
+            "bridge_task_id": task_id,
+            "event_type": "assistant_done",
+            "content": content,
+            "sequence": 3,
+            "metadata": {
+                "adapter_kind": "codex",
+                "adapter_session_id": result.session_id,
+                "resume_mode": "context_replay_new_session",
+                **_safe_codex_metadata(result.metadata or {}),
+            },
+        },
     )
 
 

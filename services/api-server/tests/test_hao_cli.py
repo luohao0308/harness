@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -307,6 +308,662 @@ def test_hao_bridge_state_migrates_raw_device_token_out_of_bridge_json(
     token_file = tmp_path / "bridge.device-token"
     assert token_file.read_text(encoding="utf-8") == "legacy-device-token"
     assert token_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_hao_bridge_v4_codex_pair_fails_before_register_when_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {}
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(hao_main_module.shutil, "which", lambda name: None)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "codex",
+            "--cwd",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 1
+    assert [name for name, _payload in calls] == []
+    assert not (tmp_path / "bridge.json").exists()
+
+
+def test_hao_bridge_v4_codex_state_uses_workspace_sidecar_and_safe_daemon_argv(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+    popen_commands: list[list[str]] = []
+    popen_kwargs: list[dict] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {
+                "connection": {"id": "codex-connection-1"},
+                "device_token": "codex-device-token",
+            }
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            popen_commands.append(command)
+            popen_kwargs.append(kwargs)
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/usr/local/bin/codex",
+        version="codex 1.0",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+        resume_help="resume --json --output-last-message -c",
+    )
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "codex",
+            "--cwd",
+            str(tmp_path),
+            "--daemon",
+        ]
+    )
+
+    assert exit_code == 0
+    bridge_json = (tmp_path / "bridge.json").read_text(encoding="utf-8")
+    assert "codex-device-token" not in bridge_json
+    assert str(tmp_path) not in bridge_json
+    assert '"cwd"' not in bridge_json
+    assert "workspace_identity_hash" in bridge_json
+    assert "workspace_root_ref" in bridge_json
+    workspace_sidecar = tmp_path / "bridge.workspace-root"
+    assert workspace_sidecar.read_text(encoding="utf-8") == str(tmp_path.resolve())
+    assert workspace_sidecar.stat().st_mode & 0o777 == 0o600
+    register = next(payload for name, payload in calls if name == "register")
+    assert register["adapter_kind"] == "codex"
+    assert register["metadata"]["workspace_identity_hash"]
+    assert register["risk_capabilities"] == ["workspace_read_constrained"]
+    command = popen_commands[0]
+    assert "--cwd" not in command
+    assert str(tmp_path) not in command
+    assert "codex-device-token" not in command
+    assert popen_kwargs[0]["cwd"] != str(tmp_path)
+
+
+def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    output_path = tmp_path / "last.txt"
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/opt/codex/bin/codex",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+    )
+
+    command = hao_main_module._codex_command(
+        probe=probe,
+        workspace_root=tmp_path,
+        output_last_message=output_path,
+    )
+
+    assert command[:2] == ["/opt/codex/bin/codex", "exec"]
+    assert "--json" in command
+    assert "--output-last-message" in command
+    assert "-C" in command
+    assert str(tmp_path) in command
+    assert command[-1] == "-"
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "danger-full-access" not in command
+    assert "--last" not in command
+    assert "secret prompt" not in command
+
+    monkeypatch.setenv("HARNESS_SECRET", "harness-secret")
+    monkeypatch.setenv("HAO_API_TOKEN", "hao-token")
+    monkeypatch.setenv("LOCAL_AGENT_DEVICE_TOKEN", "device-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-1234567890abcdef")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example")
+    env = hao_main_module._codex_subprocess_env(
+        executable="/opt/codex/bin/codex",
+        temp_dir=tmp_path,
+    )
+
+    assert env["TMPDIR"] == str(tmp_path)
+    assert Path(env["HOME"]).parent == tmp_path
+    assert Path(env["CODEX_HOME"]).parent == tmp_path
+    assert "HARNESS_SECRET" not in env
+    assert "HAO_API_TOKEN" not in env
+    assert "LOCAL_AGENT_DEVICE_TOKEN" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "HTTPS_PROXY" not in env
+
+
+def test_hao_bridge_v4_codex_probe_uses_sanitized_env(monkeypatch) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    captured_envs: list[dict] = []
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        captured_envs.append(dict(kwargs.get("env") or {}))
+        if command[-2:] == ["exec", "--help"]:
+            stdout = "--json --output-last-message -C --sandbox read-only"
+        elif command[-3:] == ["exec", "resume", "--help"]:
+            stdout = "resume -c --config"
+        else:
+            stdout = "codex 1.0"
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(hao_main_module.shutil, "which", lambda name: "/opt/codex/bin/codex")
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+    monkeypatch.setenv("HARNESS_SECRET", "harness-secret")
+    monkeypatch.setenv("HAO_API_TOKEN", "hao-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-1234567890abcdef")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example")
+    monkeypatch.setenv("HOME", "/Users/luohao")
+    monkeypatch.setenv("CODEX_HOME", "/Users/luohao/.codex")
+
+    probe = hao_main_module._probe_codex_cli()
+
+    assert probe.installed is True
+    assert len(captured_envs) == 3
+    for env in captured_envs:
+        assert "HARNESS_SECRET" not in env
+        assert "HAO_API_TOKEN" not in env
+        assert "OPENAI_API_KEY" not in env
+        assert "HTTP_PROXY" not in env
+        assert "HOME" not in env
+        assert "CODEX_HOME" not in env
+
+
+def test_hao_bridge_v4_run_codex_cli_success_uses_stdin_and_readonly_sandbox(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(workspace),
+    }
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/opt/codex/bin/codex",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("final answer from codex", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"type":"assistant_delta","delta":"streamed"}\n',
+            stderr="",
+        )
+
+    monkeypatch.setenv("HOME", "/Users/luohao")
+    monkeypatch.setenv("CODEX_HOME", "/Users/luohao/.codex")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-1234567890abcdef")
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+
+    result = hao_main_module._run_codex_cli(
+        config=config,
+        state=state,
+        payload={
+            "message": "hello from workspace",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+        },
+    )
+
+    assert result.status == "completed"
+    assert result.content == "final answer from codex"
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[:2] == ["/opt/codex/bin/codex", "exec"]
+    assert command[-1] == "-"
+    assert "hello from workspace" not in command
+    assert "--sandbox" in command
+    assert "read-only" in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "danger-full-access" not in command
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert "hello from workspace" in str(kwargs["input"])
+    assert kwargs["cwd"] == str(workspace)
+    env = kwargs["env"]
+    assert isinstance(env, dict)
+    assert "OPENAI_API_KEY" not in env
+    assert env["HOME"] != "/Users/luohao"
+    assert env["CODEX_HOME"] != "/Users/luohao/.codex"
+
+
+def test_hao_bridge_v4_run_codex_cli_rejects_workspace_sidecar_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/opt/codex/bin/codex",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+    )
+    spawned: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        spawned.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+
+    result = hao_main_module._run_codex_cli(
+        config=config,
+        state={"workspace_root_ref": root_ref, "workspace_identity_hash": "wrong-hash"},
+        payload={"message": "hello"},
+    )
+
+    assert result.status == "error"
+    assert "workspace root sidecar" in result.error_message
+    assert spawned == []
+
+
+def test_hao_bridge_v4_run_codex_cli_reports_timeout_nonzero_and_empty_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(workspace),
+    }
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/opt/codex/bin/codex",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+    )
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
+
+    def timeout_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        raise subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr(hao_main_module.subprocess, "run", timeout_run)
+    timed_out = hao_main_module._run_codex_cli(
+        config=config,
+        state=state,
+        payload={"message": "timeout", "workspace_identity_hash": state["workspace_identity_hash"]},
+    )
+    assert timed_out.status == "error"
+    assert "timed out" in timed_out.error_message
+
+    def nonzero_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        return subprocess.CompletedProcess(
+            command,
+            2,
+            stdout="",
+            stderr="failed token=sk-proj-1234567890abcdef /Users/luohao/private/file.txt",
+        )
+
+    monkeypatch.setattr(hao_main_module.subprocess, "run", nonzero_run)
+    nonzero = hao_main_module._run_codex_cli(
+        config=config,
+        state=state,
+        payload={"message": "nonzero", "workspace_identity_hash": state["workspace_identity_hash"]},
+    )
+    assert nonzero.status == "error"
+    assert "sk-proj" not in nonzero.error_message
+    assert "/Users/luohao" not in nonzero.error_message
+    assert nonzero.metadata == {"exit_code": 2}
+
+    def empty_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hao_main_module.subprocess, "run", empty_run)
+    empty = hao_main_module._run_codex_cli(
+        config=config,
+        state=state,
+        payload={"message": "empty", "workspace_identity_hash": state["workspace_identity_hash"]},
+    )
+    assert empty.status == "error"
+    assert "empty assistant output" in empty.error_message
+
+
+def test_hao_bridge_v4_run_codex_cli_rejects_server_workspace_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(workspace),
+    }
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/opt/codex/bin/codex",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+    )
+    spawned: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        spawned.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+
+    result = hao_main_module._run_codex_cli(
+        config=config,
+        state=state,
+        payload={"message": "wrong workspace", "workspace_identity_hash": "server-hash"},
+    )
+
+    assert result.status == "error"
+    assert "server task" in result.error_message
+    assert spawned == []
+
+
+def test_hao_bridge_v4_codex_run_cannot_rewrite_paired_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    original = tmp_path / "original"
+    other = tmp_path / "other"
+    original.mkdir()
+    other.mkdir()
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    workspace_ref = hao_main_module._save_bridge_workspace_root(config, original)
+    hao_main_module._save_bridge_state(
+        config,
+        {
+            "api_url": "http://127.0.0.1:8000",
+            "connection_id": "codex-connection",
+            "device_token": "codex-device-token",
+            "adapter_kind": "codex",
+            "workspace_root_ref": workspace_ref,
+            "workspace_identity_hash": hao_main_module._workspace_identity_hash(original),
+        },
+    )
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "run",
+            "--adapter",
+            "codex",
+            "--cwd",
+            str(other),
+            "--once",
+        ]
+    )
+
+    assert exit_code == 1
+    state = hao_main_module._load_bridge_state(config)
+    assert state["workspace_identity_hash"] == hao_main_module._workspace_identity_hash(original)
+    assert (config.home / str(state["workspace_root_ref"])).read_text(encoding="utf-8") == str(
+        original.resolve()
+    )
+
+
+def test_hao_bridge_v4_run_preserves_saved_codex_adapter_without_adapter_arg(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    workspace_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    hao_main_module._save_bridge_device_token(config, "codex-device-token")
+    hao_main_module._save_bridge_state(
+        config,
+        {
+            "api_url": "http://127.0.0.1:8000",
+            "connection_id": "codex-connection",
+            "device_token_ref": "bridge.device-token",
+            "adapter_kind": "codex",
+            "workspace_root_ref": workspace_ref,
+            "workspace_identity_hash": hao_main_module._workspace_identity_hash(workspace),
+        },
+    )
+    handled: list[str] = []
+
+    class FakeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 30.0) -> None:
+            del api_url, token, timeout
+
+        def heartbeat_local_agent_connection(self, **kwargs) -> dict:
+            assert kwargs["device_token"] == "codex-device-token"
+            return {}
+
+        def pull_local_agent_bridge_tasks(self, *, device_token: str) -> dict:
+            assert device_token == "codex-device-token"
+            return {"items": [{"id": "task-1", "payload": {"message": "hello"}}]}
+
+        def ack_local_agent_bridge_task(self, **kwargs) -> dict:
+            assert kwargs["device_token"] == "codex-device-token"
+            assert kwargs["status"] == "running"
+            return {}
+
+    def fake_handle_codex(**kwargs) -> None:
+        handled.append(kwargs["state"]["adapter_kind"])
+
+    def fail_pending_tool_resume(**kwargs) -> None:
+        raise AssertionError("codex bridge run must not call pending host-tool resume")
+
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeClient)
+    monkeypatch.setattr(hao_main_module, "_handle_codex_bridge_task", fake_handle_codex)
+    monkeypatch.setattr(hao_main_module, "_resume_bridge_pending_tools", fail_pending_tool_resume)
+
+    exit_code = hao_main_module.main(["bridge", "run", "--once"])
+
+    assert exit_code == 0
+    assert handled == ["codex"]
+    state = hao_main_module._load_bridge_state(config)
+    assert state["adapter_kind"] == "codex"
+
+
+def test_hao_bridge_v4_run_rejects_explicit_adapter_mismatch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    hao_main_module._save_bridge_device_token(config, "codex-device-token")
+    hao_main_module._save_bridge_state(
+        config,
+        {
+            "api_url": "http://127.0.0.1:8000",
+            "connection_id": "codex-connection",
+            "device_token_ref": "bridge.device-token",
+            "adapter_kind": "codex",
+            "workspace_identity_hash": "hash-1",
+        },
+    )
+
+    exit_code = hao_main_module.main(["bridge", "run", "--adapter", "hao", "--once"])
+
+    assert exit_code == 1
+    assert hao_main_module._load_bridge_state(config)["adapter_kind"] == "codex"
+
+
+def test_hao_bridge_v4_codex_prompt_replays_bounded_redacted_context() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+
+    prompt = hao_main_module._codex_prompt_for_task(
+        {
+            "resume_mode": "context_replay_new_session",
+            "conversation_context": [
+                {
+                    "role": "user",
+                    "content": "First ask TOKEN=raw-token /Users/luohao/private/file.txt",
+                },
+                {"role": "assistant", "content": "First answer sk-proj-1234567890abcdef"},
+                {"role": "system", "content": "ignored"},
+            ],
+            "message": "Second ask password=hunter2",
+        }
+    )
+
+    assert "Harness conversation context from prior turns:" in prompt
+    assert "user: First ask TOKEN=[REDACTED] .../private/file.txt" in prompt
+    assert "assistant: First answer [REDACTED]" in prompt
+    assert "ignored" not in prompt
+    assert "Second ask password=[REDACTED]" in prompt
+    assert "raw-token" not in prompt
+    assert "hunter2" not in prompt
+    assert "/Users/luohao" not in prompt
+
+
+def test_hao_bridge_v4_codex_terminal_event_ids_are_stable(monkeypatch) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    captured_payloads: list[dict] = []
+
+    class FakeClient:
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            captured_payloads.append(payload)
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        hao_main_module,
+        "_run_codex_cli",
+        lambda **kwargs: hao_main_module.CodexRunResult(
+            status="completed",
+            content="done",
+            session_id="session-1",
+            metadata={"exit_code": 0},
+        ),
+    )
+
+    hao_main_module._handle_codex_bridge_task(
+        config=object(),
+        state={"workspace_identity_hash": "hash-1"},
+        client=FakeClient(),
+        device_token="device-token",
+        task={"id": "task-1", "payload": {"message": "hello"}},
+    )
+
+    assert [payload["event_id"] for payload in captured_payloads] == [
+        "task-1:codex:started",
+        "task-1:codex:delta:1",
+        "task-1:codex:done",
+    ]
+
+    captured_payloads.clear()
+    monkeypatch.setattr(
+        hao_main_module,
+        "_run_codex_cli",
+        lambda **kwargs: hao_main_module.CodexRunResult(
+            status="error",
+            error_message="codex unavailable",
+        ),
+    )
+
+    hao_main_module._handle_codex_bridge_task(
+        config=object(),
+        state={"workspace_identity_hash": "hash-1"},
+        client=FakeClient(),
+        device_token="device-token",
+        task={"id": "task-2", "payload": {"message": "hello"}},
+    )
+
+    assert [payload["event_id"] for payload in captured_payloads] == [
+        "task-2:codex:started",
+        "task-2:codex:error",
+    ]
+
+
+def test_hao_bridge_v4_codex_jsonl_parser_uses_fallback_and_redaction() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    result = hao_main_module._parse_codex_output(
+        '{"type":"assistant_delta","delta":"Hello "}\n'
+        '{"item":{"role":"assistant","content":[{"text":"world"}]}}\n'
+        'not-json\n',
+        "final sk-proj-1234567890abcdef /Users/luohao/private/file.txt",
+    )
+
+    assert result.status == "completed"
+    assert result.content == "final [REDACTED] .../private/file.txt"
+    assert result.metadata == {"delta_count": 2, "used_fallback": True}
+
+
+def test_hao_bridge_v4_codex_jsonl_parser_ignores_non_assistant_output() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    result = hao_main_module._parse_codex_output(
+        '{"type":"tool_output","output":"do not project"}\n'
+        '{"type":"command","message":"do not project either"}\n'
+        '{"message":{"role":"assistant","content":"assistant text"}}\n',
+        "",
+    )
+
+    assert result.status == "completed"
+    assert result.content == "assistant text"
+    assert result.metadata == {"delta_count": 1, "used_fallback": False}
 
 
 def test_hao_session_store_persists_messages_and_tool_events(tmp_path: Path) -> None:

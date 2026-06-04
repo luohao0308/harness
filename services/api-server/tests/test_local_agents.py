@@ -343,7 +343,9 @@ def test_local_agent_pairing_registers_with_hashed_single_use_token(
     }
 
 
-def test_local_agent_v1_rejects_disabled_adapters(db_session: Session) -> None:
+def test_local_agent_v4_supports_codex_but_rejects_claude_code(
+    db_session: Session,
+) -> None:
     client = TestClient(app)
     _ensure_agent(db_session)
     created = client.post(
@@ -352,7 +354,115 @@ def test_local_agent_v1_rejects_disabled_adapters(db_session: Session) -> None:
         json={"agent_id": "default"},
     ).json()
 
-    response = client.post(
+    codex = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": created["pair_token"],
+            "pair_code": created["pair_code"],
+            "adapter_kind": "codex",
+            "display_name": "Codex CLI",
+            "protocol_version": "local-agent-v1",
+            "workspace_root": "/Users/luohao/private-demo",
+            "capabilities": {
+                "supports_streaming": True,
+                "supports_resume": True,
+                "supports_cancel": True,
+                "host_tools_authorized": True,
+                "deterministic_session_id": False,
+            },
+            "risk_capabilities": ["host_write", "shell", "git", "network", "secret_read"],
+            "metadata": {"workspace_identity_hash": "hash-1"},
+        },
+    )
+
+    assert codex.status_code == 201, codex.text
+    connection = codex.json()["connection"]
+    assert connection["adapter_kind"] == "codex"
+    assert connection["capabilities_json"]["enabled_in_v4"] is True
+    assert connection["capabilities_json"]["supports_resume"] is False
+    assert connection["capabilities_json"]["supports_cancel"] is False
+    assert connection["capabilities_json"]["host_tools_authorized"] is False
+    assert connection["capabilities_json"]["resume_mode"] == "context_replay_new_session"
+    assert connection["risk_capabilities_json"] == []
+    assert connection["workspace_root"] == ".../private-demo"
+    row = db_session.get(LocalAgentConnection, connection["id"])
+    assert row is not None
+    assert row.metadata_json["workspace_identity_hash"] == "hash-1"
+
+    created_claude = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    ).json()
+    claude = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": created_claude["pair_token"],
+            "pair_code": created_claude["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+        },
+    )
+    assert claude.status_code == 400
+    assert "not enabled" in claude.text
+
+
+def test_local_agent_v4_adapter_scope_rejects_codex_before_consuming_token(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created_response = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True, "adapters": ["hao"]}},
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    rejected = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": created["pair_token"],
+            "pair_code": created["pair_code"],
+            "adapter_kind": "codex",
+            "protocol_version": "local-agent-v1",
+        },
+    )
+    assert rejected.status_code == 403, rejected.text
+    token = db_session.get(LocalAgentPairingToken, created["id"])
+    assert token is not None
+    assert token.status == "active"
+    assert token.consumed_at is None
+
+    accepted = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": created["pair_token"],
+            "pair_code": created["pair_code"],
+            "adapter_kind": "hao",
+            "protocol_version": "local-agent-v1",
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    db_session.refresh(token)
+    assert token.status == "consumed"
+
+
+def test_local_agent_v4_custom_scope_requires_explicit_adapters_before_consuming_token(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created_response = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True}},
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    rejected = client.post(
         "/api/agents/local-agent/connections/register",
         json={
             "pair_token": created["pair_token"],
@@ -362,8 +472,343 @@ def test_local_agent_v1_rejects_disabled_adapters(db_session: Session) -> None:
         },
     )
 
-    assert response.status_code == 400
-    assert "not enabled" in response.text
+    assert rejected.status_code == 403, rejected.text
+    assert "explicit adapter scope" in rejected.text
+    token = db_session.get(LocalAgentPairingToken, created["id"])
+    assert token is not None
+    assert token.status == "active"
+    assert token.consumed_at is None
+
+
+def test_local_agent_v4_pairing_command_is_adapter_scoped(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+
+    default_pairing = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default"},
+    )
+    assert default_pairing.status_code == 201, default_pairing.text
+    assert "--adapter codex" not in default_pairing.json()["command"]
+
+    codex_pairing = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {"executable": True, "adapters": ["codex"]},
+        },
+    )
+    assert codex_pairing.status_code == 201, codex_pairing.text
+    assert "--adapter codex" in codex_pairing.json()["command"]
+
+
+def test_local_agent_v4_codex_resume_is_always_context_replay(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True, "adapters": ["codex"]}},
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "codex",
+            "protocol_version": "local-agent-v1",
+            "capabilities": {
+                "supports_resume": True,
+                "supports_cancel": True,
+                "host_tools_authorized": True,
+                "deterministic_session_id": True,
+                "resume_sandbox_read_only": True,
+            },
+            "metadata": {"workspace_identity_hash": "hash-codex"},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+    assert connection["capabilities_json"]["supports_resume"] is False
+    assert connection["capabilities_json"]["resume_mode"] == "context_replay_new_session"
+
+    binding = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={
+            "title": "Codex context replay",
+            "adapter_session_id": "untrusted-codex-session",
+            "resume_mode": "native_resume",
+        },
+    )
+    assert binding.status_code == 201, binding.text
+    assert binding.json()["resume_mode"] == "context_replay_new_session"
+
+    sent = client.post(
+        f"/api/agents/local-agent/bindings/{binding.json()['id']}/messages",
+        headers=AUTH_HEADERS,
+        json={"content": "continue safely", "client_message_id": "codex-resume-test"},
+    )
+    assert sent.status_code == 202, sent.text
+    pulled = client.get(
+        "/api/agents/local-agent/bridge/tasks",
+        headers={"X-Local-Agent-Device-Token": device_token},
+    )
+    assert pulled.status_code == 200, pulled.text
+    task_payload = pulled.json()["items"][0]["payload"]
+    assert task_payload["resume_mode"] == "context_replay_new_session"
+    assert task_payload["capabilities"]["supports_resume"] is False
+    assert task_payload["workspace_identity_hash"] == "hash-codex"
+
+
+def test_local_agent_v4_codex_second_turn_replays_redacted_harness_context(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True, "adapters": ["codex"]}},
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "codex",
+            "protocol_version": "local-agent-v1",
+            "capabilities": {"supports_streaming": True},
+            "metadata": {"workspace_identity_hash": "hash-codex"},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    binding = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={"title": "Codex replay", "resume_mode": "native_resume"},
+    )
+    assert binding.status_code == 201, binding.text
+    binding_id = binding.json()["id"]
+
+    first = client.post(
+        f"/api/agents/local-agent/bindings/{binding_id}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "content": "remember TOKEN=raw-token /Users/luohao/private/file.txt",
+            "client_message_id": "codex-context-1",
+        },
+    )
+    assert first.status_code == 202, first.text
+    first_pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
+    assert first_pull.status_code == 200, first_pull.text
+    first_task = first_pull.json()["items"][0]
+    first_done = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "codex-context-1-done",
+            "bridge_task_id": first_task["id"],
+            "event_type": "assistant_done",
+            "content": "stored sk-proj-1234567890abcdef",
+            "sequence": 1,
+        },
+    )
+    assert first_done.status_code == 201, first_done.text
+
+    second = client.post(
+        f"/api/agents/local-agent/bindings/{binding_id}/messages",
+        headers=AUTH_HEADERS,
+        json={"content": "continue from prior turn", "client_message_id": "codex-context-2"},
+    )
+    assert second.status_code == 202, second.text
+    second_pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
+    assert second_pull.status_code == 200, second_pull.text
+    payload = second_pull.json()["items"][0]["payload"]
+    context = payload["conversation_context"]
+
+    assert payload["resume_mode"] == "context_replay_new_session"
+    assert [item["role"] for item in context] == ["user", "assistant"]
+    context_text = json.dumps(context, ensure_ascii=False)
+    assert "remember TOKEN=[REDACTED] .../private/file.txt" in context_text
+    assert "stored [REDACTED]" in context_text
+    assert "raw-token" not in context_text
+    assert "sk-proj-1234567890abcdef" not in context_text
+    assert "/Users/luohao" not in context_text
+    assert "continue from prior turn" not in context_text
+
+
+def test_local_agent_v4_codex_legacy_tool_result_is_rejected_without_tool_call(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True, "adapters": ["codex"]}},
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "codex",
+            "protocol_version": "local-agent-v1",
+            "capabilities": {"supports_streaming": True},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="codex-tool-result-test",
+    )
+    assert sent["run_id"]
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+
+    rejected = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "codex-legacy-tool-result",
+            "bridge_task_id": task["id"],
+            "event_type": "tool_result",
+            "tool_name": "read_metadata",
+            "input_json": {"path": "README.md"},
+            "output_json": {"content": "safe-looking but not authorized"},
+            "status": "SUCCESS",
+            "risk_level": "low",
+        },
+    )
+
+    assert rejected.status_code == 409, rejected.text
+    assert "cannot report legacy tool_result" in rejected.text
+    assert db_session.execute(select(ToolCall)).scalars().all() == []
+    assert (
+        db_session.execute(
+            select(LocalAgentBridgeEventReceipt).where(
+                LocalAgentBridgeEventReceipt.event_id == "codex-legacy-tool-result"
+            )
+        ).scalar_one_or_none()
+        is None
+    )
+
+
+def test_local_agent_v4_codex_host_tool_protocol_is_hard_denied(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True, "adapters": ["codex"]}},
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "codex",
+            "protocol_version": "local-agent-v1",
+            "capabilities": {"supports_streaming": True},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+    _sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="codex-host-tool-denied",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "codex-tool-req",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf denied"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "full-auto",
+        },
+    )
+    assert tool_request.status_code == 409, tool_request.text
+    assert "cannot use local host tool protocol" in tool_request.text
+
+    result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/codex-tool-req/result",
+        headers=bridge_headers,
+        json={"event_id": "codex-tool-result", "status": "SUCCESS"},
+    )
+    assert result.status_code == 409, result.text
+    command_event = client.post(
+        "/api/agents/local-agent/bridge/commands/codex-cmd/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "codex-cmd-start",
+            "tool_request_id": "codex-tool-req",
+            "event_type": "started",
+            "tool_name": "run_shell",
+            "command": "printf denied",
+        },
+    )
+    assert command_event.status_code == 409, command_event.text
+    command_status = client.get(
+        "/api/agents/local-agent/bridge/commands/codex-cmd",
+        headers=bridge_headers,
+    )
+    assert command_status.status_code == 409, command_status.text
+    cancel_ack = client.post(
+        "/api/agents/local-agent/bridge/commands/codex-cmd/cancel-ack",
+        headers=bridge_headers,
+        json={"status": "cancelled", "error_message": "cancelled"},
+    )
+    assert cancel_ack.status_code == 409, cancel_ack.text
+    cancel = client.post(
+        f"/api/agents/local-agent/bindings/{task['binding_id']}/commands/codex-cmd/cancel",
+        headers=AUTH_HEADERS,
+    )
+    assert cancel.status_code == 409, cancel.text
+    retry = client.post(
+        f"/api/agents/local-agent/bindings/{task['binding_id']}/commands/codex-cmd/retry",
+        headers=AUTH_HEADERS,
+    )
+    assert retry.status_code == 409, retry.text
+
+    assert db_session.execute(select(LocalAgentToolRequest)).scalars().all() == []
+    assert db_session.execute(select(ToolCall)).scalars().all() == []
+    assert db_session.execute(select(ToolApproval)).scalars().all() == []
+    assert db_session.execute(select(LocalAgentCommand)).scalars().all() == []
+    assert db_session.execute(select(LocalAgentPendingChange)).scalars().all() == []
+    assert db_session.execute(select(LocalAgentBridgeEventReceipt)).scalars().all() == []
 
 
 def test_local_agent_pairing_registration_replay_cannot_create_second_connection(
