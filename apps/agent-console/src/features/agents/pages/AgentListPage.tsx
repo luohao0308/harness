@@ -837,12 +837,12 @@ const LOCAL_AGENT_ADAPTERS = [
   {
     kind: "claude_code",
     label: "Claude Code",
-    enabled: false,
-    badgeZh: "后续接入",
-    badgeEn: "Future",
+    enabled: true,
+    badgeZh: "v5 启用",
+    badgeEn: "v5 enabled",
     icon: Brain,
-    zh: "后续切片接入；v4 不发放可执行适配器。",
-    en: "Future adapter slice; v4 does not issue executable support.",
+    zh: "v5 受限 headless 适配器，支持 assistant 回复；host tools 禁用，使用 context replay。",
+    en: "The v5 constrained headless adapter for assistant replies; host tools are disabled and context replay is used.",
   },
 ] as const;
 

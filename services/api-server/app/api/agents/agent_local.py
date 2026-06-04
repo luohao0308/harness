@@ -12,9 +12,9 @@ from .common import *
 from ._workspace_chat_helpers import _create_workspace_chat_run
 
 LOCAL_AGENT_PROTOCOL_VERSION = "local-agent-v1"
-LOCAL_AGENT_SUPPORTED_ADAPTERS = {"fake", "hao", "codex"}
-LOCAL_AGENT_DISABLED_ADAPTERS = {"claude_code"}
-LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS = ["fake", "hao", "codex"]
+LOCAL_AGENT_SUPPORTED_ADAPTERS = {"fake", "hao", "codex", "claude_code"}
+LOCAL_AGENT_DISABLED_ADAPTERS: set[str] = set()
+LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS = ["fake", "hao", "codex", "claude_code"]
 LOCAL_AGENT_COMMAND = (
     "hao bridge pair "
     "--api {api_url} --pair-token {pair_token} --pair-code {pair_code} --daemon"
@@ -66,7 +66,9 @@ LOCAL_AGENT_CAPABILITY_TOOL_ALIASES = {
     "network": "network_request",
 }
 LOCAL_AGENT_SAFE_TOOLS = {"fake.noop", "local_status", "read_metadata"}
+LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS = {"codex", "claude_code"}
 LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES = {"workspace_read_constrained"}
+LOCAL_AGENT_CLAUDE_CODE_ALLOWED_RISK_CAPABILITIES: set[str] = set()
 LOCAL_AGENT_NETWORK_PATTERNS = re.compile(
     r"\b(curl|wget|ssh|scp|git\s+remote|npm\s+install|pip\s+install|pnpm\s+install|yarn\s+add)\b",
     re.IGNORECASE,
@@ -224,10 +226,10 @@ def _bridge_connection(
 
 
 def _ensure_host_tool_protocol_allowed(connection: LocalAgentConnection) -> None:
-    if connection.adapter_kind == "codex":
+    if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Codex adapter cannot use local host tool protocol in v4",
+            detail=f"{connection.adapter_kind} adapter cannot use local host tool protocol",
         )
 
 
@@ -774,7 +776,7 @@ def send_local_agent_message(
             agent_session_id=agent_session.id,
             session=session,
         )
-        if connection.adapter_kind == "codex"
+        if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS
         else []
     )
     user_message = AgentMessage(
@@ -3079,6 +3081,8 @@ def _apply_bridge_event(
             actor_id=connection.id,
         )
     elif request.event_type == "assistant_done":
+        if connection.adapter_kind == "claude_code":
+            _ensure_claude_code_assistant_done_safety_proof(request)
         if _has_unresolved_local_tool_state(bridge_task=bridge_task, session=session):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -3120,6 +3124,7 @@ def _apply_bridge_event(
                 "assistant_message_id": assistant.id,
                 "adapter_kind": connection.adapter_kind,
                 "sequence": request.sequence,
+                "metadata": _safe_metadata(request.metadata),
             },
             actor_type="local_agent",
             actor_id=connection.id,
@@ -3152,10 +3157,10 @@ def _apply_bridge_event(
             actor_id=connection.id,
         )
     elif request.event_type == "tool_result":
-        if connection.adapter_kind == "codex":
+        if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Codex adapter cannot report legacy tool_result events in v4",
+                detail=f"{connection.adapter_kind} adapter cannot report legacy tool_result events",
             )
         if _legacy_tool_result_requires_authorization(request):
             raise HTTPException(
@@ -3228,6 +3233,25 @@ def _legacy_tool_result_requires_authorization(request: LocalAgentBridgeEventReq
     )
 
 
+def _ensure_claude_code_assistant_done_safety_proof(
+    request: LocalAgentBridgeEventRequest,
+) -> None:
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    system_init_safe = metadata.get("system_init_safe")
+    if system_init_safe is not True:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claude Code assistant_done requires empty-tool system/init safety proof",
+        )
+    for key in ("tools_count", "mcp_servers_count"):
+        value = metadata.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value != 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Claude Code assistant_done requires empty-tool system/init safety proof",
+            )
+
+
 def _default_local_agent_name(adapter_kind: str) -> str:
     return {
         "fake": "Fake Local Agent",
@@ -3267,7 +3291,7 @@ def _normalized_resume_mode(
     connection: LocalAgentConnection,
     requested_resume_mode: str,
 ) -> str:
-    if connection.adapter_kind == "codex":
+    if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
         return "context_replay_new_session"
     return requested_resume_mode
 
@@ -3286,6 +3310,19 @@ def _normalized_capabilities(adapter_kind: str, reported: dict | None) -> dict:
             "host_tools_authorized": False,
             "resume_mode": "context_replay_new_session",
         }
+    if adapter_kind == "claude_code":
+        return {
+            **capabilities,
+            "adapter_kind": "claude_code",
+            "supports_streaming": bool(capabilities.get("supports_streaming", True)),
+            "supports_resume": False,
+            "supports_cancel": False,
+            "enabled_in_v1": True,
+            "enabled_in_v5": True,
+            "host_tools_authorized": False,
+            "resume_mode": "context_replay_new_session",
+            "execution_mode": "headless_bare_no_session_no_tools",
+        }
     capabilities.setdefault("adapter_kind", adapter_kind)
     capabilities.setdefault("supports_streaming", True)
     capabilities.setdefault("supports_resume", adapter_kind == "hao")
@@ -3300,6 +3337,12 @@ def _normalized_risk_capabilities(adapter_kind: str, reported: list[str]) -> lis
             str(capability)
             for capability in reported
             if str(capability) in LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES
+        ]
+    if adapter_kind == "claude_code":
+        return [
+            str(capability)
+            for capability in reported
+            if str(capability) in LOCAL_AGENT_CLAUDE_CODE_ALLOWED_RISK_CAPABILITIES
         ]
     return list(reported)
 

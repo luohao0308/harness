@@ -343,68 +343,85 @@ def test_local_agent_pairing_registers_with_hashed_single_use_token(
     }
 
 
-def test_local_agent_v4_supports_codex_but_rejects_claude_code(
+def test_local_agent_v5_supports_restricted_assistant_adapters(
     db_session: Session,
 ) -> None:
     client = TestClient(app)
     _ensure_agent(db_session)
-    created = client.post(
-        "/api/agents/local-agent/pairing-tokens",
-        headers=AUTH_HEADERS,
-        json={"agent_id": "default"},
-    ).json()
 
-    codex = client.post(
-        "/api/agents/local-agent/connections/register",
-        json={
-            "pair_token": created["pair_token"],
-            "pair_code": created["pair_code"],
-            "adapter_kind": "codex",
+    expected = {
+        "codex": {
             "display_name": "Codex CLI",
-            "protocol_version": "local-agent-v1",
-            "workspace_root": "/Users/luohao/private-demo",
-            "capabilities": {
-                "supports_streaming": True,
-                "supports_resume": True,
-                "supports_cancel": True,
-                "host_tools_authorized": True,
-                "deterministic_session_id": False,
+            "workspace_identity_hash": "hash-codex",
+            "enabled_flag": "enabled_in_v4",
+            "risk_capabilities": ["workspace_read_constrained", "host_write", "shell"],
+            "normalized_risk_capabilities": ["workspace_read_constrained"],
+        },
+        "claude_code": {
+            "display_name": "Claude Code",
+            "workspace_identity_hash": "hash-claude",
+            "enabled_flag": "enabled_in_v5",
+            "risk_capabilities": [
+                "workspace_read_constrained",
+                "host_write",
+                "shell",
+                "git",
+                "network",
+                "secret_read",
+                "mcp",
+                "plugin",
+                "hook",
+                "subagent",
+            ],
+            "normalized_risk_capabilities": [],
+        },
+    }
+
+    for adapter_kind, config in expected.items():
+        created = client.post(
+            "/api/agents/local-agent/pairing-tokens",
+            headers=AUTH_HEADERS,
+            json={"agent_id": "default"},
+        ).json()
+        registered = client.post(
+            "/api/agents/local-agent/connections/register",
+            json={
+                "pair_token": created["pair_token"],
+                "pair_code": created["pair_code"],
+                "adapter_kind": adapter_kind,
+                "display_name": config["display_name"],
+                "protocol_version": "local-agent-v1",
+                "workspace_root": "/Users/luohao/private-demo",
+                "capabilities": {
+                    "supports_streaming": True,
+                    "supports_resume": True,
+                    "supports_cancel": True,
+                    "host_tools_authorized": True,
+                    "deterministic_session_id": False,
+                },
+                "risk_capabilities": config["risk_capabilities"],
+                "metadata": {"workspace_identity_hash": config["workspace_identity_hash"]},
             },
-            "risk_capabilities": ["host_write", "shell", "git", "network", "secret_read"],
-            "metadata": {"workspace_identity_hash": "hash-1"},
-        },
-    )
+        )
 
-    assert codex.status_code == 201, codex.text
-    connection = codex.json()["connection"]
-    assert connection["adapter_kind"] == "codex"
-    assert connection["capabilities_json"]["enabled_in_v4"] is True
-    assert connection["capabilities_json"]["supports_resume"] is False
-    assert connection["capabilities_json"]["supports_cancel"] is False
-    assert connection["capabilities_json"]["host_tools_authorized"] is False
-    assert connection["capabilities_json"]["resume_mode"] == "context_replay_new_session"
-    assert connection["risk_capabilities_json"] == []
-    assert connection["workspace_root"] == ".../private-demo"
-    row = db_session.get(LocalAgentConnection, connection["id"])
-    assert row is not None
-    assert row.metadata_json["workspace_identity_hash"] == "hash-1"
-
-    created_claude = client.post(
-        "/api/agents/local-agent/pairing-tokens",
-        headers=AUTH_HEADERS,
-        json={"agent_id": "default"},
-    ).json()
-    claude = client.post(
-        "/api/agents/local-agent/connections/register",
-        json={
-            "pair_token": created_claude["pair_token"],
-            "pair_code": created_claude["pair_code"],
-            "adapter_kind": "claude_code",
-            "protocol_version": "local-agent-v1",
-        },
-    )
-    assert claude.status_code == 400
-    assert "not enabled" in claude.text
+        assert registered.status_code == 201, registered.text
+        connection = registered.json()["connection"]
+        assert connection["adapter_kind"] == adapter_kind
+        assert connection["capabilities_json"][config["enabled_flag"]] is True
+        assert connection["capabilities_json"]["supports_resume"] is False
+        assert connection["capabilities_json"]["supports_cancel"] is False
+        assert connection["capabilities_json"]["host_tools_authorized"] is False
+        assert connection["capabilities_json"]["resume_mode"] == "context_replay_new_session"
+        if adapter_kind == "claude_code":
+            assert (
+                connection["capabilities_json"]["execution_mode"]
+                == "headless_bare_no_session_no_tools"
+            )
+        assert connection["risk_capabilities_json"] == config["normalized_risk_capabilities"]
+        assert connection["workspace_root"] == ".../private-demo"
+        row = db_session.get(LocalAgentConnection, connection["id"])
+        assert row is not None
+        assert row.metadata_json["workspace_identity_hash"] == config["workspace_identity_hash"]
 
 
 def test_local_agent_v4_adapter_scope_rejects_codex_before_consuming_token(
@@ -441,6 +458,48 @@ def test_local_agent_v4_adapter_scope_rejects_codex_before_consuming_token(
             "pair_token": created["pair_token"],
             "pair_code": created["pair_code"],
             "adapter_kind": "hao",
+            "protocol_version": "local-agent-v1",
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    db_session.refresh(token)
+    assert token.status == "consumed"
+
+
+def test_local_agent_v5_adapter_scope_rejects_claude_code_before_consuming_token(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created_response = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "scope": {"executable": True, "adapters": ["codex"]}},
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+
+    rejected = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": created["pair_token"],
+            "pair_code": created["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+        },
+    )
+    assert rejected.status_code == 403, rejected.text
+    token = db_session.get(LocalAgentPairingToken, created["id"])
+    assert token is not None
+    assert token.status == "active"
+    assert token.consumed_at is None
+
+    accepted = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": created["pair_token"],
+            "pair_code": created["pair_code"],
+            "adapter_kind": "codex",
             "protocol_version": "local-agent-v1",
         },
     )
@@ -504,6 +563,128 @@ def test_local_agent_v4_pairing_command_is_adapter_scoped(
     )
     assert codex_pairing.status_code == 201, codex_pairing.text
     assert "--adapter codex" in codex_pairing.json()["command"]
+
+    claude_pairing = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {"executable": True, "adapters": ["claude_code"]},
+        },
+    )
+    assert claude_pairing.status_code == 201, claude_pairing.text
+    assert "--adapter claude_code" in claude_pairing.json()["command"]
+
+
+def test_local_agent_v5_claude_done_requires_server_side_safety_proof(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {"executable": True, "adapters": ["claude_code"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+            "capabilities": {"supports_streaming": True, "supports_resume": True},
+            "metadata": {"workspace_identity_hash": "hash-claude"},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-safety-proof-test",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+
+    missing_proof = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-done-missing-proof",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "unsafe success",
+            "metadata": {"adapter_kind": "claude_code"},
+        },
+    )
+    assert missing_proof.status_code == 409, missing_proof.text
+    assert "system/init safety proof" in missing_proof.text
+    assert (
+        db_session.execute(
+            select(LocalAgentBridgeEventReceipt).where(
+                LocalAgentBridgeEventReceipt.event_id == "claude-done-missing-proof"
+            )
+        ).scalar_one_or_none()
+        is None
+    )
+    messages = db_session.execute(
+        select(AgentMessage).where(AgentMessage.session_id == sent["agent_session_id"])
+    ).scalars()
+    assert [message.role for message in messages] == ["user"]
+
+    unsafe_tools_count = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-done-tools-present",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "unsafe success",
+            "metadata": {
+                "adapter_kind": "claude_code",
+                "system_init_safe": True,
+                "tools_count": 1,
+                "mcp_servers_count": 0,
+            },
+        },
+    )
+    assert unsafe_tools_count.status_code == 409, unsafe_tools_count.text
+
+    accepted = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-done-safe-proof",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "safe success",
+            "metadata": {
+                "adapter_kind": "claude_code",
+                "system_init_safe": True,
+                "tools_count": 0,
+                "mcp_servers_count": 0,
+            },
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    db_session.expire_all()
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    assert bridge_task is not None
+    assert bridge_task.status == "completed"
+    messages = list(
+        db_session.execute(
+            select(AgentMessage).where(AgentMessage.session_id == sent["agent_session_id"])
+        ).scalars()
+    )
+    assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[-1].content == "safe success"
 
 
 def test_local_agent_v4_codex_resume_is_always_context_replay(

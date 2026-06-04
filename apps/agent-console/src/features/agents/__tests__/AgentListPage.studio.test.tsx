@@ -237,7 +237,7 @@ describe("AgentListPage Studio controls", () => {
           pair_token: "plain-pair-token",
           command: [
             "hao bridge pair --api http://127.0.0.1:8000 --pair-token plain-pair-token --pair-code ABC123",
-            adapterKind === "codex" ? "--adapter codex" : "",
+            adapterKind !== "hao" ? `--adapter ${adapterKind}` : "",
           ].filter(Boolean).join(" "),
           status: "active",
           expires_at: "2026-06-03T00:10:00Z",
@@ -274,6 +274,15 @@ describe("AgentListPage Studio controls", () => {
       scope: { executable: true, adapters: ["codex"] },
     });
     expect(await within(dialog).findByText(/--adapter codex/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /本地 Agent 类型|Local Agent adapter/ }));
+    await user.click(await screen.findByRole("option", { name: /Claude Code/ }));
+    await user.click(within(dialog).getByRole("button", { name: /生成连接命令|Generate command/ }));
+    await waitFor(() => expect(pairingBodies).toHaveLength(3));
+    expect(pairingBodies[2]).toMatchObject({
+      agent_id: "default",
+      scope: { executable: true, adapters: ["claude_code"] },
+    });
+    expect(await within(dialog).findByText(/--adapter claude_code/)).toBeInTheDocument();
     expect(within(dialog).getByText("Fake Local Agent")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /接入 fake bridge|Connect fake bridge/ })).not.toBeInTheDocument();
     await user.click(within(dialog).getAllByRole("button", { name: /撤销|Revoke/ })[0]);

@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-04T16:47:55Z
+last_updated_at: 2026-06-04T18:35:51Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -119,24 +119,41 @@ stages:
 post_stage_hardening:
   - id: local-agent-claude-code-adapter-v5
     date: 2026-06-05
-    status: plan_reviewed
-    demo: Local Agent Claude Code Adapter V5 is planned as a constrained assistant-response local-agent adapter using headless bare Claude Code, no built-in tools, no session persistence, isolated config state, forced context replay, and existing Harness Run/Event/Message authority.
+    status: completed
+    demo: Local Agent Claude Code Adapter V5 adds Claude Code as a constrained assistant-response local-agent adapter using headless bare Claude Code, no built-in tools, no session persistence, isolated config state, forced context replay, and existing Harness Run/Event/Message authority.
     verification_result: passed
     verification_commands:
-      - architecture/protocol reviewer final verdict PASS
-      - security/test reviewer final verdict PASS
+      - architecture/protocol planning reviewer final verdict PASS
+      - security/test planning reviewer final verdict PASS
+      - implementation code/security reviewer final verdict APPROVE
+      - implementation architecture reviewer final verdict WATCH with no blockers; server-side Claude Code assistant_done safety proof guard was added and revalidated
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -k "bridge or claude or codex or adapter or pending_state_file"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-unavailable
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-readonly-reply
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-resume-mode
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-side-effect-rejected
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
       - python3 scripts/validate-docs.py
       - git diff --check
     acceptance_notes:
       - V5 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-claude-code-adapter-v5.md` and `.omx/plans/test-spec-local-agent-claude-code-adapter-v5.md`.
-      - V5 will enable `adapter_kind=claude_code` only as an assistant-response local-agent adapter; implementation is not complete yet.
-      - Claude Code V5 must use the existing local-agent pairing, bridge task, event projection, binding, Workspace ChatSurface, pending/offline, and API/DB truth paths.
-      - Required command shape is `claude --bare -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --permission-mode default --tools ""`.
-      - V5 forbids host tools, native resume, MCP/plugin/hook/subagent/browser/remote-control surfaces, `--settings`, `--setting-sources`, `apiKeyHelper`, permission bypass modes, raw prompt argv, raw workspace root argv, and secret-bearing argv.
-      - Subprocess execution must use stdin or private mode `0600` input, private temp cwd, temp `HOME`, temp `CLAUDE_CONFIG_DIR`, and no paired workspace file exposure.
-      - Server-normalized capabilities must force `supports_resume=false`, `supports_cancel=false`, `host_tools_authorized=false`, and `resume_mode=context_replay_new_session`.
-      - Assistant success projection requires `system/init` or equivalent proof of empty tools/MCP/plugins/hooks/custom-agent surfaces.
-      - Deterministic V5 smoke will use mocked Claude subprocess fixtures; live Claude credential smoke remains optional manual evidence.
+      - `adapter_kind=claude_code` is now supported as a restricted assistant-response local-agent adapter while fake, hao, and Codex behavior remains in place.
+      - Agent Studio marks Claude Code as `v5 enabled` and generates adapter-scoped pairing commands with `--adapter claude_code`.
+      - Backend validates explicit `scope.adapters` before token consumption, so rejected Claude/Codex scope attempts remain replay-safe.
+      - Server-normalized Claude Code capabilities force `supports_resume=false`, `supports_cancel=false`, `host_tools_authorized=false`, `resume_mode=context_replay_new_session`, and `execution_mode=headless_bare_no_session_no_tools`; risk capabilities normalize to empty.
+      - `hao bridge pair/run --adapter claude_code` probes Claude Code before registration, stores raw device token/workspace root only in `0600` sidecars, and keeps `bridge.json` to safe refs/hashes.
+      - Required command shape is `claude --bare -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --permission-mode default --tools ""`; prompt text is passed through stdin, never argv.
+      - Claude Code subprocesses use private temp cwd, temp `HOME`, temp `CLAUDE_CONFIG_DIR`, skip prompt history, disable auto memory and built-in agents, and exclude provider/Harness/bridge/proxy secrets by default.
+      - CLI parsing requires `system/init` safety proof with empty tools/MCP/plugins/hooks/custom-agent surfaces before assistant success.
+      - API event ingestion now also requires Claude Code `assistant_done` metadata to include `system_init_safe=true`, `tools_count=0`, and `mcp_servers_count=0`, closing the implementation architecture WATCH.
+      - Claude Code legacy `tool_result` and host tool protocol paths are rejected before `ToolCall` success or receipt creation.
+      - Deterministic V5 smoke covers Claude unavailable, read-only reply, forced context replay, and side-effect rejection without live Claude credentials.
+      - Final validation passed local-agent backend regression (`36 passed`), CLI targeted regression (`32 passed, 130 deselected`), tool safety regression (`17 passed`), V5 smoke scenarios, frontend targeted tests (`22 passed`), frontend typecheck, docs validation, and diff check.
 
   - id: local-agent-codex-adapter-v4
     date: 2026-06-04

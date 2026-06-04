@@ -427,6 +427,142 @@ def test_hao_bridge_v4_codex_state_uses_workspace_sidecar_and_safe_daemon_argv(
     assert popen_kwargs[0]["cwd"] != str(tmp_path)
 
 
+def _claude_probe(hao_main_module, *, executable: str = "/opt/claude/bin/claude"):
+    help_text = (
+        "--bare -p --print --output-format stream-json --include-partial-messages "
+        "--no-session-persistence --permission-mode --tools"
+    )
+    return hao_main_module.ClaudeCodeCliProbe(
+        installed=True,
+        executable=executable,
+        version="claude 1.0",
+        help_text=help_text,
+        print_help=help_text,
+    )
+
+
+def test_hao_bridge_v5_claude_pair_fails_before_register_when_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {}
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_code_cli",
+        lambda: hao_main_module.ClaudeCodeCliProbe(
+            installed=False,
+            error_message="claude executable not found",
+        ),
+    )
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "claude_code",
+            "--cwd",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 1
+    assert [name for name, _payload in calls] == []
+    assert not (tmp_path / "bridge.json").exists()
+
+
+def test_hao_bridge_v5_claude_state_uses_workspace_sidecar_and_safe_daemon_argv(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+    popen_commands: list[list[str]] = []
+    popen_kwargs: list[dict] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {
+                "connection": {"id": "claude-connection-1"},
+                "device_token": "claude-device-token",
+            }
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            popen_commands.append(command)
+            popen_kwargs.append(kwargs)
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_code_cli",
+        lambda: _claude_probe(hao_main_module),
+    )
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "claude_code",
+            "--cwd",
+            str(tmp_path),
+            "--daemon",
+        ]
+    )
+
+    assert exit_code == 0
+    bridge_json = (tmp_path / "bridge.json").read_text(encoding="utf-8")
+    assert "claude-device-token" not in bridge_json
+    assert str(tmp_path) not in bridge_json
+    assert '"cwd"' not in bridge_json
+    assert "workspace_identity_hash" in bridge_json
+    assert "workspace_root_ref" in bridge_json
+    workspace_sidecar = tmp_path / "bridge.workspace-root"
+    assert workspace_sidecar.read_text(encoding="utf-8") == str(tmp_path.resolve())
+    assert workspace_sidecar.stat().st_mode & 0o777 == 0o600
+    register = next(payload for name, payload in calls if name == "register")
+    assert register["adapter_kind"] == "claude_code"
+    assert register["metadata"]["workspace_identity_hash"]
+    assert register["risk_capabilities"] == []
+    assert register["capabilities"]["execution_mode"] == "headless_bare_no_session_no_tools"
+    command = popen_commands[0]
+    assert "--cwd" not in command
+    assert str(tmp_path) not in command
+    assert "claude-device-token" not in command
+    assert popen_kwargs[0]["cwd"] != str(tmp_path)
+
+
 def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
     tmp_path: Path,
     monkeypatch,
@@ -512,6 +648,125 @@ def test_hao_bridge_v4_codex_probe_uses_sanitized_env(monkeypatch) -> None:
         assert "HTTP_PROXY" not in env
         assert "HOME" not in env
         assert "CODEX_HOME" not in env
+
+
+def test_hao_bridge_v5_claude_command_builder_and_env_are_safe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    probe = _claude_probe(hao_main_module)
+
+    command = hao_main_module._claude_code_command(probe=probe)
+
+    assert command == [
+        "/opt/claude/bin/claude",
+        "--bare",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--no-session-persistence",
+        "--permission-mode",
+        "default",
+        "--tools",
+        "",
+    ]
+    forbidden = {
+        "--dangerously-skip-permissions",
+        "--permission-mode bypassPermissions",
+        "bypassPermissions",
+        "acceptEdits",
+        "auto",
+        "dontAsk",
+        "--continue",
+        "-c",
+        "--resume",
+        "-r",
+        "--session-id",
+        "--add-dir",
+        "--remote",
+        "--remote-control",
+        "--mcp-config",
+        "--plugin-dir",
+        "--plugin-url",
+        "--agents",
+        "--allowedTools",
+        "--settings",
+        "--setting-sources",
+        "--include-hook-events",
+    }
+    assert not forbidden.intersection(command)
+    assert "secret prompt" not in command
+
+    monkeypatch.setenv("HARNESS_SECRET", "harness-secret")
+    monkeypatch.setenv("HAO_API_TOKEN", "hao-token")
+    monkeypatch.setenv("LOCAL_AGENT_DEVICE_TOKEN", "device-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-1234567890abcdef")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example")
+    env = hao_main_module._claude_code_subprocess_env(
+        executable="/opt/claude/bin/claude",
+        temp_dir=tmp_path,
+    )
+
+    assert env["TMPDIR"] == str(tmp_path)
+    assert Path(env["HOME"]).parent == tmp_path
+    assert Path(env["CLAUDE_CONFIG_DIR"]).parent == tmp_path
+    assert env["CLAUDE_CODE_SKIP_PROMPT_HISTORY"] == "1"
+    assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+    assert env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] == "1"
+    assert "HARNESS_SECRET" not in env
+    assert "HAO_API_TOKEN" not in env
+    assert "LOCAL_AGENT_DEVICE_TOKEN" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert "HTTPS_PROXY" not in env
+
+    monkeypatch.setenv("HAO_CLAUDE_CODE_ALLOW_ANTHROPIC_API_KEY", "1")
+    env_with_key = hao_main_module._claude_code_subprocess_env(
+        executable="/opt/claude/bin/claude",
+        temp_dir=tmp_path / "allowed",
+    )
+    assert env_with_key["ANTHROPIC_API_KEY"] == "sk-ant-secret"
+
+
+def test_hao_bridge_v5_claude_probe_uses_sanitized_env(monkeypatch) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    captured_envs: list[dict] = []
+    help_text = (
+        "--bare -p --print --output-format stream-json --include-partial-messages "
+        "--no-session-persistence --permission-mode --tools"
+    )
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        captured_envs.append(dict(kwargs.get("env") or {}))
+        stdout = "claude 1.0" if command[-1] == "--version" else help_text
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(hao_main_module.shutil, "which", lambda name: "/opt/claude/bin/claude")
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+    monkeypatch.setenv("HARNESS_SECRET", "harness-secret")
+    monkeypatch.setenv("HAO_API_TOKEN", "hao-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example")
+    monkeypatch.setenv("HOME", "/Users/luohao")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/Users/luohao/.claude")
+
+    probe = hao_main_module._probe_claude_code_cli()
+
+    assert probe.installed is True
+    assert len(captured_envs) == 3
+    for env in captured_envs:
+        assert "HARNESS_SECRET" not in env
+        assert "HAO_API_TOKEN" not in env
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "HTTP_PROXY" not in env
+        assert "HOME" not in env
+        assert "CLAUDE_CONFIG_DIR" not in env
 
 
 def test_hao_bridge_v4_run_codex_cli_success_uses_stdin_and_readonly_sandbox(
@@ -683,6 +938,159 @@ def test_hao_bridge_v4_run_codex_cli_reports_timeout_nonzero_and_empty_output(
     )
     assert empty.status == "error"
     assert "empty assistant output" in empty.error_message
+
+
+def test_hao_bridge_v5_run_claude_cli_success_uses_stdin_private_cwd_and_no_tools(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    probe = _claude_probe(hao_main_module)
+    captured: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        stdout = (
+            '{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}\n'
+            '{"type":"assistant","message":{"role":"assistant","content":[{"text":"hello "}]}}\n'
+            '{"type":"result","result":"world","session_id":"claude-session-secret"}\n'
+        )
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setenv("HOME", "/Users/luohao")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    monkeypatch.setattr(hao_main_module, "_probe_claude_code_cli", lambda: probe)
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+
+    result = hao_main_module._run_claude_code_cli(
+        config=config,
+        state=state,
+        payload={
+            "message": "hello from workspace token=sk-ant-secret",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+            "conversation_context": [
+                {"role": "user", "content": "prior /Users/luohao/private/file.txt"},
+                {"role": "assistant", "content": "answer sk-ant-abcdef123456"},
+            ],
+        },
+    )
+
+    assert result.status == "completed"
+    assert result.content == "hello world"
+    assert result.session_id == "claude-session-secret"
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[:2] == ["/opt/claude/bin/claude", "--bare"]
+    assert "--tools" in command
+    assert command[command.index("--tools") + 1] == ""
+    assert "--no-session-persistence" in command
+    assert "hello from workspace" not in command
+    assert str(workspace) not in command
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert "hello from workspace token=[REDACTED]" in str(kwargs["input"])
+    assert ".../private/file.txt" in str(kwargs["input"])
+    assert "/Users/luohao" not in str(kwargs["input"])
+    assert Path(str(kwargs["cwd"])).parent != workspace
+    assert str(kwargs["cwd"]) != str(workspace)
+    env = kwargs["env"]
+    assert isinstance(env, dict)
+    assert "ANTHROPIC_API_KEY" not in env
+    assert env["HOME"] != "/Users/luohao"
+    assert Path(env["CLAUDE_CONFIG_DIR"]).parent == Path(env["TMPDIR"])
+
+
+def test_hao_bridge_v5_run_claude_cli_rejects_workspace_and_process_failures(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    probe = _claude_probe(hao_main_module)
+    monkeypatch.setattr(hao_main_module, "_probe_claude_code_cli", lambda: probe)
+
+    spawned: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        spawned.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hao_main_module.subprocess, "run", fake_run)
+    sidecar_mismatch = hao_main_module._run_claude_code_cli(
+        config=config,
+        state={**state, "workspace_identity_hash": "wrong-local-sidecar"},
+        payload={"message": "hello"},
+    )
+    assert sidecar_mismatch.status == "error"
+    assert "workspace root sidecar" in sidecar_mismatch.error_message
+    assert spawned == []
+
+    server_mismatch = hao_main_module._run_claude_code_cli(
+        config=config,
+        state=state,
+        payload={"message": "hello", "workspace_identity_hash": "wrong-server-hash"},
+    )
+    assert server_mismatch.status == "error"
+    assert "server task" in server_mismatch.error_message
+    assert spawned == []
+
+    def timeout_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        raise subprocess.TimeoutExpired(command, 1)
+
+    monkeypatch.setattr(hao_main_module.subprocess, "run", timeout_run)
+    timed_out = hao_main_module._run_claude_code_cli(
+        config=config,
+        state=state,
+        payload={"message": "timeout", "workspace_identity_hash": state["workspace_identity_hash"]},
+    )
+    assert timed_out.status == "error"
+    assert "timed out" in timed_out.error_message
+
+    def nonzero_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        del kwargs
+        return subprocess.CompletedProcess(
+            command,
+            2,
+            stdout="",
+            stderr="failed token=sk-ant-secret /Users/luohao/private/file.txt",
+        )
+
+    monkeypatch.setattr(hao_main_module.subprocess, "run", nonzero_run)
+    nonzero = hao_main_module._run_claude_code_cli(
+        config=config,
+        state=state,
+        payload={"message": "nonzero", "workspace_identity_hash": state["workspace_identity_hash"]},
+    )
+    assert nonzero.status == "error"
+    assert "sk-ant" not in nonzero.error_message
+    assert "/Users/luohao" not in nonzero.error_message
+    assert nonzero.metadata == {"exit_code": 2}
 
 
 def test_hao_bridge_v4_run_codex_cli_rejects_server_workspace_mismatch(
@@ -938,6 +1346,68 @@ def test_hao_bridge_v4_codex_terminal_event_ids_are_stable(monkeypatch) -> None:
     ]
 
 
+def test_hao_bridge_v5_claude_terminal_event_ids_are_stable(monkeypatch) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    captured_payloads: list[dict] = []
+
+    class FakeClient:
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            captured_payloads.append(payload)
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        hao_main_module,
+        "_run_claude_code_cli",
+        lambda **kwargs: hao_main_module.ClaudeCodeRunResult(
+            status="completed",
+            content="done",
+            session_id="session-1",
+            metadata={"exit_code": 0, "api_key": "sk-ant-secret"},
+        ),
+    )
+
+    hao_main_module._handle_claude_code_bridge_task(
+        config=object(),
+        state={"workspace_identity_hash": "hash-1"},
+        client=FakeClient(),
+        device_token="device-token",
+        task={"id": "task-1", "payload": {"message": "hello"}},
+    )
+
+    assert [payload["event_id"] for payload in captured_payloads] == [
+        "task-1:claude_code:started",
+        "task-1:claude_code:delta:1",
+        "task-1:claude_code:done",
+    ]
+    assert captured_payloads[-1]["metadata"]["api_key"] == "[REDACTED]"
+
+    captured_payloads.clear()
+    monkeypatch.setattr(
+        hao_main_module,
+        "_run_claude_code_cli",
+        lambda **kwargs: hao_main_module.ClaudeCodeRunResult(
+            status="error",
+            error_message="claude unavailable",
+            metadata={"stderr": "/Users/luohao/private token=sk-ant-secret"},
+        ),
+    )
+
+    hao_main_module._handle_claude_code_bridge_task(
+        config=object(),
+        state={"workspace_identity_hash": "hash-1"},
+        client=FakeClient(),
+        device_token="device-token",
+        task={"id": "task-2", "payload": {"message": "hello"}},
+    )
+
+    assert [payload["event_id"] for payload in captured_payloads] == [
+        "task-2:claude_code:started",
+        "task-2:claude_code:error",
+    ]
+    assert "sk-ant" not in captured_payloads[-1]["metadata"]["stderr"]
+    assert "/Users/luohao" not in captured_payloads[-1]["metadata"]["stderr"]
+
+
 def test_hao_bridge_v4_codex_jsonl_parser_uses_fallback_and_redaction() -> None:
     hao_main_module = importlib.import_module("app.cli.hao.main")
     result = hao_main_module._parse_codex_output(
@@ -964,6 +1434,62 @@ def test_hao_bridge_v4_codex_jsonl_parser_ignores_non_assistant_output() -> None
     assert result.status == "completed"
     assert result.content == "assistant text"
     assert result.metadata == {"delta_count": 1, "used_fallback": False}
+
+
+def test_hao_bridge_v5_claude_jsonl_parser_requires_empty_tool_safety_proof() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+
+    result = hao_main_module._parse_claude_code_output(
+        '{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}\n'
+        '{"type":"assistant","message":{"role":"assistant","content":[{"text":"Hello"}]}}\n'
+        '{"type":"result","result":" world sk-ant-secret123456 /Users/luohao/private.txt",'
+        '"session_id":"session-1"}\n'
+    )
+
+    assert result.status == "completed"
+    assert result.content == "Hello world [REDACTED] .../private.txt"
+    assert result.session_id == "session-1"
+    assert result.metadata == {
+        "system_init_safe": True,
+        "tools_count": 0,
+        "mcp_servers_count": 0,
+        "delta_count": 2,
+        "used_fallback": False,
+    }
+
+    unsafe = hao_main_module._parse_claude_code_output(
+        '{"type":"system","subtype":"init","tools":["Read"],"mcp_servers":[]}\n'
+        '{"type":"assistant","content":"should not project"}\n'
+    )
+    assert unsafe.status == "error"
+    assert "unsafe system/init" in unsafe.error_message
+
+    missing = hao_main_module._parse_claude_code_output(
+        '{"type":"assistant","content":"missing safety"}\n'
+    )
+    assert missing.status == "error"
+    assert "missing empty-tool" in missing.error_message
+
+
+def test_hao_bridge_v5_claude_jsonl_parser_ignores_generic_non_assistant_records() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+
+    result = hao_main_module._parse_claude_code_output(
+        '{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}\n'
+        '{"type":"message","content":"generic message must not project"}\n'
+        '{"type":"message","message":{"role":"user","content":"user text must not project"}}\n'
+        '{"type":"assistant","message":{"role":"assistant","content":"assistant text"}}\n'
+    )
+
+    assert result.status == "completed"
+    assert result.content == "assistant text"
+    assert result.metadata == {
+        "system_init_safe": True,
+        "tools_count": 0,
+        "mcp_servers_count": 0,
+        "delta_count": 1,
+        "used_fallback": False,
+    }
 
 
 def test_hao_session_store_persists_messages_and_tool_events(tmp_path: Path) -> None:
