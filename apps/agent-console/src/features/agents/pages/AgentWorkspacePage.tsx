@@ -343,6 +343,7 @@ export function AgentWorkspacePage() {
       pendingTasks: localBindingTasksQuery.data?.items ?? [],
       connection: selectedLocalConnection,
       fallbackTitle: `${agent.data?.name ?? agentId} 本地 Agent`,
+      pendingApprovalCount,
       pendingNode,
       pendingUserNode,
     });
@@ -367,6 +368,7 @@ export function AgentWorkspacePage() {
     localAgentEnabled,
     localMessagesQuery.data,
     localPendingAssistantNodeId,
+    pendingApprovalCount,
     selectedLocalConnection,
   ]);
 
@@ -654,10 +656,11 @@ export function AgentWorkspacePage() {
       const assistantNodeId = useWorkspaceStore.getState().appendNode({
         parent_id: userNodeId,
         role: "assistant",
-        content:
-          selectedLocalConnection.status === "offline"
-            ? "本地 Agent 当前离线，消息已排队。bridge 恢复后会继续处理。"
-            : "等待本地 Agent 响应...",
+        content: localAgentPendingTaskContent(
+          "pending",
+          selectedLocalConnection,
+          pendingApprovalCount,
+        ),
         state: "streaming",
         metadata: {
           workspace_mode: "chat",
@@ -728,6 +731,7 @@ export function AgentWorkspacePage() {
       activeLocalBinding,
       localAgentEnabled,
       localSendMutation,
+      pendingApprovalCount,
       queryClient,
       selectedLocalConnection,
       setActiveRunId,
@@ -834,6 +838,8 @@ export function AgentWorkspacePage() {
               binding={activeLocalBinding}
               isBindingPending={localBindingMutation.isPending}
               isSending={localSendMutation.isPending}
+              pendingApprovalCount={pendingApprovalCount}
+              activeRunId={activeRunId}
               onEnabledChange={handleLocalAgentEnabledChange}
               onConnectionChange={(connectionId) => {
                 setSelectedLocalConnectionId(connectionId);
@@ -905,6 +911,8 @@ function LocalAgentWorkspacePanel({
   binding,
   isBindingPending,
   isSending,
+  pendingApprovalCount,
+  activeRunId,
   onEnabledChange,
   onConnectionChange,
   onOpenStudio,
@@ -915,12 +923,16 @@ function LocalAgentWorkspacePanel({
   binding: LocalAgentConversationBinding | null;
   isBindingPending: boolean;
   isSending: boolean;
+  pendingApprovalCount: number;
+  activeRunId: string | null;
   onEnabledChange: (enabled: boolean) => void;
   onConnectionChange: (connectionId: string) => void;
   onOpenStudio: () => void;
 }) {
   const selected =
     connections.find((connection) => connection.id === selectedConnectionId) ?? null;
+  const usesClaudePermissionBridge =
+    selected !== null && localAgentUsesClaudePermissionBridge(selected);
   const statusLabel = selected ? localAgentStatusLabel(selected.status) : "未接入";
   const statusClass = selected
     ? selected.status === "online" || selected.status === "busy"
@@ -952,7 +964,7 @@ function LocalAgentWorkspacePanel({
             >
               {connections.map((connection) => (
                 <option key={connection.id} value={connection.id}>
-                  {connection.display_name} · {connection.adapter_kind}
+                  {localAgentConnectionOptionLabel(connection)}
                 </option>
               ))}
             </select>
@@ -984,11 +996,44 @@ function LocalAgentWorkspacePanel({
           {enabled && selected?.status === "offline" ? (
             <span className="text-amber-700">离线时消息会保持 pending，bridge 恢复后继续。</span>
           ) : null}
+          {enabled && usesClaudePermissionBridge && pendingApprovalCount > 0 ? (
+            <span className="text-amber-700">
+              等待 Claude Code 本地工具审批
+              {activeRunId ? (
+                <a
+                  className="ml-1 font-medium underline-offset-2 hover:underline"
+                  href={`/runs/${activeRunId}#approvals`}
+                >
+                  运行详情
+                </a>
+              ) : null}
+            </span>
+          ) : null}
           {isSending ? <span>正在排队...</span> : null}
         </div>
       </div>
     </div>
   );
+}
+
+function localAgentUsesClaudePermissionBridge(connection: LocalAgentConnection | null): boolean {
+  return (
+    connection !== null &&
+    connection.adapter_kind === "claude_code" &&
+    connection.capabilities_json.permission_bridge === "harness_local_tool_request_v1" &&
+    connection.capabilities_json.permission_bridge_execution === "harness_owned_executor" &&
+    connection.capabilities_json.sdk_native_tool_execution_enabled === false
+  );
+}
+
+function localAgentConnectionOptionLabel(connection: LocalAgentConnection): string {
+  if (localAgentUsesClaudePermissionBridge(connection)) {
+    return `${connection.display_name} · Claude Code V6 · 权限桥 · 上下文重放`;
+  }
+  if (connection.adapter_kind === "claude_code") {
+    return `${connection.display_name} · Claude Code V5 · 本地工具关闭 · 上下文重放`;
+  }
+  return `${connection.display_name} · ${connection.adapter_kind}`;
 }
 
 function localAgentStatusLabel(status: string): string {
@@ -1016,6 +1061,7 @@ function localAgentConversationFromMessages({
   pendingTasks,
   connection,
   fallbackTitle,
+  pendingApprovalCount,
   pendingUserNode,
   pendingNode,
 }: {
@@ -1024,6 +1070,7 @@ function localAgentConversationFromMessages({
   pendingTasks: LocalAgentBindingTask[];
   connection: LocalAgentConnection | null;
   fallbackTitle: string;
+  pendingApprovalCount: number;
   pendingUserNode?: ConversationNode;
   pendingNode?: ConversationNode;
 }): ConversationSummary {
@@ -1121,7 +1168,16 @@ function localAgentConversationFromMessages({
   }
 
   if (shouldKeepPendingAssistant) {
-    const assistant = { ...pendingNode, parent_id: parentId, children_ids: [] };
+    const pendingStatus =
+      typeof pendingNode.metadata.orchestration?.status === "string"
+        ? pendingNode.metadata.orchestration.status
+        : "pending";
+    const assistant = {
+      ...pendingNode,
+      parent_id: parentId,
+      children_ids: [],
+      content: localAgentPendingTaskContent(pendingStatus, connection, pendingApprovalCount),
+    };
     nodesById[parentId] = {
       ...nodesById[parentId],
       children_ids: [...nodesById[parentId].children_ids, assistant.id],
@@ -1150,7 +1206,7 @@ function localAgentConversationFromMessages({
       parent_id: taskParentId,
       children_ids: [],
       role: "assistant",
-      content: localAgentPendingTaskContent(task.status, connection?.status),
+      content: localAgentPendingTaskContent(task.status, connection, pendingApprovalCount),
       state: "streaming",
       run_id: task.run_id,
       metadata: {
@@ -1198,9 +1254,16 @@ function localAgentConversationId(bindingId: string): string {
   return `local-agent:${bindingId}`;
 }
 
-function localAgentPendingTaskContent(taskStatus: string, connectionStatus?: string): string {
-  if (connectionStatus === "offline") {
+function localAgentPendingTaskContent(
+  taskStatus: string,
+  connection: LocalAgentConnection | null,
+  pendingApprovalCount = 0,
+): string {
+  if (connection?.status === "offline") {
     return "本地 Agent 当前离线，消息已排队。bridge 恢复后会继续处理。";
+  }
+  if (localAgentUsesClaudePermissionBridge(connection) && pendingApprovalCount > 0) {
+    return "等待 Claude Code 本地工具审批。可在运行详情处理审批。";
   }
   if (taskStatus === "running" || taskStatus === "leased") {
     return "本地 Agent 正在处理，完成后会同步到这里。";

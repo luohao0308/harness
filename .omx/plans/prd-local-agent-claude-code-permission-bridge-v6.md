@@ -38,11 +38,11 @@ Reference facts used by this plan:
   - filesystem delete/move -> `delete_file` / `move_file` and denied or approval-required
   - network-like Bash -> `network` or approval-required critical command
   - env/secret patterns -> `env_read` / `secret_read` and denied or critical approval
-- The bridge must call `POST /api/agents/local-agent/bridge/tool-requests` before Claude Code executes any side-effect tool.
-- The bridge must block inside `can_use_tool` while polling the existing decision endpoint; it returns SDK allow only after API decision is executable and returns SDK deny for denied/expired/revoked/timeout decisions.
-- The bridge must pass server-approved modified input back to Claude Code, never the original input when Harness returned a sanitized replacement.
+- The bridge must call `POST /api/agents/local-agent/bridge/tool-requests` before any side-effect host action is considered executable.
+- The bridge must block inside `can_use_tool` while polling the existing decision endpoint; it returns SDK deny after Harness-owned execution succeeds or fails, so Claude Code's native side-effect executor cannot run a second time.
+- The bridge must execute only server-approved modified input through the Harness-owned local executor, never the original input when Harness returned a sanitized replacement.
 - SDK configuration must not pre-approve side-effect tools before Harness sees them. V6 required path must keep `allowed_tools` / SDK settings / hooks from auto-allowing `Bash`, `Write`, `Edit`, `MultiEdit`, git/network/env/secret-like operations, or any mutation-capable custom tool. Those requests must reach the Harness `can_use_tool` callback first or be denied.
-- The actual host side effect must remain either Claude Code built-in execution gated by the SDK callback or, if implementation cannot prove SDK execution is bounded enough, a Harness-owned local tool executor. In both cases, result evidence must bind to the same V3 `tool_request_id` and `tool_call_id`.
+- The actual host side effect is Harness-owned local tool execution after intent capture and approval; result evidence must bind to the same V3 `tool_request_id` and `tool_call_id`.
 - V6 must not use `bypassPermissions`, `acceptEdits`, `auto`, `dontAsk`, `--dangerously-skip-permissions`, remote-control, background sessions, web/cloud sessions, project/user `.claude` hooks/plugins/subagents, or unbounded settings sources in the required path.
 - V6 must preserve workspace identity enforcement from V4/V5: local sidecar raw workspace root hash must match server task `workspace_identity_hash` before any Claude SDK run or local tool execution.
 - V6 may expose paired workspace files to Claude Code only through explicitly enabled, server-classified Claude tools and path guards. This is a change from V5 private cwd/no workspace access and must be visible in capabilities/UI.
@@ -70,9 +70,11 @@ Reference facts used by this plan:
 {
   "adapter_kind": "claude_code",
   "enabled_in_v6": true,
-  "execution_mode": "agent_sdk_permission_bridge",
+  "execution_mode": "agent_sdk_intent_capture_harness_executor",
   "host_tools_authorized": true,
   "permission_bridge": "harness_local_tool_request_v1",
+  "permission_bridge_execution": "harness_owned_executor",
+  "sdk_native_tool_execution_enabled": false,
   "supports_streaming": true,
   "supports_resume": false,
   "supports_cancel": true,
@@ -106,8 +108,8 @@ Reference facts used by this plan:
    - Approval polling must be cancellable when bridge task is cancelled or connection is revoked.
 
 4. Execution boundary
-   - Preferred V6 path: let Claude SDK execute only after `can_use_tool` returns allow, while all post-tool evidence is mirrored into Harness V3 result endpoints.
-   - Required safety condition: if SDK cannot emit a reliable post-tool result with tool use id/status/output, V6 must not claim authorized execution success; it must either use Harness-owned local executor after allow or mark the run unsupported.
+   - Required V6 path: Claude SDK captures host-tool intent through `can_use_tool`; Harness-owned local executor performs the approved side effect and reports through V3 result endpoints.
+   - Required safety condition: SDK native side-effect execution stays disabled. The SDK callback returns deny after Harness execution so Claude Code cannot also execute the same side effect.
    - For `Write` / `Edit` / `MultiEdit`, V6 should favor diff-first pending change:
      - precompute pending change preview when possible;
      - approval freezes target paths and diff hash;
@@ -241,7 +243,7 @@ The SDK permission bridge gives Claude Code real local coding capability while p
    - Disable or isolate project/user settings, plugins, hooks, MCP servers, subagents, and auto memory unless explicitly required and safety-proven.
    - Use paired workspace root only after workspace hash validation.
    - Stream assistant deltas/done/error through existing bridge event APIs.
-   - Add an early implementation checkpoint: choose either SDK built-in execution with reliable post-tool result capture or Harness-owned local execution after SDK permission approval. If neither path can prove bounded execution plus result binding, V6 must stop before advertising permission bridge support.
+   - Use the Harness-owned local executor after SDK intent capture and approval; keep `sdk_native_tool_execution_enabled=false` and report `permission_bridge_execution=harness_owned_executor`.
 
 5. `can_use_tool` adapter
    - Map Claude tool requests to V3 tool request payloads.
@@ -251,7 +253,7 @@ The SDK permission bridge gives Claude Code real local coding capability while p
    - Treat POST `/tool-requests` failure, decision endpoint 5xx/network timeout, callback exception, SDK crash, runner death, and SDK crash after approval but before result as fail-closed: no host side effect may be executed or marked successful.
 
 6. Tool result and lifecycle mirroring
-   - Capture SDK tool result events where available; otherwise use Harness-owned local executor for V6-supported tools.
+   - Use Harness-owned local executor for V6-supported tools and report results through existing V3 result endpoints.
    - Record command start/output/finish for Bash.
    - Record pending changes and hash guards for writes/edits.
    - Submit authorized results to V3 result endpoint using the same `tool_request_id`.
