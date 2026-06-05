@@ -2699,6 +2699,12 @@ class LocalAgentPendingToolRequestPage(BaseModel):
     )
 
 
+class LocalAgentPendingChangeRefreshRequest(BaseModel):
+    input_json: dict = Field(default_factory=dict, description="已批准的可执行输入")
+    target_paths: list[str] = Field(default_factory=list, description="批准后的目标路径")
+    pending_change_preview: dict = Field(description="批准后重建的 pending change 预览")
+
+
 class LocalAgentToolResultRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=160, description="结果幂等事件 ID")
     status: Literal["SUCCESS", "FAILED", "TIMEOUT", "DENIED", "CANCELLED"] = Field(

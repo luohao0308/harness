@@ -3179,12 +3179,17 @@ export async function selectAgentTokenOptimizer(
 }
 
 export async function createLocalAgentPairingToken(agentId: string, adapterKind: string = "hao") {
+  const scope: Record<string, unknown> = { executable: true, adapters: [adapterKind] };
+  if (adapterKind === "claude_code_v6") {
+    scope.adapters = ["claude_code"];
+    scope.permission_bridge = ["sdk"];
+  }
   return request<LocalAgentPairing>("/api/agents/local-agent/pairing-tokens", {
     method: "POST",
     body: JSON.stringify({
       agent_id: agentId,
       ttl_minutes: 10,
-      scope: { executable: true, adapters: [adapterKind] },
+      scope,
     }),
   });
 }

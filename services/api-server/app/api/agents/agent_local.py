@@ -68,7 +68,56 @@ LOCAL_AGENT_CAPABILITY_TOOL_ALIASES = {
 LOCAL_AGENT_SAFE_TOOLS = {"fake.noop", "local_status", "read_metadata"}
 LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS = {"codex", "claude_code"}
 LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES = {"workspace_read_constrained"}
-LOCAL_AGENT_CLAUDE_CODE_ALLOWED_RISK_CAPABILITIES: set[str] = set()
+LOCAL_AGENT_CLAUDE_CODE_ALLOWED_RISK_CAPABILITIES = {
+    "workspace_read",
+    "host_write_approval_required",
+    "shell_approval_required",
+    "git_approval_required",
+    "pending_change",
+    "command_lifecycle",
+}
+LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE = "harness_local_tool_request_v1"
+LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTION_MODE = (
+    "agent_sdk_intent_capture_harness_executor"
+)
+LOCAL_AGENT_CLAUDE_CODE_LEGACY_PERMISSION_BRIDGE_EXECUTION_MODE = (
+    "agent_sdk_permission_bridge"
+)
+LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTOR = "harness_owned_executor"
+LOCAL_AGENT_CLAUDE_CODE_V6_SAFETY_FLAGS = {
+    "permission_bridge_callback_configured",
+    "permission_bridge_pre_tool_hook_configured",
+    "permission_bridge_dummy_hook_only",
+    "side_effect_tools_preapproval_disabled",
+    "forbidden_permission_modes_disabled",
+    "unmanaged_settings_disabled",
+    "mcp_disabled",
+    "plugins_disabled",
+    "hooks_disabled",
+    "subagents_disabled",
+    "browser_disabled",
+    "computer_use_disabled",
+    "remote_control_disabled",
+}
+LOCAL_AGENT_CLAUDE_CODE_FORBIDDEN_CAPABILITY_MARKERS = {
+    "bypasspermissions",
+    "acceptedits",
+    "auto",
+    "dontask",
+    "remote_control",
+    "remote-control",
+    "mcp",
+    "plugin",
+    "hook",
+    "subagent",
+    "browser",
+    "computer_use",
+    "computer-use",
+    "native_resume",
+    "background_session",
+    "web_session",
+    "cloud_session",
+}
 LOCAL_AGENT_NETWORK_PATTERNS = re.compile(
     r"\b(curl|wget|ssh|scp|git\s+remote|npm\s+install|pip\s+install|pnpm\s+install|yarn\s+add)\b",
     re.IGNORECASE,
@@ -124,6 +173,9 @@ def _pairing_response(
         )
         if adapter_kind != "hao":
             command = f"{command} --adapter {adapter_kind}"
+        permission_bridge = _pairing_command_permission_bridge(token.scope_json)
+        if permission_bridge:
+            command = f"{command} --permission-bridge {permission_bridge}"
     return LocalAgentPairingResponse(
         id=token.id,
         agent_id=token.agent_id,
@@ -226,11 +278,69 @@ def _bridge_connection(
 
 
 def _ensure_host_tool_protocol_allowed(connection: LocalAgentConnection) -> None:
+    if connection.adapter_kind == "claude_code" and _claude_code_permission_bridge_enabled(
+        connection
+    ):
+        return
     if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"{connection.adapter_kind} adapter cannot use local host tool protocol",
         )
+
+
+def _claude_code_permission_bridge_enabled(connection: LocalAgentConnection) -> bool:
+    capabilities = (
+        connection.capabilities_json if isinstance(connection.capabilities_json, dict) else {}
+    )
+    return (
+        connection.adapter_kind == "claude_code"
+        and _claude_code_permission_bridge_entitled(connection)
+        and capabilities.get("enabled_in_v6") is True
+        and capabilities.get("host_tools_authorized") is True
+        and capabilities.get("permission_bridge") == LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE
+        and capabilities.get("execution_mode")
+        == LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTION_MODE
+        and capabilities.get("permission_bridge_execution")
+        == LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTOR
+        and capabilities.get("sdk_native_tool_execution_enabled") is False
+    )
+
+
+def _claude_code_permission_bridge_entitled(connection: LocalAgentConnection) -> bool:
+    metadata = connection.metadata_json if isinstance(connection.metadata_json, dict) else {}
+    return (
+        connection.adapter_kind == "claude_code"
+        and metadata.get("server_permission_bridge_entitlement") == "sdk"
+    )
+
+
+def _scope_permission_bridge(scope: dict) -> str | None:
+    raw = scope.get("permission_bridge") if isinstance(scope, dict) else None
+    if isinstance(raw, list) and len(raw) == 1:
+        return str(raw[0])
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
+def _pairing_command_permission_bridge(scope: dict) -> str | None:
+    permission_bridge = _scope_permission_bridge(scope)
+    if permission_bridge == "sdk":
+        return "sdk"
+    return None
+
+
+def _connection_metadata_with_permission_bridge_entitlement(
+    metadata: dict,
+    *,
+    permission_bridge: str | None,
+) -> dict:
+    safe_metadata = _safe_metadata(metadata)
+    safe_metadata["server_permission_bridge_entitlement"] = (
+        "sdk" if permission_bridge == "sdk" else "none"
+    )
+    return safe_metadata
 
 
 def _get_local_target_agent(
@@ -391,6 +501,29 @@ def register_local_agent_connection(
             status_code=status.HTTP_410_GONE, detail="Local Agent pairing token expired"
         )
     _validate_pairing_scope_for_adapter(token.scope_json, request.adapter_kind)
+    normalized_capabilities = _normalized_capabilities(
+        request.adapter_kind,
+        request.capabilities,
+    )
+    normalized_risk_capabilities = _normalized_risk_capabilities(
+        request.adapter_kind,
+        request.risk_capabilities,
+    )
+    token_permission_bridge = _scope_permission_bridge(token.scope_json)
+    normalized_claude_v6 = _claude_code_capabilities_v6_enabled(normalized_capabilities)
+    if token_permission_bridge == "sdk" and not normalized_claude_v6:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Claude Code SDK permission bridge capability is required "
+                "for this pairing token"
+            ),
+        )
+    if normalized_claude_v6 and token_permission_bridge != "sdk":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Claude Code SDK permission bridge requires a scoped pairing token",
+        )
 
     device_token = secrets.token_urlsafe(DEVICE_TOKEN_BYTES)
     connection = LocalAgentConnection(
@@ -405,15 +538,12 @@ def register_local_agent_connection(
         bridge_version=request.bridge_version,
         status="online",
         workspace_root=_redact_path(request.workspace_root),
-        capabilities_json=_normalized_capabilities(
-            request.adapter_kind,
-            request.capabilities,
+        capabilities_json=normalized_capabilities,
+        risk_capabilities_json=normalized_risk_capabilities,
+        metadata_json=_connection_metadata_with_permission_bridge_entitlement(
+            request.metadata,
+            permission_bridge=token_permission_bridge if normalized_claude_v6 else None,
         ),
-        risk_capabilities_json=_normalized_risk_capabilities(
-            request.adapter_kind,
-            request.risk_capabilities,
-        ),
-        metadata_json=_safe_metadata(request.metadata),
         last_seen_at=now,
         created_at=now,
         updated_at=now,
@@ -504,10 +634,32 @@ def heartbeat_local_agent_connection(
     connection.protocol_version = request.protocol_version
     connection.bridge_version = request.bridge_version
     if request.capabilities is not None:
-        connection.capabilities_json = _normalized_capabilities(
+        heartbeat_capabilities = _normalized_capabilities(
             connection.adapter_kind,
             request.capabilities,
         )
+        if (
+            connection.adapter_kind == "claude_code"
+            and _claude_code_capabilities_v6_enabled(heartbeat_capabilities)
+            and not _claude_code_permission_bridge_entitled(connection)
+        ):
+            existing_capabilities = (
+                connection.capabilities_json
+                if isinstance(connection.capabilities_json, dict)
+                else {}
+            )
+            heartbeat_capabilities = _normalized_capabilities(
+                connection.adapter_kind,
+                {
+                    **request.capabilities,
+                    "supports_streaming": request.capabilities.get(
+                        "supports_streaming",
+                        existing_capabilities.get("supports_streaming", True),
+                    ),
+                    "claude_permission_bridge_v1": False,
+                },
+            )
+        connection.capabilities_json = heartbeat_capabilities
     connection.last_seen_at = now
     connection.updated_at = now
     _record_local_agent_audit(
@@ -1327,6 +1479,116 @@ def get_local_agent_tool_decision(
         session=session,
     )
     _expire_local_tool_request_if_needed(local_request, session=session)
+    session.commit()
+    session.refresh(local_request)
+    return _local_tool_decision_response(local_request, session=session)
+
+
+@router.post(
+    "/local-agent/bridge/tool-requests/{tool_request_id}/pending-change-refresh",
+    response_model=LocalAgentToolDecisionResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Bridge 用批准后的输入刷新 pending change 预览",
+)
+def refresh_local_agent_pending_change(
+    tool_request_id: str,
+    request: LocalAgentPendingChangeRefreshRequest,
+    session: DbSession,
+    x_local_agent_device_token: str | None = Header(default=None),
+) -> LocalAgentToolDecisionResponse:
+    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    _ensure_host_tool_protocol_allowed(connection)
+    local_request = _owned_local_tool_request(
+        tool_request_id=tool_request_id,
+        connection=connection,
+        session=session,
+    )
+    _require_executable_local_tool_request(
+        local_request,
+        session=session,
+        detail="Local Agent pending change is not authorized",
+    )
+    if local_request.tool_name not in LOCAL_AGENT_PENDING_CHANGE_TOOLS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent pending change refresh is only valid for write/apply_patch tools",
+        )
+    approved_input = _approved_input_for_request(local_request)
+    if request.input_json != approved_input:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent pending change refresh must use the approved executable input",
+        )
+    preview = _validated_pending_change_refresh_preview(
+        local_request=local_request,
+        refresh=request,
+    )
+    pending_change = session.execute(
+        select(LocalAgentPendingChange)
+        .where(
+            LocalAgentPendingChange.local_agent_tool_request_id == local_request.id,
+            LocalAgentPendingChange.status.in_(LOCAL_AGENT_PENDING_CHANGE_ACTIVE_STATUSES),
+        )
+        .order_by(LocalAgentPendingChange.updated_at.desc(), LocalAgentPendingChange.id.desc())
+    ).scalar_one_or_none()
+    if pending_change is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent pending change refresh requires an active preview",
+        )
+    now = utc_now()
+    pending_change.change_id = str(preview["change_id"])
+    pending_change.target_paths_json = [str(path) for path in request.target_paths]
+    pending_change.diff_sha256 = str(preview["diff_sha256"])
+    pending_change.preview_json = preview
+    pending_change.status = (
+        "approved" if local_request.status == "approved" else local_request.status
+    )
+    pending_change.command_id = None
+    pending_change.committed_at = None
+    pending_change.denied_at = None
+    pending_change.error_message = None
+    pending_change.updated_at = now
+    decision_json = (
+        local_request.decision_json if isinstance(local_request.decision_json, dict) else {}
+    )
+    local_request.decision_json = {
+        **decision_json,
+        "input_json": approved_input,
+        "executable_input_sha256": _executable_input_sha256(approved_input),
+        "pending_change_preview": preview,
+    }
+    local_request.updated_at = now
+    approval = (
+        session.get(ToolApproval, local_request.approval_id)
+        if local_request.approval_id
+        else None
+    )
+    if approval is not None:
+        approval_request_json = (
+            approval.request_json if isinstance(approval.request_json, dict) else {}
+        )
+        approval.request_json = {
+            **approval_request_json,
+            "input_json": approved_input,
+            "executable_input_sha256": _executable_input_sha256(approved_input),
+            "pending_change_preview": preview,
+        }
+    EventStore(session).append(
+        task_id=local_request.task_id,
+        event_type=EventType.LOCAL_AGENT_PENDING_CHANGE_PREVIEWED,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_request.tool_request_id,
+            "change_id": pending_change.change_id,
+            "target_paths": pending_change.target_paths_json,
+            "diff_sha256": pending_change.diff_sha256,
+            "status": pending_change.status,
+            "refreshed": True,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
     session.commit()
     session.refresh(local_request)
     return _local_tool_decision_response(local_request, session=session)
@@ -2618,6 +2880,91 @@ def _record_pending_change_preview(
     )
 
 
+def _validated_pending_change_refresh_preview(
+    *,
+    local_request: LocalAgentToolRequest,
+    refresh: LocalAgentPendingChangeRefreshRequest,
+) -> dict:
+    preview = (
+        refresh.pending_change_preview
+        if isinstance(refresh.pending_change_preview, dict)
+        else {}
+    )
+    change_id = str(preview.get("change_id") or "").strip()
+    if not change_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent pending change refresh requires change_id",
+        )
+    target_paths = [str(path).strip() for path in refresh.target_paths if str(path).strip()]
+    if not target_paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent pending change refresh requires target paths",
+        )
+    preview_target_paths = preview.get("target_paths")
+    if isinstance(preview_target_paths, list):
+        normalized_preview_paths = [
+            str(path).strip() for path in preview_target_paths if str(path).strip()
+        ]
+        if normalized_preview_paths != target_paths:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent pending change refresh target paths do not match preview",
+            )
+    expected_target_paths = _approved_pending_change_target_paths(local_request, refresh.input_json)
+    if expected_target_paths != target_paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent pending change refresh target paths do not match approved input",
+        )
+    diff_sha256 = str(preview.get("diff_sha256") or preview.get("diff_hash") or "").strip()
+    if not diff_sha256:
+        diff_text = str(preview.get("diff") or "")
+        if not diff_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent pending change refresh requires diff or diff hash",
+            )
+        diff_sha256 = hashlib.sha256(
+            diff_text.encode("utf-8", errors="replace")
+        ).hexdigest()
+    return {
+        **preview,
+        "change_id": change_id,
+        "target_paths": target_paths,
+        "diff_sha256": diff_sha256,
+    }
+
+
+def _approved_pending_change_target_paths(
+    local_request: LocalAgentToolRequest,
+    input_json: dict,
+) -> list[str]:
+    if local_request.tool_name == "write_file":
+        path = str(input_json.get("path") or "").strip()
+        return [path] if path else []
+    if local_request.tool_name == "apply_patch":
+        return _patch_target_paths_from_preview_text(str(input_json.get("patch") or ""))
+    return []
+
+
+def _patch_target_paths_from_preview_text(patch: str) -> list[str]:
+    paths: list[str] = []
+    for line in patch.splitlines():
+        if not line.startswith(("--- ", "+++ ")):
+            continue
+        raw = line[4:].strip()
+        if raw == "/dev/null":
+            continue
+        if raw.startswith(("a/", "b/")):
+            raw = raw[2:]
+        path = raw.split("\t", 1)[0].strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths
+
+
 def _validate_pending_change_result(
     *,
     local_request: LocalAgentToolRequest,
@@ -3082,7 +3429,7 @@ def _apply_bridge_event(
         )
     elif request.event_type == "assistant_done":
         if connection.adapter_kind == "claude_code":
-            _ensure_claude_code_assistant_done_safety_proof(request)
+            _ensure_claude_code_assistant_done_safety_proof(connection, request)
         if _has_unresolved_local_tool_state(bridge_task=bridge_task, session=session):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -3234,6 +3581,16 @@ def _legacy_tool_result_requires_authorization(request: LocalAgentBridgeEventReq
 
 
 def _ensure_claude_code_assistant_done_safety_proof(
+    connection: LocalAgentConnection,
+    request: LocalAgentBridgeEventRequest,
+) -> None:
+    if _claude_code_permission_bridge_enabled(connection):
+        _ensure_claude_code_permission_bridge_done_safety_proof(request)
+        return
+    _ensure_claude_code_v5_empty_tool_safety_proof(request)
+
+
+def _ensure_claude_code_v5_empty_tool_safety_proof(
     request: LocalAgentBridgeEventRequest,
 ) -> None:
     metadata = request.metadata if isinstance(request.metadata, dict) else {}
@@ -3250,6 +3607,50 @@ def _ensure_claude_code_assistant_done_safety_proof(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Claude Code assistant_done requires empty-tool system/init safety proof",
             )
+
+
+def _ensure_claude_code_permission_bridge_done_safety_proof(
+    request: LocalAgentBridgeEventRequest,
+) -> None:
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    if (
+        metadata.get("permission_bridge_active") is not True
+        or metadata.get("permission_bridge_version") != LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE
+        or metadata.get("permission_bridge_execution")
+        != LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTOR
+        or metadata.get("sdk_native_tool_execution_enabled") is not False
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claude Code assistant_done requires active permission bridge proof",
+        )
+    safety = metadata.get("safety") if isinstance(metadata.get("safety"), dict) else metadata
+    for key in LOCAL_AGENT_CLAUDE_CODE_V6_SAFETY_FLAGS:
+        if safety.get(key) is not True:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Claude Code permission bridge safety proof missing: {key}",
+            )
+    forbidden_mode = str(
+        safety.get("permission_mode") or metadata.get("permission_mode") or ""
+    ).strip()
+    if forbidden_mode and forbidden_mode != "default":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claude Code permission bridge used forbidden permission mode",
+        )
+    forbidden_surfaces = safety.get("forbidden_surfaces")
+    if isinstance(forbidden_surfaces, list) and forbidden_surfaces:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claude Code permission bridge loaded forbidden capability surface",
+        )
+    allowed_tools = safety.get("allowed_tools")
+    if isinstance(allowed_tools, list) and allowed_tools:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Claude Code permission bridge cannot pre-approve SDK tools",
+        )
 
 
 def _default_local_agent_name(adapter_kind: str) -> str:
@@ -3274,6 +3675,14 @@ def _validate_pairing_scope_for_adapter(scope: dict, adapter_kind: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Local Agent pairing token is not scoped for this adapter",
+        )
+    permission_bridge = _scope_permission_bridge(scope)
+    if permission_bridge is None:
+        return
+    if adapter_kind != "claude_code" or permission_bridge != "sdk":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local Agent pairing token permission bridge is not scoped for this adapter",
         )
 
 
@@ -3311,24 +3720,119 @@ def _normalized_capabilities(adapter_kind: str, reported: dict | None) -> dict:
             "resume_mode": "context_replay_new_session",
         }
     if adapter_kind == "claude_code":
-        return {
+        v6_enabled = _claude_code_reported_v6_capabilities_allowed(capabilities)
+        normalized = {
             **capabilities,
             "adapter_kind": "claude_code",
             "supports_streaming": bool(capabilities.get("supports_streaming", True)),
             "supports_resume": False,
-            "supports_cancel": False,
             "enabled_in_v1": True,
             "enabled_in_v5": True,
-            "host_tools_authorized": False,
             "resume_mode": "context_replay_new_session",
-            "execution_mode": "headless_bare_no_session_no_tools",
+            "permission_defer_supported": False,
         }
+        if v6_enabled:
+            normalized.update(
+                {
+                    "enabled_in_v6": True,
+                    "supports_cancel": True,
+                    "host_tools_authorized": True,
+                    "claude_permission_bridge_v1": True,
+                    "permission_bridge": LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE,
+                    "execution_mode": LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTION_MODE,
+                    "permission_bridge_execution": (
+                        LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTOR
+                    ),
+                    "sdk_native_tool_execution_enabled": False,
+                    "permission_bridge_mode": "sdk",
+                    "sdk_allowed_tools_preapproved": False,
+                }
+            )
+        else:
+            normalized.update(
+                {
+                    "enabled_in_v6": False,
+                    "supports_cancel": False,
+                    "host_tools_authorized": False,
+                    "permission_bridge": None,
+                    "execution_mode": "headless_bare_no_session_no_tools",
+                    "permission_bridge_mode": "none",
+                }
+            )
+        return normalized
     capabilities.setdefault("adapter_kind", adapter_kind)
     capabilities.setdefault("supports_streaming", True)
     capabilities.setdefault("supports_resume", adapter_kind == "hao")
     capabilities.setdefault("supports_cancel", adapter_kind == "hao")
     capabilities.setdefault("enabled_in_v1", adapter_kind in LOCAL_AGENT_SUPPORTED_ADAPTERS)
     return capabilities
+
+
+def _claude_code_capabilities_v6_enabled(capabilities: dict) -> bool:
+    return (
+        capabilities.get("enabled_in_v6") is True
+        and capabilities.get("host_tools_authorized") is True
+        and capabilities.get("permission_bridge") == LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE
+        and capabilities.get("execution_mode")
+        == LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTION_MODE
+        and capabilities.get("permission_bridge_execution")
+        == LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTOR
+        and capabilities.get("sdk_native_tool_execution_enabled") is False
+    )
+
+
+def _claude_code_reported_v6_capabilities_allowed(capabilities: dict) -> bool:
+    if capabilities.get("claude_permission_bridge_v1") is not True:
+        return False
+    if str(capabilities.get("permission_bridge_mode") or "").strip() != "sdk":
+        return False
+    if capabilities.get("permission_bridge") not in {
+        LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE,
+        "sdk",
+    }:
+        return False
+    execution_mode = str(capabilities.get("execution_mode") or "").strip()
+    if execution_mode != LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTION_MODE:
+        return False
+    permission_bridge_execution = str(
+        capabilities.get("permission_bridge_execution") or ""
+    ).strip()
+    if permission_bridge_execution != LOCAL_AGENT_CLAUDE_CODE_PERMISSION_BRIDGE_EXECUTOR:
+        return False
+    if capabilities.get("sdk_native_tool_execution_enabled") is not False:
+        return False
+    if capabilities.get("permission_bridge_callback_configured") is not True:
+        return False
+    if capabilities.get("permission_bridge_pre_tool_hook_configured") is not True:
+        return False
+    if capabilities.get("permission_bridge_dummy_hook_only") is not True:
+        return False
+    if capabilities.get("side_effect_tools_preapproval_disabled") is not True:
+        return False
+    if capabilities.get("forbidden_permission_modes_disabled") is not True:
+        return False
+    if capabilities.get("unmanaged_settings_disabled") is not True:
+        return False
+    if capabilities.get("sdk_allowed_tools_preapproved") is True:
+        return False
+    if capabilities.get("allowed_tools") not in (None, [], ()):
+        return False
+    for key in (
+        "remote_control_enabled",
+        "mcp_enabled",
+        "plugins_enabled",
+        "hooks_enabled",
+        "subagents_enabled",
+        "browser_enabled",
+        "computer_use_enabled",
+        "native_resume_enabled",
+        "background_sessions_enabled",
+        "web_sessions_enabled",
+        "cloud_sessions_enabled",
+    ):
+        if capabilities.get(key) is True:
+            return False
+    return True
 
 
 def _normalized_risk_capabilities(adapter_kind: str, reported: list[str]) -> list[str]:

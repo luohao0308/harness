@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import importlib
+import inspect
 import json
 import os
 import re
@@ -40,9 +43,33 @@ CODEX_SECRET_PATTERN = re.compile(
 CLAUDE_SUBPROCESS_TIMEOUT_SECONDS = 120
 CLAUDE_OUTPUT_LIMIT_BYTES = 64_000
 CLAUDE_WORKSPACE_HASH_PREFIX = "harness-local-agent-claude-code-v5:"
+CLAUDE_PERMISSION_BRIDGE_VERSION = "harness_local_tool_request_v1"
+CLAUDE_PERMISSION_BRIDGE_MODE_NONE = "none"
+CLAUDE_PERMISSION_BRIDGE_MODE_SDK = "sdk"
+CLAUDE_PERMISSION_DECISION_POLL_SECONDS = 2.0
+CLAUDE_PERMISSION_DECISION_TIMEOUT_SECONDS = 1800.0
 CLAUDE_SECRET_PATTERN = re.compile(
     r"(sk-ant-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{12,}|sat-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{12,})",
     re.IGNORECASE,
+)
+CLAUDE_READ_TOOLS = {"Read", "Glob", "Grep", "LS"}
+CLAUDE_DENIED_TOOLS = {
+    "WebFetch",
+    "WebSearch",
+    "Task",
+    "AskUserQuestion",
+    "NotebookEdit",
+    "TodoWrite",
+}
+CLAUDE_SIDE_EFFECT_TOOLS = {"Bash", "Write", "Edit", "MultiEdit"}
+CLAUDE_SAFE_SDK_TOOLS: list[str] = []
+CLAUDE_AGENT_SDK_REQUIRED_SYMBOLS = (
+    "ClaudeSDKClient",
+    "ClaudeAgentOptions",
+    "PermissionResultAllow",
+    "PermissionResultDeny",
+    "HookMatcher",
+    "AssistantMessage",
 )
 
 
@@ -189,6 +216,34 @@ class ClaudeCodeRunResult:
     metadata: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class ClaudeAgentSdkProbe:
+    installed: bool
+    version: str = ""
+    error_message: str = ""
+    symbols: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ClaudePermissionBridgeResult:
+    status: str
+    content: str = ""
+    error_message: str = ""
+    session_id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ClaudeToolMapping:
+    allowed: bool
+    tool_name: str
+    input_json: dict[str, Any]
+    target_paths: list[str]
+    requires_network: bool = False
+    requires_secret_read: bool = False
+    reason: str = ""
+
+
 def _store() -> SessionStore:
     config = load_config()
     return SessionStore(config.session_db_path, config.sessions_dir)
@@ -295,6 +350,12 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_pair.add_argument("--daemon", action="store_true")
     bridge_pair.add_argument("--once", action="store_true")
     bridge_pair.add_argument("--interval", type=float, default=2.0)
+    bridge_pair.add_argument(
+        "--permission-bridge",
+        choices=[CLAUDE_PERMISSION_BRIDGE_MODE_NONE, CLAUDE_PERMISSION_BRIDGE_MODE_SDK],
+        default=CLAUDE_PERMISSION_BRIDGE_MODE_NONE,
+        help="Claude Code permission bridge mode",
+    )
 
     bridge_run = bridge_sub.add_parser("run", help="Run a previously paired local Agent bridge")
     bridge_run.add_argument("--api", "--api-url", dest="api_url", default=None)
@@ -310,6 +371,12 @@ def build_parser() -> argparse.ArgumentParser:
     bridge_run.add_argument("--cwd", default=None)
     bridge_run.add_argument("--once", action="store_true")
     bridge_run.add_argument("--interval", type=float, default=2.0)
+    bridge_run.add_argument(
+        "--permission-bridge",
+        choices=[CLAUDE_PERMISSION_BRIDGE_MODE_NONE, CLAUDE_PERMISSION_BRIDGE_MODE_SDK],
+        default=None,
+        help="Claude Code permission bridge mode",
+    )
 
     resume = subparsers.add_parser("resume", help="Resume a local session")
     resume.add_argument("session_id", nargs="?")
@@ -602,13 +669,35 @@ def _bridge_version() -> str:
     return f"hao-{_hao_version()}"
 
 
-def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
+def _permission_bridge_for_adapter(adapter_kind: str, value: str | None) -> str:
+    mode = str(value or CLAUDE_PERMISSION_BRIDGE_MODE_NONE).strip()
+    if mode not in {CLAUDE_PERMISSION_BRIDGE_MODE_NONE, CLAUDE_PERMISSION_BRIDGE_MODE_SDK}:
+        return CLAUDE_PERMISSION_BRIDGE_MODE_NONE
+    if adapter_kind != "claude_code":
+        return CLAUDE_PERMISSION_BRIDGE_MODE_NONE
+    return mode
+
+
+def _bridge_capabilities(
+    adapter_kind: str,
+    *,
+    permission_bridge: str = CLAUDE_PERMISSION_BRIDGE_MODE_NONE,
+) -> dict[str, Any]:
     if adapter_kind == "codex":
         probe = _probe_codex_cli()
         return _codex_bridge_capabilities(probe)
     if adapter_kind == "claude_code":
         probe = _probe_claude_code_cli()
-        return _claude_code_bridge_capabilities(probe)
+        sdk_probe = (
+            _probe_claude_agent_sdk()
+            if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK
+            else None
+        )
+        return _claude_code_bridge_capabilities(
+            probe,
+            permission_bridge=permission_bridge,
+            sdk_probe=sdk_probe,
+        )
     return {
         "adapter_kind": adapter_kind,
         "supports_resume": adapter_kind == "hao",
@@ -618,11 +707,24 @@ def _bridge_capabilities(adapter_kind: str) -> dict[str, Any]:
     }
 
 
-def _bridge_risk_capabilities(adapter_kind: str) -> list[str]:
+def _bridge_risk_capabilities(
+    adapter_kind: str,
+    *,
+    permission_bridge: str = CLAUDE_PERMISSION_BRIDGE_MODE_NONE,
+) -> list[str]:
     if adapter_kind == "hao":
         return ["host_read", "host_write", "shell", "git", "network"]
     if adapter_kind == "codex":
         return ["workspace_read_constrained"]
+    if adapter_kind == "claude_code" and permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
+        return [
+            "workspace_read",
+            "host_write_approval_required",
+            "shell_approval_required",
+            "git_approval_required",
+            "pending_change",
+            "command_lifecycle",
+        ]
     if adapter_kind == "claude_code":
         return []
     return []
@@ -725,8 +827,93 @@ def _codex_bridge_capabilities(probe: CodexCliProbe) -> dict[str, Any]:
     }
 
 
-def _claude_code_bridge_capabilities(probe: ClaudeCodeCliProbe) -> dict[str, Any]:
-    return {
+def _probe_claude_agent_sdk() -> ClaudeAgentSdkProbe:
+    try:
+        module = importlib.import_module("claude_agent_sdk")
+    except Exception as exc:
+        return ClaudeAgentSdkProbe(
+            installed=False,
+            error_message=_redact_claude_text(f"claude_agent_sdk import failed: {exc}"),
+        )
+    try:
+        types_module = importlib.import_module("claude_agent_sdk.types")
+    except Exception:
+        types_module = None
+    missing = [
+        name
+        for name in CLAUDE_AGENT_SDK_REQUIRED_SYMBOLS
+        if not _claude_agent_sdk_has_symbol(module, types_module, name)
+    ]
+    if missing:
+        return ClaudeAgentSdkProbe(
+            installed=False,
+            error_message=f"claude_agent_sdk missing required symbols: {', '.join(missing)}",
+            symbols=tuple(
+                name
+                for name in CLAUDE_AGENT_SDK_REQUIRED_SYMBOLS
+                if _claude_agent_sdk_has_symbol(module, types_module, name)
+            ),
+        )
+    options_symbol = _claude_agent_sdk_symbol(module, types_module, "ClaudeAgentOptions")
+    missing_options = [
+        keyword
+        for keyword in ("can_use_tool", "hooks")
+        if not _callable_accepts_keyword(options_symbol, keyword)
+    ]
+    if missing_options:
+        return ClaudeAgentSdkProbe(
+            installed=False,
+            error_message=(
+                "claude_agent_sdk ClaudeAgentOptions missing required parameters: "
+                + ", ".join(missing_options)
+            ),
+            symbols=CLAUDE_AGENT_SDK_REQUIRED_SYMBOLS,
+        )
+    version = str(getattr(module, "__version__", "") or "")
+    if not version:
+        try:
+            version = package_version("claude-agent-sdk")
+        except PackageNotFoundError:
+            version = "unknown"
+    return ClaudeAgentSdkProbe(
+        installed=True,
+        version=version,
+        symbols=CLAUDE_AGENT_SDK_REQUIRED_SYMBOLS,
+    )
+
+
+def _claude_agent_sdk_has_symbol(module: Any, types_module: Any, name: str) -> bool:
+    return hasattr(module, name) or (types_module is not None and hasattr(types_module, name))
+
+
+def _claude_agent_sdk_symbol(module: Any, types_module: Any, name: str) -> Any:
+    if hasattr(module, name):
+        return getattr(module, name)
+    if types_module is not None and hasattr(types_module, name):
+        return getattr(types_module, name)
+    raise AttributeError(name)
+
+
+def _callable_accepts_keyword(target: Any, keyword: str) -> bool:
+    try:
+        signature = inspect.signature(target)
+    except (TypeError, ValueError):
+        return True
+    if keyword in signature.parameters:
+        return True
+    return any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _claude_code_bridge_capabilities(
+    probe: ClaudeCodeCliProbe,
+    *,
+    permission_bridge: str = CLAUDE_PERMISSION_BRIDGE_MODE_NONE,
+    sdk_probe: ClaudeAgentSdkProbe | None = None,
+) -> dict[str, Any]:
+    base = {
         "adapter_kind": "claude_code",
         "installed": probe.installed,
         "version": probe.version,
@@ -739,6 +926,51 @@ def _claude_code_bridge_capabilities(probe: ClaudeCodeCliProbe) -> dict[str, Any
         "enabled_in_v5": True,
         "execution_mode": "headless_bare_no_session_no_tools",
         "probe_error": probe.error_message,
+    }
+    if permission_bridge != CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
+        return base
+    sdk_probe = sdk_probe or _probe_claude_agent_sdk()
+    if not (probe.installed and sdk_probe.installed):
+        return {
+            **base,
+            "permission_bridge_mode": "sdk",
+            "sdk_available": sdk_probe.installed,
+            "sdk_version": sdk_probe.version,
+            "sdk_probe_error": sdk_probe.error_message,
+        }
+    return {
+        **base,
+        "supports_cancel": True,
+        "host_tools_authorized": True,
+        "enabled_in_v6": True,
+        "claude_permission_bridge_v1": True,
+        "permission_bridge": CLAUDE_PERMISSION_BRIDGE_VERSION,
+        "permission_bridge_mode": "sdk",
+        "execution_mode": "agent_sdk_intent_capture_harness_executor",
+        "permission_bridge_execution": "harness_owned_executor",
+        "sdk_native_tool_execution_enabled": False,
+        "sdk_available": True,
+        "sdk_version": sdk_probe.version,
+        "sdk_required_symbols": list(sdk_probe.symbols),
+        "sdk_allowed_tools_preapproved": False,
+        "allowed_tools": [],
+        "permission_bridge_callback_configured": True,
+        "permission_bridge_pre_tool_hook_configured": True,
+        "permission_bridge_dummy_hook_only": True,
+        "side_effect_tools_preapproval_disabled": True,
+        "forbidden_permission_modes_disabled": True,
+        "unmanaged_settings_disabled": True,
+        "mcp_enabled": False,
+        "plugins_enabled": False,
+        "hooks_enabled": False,
+        "subagents_enabled": False,
+        "browser_enabled": False,
+        "computer_use_enabled": False,
+        "remote_control_enabled": False,
+        "native_resume_enabled": False,
+        "background_sessions_enabled": False,
+        "web_sessions_enabled": False,
+        "cloud_sessions_enabled": False,
     }
 
 
@@ -898,6 +1130,28 @@ def _claude_code_prompt_for_task(payload: dict[str, Any]) -> str:
         "User message:\n"
         f"{message}\n"
     )
+
+
+def _claude_code_permission_bridge_prompt_for_task(payload: dict[str, Any]) -> str:
+    base = _claude_code_prompt_for_task(payload)
+    return (
+        base
+        + "\nV6 permission bridge is active. Harness owns all local tool approvals. "
+        "When you need Bash, Write, Edit, MultiEdit, git, network, env, or secret-like "
+        "host access, request the tool normally and wait for Harness approval. "
+        "The approved input may be modified by policy; do not assume the original "
+        "request was executed.\n"
+    )
+
+
+async def _claude_agent_sdk_prompt_stream(prompt: str):
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": prompt,
+        },
+    }
 
 
 def _codex_subprocess_env(*, executable: str, temp_dir: Path) -> dict[str, str]:
@@ -1516,6 +1770,409 @@ def _run_claude_code_cli(
         )
 
 
+def _claude_permission_bridge_safety_metadata(
+    *,
+    sdk_version: str = "",
+    fake_sdk: bool = False,
+) -> dict[str, Any]:
+    safety = {
+        "permission_bridge_callback_configured": True,
+        "side_effect_tools_preapproval_disabled": True,
+        "forbidden_permission_modes_disabled": True,
+        "unmanaged_settings_disabled": True,
+        "mcp_disabled": True,
+        "plugins_disabled": True,
+        "hooks_disabled": True,
+        "subagents_disabled": True,
+        "browser_disabled": True,
+        "computer_use_disabled": True,
+        "remote_control_disabled": True,
+        "permission_mode": "default",
+        "allowed_tools": [],
+        "forbidden_surfaces": [],
+        "permission_bridge_pre_tool_hook_configured": True,
+        "permission_bridge_dummy_hook_only": True,
+    }
+    return {
+        **safety,
+        "permission_bridge_active": True,
+        "permission_bridge_version": CLAUDE_PERMISSION_BRIDGE_VERSION,
+        "permission_bridge_mode": "sdk",
+        "permission_bridge_execution": "harness_owned_executor",
+        "sdk_native_tool_execution_enabled": False,
+        "sdk_version": sdk_version,
+        "fake_sdk": fake_sdk,
+        "supports_resume": False,
+        "resume_mode": "context_replay_new_session",
+        "safety": safety,
+    }
+
+
+def _validate_claude_permission_bridge_workspace(
+    *,
+    config: Any,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> tuple[Path | None, ClaudePermissionBridgeResult | None]:
+    workspace_root = _load_bridge_workspace_root(config, state)
+    if workspace_root is None:
+        return None, ClaudePermissionBridgeResult(
+            status="error",
+            error_message="claude workspace root sidecar missing or mismatched",
+        )
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        return None, ClaudePermissionBridgeResult(
+            status="error",
+            error_message="claude workspace root is unavailable",
+        )
+    actual_workspace_hash = _workspace_identity_hash(workspace_root, adapter_kind="claude_code")
+    server_workspace_hash = str(payload.get("workspace_identity_hash") or "")
+    if not server_workspace_hash or server_workspace_hash != actual_workspace_hash:
+        return None, ClaudePermissionBridgeResult(
+            status="error",
+            error_message="claude workspace identity does not match server task",
+            metadata={"workspace_identity_hash": actual_workspace_hash},
+        )
+    return workspace_root, None
+
+
+def _fake_claude_sdk_events_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    fake = payload.get("fake_sdk_events")
+    if isinstance(fake, list):
+        return [item for item in fake if isinstance(item, dict)]
+    return []
+
+
+def _claude_permission_bridge_fake_sdk_enabled() -> bool:
+    return str(os.environ.get("HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _claude_permission_bridge_fake_sdk_requested(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("test_fixture_mode") == "claude_permission_bridge_fake_sdk"
+        and payload.get("fake_sdk_events") is not None
+    )
+
+
+def _run_claude_permission_bridge_fake_sdk(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    bridge_task_id: str,
+    config: Any,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> ClaudePermissionBridgeResult:
+    if not _claude_permission_bridge_fake_sdk_enabled():
+        return ClaudePermissionBridgeResult(
+            status="error",
+            error_message="Claude permission bridge fake SDK mode is disabled",
+            metadata=_claude_permission_bridge_safety_metadata(fake_sdk=True),
+        )
+    workspace_root, failure = _validate_claude_permission_bridge_workspace(
+        config=config,
+        state=state,
+        payload=payload,
+    )
+    if failure is not None:
+        return failure
+    assert workspace_root is not None
+    store = SessionStore(config.session_db_path, config.sessions_dir)
+    local_session = store.create_session(
+        cwd=str(workspace_root),
+        agent_id=str(payload.get("agent_id") or "default"),
+        mode="confirm",
+        cli_mode="claude_code",
+        target="host",
+    )
+    run_id = str(payload.get("run_id") or "")
+    if run_id:
+        store.update_run_id(local_session.id, run_id)
+    assistant_chunks: list[str] = []
+    sequence = 0
+    for event in _fake_claude_sdk_events_from_payload(payload):
+        sequence += 1
+        event_type = str(event.get("type") or "")
+        if event_type == "tool_request":
+            ok, message, _approved_input = _handle_claude_permission_tool_request(
+                client=client,
+                device_token=device_token,
+                bridge_task_id=bridge_task_id,
+                store=store,
+                local_session_id=local_session.id,
+                run_id=run_id,
+                agent_id=str(payload.get("agent_id") or "default"),
+                cwd=workspace_root,
+                claude_tool_name=str(event.get("tool_name") or ""),
+                claude_input=event.get("input") if isinstance(event.get("input"), dict) else {},
+                tool_use_id=str(event.get("tool_use_id") or ""),
+                sequence=sequence,
+            )
+            if not ok:
+                return ClaudePermissionBridgeResult(
+                    status="error",
+                    error_message=message,
+                    metadata=_claude_permission_bridge_safety_metadata(fake_sdk=True),
+                )
+            assistant_chunks.append(message)
+        elif event_type in {"assistant", "assistant_delta"}:
+            assistant_chunks.append(_redact_claude_text(str(event.get("content") or "")))
+        elif event_type == "crash":
+            return ClaudePermissionBridgeResult(
+                status="error",
+                error_message=_redact_claude_text(str(event.get("error") or "fake SDK crashed")),
+                metadata=_claude_permission_bridge_safety_metadata(fake_sdk=True),
+            )
+    content = "\n".join(chunk for chunk in assistant_chunks if chunk).strip()
+    if not content:
+        content = "Claude Code permission bridge completed."
+    return ClaudePermissionBridgeResult(
+        status="completed",
+        content=content,
+        session_id=local_session.id,
+        metadata=_claude_permission_bridge_safety_metadata(fake_sdk=True),
+    )
+
+
+def _extract_claude_sdk_text(message: Any) -> str:
+    if isinstance(message, str):
+        return _redact_claude_text(message)
+    if isinstance(message, dict):
+        return _extract_claude_text(message)
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return _redact_claude_text(content)
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            text = getattr(item, "text", None)
+            if isinstance(text, str):
+                chunks.append(text)
+            elif isinstance(item, dict):
+                value = item.get("text") or item.get("content")
+                if isinstance(value, str):
+                    chunks.append(value)
+        return _redact_claude_text("".join(chunks))
+    return ""
+
+
+def _claude_sdk_tool_name(
+    tool_name: Any,
+    input_json: Any,
+) -> tuple[str, dict[str, Any], str | None]:
+    if isinstance(tool_name, dict):
+        payload = tool_name
+        inferred_name = str(payload.get("name") or payload.get("tool_name") or "")
+        inferred_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+        tool_use_id = payload.get("id") or payload.get("tool_use_id")
+        return inferred_name, inferred_input, str(tool_use_id) if tool_use_id else None
+    if isinstance(input_json, dict):
+        tool_use_id = input_json.get("id") or input_json.get("tool_use_id")
+        return str(tool_name or ""), input_json, str(tool_use_id) if tool_use_id else None
+    return str(tool_name or ""), {}, None
+
+
+async def _run_claude_permission_bridge_sdk_async(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    bridge_task_id: str,
+    config: Any,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> ClaudePermissionBridgeResult:
+    workspace_root, failure = _validate_claude_permission_bridge_workspace(
+        config=config,
+        state=state,
+        payload=payload,
+    )
+    if failure is not None:
+        return failure
+    assert workspace_root is not None
+    sdk_probe = _probe_claude_agent_sdk()
+    if not sdk_probe.installed:
+        return ClaudePermissionBridgeResult(
+            status="error",
+            error_message=sdk_probe.error_message or "claude_agent_sdk unavailable",
+            metadata=_claude_permission_bridge_safety_metadata(
+                sdk_version=sdk_probe.version,
+                fake_sdk=False,
+            ),
+        )
+    sdk = importlib.import_module("claude_agent_sdk")
+    try:
+        sdk_types = importlib.import_module("claude_agent_sdk.types")
+    except Exception:
+        sdk_types = None
+    HookMatcher = _claude_agent_sdk_symbol(sdk, sdk_types, "HookMatcher")
+    PermissionResultDeny = _claude_agent_sdk_symbol(sdk, sdk_types, "PermissionResultDeny")
+    store = SessionStore(config.session_db_path, config.sessions_dir)
+    local_session = store.create_session(
+        cwd=str(workspace_root),
+        agent_id=str(payload.get("agent_id") or "default"),
+        mode="confirm",
+        cli_mode="claude_code",
+        target="host",
+    )
+    run_id = str(payload.get("run_id") or "")
+    if run_id:
+        store.update_run_id(local_session.id, run_id)
+    sequence_counter = {"value": 0}
+
+    async def can_use_tool(tool_name: Any, input_json: Any, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        sequence_counter["value"] += 1
+        mapped_name, mapped_input, tool_use_id = _claude_sdk_tool_name(tool_name, input_json)
+        ok, message, _approved_input = _handle_claude_permission_tool_request(
+            client=client,
+            device_token=device_token,
+            bridge_task_id=bridge_task_id,
+            store=store,
+            local_session_id=local_session.id,
+            run_id=run_id,
+            agent_id=str(payload.get("agent_id") or "default"),
+            cwd=workspace_root,
+            claude_tool_name=mapped_name,
+            claude_input=mapped_input,
+            tool_use_id=tool_use_id,
+            sequence=sequence_counter["value"],
+        )
+        if ok:
+            # Harness already executed and audited the side effect. Deny SDK-native execution
+            # so Claude Code cannot perform the same host mutation a second time.
+            return PermissionResultDeny(message=message)
+        return PermissionResultDeny(message=_redact_claude_text(message))
+
+    async def permission_bridge_pre_tool_hook(
+        input_data: Any,
+        tool_use_id: Any,
+        context: Any,
+    ) -> dict[str, bool]:
+        del input_data, tool_use_id, context
+        return {"continue_": True}
+
+    options_kwargs = {
+        "permission_mode": "default",
+        "allowed_tools": CLAUDE_SAFE_SDK_TOOLS,
+        "can_use_tool": can_use_tool,
+    }
+    options_signature = inspect.signature(sdk.ClaudeAgentOptions)
+    if _callable_accepts_keyword(sdk.ClaudeAgentOptions, "hooks"):
+        options_kwargs["hooks"] = {
+            "PreToolUse": [
+                HookMatcher(
+                    matcher=None,
+                    hooks=[permission_bridge_pre_tool_hook],
+                )
+            ]
+        }
+    if "setting_sources" in options_signature.parameters:
+        options_kwargs["setting_sources"] = []
+    if "disallowed_tools" in options_signature.parameters:
+        options_kwargs["disallowed_tools"] = sorted(CLAUDE_DENIED_TOOLS)
+    for disabled_keyword, disabled_value in (
+        ("mcp_servers", {}),
+        ("strict_mcp_config", True),
+        ("agents", {}),
+        ("plugins", []),
+        ("skills", []),
+        ("include_hook_events", False),
+    ):
+        if disabled_keyword in options_signature.parameters:
+            options_kwargs[disabled_keyword] = disabled_value
+    if "cwd" in options_signature.parameters:
+        options_kwargs["cwd"] = str(workspace_root)
+    try:
+        options = sdk.ClaudeAgentOptions(**options_kwargs)
+    except Exception as exc:
+        return ClaudePermissionBridgeResult(
+            status="error",
+            error_message=_redact_claude_text(f"Claude Agent SDK options failed: {exc}"),
+            metadata=_claude_permission_bridge_safety_metadata(
+                sdk_version=sdk_probe.version,
+                fake_sdk=False,
+            ),
+        )
+    prompt = _claude_code_permission_bridge_prompt_for_task(payload)
+    assistant_chunks: list[str] = []
+    try:
+        async with sdk.ClaudeSDKClient(options=options) as claude_client:
+            await claude_client.query(_claude_agent_sdk_prompt_stream(prompt))
+            async for message in claude_client.receive_response():
+                text = _extract_claude_sdk_text(message)
+                if text:
+                    assistant_chunks.append(text)
+    except Exception as exc:
+        return ClaudePermissionBridgeResult(
+            status="error",
+            error_message=_redact_claude_text(f"Claude Agent SDK run failed: {exc}"),
+            metadata=_claude_permission_bridge_safety_metadata(
+                sdk_version=sdk_probe.version,
+                fake_sdk=False,
+            ),
+        )
+    content = "".join(assistant_chunks).strip()
+    if not content:
+        return ClaudePermissionBridgeResult(
+            status="error",
+            error_message="Claude Agent SDK returned empty assistant output",
+            metadata=_claude_permission_bridge_safety_metadata(
+                sdk_version=sdk_probe.version,
+                fake_sdk=False,
+            ),
+        )
+    return ClaudePermissionBridgeResult(
+        status="completed",
+        content=content,
+        session_id=local_session.id,
+        metadata=_claude_permission_bridge_safety_metadata(
+            sdk_version=sdk_probe.version,
+            fake_sdk=False,
+        ),
+    )
+
+
+def _run_claude_permission_bridge_sdk(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    bridge_task_id: str,
+    config: Any,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> ClaudePermissionBridgeResult:
+    fake_requested = _claude_permission_bridge_fake_sdk_requested(payload)
+    if fake_requested and _claude_permission_bridge_fake_sdk_enabled():
+        return _run_claude_permission_bridge_fake_sdk(
+            client=client,
+            device_token=device_token,
+            bridge_task_id=bridge_task_id,
+            config=config,
+            state=state,
+            payload=payload,
+        )
+    if fake_requested:
+        return ClaudePermissionBridgeResult(
+            status="error",
+            error_message="Claude permission bridge fake SDK mode is disabled",
+            metadata=_claude_permission_bridge_safety_metadata(fake_sdk=True),
+        )
+    return asyncio.run(
+        _run_claude_permission_bridge_sdk_async(
+            client=client,
+            device_token=device_token,
+            bridge_task_id=bridge_task_id,
+            config=config,
+            state=state,
+            payload=payload,
+        )
+    )
+
+
 def _save_bridge_device_token(config: Any, device_token: str) -> str:
     config.home.mkdir(parents=True, exist_ok=True)
     token_ref = BRIDGE_DEVICE_TOKEN_REF
@@ -1579,6 +2236,7 @@ def _bridge_state_for_disk(state: dict[str, Any]) -> dict[str, Any]:
         "device_token_ref",
         "adapter_kind",
         "display_name",
+        "permission_bridge",
         "workspace_root_ref",
         "workspace_identity_hash",
     }
@@ -1761,6 +2419,261 @@ def _requires_secret_read(tool_name: str, input_json: dict[str, Any]) -> bool:
         pattern in lowered
         for pattern in ("printenv", "cat .env", "token", "secret", "api_key")
     )
+
+
+def _claude_tool_text(input_json: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = input_json.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _map_claude_tool_request(tool_name: str, input_json: dict[str, Any]) -> ClaudeToolMapping:
+    normalized_tool = str(tool_name or "").strip()
+    if normalized_tool == "Bash":
+        command = _claude_tool_text(input_json, "command", "cmd")
+        if not command:
+            return ClaudeToolMapping(False, "run_shell", {}, [], reason="Bash command is missing")
+        return ClaudeToolMapping(
+            True,
+            "run_shell",
+            {
+                "command": command,
+                "description": _claude_tool_text(input_json, "description"),
+                "timeout_seconds": input_json.get("timeout_seconds", input_json.get("timeout")),
+            },
+            [],
+            requires_network=_requires_network("run_shell", {"command": command}),
+            requires_secret_read=_requires_secret_read("run_shell", {"command": command}),
+        )
+    if normalized_tool == "Write":
+        path = _claude_tool_text(input_json, "file_path", "path")
+        content = str(input_json.get("content") or "")
+        if not path:
+            return ClaudeToolMapping(False, "write_file", {}, [], reason="Write path is missing")
+        return ClaudeToolMapping(True, "write_file", {"path": path, "content": content}, [path])
+    if normalized_tool in {"Edit", "MultiEdit"}:
+        patch = _claude_tool_text(input_json, "patch", "diff")
+        path = _claude_tool_text(input_json, "file_path", "path")
+        if patch:
+            return ClaudeToolMapping(True, "apply_patch", {"patch": patch}, [path] if path else [])
+        return ClaudeToolMapping(
+            False,
+            "apply_patch",
+            {},
+            [path] if path else [],
+            reason=f"{normalized_tool} requires diff-first patch input in V6",
+        )
+    if normalized_tool == "Read":
+        path = _claude_tool_text(input_json, "file_path", "path")
+        if not path:
+            return ClaudeToolMapping(False, "read_file", {}, [], reason="Read path is missing")
+        return ClaudeToolMapping(True, "read_file", {"path": path}, [path])
+    if normalized_tool == "LS":
+        root = _claude_tool_text(input_json, "path", "root") or "."
+        return ClaudeToolMapping(True, "list_files", {"root": root}, [root])
+    if normalized_tool == "Glob":
+        root = _claude_tool_text(input_json, "path", "root") or "."
+        glob = _claude_tool_text(input_json, "pattern", "glob") or "**/*"
+        return ClaudeToolMapping(True, "list_files", {"root": root, "glob": glob}, [root])
+    if normalized_tool == "Grep":
+        query = _claude_tool_text(input_json, "pattern", "query")
+        root = _claude_tool_text(input_json, "path", "root") or "."
+        glob = _claude_tool_text(input_json, "glob") or "**/*"
+        if not query:
+            return ClaudeToolMapping(
+                False,
+                "search_files",
+                {},
+                [root],
+                reason="Grep query is missing",
+            )
+        return ClaudeToolMapping(
+            True,
+            "search_files",
+            {"root": root, "query": query, "glob": glob},
+            [root],
+        )
+    if normalized_tool in CLAUDE_DENIED_TOOLS or normalized_tool.startswith("mcp__"):
+        return ClaudeToolMapping(
+            False,
+            normalized_tool or "unknown",
+            {},
+            [],
+            reason=f"Claude tool {normalized_tool or 'unknown'} is not mapped in V6",
+        )
+    return ClaudeToolMapping(
+        False,
+        normalized_tool or "unknown",
+        {},
+        [],
+        reason=f"unknown Claude tool {normalized_tool or 'unknown'} is denied by default",
+    )
+
+
+def _claude_tool_request_id(
+    *,
+    bridge_task_id: str,
+    tool_use_id: str | None,
+    tool_name: str,
+    sequence: int,
+) -> str:
+    return _bridge_tool_request_id(
+        bridge_task_id=bridge_task_id,
+        tool_call_id=f"claude:{tool_use_id or f'{tool_name}:{sequence}'}",
+        tool_name=tool_name,
+    )
+
+
+def _claude_permission_result_message(result: ToolExecutionResult) -> str:
+    output = result.output_json if isinstance(result.output_json, dict) else {}
+    safe_output = _redact_claude_text(json.dumps(output, ensure_ascii=False), limit=4000)
+    if result.status == "SUCCESS":
+        return f"Harness approved and executed the local tool. Result: {safe_output}"
+    reason = result.error_message or str(output.get("error") or result.status)
+    return f"Harness did not execute the local tool successfully: {_redact_claude_text(reason)}"
+
+
+def _poll_local_tool_decision_for_claude(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    tool_request_id: str,
+    timeout_seconds: float = CLAUDE_PERMISSION_DECISION_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + max(0.1, timeout_seconds)
+    last_decision: dict[str, Any] = {}
+    while time.monotonic() <= deadline:
+        decision = client.get_local_agent_tool_decision(
+            device_token=device_token,
+            tool_request_id=tool_request_id,
+        )
+        if isinstance(decision, dict):
+            last_decision = decision
+        terminal_decision = str(decision.get("decision") or decision.get("status") or "").strip()
+        if terminal_decision == "approval_required":
+            time.sleep(CLAUDE_PERMISSION_DECISION_POLL_SECONDS)
+            continue
+        if terminal_decision == "cancelled" and not decision.get("reason"):
+            return {
+                **decision,
+                "executable": False,
+                "reason": "Claude Code permission bridge request was cancelled",
+            }
+        if terminal_decision == "expired" and not decision.get("reason"):
+            return {
+                **decision,
+                "executable": False,
+                "reason": "Claude Code permission bridge approval expired",
+            }
+        if terminal_decision in {"denied", "failed", "revoked"} and not decision.get("reason"):
+            return {
+                **decision,
+                "executable": False,
+                "reason": f"Claude Code permission bridge request {terminal_decision}",
+            }
+        if terminal_decision:
+            return decision
+        return {
+            **decision,
+            "decision": "denied",
+            "executable": False,
+            "reason": "Claude Code permission bridge returned an invalid decision",
+        }
+    return {
+        **last_decision,
+        "decision": "denied",
+        "executable": False,
+        "reason": "Claude Code permission bridge approval timed out",
+    }
+
+
+def _handle_claude_permission_tool_request(
+    *,
+    client: HarnessApiClient,
+    device_token: str,
+    bridge_task_id: str,
+    store: SessionStore,
+    local_session_id: str,
+    run_id: str | None,
+    agent_id: str,
+    cwd: Path,
+    claude_tool_name: str,
+    claude_input: dict[str, Any],
+    tool_use_id: str | None,
+    sequence: int,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    mapping = _map_claude_tool_request(claude_tool_name, claude_input)
+    if not mapping.allowed:
+        return False, mapping.reason or "Claude tool denied by Harness", None
+    tool_request_id = _claude_tool_request_id(
+        bridge_task_id=bridge_task_id,
+        tool_use_id=tool_use_id,
+        tool_name=claude_tool_name,
+        sequence=sequence,
+    )
+    try:
+        handled = _handle_bridge_host_tool_request(
+            client=client,
+            bridge_context=BridgeToolContext(
+                bridge_task_id=bridge_task_id,
+                device_token=device_token,
+            ),
+            store=store,
+            session_id=local_session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            command="claude_code",
+            cwd=cwd,
+            tool_name=mapping.tool_name,
+            tool_call_id=tool_request_id,
+            input_json=mapping.input_json,
+            risk_level="critical"
+            if (mapping.requires_network or mapping.requires_secret_read)
+            else "high",
+            permission_mode="confirm",
+            tool_request_id_override=tool_request_id,
+        )
+    except Exception as exc:
+        return False, _redact_claude_text(f"Harness tool request failed: {exc}"), None
+    if handled.status == "pending_approval":
+        pending = handled.pending_tool
+        if not isinstance(pending, dict):
+            return False, "Harness approval state is missing", None
+        try:
+            decision = _poll_local_tool_decision_for_claude(
+                client=client,
+                device_token=device_token,
+                tool_request_id=tool_request_id,
+            )
+        except Exception as exc:
+            return False, _redact_claude_text(f"Harness approval polling failed: {exc}"), None
+        if not decision.get("executable"):
+            return False, str(decision.get("reason") or decision.get("decision") or "denied"), None
+        handled = _execute_approved_bridge_pending_tool(
+            pending={**pending, "input_json": decision.get("input_json")},
+            decision=decision,
+            client=client,
+            device_token=device_token,
+            store=store,
+            local_session_id=local_session_id,
+            cwd=cwd,
+        )
+    if handled.result is None:
+        return False, handled.error_message or handled.status, None
+    if handled.status != "executed" or handled.result.status != "SUCCESS":
+        return (
+            False,
+            handled.error_message or _claude_permission_result_message(handled.result),
+            None,
+        )
+    executable_input = (
+        handled.result.input_json
+        if isinstance(handled.result.input_json, dict)
+        else mapping.input_json
+    )
+    return True, _claude_permission_result_message(handled.result), executable_input
 
 
 def _bridge_pending_tool_from_decision(decision: dict[str, Any]) -> dict[str, Any] | None:
@@ -2025,6 +2938,7 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
     config = load_config()
     api_url = args.api_url or config.api_url
     cwd = Path(args.cwd).expanduser().resolve()
+    permission_bridge = _permission_bridge_for_adapter(args.adapter_kind, args.permission_bridge)
     if args.adapter_kind == "codex":
         probe = _probe_codex_cli()
         if not probe.installed:
@@ -2057,6 +2971,23 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
+        if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
+            sdk_probe = _probe_claude_agent_sdk()
+            if not sdk_probe.installed:
+                print(
+                    json.dumps(
+                        {
+                            "status": "failed",
+                            "adapter_kind": "claude_code",
+                            "permission_bridge": "sdk",
+                            "error": sdk_probe.error_message or "claude_agent_sdk unavailable",
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                )
+                return 1
     client = HarnessApiClient(api_url, config.token)
     display_name = args.display_name or (
         "hao Local Agent"
@@ -2078,8 +3009,11 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
         adapter_kind=args.adapter_kind,
         display_name=display_name,
         workspace_root=str(cwd),
-        capabilities=_bridge_capabilities(args.adapter_kind),
-        risk_capabilities=_bridge_risk_capabilities(args.adapter_kind),
+        capabilities=_bridge_capabilities(args.adapter_kind, permission_bridge=permission_bridge),
+        risk_capabilities=_bridge_risk_capabilities(
+            args.adapter_kind,
+            permission_bridge=permission_bridge,
+        ),
         bridge_version=_bridge_version(),
         metadata={
             "workspace_identity_hash": workspace_identity_hash,
@@ -2095,6 +3029,7 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
         "device_token": registered["device_token"],
         "adapter_kind": args.adapter_kind,
         "display_name": display_name,
+        "permission_bridge": permission_bridge,
     }
     if args.adapter_kind in {"codex", "claude_code"}:
         state["workspace_root_ref"] = _save_bridge_workspace_root(config, cwd)
@@ -2108,6 +3043,7 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
                 "status": "paired",
                 "connection_id": connection["id"],
                 "adapter_kind": args.adapter_kind,
+                "permission_bridge": permission_bridge,
                 "state_path": str(_bridge_state_path(config)),
             },
             ensure_ascii=False,
@@ -2142,6 +3078,12 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
         "--interval",
         str(args.interval),
     ]
+    permission_bridge = str(state.get("permission_bridge") or CLAUDE_PERMISSION_BRIDGE_MODE_NONE)
+    if (
+        state.get("adapter_kind") == "claude_code"
+        and permission_bridge != CLAUDE_PERMISSION_BRIDGE_MODE_NONE
+    ):
+        command.extend(["--permission-bridge", permission_bridge])
     if state.get("adapter_kind") not in {"codex", "claude_code"}:
         command.extend(["--cwd", str(state["cwd"])])
     popen_kwargs: dict[str, Any] = {
@@ -2195,6 +3137,34 @@ def _run_bridge(args: argparse.Namespace) -> int:
         )
         return 1
     state["adapter_kind"] = args.adapter_kind or saved_adapter_kind or "hao"
+    saved_permission_bridge = str(state.get("permission_bridge") or "")
+    requested_permission_bridge = (
+        _permission_bridge_for_adapter(str(state["adapter_kind"]), args.permission_bridge)
+        if args.permission_bridge is not None
+        else saved_permission_bridge or CLAUDE_PERMISSION_BRIDGE_MODE_NONE
+    )
+    if (
+        args.permission_bridge is not None
+        and saved_permission_bridge
+        and requested_permission_bridge != saved_permission_bridge
+    ):
+        print(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": "bridge permission mode does not match paired adapter identity",
+                    "state_path": str(_bridge_state_path(config)),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    state["permission_bridge"] = _permission_bridge_for_adapter(
+        str(state["adapter_kind"]),
+        requested_permission_bridge,
+    )
     if state["adapter_kind"] in {"codex", "claude_code"}:
         if args.cwd:
             cwd = Path(args.cwd).expanduser().resolve()
@@ -2258,7 +3228,11 @@ def _run_bridge_loop_from_state(
     adapter_kind = str(state.get("adapter_kind") or "hao")
     device_token = str(state["device_token"])
     connection_id = str(state["connection_id"])
-    capabilities = _bridge_capabilities(adapter_kind)
+    permission_bridge = _permission_bridge_for_adapter(
+        adapter_kind,
+        str(state.get("permission_bridge") or CLAUDE_PERMISSION_BRIDGE_MODE_NONE),
+    )
+    capabilities = _bridge_capabilities(adapter_kind, permission_bridge=permission_bridge)
     while True:
         client.heartbeat_local_agent_connection(
             connection_id=connection_id,
@@ -2438,6 +3412,15 @@ def _handle_claude_code_bridge_task(
 ) -> None:
     task_id = str(task["id"])
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    permission_bridge = _permission_bridge_for_adapter(
+        "claude_code",
+        str(state.get("permission_bridge") or CLAUDE_PERMISSION_BRIDGE_MODE_NONE),
+    )
+    command_mode = (
+        "agent_sdk_intent_capture_harness_executor"
+        if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK
+        else "headless_bare_no_session_no_tools"
+    )
     client.report_local_agent_bridge_event(
         device_token=device_token,
         payload={
@@ -2447,14 +3430,26 @@ def _handle_claude_code_bridge_task(
             "sequence": 1,
             "metadata": {
                 "adapter_kind": "claude_code",
-                "command_mode": "headless_bare_no_session_no_tools",
+                "command_mode": command_mode,
+                "permission_bridge": permission_bridge,
                 "supports_resume": False,
                 "resume_mode": "context_replay_new_session",
                 "workspace_identity_hash": state.get("workspace_identity_hash"),
             },
         },
     )
-    result = _run_claude_code_cli(config=config, state=state, payload=payload)
+    result: ClaudeCodeRunResult | ClaudePermissionBridgeResult
+    if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
+        result = _run_claude_permission_bridge_sdk(
+            client=client,
+            device_token=device_token,
+            bridge_task_id=task_id,
+            config=config,
+            state=state,
+            payload=payload,
+        )
+    else:
+        result = _run_claude_code_cli(config=config, state=state, payload=payload)
     if result.status != "completed":
         client.report_local_agent_bridge_event(
             device_token=device_token,
@@ -2466,6 +3461,7 @@ def _handle_claude_code_bridge_task(
                 "sequence": 2,
                 "metadata": {
                     "adapter_kind": "claude_code",
+                    "permission_bridge": permission_bridge,
                     **_safe_claude_metadata(result.metadata or {}),
                 },
             },
@@ -2493,6 +3489,7 @@ def _handle_claude_code_bridge_task(
             "sequence": 3,
             "metadata": {
                 "adapter_kind": "claude_code",
+                "permission_bridge": permission_bridge,
                 "adapter_session_id": result.session_id,
                 "resume_mode": "context_replay_new_session",
                 **_safe_claude_metadata(result.metadata or {}),
@@ -2793,8 +3790,9 @@ def _handle_bridge_host_tool_request(
     input_json: dict[str, Any],
     risk_level: str,
     permission_mode: str,
+    tool_request_id_override: str | None = None,
 ) -> BridgeToolHandlingResult:
-    tool_request_id = _bridge_tool_request_id(
+    tool_request_id = tool_request_id_override or _bridge_tool_request_id(
         bridge_task_id=bridge_context.bridge_task_id,
         tool_call_id=tool_call_id,
         tool_name=tool_name,
@@ -2981,16 +3979,34 @@ def _execute_approved_bridge_pending_tool(
     else:
         try:
             if tool_name in {"write_file", "apply_patch"}:
-                change_id = str(pending.get("change_id") or "")
+                refreshed_pending = _refresh_approved_bridge_pending_change(
+                    pending=pending,
+                    input_json=input_json,
+                    client=client,
+                    device_token=device_token,
+                    store=store,
+                    local_session_id=local_session_id,
+                    cwd=cwd,
+                )
+                pending = refreshed_pending
+                change_id = str(refreshed_pending.get("change_id") or "")
                 commit_tool = _headless_commit_tool_name(tool_name)
                 if not change_id or commit_tool is None:
                     raise ValueError("approved pending change is missing change_id")
-                result = execute_local_tool(
+                commit_result = execute_local_tool(
                     commit_tool,
                     {"change_id": change_id},
                     cwd,
                     session_store=store,
                     session_id=local_session_id,
+                )
+                result = ToolExecutionResult(
+                    tool_name=tool_name,
+                    status=commit_result.status,
+                    input_json=input_json,
+                    output_json=commit_result.output_json,
+                    duration_ms=commit_result.duration_ms,
+                    error_message=commit_result.error_message,
                 )
             elif tool_name in SHELL_COMMAND_TOOLS:
                 reporting_store = BridgeReportingSessionStore(
@@ -3248,6 +4264,130 @@ def _headless_commit_tool_name(tool_name: str) -> str | None:
     if tool_name == "apply_patch":
         return "commit_apply_patch"
     return None
+
+
+def _headless_preview_tool_name(tool_name: str) -> str | None:
+    if tool_name == "write_file":
+        return "preview_write_file"
+    if tool_name == "apply_patch":
+        return "preview_apply_patch"
+    return None
+
+
+def _reject_pending_change_safely(
+    *,
+    store: SessionStore,
+    change_id: str,
+    reason: str,
+) -> None:
+    if not change_id:
+        return
+    try:
+        existing = store.get_pending_change(change_id)
+        if existing is None or existing.get("status") != "pending":
+            return
+        store.update_pending_change_status(
+            change_id,
+            status="rejected",
+            error_message=reason,
+        )
+    except Exception:
+        return
+
+
+def _refresh_approved_bridge_pending_change(
+    *,
+    pending: dict[str, Any],
+    input_json: dict[str, Any],
+    client: HarnessApiClient,
+    device_token: str,
+    store: SessionStore,
+    local_session_id: str,
+    cwd: Path,
+) -> dict[str, Any]:
+    tool_name = str(pending["tool_name"])
+    preview_tool = _headless_preview_tool_name(tool_name)
+    if preview_tool is None:
+        return pending
+    existing_change_id = str(pending.get("change_id") or "")
+    if existing_change_id:
+        existing_change = store.get_pending_change(existing_change_id)
+        if (
+            existing_change is not None
+            and existing_change.get("tool_name") == tool_name
+            and isinstance(existing_change.get("input_json"), dict)
+            and existing_change.get("input_json") == input_json
+        ):
+            return pending
+    refreshed_change_id = ""
+    try:
+        preview_result = execute_local_tool(
+            preview_tool,
+            input_json,
+            cwd,
+            session_store=store,
+            session_id=local_session_id,
+            pending_change_metadata={
+                "source": "local_agent_bridge",
+                "bridge_task_id": pending.get("bridge_task_id"),
+                "tool_request_id": pending.get("tool_request_id"),
+                "run_id": pending.get("run_id"),
+                "permission_mode": pending.get("permission_mode"),
+                "approved_refresh": True,
+            },
+        )
+        if preview_result.status != "SUCCESS":
+            raise ValueError(
+                preview_result.error_message or "approved pending change preview failed"
+            )
+        output_json = (
+            preview_result.output_json if isinstance(preview_result.output_json, dict) else {}
+        )
+        refreshed_change_id = str(output_json.get("change_id") or "").strip()
+        if not refreshed_change_id:
+            raise ValueError("approved pending change preview is missing change_id")
+        target_paths = _tool_target_paths(tool_name, input_json, output_json)
+        if not target_paths:
+            raise ValueError("approved pending change preview is missing target paths")
+        diff = str(output_json.get("diff") or "")
+        diff_sha256 = _sha256_text(diff)
+        refresh_payload = {
+            "input_json": input_json,
+            "target_paths": target_paths,
+            "pending_change_preview": {
+                "change_id": refreshed_change_id,
+                "operation": tool_name,
+                "target_paths": target_paths,
+                "diff": diff,
+                "diff_sha256": diff_sha256,
+                "preview_bytes": len(diff.encode("utf-8", errors="replace")),
+            },
+        }
+        client.refresh_local_agent_pending_change(
+            device_token=device_token,
+            tool_request_id=str(pending["tool_request_id"]),
+            payload=refresh_payload,
+        )
+        previous_change_id = existing_change_id
+        if previous_change_id and previous_change_id != refreshed_change_id:
+            _reject_pending_change_safely(
+                store=store,
+                change_id=previous_change_id,
+                reason="replaced by approved modified input",
+            )
+        return {
+            **pending,
+            "change_id": refreshed_change_id,
+            "diff_sha256": diff_sha256,
+        }
+    except Exception:
+        if refreshed_change_id:
+            _reject_pending_change_safely(
+                store=store,
+                change_id=refreshed_change_id,
+                reason="approved pending change refresh failed",
+            )
+        raise
 
 
 def _verification_summary(result: ToolExecutionResult) -> str:

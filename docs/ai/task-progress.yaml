@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-05T02:02:55Z
+last_updated_at: 2026-06-05T08:31:55Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -119,22 +119,40 @@ stages:
 post_stage_hardening:
   - id: local-agent-claude-code-permission-bridge-v6
     date: 2026-06-05
-    status: plan_reviewed
-    demo: Local Agent Claude Code Permission Bridge V6 plan is入库 and reviewed. The planned V6 scope is an Agent SDK permission bridge that routes Claude Code host-tool intent through Harness V3 LocalAgentToolRequest, ToolApproval, ToolCall, AgentEvent, pending-change, and command lifecycle authority before any local side effect.
-    verification_result: plan_review_passed
+    status: completed
+    demo: Local Agent Claude Code Permission Bridge V6 adds an opt-in Claude Agent SDK permission bridge that captures host-tool intent, routes it through Harness V3 approval and execution authority, and keeps assistant conversation inside the existing local-agent Run/Event/Message path.
+    verification_result: passed
     verification_commands:
       - architecture/protocol planning reviewer final verdict PASS
       - security/test planning reviewer initial verdict REVISE/BLOCK; plan revised; final verdict PASS
+      - implementation architecture reviewer final verdict CLEAR
+      - implementation code/security reviewer final verdict APPROVE
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "claude and (bridge or permission or fake_sdk or sdk)"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py
+      - python3 -m py_compile scripts/smoke-test-local-agent-v6.py services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/app/api/tasks.py services/api-server/tests/test_local_agents.py services/api-server/tests/test_hao_cli.py
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-sdk-unavailable
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-approved
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-cancel
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-v5-heartbeat-upgrade-denied
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-modified-approval
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
       - python3 scripts/validate-docs.py
       - git diff --check
     acceptance_notes:
-      - V6 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-claude-code-permission-bridge-v6.md` and `.omx/plans/test-spec-local-agent-claude-code-permission-bridge-v6.md`.
-      - V6 is planned as a Claude Code Agent SDK `can_use_tool` permission bridge slice; V5 headless no-tools Claude Code remains the default fallback and regression baseline.
-      - The plan requires side-effect SDK tool requests such as Bash, Write, Edit, MultiEdit, git/network/env/secret-like operations to reach Harness `can_use_tool` and V3 local tool approval before execution; SDK allowed-tools/settings cannot pre-approve them.
-      - The plan keeps API/DB as the authority for sessions, Runs, events, approvals, tool calls, pending changes, command lifecycle, assistant completion, and audit.
-      - Security/test review initially blocked the plan for SDK allow-rule bypass, missing fail-closed API/bridge failure cases, and missing modified-approval execution proof; the final plan adds adversarial fake SDK, API/decision/callback/SDK/runner failure, modified input, privacy, and chmod verification gates.
+      - V6 PRD and test spec remain the authoritative plan docs at `.omx/plans/prd-local-agent-claude-code-permission-bridge-v6.md` and `.omx/plans/test-spec-local-agent-claude-code-permission-bridge-v6.md`.
+      - V6 keeps API/DB as the authority for sessions, Runs, events, approvals, tool calls, pending changes, command lifecycle, assistant completion, and audit; the local bridge only captures intent, polls decisions, and reports back receipts and results.
+      - Claude V6 is now normalized to `permission_bridge=harness_local_tool_request_v1`, `execution_mode=agent_sdk_intent_capture_harness_executor`, `permission_bridge_execution=harness_owned_executor`, and `sdk_native_tool_execution_enabled=false`; the Claude SDK callback denies after Harness-owned execution so native side-effect execution cannot run twice.
+      - V6 enablement is gated by both scoped pairing entitlement and capability normalization; V5 Claude connections cannot self-upgrade to V6 through heartbeat and continue to behave as headless no-tools fallback connections.
+      - Host-tool requests from Claude V6 now create or bind the existing V3 `LocalAgentToolRequest`, `ToolApproval`, `ToolCall`, `AgentEvent`, `LocalAgentPendingChange`, and `LocalAgentCommand` records before local side effects.
+      - Modified approval now updates the executable input hash, requires write/apply-patch pending-change preview refresh against the approved modified input, fail-closes stale original preview results, and records the refreshed preview on both the local request and approval audit path.
+      - Task cancel now terminalizes pending Claude V6 local-tool state, including approvals, tool calls, pending changes, commands, and bridge tasks, and late approval or execution polling fails closed.
+      - The hao CLI V6 path now supports the Claude Agent SDK permission callback, explicit fake-SDK fixture mode, and deterministic smoke coverage for unavailable SDK, approved execution, cancelled execution, V5 heartbeat upgrade denial, and modified-approval refresh execution.
+      - Agent Studio now distinguishes Claude Code V5 from Claude Code V6, generates scoped pairing commands with `--permission-bridge sdk`, and marks V6 connections as permission-bridge plus host-tool-approval capable.
+      - Final implementation review returned architecture `CLEAR` and code/security `APPROVE`; closeout-only follow-up was correcting stale handoff wording and validation counts.
       - Native Claude Code resume, deferred tool resume after process exit, live credential UX, remote-control/web/cloud sessions, MCP/plugins/hooks/subagents/browser/computer-use, and server-side Claude credential handling remain out of V6 scope.
-      - No V6 implementation has started on this branch; this entry records plan入库 and reviewer consensus only.
 
   - id: local-agent-claude-code-adapter-v5
     date: 2026-06-05

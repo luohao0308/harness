@@ -269,6 +269,26 @@ class HarnessApiClient:
             response.raise_for_status()
             return response.json()
 
+    def refresh_local_agent_pending_change(
+        self,
+        *,
+        device_token: str,
+        tool_request_id: str,
+        payload: dict,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/"
+            f"{tool_request_id}/pending-change-refresh"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
     def get_local_agent_command_status(
         self,
         *,
