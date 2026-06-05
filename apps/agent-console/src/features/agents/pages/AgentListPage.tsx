@@ -622,7 +622,7 @@ export function AgentListPage() {
                     buttonClassName="min-w-36"
                     menuClassName="min-w-48"
                     options={LOCAL_AGENT_ADAPTERS.map((adapter) => ({
-                      value: adapter.kind,
+                      value: adapter.pairingKind,
                       label: adapter.label,
                       description: text(adapter.zh, adapter.en),
                       disabled: !adapter.enabled,
@@ -688,7 +688,7 @@ export function AgentListPage() {
               </div>
               <div className="grid gap-2">
                 {LOCAL_AGENT_ADAPTERS.map((adapter) => {
-                  const matches = selectedLocalAgentConnections.filter((connection) => connection.adapter_kind === adapter.kind);
+                  const matches = selectedLocalAgentConnections.filter((connection) => adapter.matchesConnection(connection));
                   return (
                     <div key={adapter.kind} className="rounded-md border border-slate-200 bg-white p-3">
                       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -806,6 +806,7 @@ function WizardStep({ index, title, active }: { index: string; title: string; ac
 const LOCAL_AGENT_ADAPTERS = [
   {
     kind: "fake",
+    pairingKind: "fake",
     label: "fake bridge",
     enabled: true,
     badgeZh: "v1 启用",
@@ -813,9 +814,11 @@ const LOCAL_AGENT_ADAPTERS = [
     icon: Monitor,
     zh: "用于验证配对、注册、心跳和一次回复，不执行本地命令。",
     en: "Validates pairing, registration, heartbeat, and one reply without local command execution.",
+    matchesConnection: (connection: LocalAgentConnection) => connection.adapter_kind === "fake",
   },
   {
     kind: "hao",
+    pairingKind: "hao",
     label: "hao",
     enabled: true,
     badgeZh: "v1 启用",
@@ -823,9 +826,11 @@ const LOCAL_AGENT_ADAPTERS = [
     icon: Terminal,
     zh: "v1 真实本地 Agent 适配器，支持本地会话恢复和审计回传。",
     en: "The v1 real local Agent adapter with local session resume and audit reporting.",
+    matchesConnection: (connection: LocalAgentConnection) => connection.adapter_kind === "hao",
   },
   {
     kind: "codex",
+    pairingKind: "codex",
     label: "Codex CLI",
     enabled: true,
     badgeZh: "v4 启用",
@@ -833,21 +838,45 @@ const LOCAL_AGENT_ADAPTERS = [
     icon: Bot,
     zh: "v4 受限本地 Agent 适配器，支持只读 assistant 回复；本地主机工具默认禁用。",
     en: "The v4 constrained local Agent adapter for read-only assistant replies; host tools stay disabled.",
+    matchesConnection: (connection: LocalAgentConnection) => connection.adapter_kind === "codex",
   },
   {
     kind: "claude_code",
-    label: "Claude Code",
+    pairingKind: "claude_code",
+    label: "Claude Code V5",
     enabled: true,
     badgeZh: "v5 启用",
     badgeEn: "v5 enabled",
     icon: Brain,
-    zh: "v5 受限 headless 适配器，支持 assistant 回复；host tools 禁用，使用 context replay。",
-    en: "The v5 constrained headless adapter for assistant replies; host tools are disabled and context replay is used.",
+    zh: "v5 保守无工具适配器，支持 assistant 回复；本地主机工具禁用。",
+    en: "The v5 conservative no-tools adapter for assistant replies; host tools stay disabled.",
+    matchesConnection: (connection: LocalAgentConnection) =>
+      connection.adapter_kind === "claude_code" && !localAgentUsesClaudePermissionBridge(connection),
+  },
+  {
+    kind: "claude_code_v6",
+    pairingKind: "claude_code_v6",
+    label: "Claude Code V6",
+    enabled: true,
+    badgeZh: "v6 启用",
+    badgeEn: "v6 enabled",
+    icon: Brain,
+    zh: "v6 SDK 意图捕获 + Harness 执行器，支持 assistant 回复和经 Harness 审批的本地工具。",
+    en: "The v6 SDK intent-capture plus Harness executor adapter for assistant replies and Harness-approved local tools.",
+    matchesConnection: localAgentUsesClaudePermissionBridge,
   },
 ] as const;
 
 function localAgentSupportsResume(connection: LocalAgentConnection) {
   return connection.capabilities_json.supports_resume === true;
+}
+
+function localAgentUsesClaudePermissionBridge(connection: LocalAgentConnection) {
+  return (
+    connection.adapter_kind === "claude_code" &&
+    connection.capabilities_json.permission_bridge === "harness_local_tool_request_v1" &&
+    connection.capabilities_json.host_tools_authorized === true
+  );
 }
 
 function localAgentStatusTone(connection: LocalAgentConnection) {
@@ -876,6 +905,7 @@ function LocalAgentConnectionRow({
 }) {
   const { text } = useI18n();
   const supportsResume = localAgentSupportsResume(connection);
+  const usesClaudePermissionBridge = localAgentUsesClaudePermissionBridge(connection);
   return (
     <div className="rounded-md border border-slate-100 bg-white p-2">
       <div className="flex items-start justify-between gap-2">
@@ -886,6 +916,12 @@ function LocalAgentConnectionRow({
             <Badge tone={supportsResume ? "success" : "warning"}>
               {supportsResume ? text("原生恢复", "Native resume") : text("上下文重放", "Context replay")}
             </Badge>
+            {usesClaudePermissionBridge ? (
+              <>
+                <Badge tone="purple">{text("V6 权限桥", "V6 permission bridge")}</Badge>
+                <Badge tone="warning">{text("本地工具需审批", "Host tools need approval")}</Badge>
+              </>
+            ) : null}
             {connection.capabilities_json.host_tools_authorized === false ? (
               <Badge tone="neutral">{text("本地工具禁用", "Host tools disabled")}</Badge>
             ) : null}

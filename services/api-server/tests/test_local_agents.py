@@ -158,6 +158,121 @@ def _registered_connection_for_agent(
     return payload["connection"], payload["device_token"]
 
 
+def _claude_v6_capabilities(**overrides: object) -> dict:
+    capabilities = {
+        "supports_streaming": True,
+        "claude_permission_bridge_v1": True,
+        "permission_bridge": "harness_local_tool_request_v1",
+        "permission_bridge_mode": "sdk",
+        "execution_mode": "agent_sdk_intent_capture_harness_executor",
+        "permission_bridge_execution": "harness_owned_executor",
+        "sdk_native_tool_execution_enabled": False,
+        "permission_bridge_callback_configured": True,
+        "permission_bridge_pre_tool_hook_configured": True,
+        "permission_bridge_dummy_hook_only": True,
+        "side_effect_tools_preapproval_disabled": True,
+        "forbidden_permission_modes_disabled": True,
+        "unmanaged_settings_disabled": True,
+        "sdk_allowed_tools_preapproved": False,
+        "allowed_tools": [],
+        "remote_control_enabled": False,
+        "mcp_enabled": False,
+        "plugins_enabled": False,
+        "hooks_enabled": False,
+        "subagents_enabled": False,
+        "browser_enabled": False,
+        "computer_use_enabled": False,
+        "native_resume_enabled": False,
+        "background_sessions_enabled": False,
+        "web_sessions_enabled": False,
+        "cloud_sessions_enabled": False,
+    }
+    capabilities.update(overrides)
+    return capabilities
+
+
+def _claude_v6_safety_metadata(**overrides: object) -> dict:
+    safety = {
+        "permission_bridge_callback_configured": True,
+        "permission_bridge_pre_tool_hook_configured": True,
+        "permission_bridge_dummy_hook_only": True,
+        "side_effect_tools_preapproval_disabled": True,
+        "forbidden_permission_modes_disabled": True,
+        "unmanaged_settings_disabled": True,
+        "mcp_disabled": True,
+        "plugins_disabled": True,
+        "hooks_disabled": True,
+        "subagents_disabled": True,
+        "browser_disabled": True,
+        "computer_use_disabled": True,
+        "remote_control_disabled": True,
+        "permission_mode": "default",
+        "allowed_tools": [],
+        "forbidden_surfaces": [],
+    }
+    metadata = {
+        **safety,
+        "permission_bridge_active": True,
+        "permission_bridge_version": "harness_local_tool_request_v1",
+        "permission_bridge_mode": "sdk",
+        "permission_bridge_execution": "harness_owned_executor",
+        "sdk_native_tool_execution_enabled": False,
+        "supports_resume": False,
+        "resume_mode": "context_replay_new_session",
+        "safety": safety,
+    }
+    metadata.update(overrides)
+    return metadata
+
+
+def _registered_claude_v6_connection(
+    client: TestClient,
+    db_session: Session,
+    *,
+    capabilities: dict | None = None,
+) -> tuple[dict, str]:
+    _ensure_agent(db_session)
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {
+                "executable": True,
+                "adapters": ["claude_code"],
+                "permission_bridge": ["sdk"],
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+            "workspace_root": "/Users/luohao/projects/claude-demo",
+            "capabilities": capabilities or _claude_v6_capabilities(),
+            "risk_capabilities": [
+                "workspace_read",
+                "host_write_approval_required",
+                "shell_approval_required",
+                "git_approval_required",
+                "pending_change",
+                "command_lifecycle",
+                "network",
+                "secret_read",
+            ],
+            "metadata": {"workspace_identity_hash": "hash-claude-v6"},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    payload = registered.json()
+    return payload["connection"], payload["device_token"]
+
+
 def _leased_bridge_task(
     client: TestClient,
     connection_id: str,
@@ -576,6 +691,31 @@ def test_local_agent_v4_pairing_command_is_adapter_scoped(
     assert "--adapter claude_code" in claude_pairing.json()["command"]
 
 
+def test_local_agent_v6_claude_pairing_command_includes_permission_bridge(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+
+    pairing = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {
+                "executable": True,
+                "adapters": ["claude_code"],
+                "permission_bridge": ["sdk"],
+            },
+        },
+    )
+
+    assert pairing.status_code == 201, pairing.text
+    command = pairing.json()["command"]
+    assert "--adapter claude_code" in command
+    assert "--permission-bridge sdk" in command
+
+
 def test_local_agent_v5_claude_done_requires_server_side_safety_proof(
     db_session: Session,
 ) -> None:
@@ -685,6 +825,760 @@ def test_local_agent_v5_claude_done_requires_server_side_safety_proof(
     )
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[-1].content == "safe success"
+
+
+def test_local_agent_v6_claude_registration_requires_permission_bridge_capability(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {
+                "executable": True,
+                "adapters": ["claude_code"],
+                "permission_bridge": ["sdk"],
+            },
+        },
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    rejected = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+            "capabilities": _claude_v6_capabilities(allowed_tools=["Bash"]),
+        },
+    )
+    assert rejected.status_code == 403, rejected.text
+    token = db_session.get(LocalAgentPairingToken, pairing["id"])
+    assert token is not None
+    assert token.status == "active"
+
+    connection, _device_token = _registered_claude_v6_connection(client, db_session)
+    capabilities = connection["capabilities_json"]
+    assert capabilities["enabled_in_v6"] is True
+    assert capabilities["host_tools_authorized"] is True
+    assert capabilities["supports_cancel"] is True
+    assert capabilities["permission_bridge"] == "harness_local_tool_request_v1"
+    assert capabilities["execution_mode"] == "agent_sdk_intent_capture_harness_executor"
+    assert capabilities["permission_bridge_execution"] == "harness_owned_executor"
+    assert capabilities["sdk_native_tool_execution_enabled"] is False
+    assert capabilities["allowed_tools"] == []
+    assert connection["risk_capabilities_json"] == [
+        "workspace_read",
+        "host_write_approval_required",
+        "shell_approval_required",
+        "git_approval_required",
+        "pending_change",
+        "command_lifecycle",
+    ]
+
+
+def test_local_agent_v6_claude_host_tool_protocol_is_capability_gated(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {"executable": True, "adapters": ["claude_code"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+            "capabilities": {"supports_streaming": True},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+    _sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v5-host-tool-denied",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+
+    denied = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v5-tool-req",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf denied"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+        },
+    )
+    assert denied.status_code == 409, denied.text
+    assert "cannot use local host tool protocol" in denied.text
+
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-host-tool-allowed",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    allowed = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v6-tool-req",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf ok"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+        },
+    )
+    assert allowed.status_code == 201, allowed.text
+    assert allowed.json()["decision"] == "approval_required"
+    assert allowed.json()["approval_id"]
+    assert sent["run_id"]
+
+
+def test_local_agent_v6_claude_heartbeat_cannot_self_upgrade_v5_connection(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    _ensure_agent(db_session)
+
+    created = client.post(
+        "/api/agents/local-agent/pairing-tokens",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_id": "default",
+            "scope": {"executable": True, "adapters": ["claude_code"]},
+        },
+    )
+    assert created.status_code == 201, created.text
+    pairing = created.json()
+    registered = client.post(
+        "/api/agents/local-agent/connections/register",
+        json={
+            "pair_token": pairing["pair_token"],
+            "pair_code": pairing["pair_code"],
+            "adapter_kind": "claude_code",
+            "protocol_version": "local-agent-v1",
+            "bridge_version": "0.1.0",
+            "workspace_root": "/Users/luohao/projects/claude-v5",
+            "capabilities": {"supports_streaming": True},
+        },
+    )
+    assert registered.status_code == 201, registered.text
+    connection = registered.json()["connection"]
+    device_token = registered.json()["device_token"]
+
+    heartbeat = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/heartbeat",
+        headers={"X-Local-Agent-Device-Token": device_token},
+        json={
+            "status": "online",
+            "protocol_version": "local-agent-v1",
+            "bridge_version": "0.1.1",
+            "capabilities": _claude_v6_capabilities(),
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    capabilities = heartbeat.json()["connection"]["capabilities_json"]
+    assert capabilities["enabled_in_v6"] is False
+    assert capabilities["host_tools_authorized"] is False
+    assert capabilities["permission_bridge"] is None
+    assert capabilities["execution_mode"] == "headless_bare_no_session_no_tools"
+
+    _sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v5-heartbeat-upgrade-denied",
+    )
+    denied = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers={"X-Local-Agent-Device-Token": device_token},
+        json={
+            "tool_request_id": "claude-v5-heartbeat-tool",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf denied"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+        },
+    )
+    assert denied.status_code == 409, denied.text
+
+
+def test_local_agent_v6_claude_done_requires_permission_bridge_proof_and_resolved_tools(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-done-proof",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+
+    v5_proof = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-v5-proof",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "wrong proof",
+            "metadata": {
+                "adapter_kind": "claude_code",
+                "system_init_safe": True,
+                "tools_count": 0,
+                "mcp_servers_count": 0,
+            },
+        },
+    )
+    assert v5_proof.status_code == 409, v5_proof.text
+    assert "permission bridge proof" in v5_proof.text
+
+    forbidden_surface = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-forbidden-proof",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "bad proof",
+            "metadata": _claude_v6_safety_metadata(
+                safety={
+                    **_claude_v6_safety_metadata()["safety"],
+                    "forbidden_surfaces": ["mcp"],
+                }
+            ),
+        },
+    )
+    assert forbidden_surface.status_code == 409, forbidden_surface.text
+    assert "forbidden capability surface" in forbidden_surface.text
+
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v6-run-shell",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf ok"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    decision = tool_request.json()
+    assert decision["decision"] == "approval_required"
+
+    early_done = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-done-too-early",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "too early",
+            "metadata": _claude_v6_safety_metadata(),
+        },
+    )
+    assert early_done.status_code == 409, early_done.text
+    assert "unresolved local tool state" in early_done.text
+
+    approved = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/approve",
+        headers=ADMIN_HEADERS,
+        json={"reason": "allow V6 permission bridge shell"},
+    )
+    assert approved.status_code == 202, approved.text
+    polled = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-run-shell/decision",
+        headers=bridge_headers,
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["executable"] is True
+    _start_and_finish_command(
+        client,
+        bridge_headers=bridge_headers,
+        tool_request_id="claude-v6-run-shell",
+        command_id="claude-v6-command-1",
+        command="printf ok",
+    )
+    result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-run-shell/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-run-shell-result",
+            "status": "SUCCESS",
+            "output_json": {"stdout": "ok"},
+            "duration_ms": 1,
+            "command_id": "claude-v6-command-1",
+        },
+    )
+    assert result.status_code == 202, result.text
+
+    accepted = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-done",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "safe V6 success",
+            "metadata": _claude_v6_safety_metadata(),
+        },
+    )
+    assert accepted.status_code == 201, accepted.text
+    db_session.expire_all()
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    assert bridge_task is not None
+    assert bridge_task.status == "completed"
+    messages = list(
+        db_session.execute(
+            select(AgentMessage).where(AgentMessage.session_id == sent["agent_session_id"])
+        ).scalars()
+    )
+    assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[-1].content == "safe V6 success"
+    assert db_session.execute(select(LocalAgentToolRequest)).scalar_one().status == "succeeded"
+
+
+def test_local_agent_v6_modify_can_replace_shell_command_and_enforce_modified_execution(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-modify-shell",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v6-modify-shell",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf original"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    decision = tool_request.json()
+
+    modified = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/modify",
+        headers=ADMIN_HEADERS,
+        json={
+            "modified_input_json": {"command": "printf sanitized"},
+            "reason": "sanitize shell command",
+        },
+    )
+    assert modified.status_code == 202, modified.text
+
+    polled = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-modify-shell/decision",
+        headers=bridge_headers,
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["input_json"]["command"] == "printf sanitized"
+    assert polled.json()["decision_json"]["input_json"]["command"] == "printf sanitized"
+
+    original_start = client.post(
+        "/api/agents/local-agent/bridge/commands/claude-v6-modify-shell-original/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-modify-shell-original-start",
+            "tool_request_id": "claude-v6-modify-shell",
+            "event_type": "started",
+            "tool_name": "run_shell",
+            "command": "printf original",
+        },
+    )
+    assert original_start.status_code == 409
+    assert "approved executable input" in original_start.text
+
+    _start_and_finish_command(
+        client,
+        bridge_headers=bridge_headers,
+        tool_request_id="claude-v6-modify-shell",
+        command_id="claude-v6-modify-shell-command",
+        command="printf sanitized",
+    )
+    result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-modify-shell/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-modify-shell-result",
+            "status": "SUCCESS",
+            "output_json": {"stdout": "sanitized"},
+            "duration_ms": 1,
+            "command_id": "claude-v6-modify-shell-command",
+        },
+    )
+    assert result.status_code == 202, result.text
+
+    db_session.expire_all()
+    request_row = db_session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "claude-v6-modify-shell"
+        )
+    ).scalar_one()
+    tool_call = db_session.get(ToolCall, decision["tool_call_id"])
+    assert request_row.decision_json["input_json"]["command"] == "printf sanitized"
+    assert tool_call is not None
+    assert tool_call.input_json["command"] == "printf sanitized"
+    assert request_row.status == "succeeded"
+
+
+def test_local_agent_v6_modify_write_file_rejects_stale_original_pending_change_result(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-modify-write-stale",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v6-modify-write-stale",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "original\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "change-original",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "a" * 64,
+            },
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    decision = tool_request.json()
+    modified = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/modify",
+        headers=ADMIN_HEADERS,
+        json={
+            "modified_input_json": {
+                "path": "safe.md",
+                "content": "sanitized\n",
+            },
+            "reason": "sanitize write target",
+        },
+    )
+    assert modified.status_code == 202, modified.text
+
+    stale_result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-modify-write-stale/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-modify-write-result-stale",
+            "status": "SUCCESS",
+            "output_json": {"path": "notes.md"},
+            "duration_ms": 1,
+            "change_id": "change-original",
+            "diff_sha256": "a" * 64,
+        },
+    )
+    assert stale_result.status_code == 409
+    assert "diff hash is required" in stale_result.text
+
+    db_session.expire_all()
+    request_row = db_session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "claude-v6-modify-write-stale"
+        )
+    ).scalar_one()
+    pending_change = db_session.execute(
+        select(LocalAgentPendingChange).where(
+            LocalAgentPendingChange.local_agent_tool_request_id == request_row.id
+        )
+    ).scalar_one()
+    assert request_row.status == "failed"
+    assert pending_change.status == "failed"
+
+
+def test_local_agent_v6_modify_write_file_refreshes_pending_change_to_modified_hash(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-modify-write",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v6-modify-write",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "original\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "change-original",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "a" * 64,
+            },
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    decision = tool_request.json()
+
+    modified = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/modify",
+        headers=ADMIN_HEADERS,
+        json={
+            "modified_input_json": {
+                "path": "safe.md",
+                "content": "sanitized\n",
+            },
+            "reason": "sanitize write target",
+        },
+    )
+    assert modified.status_code == 202, modified.text
+
+    polled = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-modify-write/decision",
+        headers=bridge_headers,
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["input_json"] == {"path": "safe.md", "content": "sanitized\n"}
+
+    refreshed = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-modify-write/pending-change-refresh",
+        headers=bridge_headers,
+        json={
+            "input_json": {"path": "safe.md", "content": "sanitized\n"},
+            "target_paths": ["safe.md"],
+            "pending_change_preview": {
+                "change_id": "change-sanitized",
+                "target_paths": ["safe.md"],
+                "diff_sha256": "b" * 64,
+            },
+        },
+    )
+    assert refreshed.status_code == 202, refreshed.text
+    assert refreshed.json()["decision_json"]["pending_change_preview"]["change_id"] == (
+        "change-sanitized"
+    )
+
+    result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-modify-write/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-modify-write-result",
+            "status": "SUCCESS",
+            "output_json": {"path": "safe.md"},
+            "duration_ms": 1,
+            "change_id": "change-sanitized",
+            "diff_sha256": "b" * 64,
+        },
+    )
+    assert result.status_code == 202, result.text
+
+    db_session.expire_all()
+    request_row = db_session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "claude-v6-modify-write"
+        )
+    ).scalar_one()
+    pending_change = db_session.execute(
+        select(LocalAgentPendingChange).where(
+            LocalAgentPendingChange.local_agent_tool_request_id == request_row.id
+        )
+    ).scalar_one()
+    assert pending_change.change_id == "change-sanitized"
+    assert pending_change.target_paths_json == ["safe.md"]
+    assert pending_change.diff_sha256 == "b" * 64
+    assert pending_change.status == "committed"
+    assert request_row.decision_json["pending_change_preview"]["change_id"] == "change-sanitized"
+    assert request_row.decision_json["input_json"] == {"path": "safe.md", "content": "sanitized\n"}
+
+
+def test_local_agent_v6_task_cancel_terminalizes_pending_tool_state(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    sent_payload, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-cancel-pending-tool",
+    )
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "claude-v6-cancel-tool",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "new\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "claude-v6-cancel-change",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "c" * 64,
+            },
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    decision = tool_request.json()
+    local_request_id = db_session.execute(
+        select(LocalAgentToolRequest.id).where(
+            LocalAgentToolRequest.tool_request_id == "claude-v6-cancel-tool"
+        )
+    ).scalar_one()
+    command = LocalAgentCommand(
+        organization_id=connection.get("organization_id"),
+        connection_id=connection["id"],
+        binding_id=task["binding_id"],
+        bridge_task_id=task["id"],
+        task_id=sent_payload["run_id"],
+        local_agent_tool_request_id=local_request_id,
+        tool_request_id="claude-v6-cancel-tool",
+        command_id="claude-v6-cancel-command",
+        tool_name="write_file",
+        command="write notes.md",
+        status="pending",
+        output_summary_json={},
+        event_receipts_json={},
+    )
+    db_session.add(command)
+    db_session.commit()
+
+    cancelled = client.post(f"/api/tasks/{sent_payload['run_id']}/cancel", headers=AUTH_HEADERS)
+    assert cancelled.status_code == 202, cancelled.text
+
+    db_session.expire_all()
+    request_row = db_session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "claude-v6-cancel-tool"
+        )
+    ).scalar_one()
+    approval = db_session.get(ToolApproval, decision["approval_id"])
+    tool_call = db_session.get(ToolCall, decision["tool_call_id"])
+    change = db_session.execute(select(LocalAgentPendingChange)).scalar_one()
+    command = db_session.execute(
+        select(LocalAgentCommand).where(LocalAgentCommand.command_id == "claude-v6-cancel-command")
+    ).scalar_one()
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    run = db_session.get(Task, sent_payload["run_id"])
+    assert request_row.status == "cancelled"
+    assert request_row.decision_json["terminal_status"] == "cancelled"
+    assert approval is not None
+    assert approval.status == "DENIED"
+    assert tool_call is not None
+    assert tool_call.status == "CANCELLED"
+    assert change.status == "denied"
+    assert command.status == "cancelled"
+    assert bridge_task is not None
+    assert bridge_task.status == "cancelled"
+    assert run is not None
+    assert run.status == "CANCELLED"
+
+    late_approval = client.post(
+        f"/api/tasks/{sent_payload['run_id']}/tool-approvals/{decision['approval_id']}/approve",
+        headers=ADMIN_HEADERS,
+        json={"reason": "too late"},
+    )
+    assert late_approval.status_code == 409, late_approval.text
+    polled = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/claude-v6-cancel-tool/decision",
+        headers=bridge_headers,
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["decision"] == "cancelled"
+    assert polled.json()["executable"] is False
+
+
+def test_local_agent_v6_claude_legacy_tool_result_is_rejected(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_claude_v6_connection(client, db_session)
+    _sent, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="claude-v6-legacy-tool-result",
+    )
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+
+    rejected = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "claude-v6-legacy-tool-result",
+            "bridge_task_id": task["id"],
+            "event_type": "tool_result",
+            "tool_name": "read_metadata",
+            "input_json": {"path": "README.md"},
+            "output_json": {"content": "legacy"},
+            "status": "SUCCESS",
+            "risk_level": "low",
+        },
+    )
+
+    assert rejected.status_code == 409, rejected.text
+    assert "cannot report legacy tool_result" in rejected.text
+    assert db_session.execute(select(ToolCall)).scalars().all() == []
 
 
 def test_local_agent_v4_codex_resume_is_always_context_replay(

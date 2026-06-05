@@ -224,11 +224,34 @@ describe("AgentListPage Studio controls", () => {
       if (path === "/api/agents" && !init?.method) return jsonResponse({ items: [agent()], next_cursor: null });
       if (path === "/api/agents/token-optimizer/presets" && !init?.method) return jsonResponse(tokenOptimizerPresets());
       if (path === "/api/agents/default/knowledge/sources" && !init?.method) return jsonResponse({ items: [], next_cursor: null });
-      if (path === "/api/agents/local-agent/connections" && !init?.method) return jsonResponse({ items: [localAgentConnection()], next_cursor: null });
+      if (path === "/api/agents/local-agent/connections" && !init?.method) {
+        return jsonResponse({
+          items: [
+            localAgentConnection(),
+            localAgentConnection({
+              id: "local-claude-v6",
+              display_name: "Claude Code",
+              adapter_kind: "claude_code",
+              capabilities_json: {
+                supports_resume: false,
+                supports_streaming: true,
+                supports_cancel: true,
+                host_tools_authorized: true,
+                permission_bridge: "harness_local_tool_request_v1",
+                execution_mode: "agent_sdk_intent_capture_harness_executor",
+                permission_bridge_execution: "harness_owned_executor",
+                sdk_native_tool_execution_enabled: false,
+              },
+              risk_capabilities_json: ["shell_approval_required", "pending_change"],
+            }),
+          ],
+          next_cursor: null,
+        });
+      }
       if (path === "/api/agents/local-agent/pairing-tokens" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as Record<string, unknown>;
         pairingBodies.push(body);
-        const scope = body.scope as { adapters?: string[] } | undefined;
+        const scope = body.scope as { adapters?: string[]; permission_bridge?: string[] } | undefined;
         const adapterKind = scope?.adapters?.[0] ?? "hao";
         return jsonResponse({
           id: "pair-1",
@@ -238,6 +261,7 @@ describe("AgentListPage Studio controls", () => {
           command: [
             "hao bridge pair --api http://127.0.0.1:8000 --pair-token plain-pair-token --pair-code ABC123",
             adapterKind !== "hao" ? `--adapter ${adapterKind}` : "",
+            scope?.permission_bridge?.[0] === "sdk" ? "--permission-bridge sdk" : "",
           ].filter(Boolean).join(" "),
           status: "active",
           expires_at: "2026-06-03T00:10:00Z",
@@ -257,7 +281,7 @@ describe("AgentListPage Studio controls", () => {
     await user.click(screen.getByRole("button", { name: /打开接入向导|Open connection wizard/ }));
     const dialog = await screen.findByRole("dialog", { name: "接入本地 Agent" });
     expect(within(dialog).getByText("Codex CLI")).toBeInTheDocument();
-    expect(within(dialog).getByText("Claude Code")).toBeInTheDocument();
+    expect(within(dialog).getAllByText("Claude Code").length).toBeGreaterThan(0);
     await user.click(within(dialog).getByRole("button", { name: /生成连接命令|Generate command/ }));
     expect((await within(dialog).findAllByText(/ABC123/)).length).toBeGreaterThan(0);
     expect(pairingBodies[0]).toMatchObject({
@@ -275,14 +299,17 @@ describe("AgentListPage Studio controls", () => {
     });
     expect(await within(dialog).findByText(/--adapter codex/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: /本地 Agent 类型|Local Agent adapter/ }));
-    await user.click(await screen.findByRole("option", { name: /Claude Code/ }));
+    await user.click(await screen.findByRole("option", { name: /Claude Code V6/ }));
     await user.click(within(dialog).getByRole("button", { name: /生成连接命令|Generate command/ }));
     await waitFor(() => expect(pairingBodies).toHaveLength(3));
     expect(pairingBodies[2]).toMatchObject({
       agent_id: "default",
-      scope: { executable: true, adapters: ["claude_code"] },
+      scope: { executable: true, adapters: ["claude_code"], permission_bridge: ["sdk"] },
     });
     expect(await within(dialog).findByText(/--adapter claude_code/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/--permission-bridge sdk/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/V6 权限桥|V6 permission bridge/).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/本地工具需审批|Host tools need approval/).length).toBeGreaterThan(0);
     expect(within(dialog).getByText("Fake Local Agent")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /接入 fake bridge|Connect fake bridge/ })).not.toBeInTheDocument();
     await user.click(within(dialog).getAllByRole("button", { name: /撤销|Revoke/ })[0]);

@@ -1,10 +1,10 @@
 # Wiki Index
 
-> 13 pages | Last updated: 2026-06-05T02:02:55Z
+> 13 pages | Last updated: 2026-06-05T08:31:55Z
 
 ## session-log
 
-- [Local Agent Claude Code Permission Bridge V6](session-2026-06-05-local-agent-claude-code-permission-bridge-v6.md) — V6 plan入库 and two-reviewer PASS for a Claude Code Agent SDK permission bridge that routes host-tool intent through Harness V3 local tool approval before side effects.
+- [Local Agent Claude Code Permission Bridge V6](session-2026-06-05-local-agent-claude-code-permission-bridge-v6.md) — Claude Code V6 permission bridge implemented with SDK intent capture, Harness-owned executor semantics, V5 upgrade blocking, cancel terminalization, and deterministic smoke evidence.
 - [Local Agent Claude Code Adapter V5](session-2026-06-05-local-agent-claude-code-adapter-v5.md) — Claude Code local-agent adapter implemented with headless bare no-tools execution, config isolation, forced context replay, API-side safety proof, deterministic smoke, and final review closeout.
 - [Local Agent Codex Adapter V4](session-2026-06-04-local-agent-codex-adapter-v4.md) — Codex CLI local-agent adapter with forced context replay, read-only subprocess execution, workspace identity enforcement, disabled host tools, and final review closeout evidence.
 - [Local Agent Tool Safety V3](session-2026-06-04-local-agent-tool-safety-v3.md) — Local Agent Tool Safety V3 is verified with authorization-bound host tool results, separate local approval, bridge-state privacy, device-token split, retry, TTL/revoke cleanup, and deterministic smoke evidence.

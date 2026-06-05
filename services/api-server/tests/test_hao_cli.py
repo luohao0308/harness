@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import subprocess
+import sys
+import types
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -20,7 +24,7 @@ from app.cli.hao.config import (
     load_persisted_config,
     save_auth,
 )
-from app.cli.hao.local_tools import execute_local_tool, safe_join
+from app.cli.hao.local_tools import ToolExecutionResult, execute_local_tool, safe_join
 from app.cli.hao.permissions import PermissionEngine, command_is_dangerous
 from app.cli.hao.session_store import SessionStore
 from app.db.models import AgentEvent, Task, ToolCall, utc_now
@@ -441,6 +445,122 @@ def _claude_probe(hao_main_module, *, executable: str = "/opt/claude/bin/claude"
     )
 
 
+def _claude_sdk_probe(hao_main_module, *, installed: bool = True):
+    return hao_main_module.ClaudeAgentSdkProbe(
+        installed=installed,
+        version="0.1-test" if installed else "",
+        error_message="" if installed else "sdk missing",
+        symbols=(
+            "ClaudeSDKClient",
+            "ClaudeAgentOptions",
+            "PermissionResultAllow",
+            "PermissionResultDeny",
+            "HookMatcher",
+            "AssistantMessage",
+        )
+        if installed
+        else (),
+    )
+
+
+def _install_fake_claude_agent_sdk(monkeypatch, captured: dict[str, Any]) -> None:
+    sdk_module = types.ModuleType("claude_agent_sdk")
+    types_module = types.ModuleType("claude_agent_sdk.types")
+    sdk_module.__version__ = "0.1.80-test"
+
+    class HookMatcher:
+        def __init__(
+            self,
+            *,
+            matcher: str | None = None,
+            hooks: list | None = None,
+            timeout: float | None = None,
+        ) -> None:
+            self.matcher = matcher
+            self.hooks = hooks or []
+            self.timeout = timeout
+
+    class PermissionResultAllow:
+        def __init__(self, *, updated_input: dict | None = None) -> None:
+            self.updated_input = updated_input or {}
+
+    class PermissionResultDeny:
+        def __init__(self, *, message: str = "") -> None:
+            self.message = message
+
+    class AssistantMessage:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class ClaudeAgentOptions:
+        def __init__(
+            self,
+            *,
+            permission_mode: str | None = None,
+            allowed_tools: list | None = None,
+            can_use_tool=None,
+            hooks: dict | None = None,
+            setting_sources: list | None = None,
+            disallowed_tools: list | None = None,
+            mcp_servers: dict | None = None,
+            strict_mcp_config: bool | None = None,
+            agents: dict | None = None,
+            plugins: list | None = None,
+            skills: list | None = None,
+            include_hook_events: bool | None = None,
+            cwd: str | None = None,
+        ) -> None:
+            captured["options_kwargs"] = {
+                "permission_mode": permission_mode,
+                "allowed_tools": allowed_tools,
+                "can_use_tool": can_use_tool,
+                "hooks": hooks,
+                "setting_sources": setting_sources,
+                "disallowed_tools": disallowed_tools,
+                "mcp_servers": mcp_servers,
+                "strict_mcp_config": strict_mcp_config,
+                "agents": agents,
+                "plugins": plugins,
+                "skills": skills,
+                "include_hook_events": include_hook_events,
+                "cwd": cwd,
+            }
+
+    class ClaudeSDKClient:
+        def __init__(self, options=None) -> None:
+            captured["client_options"] = options
+
+        async def __aenter__(self):
+            captured["entered"] = True
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            captured["exited"] = True
+
+        async def query(self, prompt, session_id: str = "default") -> None:
+            captured["query_session_id"] = session_id
+            captured["prompt_is_streaming"] = hasattr(prompt, "__aiter__")
+            captured["prompt_items"] = []
+            async for item in prompt:
+                captured["prompt_items"].append(item)
+
+        async def receive_response(self):
+            yield AssistantMessage("sdk bridge reply")
+
+    sdk_module.ClaudeSDKClient = ClaudeSDKClient
+    sdk_module.ClaudeAgentOptions = ClaudeAgentOptions
+    sdk_module.PermissionResultAllow = PermissionResultAllow
+    sdk_module.PermissionResultDeny = PermissionResultDeny
+    sdk_module.HookMatcher = HookMatcher
+    sdk_module.AssistantMessage = AssistantMessage
+    types_module.PermissionResultAllow = PermissionResultAllow
+    types_module.PermissionResultDeny = PermissionResultDeny
+    types_module.HookMatcher = HookMatcher
+    types_module.AssistantMessage = AssistantMessage
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", sdk_module)
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk.types", types_module)
+
+
 def test_hao_bridge_v5_claude_pair_fails_before_register_when_unavailable(
     tmp_path: Path,
     monkeypatch,
@@ -479,6 +599,58 @@ def test_hao_bridge_v5_claude_pair_fails_before_register_when_unavailable(
             "ABC123",
             "--adapter",
             "claude_code",
+            "--cwd",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 1
+    assert [name for name, _payload in calls] == []
+    assert not (tmp_path / "bridge.json").exists()
+
+
+def test_hao_bridge_v6_claude_pair_fails_before_register_when_sdk_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {}
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_code_cli",
+        lambda: _claude_probe(hao_main_module),
+    )
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_agent_sdk",
+        lambda: _claude_sdk_probe(hao_main_module, installed=False),
+    )
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "claude_code",
+            "--permission-bridge",
+            "sdk",
             "--cwd",
             str(tmp_path),
         ]
@@ -561,6 +733,94 @@ def test_hao_bridge_v5_claude_state_uses_workspace_sidecar_and_safe_daemon_argv(
     assert str(tmp_path) not in command
     assert "claude-device-token" not in command
     assert popen_kwargs[0]["cwd"] != str(tmp_path)
+
+
+def test_hao_bridge_v6_claude_pair_registers_permission_bridge_and_safe_daemon_argv(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+    popen_commands: list[list[str]] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            return {
+                "connection": {"id": "claude-v6-connection"},
+                "device_token": "claude-v6-device-token",
+            }
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            del kwargs
+            popen_commands.append(command)
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_code_cli",
+        lambda: _claude_probe(hao_main_module),
+    )
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_agent_sdk",
+        lambda: _claude_sdk_probe(hao_main_module),
+    )
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--adapter",
+            "claude_code",
+            "--permission-bridge",
+            "sdk",
+            "--cwd",
+            str(tmp_path),
+            "--daemon",
+        ]
+    )
+
+    assert exit_code == 0
+    register = next(payload for name, payload in calls if name == "register")
+    assert register["adapter_kind"] == "claude_code"
+    assert register["risk_capabilities"] == [
+        "workspace_read",
+        "host_write_approval_required",
+        "shell_approval_required",
+        "git_approval_required",
+        "pending_change",
+        "command_lifecycle",
+    ]
+    capabilities = register["capabilities"]
+    assert capabilities["claude_permission_bridge_v1"] is True
+    assert capabilities["permission_bridge"] == "harness_local_tool_request_v1"
+    assert capabilities["permission_bridge_mode"] == "sdk"
+    assert capabilities["host_tools_authorized"] is True
+    assert capabilities["sdk_allowed_tools_preapproved"] is False
+    assert capabilities["allowed_tools"] == []
+    assert capabilities["mcp_enabled"] is False
+    assert capabilities["browser_enabled"] is False
+    bridge_json = (tmp_path / "bridge.json").read_text(encoding="utf-8")
+    assert '"permission_bridge": "sdk"' in bridge_json
+    assert "claude-v6-device-token" not in bridge_json
+    command = popen_commands[0]
+    assert "--permission-bridge" in command
+    assert command[command.index("--permission-bridge") + 1] == "sdk"
+    assert "claude-v6-device-token" not in command
+    assert str(tmp_path) not in command
 
 
 def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
@@ -767,6 +1027,818 @@ def test_hao_bridge_v5_claude_probe_uses_sanitized_env(monkeypatch) -> None:
         assert "HTTP_PROXY" not in env
         assert "HOME" not in env
         assert "CLAUDE_CONFIG_DIR" not in env
+
+
+def test_hao_bridge_v6_claude_capabilities_require_cli_and_sdk() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+
+    missing_sdk = hao_main_module._claude_code_bridge_capabilities(
+        _claude_probe(hao_main_module),
+        permission_bridge="sdk",
+        sdk_probe=_claude_sdk_probe(hao_main_module, installed=False),
+    )
+    assert missing_sdk["host_tools_authorized"] is False
+    assert missing_sdk["permission_bridge_mode"] == "sdk"
+    assert "claude_permission_bridge_v1" not in missing_sdk
+
+    v6 = hao_main_module._claude_code_bridge_capabilities(
+        _claude_probe(hao_main_module),
+        permission_bridge="sdk",
+        sdk_probe=_claude_sdk_probe(hao_main_module),
+    )
+    assert v6["enabled_in_v6"] is True
+    assert v6["host_tools_authorized"] is True
+    assert v6["supports_cancel"] is True
+    assert v6["permission_bridge"] == "harness_local_tool_request_v1"
+    assert v6["execution_mode"] == "agent_sdk_intent_capture_harness_executor"
+    assert v6["permission_bridge_execution"] == "harness_owned_executor"
+    assert v6["sdk_native_tool_execution_enabled"] is False
+    assert v6["allowed_tools"] == []
+    assert v6["sdk_allowed_tools_preapproved"] is False
+    assert v6["mcp_enabled"] is False
+    assert v6["subagents_enabled"] is False
+    assert v6["browser_enabled"] is False
+
+
+def test_hao_bridge_v6_claude_tool_mapping_allows_only_harness_mapped_tools() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+
+    bash = hao_main_module._map_claude_tool_request("Bash", {"command": "printf ok"})
+    assert bash.allowed is True
+    assert bash.tool_name == "run_shell"
+    assert bash.input_json["command"] == "printf ok"
+
+    write = hao_main_module._map_claude_tool_request(
+        "Write",
+        {"file_path": "notes.md", "content": "hello"},
+    )
+    assert write.allowed is True
+    assert write.tool_name == "write_file"
+    assert write.input_json == {"path": "notes.md", "content": "hello"}
+    assert write.target_paths == ["notes.md"]
+
+    denied = hao_main_module._map_claude_tool_request("WebFetch", {"url": "https://example.com"})
+    assert denied.allowed is False
+    assert "not mapped" in denied.reason
+    mcp = hao_main_module._map_claude_tool_request("mcp__server__tool", {})
+    assert mcp.allowed is False
+    unknown = hao_main_module._map_claude_tool_request("DangerTool", {})
+    assert unknown.allowed is False
+    assert "denied by default" in unknown.reason
+
+
+def test_hao_bridge_v6_real_sdk_options_use_streaming_prompt_and_pretool_hook(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type(
+        "Config",
+        (),
+        {
+            "home": tmp_path / "hao-home",
+            "session_db_path": tmp_path / "hao.db",
+            "sessions_dir": tmp_path / "sessions",
+        },
+    )()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "permission_bridge": "sdk",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    captured: dict[str, Any] = {}
+    _install_fake_claude_agent_sdk(monkeypatch, captured)
+
+    class FakeClient:
+        pass
+
+    result = hao_main_module._run_claude_permission_bridge_sdk(
+        client=FakeClient(),
+        device_token="device-token-claude",
+        bridge_task_id="bridge-task-claude",
+        config=config,
+        state=state,
+        payload={
+            "message": "please inspect the repository",
+            "agent_id": "default",
+            "run_id": "run-claude-v6",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+        },
+    )
+
+    assert result.status == "completed"
+    assert result.content == "sdk bridge reply"
+    assert result.metadata is not None
+    assert result.metadata["permission_bridge_pre_tool_hook_configured"] is True
+    assert result.metadata["permission_bridge_dummy_hook_only"] is True
+    assert captured["prompt_is_streaming"] is True
+    assert captured["prompt_items"][0]["type"] == "user"
+    assert "V6 permission bridge is active" in captured["prompt_items"][0]["message"]["content"]
+    options = captured["options_kwargs"]
+    assert options["permission_mode"] == "default"
+    assert options["allowed_tools"] == []
+    assert callable(options["can_use_tool"])
+    assert options["setting_sources"] == []
+    assert options["mcp_servers"] == {}
+    assert options["strict_mcp_config"] is True
+    assert options["agents"] == {}
+    assert options["plugins"] == []
+    assert options["skills"] == []
+    assert options["include_hook_events"] is False
+    assert options["cwd"] == str(workspace)
+    assert "WebFetch" in options["disallowed_tools"]
+    hook_matchers = options["hooks"]["PreToolUse"]
+    assert len(hook_matchers) == 1
+    assert hook_matchers[0].matcher is None
+    assert len(hook_matchers[0].hooks) == 1
+    hook_result = asyncio.run(hook_matchers[0].hooks[0]({}, "tool-use-1", {}))
+    assert hook_result == {"continue_": True}
+
+
+def test_hao_bridge_v6_real_sdk_callback_denies_native_execution_and_uses_server_input(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type(
+        "Config",
+        (),
+        {
+            "home": tmp_path / "hao-home",
+            "session_db_path": tmp_path / "hao.db",
+            "sessions_dir": tmp_path / "sessions",
+        },
+    )()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "permission_bridge": "sdk",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    captured: dict[str, Any] = {}
+    calls: list[tuple[str, dict]] = []
+    _install_fake_claude_agent_sdk(monkeypatch, captured)
+
+    class FakeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("tool_request", {"device_token": device_token, **payload}))
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "server-claude-tool",
+                "approval_id": "approval-claude-tool",
+                "decision": "approval_required",
+                "status": "approval_required",
+                "executable": False,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "reason": "approval required",
+                "decision_json": {},
+                "expires_at": None,
+            }
+
+        def get_local_agent_tool_decision(self, *, device_token: str, tool_request_id: str) -> dict:
+            calls.append(
+                (
+                    "decision",
+                    {"device_token": device_token, "tool_request_id": tool_request_id},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "decision": "approved",
+                "status": "approved",
+                "executable": True,
+                "server_execution": False,
+                "tool_name": "run_shell",
+                "input_json": {"command": "printf server-approved"},
+                "reason": "",
+            }
+
+        def report_local_agent_command_event(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_event",
+                    {"device_token": device_token, "command_id": command_id, **payload},
+                )
+            )
+            return {"command_id": command_id, "status": payload["event_type"]}
+
+        def get_local_agent_command_status(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_status",
+                    {"device_token": device_token, "command_id": command_id},
+                )
+            )
+            return {"command_id": command_id, "status": "running", "cancel_requested": False}
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {"device_token": device_token, "tool_request_id": tool_request_id, **payload},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "tool_call_id": "server-claude-tool",
+                "decision": "succeeded",
+                "status": "succeeded",
+            }
+
+    def fake_local_tool(tool_name: str, input_json: dict, workspace_root: Path, **kwargs):
+        session_store = kwargs["session_store"]
+        session_id = kwargs["session_id"]
+        command = session_store.create_command(
+            session_id,
+            tool_name=tool_name,
+            command=input_json["command"],
+            command_json=input_json,
+            timeout_seconds=30,
+        )
+        session_store.start_command(command["id"])
+        session_store.record_command_output(command["id"], stream="stdout", chunk="server-approved")
+        session_store.finish_command(
+            command["id"],
+            status="success",
+            exit_code=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+        )
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            status="SUCCESS",
+            input_json=input_json,
+            output_json={
+                "command_id": command["id"],
+                "command": input_json["command"],
+                "command_status": "success",
+                "stdout": "server-approved",
+            },
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(hao_main_module, "execute_local_tool", fake_local_tool)
+    monkeypatch.setattr(hao_main_module, "CLAUDE_PERMISSION_DECISION_POLL_SECONDS", 0.001)
+
+    result = hao_main_module._run_claude_permission_bridge_sdk(
+        client=FakeClient(),
+        device_token="device-token-claude",
+        bridge_task_id="bridge-task-claude",
+        config=config,
+        state=state,
+        payload={
+            "message": "please inspect the repository",
+            "agent_id": "default",
+            "run_id": "run-claude-v6",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+        },
+    )
+
+    assert result.status == "completed"
+    callback = captured["options_kwargs"]["can_use_tool"]
+    native_result = asyncio.run(
+        callback("Bash", {"command": "printf model-proposed", "tool_use_id": "bash-1"})
+    )
+    deny_type = sys.modules["claude_agent_sdk"].PermissionResultDeny
+    assert isinstance(native_result, deny_type)
+    assert "Harness approved and executed" in native_result.message
+    assert "server-approved" in native_result.message
+    tool_request = next(payload for name, payload in calls if name == "tool_request")
+    assert tool_request["input_json"]["command"] == "printf model-proposed"
+    tool_result = next(payload for name, payload in calls if name == "tool_result")
+    assert tool_result["status"] == "SUCCESS"
+    assert tool_result["output_json"]["command"] == "printf server-approved"
+
+
+def test_hao_bridge_v6_fake_sdk_executes_server_approved_input_and_reports_safety(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK", "1")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type(
+        "Config",
+        (),
+        {
+            "home": tmp_path / "hao-home",
+            "session_db_path": tmp_path / "hao.db",
+            "sessions_dir": tmp_path / "sessions",
+        },
+    )()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "permission_bridge": "sdk",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    calls: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("tool_request", {"device_token": device_token, **payload}))
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "server-claude-tool",
+                "approval_id": "approval-claude-tool",
+                "decision": "approval_required",
+                "status": "approval_required",
+                "executable": False,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "reason": "approval required",
+                "decision_json": {},
+                "expires_at": None,
+            }
+
+        def get_local_agent_tool_decision(self, *, device_token: str, tool_request_id: str) -> dict:
+            calls.append(
+                (
+                    "decision",
+                    {"device_token": device_token, "tool_request_id": tool_request_id},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "decision": "approved",
+                "status": "approved",
+                "executable": True,
+                "server_execution": False,
+                "tool_name": "run_shell",
+                "input_json": {"command": "printf server-approved"},
+                "reason": "",
+            }
+
+        def report_local_agent_command_event(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_event",
+                    {"device_token": device_token, "command_id": command_id, **payload},
+                )
+            )
+            return {"command_id": command_id, "status": payload["event_type"]}
+
+        def get_local_agent_command_status(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_status",
+                    {"device_token": device_token, "command_id": command_id},
+                )
+            )
+            return {"command_id": command_id, "status": "running", "cancel_requested": False}
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {"device_token": device_token, "tool_request_id": tool_request_id, **payload},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "tool_call_id": "server-claude-tool",
+                "decision": "succeeded",
+                "status": "succeeded",
+            }
+
+    def fake_local_tool(tool_name: str, input_json: dict, workspace_root: Path, **kwargs):
+        session_store = kwargs["session_store"]
+        session_id = kwargs["session_id"]
+        command = session_store.create_command(
+            session_id,
+            tool_name=tool_name,
+            command=input_json["command"],
+            command_json=input_json,
+            timeout_seconds=30,
+        )
+        session_store.start_command(command["id"])
+        session_store.record_command_output(command["id"], stream="stdout", chunk="server-approved")
+        session_store.finish_command(
+            command["id"],
+            status="success",
+            exit_code=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+        )
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            status="SUCCESS",
+            input_json=input_json,
+            output_json={
+                "command_id": command["id"],
+                "command": input_json["command"],
+                "command_status": "success",
+                "stdout": "server-approved",
+            },
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(hao_main_module, "execute_local_tool", fake_local_tool)
+    monkeypatch.setattr(hao_main_module, "CLAUDE_PERMISSION_DECISION_POLL_SECONDS", 0.001)
+
+    result = hao_main_module._run_claude_permission_bridge_sdk(
+        client=FakeClient(),
+        device_token="device-token-claude",
+        bridge_task_id="bridge-task-claude",
+        config=config,
+        state=state,
+        payload={
+            "message": "fake claude",
+            "agent_id": "default",
+            "run_id": "run-claude-v6",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+            "test_fixture_mode": "claude_permission_bridge_fake_sdk",
+            "fake_sdk_events": [
+                {
+                    "type": "tool_request",
+                    "tool_name": "Bash",
+                    "tool_use_id": "bash-1",
+                    "input": {"command": "printf model-proposed"},
+                },
+                {"type": "assistant", "content": "done"},
+            ],
+        },
+    )
+
+    assert result.status == "completed"
+    assert "server-approved" in result.content
+    assert "done" in result.content
+    assert result.metadata is not None
+    assert result.metadata["permission_bridge_active"] is True
+    assert result.metadata["permission_bridge_version"] == "harness_local_tool_request_v1"
+    assert result.metadata["computer_use_disabled"] is True
+    assert result.metadata["allowed_tools"] == []
+    tool_request = next(payload for name, payload in calls if name == "tool_request")
+    assert tool_request["input_json"]["command"] == "printf model-proposed"
+    tool_result = next(payload for name, payload in calls if name == "tool_result")
+    assert tool_result["status"] == "SUCCESS"
+    assert tool_result["output_json"]["command"] == "printf server-approved"
+    command_events = [payload for name, payload in calls if name == "command_event"]
+    assert [event["event_type"] for event in command_events] == [
+        "started",
+        "output",
+        "finished",
+    ]
+
+
+def test_hao_bridge_v6_execute_approved_write_refreshes_pending_change_and_commits_modified_input(
+    tmp_path: Path,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    local_session = store.create_session(
+        cwd=str(workspace),
+        agent_id="default",
+        mode="confirm",
+        cli_mode="claude_code",
+        target="host",
+    )
+    original_preview = execute_local_tool(
+        "preview_write_file",
+        {"path": "notes.md", "content": "original\n"},
+        workspace,
+        session_store=store,
+        session_id=local_session.id,
+        pending_change_metadata={"source": "local_agent_bridge"},
+    )
+    original_change_id = str(original_preview.output_json["change_id"])
+    pending = {
+        "tool_request_id": "tool-req-write",
+        "bridge_task_id": "bridge-task-write",
+        "tool_call_id": "model-tool-write",
+        "tool_name": "write_file",
+        "local_session_id": local_session.id,
+        "run_id": "run-write",
+        "agent_id": "default",
+        "command": "claude_code",
+        "permission_mode": "confirm",
+        "change_id": original_change_id,
+        "diff_sha256": hao_main_module._sha256_text(
+            str(original_preview.output_json.get("diff") or "")
+        ),
+    }
+    decision = {
+        "tool_request_id": "tool-req-write",
+        "tool_name": "write_file",
+        "input_json": {"path": "safe.md", "content": "sanitized\n"},
+    }
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeClient:
+        def refresh_local_agent_pending_change(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "refresh",
+                    {
+                        "device_token": device_token,
+                        "tool_request_id": tool_request_id,
+                        "payload": payload,
+                    },
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "decision": "approved",
+                "status": "approved",
+                "executable": True,
+                "input_json": payload["input_json"],
+                "decision_json": {"pending_change_preview": payload["pending_change_preview"]},
+            }
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {
+                        "device_token": device_token,
+                        "tool_request_id": tool_request_id,
+                        "payload": payload,
+                    },
+                )
+            )
+            return {"tool_request_id": tool_request_id, "tool_call_id": "server-tool-write"}
+
+    handled = hao_main_module._execute_approved_bridge_pending_tool(
+        pending=pending,
+        decision=decision,
+        client=FakeClient(),
+        device_token="device-token-write",
+        store=store,
+        local_session_id=local_session.id,
+        cwd=workspace,
+    )
+
+    assert handled.status == "executed"
+    assert handled.result is not None
+    assert handled.result.status == "SUCCESS"
+    assert handled.result.input_json == {"path": "safe.md", "content": "sanitized\n"}
+    assert (workspace / "safe.md").read_text(encoding="utf-8") == "sanitized\n"
+    assert not (workspace / "notes.md").exists()
+
+    refresh_call = next(payload for name, payload in calls if name == "refresh")
+    refresh_preview = refresh_call["payload"]["pending_change_preview"]
+    assert refresh_call["payload"]["input_json"] == {"path": "safe.md", "content": "sanitized\n"}
+    assert refresh_call["payload"]["target_paths"] == ["safe.md"]
+
+    tool_result_call = next(payload for name, payload in calls if name == "tool_result")
+    assert tool_result_call["payload"]["change_id"] == refresh_preview["change_id"]
+    assert tool_result_call["payload"]["diff_sha256"] == refresh_preview["diff_sha256"]
+
+    changes = {change["id"]: change for change in store.list_pending_changes(local_session.id)}
+    assert changes[original_change_id]["status"] == "rejected"
+    refreshed_change_id = str(handled.result.output_json["change_id"])
+    assert refreshed_change_id != original_change_id
+    assert changes[refreshed_change_id]["status"] == "committed"
+    assert changes[refreshed_change_id]["input_json"] == {
+        "path": "safe.md",
+        "content": "sanitized\n",
+    }
+
+
+def test_hao_bridge_v6_fake_sdk_requires_explicit_fixture_mode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK", "1")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type(
+        "Config",
+        (),
+        {
+            "home": tmp_path / "hao-home",
+            "session_db_path": tmp_path / "hao.db",
+            "sessions_dir": tmp_path / "sessions",
+        },
+    )()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "permission_bridge": "sdk",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    captured: dict[str, Any] = {}
+    _install_fake_claude_agent_sdk(monkeypatch, captured)
+
+    class FakeClient:
+        def create_local_agent_tool_request(self, **kwargs) -> dict:
+            raise AssertionError("fake SDK fixture mode should not activate without explicit flag")
+
+    result = hao_main_module._run_claude_permission_bridge_sdk(
+        client=FakeClient(),
+        device_token="device-token-claude",
+        bridge_task_id="bridge-task-claude",
+        config=config,
+        state=state,
+        payload={
+            "message": "real sdk path",
+            "agent_id": "default",
+            "run_id": "run-claude-v6",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+            "fake_sdk_events": [
+                {
+                    "type": "tool_request",
+                    "tool_name": "Bash",
+                    "tool_use_id": "bash-1",
+                    "input": {"command": "printf ignored"},
+                }
+            ],
+        },
+    )
+
+    assert result.status == "completed"
+    assert result.content == "sdk bridge reply"
+
+
+def test_hao_bridge_v6_fake_sdk_fails_closed_on_decision_poll_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK", "1")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type(
+        "Config",
+        (),
+        {
+            "home": tmp_path / "hao-home",
+            "session_db_path": tmp_path / "hao.db",
+            "sessions_dir": tmp_path / "sessions",
+        },
+    )()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "permission_bridge": "sdk",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    calls: list[str] = []
+
+    class FakeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            del device_token
+            calls.append("tool_request")
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "server-claude-tool",
+                "approval_id": "approval-claude-tool",
+                "decision": "approval_required",
+                "status": "approval_required",
+                "executable": False,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "reason": "approval required",
+                "decision_json": {},
+                "expires_at": None,
+            }
+
+        def get_local_agent_tool_decision(self, *, device_token: str, tool_request_id: str) -> dict:
+            del device_token, tool_request_id
+            calls.append("decision")
+            raise RuntimeError("decision api unavailable")
+
+    def fail_local_tool(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("SDK bridge must fail closed before local execution")
+
+    monkeypatch.setattr(hao_main_module, "execute_local_tool", fail_local_tool)
+    monkeypatch.setattr(hao_main_module, "CLAUDE_PERMISSION_DECISION_POLL_SECONDS", 0.001)
+
+    result = hao_main_module._run_claude_permission_bridge_sdk(
+        client=FakeClient(),
+        device_token="device-token-claude",
+        bridge_task_id="bridge-task-claude",
+        config=config,
+        state=state,
+        payload={
+            "message": "fake claude",
+            "agent_id": "default",
+            "run_id": "run-claude-v6",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+            "test_fixture_mode": "claude_permission_bridge_fake_sdk",
+            "fake_sdk_events": [
+                {
+                    "type": "tool_request",
+                    "tool_name": "Bash",
+                    "tool_use_id": "bash-1",
+                    "input": {"command": "printf model-proposed"},
+                },
+            ],
+        },
+    )
+
+    assert result.status == "error"
+    assert "approval polling failed" in result.error_message
+    assert calls == ["tool_request", "decision"]
+
+
+def test_hao_bridge_v6_cancelled_decision_returns_explicit_reason() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+
+    class FakeClient:
+        def get_local_agent_tool_decision(self, *, device_token: str, tool_request_id: str) -> dict:
+            del device_token, tool_request_id
+            return {
+                "tool_request_id": "tool-req",
+                "decision": "cancelled",
+                "status": "cancelled",
+                "executable": False,
+                "reason": "",
+            }
+
+    decision = hao_main_module._poll_local_tool_decision_for_claude(
+        client=FakeClient(),
+        device_token="device-token",
+        tool_request_id="tool-req",
+        timeout_seconds=0.01,
+    )
+
+    assert decision["decision"] == "cancelled"
+    assert decision["executable"] is False
+    assert decision["reason"] == "Claude Code permission bridge request was cancelled"
 
 
 def test_hao_bridge_v4_run_codex_cli_success_uses_stdin_and_readonly_sandbox(
