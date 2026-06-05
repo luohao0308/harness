@@ -4,10 +4,13 @@ from __future__ import annotations
 # ruff: noqa: E402,I001
 
 import argparse
+import importlib
 import os
 import sys
 from collections.abc import Generator
+from datetime import timedelta
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 
@@ -59,6 +62,7 @@ from app.db.models import (  # noqa: E402
     Task,
     ToolApproval,
     ToolCall,
+    utc_now,
 )
 from app.db.session import get_db_session  # noqa: E402
 from app.main import app  # noqa: E402
@@ -301,6 +305,17 @@ def _bind_and_lease(
     )
     assert ack.status_code == 200, ack.text
     return binding.json(), sent.json(), task
+
+
+def _bridge_headers(device_token: str) -> dict[str, str]:
+    return {"X-Local-Agent-Device-Token": device_token}
+
+
+def _assert_no_successful_tool_calls(session: Session) -> None:
+    success_count = session.execute(
+        select(ToolCall).where(ToolCall.status == "SUCCESS")
+    ).scalars().all()
+    assert success_count == []
 
 
 def claude_sdk_unavailable() -> dict[str, Any]:
@@ -611,6 +626,161 @@ def claude_modified_approval() -> dict[str, Any]:
     )
 
 
+def claude_approve_write() -> dict[str, Any]:
+    client, session = _new_session()
+    connection, device_token = _pair_claude_v6(client, session)
+    bridge_headers = _bridge_headers(device_token)
+    _binding, sent, task = _bind_and_lease(
+        client,
+        connection_id=connection["id"],
+        device_token=device_token,
+        title="Claude V6 approve write smoke",
+        message="write after Harness approval",
+        client_message_id="smoke-v6-approve-write",
+    )
+    requested = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "smoke-v6-approve-write-tool",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "approved\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "smoke-v6-approve-write-change",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "d" * 64,
+            },
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    decision = requested.json()
+    assert decision["decision"] == "approval_required"
+    approved = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/approve",
+        headers=ADMIN_HEADERS,
+        json={"reason": "approve write smoke"},
+    )
+    assert approved.status_code == 202, approved.text
+    polled = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/smoke-v6-approve-write-tool/decision",
+        headers=bridge_headers,
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["decision"] == "approved"
+    result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/smoke-v6-approve-write-tool/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "smoke-v6-approve-write-result",
+            "status": "SUCCESS",
+            "output_json": {"path": "notes.md"},
+            "duration_ms": 1,
+            "change_id": "smoke-v6-approve-write-change",
+            "diff_sha256": "d" * 64,
+        },
+    )
+    assert result.status_code == 202, result.text
+    done = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "smoke-v6-approve-write-done",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "write approved through Harness executor",
+            "metadata": _claude_v6_safety_metadata(),
+        },
+    )
+    assert done.status_code == 201, done.text
+    session.expire_all()
+    request_row = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "smoke-v6-approve-write-tool"
+        )
+    ).scalar_one()
+    pending_change = session.execute(
+        select(LocalAgentPendingChange).where(
+            LocalAgentPendingChange.local_agent_tool_request_id == request_row.id
+        )
+    ).scalar_one()
+    tool_call = session.get(ToolCall, decision["tool_call_id"])
+    assert request_row.status == "succeeded"
+    assert pending_change.status == "committed"
+    assert tool_call is not None and tool_call.status == "SUCCESS"
+    return _evidence(session, scenario="claude-approve-write", run_id=sent["run_id"])
+
+
+def claude_reject_bash() -> dict[str, Any]:
+    client, session = _new_session()
+    connection, device_token = _pair_claude_v6(client, session)
+    bridge_headers = _bridge_headers(device_token)
+    _binding, sent, task = _bind_and_lease(
+        client,
+        connection_id=connection["id"],
+        device_token=device_token,
+        title="Claude V6 reject bash smoke",
+        message="reject bash",
+        client_message_id="smoke-v6-reject-bash",
+    )
+    requested = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "smoke-v6-reject-bash-tool",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf denied"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    decision = requested.json()
+    assert decision["decision"] == "approval_required"
+    rejected = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/reject",
+        headers=ADMIN_HEADERS,
+        json={"reason": "reject bash smoke"},
+    )
+    assert rejected.status_code == 202, rejected.text
+    polled = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/smoke-v6-reject-bash-tool/decision",
+        headers=bridge_headers,
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["decision"] == "denied"
+    assert polled.json()["executable"] is False
+    late_result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/smoke-v6-reject-bash-tool/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "smoke-v6-reject-bash-late-result",
+            "status": "SUCCESS",
+            "output_json": {"stdout": "should not land"},
+            "command_id": "smoke-v6-reject-bash-cmd",
+        },
+    )
+    assert late_result.status_code == 409, late_result.text
+    session.expire_all()
+    request_row = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "smoke-v6-reject-bash-tool"
+        )
+    ).scalar_one()
+    tool_call = session.get(ToolCall, decision["tool_call_id"])
+    assert request_row.status == "denied"
+    assert tool_call is not None and tool_call.status == "DENIED"
+    assert session.execute(select(LocalAgentCommand)).scalars().all() == []
+    _assert_no_successful_tool_calls(session)
+    return _evidence(session, scenario="claude-reject-bash", run_id=sent["run_id"])
+
+
 def claude_permission_bridge_cancel() -> dict[str, Any]:
     client, session = _new_session()
     connection, device_token = _pair_claude_v6(client, session)
@@ -704,6 +874,345 @@ def claude_permission_bridge_cancel() -> dict[str, Any]:
     )
 
 
+def claude_revoke_pending() -> dict[str, Any]:
+    client, session = _new_session()
+    connection, device_token = _pair_claude_v6(client, session)
+    bridge_headers = _bridge_headers(device_token)
+    _binding, sent, task = _bind_and_lease(
+        client,
+        connection_id=connection["id"],
+        device_token=device_token,
+        title="Claude V6 revoke pending smoke",
+        message="request write then revoke connection",
+        client_message_id="smoke-v6-revoke-pending",
+    )
+    requested = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "smoke-v6-revoke-pending-tool",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "new\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "smoke-v6-revoke-pending-change",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "e" * 64,
+            },
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    decision = requested.json()
+    local_request_id = session.execute(
+        select(LocalAgentToolRequest.id).where(
+            LocalAgentToolRequest.tool_request_id == "smoke-v6-revoke-pending-tool"
+        )
+    ).scalar_one()
+    session.add(
+        LocalAgentCommand(
+            organization_id=connection.get("organization_id"),
+            connection_id=connection["id"],
+            binding_id=task["binding_id"],
+            bridge_task_id=task["id"],
+            task_id=sent["run_id"],
+            local_agent_tool_request_id=local_request_id,
+            tool_request_id="smoke-v6-revoke-pending-tool",
+            command_id="smoke-v6-revoke-pending-cmd",
+            tool_name="write_file",
+            command="write notes.md",
+            status="pending",
+            output_summary_json={},
+            event_receipts_json={},
+        )
+    )
+    session.commit()
+    revoked = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/revoke",
+        headers=ADMIN_HEADERS,
+    )
+    assert revoked.status_code == 200, revoked.text
+    session.expire_all()
+    request_row = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "smoke-v6-revoke-pending-tool"
+        )
+    ).scalar_one()
+    approval = session.get(ToolApproval, decision["approval_id"])
+    tool_call = session.get(ToolCall, decision["tool_call_id"])
+    change = session.execute(select(LocalAgentPendingChange)).scalar_one()
+    command = session.execute(
+        select(LocalAgentCommand).where(
+            LocalAgentCommand.command_id == "smoke-v6-revoke-pending-cmd"
+        )
+    ).scalar_one()
+    bridge_task = session.get(LocalAgentBridgeTask, task["id"])
+    run = session.get(Task, sent["run_id"])
+    assert request_row.status == "cancelled"
+    assert approval is not None and approval.status == "DENIED"
+    assert tool_call is not None and tool_call.status == "CANCELLED"
+    assert change.status == "denied"
+    assert command.status == "cancelled"
+    assert bridge_task is not None and bridge_task.status == "cancelled"
+    assert run is not None and run.status == "CANCELLED"
+    late_result = client.post(
+        "/api/agents/local-agent/bridge/tool-requests/smoke-v6-revoke-pending-tool/result",
+        headers=bridge_headers,
+        json={
+            "event_id": "smoke-v6-revoke-pending-late-result",
+            "status": "SUCCESS",
+            "output_json": {"changed": True},
+            "change_id": "smoke-v6-revoke-pending-change",
+            "diff_sha256": "e" * 64,
+        },
+    )
+    assert late_result.status_code == 403, late_result.text
+    _assert_no_successful_tool_calls(session)
+    return _evidence(session, scenario="claude-revoke-pending", run_id=sent["run_id"])
+
+
+def claude_approval_timeout() -> dict[str, Any]:
+    client, session = _new_session()
+    connection, device_token = _pair_claude_v6(client, session)
+    bridge_headers = _bridge_headers(device_token)
+    _binding, sent, task = _bind_and_lease(
+        client,
+        connection_id=connection["id"],
+        device_token=device_token,
+        title="Claude V6 approval timeout smoke",
+        message="approval expires before execution",
+        client_message_id="smoke-v6-approval-timeout",
+    )
+    requested = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "smoke-v6-approval-timeout-tool",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "expired\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "confirm",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "smoke-v6-approval-timeout-change",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "f" * 64,
+            },
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    decision = requested.json()
+    request_row = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "smoke-v6-approval-timeout-tool"
+        )
+    ).scalar_one()
+    request_row.decision_expires_at = utc_now() - timedelta(minutes=1)
+    session.commit()
+    too_late = client.post(
+        f"/api/tasks/{sent['run_id']}/tool-approvals/{decision['approval_id']}/approve",
+        headers=ADMIN_HEADERS,
+        json={"reason": "too late"},
+    )
+    assert too_late.status_code == 409, too_late.text
+    assert "expired" in too_late.text
+    session.expire_all()
+    request_row = session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_request_id == "smoke-v6-approval-timeout-tool"
+        )
+    ).scalar_one()
+    approval = session.get(ToolApproval, decision["approval_id"])
+    tool_call = session.get(ToolCall, decision["tool_call_id"])
+    change = session.execute(select(LocalAgentPendingChange)).scalar_one()
+    assert request_row.status == "expired"
+    assert approval is not None and approval.status == "EXPIRED"
+    assert tool_call is not None and tool_call.status == "DENIED"
+    assert change.status == "denied"
+    _assert_no_successful_tool_calls(session)
+    return _evidence(session, scenario="claude-approval-timeout", run_id=sent["run_id"])
+
+
+def claude_bypass_attempt() -> dict[str, Any]:
+    client, session = _new_session()
+    connection, device_token = _pair_claude_v6(client, session)
+    bridge_headers = _bridge_headers(device_token)
+    _binding, sent, task = _bind_and_lease(
+        client,
+        connection_id=connection["id"],
+        device_token=device_token,
+        title="Claude V6 bypass attempt smoke",
+        message="attempt unsafe bypass",
+        client_message_id="smoke-v6-bypass",
+    )
+    unsafe_metadata = _claude_v6_safety_metadata()
+    unsafe_safety = dict(unsafe_metadata["safety"])
+    unsafe_safety.update(
+        {
+            "permission_mode": "bypassPermissions",
+            "allowed_tools": ["Bash"],
+            "forbidden_surfaces": ["mcp"],
+        }
+    )
+    unsafe_metadata.update(unsafe_safety)
+    unsafe_metadata["safety"] = unsafe_safety
+    done = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "smoke-v6-bypass-done",
+            "bridge_task_id": task["id"],
+            "event_type": "assistant_done",
+            "content": "unsafe bypass",
+            "metadata": unsafe_metadata,
+        },
+    )
+    assert done.status_code == 409, done.text
+    legacy_tool_result = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "smoke-v6-bypass-legacy-tool",
+            "bridge_task_id": task["id"],
+            "event_type": "tool_result",
+            "tool_name": "run_shell",
+            "status": "SUCCESS",
+            "input_json": {"command": "printf bypass"},
+            "output_json": {"stdout": "bypass"},
+            "metadata": {"permission_mode": "bypassPermissions"},
+        },
+    )
+    assert legacy_tool_result.status_code == 409, legacy_tool_result.text
+    session.expire_all()
+    messages = list(
+        session.execute(
+            select(AgentMessage).where(AgentMessage.session_id == sent["agent_session_id"])
+        ).scalars()
+    )
+    assert [message.role for message in messages] == ["user"]
+    _assert_no_successful_tool_calls(session)
+    return _evidence(session, scenario="claude-bypass-attempt", run_id=sent["run_id"])
+
+
+def claude_api_failure_fail_closed() -> dict[str, Any]:
+    previous_env = os.environ.get("HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK")
+    os.environ["HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK"] = "1"
+    try:
+        hao_main_module = importlib.import_module("app.cli.hao.main")
+        with TemporaryDirectory(prefix="harness-v6-smoke-") as tmp_name:
+            tmp_path = Path(tmp_name)
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            config = type(
+                "Config",
+                (),
+                {
+                    "home": tmp_path / "hao-home",
+                    "session_db_path": tmp_path / "hao.db",
+                    "sessions_dir": tmp_path / "sessions",
+                },
+            )()
+            root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+            state = {
+                "adapter_kind": "claude_code",
+                "permission_bridge": "sdk",
+                "workspace_root_ref": root_ref,
+                "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+                    workspace,
+                    adapter_kind="claude_code",
+                ),
+            }
+            calls: list[str] = []
+
+            class FakeClient:
+                def create_local_agent_tool_request(
+                    self,
+                    *,
+                    device_token: str,
+                    payload: dict,
+                ) -> dict:
+                    del device_token
+                    calls.append("tool_request")
+                    return {
+                        "tool_request_id": payload["tool_request_id"],
+                        "bridge_task_id": payload["bridge_task_id"],
+                        "tool_call_id": "server-claude-tool",
+                        "approval_id": "approval-claude-tool",
+                        "decision": "approval_required",
+                        "status": "approval_required",
+                        "executable": False,
+                        "server_execution": False,
+                        "tool_name": payload["tool_name"],
+                        "input_json": payload["input_json"],
+                        "reason": "approval required",
+                        "decision_json": {},
+                        "expires_at": None,
+                    }
+
+                def get_local_agent_tool_decision(
+                    self,
+                    *,
+                    device_token: str,
+                    tool_request_id: str,
+                ) -> dict:
+                    del device_token, tool_request_id
+                    calls.append("decision")
+                    raise RuntimeError("decision api unavailable")
+
+            original_execute = hao_main_module.execute_local_tool
+            original_poll_seconds = hao_main_module.CLAUDE_PERMISSION_DECISION_POLL_SECONDS
+
+            def fail_local_tool(*args, **kwargs):
+                del args, kwargs
+                raise AssertionError("SDK bridge must fail closed before local execution")
+
+            hao_main_module.execute_local_tool = fail_local_tool
+            hao_main_module.CLAUDE_PERMISSION_DECISION_POLL_SECONDS = 0.001
+            try:
+                result = hao_main_module._run_claude_permission_bridge_sdk(
+                    client=FakeClient(),
+                    device_token="device-token-claude",
+                    bridge_task_id="bridge-task-claude",
+                    config=config,
+                    state=state,
+                    payload={
+                        "message": "fake claude",
+                        "agent_id": "default",
+                        "run_id": "run-claude-v6",
+                        "workspace_identity_hash": state["workspace_identity_hash"],
+                        "test_fixture_mode": "claude_permission_bridge_fake_sdk",
+                        "fake_sdk_events": [
+                            {
+                                "type": "tool_request",
+                                "tool_name": "Bash",
+                                "tool_use_id": "bash-1",
+                                "input": {"command": "printf model-proposed"},
+                            },
+                        ],
+                    },
+                )
+            finally:
+                hao_main_module.execute_local_tool = original_execute
+                hao_main_module.CLAUDE_PERMISSION_DECISION_POLL_SECONDS = original_poll_seconds
+            assert result.status == "error"
+            assert result.error_message is not None
+            assert "approval polling failed" in result.error_message
+            assert calls == ["tool_request", "decision"]
+    finally:
+        if previous_env is None:
+            os.environ.pop("HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK", None)
+        else:
+            os.environ["HAO_CLAUDE_PERMISSION_BRIDGE_FAKE_SDK"] = previous_env
+    client, session = _new_session()
+    _ensure_agent(session)
+    return _evidence(session, scenario="claude-api-failure-fail-closed")
+
+
 def claude_v5_heartbeat_upgrade_denied() -> dict[str, Any]:
     client, session = _new_session()
     connection, device_token = _pair_claude_v5(client, session)
@@ -763,10 +1272,16 @@ def _evidence(session: Session, *, scenario: str, run_id: str | None = None) -> 
 
 
 SCENARIOS = {
+    "claude-api-failure-fail-closed": claude_api_failure_fail_closed,
+    "claude-approval-timeout": claude_approval_timeout,
+    "claude-approve-write": claude_approve_write,
+    "claude-bypass-attempt": claude_bypass_attempt,
     "claude-sdk-unavailable": claude_sdk_unavailable,
     "claude-modified-approval": claude_modified_approval,
     "claude-permission-bridge-approved": claude_permission_bridge_approved,
     "claude-permission-bridge-cancel": claude_permission_bridge_cancel,
+    "claude-reject-bash": claude_reject_bash,
+    "claude-revoke-pending": claude_revoke_pending,
     "claude-v5-heartbeat-upgrade-denied": claude_v5_heartbeat_upgrade_denied,
 }
 

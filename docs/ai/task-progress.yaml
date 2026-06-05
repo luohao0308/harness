@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-05T08:31:55Z
+last_updated_at: 2026-06-05T09:31:29Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -127,16 +127,26 @@ post_stage_hardening:
       - security/test planning reviewer initial verdict REVISE/BLOCK; plan revised; final verdict PASS
       - implementation architecture reviewer final verdict CLEAR
       - implementation code/security reviewer final verdict APPROVE
+      - V1-V6 cross-review architecture reviewer verdict CLEAR; test reviewer WATCH resolved; design reviewer WATCH resolved; code/security reviewer no blocking findings
       - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
       - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "claude and (bridge or permission or fake_sdk or sdk)"
       - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py -q
       - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py
       - python3 -m py_compile scripts/smoke-test-local-agent-v6.py services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/app/api/tasks.py services/api-server/tests/test_local_agents.py services/api-server/tests/test_hao_cli.py
       - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-sdk-unavailable
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-approve-write
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-reject-bash
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-revoke-pending
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-approval-timeout
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-bypass-attempt
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-api-failure-fail-closed
       - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-approved
       - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-cancel
       - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-v5-heartbeat-upgrade-denied
       - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-modified-approval
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k "v6 or local_agent_v3_approval_after_ttl or revoke_terminalizes or deny"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "permission_bridge or fake_sdk or bridge_v6"
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py
       - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
       - cd apps/agent-console && npm run lint -- --pretty false
       - python3 scripts/validate-docs.py
@@ -149,9 +159,11 @@ post_stage_hardening:
       - Host-tool requests from Claude V6 now create or bind the existing V3 `LocalAgentToolRequest`, `ToolApproval`, `ToolCall`, `AgentEvent`, `LocalAgentPendingChange`, and `LocalAgentCommand` records before local side effects.
       - Modified approval now updates the executable input hash, requires write/apply-patch pending-change preview refresh against the approved modified input, fail-closes stale original preview results, and records the refreshed preview on both the local request and approval audit path.
       - Task cancel now terminalizes pending Claude V6 local-tool state, including approvals, tool calls, pending changes, commands, and bridge tasks, and late approval or execution polling fails closed.
-      - The hao CLI V6 path now supports the Claude Agent SDK permission callback, explicit fake-SDK fixture mode, and deterministic smoke coverage for unavailable SDK, approved execution, cancelled execution, V5 heartbeat upgrade denial, and modified-approval refresh execution.
+      - The hao CLI V6 path now supports the Claude Agent SDK permission callback, explicit fake-SDK fixture mode, and deterministic smoke coverage for SDK unavailable, approve write, modified approval, reject bash, revoke pending, approval timeout, bypass attempt, API failure fail-closed, approved shell execution, cancelled execution, and V5 heartbeat upgrade denial.
       - Agent Studio now distinguishes Claude Code V5 from Claude Code V6, generates scoped pairing commands with `--permission-bridge sdk`, and marks V6 connections as permission-bridge plus host-tool-approval capable.
-      - Final implementation review returned architecture `CLEAR` and code/security `APPROVE`; closeout-only follow-up was correcting stale handoff wording and validation counts.
+      - Agent Workspace now distinguishes Claude Code V5/V6 in the local connection selector, shows Claude V6 local-tool approval pending state with a Run Detail approvals link, and uses template-scoped `使用此模板` / `Use template` copy in the template creation card.
+      - V1-V6 cross-review consensus is closed: architecture/protocol review remained `CLEAR`, test WATCH was resolved by exact V6 smoke scenarios, design WATCH was resolved by Workspace labels/approval state/template copy, and code/security had no blocking findings.
+      - Final implementation review returned architecture `CLEAR` and code/security `APPROVE`; closeout follow-up corrected stale handoff wording, validation counts, exact V6 smoke coverage, and Workspace V6 UI clarity.
       - Native Claude Code resume, deferred tool resume after process exit, live credential UX, remote-control/web/cloud sessions, MCP/plugins/hooks/subagents/browser/computer-use, and server-side Claude credential handling remain out of V6 scope.
 
   - id: local-agent-claude-code-adapter-v5

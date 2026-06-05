@@ -25,8 +25,9 @@ V6 upgrades Claude Code from the V5 no-tools adapter into an opt-in SDK intent-c
 - Required SDK side-effect tools to reach Harness approval; SDK allowed-tools/settings cannot pre-approve Bash, Write, Edit, MultiEdit, git/network/env/secret-like operations, or mutation-capable custom tools.
 - Denied duplicate native execution after Harness-owned execution by returning an SDK deny result from the callback after the Harness executor completes.
 - Terminalized pending V6 tool state on task cancel, including local tool requests, tool approvals, tool calls, pending changes, commands, and bridge tasks.
-- Added deterministic smoke and fixture coverage for unavailable SDK, approved execution, cancelled execution, V5 heartbeat upgrade denial, and modified-approval refresh execution.
+- Added deterministic smoke and fixture coverage for SDK unavailable, approve write, modified approval, reject bash, revoke pending, approval timeout, bypass attempt, API failure fail-closed, approved shell execution, cancelled execution, and V5 heartbeat upgrade denial.
 - Updated Agent Studio to expose separate Claude Code V5 and Claude Code V6 pairing options and status badges.
+- Updated Agent Workspace to distinguish Claude Code V5/V6 connection labels, surface Claude V6 local-tool approval pending state with a Run Detail approvals link, and keep template creation copy scoped to `使用此模板` / `Use template`.
 - Kept native Claude Code resume, deferred tool resume after process exit, live credential UX, remote-control/web/cloud sessions, MCP/plugins/hooks/subagents/browser/computer-use, and server-side Claude credential handling out of V6.
 
 ## External Reference Evidence
@@ -66,6 +67,13 @@ Implementation review completed after code changes:
 - Architecture review: `CLEAR`.
 - Code/security review: `APPROVE`.
 
+V1-V6 cross-review completed after the implementation closeout:
+
+- Architecture/protocol reviewer: `CLEAR`; API/DB authority, scoped entitlement, V5/V6 upgrade controls, approval path, and cancellation/revoke fail-closed behavior remain coherent across V1-V6.
+- Test reviewer: initial `WATCH`; resolved by adding exact V6 deterministic smoke scenarios for `claude-approve-write`, `claude-reject-bash`, `claude-revoke-pending`, `claude-approval-timeout`, `claude-bypass-attempt`, and `claude-api-failure-fail-closed`.
+- Design reviewer: initial `WATCH`; resolved by adding Workspace Claude V5/V6 selector labels, Claude V6 local-tool approval pending text plus approvals link, and template-scoped `Use template` copy.
+- Code/security reviewer: no blocking findings.
+
 Security-critical fixes already applied before final review:
 
 - V5 Claude connections cannot self-upgrade to V6 through heartbeat capability reports.
@@ -86,11 +94,20 @@ Security-critical fixes already applied before final review:
 - `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py -q` -> `236 passed`.
 - `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-sdk-unavailable` passed.
+- `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-approve-write` passed.
+- `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-reject-bash` passed.
+- `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-revoke-pending` passed.
+- `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-approval-timeout` passed.
+- `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-bypass-attempt` passed.
+- `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-api-failure-fail-closed` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-approved` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-cancel` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-v5-heartbeat-upgrade-denied` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-modified-approval` passed.
-- `cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx` -> `22 passed`.
+- `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k "v6 or local_agent_v3_approval_after_ttl or revoke_terminalizes or deny"` -> `12 passed, 34 deselected`.
+- `cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "permission_bridge or fake_sdk or bridge_v6"` -> `11 passed, 39 deselected`.
+- `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py` passed.
+- `cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx` -> `23 passed`.
 - `cd apps/agent-console && npm run lint -- --pretty false` passed.
 - `python3 scripts/validate-docs.py` passed.
 - `git diff --check` passed.
@@ -98,5 +115,5 @@ Security-critical fixes already applied before final review:
 ## Current Status
 
 - Branch: `feature/local-agent-claude-code-permission-bridge-v6`
-- Status: implemented and verified locally
+- Status: implemented, V1-V6 cross-reviewed, optimized, and verified locally
 - Next step: commit and push this branch without staging unrelated `omx_wiki/session-log-2026-06-04-*` files.

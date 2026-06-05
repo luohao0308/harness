@@ -25,8 +25,10 @@ V6 不验收 native Claude Code resume、deferred tool resume after process exit
 - `adapter_kind=claude_code` with no V6 permission bridge capability still returns `host_tools_authorized=false` and rejects `/bridge/tool-requests` with 409。
 - `adapter_kind=claude_code` with reported `claude_permission_bridge_v1=true` normalizes to:
   - `enabled_in_v6=true`
-  - `execution_mode=agent_sdk_permission_bridge`
+  - `execution_mode=agent_sdk_intent_capture_harness_executor`
   - `permission_bridge=harness_local_tool_request_v1`
+  - `permission_bridge_execution=harness_owned_executor`
+  - `sdk_native_tool_execution_enabled=false`
   - `host_tools_authorized=true`
   - `supports_resume=false`
   - `resume_mode=context_replay_new_session`

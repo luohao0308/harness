@@ -328,7 +328,7 @@ export function AgentListPage() {
               </label>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={() => createAgentMutation.mutate()} disabled={createAgentMutation.isPending}>
-                  <Bot className="h-3.5 w-3.5" /> {text("创建智能体", "Create Agent")}
+                  <Bot className="h-3.5 w-3.5" /> {text("使用此模板", "Use template")}
                 </Button>
                 <Button onClick={() => cloneAgentMutation.mutate()} disabled={cloneAgentMutation.isPending}>
                   {text("克隆当前智能体", "Clone selected Agent")}

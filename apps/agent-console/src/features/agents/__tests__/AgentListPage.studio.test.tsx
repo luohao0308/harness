@@ -157,7 +157,7 @@ describe("AgentListPage Studio controls", () => {
     expect(screen.getByRole("button", { name: /保守省 Token/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /强力省 Token/ })).toBeInTheDocument();
     expect(screen.queryByLabelText("能力名称")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /创建智能体|Create Agent/ }));
+    await user.click(screen.getByRole("button", { name: /使用此模板|Use template/ }));
     expect(await screen.findByText("智能体创建成功")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /克隆当前智能体|Clone selected Agent/ }));
     expect(await screen.findByText("智能体克隆成功")).toBeInTheDocument();
