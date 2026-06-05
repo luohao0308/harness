@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-04T18:35:51Z
+last_updated_at: 2026-06-05T02:02:55Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,25 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: local-agent-claude-code-permission-bridge-v6
+    date: 2026-06-05
+    status: plan_reviewed
+    demo: Local Agent Claude Code Permission Bridge V6 plan is入库 and reviewed. The planned V6 scope is an Agent SDK permission bridge that routes Claude Code host-tool intent through Harness V3 LocalAgentToolRequest, ToolApproval, ToolCall, AgentEvent, pending-change, and command lifecycle authority before any local side effect.
+    verification_result: plan_review_passed
+    verification_commands:
+      - architecture/protocol planning reviewer final verdict PASS
+      - security/test planning reviewer initial verdict REVISE/BLOCK; plan revised; final verdict PASS
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V6 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-claude-code-permission-bridge-v6.md` and `.omx/plans/test-spec-local-agent-claude-code-permission-bridge-v6.md`.
+      - V6 is planned as a Claude Code Agent SDK `can_use_tool` permission bridge slice; V5 headless no-tools Claude Code remains the default fallback and regression baseline.
+      - The plan requires side-effect SDK tool requests such as Bash, Write, Edit, MultiEdit, git/network/env/secret-like operations to reach Harness `can_use_tool` and V3 local tool approval before execution; SDK allowed-tools/settings cannot pre-approve them.
+      - The plan keeps API/DB as the authority for sessions, Runs, events, approvals, tool calls, pending changes, command lifecycle, assistant completion, and audit.
+      - Security/test review initially blocked the plan for SDK allow-rule bypass, missing fail-closed API/bridge failure cases, and missing modified-approval execution proof; the final plan adds adversarial fake SDK, API/decision/callback/SDK/runner failure, modified input, privacy, and chmod verification gates.
+      - Native Claude Code resume, deferred tool resume after process exit, live credential UX, remote-control/web/cloud sessions, MCP/plugins/hooks/subagents/browser/computer-use, and server-side Claude credential handling remain out of V6 scope.
+      - No V6 implementation has started on this branch; this entry records plan入库 and reviewer consensus only.
+
   - id: local-agent-claude-code-adapter-v5
     date: 2026-06-05
     status: completed
