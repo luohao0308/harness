@@ -1083,7 +1083,14 @@ def bind_local_agent_conversation(
         existing.adapter_session_id = request.adapter_session_id or existing.adapter_session_id
         existing.resume_mode = resume_mode
         existing.updated_at = utc_now()
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Agent Session is already bound to a different local Agent connection",
+            ) from exc
         session.refresh(existing)
         return _binding_response(existing)
 
@@ -1112,7 +1119,14 @@ def bind_local_agent_conversation(
         updated_at=now,
     )
     session.add(binding)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Session is already bound to a different local Agent connection",
+        ) from exc
     session.refresh(binding)
     return _binding_response(binding)
 
@@ -1173,6 +1187,11 @@ def send_local_agent_message(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Local Agent binding not found"
         )
+    if binding.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent binding is not active",
+        )
     connection = _owned_connection(
         connection_id=binding.connection_id,
         session=session,
@@ -1183,6 +1202,15 @@ def send_local_agent_message(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Local Agent connection revoked"
         )
+    agent_session = session.get(AgentSession, binding.agent_session_id)
+    if agent_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent Session not found")
+    _ensure_agent_session_not_bound_to_other_local_connection(
+        agent_session_id=agent_session.id,
+        connection_id=connection.id,
+        session=session,
+        principal=principal,
+    )
     existing = session.execute(
         select(LocalAgentBridgeTask).where(
             LocalAgentBridgeTask.binding_id == binding.id,
@@ -1198,14 +1226,13 @@ def send_local_agent_message(
             status=existing.status,
         )
 
-    agent_session = session.get(AgentSession, binding.agent_session_id)
-    if agent_session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent Session not found")
     now = utc_now()
     conversation_context = _local_agent_workspace_conversation_context(request)
     if not conversation_context and not request.workspace_context_provided:
         conversation_context = _codex_conversation_context(
             agent_session_id=agent_session.id,
+            connection_id=connection.id,
+            binding_id=binding.id,
             session=session,
         )
     requested_model_provider = request.model_provider or "default"
@@ -1261,6 +1288,7 @@ def send_local_agent_message(
             "source": "local_agent",
             "connection_id": connection.id,
             "binding_id": binding.id,
+            "agent_session_id": agent_session.id,
             "client_message_id": request.client_message_id,
             "workspace_request": local_io_input["workspace_request"],
             "local_agent_io": {
@@ -1297,6 +1325,8 @@ def send_local_agent_message(
         "attachments": attachment_payloads,
         "compressed_context": compressed_context,
         "agent_id": binding.agent_id,
+        "connection_id": connection.id,
+        "binding_id": binding.id,
         "agent_session_id": agent_session.id,
         "run_id": run.id,
         "workspace_root": connection.workspace_root,
@@ -2581,6 +2611,12 @@ def _resolve_or_create_agent_session(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only the session owner can bind local Agent execution",
             )
+        _ensure_agent_session_not_bound_to_other_local_connection(
+            agent_session_id=agent_session.id,
+            connection_id=connection.id,
+            session=session,
+            principal=principal,
+        )
         return agent_session
     now = utc_now()
     agent_session = AgentSession(
@@ -2595,6 +2631,28 @@ def _resolve_or_create_agent_session(
     session.add(agent_session)
     session.flush()
     return agent_session
+
+
+def _ensure_agent_session_not_bound_to_other_local_connection(
+    *,
+    agent_session_id: str,
+    connection_id: str,
+    session: Session,
+    principal: Principal,
+) -> None:
+    existing_local_binding = session.execute(
+        select(LocalAgentConversationBinding.id).where(
+            LocalAgentConversationBinding.organization_id == principal.organization_id,
+            LocalAgentConversationBinding.agent_session_id == agent_session_id,
+            LocalAgentConversationBinding.connection_id != connection_id,
+            LocalAgentConversationBinding.status == "active",
+        )
+    ).first()
+    if existing_local_binding is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent Session is already bound to a different local Agent connection",
+        )
 
 
 def _owned_bridge_task(
@@ -3907,6 +3965,8 @@ def _apply_bridge_event(
             metadata_json={
                 "source": "local_agent",
                 "connection_id": connection.id,
+                "binding_id": bridge_task.binding_id,
+                "agent_session_id": bridge_task.agent_session_id,
                 "bridge_task_id": bridge_task.id,
                 "adapter_kind": connection.adapter_kind,
                 "event_id": request.event_id,
@@ -4302,7 +4362,8 @@ def _local_agent_message_input_snapshot(
         "context_max_tokens": request.context_max_tokens,
         "pinned_node_ids": request.pinned_node_ids[:50],
         "conversation_context_count": len(conversation_context),
-        "conversation_context_preview": _local_agent_context_preview(conversation_context),
+        "conversation_context": _local_agent_context_snapshot(conversation_context),
+        "conversation_context_preview": _local_agent_context_snapshot(conversation_context),
         "workspace_request": _local_agent_workspace_request_preview(
             workspace_request,
             attachments=attachment_payloads,
@@ -4355,7 +4416,8 @@ def _local_agent_message_input_snapshot_from_payload(
             max_items=50,
         ),
         "conversation_context_count": len(conversation_context),
-        "conversation_context_preview": _local_agent_context_preview(conversation_context),
+        "conversation_context": _local_agent_context_snapshot(conversation_context),
+        "conversation_context_preview": _local_agent_context_snapshot(conversation_context),
         "workspace_request": _local_agent_workspace_request_preview(
             workspace_request,
             attachments=attachments,
@@ -4403,18 +4465,18 @@ def _local_agent_message_output_snapshot(
     }
 
 
-def _local_agent_context_preview(items: list[dict]) -> list[dict[str, str]]:
-    preview: list[dict[str, str]] = []
+def _local_agent_context_snapshot(items: list[dict]) -> list[dict[str, str]]:
+    snapshot: list[dict[str, str]] = []
     for item in items[:12]:
-        preview.append(
+        snapshot.append(
             {
                 "role": _bounded_text(str(item.get("role") or ""), limit=40),
                 "content": _bounded_text(str(item.get("content") or ""), limit=1000),
             }
         )
     if len(items) > 12:
-        preview.append({"role": "system", "content": "[truncated]"})
-    return preview
+        snapshot.append({"role": "system", "content": "[truncated]"})
+    return snapshot
 
 
 def _local_agent_attachment_preview(items: list[dict]) -> list[dict]:
@@ -4943,6 +5005,8 @@ def _local_agent_task_duration_ms(task: LocalAgentBridgeTask, now: datetime) -> 
 def _codex_conversation_context(
     *,
     agent_session_id: str,
+    connection_id: str,
+    binding_id: str,
     session: Session,
 ) -> list[dict[str, str]]:
     rows = list(
@@ -4959,6 +5023,14 @@ def _codex_conversation_context(
     context: list[dict[str, str]] = []
     total_chars = 0
     for message in reversed(rows):
+        metadata = message.metadata_json if isinstance(message.metadata_json, dict) else {}
+        if not _local_agent_message_metadata_matches_binding(
+            metadata,
+            agent_session_id=agent_session_id,
+            connection_id=connection_id,
+            binding_id=binding_id,
+        ):
+            continue
         content = _bounded_text(message.content, limit=LOCAL_AGENT_CODEX_CONTEXT_MESSAGE_CHARS)
         if not content:
             continue
@@ -4970,6 +5042,23 @@ def _codex_conversation_context(
         context.append({"role": message.role, "content": content})
         total_chars += len(content)
     return context
+
+
+def _local_agent_message_metadata_matches_binding(
+    metadata: dict,
+    *,
+    agent_session_id: str,
+    connection_id: str,
+    binding_id: str,
+) -> bool:
+    if metadata.get("source") != "local_agent":
+        return False
+    if metadata.get("binding_id") != binding_id:
+        return False
+    if metadata.get("connection_id") != connection_id:
+        return False
+    metadata_session_id = metadata.get("agent_session_id")
+    return metadata_session_id is None or metadata_session_id == agent_session_id
 
 
 def _redact_mapping(value: dict, *, max_items: int = 50) -> dict:

@@ -629,6 +629,14 @@ class LocalAgentConversationBinding(Base):
             "agent_session_id",
             name="local_agent_bindings_connection_session_uidx",
         ),
+        Index(
+            "ix_local_agent_bindings_active_session_uidx",
+            "organization_id",
+            "agent_session_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
         Index("ix_local_agent_bindings_org_user", "organization_id", "owner_user_id"),
     )
 
