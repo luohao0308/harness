@@ -81,13 +81,13 @@ export function SearchOverlay({
       role="dialog"
       aria-modal="true"
       aria-label={text("搜索会话", "Search conversation")}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-4 pt-[8vh] backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/35 p-4 pt-[8vh]"
       onClick={onClose}
     >
       <div
         ref={dialogRef}
         onClick={(event) => event.stopPropagation()}
-        className="w-[min(42rem,100%)] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+        className="w-[min(42rem,100%)] rounded-2xl border border-slate-200 bg-white p-4 shadow-none"
       >
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0">

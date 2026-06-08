@@ -52,7 +52,7 @@ export function InspectorMenu({ onOpenInspector }: InspectorMenuProps): JSX.Elem
         <div
           role="menu"
           aria-label={rootLabel}
-          className="absolute right-0 top-full z-30 mt-1 w-[180px] rounded-2xl border border-slate-200 bg-white p-1 shadow-lg"
+          className="absolute right-0 top-full z-30 mt-1 w-[180px] rounded-2xl border border-slate-200 bg-white p-1 shadow-none"
         >
           <button
             type="button"
