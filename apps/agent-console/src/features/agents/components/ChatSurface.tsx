@@ -38,7 +38,11 @@ import {
 } from "../../../stores/workspaceStore";
 import {
   compressAgentWorkspaceContext,
+  type AgentDefinition,
   type AgentAttachmentPayload,
+  type AgentChatStreamMessage,
+  type AgentChatStreamPayload,
+  type LocalAgentConnection,
   type ToolMetadata,
   type WorkspaceContextCompressionResponse,
 } from "../../tasks/api";
@@ -61,6 +65,7 @@ import { AUTO_COMPRESSION_RATIO_DEFAULT } from "../lib/contextTokens";
 import { estimateTextTokens } from "../lib/contextTruncation";
 import { planApprovalGate } from "../lib/planApprovalGate";
 import type { SlashCommand } from "../lib/slashCommands";
+import { extractToolMentions } from "../lib/toolMentions";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
 import {
   ChatComposer,
@@ -76,6 +81,23 @@ import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
 const MAX_ATTACHMENT_TEXT_BYTES = 120_000;
+
+export type LocalAgentSubmitContext = {
+  workspace_mode: WorkspaceMode;
+  mode: AgentChatStreamPayload["mode"];
+  model_provider?: string | null;
+  model_name?: string | null;
+  messages: AgentChatStreamMessage[];
+  active_leaf_id?: string | null;
+  active_branch_id?: string | null;
+  pinned_node_ids: string[];
+  context_window_turns: number;
+  tool_mentions: NonNullable<AgentChatStreamPayload["tool_mentions"]>;
+  attachment_names: string[];
+  attachments: AgentAttachmentPayload[];
+  context_max_tokens?: number;
+  compressed_context: AgentChatStreamPayload["compressed_context"];
+};
 
 export type ChatSurfaceProps = {
   agentId: string;
@@ -110,9 +132,19 @@ export type ChatSurfaceProps = {
   jumpTarget?: { nodeId: string; seq: number } | null;
   onCreateTeamFromConversation?: () => void;
   isCreatingTeam?: boolean;
-  localAgentPanel?: ReactNode;
+  agents?: AgentDefinition[];
+  agentsLoading?: boolean;
+  onAgentChange?: (agentId: string) => void;
+  localAgentEnabled?: boolean;
+  localAgentConnections?: LocalAgentConnection[];
+  selectedLocalConnectionId?: string | null;
+  onLocalAgentTargetChange?: (connectionId: string) => void;
+  localAgentControl?: ReactNode;
   localAgentPending?: boolean;
-  onLocalAgentSubmit?: (goal: string) => Promise<void> | void;
+  onLocalAgentSubmit?: (
+    goal: string,
+    context: LocalAgentSubmitContext,
+  ) => Promise<boolean | void> | boolean | void;
 };
 
 export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
@@ -138,7 +170,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     onOpenShortcut,
     onCreateTeamFromConversation,
     isCreatingTeam = false,
-    localAgentPanel = null,
+    agents = [],
+    agentsLoading = false,
+    onAgentChange,
+    localAgentEnabled = false,
+    localAgentConnections = [],
+    selectedLocalConnectionId = null,
+    onLocalAgentTargetChange,
+    localAgentControl = null,
     localAgentPending = false,
     onLocalAgentSubmit,
   } = props;
@@ -297,6 +336,53 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         truncated: attachment.truncated,
       })),
     [attachments],
+  );
+
+  const buildLocalAgentSubmitContext = useCallback(
+    (goal: string): LocalAgentSubmitContext => {
+      const store = useWorkspaceStore.getState();
+      const path = store.activePath();
+      return {
+        workspace_mode: workspaceMode,
+        mode: workspaceMode === "goal" ? "plan" : workspaceMode,
+        model_provider: selectedProviderId,
+        model_name: selectedModelId,
+        messages: serializeLocalAgentMessages(path),
+        active_leaf_id: store.activeLeafId,
+        active_branch_id: store.activeLeafId,
+        pinned_node_ids: store.pinnedNodeIds,
+        context_window_turns: store.contextWindowTurns,
+        tool_mentions: extractToolMentions(goal, tools),
+        attachment_names: attachmentNames,
+        attachments: attachmentPayloads,
+        context_max_tokens: store.contextMaxTokens,
+        compressed_context:
+          activeCompression === null
+            ? null
+            : {
+                summary: activeCompression.summary,
+                branch_id: store.activeLeafId,
+                coverage_node_ids: activeCompression.coverageNodeIds,
+                coverage_path_hash: activeCompression.coveragePathHash,
+                summary_schema_version: SUMMARY_SCHEMA_VERSION,
+                compression_prompt_version: COMPRESSION_PROMPT_VERSION,
+                compressor_provider: activeCompression.compressorProvider,
+                compressor_model: activeCompression.compressorModel,
+                estimated_original_tokens: activeCompression.estimatedOriginalTokens,
+                estimated_summary_tokens: activeCompression.estimatedSummaryTokens,
+                cache_status: activeCompression.cacheStatus ?? null,
+              },
+      };
+    },
+    [
+      activeCompression,
+      attachmentNames,
+      attachmentPayloads,
+      selectedModelId,
+      selectedProviderId,
+      tools,
+      workspaceMode,
+    ],
   );
 
   const commitCompressionResponse = useCallback(
@@ -515,10 +601,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   ]);
 
   // ─── Composer callbacks ────────────────────────────────────────────────
-  const handleSubmit = useCallback(async (): Promise<void> => {
+  const handleSubmit = useCallback(async (): Promise<boolean | void> => {
     const goal = draft.trim();
-    if (goal.length === 0) return;
-    if (stream.isStreaming || localAgentPending) return;
+    if (goal.length === 0) return false;
+    if (stream.isStreaming || localAgentPending) return false;
 
     if (workspaceMode === "plan" || workspaceMode === "goal") {
       const confirmed = await confirm({
@@ -529,7 +615,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             : "这会创建规划后执行运行，并立即触发可执行执行链路。",
         confirmText: workspaceMode === "goal" ? "确认进入" : "确认创建",
       });
-      if (!confirmed) return;
+      if (!confirmed) return false;
     }
 
     if (contextUsageRatio >= autoCompressionRatio) {
@@ -548,12 +634,13 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 
     chatListRef.current?.notifyUserSubmit();
     if (onLocalAgentSubmit !== undefined) {
-      await onLocalAgentSubmit(goal);
+      const sent = await onLocalAgentSubmit(goal, buildLocalAgentSubmitContext(goal));
+      if (sent === false) return false;
       setAttachments((current) => {
         for (const attachment of current) revokeAttachmentPreview(attachment);
         return [];
       });
-      return;
+      return true;
     }
 
     void stream.start({
@@ -566,12 +653,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       for (const attachment of current) revokeAttachmentPreview(attachment);
       return [];
     });
+    return true;
   }, [
     activeCompression,
     activePath,
     attachmentNames,
     attachmentPayloads,
     autoCompressionRatio,
+    buildLocalAgentSubmitContext,
     compressionBranchKey,
     compressCurrentContext,
     contextUsageRatio,
@@ -592,6 +681,13 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
 
   const handleRetry = useCallback(
     (nodeId: string): void => {
+      const node = useWorkspaceStore.getState().nodesById[nodeId];
+      if (
+        node?.metadata.retry_disabled === true ||
+        node?.metadata.orchestration?.source === "local_agent"
+      ) {
+        return;
+      }
       void stream.retry(nodeId);
     },
     [stream],
@@ -973,6 +1069,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         onOpenInspector={onOpenInspector}
         onCreateTeamFromConversation={onCreateTeamFromConversation}
         isCreatingTeam={isCreatingTeam}
+        agents={agents}
+        agentsLoading={agentsLoading}
+        onAgentChange={onAgentChange}
+        localAgentEnabled={localAgentEnabled}
+        localAgentConnections={localAgentConnections}
+        selectedLocalConnectionId={selectedLocalConnectionId}
+        onLocalAgentTargetChange={onLocalAgentTargetChange}
+        localAgentControl={localAgentControl}
         summaryManager={
           <ContextSummaryManager
             summary={activeCompression}
@@ -984,8 +1088,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           />
         }
       />
-
-      {localAgentPanel}
 
       <ChatMessageList
         ref={chatListRef}
@@ -1225,7 +1327,7 @@ function BottomToolsPopover({
       aria-modal="false"
       aria-label={title}
       className={cn(
-        "absolute bottom-[58px] left-4 right-4 z-30 max-h-[min(70vh,480px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl",
+        "absolute bottom-[58px] left-4 right-4 z-30 max-h-[min(70vh,480px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-none",
         align === "right"
           ? "sm:left-auto sm:right-4 sm:w-[280px]"
           : "sm:left-4 sm:right-auto sm:w-[280px]",
@@ -1735,4 +1837,20 @@ function buildActivePath(
     current = node.parent_id;
   }
   return path.reverse();
+}
+
+function serializeLocalAgentMessages(nodes: ConversationNode[]): AgentChatStreamMessage[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    parent_id: node.parent_id,
+    children_ids: node.children_ids,
+    role: node.role,
+    content: node.content,
+    state: node.state,
+    run_id: node.run_id,
+    metadata: { ...node.metadata },
+    tool_calls: node.tool_calls,
+    artifacts: node.artifacts.map((artifact) => ({ ...artifact })),
+    created_at: node.created_at,
+  }));
 }

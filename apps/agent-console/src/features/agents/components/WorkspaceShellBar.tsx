@@ -7,6 +7,7 @@ import {
   GitBranch,
   Loader2,
   MessageSquareText,
+  Monitor,
   Sparkles,
   Wrench,
   X,
@@ -14,9 +15,11 @@ import {
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
+import { MenuSelect } from "../../../components/ui/menu-select";
 import { useI18n } from "../../../lib/i18n";
+import { cn } from "../../../lib/utils";
 import { statusLabel } from "../../../lib/labels";
-import type { ToolMetadata } from "../../tasks/api";
+import type { AgentDefinition, LocalAgentConnection, ToolMetadata } from "../../tasks/api";
 import { useOutsideClick } from "../hooks/useOutsideClick";
 import type { InspectorSection } from "../lib/types";
 import { InspectorMenu } from "./InspectorMenu";
@@ -38,6 +41,14 @@ export type WorkspaceShellBarProps = {
   onCreateTeamFromConversation?: () => void;
   isCreatingTeam?: boolean;
   summaryManager?: ReactNode;
+  agents?: AgentDefinition[];
+  agentsLoading?: boolean;
+  onAgentChange?: (agentId: string) => void;
+  localAgentEnabled?: boolean;
+  localAgentConnections?: LocalAgentConnection[];
+  selectedLocalConnectionId?: string | null;
+  onLocalAgentTargetChange?: (connectionId: string) => void;
+  localAgentControl?: ReactNode;
 };
 
 export function WorkspaceShellBar({
@@ -52,6 +63,14 @@ export function WorkspaceShellBar({
   onCreateTeamFromConversation,
   isCreatingTeam = false,
   summaryManager = null,
+  agents = [],
+  agentsLoading = false,
+  onAgentChange,
+  localAgentEnabled = false,
+  localAgentConnections = [],
+  selectedLocalConnectionId = null,
+  onLocalAgentTargetChange,
+  localAgentControl = null,
 }: WorkspaceShellBarProps): JSX.Element {
   const { text } = useI18n();
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -65,13 +84,59 @@ export function WorkspaceShellBar({
     `Tools/MCP: ${tools.length} available`,
   );
   const toolsPreviewLabel = formatToolsPreview(tools, text);
+  const agentTargetValue =
+    localAgentEnabled && selectedLocalConnectionId !== null
+      ? localAgentTargetValue(selectedLocalConnectionId)
+      : cloudAgentTargetValue(agentId);
+  const cloudAgentOptions =
+    agents.length > 0
+      ? agents.map((agent) => ({
+          value: cloudAgentTargetValue(agent.id),
+          label: agent.name,
+          description: `${text("工作台", "Workspace")} · ${agent.id}`,
+          meta: agent.status === "ACTIVE" ? text("可用", "Active") : agent.status,
+          leading: <Bot aria-hidden="true" className="h-3.5 w-3.5" />,
+          group: text("智能体", "Agents"),
+        }))
+      : [
+          {
+            value: cloudAgentTargetValue(agentId),
+            label: agentName,
+            description: `${text("工作台", "Workspace")} · ${agentId}`,
+            meta: agentsLoading ? text("同步中", "Loading") : undefined,
+            leading: <Bot aria-hidden="true" className="h-3.5 w-3.5" />,
+            group: text("智能体", "Agents"),
+          },
+        ];
+  const usableLocalAgentConnections = localAgentConnections.filter(isUsableLocalAgentConnection);
+  const localAgentOptions = usableLocalAgentConnections.map((connection) => ({
+    value: localAgentTargetValue(connection.id),
+    label: connection.display_name,
+    description: localAgentOptionDescription(connection),
+    meta: localAgentStatusLabel(connection.status),
+    leading: (
+      <Monitor
+        aria-hidden="true"
+        className={cn(
+          "h-3.5 w-3.5",
+          connection.status === "online" || connection.status === "busy"
+            ? "text-emerald-600"
+            : connection.status === "offline"
+              ? "text-amber-600"
+              : "text-slate-500",
+        )}
+      />
+    ),
+    group: text("本地 Agent", "Local Agents"),
+  }));
+  const agentOptions = [...cloudAgentOptions, ...localAgentOptions];
 
   useOutsideClick(toolsPickerRef, () => setToolsOpen(false), toolsOpen);
 
   return (
     <header className="relative z-30 shrink-0 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex min-w-[220px] flex-1 items-center gap-2">
+        <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-2 sm:min-w-[260px]">
           <Link
             to="/agents"
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
@@ -80,15 +145,38 @@ export function WorkspaceShellBar({
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
           </Link>
-          <div className="min-w-0">
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
-              <Bot aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-500" />
-              <span className="truncate">{agentName}</span>
-            </span>
-            <div className="hidden text-[11px] leading-4 text-slate-500 sm:block">
-              {text("模型加运行平台组成智能体", "Model + Harness = Agent")}
-              <span className="mx-1 text-slate-300">·</span>
-              {text("工作台", "Workspace")} · {agentId}
+          <div className="min-w-0 flex-1">
+            {onAgentChange ? (
+              <MenuSelect
+                ariaLabel={text("切换智能体或本地 Agent", "Switch Agent or Local Agent")}
+                value={agentTargetValue}
+                options={agentOptions}
+                onChange={(value) => {
+                  if (value.startsWith("local:")) {
+                    onLocalAgentTargetChange?.(value.slice("local:".length));
+                    return;
+                  }
+                  if (value.startsWith("agent:")) {
+                    onAgentChange(value.slice("agent:".length));
+                  }
+                }}
+                size="compact"
+                className="w-full max-w-[20rem] min-w-0"
+                buttonClassName="h-9 rounded-lg border-transparent bg-transparent px-1.5 py-1 shadow-none hover:border-slate-200"
+                menuClassName="left-auto right-0 w-[min(18rem,calc(100vw-3rem))] max-w-[calc(100vw-3rem)]"
+              />
+            ) : (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
+                <Bot aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-500" />
+                <span className="truncate">{agentName}</span>
+              </span>
+            )}
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-4 text-slate-500">
+              <span className="hidden sm:inline">
+                {text("模型加运行平台组成智能体", "Model + Harness = Agent")}
+              </span>
+              <span className="hidden text-slate-300 sm:inline">·</span>
+              {localAgentControl}
             </div>
           </div>
         </div>
@@ -134,7 +222,7 @@ export function WorkspaceShellBar({
                 role="dialog"
                 aria-modal="false"
                 aria-label={text("工具", "Tools")}
-                className="absolute right-0 top-full z-40 mt-1.5 w-[min(280px,calc(100vw-1rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+                className="absolute right-0 top-full z-40 mt-1.5 w-[min(280px,calc(100vw-1rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-none"
               >
                 <div className="mb-2 flex items-start justify-between gap-2 border-b border-slate-100 px-1 pb-2">
                   <div className="min-w-0">
@@ -220,6 +308,50 @@ export function WorkspaceShellBar({
       </div>
     </header>
   );
+}
+
+function cloudAgentTargetValue(agentId: string): string {
+  return `agent:${agentId}`;
+}
+
+function localAgentTargetValue(connectionId: string): string {
+  return `local:${connectionId}`;
+}
+
+function isUsableLocalAgentConnection(connection: LocalAgentConnection): boolean {
+  return (
+    connection.status !== "revoked" &&
+    connection.status !== "pending_confirmation" &&
+    connection.onboarding_confirmed === true
+  );
+}
+
+function localAgentOptionDescription(connection: LocalAgentConnection): string {
+  if (
+    connection.adapter_kind === "claude_code" &&
+    connection.capabilities_json.permission_bridge === "harness_local_tool_request_v1"
+  ) {
+    return "Claude Code · 权限桥";
+  }
+  if (connection.adapter_kind === "claude_code") {
+    return "Claude Code · 对话模式";
+  }
+  return `本地连接 · ${connection.adapter_kind}`;
+}
+
+function localAgentStatusLabel(status: string): string {
+  switch (status) {
+    case "online":
+      return "在线";
+    case "busy":
+      return "执行中";
+    case "offline":
+      return "离线";
+    case "revoked":
+      return "已撤销";
+    default:
+      return status || "未知";
+  }
 }
 
 function formatToolsPreview(

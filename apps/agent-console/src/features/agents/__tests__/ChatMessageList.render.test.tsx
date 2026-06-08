@@ -220,4 +220,62 @@ describe("ChatMessageList render regression (React error #310)", () => {
     container.remove();
     errorSpy.mockRestore();
   });
+
+  it("renders local Agent input and output metadata as a visible I/O panel", async () => {
+    const assistantNode = makeNode({
+      id: "a1",
+      role: "assistant",
+      content: "检查完成。",
+      metadata: {
+        orchestration: {
+          source: "local_agent",
+          local_agent_io: {
+            input: {
+              adapter_kind: "hao",
+              binding_id: "binding-hao-1234567890",
+              agent_session_id: "session-hao-1234567890",
+              model_provider: "deepseek",
+              model_name: "deepseek-v4",
+              message: "请检查本地项目",
+              conversation_context_count: 2,
+              tool_mentions: [{ name: "read_file" }],
+              attachments: [{ name: "README.md" }],
+            },
+            output: {
+              bridge_task_id: "bridge-task-hao-1234567890",
+              model_call_id: "model-call-hao-1234567890",
+              content_preview: "检查完成。",
+              prompt_tokens: 41,
+              completion_tokens: 9,
+              total_tokens: 50,
+              duration_ms: 12,
+            },
+          },
+        },
+      },
+    });
+
+    await act(async () => {
+      root.render(<ChatMessageList {...buildProps([assistantNode])} />);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("本地 Agent I/O");
+    expect(text).toContain("hao");
+    expect(text).toContain("deepseek/deepseek-v4");
+    expect(text).toContain("2 条");
+    expect(text).toContain("read_file");
+    expect(text).toContain("README.md");
+    expect(text).toContain("输入 41");
+    expect(text).toContain("输出 9");
+    expect(text).toContain("总计 50");
+    expect(text).toContain("请检查本地项目");
+    expect(text).toContain("检查完成。");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
 });

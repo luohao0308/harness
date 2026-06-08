@@ -82,7 +82,7 @@ export type ChatErrorBubbleProps = {
   /** Structured error metadata. Required: error bubbles must carry meta. */
   error: ConversationErrorMeta;
   /** Invoked when the user clicks the Retry button. */
-  onRetry: () => void;
+  onRetry?: () => void;
 };
 
 export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps): JSX.Element {
@@ -92,6 +92,7 @@ export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps):
   });
   const partialContent = node.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   const retryLabel = text(ERROR_COPY_KEYS.RETRY[0], ERROR_COPY_KEYS.RETRY[1]);
+  const canRetry = onRetry !== undefined && node.metadata.retry_disabled !== true;
 
   // `justCopied` mirrors the `MessageActions` UI pattern: flip to true on a
   // successful clipboard write and auto-reset after 1500ms. A ref holds the
@@ -172,10 +173,12 @@ export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps):
             )}
             {copyLabel}
           </Button>
-          <Button variant="danger" onClick={onRetry} aria-label={retryLabel}>
-            <RotateCw aria-hidden="true" className="h-3.5 w-3.5" />
-            {retryLabel}
-          </Button>
+          {canRetry && (
+            <Button variant="danger" onClick={onRetry} aria-label={retryLabel}>
+              <RotateCw aria-hidden="true" className="h-3.5 w-3.5" />
+              {retryLabel}
+            </Button>
+          )}
         </div>
       </div>
     </div>

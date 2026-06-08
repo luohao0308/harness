@@ -54,6 +54,7 @@ export type ConversationNode = {
     knowledge_grounding?: string | null;
     orchestration?: Record<string, unknown>;
     error?: ConversationErrorMeta;
+    retry_disabled?: boolean;
     // v2 additive (Design §Data Models → ConversationNode)
     streaming_diagnostic?: "possible_buffering";
   };
@@ -138,6 +139,7 @@ type WorkspaceState = {
     currentConversationId: string;
     historyPanelCollapsed?: boolean;
   }) => void;
+  upsertConversationSummary: (summary: ConversationSummary) => void;
   // --- v4 additive actions ---
   /** Route the value through `clampContextMaxTokens` before writing. */
   setContextMaxTokens: (value: number) => void;
@@ -533,6 +535,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       draftFromNodeId: null,
     });
   },
+  upsertConversationSummary: (summary) =>
+    set((state) => ({
+      conversations: state.conversations.some((conversation) => conversation.id === summary.id)
+        ? state.conversations.map((conversation) =>
+            conversation.id === summary.id ? summary : conversation,
+          )
+        : [...state.conversations, summary],
+    })),
 }));
 
 // ---------------------------------------------------------------------------
