@@ -11,15 +11,20 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 import uuid
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
+from queue import Empty, Queue
 from typing import Any
+
+import httpx
 
 from .api_client import HarnessApiClient, SSEEvent
 from .config import clear_persisted_token, format_status, load_config, save_auth
@@ -32,6 +37,9 @@ GIT_STATUS_CONTEXT_LIMIT = 8
 PACKAGE_DISTRIBUTION_NAME = "agent-harness-api-server"
 BRIDGE_DEVICE_TOKEN_REF = "bridge.device-token"
 BRIDGE_WORKSPACE_ROOT_REF = "bridge.workspace-root"
+BRIDGE_AUTO_PAIR_ADAPTERS = ("hao", "codex", "claude_code")
+BRIDGE_FULL_RISK_CAPABILITIES = ["host_read", "host_write", "shell", "git", "network"]
+BRIDGE_UNCONFIRMED_STATUS_PHRASE = "has not been confirmed"
 CODEX_SUBPROCESS_TIMEOUT_SECONDS = 120
 CODEX_OUTPUT_LIMIT_BYTES = 64_000
 CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT = 4000
@@ -40,6 +48,30 @@ CODEX_SECRET_PATTERN = re.compile(
     r"(sk-[A-Za-z0-9_-]{12,}|sat-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{12,})",
     re.IGNORECASE,
 )
+CODEX_CONFIG_SCALAR_ALLOWLIST = {
+    "disable_response_storage",
+    "model",
+    "model_context_window",
+    "model_provider",
+    "model_reasoning_effort",
+    "model_verbosity",
+}
+CODEX_PROVIDER_CONFIG_ALLOWLIST = {
+    "base_url",
+    "experimental_bearer_token",
+    "name",
+    "requires_openai_auth",
+    "wire_api",
+}
+CODEX_SENSITIVE_CONFIG_KEYS = {
+    "access_token",
+    "api_key",
+    "experimental_bearer_token",
+    "id_token",
+    "refresh_token",
+    "secret",
+    "token",
+}
 CLAUDE_SUBPROCESS_TIMEOUT_SECONDS = 120
 CLAUDE_OUTPUT_LIMIT_BYTES = 64_000
 CLAUDE_WORKSPACE_HASH_PREFIX = "harness-local-agent-claude-code-v5:"
@@ -63,6 +95,18 @@ CLAUDE_DENIED_TOOLS = {
 }
 CLAUDE_SIDE_EFFECT_TOOLS = {"Bash", "Write", "Edit", "MultiEdit"}
 CLAUDE_SAFE_SDK_TOOLS: list[str] = []
+CLAUDE_SETTINGS_ENV_ALLOWLIST = {
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_MODEL",
+}
+CLAUDE_SENSITIVE_ENV_KEYS = {
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+}
 CLAUDE_AGENT_SDK_REQUIRED_SYMBOLS = (
     "ClaudeSDKClient",
     "ClaudeAgentOptions",
@@ -106,6 +150,7 @@ class HeadlessRunResult:
 class BridgeToolContext:
     bridge_task_id: str
     device_token: str
+    harness_stream_token: str = ""
 
 
 @dataclass(frozen=True)
@@ -141,6 +186,10 @@ class CodexCliProbe:
     @property
     def supports_read_only_sandbox(self) -> bool:
         return "--sandbox" in self.exec_help and "read-only" in self.exec_help
+
+    @property
+    def supports_skip_git_repo_check(self) -> bool:
+        return "--skip-git-repo-check" in self.exec_help
 
     @property
     def supports_resume(self) -> bool:
@@ -343,7 +392,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--adapter-kind",
         dest="adapter_kind",
         choices=["fake", "hao", "codex", "claude_code"],
-        default="hao",
+        default=None,
     )
     bridge_pair.add_argument("--display-name", default=None)
     bridge_pair.add_argument("--cwd", default=".")
@@ -685,7 +734,12 @@ def _bridge_capabilities(
 ) -> dict[str, Any]:
     if adapter_kind == "codex":
         probe = _probe_codex_cli()
-        return _codex_bridge_capabilities(probe)
+        model_provider, model_name = _codex_detected_model()
+        return _with_detected_model_capabilities(
+            _codex_bridge_capabilities(probe),
+            model_provider=model_provider,
+            model_name=model_name,
+        )
     if adapter_kind == "claude_code":
         probe = _probe_claude_code_cli()
         sdk_probe = (
@@ -693,10 +747,15 @@ def _bridge_capabilities(
             if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK
             else None
         )
-        return _claude_code_bridge_capabilities(
-            probe,
-            permission_bridge=permission_bridge,
-            sdk_probe=sdk_probe,
+        model_provider, model_name = _claude_code_detected_model()
+        return _with_detected_model_capabilities(
+            _claude_code_bridge_capabilities(
+                probe,
+                permission_bridge=permission_bridge,
+                sdk_probe=sdk_probe,
+            ),
+            model_provider=model_provider,
+            model_name=model_name,
         )
     return {
         "adapter_kind": adapter_kind,
@@ -707,26 +766,51 @@ def _bridge_capabilities(
     }
 
 
+def _with_detected_model_capabilities(
+    capabilities: dict[str, Any],
+    *,
+    model_provider: str | None,
+    model_name: str | None,
+) -> dict[str, Any]:
+    provider = str(model_provider or "").strip()
+    model = str(model_name or "").strip()
+    if not provider or not model:
+        return capabilities
+    return {
+        **capabilities,
+        "model_provider": provider,
+        "model_name": model,
+        "default_model_provider": provider,
+        "default_model": model,
+    }
+
+
+def _codex_detected_model() -> tuple[str | None, str | None]:
+    config = _minimal_codex_config(Path.home() / ".codex" / "config.toml")
+    model_provider = config.get("model_provider")
+    model_name = config.get("model")
+    return (
+        model_provider if isinstance(model_provider, str) else None,
+        model_name if isinstance(model_name, str) else None,
+    )
+
+
+def _claude_code_detected_model(
+    source: Mapping[str, str] | None = None,
+) -> tuple[str | None, str | None]:
+    env = _claude_code_allowed_source_env(source or os.environ)
+    model = str(env.get("ANTHROPIC_MODEL") or "").strip()
+    return ("anthropic", model) if model else (None, None)
+
+
 def _bridge_risk_capabilities(
     adapter_kind: str,
     *,
     permission_bridge: str = CLAUDE_PERMISSION_BRIDGE_MODE_NONE,
 ) -> list[str]:
-    if adapter_kind == "hao":
-        return ["host_read", "host_write", "shell", "git", "network"]
-    if adapter_kind == "codex":
-        return ["workspace_read_constrained"]
-    if adapter_kind == "claude_code" and permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
-        return [
-            "workspace_read",
-            "host_write_approval_required",
-            "shell_approval_required",
-            "git_approval_required",
-            "pending_change",
-            "command_lifecycle",
-        ]
-    if adapter_kind == "claude_code":
-        return []
+    del permission_bridge
+    if adapter_kind in {"hao", "codex", "claude_code"}:
+        return list(BRIDGE_FULL_RISK_CAPABILITIES)
     return []
 
 
@@ -750,11 +834,130 @@ def _codex_safe_env(*, executable: str, temp_dir: Path | None = None) -> dict[st
         isolated_codex_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         env["HOME"] = str(isolated_home)
         env["CODEX_HOME"] = str(isolated_codex_home)
+        _copy_codex_runtime_config(source=source, destination=isolated_codex_home)
     for key in ("LANG", "LC_ALL", "LC_CTYPE", "TERM"):
         value = source.get(key)
         if value:
             env[key] = value
     return env
+
+
+def _codex_source_home(source: Mapping[str, str]) -> Path:
+    codex_home = source.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser()
+    home = source.get("HOME")
+    return (Path(home).expanduser() if home else Path.home()) / ".codex"
+
+
+def _copy_codex_runtime_config(*, source: Mapping[str, str], destination: Path) -> None:
+    source_home = _codex_source_home(source)
+    auth_path = source_home / "auth.json"
+    if auth_path.is_file():
+        try:
+            shutil.copyfile(auth_path, destination / "auth.json")
+            os.chmod(destination / "auth.json", 0o600)
+        except OSError:
+            pass
+    minimal_config = _minimal_codex_config(source_home / "config.toml")
+    if minimal_config:
+        try:
+            config_path = destination / "config.toml"
+            config_path.write_text(_dump_minimal_toml(minimal_config), encoding="utf-8")
+            os.chmod(config_path, 0o600)
+        except OSError:
+            pass
+
+
+def _minimal_codex_config(config_path: Path) -> dict[str, Any]:
+    try:
+        raw_config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    if not isinstance(raw_config, dict):
+        return {}
+    config: dict[str, Any] = {}
+    for key in sorted(CODEX_CONFIG_SCALAR_ALLOWLIST):
+        value = raw_config.get(key)
+        if isinstance(value, str | bool | int | float):
+            config[key] = value
+    provider_name = config.get("model_provider")
+    raw_providers = raw_config.get("model_providers")
+    if isinstance(provider_name, str) and isinstance(raw_providers, dict):
+        raw_provider = raw_providers.get(provider_name)
+        if isinstance(raw_provider, dict):
+            provider_config: dict[str, Any] = {}
+            for key in sorted(CODEX_PROVIDER_CONFIG_ALLOWLIST):
+                value = raw_provider.get(key)
+                if isinstance(value, str | bool | int | float):
+                    provider_config[key] = value
+            if provider_config:
+                config["model_providers"] = {provider_name: provider_config}
+    return config
+
+
+def _dump_minimal_toml(config: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for key, value in config.items():
+        if key == "model_providers" or isinstance(value, dict):
+            continue
+        lines.append(f"{key} = {_toml_scalar(value)}\n")
+    providers = config.get("model_providers")
+    if isinstance(providers, dict):
+        for provider_name, provider_config in providers.items():
+            if not isinstance(provider_name, str) or not isinstance(provider_config, dict):
+                continue
+            lines.append(f"\n[model_providers.{_toml_key(provider_name)}]\n")
+            for key, value in provider_config.items():
+                if isinstance(value, str | bool | int | float):
+                    lines.append(f"{key} = {_toml_scalar(value)}\n")
+    return "".join(lines)
+
+
+def _toml_key(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_scalar(value: str | bool | int | float) -> str:
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _codex_sensitive_source_values(source: Mapping[str, str]) -> list[str]:
+    source_home = _codex_source_home(source)
+    values: set[str] = set()
+    try:
+        raw_auth = json.loads((source_home / "auth.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raw_auth = {}
+    _collect_sensitive_config_values(raw_auth, values)
+    _collect_sensitive_config_values(_minimal_codex_config(source_home / "config.toml"), values)
+    return sorted(values, key=len, reverse=True)
+
+
+def _collect_sensitive_config_values(value: Any, values: set[str], key: str = "") -> None:
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            _collect_sensitive_config_values(child_value, values, str(child_key))
+        return
+    if isinstance(value, list):
+        for child_value in value:
+            _collect_sensitive_config_values(child_value, values, key)
+        return
+    if not isinstance(value, str) or len(value) < 8:
+        return
+    key_lower = key.lower()
+    if (
+        key_lower in CODEX_SENSITIVE_CONFIG_KEYS
+        or "token" in key_lower
+        or "secret" in key_lower
+        or "password" in key_lower
+        or key_lower.endswith("key")
+    ):
+        values.add(value)
 
 
 def _run_probe_command(command: list[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess:
@@ -815,8 +1018,10 @@ def _codex_bridge_capabilities(probe: CodexCliProbe) -> dict[str, Any]:
         "version": probe.version,
         "supports_streaming": probe.installed and probe.supports_json,
         "supports_resume": False,
-        "supports_cancel": False,
-        "host_tools_authorized": False,
+        "supports_cancel": True,
+        "host_tools_authorized": True,
+        "permission_defer_supported": True,
+        "tool_execution_authority": "harness_approved_local_bridge",
         "resume_mode": "context_replay_new_session",
         "protocol_version": "local-agent-v1",
         "enabled_in_v4": True,
@@ -919,12 +1124,14 @@ def _claude_code_bridge_capabilities(
         "version": probe.version,
         "supports_streaming": probe.installed and probe.supports_stream_json,
         "supports_resume": False,
-        "supports_cancel": False,
-        "host_tools_authorized": False,
+        "supports_cancel": True,
+        "host_tools_authorized": True,
+        "permission_defer_supported": True,
+        "tool_execution_authority": "harness_approved_local_bridge",
         "resume_mode": "context_replay_new_session",
         "protocol_version": "local-agent-v1",
         "enabled_in_v5": True,
-        "execution_mode": "headless_bare_no_session_no_tools",
+        "execution_mode": "headless_harness_tool_bridge",
         "probe_error": probe.error_message,
     }
     if permission_bridge != CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
@@ -990,7 +1197,10 @@ def _redact_codex_text(value: str, *, limit: int = CODEX_OUTPUT_LIMIT_BYTES) -> 
         "utf-8",
         errors="replace",
     )
-    redacted = CODEX_SECRET_PATTERN.sub("[REDACTED]", bounded)
+    redacted = bounded
+    for secret_value in _codex_sensitive_source_values(os.environ):
+        redacted = re.sub(re.escape(secret_value), "[REDACTED]", redacted)
+    redacted = CODEX_SECRET_PATTERN.sub("[REDACTED]", redacted)
     redacted = re.sub(
         r"(?i)(api[_-]?key|token|secret|password)=\S+",
         r"\1=[REDACTED]",
@@ -1006,7 +1216,10 @@ def _redact_claude_text(value: str, *, limit: int = CLAUDE_OUTPUT_LIMIT_BYTES) -
         "utf-8",
         errors="replace",
     )
-    redacted = CLAUDE_SECRET_PATTERN.sub("[REDACTED]", bounded)
+    redacted = bounded
+    for secret_value in _claude_code_sensitive_source_env_values(os.environ):
+        redacted = re.sub(re.escape(secret_value), "[REDACTED]", redacted)
+    redacted = CLAUDE_SECRET_PATTERN.sub("[REDACTED]", redacted)
     redacted = re.sub(
         r"(?i)(api[_-]?key|token|secret|password)=\S+",
         r"\1=[REDACTED]",
@@ -1055,9 +1268,93 @@ def _safe_claude_metadata(value: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
-def _codex_prompt_for_task(payload: dict[str, Any]) -> str:
-    message = _redact_codex_text(str(payload.get("message") or "").strip(), limit=4000)
-    resume_mode = str(payload.get("resume_mode") or "context_replay_new_session")
+def _bridge_workspace_context_prompt(payload: dict[str, Any], *, redactor) -> str:
+    lines: list[str] = []
+    model_provider = str(payload.get("model_provider") or "default").strip() or "default"
+    model_name = str(payload.get("model_name") or "default").strip() or "default"
+    lines.append(f"Harness selected model: provider={model_provider}, model={model_name}.")
+
+    tool_names = _bridge_payload_tool_names(payload.get("tool_mentions"))
+    if tool_names:
+        lines.append("Harness requested tools: " + ", ".join(tool_names) + ".")
+
+    attachment_names = _bridge_payload_attachment_names(payload)
+    if attachment_names:
+        lines.append("Harness attachments: " + ", ".join(attachment_names) + ".")
+
+    compressed = payload.get("compressed_context")
+    if isinstance(compressed, dict):
+        summary = str(compressed.get("summary") or "").strip()
+        if summary:
+            lines.append("Compressed workspace context: " + redactor(summary, limit=3000))
+
+    attachment_snippets = _bridge_payload_attachment_snippets(
+        payload.get("attachments"),
+        redactor=redactor,
+    )
+    lines.extend(attachment_snippets)
+
+    if len(lines) == 1 and model_provider == "default" and model_name == "default":
+        return ""
+    return (
+        "Harness Workspace request metadata:\n"
+        + "\n".join(f"- {line}" for line in lines)
+        + "\n\n"
+    )
+
+
+def _bridge_payload_tool_names(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    names: list[str] = []
+    for item in value[:12]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        source = str(item.get("source") or "").strip()
+        if not name:
+            continue
+        names.append(f"{source}:{name}" if source else name)
+    return names
+
+
+def _bridge_payload_attachment_names(payload: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    raw_names = payload.get("attachment_names")
+    if isinstance(raw_names, list):
+        names.extend(str(item).strip() for item in raw_names[:12] if str(item).strip())
+    raw_attachments = payload.get("attachments")
+    if isinstance(raw_attachments, list):
+        for attachment in raw_attachments[:12]:
+            if not isinstance(attachment, dict):
+                continue
+            name = str(attachment.get("name") or attachment.get("filename") or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+def _bridge_payload_attachment_snippets(value: Any, *, redactor) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    snippets: list[str] = []
+    for attachment in value[:3]:
+        if not isinstance(attachment, dict):
+            continue
+        name = str(attachment.get("name") or attachment.get("filename") or "attachment").strip()
+        text = str(
+            attachment.get("content_text")
+            or attachment.get("text")
+            or attachment.get("content")
+            or ""
+        ).strip()
+        if not text:
+            continue
+        snippets.append(f"Attachment {name}: {redactor(text, limit=1200)}")
+    return snippets
+
+
+def _bridge_conversation_context_block(payload: dict[str, Any], *, redactor) -> str:
     context_lines: list[str] = []
     context = payload.get("conversation_context")
     if isinstance(context, list):
@@ -1067,26 +1364,51 @@ def _codex_prompt_for_task(payload: dict[str, Any]) -> str:
             role = str(item.get("role") or "").strip().lower()
             if role not in {"user", "assistant"}:
                 continue
-            content = _redact_codex_text(
+            content = redactor(
                 str(item.get("content") or "").strip(),
                 limit=CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT,
             )
             if content:
                 context_lines.append(f"{role}: {content}")
-    context_block = (
+    return (
         "Harness conversation context from prior turns:\n"
         + "\n".join(context_lines)
         + "\n\n"
         if context_lines
         else ""
     )
+
+
+def _hao_prompt_for_task(payload: dict[str, Any]) -> str:
+    message = _redact_codex_text(str(payload.get("message") or "").strip(), limit=4000)
+    resume_mode = str(payload.get("resume_mode") or "native_resume")
+    harness_context = _bridge_workspace_context_prompt(payload, redactor=_redact_codex_text)
+    context_block = _bridge_conversation_context_block(payload, redactor=_redact_codex_text)
+    return (
+        "You are running under the AI Harness local-agent bridge as the hao adapter.\n"
+        "Harness owns the conversation, run, events, approvals, model selection, tools, "
+        "attachments, context routing, and audit records.\n"
+        f"Resume mode: {resume_mode}.\n\n"
+        f"{harness_context}"
+        f"{context_block}"
+        "User message:\n"
+        f"{message}\n"
+    )
+
+
+def _codex_prompt_for_task(payload: dict[str, Any]) -> str:
+    message = _redact_codex_text(str(payload.get("message") or "").strip(), limit=4000)
+    resume_mode = str(payload.get("resume_mode") or "context_replay_new_session")
+    harness_context = _bridge_workspace_context_prompt(payload, redactor=_redact_codex_text)
+    context_block = _bridge_conversation_context_block(payload, redactor=_redact_codex_text)
     return (
         "You are running under the AI Harness local-agent bridge as the Codex CLI adapter.\n"
         "Harness owns the conversation, run, events, approvals, and audit records.\n"
-        "For this V4 adapter, do not modify files, run side-effect commands, mutate git, "
-        "install packages, read env/secrets, or initiate network access. If the task needs "
-        "those capabilities, explain the needed permission instead of performing it.\n"
+        "You have the same Harness-managed local capability surface as hao: read, write, "
+        "shell, test, git, and network intent may be requested. Host side effects must go "
+        "through Harness approval and audit; never bypass the Harness bridge.\n"
         f"Resume mode: {resume_mode}.\n\n"
+        f"{harness_context}"
         f"{context_block}"
         "User message:\n"
         f"{message}\n"
@@ -1096,36 +1418,16 @@ def _codex_prompt_for_task(payload: dict[str, Any]) -> str:
 def _claude_code_prompt_for_task(payload: dict[str, Any]) -> str:
     message = _redact_claude_text(str(payload.get("message") or "").strip(), limit=4000)
     resume_mode = str(payload.get("resume_mode") or "context_replay_new_session")
-    context_lines: list[str] = []
-    context = payload.get("conversation_context")
-    if isinstance(context, list):
-        for item in context:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get("role") or "").strip().lower()
-            if role not in {"user", "assistant"}:
-                continue
-            content = _redact_claude_text(
-                str(item.get("content") or "").strip(),
-                limit=CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT,
-            )
-            if content:
-                context_lines.append(f"{role}: {content}")
-    context_block = (
-        "Harness conversation context from prior turns:\n"
-        + "\n".join(context_lines)
-        + "\n\n"
-        if context_lines
-        else ""
-    )
+    harness_context = _bridge_workspace_context_prompt(payload, redactor=_redact_claude_text)
+    context_block = _bridge_conversation_context_block(payload, redactor=_redact_claude_text)
     return (
         "You are running under the AI Harness local-agent bridge as the Claude Code adapter.\n"
         "Harness owns the conversation, run, events, approvals, and audit records.\n"
-        "For this V5 adapter, do not modify files, run side-effect commands, mutate git, "
-        "install packages, read env/secrets, use MCP/plugins/hooks/subagents, or initiate "
-        "network access. If the task needs those capabilities, explain the needed permission "
-        "instead of performing it.\n"
+        "You have the same Harness-managed local capability surface as hao: read, write, "
+        "shell, test, git, and network intent may be requested. Host side effects must go "
+        "through Harness approval and audit; never bypass the Harness bridge.\n"
         f"Resume mode: {resume_mode}.\n\n"
+        f"{harness_context}"
         f"{context_block}"
         "User message:\n"
         f"{message}\n"
@@ -1158,6 +1460,48 @@ def _codex_subprocess_env(*, executable: str, temp_dir: Path) -> dict[str, str]:
     return _codex_safe_env(executable=executable, temp_dir=temp_dir)
 
 
+def _claude_code_settings_env(source_home: str | None) -> dict[str, str]:
+    home = Path(source_home).expanduser() if source_home else Path.home()
+    settings_path = home / ".claude" / "settings.json"
+    try:
+        raw_settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw_settings, dict):
+        return {}
+    raw_env = raw_settings.get("env")
+    if not isinstance(raw_env, dict):
+        return {}
+    env: dict[str, str] = {}
+    for key in sorted(CLAUDE_SETTINGS_ENV_ALLOWLIST):
+        value = raw_env.get(key)
+        if isinstance(value, str) and value:
+            env[key] = value
+    return env
+
+
+def _claude_code_allowed_source_env(source: Mapping[str, str]) -> dict[str, str]:
+    env = _claude_code_settings_env(source.get("HOME"))
+    for key in sorted(CLAUDE_SETTINGS_ENV_ALLOWLIST):
+        value = source.get(key)
+        if value:
+            env[key] = str(value)
+    if source.get("HAO_CLAUDE_CODE_ALLOW_ANTHROPIC_API_KEY") == "1":
+        api_key = source.get("ANTHROPIC_API_KEY")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = str(api_key)
+    return env
+
+
+def _claude_code_sensitive_source_env_values(source: Mapping[str, str]) -> list[str]:
+    env = _claude_code_allowed_source_env(source)
+    return [
+        value
+        for key, value in env.items()
+        if key in CLAUDE_SENSITIVE_ENV_KEYS and isinstance(value, str) and value
+    ]
+
+
 def _claude_code_safe_env(*, executable: str, temp_dir: Path | None = None) -> dict[str, str]:
     source = os.environ
     path_parts = [
@@ -1181,11 +1525,7 @@ def _claude_code_safe_env(*, executable: str, temp_dir: Path | None = None) -> d
         env["CLAUDE_CODE_SKIP_PROMPT_HISTORY"] = "1"
         env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
         env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] = "1"
-        if (
-            source.get("HAO_CLAUDE_CODE_ALLOW_ANTHROPIC_API_KEY") == "1"
-            and source.get("ANTHROPIC_API_KEY")
-        ):
-            env["ANTHROPIC_API_KEY"] = str(source["ANTHROPIC_API_KEY"])
+        env.update(_claude_code_allowed_source_env(source))
     for key in ("LANG", "LC_ALL", "LC_CTYPE", "TERM"):
         value = source.get(key)
         if value:
@@ -1274,8 +1614,10 @@ def _codex_command(
         str(workspace_root),
         "--sandbox",
         "read-only",
-        "-",
     ]
+    if probe.supports_skip_git_repo_check:
+        command.append("--skip-git-repo-check")
+    command.append("-")
     forbidden = {
         "--dangerously-bypass-approvals-and-sandbox",
         "danger-full-access",
@@ -1453,6 +1795,13 @@ def _extract_claude_text(record: dict[str, Any]) -> str:
     return ""
 
 
+def _claude_result_text(record: dict[str, Any]) -> str:
+    record_type = str(record.get("type") or record.get("event") or "").lower()
+    if record_type == "result" and isinstance(record.get("result"), str):
+        return str(record["result"])
+    return ""
+
+
 def _claude_record_indicates_init(record: dict[str, Any]) -> bool:
     record_type = str(record.get("type") or record.get("event") or "").lower()
     subtype = str(record.get("subtype") or record.get("kind") or "").lower()
@@ -1562,6 +1911,7 @@ def _parse_codex_output(stdout: str, final_message: str) -> CodexRunResult:
 
 def _parse_claude_code_output(stdout: str) -> ClaudeCodeRunResult:
     deltas: list[str] = []
+    result_text = ""
     session_id: str | None = None
     malformed = False
     safety_proven = False
@@ -1590,6 +1940,10 @@ def _parse_claude_code_output(stdout: str) -> ClaudeCodeRunResult:
                 ),
             }
         session_id = _extract_claude_session_id(record) or session_id
+        result_candidate = _claude_result_text(record)
+        if result_candidate:
+            result_text = _redact_claude_text(result_candidate)
+            continue
         text = _extract_claude_text(record)
         if text:
             deltas.append(_redact_claude_text(text))
@@ -1600,7 +1954,18 @@ def _parse_claude_code_output(stdout: str) -> ClaudeCodeRunResult:
             status="error",
             error_message="claude output missing empty-tool system/init safety proof",
         )
-    content = "".join(deltas).strip()
+    delta_content = "".join(deltas)
+    if result_text:
+        if not delta_content:
+            content = result_text.strip()
+        elif result_text == delta_content or result_text.startswith(delta_content):
+            content = result_text.strip()
+        elif delta_content.endswith(result_text):
+            content = delta_content.strip()
+        else:
+            content = f"{delta_content}{result_text}".strip()
+    else:
+        content = delta_content.strip()
     if not content:
         return ClaudeCodeRunResult(
             status="error",
@@ -1614,9 +1979,112 @@ def _parse_claude_code_output(stdout: str) -> ClaudeCodeRunResult:
         metadata={
             **safety_metadata,
             "delta_count": len(deltas),
+            "result_text_present": bool(result_text),
             "used_fallback": False,
         },
     )
+
+
+def _run_subprocess_with_stdout_stream(
+    command: list[str],
+    *,
+    input_text: str,
+    timeout_seconds: float,
+    cwd: str,
+    env: dict[str, str],
+    on_stdout_line: Callable[[str], None],
+) -> subprocess.CompletedProcess[str]:
+    stdout_queue: Queue[str | None] = Queue()
+    stdout_lines: list[str] = []
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+        process = subprocess.Popen(  # noqa: S603
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr_file,
+            text=True,
+            cwd=cwd,
+            env=env,
+        )
+        if process.stdout is None:
+            process.kill()
+            raise OSError("subprocess stdout pipe was unavailable")
+
+        def read_stdout() -> None:
+            try:
+                for line in process.stdout:
+                    stdout_queue.put(line)
+            finally:
+                stdout_queue.put(None)
+
+        reader = threading.Thread(target=read_stdout, daemon=True)
+        reader.start()
+        stdin_errors: list[BaseException] = []
+
+        def write_stdin() -> None:
+            if process.stdin is None:
+                return
+            try:
+                process.stdin.write(input_text)
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+            except BaseException as exc:  # pragma: no cover - defensive pipe failure path
+                stdin_errors.append(exc)
+
+        writer = threading.Thread(target=write_stdin, daemon=True)
+        writer.start()
+        deadline = time.monotonic() + timeout_seconds
+        stdout_done = False
+        while not stdout_done:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.kill()
+                process.wait()
+                writer.join(timeout=1)
+                reader.join(timeout=1)
+                stderr_file.seek(0)
+                raise subprocess.TimeoutExpired(
+                    command,
+                    timeout_seconds,
+                    output="".join(stdout_lines),
+                    stderr=stderr_file.read(),
+                )
+            try:
+                item = stdout_queue.get(timeout=min(0.1, remaining))
+            except Empty:
+                continue
+            if item is None:
+                stdout_done = True
+                continue
+            stdout_lines.append(item)
+            on_stdout_line(item)
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            writer.join(timeout=1)
+            reader.join(timeout=1)
+            stderr_file.seek(0)
+            raise subprocess.TimeoutExpired(
+                command,
+                timeout_seconds,
+                output="".join(stdout_lines),
+                stderr=stderr_file.read(),
+            ) from None
+        writer.join(timeout=1)
+        reader.join(timeout=1)
+        if stdin_errors:
+            raise OSError(f"subprocess stdin pipe failed: {stdin_errors[0]}")
+        stderr_file.seek(0)
+        return subprocess.CompletedProcess(
+            command,
+            returncode,
+            stdout="".join(stdout_lines),
+            stderr=stderr_file.read(),
+        )
 
 
 def _run_codex_cli(
@@ -1624,6 +2092,7 @@ def _run_codex_cli(
     config: Any,
     state: dict[str, Any],
     payload: dict[str, Any],
+    on_delta: Callable[[str], None] | None = None,
 ) -> CodexRunResult:
     probe = _probe_codex_cli()
     if not probe.installed:
@@ -1657,16 +2126,46 @@ def _run_codex_cli(
         except ValueError as exc:
             return CodexRunResult(status="error", error_message=str(exc))
         try:
-            completed = subprocess.run(  # noqa: S603
-                command,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=CODEX_SUBPROCESS_TIMEOUT_SECONDS,
-                cwd=str(workspace_root),
-                env=_codex_subprocess_env(executable=probe.executable, temp_dir=temp_dir),
-            )
+            env = _codex_subprocess_env(executable=probe.executable, temp_dir=temp_dir)
+            streamed_delta_count = 0
+            if on_delta is None:
+                completed = subprocess.run(  # noqa: S603
+                    command,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=CODEX_SUBPROCESS_TIMEOUT_SECONDS,
+                    cwd=str(workspace_root),
+                    env=env,
+                )
+            else:
+
+                def stream_codex_line(raw_line: str) -> None:
+                    nonlocal streamed_delta_count
+                    line = raw_line.strip()
+                    if not line:
+                        return
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        return
+                    if not isinstance(record, dict):
+                        return
+                    text = _extract_codex_text(record)
+                    if not text:
+                        return
+                    on_delta(_redact_codex_text(text))
+                    streamed_delta_count += 1
+
+                completed = _run_subprocess_with_stdout_stream(
+                    command,
+                    input_text=prompt,
+                    timeout_seconds=CODEX_SUBPROCESS_TIMEOUT_SECONDS,
+                    cwd=str(workspace_root),
+                    env=env,
+                    on_stdout_line=stream_codex_line,
+                )
         except subprocess.TimeoutExpired:
             return CodexRunResult(status="error", error_message="codex subprocess timed out")
         except OSError as exc:
@@ -1686,6 +2185,8 @@ def _run_codex_cli(
         metadata = dict(result.metadata or {})
         metadata["exit_code"] = completed.returncode
         metadata["workspace_identity_hash"] = actual_workspace_hash
+        if on_delta is not None:
+            metadata["streamed_delta_count"] = streamed_delta_count
         return CodexRunResult(
             status=result.status,
             content=result.content,
@@ -1700,6 +2201,7 @@ def _run_claude_code_cli(
     config: Any,
     state: dict[str, Any],
     payload: dict[str, Any],
+    on_delta: Callable[[str], None] | None = None,
 ) -> ClaudeCodeRunResult:
     probe = _probe_claude_code_cli()
     if not probe.installed:
@@ -1733,16 +2235,63 @@ def _run_claude_code_cli(
         except ValueError as exc:
             return ClaudeCodeRunResult(status="error", error_message=str(exc))
         try:
-            completed = subprocess.run(  # noqa: S603
-                command,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=CLAUDE_SUBPROCESS_TIMEOUT_SECONDS,
-                cwd=str(private_cwd),
-                env=_claude_code_subprocess_env(executable=probe.executable, temp_dir=temp_dir),
-            )
+            env = _claude_code_subprocess_env(executable=probe.executable, temp_dir=temp_dir)
+            streamed_delta_count = 0
+            if on_delta is None:
+                completed = subprocess.run(  # noqa: S603
+                    command,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=CLAUDE_SUBPROCESS_TIMEOUT_SECONDS,
+                    cwd=str(private_cwd),
+                    env=env,
+                )
+            else:
+                safety_proven = False
+                pending_deltas: list[str] = []
+
+                def stream_claude_line(raw_line: str) -> None:
+                    nonlocal safety_proven, streamed_delta_count
+                    line = raw_line.strip()
+                    if not line:
+                        return
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        return
+                    if not isinstance(record, dict):
+                        return
+                    if _claude_record_safety_error(record):
+                        return
+                    if _claude_record_indicates_init(record):
+                        safety_proven = True
+                        for pending in pending_deltas:
+                            on_delta(pending)
+                            streamed_delta_count += 1
+                        pending_deltas.clear()
+                        return
+                    if _claude_result_text(record):
+                        return
+                    text = _extract_claude_text(record)
+                    if not text:
+                        return
+                    redacted = _redact_claude_text(text)
+                    if safety_proven:
+                        on_delta(redacted)
+                        streamed_delta_count += 1
+                    else:
+                        pending_deltas.append(redacted)
+
+                completed = _run_subprocess_with_stdout_stream(
+                    command,
+                    input_text=prompt,
+                    timeout_seconds=CLAUDE_SUBPROCESS_TIMEOUT_SECONDS,
+                    cwd=str(private_cwd),
+                    env=env,
+                    on_stdout_line=stream_claude_line,
+                )
         except subprocess.TimeoutExpired:
             return ClaudeCodeRunResult(status="error", error_message="claude subprocess timed out")
         except OSError as exc:
@@ -1761,6 +2310,8 @@ def _run_claude_code_cli(
         metadata = dict(result.metadata or {})
         metadata["exit_code"] = completed.returncode
         metadata["workspace_identity_hash"] = actual_workspace_hash
+        if on_delta is not None:
+            metadata["streamed_delta_count"] = streamed_delta_count
         return ClaudeCodeRunResult(
             status=result.status,
             content=result.content,
@@ -1892,6 +2443,8 @@ def _run_claude_permission_bridge_fake_sdk(
     run_id = str(payload.get("run_id") or "")
     if run_id:
         store.update_run_id(local_session.id, run_id)
+    model_provider = str(payload.get("model_provider") or "default")
+    model_name = str(payload.get("model_name") or "default")
     assistant_chunks: list[str] = []
     sequence = 0
     for event in _fake_claude_sdk_events_from_payload(payload):
@@ -1906,6 +2459,8 @@ def _run_claude_permission_bridge_fake_sdk(
                 local_session_id=local_session.id,
                 run_id=run_id,
                 agent_id=str(payload.get("agent_id") or "default"),
+                model_provider=model_provider,
+                model_name=model_name,
                 cwd=workspace_root,
                 claude_tool_name=str(event.get("tool_name") or ""),
                 claude_input=event.get("input") if isinstance(event.get("input"), dict) else {},
@@ -2021,6 +2576,8 @@ async def _run_claude_permission_bridge_sdk_async(
     run_id = str(payload.get("run_id") or "")
     if run_id:
         store.update_run_id(local_session.id, run_id)
+    model_provider = str(payload.get("model_provider") or "default")
+    model_name = str(payload.get("model_name") or "default")
     sequence_counter = {"value": 0}
 
     async def can_use_tool(tool_name: Any, input_json: Any, *args: Any, **kwargs: Any) -> Any:
@@ -2035,6 +2592,8 @@ async def _run_claude_permission_bridge_sdk_async(
             local_session_id=local_session.id,
             run_id=run_id,
             agent_id=str(payload.get("agent_id") or "default"),
+            model_provider=model_provider,
+            model_name=model_name,
             cwd=workspace_root,
             claude_tool_name=mapped_name,
             claude_input=mapped_input,
@@ -2320,6 +2879,10 @@ def _safe_bridge_pending_tool_state(pending: dict[str, Any]) -> dict[str, Any]:
         "local_session_id",
         "run_id",
         "agent_id",
+        "model_provider",
+        "model_name",
+        "harness_stream_token",
+        "bridge_delta_count",
         "risk_level",
         "permission_mode",
         "change_id",
@@ -2598,6 +3161,8 @@ def _handle_claude_permission_tool_request(
     local_session_id: str,
     run_id: str | None,
     agent_id: str,
+    model_provider: str,
+    model_name: str,
     cwd: Path,
     claude_tool_name: str,
     claude_input: dict[str, Any],
@@ -2633,6 +3198,8 @@ def _handle_claude_permission_tool_request(
             if (mapping.requires_network or mapping.requires_secret_read)
             else "high",
             permission_mode="confirm",
+            model_provider=model_provider,
+            model_name=model_name,
             tool_request_id_override=tool_request_id,
         )
     except Exception as exc:
@@ -2702,6 +3269,10 @@ def _bridge_pending_tool_from_decision(decision: dict[str, Any]) -> dict[str, An
         "local_session_id": metadata.get("local_session_id"),
         "run_id": metadata.get("run_id"),
         "agent_id": metadata.get("agent_id"),
+        "model_provider": metadata.get("model_provider"),
+        "model_name": metadata.get("model_name"),
+        "harness_stream_token": metadata.get("harness_stream_token"),
+        "bridge_delta_count": metadata.get("bridge_delta_count"),
         "command": metadata.get("command") or "act",
         "risk_level": metadata.get("risk_level") or "high",
         "permission_mode": metadata.get("permission_mode") or "confirm",
@@ -2739,6 +3310,10 @@ def _sync_bridge_pending_tools_from_api(
                 "local_session_id",
                 "run_id",
                 "agent_id",
+                "model_provider",
+                "model_name",
+                "harness_stream_token",
+                "bridge_delta_count",
                 "command",
                 "risk_level",
                 "permission_mode",
@@ -2938,131 +3513,196 @@ def _run_bridge_pair(args: argparse.Namespace) -> int:
     config = load_config()
     api_url = args.api_url or config.api_url
     cwd = Path(args.cwd).expanduser().resolve()
-    permission_bridge = _permission_bridge_for_adapter(args.adapter_kind, args.permission_bridge)
-    if args.adapter_kind == "codex":
-        probe = _probe_codex_cli()
-        if not probe.installed:
-            print(
-                json.dumps(
-                    {
-                        "status": "failed",
-                        "adapter_kind": "codex",
-                        "error": probe.error_message or "codex unavailable",
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-    if args.adapter_kind == "claude_code":
-        probe = _probe_claude_code_cli()
-        if not probe.installed:
-            print(
-                json.dumps(
-                    {
-                        "status": "failed",
-                        "adapter_kind": "claude_code",
-                        "error": probe.error_message or "claude unavailable",
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
-            sdk_probe = _probe_claude_agent_sdk()
-            if not sdk_probe.installed:
-                print(
-                    json.dumps(
-                        {
-                            "status": "failed",
-                            "adapter_kind": "claude_code",
-                            "permission_bridge": "sdk",
-                            "error": sdk_probe.error_message or "claude_agent_sdk unavailable",
-                        },
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                    file=sys.stderr,
-                )
-                return 1
-    client = HarnessApiClient(api_url, config.token)
-    display_name = args.display_name or (
-        "hao Local Agent"
-        if args.adapter_kind == "hao"
-        else "Codex CLI"
-        if args.adapter_kind == "codex"
-        else "Claude Code"
-        if args.adapter_kind == "claude_code"
-        else "Fake Local Agent"
+    if args.adapter_kind:
+        result = _pair_bridge_adapter(
+            args=args,
+            config=config,
+            api_url=api_url,
+            cwd=cwd,
+            adapter_kind=str(args.adapter_kind),
+            explicit=True,
+        )
+        return 0 if result == "paired" else 1
+
+    results = [
+        _pair_bridge_adapter(
+            args=args,
+            config=replace(config, home=config.home / "bridges" / adapter_kind),
+            api_url=api_url,
+            cwd=cwd,
+            adapter_kind=adapter_kind,
+            explicit=False,
+        )
+        for adapter_kind in BRIDGE_AUTO_PAIR_ADAPTERS
+    ]
+    return 0 if "paired" in results else 1
+
+
+def _pair_bridge_adapter(
+    *,
+    args: argparse.Namespace,
+    config: Any,
+    api_url: str,
+    cwd: Path,
+    adapter_kind: str,
+    explicit: bool,
+) -> str:
+    permission_bridge = _permission_bridge_for_adapter(adapter_kind, args.permission_bridge)
+    unavailable = _bridge_pair_unavailable_reason(
+        adapter_kind,
+        permission_bridge=permission_bridge,
     )
+    if unavailable:
+        _print_bridge_pair_status(
+            status_value="failed" if explicit else "skipped",
+            adapter_kind=adapter_kind,
+            permission_bridge=permission_bridge,
+            error=unavailable,
+            stderr=explicit,
+        )
+        return "failed" if explicit else "skipped"
+
+    client = HarnessApiClient(api_url, config.token)
+    display_name = args.display_name or _bridge_pair_display_name(adapter_kind)
     workspace_identity_hash = (
-        _workspace_identity_hash(cwd, adapter_kind=args.adapter_kind)
-        if args.adapter_kind in {"codex", "claude_code"}
+        _workspace_identity_hash(cwd, adapter_kind=adapter_kind)
+        if adapter_kind in {"codex", "claude_code"}
         else ""
     )
-    registered = client.register_local_agent_connection(
-        pair_token=args.pair_token,
-        pair_code=args.pair_code,
-        adapter_kind=args.adapter_kind,
-        display_name=display_name,
-        workspace_root=str(cwd),
-        capabilities=_bridge_capabilities(args.adapter_kind, permission_bridge=permission_bridge),
-        risk_capabilities=_bridge_risk_capabilities(
-            args.adapter_kind,
+    try:
+        registered = client.register_local_agent_connection(
+            pair_token=args.pair_token,
+            pair_code=args.pair_code,
+            adapter_kind=adapter_kind,
+            display_name=display_name,
+            workspace_root=str(cwd),
+            capabilities=_bridge_capabilities(
+                adapter_kind,
+                permission_bridge=permission_bridge,
+            ),
+            risk_capabilities=_bridge_risk_capabilities(
+                adapter_kind,
+                permission_bridge=permission_bridge,
+            ),
+            bridge_version=_bridge_version(),
+            metadata={
+                "workspace_identity_hash": workspace_identity_hash,
+                "workspace_root_ref": BRIDGE_WORKSPACE_ROOT_REF,
+            }
+            if adapter_kind in {"codex", "claude_code"}
+            else {},
+        )
+    except Exception as exc:
+        _print_bridge_pair_status(
+            status_value="failed",
+            adapter_kind=adapter_kind,
             permission_bridge=permission_bridge,
-        ),
-        bridge_version=_bridge_version(),
-        metadata={
-            "workspace_identity_hash": workspace_identity_hash,
-            "workspace_root_ref": BRIDGE_WORKSPACE_ROOT_REF,
-        }
-        if args.adapter_kind in {"codex", "claude_code"}
-        else {},
-    )
+            error=str(exc),
+            stderr=True,
+        )
+        return "failed"
+
     connection = registered["connection"]
     state = {
         "api_url": api_url,
         "connection_id": connection["id"],
         "device_token": registered["device_token"],
-        "adapter_kind": args.adapter_kind,
+        "adapter_kind": adapter_kind,
         "display_name": display_name,
         "permission_bridge": permission_bridge,
     }
-    if args.adapter_kind in {"codex", "claude_code"}:
+    if adapter_kind in {"codex", "claude_code"}:
         state["workspace_root_ref"] = _save_bridge_workspace_root(config, cwd)
         state["workspace_identity_hash"] = workspace_identity_hash
     else:
         state["cwd"] = str(cwd)
     _save_bridge_state(config, state)
-    print(
-        json.dumps(
-            {
-                "status": "paired",
-                "connection_id": connection["id"],
-                "adapter_kind": args.adapter_kind,
-                "permission_bridge": permission_bridge,
-                "state_path": str(_bridge_state_path(config)),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+    _print_bridge_pair_status(
+        status_value="paired",
+        adapter_kind=adapter_kind,
+        permission_bridge=permission_bridge,
+        connection_id=connection["id"],
+        state_path=str(_bridge_state_path(config)),
     )
     if args.daemon:
-        return _spawn_bridge_daemon(args=args, state=state)
-    if args.once:
-        return _run_bridge_loop_from_state(
+        _spawn_bridge_daemon(config=config, args=args, state=state)
+    elif args.once:
+        _run_bridge_loop_from_state(
             config=config,
             state=state,
             once=True,
             interval=args.interval,
         )
-    return 0
+    return "paired"
 
 
-def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> int:
+def _bridge_pair_unavailable_reason(
+    adapter_kind: str,
+    *,
+    permission_bridge: str,
+) -> str:
+    if adapter_kind == "codex":
+        probe = _probe_codex_cli()
+        return "" if probe.installed else probe.error_message or "codex unavailable"
+    if adapter_kind == "claude_code":
+        probe = _probe_claude_code_cli()
+        if not probe.installed:
+            return probe.error_message or "claude unavailable"
+        if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK:
+            sdk_probe = _probe_claude_agent_sdk()
+            if not sdk_probe.installed:
+                return sdk_probe.error_message or "claude_agent_sdk unavailable"
+    return ""
+
+
+def _bridge_pair_display_name(adapter_kind: str) -> str:
+    return {
+        "hao": "hao Local Agent",
+        "codex": "Codex CLI",
+        "claude_code": "Claude Code",
+        "fake": "Fake Local Agent",
+    }.get(adapter_kind, adapter_kind)
+
+
+def _print_bridge_pair_status(
+    *,
+    status_value: str,
+    adapter_kind: str,
+    permission_bridge: str,
+    connection_id: str | None = None,
+    state_path: str | None = None,
+    error: str | None = None,
+    stderr: bool = False,
+) -> None:
+    payload = {
+        "status": status_value,
+        "adapter_kind": adapter_kind,
+        "permission_bridge": permission_bridge,
+    }
+    if connection_id:
+        payload["connection_id"] = connection_id
+    if state_path:
+        payload["state_path"] = state_path
+    if error:
+        payload["error"] = error
+    if status_value == "paired":
+        payload["next_step"] = "return_to_platform_refresh_discovery"
+        payload["message"] = (
+            "已发现本地 Agent，请返回 Harness 平台点击“我已执行，刷新识别”，"
+            "勾选确认后才会接入。"
+        )
+    print(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        file=sys.stderr if stderr else sys.stdout,
+    )
+
+
+def _spawn_bridge_daemon(
+    *,
+    config: Any,
+    args: argparse.Namespace,
+    state: dict[str, Any],
+) -> int:
     command = [
         sys.executable,
         "-m",
@@ -3091,6 +3731,7 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "start_new_session": True,
+        "env": {**os.environ, "HAO_HOME": str(config.home)},
     }
     if state.get("adapter_kind") in {"codex", "claude_code"}:
         popen_kwargs["cwd"] = str(Path(__file__).resolve().parents[3])
@@ -3104,6 +3745,8 @@ def _spawn_bridge_daemon(*, args: argparse.Namespace, state: dict[str, Any]) -> 
                 "status": "daemon_started",
                 "connection_id": state["connection_id"],
                 "adapter_kind": state["adapter_kind"],
+                "next_step": "return_to_platform_refresh_discovery",
+                "message": "后台 bridge 已启动，请返回到 Harness 平台上点击“我已执行，刷新识别”。",
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -3234,21 +3877,34 @@ def _run_bridge_loop_from_state(
     )
     capabilities = _bridge_capabilities(adapter_kind, permission_bridge=permission_bridge)
     while True:
-        client.heartbeat_local_agent_connection(
+        heartbeat = client.heartbeat_local_agent_connection(
             connection_id=connection_id,
             device_token=device_token,
             status="online",
             bridge_version=_bridge_version(),
             capabilities=capabilities,
         )
-        if adapter_kind not in {"codex", "claude_code"}:
-            _resume_bridge_pending_tools(
-                config=config,
-                state=state,
-                client=client,
-                device_token=device_token,
-            )
-        page = client.pull_local_agent_bridge_tasks(device_token=device_token)
+        connection = heartbeat.get("connection") if isinstance(heartbeat, dict) else {}
+        if isinstance(connection, dict) and connection.get("onboarding_confirmed") is False:
+            if once:
+                return 0
+            time.sleep(max(0.5, interval))
+            continue
+        _resume_bridge_pending_tools(
+            config=config,
+            state=state,
+            client=client,
+            device_token=device_token,
+        )
+        try:
+            page = client.pull_local_agent_bridge_tasks(device_token=device_token)
+        except httpx.HTTPStatusError as exc:
+            if _bridge_error_is_unconfirmed(exc):
+                if once:
+                    return 0
+                time.sleep(max(0.5, interval))
+                continue
+            raise
         for task in page.get("items", []):
             _handle_bridge_task(
                 config=config,
@@ -3261,6 +3917,17 @@ def _run_bridge_loop_from_state(
         if once:
             return 0
         time.sleep(max(0.5, interval))
+
+
+def _bridge_error_is_unconfirmed(exc: httpx.HTTPStatusError) -> bool:
+    if exc.response.status_code not in {403, 409}:
+        return False
+    try:
+        payload = exc.response.json()
+    except ValueError:
+        payload = {}
+    detail = payload.get("detail") if isinstance(payload, dict) else ""
+    return BRIDGE_UNCONFIRMED_STATUS_PHRASE in str(detail)
 
 
 def _handle_bridge_task(
@@ -3348,14 +4015,35 @@ def _handle_codex_bridge_task(
             "sequence": 1,
             "metadata": {
                 "adapter_kind": "codex",
-                "command_mode": "exec_json_read_only_stdin",
+                "command_mode": "exec_json_harness_tool_bridge",
                 "supports_resume": False,
                 "resume_mode": "context_replay_new_session",
                 "workspace_identity_hash": state.get("workspace_identity_hash"),
             },
         },
     )
-    result = _run_codex_cli(config=config, state=state, payload=payload)
+    next_sequence = 2
+    streamed_delta_count = 0
+
+    def report_delta(delta: str) -> None:
+        nonlocal next_sequence, streamed_delta_count
+        if delta == "":
+            return
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:codex:delta:{next_sequence}",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_delta",
+                "content": delta,
+                "sequence": next_sequence,
+                "metadata": {"adapter_kind": "codex", "streaming_via": "subprocess_stdout"},
+            },
+        )
+        next_sequence += 1
+        streamed_delta_count += 1
+
+    result = _run_codex_cli(config=config, state=state, payload=payload, on_delta=report_delta)
     if result.status != "completed":
         client.report_local_agent_bridge_event(
             device_token=device_token,
@@ -3364,7 +4052,7 @@ def _handle_codex_bridge_task(
                 "bridge_task_id": task_id,
                 "event_type": "assistant_error",
                 "error_message": result.error_message or "codex adapter failed",
-                "sequence": 2,
+                "sequence": next_sequence,
                 "metadata": {
                     "adapter_kind": "codex",
                     **_safe_codex_metadata(result.metadata or {}),
@@ -3373,17 +4061,8 @@ def _handle_codex_bridge_task(
         )
         return
     content = result.content.strip()
-    client.report_local_agent_bridge_event(
-        device_token=device_token,
-        payload={
-            "event_id": f"{task_id}:codex:delta:1",
-            "bridge_task_id": task_id,
-            "event_type": "assistant_delta",
-            "content": content,
-            "sequence": 2,
-            "metadata": {"adapter_kind": "codex"},
-        },
-    )
+    if streamed_delta_count == 0:
+        report_delta(content)
     client.report_local_agent_bridge_event(
         device_token=device_token,
         payload={
@@ -3391,7 +4070,7 @@ def _handle_codex_bridge_task(
             "bridge_task_id": task_id,
             "event_type": "assistant_done",
             "content": content,
-            "sequence": 3,
+            "sequence": next_sequence,
             "metadata": {
                 "adapter_kind": "codex",
                 "adapter_session_id": result.session_id,
@@ -3412,6 +4091,8 @@ def _handle_claude_code_bridge_task(
 ) -> None:
     task_id = str(task["id"])
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    next_sequence = 2
+    streamed_delta_count = 0
     permission_bridge = _permission_bridge_for_adapter(
         "claude_code",
         str(state.get("permission_bridge") or CLAUDE_PERMISSION_BRIDGE_MODE_NONE),
@@ -3419,7 +4100,7 @@ def _handle_claude_code_bridge_task(
     command_mode = (
         "agent_sdk_intent_capture_harness_executor"
         if permission_bridge == CLAUDE_PERMISSION_BRIDGE_MODE_SDK
-        else "headless_bare_no_session_no_tools"
+        else "headless_harness_tool_bridge"
     )
     client.report_local_agent_bridge_event(
         device_token=device_token,
@@ -3449,7 +4130,33 @@ def _handle_claude_code_bridge_task(
             payload=payload,
         )
     else:
-        result = _run_claude_code_cli(config=config, state=state, payload=payload)
+        def report_delta(delta: str) -> None:
+            nonlocal next_sequence, streamed_delta_count
+            if delta == "":
+                return
+            client.report_local_agent_bridge_event(
+                device_token=device_token,
+                payload={
+                    "event_id": f"{task_id}:claude_code:delta:{next_sequence}",
+                    "bridge_task_id": task_id,
+                    "event_type": "assistant_delta",
+                    "content": delta,
+                    "sequence": next_sequence,
+                    "metadata": {
+                        "adapter_kind": "claude_code",
+                        "streaming_via": "subprocess_stdout",
+                    },
+                },
+            )
+            next_sequence += 1
+            streamed_delta_count += 1
+
+        result = _run_claude_code_cli(
+            config=config,
+            state=state,
+            payload=payload,
+            on_delta=report_delta,
+        )
     if result.status != "completed":
         client.report_local_agent_bridge_event(
             device_token=device_token,
@@ -3458,7 +4165,7 @@ def _handle_claude_code_bridge_task(
                 "bridge_task_id": task_id,
                 "event_type": "assistant_error",
                 "error_message": result.error_message or "claude code adapter failed",
-                "sequence": 2,
+                "sequence": next_sequence,
                 "metadata": {
                     "adapter_kind": "claude_code",
                     "permission_bridge": permission_bridge,
@@ -3468,17 +4175,19 @@ def _handle_claude_code_bridge_task(
         )
         return
     content = result.content.strip()
-    client.report_local_agent_bridge_event(
-        device_token=device_token,
-        payload={
-            "event_id": f"{task_id}:claude_code:delta:1",
-            "bridge_task_id": task_id,
-            "event_type": "assistant_delta",
-            "content": content,
-            "sequence": 2,
-            "metadata": {"adapter_kind": "claude_code"},
-        },
-    )
+    if streamed_delta_count == 0:
+        client.report_local_agent_bridge_event(
+            device_token=device_token,
+            payload={
+                "event_id": f"{task_id}:claude_code:delta:{next_sequence}",
+                "bridge_task_id": task_id,
+                "event_type": "assistant_delta",
+                "content": content,
+                "sequence": next_sequence,
+                "metadata": {"adapter_kind": "claude_code"},
+            },
+        )
+        next_sequence += 1
     client.report_local_agent_bridge_event(
         device_token=device_token,
         payload={
@@ -3486,7 +4195,7 @@ def _handle_claude_code_bridge_task(
             "bridge_task_id": task_id,
             "event_type": "assistant_done",
             "content": content,
-            "sequence": 3,
+            "sequence": next_sequence,
             "metadata": {
                 "adapter_kind": "claude_code",
                 "permission_bridge": permission_bridge,
@@ -3508,10 +4217,17 @@ def _handle_hao_bridge_task(
 ) -> None:
     task_id = str(task["id"])
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-    prompt = str(payload.get("message") or "").strip()
+    prompt = _hao_prompt_for_task(payload)
     run_id = str(payload.get("run_id") or "")
     agent_id = str(payload.get("agent_id") or "default")
     adapter_session_id = payload.get("adapter_session_id")
+    workspace_request = payload.get("workspace_request")
+    workspace_mode = (
+        str(workspace_request.get("mode") or "")
+        if isinstance(workspace_request, dict)
+        else ""
+    )
+    command = "plan" if workspace_mode in {"markdown_plan", "plan"} else "act"
     cwd = Path(str(state.get("cwd") or payload.get("workspace_root") or ".")).expanduser().resolve()
     store = SessionStore(config.session_db_path, config.sessions_dir)
     local_session = (
@@ -3524,14 +4240,26 @@ def _handle_hao_bridge_task(
             cwd=str(cwd),
             agent_id=agent_id,
             mode="confirm",
-            cli_mode="act",
+            cli_mode=command,
             target="host",
         )
     if run_id:
         store.update_run_id(local_session.id, run_id)
     try:
+        model_provider = str(payload.get("model_provider") or "default")
+        model_name = str(payload.get("model_name") or "default")
+        stream_token = str(payload.get("harness_stream_token") or "").strip()
+        stream_client = (
+            HarnessApiClient(
+                str(state.get("api_url") or client.api_url),
+                stream_token,
+                timeout=30.0,
+            )
+            if stream_token
+            else client
+        )
         result = run_headless_once(
-            command="act",
+            command=command,
             prompt=prompt,
             cwd=cwd,
             session_store=store,
@@ -3539,13 +4267,14 @@ def _handle_hao_bridge_task(
             permission_mode="confirm",
             target="host",
             max_auto_turns=3,
-            api_client=client,
+            api_client=stream_client,
             agent_id=agent_id,
-            model_provider="default",
-            model_name="default",
+            model_provider=model_provider,
+            model_name=model_name,
             bridge_context=BridgeToolContext(
                 bridge_task_id=task_id,
                 device_token=device_token,
+                harness_stream_token=stream_token,
             ),
         )
     except Exception as exc:
@@ -3582,6 +4311,17 @@ def _handle_hao_bridge_task(
         local_session_id=local_session.id,
         content=assistant or "hao completed without assistant text.",
         status=result.status,
+        sequence=_bridge_done_sequence(result.stdout_json),
+        model_call_id=(
+            str(result.stdout_json.get("model_call_id"))
+            if result.stdout_json.get("model_call_id")
+            else None
+        ),
+        usage=(
+            result.stdout_json.get("usage")
+            if isinstance(result.stdout_json.get("usage"), dict)
+            else None
+        ),
     )
 
 
@@ -3598,6 +4338,37 @@ def _finalize_pending_bridge_result(
     return True
 
 
+def _report_bridge_assistant_delta(
+    *,
+    client: Any,
+    bridge_context: BridgeToolContext,
+    content: str,
+    sequence: int,
+) -> None:
+    client.report_local_agent_bridge_event(
+        device_token=bridge_context.device_token,
+        payload={
+            "event_id": f"{bridge_context.bridge_task_id}:delta:{sequence}",
+            "bridge_task_id": bridge_context.bridge_task_id,
+            "event_type": "assistant_delta",
+            "content": content,
+            "sequence": sequence,
+        },
+    )
+
+
+def _safe_bridge_delta_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bridge_done_sequence(stdout_json: dict[str, Any]) -> int:
+    delta_count = _safe_bridge_delta_count(stdout_json.get("bridge_delta_count"))
+    return max(1, delta_count + 1)
+
+
 def _report_bridge_assistant_done(
     *,
     client: HarnessApiClient,
@@ -3606,7 +4377,18 @@ def _report_bridge_assistant_done(
     local_session_id: str,
     content: str,
     status: str,
+    sequence: int = 1,
+    model_call_id: str | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> None:
+    metadata: dict[str, Any] = {
+        "local_session_id": local_session_id,
+        "headless_status": status,
+    }
+    if model_call_id:
+        metadata["model_call_id"] = model_call_id
+    if usage:
+        metadata["usage"] = usage
     client.report_local_agent_bridge_event(
         device_token=device_token,
         payload={
@@ -3614,11 +4396,8 @@ def _report_bridge_assistant_done(
             "bridge_task_id": bridge_task_id,
             "event_type": "assistant_done",
             "content": content,
-            "sequence": 1,
-            "metadata": {
-                "local_session_id": local_session_id,
-                "headless_status": status,
-            },
+            "sequence": sequence,
+            "metadata": metadata,
         },
     )
 
@@ -3732,6 +4511,11 @@ def _resume_bridge_pending_tools(
             state=state,
             tool_request_id=tool_request_id,
         )
+        followup_client = _bridge_stream_client_for_pending(
+            client=client,
+            state=state,
+            pending=pending,
+        )
         followup = run_headless_once(
             command=str(pending.get("command") or "act"),
             prompt="Continue using the approved local tool result.",
@@ -3741,14 +4525,16 @@ def _resume_bridge_pending_tools(
             permission_mode=str(pending.get("permission_mode") or "confirm"),
             target="host",
             max_auto_turns=3,
-            api_client=client,
+            api_client=followup_client,
             agent_id=str(pending.get("agent_id") or local_session.agent_id),
-            model_provider="default",
-            model_name="default",
+            model_provider=str(pending.get("model_provider") or "default"),
+            model_name=str(pending.get("model_name") or "default"),
             bridge_context=BridgeToolContext(
                 bridge_task_id=bridge_task_id,
                 device_token=device_token,
+                harness_stream_token=str(pending.get("harness_stream_token") or ""),
             ),
+            bridge_delta_start=_safe_bridge_delta_count(pending.get("bridge_delta_count")),
         )
         if _finalize_pending_bridge_result(config=config, state=state, result=followup):
             continue
@@ -3772,7 +4558,33 @@ def _resume_bridge_pending_tools(
             local_session_id=local_session.id,
             content=assistant or "hao completed without assistant text.",
             status=followup.status,
+            sequence=_bridge_done_sequence(followup.stdout_json),
+            model_call_id=(
+                str(followup.stdout_json.get("model_call_id"))
+                if followup.stdout_json.get("model_call_id")
+                else None
+            ),
+            usage=(
+                followup.stdout_json.get("usage")
+                if isinstance(followup.stdout_json.get("usage"), dict)
+                else None
+            ),
         )
+
+
+def _bridge_stream_client_for_pending(
+    *,
+    client: HarnessApiClient,
+    state: dict[str, Any],
+    pending: dict[str, Any],
+) -> HarnessApiClient:
+    stream_token = str(pending.get("harness_stream_token") or "").strip()
+    if not stream_token:
+        return client
+    api_url = str(state.get("api_url") or getattr(client, "api_url", "") or "").strip()
+    if not api_url:
+        return client
+    return HarnessApiClient(api_url, stream_token, timeout=30.0)
 
 
 def _handle_bridge_host_tool_request(
@@ -3790,6 +4602,9 @@ def _handle_bridge_host_tool_request(
     input_json: dict[str, Any],
     risk_level: str,
     permission_mode: str,
+    model_provider: str = "default",
+    model_name: str = "default",
+    bridge_delta_count: int = 0,
     tool_request_id_override: str | None = None,
 ) -> BridgeToolHandlingResult:
     tool_request_id = tool_request_id_override or _bridge_tool_request_id(
@@ -3852,6 +4667,9 @@ def _handle_bridge_host_tool_request(
             "metadata": {
                 "run_id": run_id,
                 "agent_id": agent_id,
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "bridge_delta_count": bridge_delta_count,
                 "local_session_id": session_id,
                 "tool_call_id": tool_call_id,
                 "command": command,
@@ -3861,30 +4679,42 @@ def _handle_bridge_host_tool_request(
             },
         },
     )
+    decision_json = decision.get("decision_json") if isinstance(decision, dict) else {}
+    decision_metadata = (
+        decision_json.get("metadata")
+        if isinstance(decision_json, dict) and isinstance(decision_json.get("metadata"), dict)
+        else {}
+    )
     if decision.get("decision") == "approval_required":
         return BridgeToolHandlingResult(
             status="pending_approval",
             backend_tool_call_id=str(decision.get("tool_call_id") or ""),
             pending_tool=_safe_bridge_pending_tool_state(
                 {
-                "tool_request_id": tool_request_id,
-                "bridge_task_id": bridge_context.bridge_task_id,
-                "tool_call_id": tool_call_id,
-                "backend_tool_call_id": decision.get("tool_call_id"),
-                "approval_id": decision.get("approval_id"),
-                "tool_name": tool_name,
-                "local_session_id": session_id,
-                "run_id": run_id,
-                "agent_id": agent_id,
-                "command": command,
-                "risk_level": risk_level,
-                "permission_mode": permission_mode,
-                "change_id": pending_change_preview.get("change_id")
-                if pending_change_preview
-                else None,
-                "diff_sha256": pending_change_preview.get("diff_sha256")
-                if pending_change_preview
-                else None,
+                    "tool_request_id": tool_request_id,
+                    "bridge_task_id": bridge_context.bridge_task_id,
+                    "tool_call_id": tool_call_id,
+                    "backend_tool_call_id": decision.get("tool_call_id"),
+                    "approval_id": decision.get("approval_id"),
+                    "tool_name": tool_name,
+                    "local_session_id": session_id,
+                    "run_id": run_id,
+                    "agent_id": agent_id,
+                    "model_provider": model_provider,
+                    "model_name": model_name,
+                    "harness_stream_token": decision_metadata.get("harness_stream_token")
+                    or bridge_context.harness_stream_token,
+                    "bridge_delta_count": decision_metadata.get("bridge_delta_count")
+                    or bridge_delta_count,
+                    "command": command,
+                    "risk_level": risk_level,
+                    "permission_mode": permission_mode,
+                    "change_id": pending_change_preview.get("change_id")
+                    if pending_change_preview
+                    else None,
+                    "diff_sha256": pending_change_preview.get("diff_sha256")
+                    if pending_change_preview
+                    else None,
                 }
             ),
         )
@@ -4229,6 +5059,7 @@ def _build_stream_payload(
     permission_mode: str,
     target: str,
     run_id: str | None,
+    local_bridge_task_id: str | None,
     max_auto_turns: int,
     messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -4237,6 +5068,7 @@ def _build_stream_payload(
         "mode": workflow_metadata["backend_mode"],
         "goal": goal,
         "run_id": run_id,
+        "local_bridge_task_id": local_bridge_task_id,
         "model_provider": model_provider,
         "model_name": model_name,
         "messages": [
@@ -4553,6 +5385,7 @@ def run_headless_once(
     model_provider: str = "default",
     model_name: str = "default",
     bridge_context: BridgeToolContext | None = None,
+    bridge_delta_start: int = 0,
 ) -> HeadlessRunResult:
     session = session_store.get_session(session_id) if session_id else None
     if session_id is not None and session is None:
@@ -4588,6 +5421,9 @@ def run_headless_once(
     stderr = ""
     depth = 0
     goal = prompt
+    bridge_event_sequence = max(0, bridge_delta_start)
+    latest_model_call_id: str | None = None
+    latest_usage: dict[str, Any] = {}
     while True:
         assistant_chunks: list[str] = []
         executed_results: list[ToolExecutionResult] = []
@@ -4603,6 +5439,9 @@ def run_headless_once(
                 permission_mode=permission_mode,
                 target=target,
                 run_id=run_id,
+                local_bridge_task_id=(
+                    bridge_context.bridge_task_id if bridge_context is not None else None
+                ),
                 max_auto_turns=max_auto_turns,
                 messages=store.list_active_path(session.id),
             )
@@ -4621,7 +5460,23 @@ def run_headless_once(
                 if run_id:
                     store.update_run_id(session.id, run_id)
             elif event.event == "delta":
-                assistant_chunks.append(str(event.data.get("content") or ""))
+                delta = str(event.data.get("content") or "")
+                if not delta:
+                    continue
+                assistant_chunks.append(delta)
+                if bridge_context is not None and api_client is not None:
+                    bridge_event_sequence += 1
+                    _report_bridge_assistant_delta(
+                        client=api_client,
+                        bridge_context=bridge_context,
+                        content=delta,
+                        sequence=bridge_event_sequence,
+                    )
+            elif event.event == "usage":
+                latest_usage = event.data if isinstance(event.data, dict) else {}
+                candidate_model_call_id = latest_usage.get("model_call_id")
+                if isinstance(candidate_model_call_id, str) and candidate_model_call_id.strip():
+                    latest_model_call_id = candidate_model_call_id.strip()
             elif event.event == "tool_call_requested":
                 tool_name = str(event.data.get("tool_name") or "")
                 input_json = event.data.get("input_json") if isinstance(event.data, dict) else {}
@@ -4643,6 +5498,8 @@ def run_headless_once(
                         session_id=session.id,
                         run_id=run_id,
                         agent_id=session.agent_id,
+                        model_provider=model_provider,
+                        model_name=model_name,
                         command=command,
                         cwd=cwd,
                         tool_name=tool_name,
@@ -4650,6 +5507,7 @@ def run_headless_once(
                         input_json=input_json,
                         risk_level=decision.risk_level,
                         permission_mode=permission_mode,
+                        bridge_delta_count=bridge_event_sequence,
                     )
                     if handled.status == "pending_approval":
                         status = "pending_approval"
@@ -4963,6 +5821,12 @@ def run_headless_once(
         stdout_json["pending_tool"] = pending_tool
     if assistant_outputs:
         stdout_json["assistant"] = "\n".join(assistant_outputs)
+    if latest_model_call_id is not None:
+        stdout_json["model_call_id"] = latest_model_call_id
+    if latest_usage:
+        stdout_json["usage"] = latest_usage
+    if bridge_event_sequence:
+        stdout_json["bridge_delta_count"] = bridge_event_sequence
     exit_code = 0 if status == "completed" else 2 if status == "pending_approval" else 1
     return HeadlessRunResult(
         exit_code=exit_code,

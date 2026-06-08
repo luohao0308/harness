@@ -590,7 +590,8 @@ class LocalAgentConnection(Base):
         ),
         UniqueConstraint(
             "pairing_token_id",
-            name="local_agent_connections_pairing_token_uidx",
+            "adapter_kind",
+            name="local_agent_connections_pairing_adapter_uidx",
         ),
         Index("ix_local_agent_connections_org_user", "organization_id", "owner_user_id"),
     )

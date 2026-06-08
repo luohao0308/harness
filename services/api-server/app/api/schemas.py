@@ -324,6 +324,10 @@ class AgentChatStreamRequest(BaseModel):
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
     run_id: str | None = Field(default=None, description="继续生成时绑定的原始 Agent Run ID")
+    local_bridge_task_id: str | None = Field(
+        default=None,
+        description="本地 Agent bridge 任务 ID；仅用于 scoped stream token 授权校验",
+    )
     active_branch_id: str | None = Field(default=None, description="前端当前分支 ID")
     pinned_node_ids: list[str] = Field(default_factory=list, description="强制注入上下文节点")
     context_window_turns: int = Field(default=8, ge=1, le=50, description="最近上下文轮数")
@@ -1732,6 +1736,7 @@ class TokenSavingsLowCostRoute(BaseModel):
 class TokenSavingsRunItem(BaseModel):
     run_id: str = Field(description="Agent Run ID")
     agent_id: str | None = Field(default=None, description="Agent ID")
+    model_names: list[str] = Field(default_factory=list, description="本次运行涉及的模型名称")
     title: str = Field(description="运行标题")
     status: str = Field(description="运行状态")
     created_at: datetime = Field(description="运行创建时间")
@@ -2500,10 +2505,16 @@ class LocalAgentConnectionRegisterResponse(BaseModel):
     device_token: str = Field(description="设备凭证，仅注册时返回一次")
 
 
+class LocalAgentConnectionUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120, description="连接显示名称")
+
+
 class LocalAgentConnectionResponse(BaseModel):
     id: str = Field(description="连接 ID")
     agent_id: str = Field(description="目标 Agent ID")
     owner_user_id: str = Field(description="设备 owner")
+    pairing_token_id: str | None = Field(default=None, description="来源配对记录 ID")
+    onboarding_confirmed: bool = Field(default=True, description="是否已由用户确认接入")
     display_name: str = Field(description="显示名称")
     adapter_kind: str = Field(description="本地 Agent 类型")
     protocol_version: str = Field(description="协议版本")
@@ -2566,6 +2577,41 @@ class LocalAgentConversationBindingPage(BaseModel):
 class LocalAgentSendMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=120_000, description="用户消息")
     client_message_id: str = Field(min_length=1, max_length=160, description="客户端幂等 ID")
+    workspace_context_provided: bool = Field(
+        default=False,
+        description="前端是否显式提供了当前 Workspace 上下文；为空时也禁止回放旧 session",
+    )
+    workspace_mode: Literal["chat", "markdown_plan", "plan", "cli_agent"] = Field(
+        default="chat",
+        description="Workspace 输入模式",
+    )
+    model_provider: str | None = Field(default=None, description="本次请求选择的模型供应商")
+    model_name: str | None = Field(default=None, description="本次请求选择的模型名称")
+    messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
+    active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
+    active_branch_id: str | None = Field(default=None, description="前端当前分支 ID")
+    pinned_node_ids: list[str] = Field(default_factory=list, description="强制注入上下文节点")
+    context_window_turns: int = Field(default=8, ge=1, le=50, description="最近上下文轮数")
+    tool_mentions: list[ToolMention] = Field(default_factory=list, description="结构化工具 mention")
+    attachment_names: list[str] = Field(default_factory=list, description="前端选择的附件文件名")
+    attachments: list[AttachmentPayload] = Field(
+        default_factory=list,
+        description="前端读取后的附件内容摘要",
+    )
+    context_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="UI-side context window budget; backend recounts before model calls",
+    )
+    compressed_context: CompressedContext | None = Field(
+        default=None,
+        description="语义压缩后的上下文摘要",
+    )
+
+    @field_validator("workspace_mode", mode="before")
+    @classmethod
+    def normalize_workspace_mode_field(cls, value: str) -> str:
+        return normalize_workspace_mode(value)
 
 
 class LocalAgentSendMessageResponse(BaseModel):
@@ -2600,6 +2646,7 @@ class LocalAgentBindingTaskResponse(BaseModel):
     user_message_id: str = Field(description="用户消息 ID")
     client_message_id: str = Field(description="客户端幂等 ID")
     status: str = Field(description="任务状态")
+    error_message: str | None = Field(default=None, description="失败原因")
     created_at: datetime = Field(description="创建时间")
     updated_at: datetime = Field(description="更新时间")
 

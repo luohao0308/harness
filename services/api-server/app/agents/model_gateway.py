@@ -1028,6 +1028,7 @@ class AuditedModelGateway:
         retrieval_evidence_ids: list[str] | None = None,
         evidence_text_sha256: str | None = None,
         context_manifest_id: str | None = None,
+        request_metadata: dict | None = None,
     ) -> None:
         self.session = session
         self.task_id = task_id
@@ -1040,6 +1041,7 @@ class AuditedModelGateway:
         self.retrieval_evidence_ids = retrieval_evidence_ids or []
         self.evidence_text_sha256 = evidence_text_sha256
         self.context_manifest_id = context_manifest_id
+        self.request_metadata = request_metadata or {}
 
     def _capability_snapshot_json(self) -> dict:
         task = self.session.get(Task, self.task_id)
@@ -1067,6 +1069,13 @@ class AuditedModelGateway:
                 effective_strategy["low_cost_route_hint"]
             )
         return {key: value for key, value in metadata.items() if value not in (None, [], {})}
+
+    def _extra_request_metadata(self) -> dict:
+        return {
+            str(key): value
+            for key, value in self.request_metadata.items()
+            if isinstance(key, str) and value not in (None, [], {})
+        }
 
     def _generation_parameters(self, provider: dict) -> dict:
         parameters: dict = {}
@@ -1189,6 +1198,7 @@ class AuditedModelGateway:
                 request_message_hashes=request_message_hashes,
                 request_message_hashes_sha256=request_message_hashes_sha256,
                 model_request_sha256=model_request_sha256,
+                extra_metadata=self._extra_request_metadata(),
             ),
             response_json={},
             created_at=utc_now(),
@@ -1308,6 +1318,7 @@ class AuditedModelGateway:
         request_message_hashes: list[dict],
         request_message_hashes_sha256: str,
         model_request_sha256: str,
+        extra_metadata: dict | None = None,
     ) -> dict:
         estimated_prompt_tokens = self._estimate_prompt_tokens(request_payload)
         return {
@@ -1320,6 +1331,7 @@ class AuditedModelGateway:
             "prompt_manifest_id": self.prompt_manifest_id,
             "context_manifest_id": self.context_manifest_id,
             **self._context_optimizer_request_metadata(),
+            **(extra_metadata or {}),
             "prompt_manifest_version": self.prompt_manifest_version,
             "retrieval_evidence_ids": sorted(self.retrieval_evidence_ids),
             "evidence_text_sha256": self.evidence_text_sha256,
@@ -1525,6 +1537,7 @@ class AuditedModelGateway:
                 request_message_hashes=request_message_hashes,
                 request_message_hashes_sha256=request_message_hashes_sha256,
                 model_request_sha256=model_request_sha256,
+                extra_metadata=self._extra_request_metadata(),
             ),
             response_json={},
             created_at=utc_now(),

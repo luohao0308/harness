@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import io
+import json
 import subprocess
 import sys
 import types
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -226,6 +229,429 @@ def test_hao_bridge_pair_once_registers_and_reports_fake_task(tmp_path: Path, mo
     assert "hello local" in done["content"]
 
 
+def test_hao_bridge_task_passes_harness_context_to_headless(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    events: list[dict] = []
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            events.append({"device_token": device_token, **payload})
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    def fake_run_headless_once(**kwargs) -> object:
+        captured.update(kwargs)
+        return hao_main_module.HeadlessRunResult(
+            exit_code=0,
+            status="completed",
+            stdout_json={"assistant": "hao done"},
+        )
+
+    monkeypatch.setattr(hao_main_module, "run_headless_once", fake_run_headless_once)
+
+    hao_main_module._handle_hao_bridge_task(
+        config=config,
+        state={"cwd": str(tmp_path)},
+        client=FakeClient(),
+        device_token="device-token",
+        task={
+            "id": "bridge-task-1",
+            "payload": {
+                "message": "hello local",
+                "run_id": "run-1",
+                "agent_id": "default",
+                "resume_mode": "native_resume",
+                "model_provider": "deepseek",
+                "model_name": "deepseek-v4",
+                "conversation_context": [
+                    {"role": "user", "content": "prior user"},
+                    {"role": "assistant", "content": "prior answer"},
+                ],
+                "tool_mentions": [{"name": "read_file", "source": "local"}],
+                "attachment_names": ["README.md"],
+                "attachments": [
+                    {
+                        "name": "README.md",
+                        "content_text": "attachment body",
+                    },
+                ],
+                "compressed_context": {"summary": "compressed summary"},
+            },
+        },
+    )
+
+    prompt = str(captured["prompt"])
+    assert "You are running under the AI Harness local-agent bridge as the hao adapter." in prompt
+    assert "Harness selected model: provider=deepseek, model=deepseek-v4." in prompt
+    assert "Harness requested tools: local:read_file." in prompt
+    assert "Harness attachments: README.md." in prompt
+    assert "Compressed workspace context: compressed summary" in prompt
+    assert "Attachment README.md: attachment body" in prompt
+    assert "user: prior user" in prompt
+    assert "assistant: prior answer" in prompt
+    assert "User message:\nhello local" in prompt
+    assert captured["model_provider"] == "deepseek"
+    assert captured["model_name"] == "deepseek-v4"
+    assert events[-1]["event_type"] == "assistant_done"
+    assert events[-1]["content"] == "hao done"
+
+
+def test_hao_bridge_task_uses_plan_command_and_stream_token(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    events: list[dict] = []
+    captured: dict[str, object] = {}
+    stream_clients: list[Any] = []
+
+    class FakeBridgeClient:
+        api_url = "http://127.0.0.1:8000"
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            events.append({"device_token": device_token, **payload})
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    class FakeStreamClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            self.api_url = api_url
+            self.token = token
+            self.timeout = timeout
+            stream_clients.append(self)
+
+    def fake_run_headless_once(**kwargs) -> object:
+        captured.update(kwargs)
+        return hao_main_module.HeadlessRunResult(
+            exit_code=0,
+            status="completed",
+            stdout_json={"assistant": "plan ready"},
+        )
+
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeStreamClient)
+    monkeypatch.setattr(hao_main_module, "run_headless_once", fake_run_headless_once)
+
+    hao_main_module._handle_hao_bridge_task(
+        config=config,
+        state={"cwd": str(tmp_path), "api_url": "http://127.0.0.1:8000"},
+        client=FakeBridgeClient(),
+        device_token="device-token",
+        task={
+            "id": "bridge-plan-task",
+            "payload": {
+                "message": "plan before acting",
+                "run_id": "run-plan",
+                "agent_id": "default",
+                "workspace_request": {"mode": "plan"},
+                "harness_stream_token": "stream-token",
+            },
+        },
+    )
+
+    assert captured["command"] == "plan"
+    assert captured["api_client"] is stream_clients[0]
+    assert stream_clients[0].api_url == "http://127.0.0.1:8000"
+    assert stream_clients[0].token == "stream-token"
+    assert events[-1]["device_token"] == "device-token"
+    assert events[-1]["event_type"] == "assistant_done"
+    assert events[-1]["content"] == "plan ready"
+
+
+def test_hao_headless_forwards_bridge_deltas_and_model_call_usage(tmp_path: Path) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    bridge_events: list[dict] = []
+
+    class FakeClient:
+        def stream_chat(self, agent_id: str, payload: dict):
+            assert agent_id == "default"
+            assert payload["local_bridge_task_id"] == "bridge-task-1"
+            yield hao_main_module.SSEEvent(
+                event="run_created",
+                data={"run_id": "run-1"},
+                raw='event: run_created\ndata: {"run_id":"run-1"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="delta",
+                data={"content": "Hello "},
+                raw='event: delta\ndata: {"content":"Hello "}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="delta",
+                data={"content": "world"},
+                raw='event: delta\ndata: {"content":"world"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="usage",
+                data={"model_call_id": "model-call-1", "prompt_tokens": 3, "completion_tokens": 2},
+                raw='event: usage\ndata: {"model_call_id":"model-call-1"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="done",
+                data={},
+                raw="event: done\ndata: {}\n\n",
+            )
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            bridge_events.append({"device_token": device_token, **payload})
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    result = hao_main_module.run_headless_once(
+        command="act",
+        prompt="say hello",
+        cwd=workspace,
+        session_store=store,
+        session_id=None,
+        permission_mode="confirm",
+        target="host",
+        max_auto_turns=1,
+        api_client=FakeClient(),
+        agent_id="default",
+        model_provider="deepseek",
+        model_name="deepseek-v4",
+        bridge_context=hao_main_module.BridgeToolContext(
+            bridge_task_id="bridge-task-1",
+            device_token="device-token",
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout_json["assistant"] == "Hello world"
+    assert result.stdout_json["model_call_id"] == "model-call-1"
+    assert result.stdout_json["bridge_delta_count"] == 2
+    assert [event["event_type"] for event in bridge_events] == [
+        "assistant_delta",
+        "assistant_delta",
+    ]
+    assert [event["content"] for event in bridge_events] == ["Hello ", "world"]
+    assert [event["sequence"] for event in bridge_events] == [1, 2]
+    assert [event["event_id"] for event in bridge_events] == [
+        "bridge-task-1:delta:1",
+        "bridge-task-1:delta:2",
+    ]
+
+
+def test_hao_bridge_pending_tool_preserves_selected_model_for_resume(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("hello from workspace\n", encoding="utf-8")
+    state = {"cwd": str(workspace), "api_url": "http://127.0.0.1:8000"}
+    calls: list[tuple[str, dict]] = []
+    shared = {"pending": True, "stream_count": 0}
+
+    class FakeClient:
+        def __init__(
+            self,
+            api_url: str = "http://127.0.0.1:8000",
+            token: str = "",
+            timeout: float = 30.0,
+        ) -> None:
+            self.api_url = api_url
+            self.token = token
+            self.timeout = timeout
+            calls.append(("client_init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def stream_chat(self, agent_id: str, payload: dict):
+            calls.append(
+                (
+                    "stream",
+                    {"agent_id": agent_id, "payload": payload, "client_token": self.token},
+                )
+            )
+            shared["stream_count"] += 1
+            yield hao_main_module.SSEEvent(
+                event="run_created",
+                data={"run_id": "run-local"},
+                raw='event: run_created\ndata: {"run_id":"run-local"}\n\n',
+            )
+            if shared["stream_count"] > 1:
+                yield hao_main_module.SSEEvent(
+                    event="delta",
+                    data={"content": "done with approved tool"},
+                    raw='event: delta\ndata: {"content":"done with approved tool"}\n\n',
+                )
+                yield hao_main_module.SSEEvent(
+                    event="usage",
+                    data={
+                        "model_call_id": "resume-model-call-1",
+                        "prompt_tokens": 2,
+                        "completion_tokens": 3,
+                    },
+                    raw='event: usage\ndata: {"model_call_id":"resume-model-call-1"}\n\n',
+                )
+                yield hao_main_module.SSEEvent(
+                    event="done",
+                    data={},
+                    raw="event: done\ndata: {}\n\n",
+                )
+                return
+            yield hao_main_module.SSEEvent(
+                event="delta",
+                data={"content": "pre approval context"},
+                raw='event: delta\ndata: {"content":"pre approval context"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="tool_call_requested",
+                data={
+                    "tool_name": "read_file",
+                    "tool_call_id": "tool-read",
+                    "input_json": {"path": "README.md"},
+                },
+                raw="event: tool_call_requested\ndata: {}\n\n",
+            )
+
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("tool_request", {"device_token": device_token, **payload}))
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "backend-tool-read",
+                "approval_id": "approval-read",
+                "decision": "approval_required" if shared["pending"] else "approved",
+                "status": "approval_required" if shared["pending"] else "approved",
+                "executable": not shared["pending"],
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "decision_json": {
+                    "metadata": {
+                        **payload["metadata"],
+                        "harness_stream_token": "fresh-scoped-stream-token",
+                    }
+                },
+            }
+
+        def list_pending_local_agent_tool_requests(self, *, device_token: str) -> dict:
+            calls.append(("list_pending", {"device_token": device_token}))
+            return {"items": []}
+
+        def get_local_agent_tool_decision(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+        ) -> dict:
+            calls.append(
+                (
+                    "decision",
+                    {"device_token": device_token, "tool_request_id": tool_request_id},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "bridge_task_id": "bridge-task-1",
+                "decision": "approved",
+                "status": "approved",
+                "executable": True,
+                "server_execution": False,
+                "tool_name": "read_file",
+                "input_json": {"path": "README.md"},
+                "reason": "",
+            }
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {"device_token": device_token, "tool_request_id": tool_request_id, **payload},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "tool_call_id": "backend-tool-read",
+                "decision": "succeeded",
+                "status": "succeeded",
+            }
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("bridge_event", {"device_token": device_token, **payload}))
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeClient)
+    client = FakeClient(token="daemon-token")
+    hao_main_module._handle_hao_bridge_task(
+        config=config,
+        state=state,
+        client=client,
+        device_token="device-token",
+        task={
+            "id": "bridge-task-1",
+            "payload": {
+                "message": "read the file",
+                "agent_id": "default",
+                "run_id": "run-local",
+                "model_provider": "deepseek",
+                "model_name": "deepseek-v4",
+                "harness_stream_token": "queued-scoped-stream-token",
+            },
+        },
+    )
+
+    persisted_state = hao_main_module._load_bridge_state(config)
+    [pending_tool] = persisted_state["pending_tool_requests"]
+    assert pending_tool["model_provider"] == "deepseek"
+    assert pending_tool["model_name"] == "deepseek-v4"
+    assert pending_tool["harness_stream_token"] == "fresh-scoped-stream-token"
+    assert pending_tool["bridge_delta_count"] == "1"
+    tool_request = next(payload for name, payload in calls if name == "tool_request")
+    assert tool_request["metadata"]["model_provider"] == "deepseek"
+    assert tool_request["metadata"]["model_name"] == "deepseek-v4"
+    assert tool_request["metadata"]["bridge_delta_count"] == 1
+
+    shared["pending"] = False
+    hao_main_module._resume_bridge_pending_tools(
+        config=config,
+        state=persisted_state,
+        client=client,
+        device_token="device-token",
+    )
+
+    followup_streams = [payload for name, payload in calls if name == "stream"]
+    assert len(followup_streams) == 2
+    assert [stream["client_token"] for stream in followup_streams] == [
+        "queued-scoped-stream-token",
+        "fresh-scoped-stream-token",
+    ]
+    assert followup_streams[-1]["payload"]["model_provider"] == "deepseek"
+    assert followup_streams[-1]["payload"]["model_name"] == "deepseek-v4"
+    bridge_events = [payload for name, payload in calls if name == "bridge_event"]
+    assert [event["event_type"] for event in bridge_events] == [
+        "assistant_delta",
+        "assistant_delta",
+        "assistant_done",
+    ]
+    assert bridge_events[0]["content"] == "pre approval context"
+    assert bridge_events[0]["sequence"] == 1
+    assert bridge_events[1]["content"] == "done with approved tool"
+    assert bridge_events[1]["sequence"] == 2
+    assert bridge_events[2]["content"] == "done with approved tool"
+    assert bridge_events[2]["sequence"] == 3
+    assert bridge_events[2]["metadata"]["model_call_id"] == "resume-model-call-1"
+    assert bridge_events[2]["metadata"]["usage"]["completion_tokens"] == 3
+    reloaded_state = hao_main_module._load_bridge_state(config)
+    assert reloaded_state.get("pending_tool_requests") in (None, [])
+
+
 def test_hao_bridge_daemon_uses_protected_state_without_device_token_argv(
     tmp_path: Path,
     monkeypatch,
@@ -288,6 +714,108 @@ def test_hao_bridge_daemon_uses_protected_state_without_device_token_argv(
     assert "device-token-secret" not in command
     assert "--cwd" in command
     assert str(tmp_path) in command
+
+
+def test_hao_bridge_pair_without_adapter_auto_registers_detected_local_agents(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    calls: list[tuple[str, dict]] = []
+    popen_commands: list[list[str]] = []
+    popen_kwargs: list[dict] = []
+
+    class FakeBridgeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 120.0) -> None:
+            calls.append(("init", {"api_url": api_url, "token": token, "timeout": timeout}))
+
+        def register_local_agent_connection(self, **payload) -> dict:
+            calls.append(("register", payload))
+            adapter_kind = payload["adapter_kind"]
+            return {
+                "connection": {"id": f"{adapter_kind}-connection"},
+                "device_token": f"{adapter_kind}-device-token",
+            }
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            popen_commands.append(command)
+            popen_kwargs.append(kwargs)
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    codex_probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/usr/local/bin/codex",
+        version="codex 1.0",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+        resume_help="resume --json --output-last-message -c",
+    )
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: codex_probe)
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_code_cli",
+        lambda: _claude_probe(hao_main_module),
+    )
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeBridgeClient)
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "pair",
+            "--api",
+            "http://127.0.0.1:8000",
+            "--pair-token",
+            "pair-token",
+            "--pair-code",
+            "ABC123",
+            "--cwd",
+            str(tmp_path),
+            "--daemon",
+        ]
+    )
+
+    assert exit_code == 0
+    registered = [payload for name, payload in calls if name == "register"]
+    assert [payload["adapter_kind"] for payload in registered] == [
+        "hao",
+        "codex",
+        "claude_code",
+    ]
+    assert (tmp_path / "bridges" / "hao" / "bridge.json").exists()
+    assert (tmp_path / "bridges" / "codex" / "bridge.json").exists()
+    assert (tmp_path / "bridges" / "claude_code" / "bridge.json").exists()
+    assert len(popen_commands) == 3
+    assert [
+        kwargs["env"]["HAO_HOME"]
+        for kwargs in popen_kwargs
+    ] == [
+        str(tmp_path / "bridges" / "hao"),
+        str(tmp_path / "bridges" / "codex"),
+        str(tmp_path / "bridges" / "claude_code"),
+    ]
+    assert all("--device-token" not in command for command in popen_commands)
+    stdout_lines = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    paired_lines = [line for line in stdout_lines if line["status"] == "paired"]
+    daemon_lines = [line for line in stdout_lines if line["status"] == "daemon_started"]
+    assert [line["adapter_kind"] for line in paired_lines] == [
+        "hao",
+        "codex",
+        "claude_code",
+    ]
+    assert [line["adapter_kind"] for line in daemon_lines] == [
+        "hao",
+        "codex",
+        "claude_code",
+    ]
+    assert all(line["next_step"] == "return_to_platform_refresh_discovery" for line in paired_lines)
+    assert "勾选确认后才会接入" in paired_lines[0]["message"]
+    assert "我已执行，刷新识别" in daemon_lines[0]["message"]
 
 
 def test_hao_bridge_state_migrates_raw_device_token_out_of_bridge_json(
@@ -423,7 +951,7 @@ def test_hao_bridge_v4_codex_state_uses_workspace_sidecar_and_safe_daemon_argv(
     register = next(payload for name, payload in calls if name == "register")
     assert register["adapter_kind"] == "codex"
     assert register["metadata"]["workspace_identity_hash"]
-    assert register["risk_capabilities"] == ["workspace_read_constrained"]
+    assert register["risk_capabilities"] == ["host_read", "host_write", "shell", "git", "network"]
     command = popen_commands[0]
     assert "--cwd" not in command
     assert str(tmp_path) not in command
@@ -726,8 +1254,8 @@ def test_hao_bridge_v5_claude_state_uses_workspace_sidecar_and_safe_daemon_argv(
     register = next(payload for name, payload in calls if name == "register")
     assert register["adapter_kind"] == "claude_code"
     assert register["metadata"]["workspace_identity_hash"]
-    assert register["risk_capabilities"] == []
-    assert register["capabilities"]["execution_mode"] == "headless_bare_no_session_no_tools"
+    assert register["risk_capabilities"] == ["host_read", "host_write", "shell", "git", "network"]
+    assert register["capabilities"]["execution_mode"] == "headless_harness_tool_bridge"
     command = popen_commands[0]
     assert "--cwd" not in command
     assert str(tmp_path) not in command
@@ -797,12 +1325,11 @@ def test_hao_bridge_v6_claude_pair_registers_permission_bridge_and_safe_daemon_a
     register = next(payload for name, payload in calls if name == "register")
     assert register["adapter_kind"] == "claude_code"
     assert register["risk_capabilities"] == [
-        "workspace_read",
-        "host_write_approval_required",
-        "shell_approval_required",
-        "git_approval_required",
-        "pending_change",
-        "command_lifecycle",
+        "host_read",
+        "host_write",
+        "shell",
+        "git",
+        "network",
     ]
     capabilities = register["capabilities"]
     assert capabilities["claude_permission_bridge_v1"] is True
@@ -832,7 +1359,7 @@ def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
     probe = hao_main_module.CodexCliProbe(
         installed=True,
         executable="/opt/codex/bin/codex",
-        exec_help="--json --output-last-message -C --sandbox read-only",
+        exec_help="--json --output-last-message -C --sandbox read-only --skip-git-repo-check",
     )
 
     command = hao_main_module._codex_command(
@@ -846,6 +1373,8 @@ def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
     assert "--output-last-message" in command
     assert "-C" in command
     assert str(tmp_path) in command
+    assert "--skip-git-repo-check" in command
+    assert command.index("--skip-git-repo-check") < command.index("-")
     assert command[-1] == "-"
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert "danger-full-access" not in command
@@ -858,6 +1387,49 @@ def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-1234567890abcdef")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-secret")
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example")
+    source_codex_home = tmp_path / "source-codex"
+    source_codex_home.mkdir()
+    (source_codex_home / "auth.json").write_text(
+        json.dumps(
+            {
+                "OPENAI_API_KEY": "sk-proj-authjson1234567890abcdef",
+                "tokens": {"access_token": "codex-access-token"},
+            },
+        ),
+        encoding="utf-8",
+    )
+    (source_codex_home / "config.toml").write_text(
+        """
+model = "gpt-5.5"
+model_provider = "custom.provider"
+model_reasoning_effort = "high"
+model_verbosity = "low"
+model_context_window = 1000000
+disable_response_storage = true
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[model_providers."custom.provider"]
+name = "Custom Provider"
+base_url = "https://codex-provider.example/v1"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "provider-secret-token"
+extra_secret = "do-not-copy"
+
+[features]
+codex_hooks = true
+
+[hooks]
+pre_model = "leaky-hook"
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/luohao"]
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
     env = hao_main_module._codex_subprocess_env(
         executable="/opt/codex/bin/codex",
         temp_dir=tmp_path,
@@ -872,6 +1444,65 @@ def test_hao_bridge_v4_codex_command_builder_and_env_are_safe(
     assert "OPENAI_API_KEY" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "HTTPS_PROXY" not in env
+    isolated_codex_home = Path(env["CODEX_HOME"])
+    isolated_auth = isolated_codex_home / "auth.json"
+    isolated_config = isolated_codex_home / "config.toml"
+    assert isolated_auth.is_file()
+    assert isolated_config.is_file()
+    assert isolated_auth.stat().st_mode & 0o777 == 0o600
+    assert isolated_config.stat().st_mode & 0o777 == 0o600
+    assert json.loads(isolated_auth.read_text(encoding="utf-8"))["tokens"] == {
+        "access_token": "codex-access-token",
+    }
+    isolated_config_text = isolated_config.read_text(encoding="utf-8")
+    isolated_config_data = hao_main_module.tomllib.loads(isolated_config_text)
+    assert isolated_config_data["model"] == "gpt-5.5"
+    assert isolated_config_data["model_provider"] == "custom.provider"
+    assert isolated_config_data["disable_response_storage"] is True
+    provider_config = isolated_config_data["model_providers"]["custom.provider"]
+    assert provider_config == {
+        "base_url": "https://codex-provider.example/v1",
+        "experimental_bearer_token": "provider-secret-token",
+        "name": "Custom Provider",
+        "requires_openai_auth": False,
+        "wire_api": "responses",
+    }
+    assert "approval_policy" not in isolated_config_text
+    assert "sandbox_mode" not in isolated_config_text
+    assert "features" not in isolated_config_text
+    assert "codex_hooks" not in isolated_config_text
+    assert "hooks" not in isolated_config_text
+    assert "mcp_servers" not in isolated_config_text
+    assert "do-not-copy" not in isolated_config_text
+
+
+def test_hao_bridge_v4_codex_minimal_toml_quotes_provider_names() -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    malicious_provider = 'bad"]\n[mcp_servers.injected]\ncommand = "oops'
+
+    output = hao_main_module._dump_minimal_toml(
+        {
+            "model": "gpt-5.5",
+            "model_provider": malicious_provider,
+            "model_providers": {
+                malicious_provider: {
+                    "name": "Injected Provider",
+                    "base_url": "https://codex-provider.example/v1",
+                    "wire_api": "responses",
+                    "experimental_bearer_token": "provider-secret-token",
+                },
+            },
+        },
+    )
+
+    parsed = hao_main_module.tomllib.loads(output)
+    assert parsed["model_provider"] == malicious_provider
+    assert set(parsed["model_providers"]) == {malicious_provider}
+    assert parsed["model_providers"][malicious_provider]["experimental_bearer_token"] == (
+        "provider-secret-token"
+    )
+    assert "mcp_servers" not in parsed
+    assert "hooks" not in parsed
 
 
 def test_hao_bridge_v4_codex_probe_uses_sanitized_env(monkeypatch) -> None:
@@ -965,8 +1596,34 @@ def test_hao_bridge_v5_claude_command_builder_and_env_are_safe(
     monkeypatch.setenv("LOCAL_AGENT_DEVICE_TOKEN", "device-token")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-1234567890abcdef")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token")
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example")
+    source_home = tmp_path / "source-home"
+    source_claude = source_home / ".claude"
+    source_claude.mkdir(parents=True)
+    (source_claude / "settings.json").write_text(
+        json.dumps(
+            {
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "settings-auth-token",
+                    "ANTHROPIC_BASE_URL": "https://claude.example",
+                    "ANTHROPIC_MODEL": "claude-settings-model",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-settings",
+                    "ANTHROPIC_API_KEY": "settings-api-key-must-not-load",
+                    "CLAUDE_CODE_OAUTH_TOKEN": "settings-oauth-must-not-load",
+                    "HTTPS_PROXY": "http://settings-proxy.example",
+                },
+                "hooks": {"PreToolUse": [{"matcher": "*", "hooks": []}]},
+                "mcpServers": {"unsafe": {"command": "node"}},
+            },
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(source_home))
     env = hao_main_module._claude_code_subprocess_env(
         executable="/opt/claude/bin/claude",
         temp_dir=tmp_path,
@@ -978,6 +1635,11 @@ def test_hao_bridge_v5_claude_command_builder_and_env_are_safe(
     assert env["CLAUDE_CODE_SKIP_PROMPT_HISTORY"] == "1"
     assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
     assert env["CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS"] == "1"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "settings-auth-token"
+    assert env["ANTHROPIC_BASE_URL"] == "https://claude.example"
+    assert env["ANTHROPIC_MODEL"] == "claude-settings-model"
+    assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "claude-sonnet-settings"
+    assert env["HOME"] != str(source_home)
     assert "HARNESS_SECRET" not in env
     assert "HAO_API_TOKEN" not in env
     assert "LOCAL_AGENT_DEVICE_TOKEN" not in env
@@ -1037,7 +1699,7 @@ def test_hao_bridge_v6_claude_capabilities_require_cli_and_sdk() -> None:
         permission_bridge="sdk",
         sdk_probe=_claude_sdk_probe(hao_main_module, installed=False),
     )
-    assert missing_sdk["host_tools_authorized"] is False
+    assert missing_sdk["host_tools_authorized"] is True
     assert missing_sdk["permission_bridge_mode"] == "sdk"
     assert "claude_permission_bridge_v1" not in missing_sdk
 
@@ -1963,6 +2625,21 @@ def test_hao_bridge_v4_run_codex_cli_reports_timeout_nonzero_and_empty_output(
         executable="/opt/codex/bin/codex",
         exec_help="--json --output-last-message -C --sandbox read-only",
     )
+    source_codex_home = tmp_path / "source-codex"
+    source_codex_home.mkdir()
+    (source_codex_home / "config.toml").write_text(
+        """
+model = "gpt-5.5"
+model_provider = "custom-provider"
+
+[model_providers.custom-provider]
+name = "Custom Provider"
+base_url = "https://codex-provider.example/v1"
+experimental_bearer_token = "provider-secret-token"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(source_codex_home))
     monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
 
     def timeout_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -1984,7 +2661,10 @@ def test_hao_bridge_v4_run_codex_cli_reports_timeout_nonzero_and_empty_output(
             command,
             2,
             stdout="",
-            stderr="failed token=sk-proj-1234567890abcdef /Users/luohao/private/file.txt",
+            stderr=(
+                "failed token=sk-proj-1234567890abcdef "
+                "provider-secret-token /Users/luohao/private/file.txt"
+            ),
         )
 
     monkeypatch.setattr(hao_main_module.subprocess, "run", nonzero_run)
@@ -1995,6 +2675,7 @@ def test_hao_bridge_v4_run_codex_cli_reports_timeout_nonzero_and_empty_output(
     )
     assert nonzero.status == "error"
     assert "sk-proj" not in nonzero.error_message
+    assert "provider-secret-token" not in nonzero.error_message
     assert "/Users/luohao" not in nonzero.error_message
     assert nonzero.metadata == {"exit_code": 2}
 
@@ -2144,13 +2825,27 @@ def test_hao_bridge_v5_run_claude_cli_rejects_workspace_and_process_failures(
     assert timed_out.status == "error"
     assert "timed out" in timed_out.error_message
 
+    source_home = tmp_path / "source-home"
+    source_claude = source_home / ".claude"
+    source_claude.mkdir(parents=True)
+    (source_claude / "settings.json").write_text(
+        json.dumps({"env": {"ANTHROPIC_AUTH_TOKEN": "settings-auth-token"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(source_home))
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
     def nonzero_run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
         del kwargs
         return subprocess.CompletedProcess(
             command,
             2,
             stdout="",
-            stderr="failed token=sk-ant-secret /Users/luohao/private/file.txt",
+            stderr=(
+                "failed auth settings-auth-token token=sk-ant-secret "
+                "/Users/luohao/private/file.txt"
+            ),
         )
 
     monkeypatch.setattr(hao_main_module.subprocess, "run", nonzero_run)
@@ -2160,6 +2855,7 @@ def test_hao_bridge_v5_run_claude_cli_rejects_workspace_and_process_failures(
         payload={"message": "nonzero", "workspace_identity_hash": state["workspace_identity_hash"]},
     )
     assert nonzero.status == "error"
+    assert "settings-auth-token" not in nonzero.error_message
     assert "sk-ant" not in nonzero.error_message
     assert "/Users/luohao" not in nonzero.error_message
     assert nonzero.metadata == {"exit_code": 2}
@@ -2292,19 +2988,117 @@ def test_hao_bridge_v4_run_preserves_saved_codex_adapter_without_adapter_arg(
     def fake_handle_codex(**kwargs) -> None:
         handled.append(kwargs["state"]["adapter_kind"])
 
-    def fail_pending_tool_resume(**kwargs) -> None:
-        raise AssertionError("codex bridge run must not call pending host-tool resume")
+    resumed: list[str] = []
+
+    def record_pending_tool_resume(**kwargs) -> None:
+        resumed.append(kwargs["device_token"])
 
     monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeClient)
     monkeypatch.setattr(hao_main_module, "_handle_codex_bridge_task", fake_handle_codex)
-    monkeypatch.setattr(hao_main_module, "_resume_bridge_pending_tools", fail_pending_tool_resume)
+    monkeypatch.setattr(hao_main_module, "_resume_bridge_pending_tools", record_pending_tool_resume)
 
     exit_code = hao_main_module.main(["bridge", "run", "--once"])
 
     assert exit_code == 0
+    assert resumed == ["codex-device-token"]
     assert handled == ["codex"]
     state = hao_main_module._load_bridge_state(config)
     assert state["adapter_kind"] == "codex"
+
+
+def test_hao_bridge_run_waits_for_onboarding_confirmation_before_pulling_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    hao_main_module._save_bridge_device_token(config, "device-token")
+    hao_main_module._save_bridge_state(
+        config,
+        {
+            "api_url": "http://127.0.0.1:8000",
+            "connection_id": "connection-1",
+            "device_token_ref": "bridge.device-token",
+            "adapter_kind": "hao",
+            "cwd": str(tmp_path),
+        },
+    )
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 30.0) -> None:
+            del api_url, token, timeout
+
+        def heartbeat_local_agent_connection(self, **kwargs) -> dict:
+            assert kwargs["device_token"] == "device-token"
+            calls.append("heartbeat")
+            return {"connection": {"id": kwargs["connection_id"], "onboarding_confirmed": False}}
+
+        def pull_local_agent_bridge_tasks(self, *, device_token: str) -> dict:
+            del device_token
+            calls.append("pull")
+            return {"items": [{"id": "task-1", "payload": {"message": "should not run"}}]}
+
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeClient)
+    monkeypatch.setattr(hao_main_module, "_resume_bridge_pending_tools", lambda **kwargs: None)
+
+    exit_code = hao_main_module.main(["bridge", "run", "--once"])
+
+    assert exit_code == 0
+    assert calls == ["heartbeat"]
+
+
+def test_hao_bridge_run_treats_unconfirmed_pull_rejection_as_wait_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setenv("HAO_HOME", str(tmp_path / "hao-home"))
+    config = hao_main_module.load_config()
+    hao_main_module._save_bridge_device_token(config, "device-token")
+    hao_main_module._save_bridge_state(
+        config,
+        {
+            "api_url": "http://127.0.0.1:8000",
+            "connection_id": "connection-1",
+            "device_token_ref": "bridge.device-token",
+            "adapter_kind": "hao",
+            "cwd": str(tmp_path),
+        },
+    )
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, api_url: str, token: str = "", timeout: float = 30.0) -> None:
+            del api_url, token, timeout
+
+        def heartbeat_local_agent_connection(self, **kwargs) -> dict:
+            assert kwargs["device_token"] == "device-token"
+            calls.append("heartbeat")
+            return {"connection": {"id": kwargs["connection_id"]}}
+
+        def pull_local_agent_bridge_tasks(self, *, device_token: str) -> dict:
+            assert device_token == "device-token"
+            calls.append("pull")
+            request = httpx.Request("GET", "http://127.0.0.1:8000/api/agents/local-agent/bridge/tasks")
+            response = httpx.Response(
+                409,
+                json={"detail": "Local Agent connection has not been confirmed"},
+                request=request,
+            )
+            raise httpx.HTTPStatusError(
+                "Local Agent connection has not been confirmed",
+                request=request,
+                response=response,
+            )
+
+    monkeypatch.setattr(hao_main_module, "HarnessApiClient", FakeClient)
+
+    exit_code = hao_main_module.main(["bridge", "run", "--once"])
+
+    assert exit_code == 0
+    assert calls == ["heartbeat", "pull"]
 
 
 def test_hao_bridge_v4_run_rejects_explicit_adapter_mismatch(
@@ -2369,16 +3163,19 @@ def test_hao_bridge_v4_codex_terminal_event_ids_are_stable(monkeypatch) -> None:
             captured_payloads.append(payload)
             return {"ok": True}
 
-    monkeypatch.setattr(
-        hao_main_module,
-        "_run_codex_cli",
-        lambda **kwargs: hao_main_module.CodexRunResult(
+    def completed_codex(**kwargs):
+        on_delta = kwargs.get("on_delta")
+        assert callable(on_delta)
+        on_delta("do")
+        on_delta("ne")
+        return hao_main_module.CodexRunResult(
             status="completed",
             content="done",
             session_id="session-1",
-            metadata={"exit_code": 0},
-        ),
-    )
+            metadata={"exit_code": 0, "streamed_delta_count": 2},
+        )
+
+    monkeypatch.setattr(hao_main_module, "_run_codex_cli", completed_codex)
 
     hao_main_module._handle_codex_bridge_task(
         config=object(),
@@ -2390,19 +3187,24 @@ def test_hao_bridge_v4_codex_terminal_event_ids_are_stable(monkeypatch) -> None:
 
     assert [payload["event_id"] for payload in captured_payloads] == [
         "task-1:codex:started",
-        "task-1:codex:delta:1",
+        "task-1:codex:delta:2",
+        "task-1:codex:delta:3",
         "task-1:codex:done",
     ]
+    assert [payload["sequence"] for payload in captured_payloads] == [1, 2, 3, 4]
+    assert [payload.get("content") for payload in captured_payloads[1:3]] == ["do", "ne"]
 
     captured_payloads.clear()
-    monkeypatch.setattr(
-        hao_main_module,
-        "_run_codex_cli",
-        lambda **kwargs: hao_main_module.CodexRunResult(
+    def failed_codex(**kwargs):
+        on_delta = kwargs.get("on_delta")
+        assert callable(on_delta)
+        on_delta("partial ")
+        return hao_main_module.CodexRunResult(
             status="error",
             error_message="codex unavailable",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(hao_main_module, "_run_codex_cli", failed_codex)
 
     hao_main_module._handle_codex_bridge_task(
         config=object(),
@@ -2414,8 +3216,10 @@ def test_hao_bridge_v4_codex_terminal_event_ids_are_stable(monkeypatch) -> None:
 
     assert [payload["event_id"] for payload in captured_payloads] == [
         "task-2:codex:started",
+        "task-2:codex:delta:2",
         "task-2:codex:error",
     ]
+    assert [payload["sequence"] for payload in captured_payloads] == [1, 2, 3]
 
 
 def test_hao_bridge_v5_claude_terminal_event_ids_are_stable(monkeypatch) -> None:
@@ -2427,16 +3231,19 @@ def test_hao_bridge_v5_claude_terminal_event_ids_are_stable(monkeypatch) -> None
             captured_payloads.append(payload)
             return {"ok": True}
 
-    monkeypatch.setattr(
-        hao_main_module,
-        "_run_claude_code_cli",
-        lambda **kwargs: hao_main_module.ClaudeCodeRunResult(
+    def completed_claude(**kwargs):
+        on_delta = kwargs.get("on_delta")
+        assert callable(on_delta)
+        on_delta("do")
+        on_delta("ne")
+        return hao_main_module.ClaudeCodeRunResult(
             status="completed",
             content="done",
             session_id="session-1",
-            metadata={"exit_code": 0, "api_key": "sk-ant-secret"},
-        ),
-    )
+            metadata={"exit_code": 0, "api_key": "sk-ant-secret", "streamed_delta_count": 2},
+        )
+
+    monkeypatch.setattr(hao_main_module, "_run_claude_code_cli", completed_claude)
 
     hao_main_module._handle_claude_code_bridge_task(
         config=object(),
@@ -2448,21 +3255,26 @@ def test_hao_bridge_v5_claude_terminal_event_ids_are_stable(monkeypatch) -> None
 
     assert [payload["event_id"] for payload in captured_payloads] == [
         "task-1:claude_code:started",
-        "task-1:claude_code:delta:1",
+        "task-1:claude_code:delta:2",
+        "task-1:claude_code:delta:3",
         "task-1:claude_code:done",
     ]
+    assert [payload["sequence"] for payload in captured_payloads] == [1, 2, 3, 4]
+    assert [payload.get("content") for payload in captured_payloads[1:3]] == ["do", "ne"]
     assert captured_payloads[-1]["metadata"]["api_key"] == "[REDACTED]"
 
     captured_payloads.clear()
-    monkeypatch.setattr(
-        hao_main_module,
-        "_run_claude_code_cli",
-        lambda **kwargs: hao_main_module.ClaudeCodeRunResult(
+    def failed_claude(**kwargs):
+        on_delta = kwargs.get("on_delta")
+        assert callable(on_delta)
+        on_delta("partial ")
+        return hao_main_module.ClaudeCodeRunResult(
             status="error",
             error_message="claude unavailable",
             metadata={"stderr": "/Users/luohao/private token=sk-ant-secret"},
-        ),
-    )
+        )
+
+    monkeypatch.setattr(hao_main_module, "_run_claude_code_cli", failed_claude)
 
     hao_main_module._handle_claude_code_bridge_task(
         config=object(),
@@ -2474,10 +3286,131 @@ def test_hao_bridge_v5_claude_terminal_event_ids_are_stable(monkeypatch) -> None
 
     assert [payload["event_id"] for payload in captured_payloads] == [
         "task-2:claude_code:started",
+        "task-2:claude_code:delta:2",
         "task-2:claude_code:error",
     ]
+    assert [payload["sequence"] for payload in captured_payloads] == [1, 2, 3]
     assert "sk-ant" not in captured_payloads[-1]["metadata"]["stderr"]
     assert "/Users/luohao" not in captured_payloads[-1]["metadata"]["stderr"]
+
+
+def test_hao_bridge_v4_run_codex_cli_streams_stdout_deltas(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(workspace),
+    }
+    probe = hao_main_module.CodexCliProbe(
+        installed=True,
+        executable="/opt/codex/bin/codex",
+        exec_help="--json --output-last-message -C --sandbox read-only",
+    )
+    streamed: list[str] = []
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            output_path = Path(command[command.index("--output-last-message") + 1])
+            output_path.write_text("final answer", encoding="utf-8")
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO(
+                '{"type":"assistant_delta","delta":"Hello "}\n'
+                '{"type":"assistant_delta","delta":"world"}\n'
+            )
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(hao_main_module, "_probe_codex_cli", lambda: probe)
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    result = hao_main_module._run_codex_cli(
+        config=config,
+        state=state,
+        payload={
+            "message": "hello",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+        },
+        on_delta=streamed.append,
+    )
+
+    assert result.status == "completed"
+    assert result.content == "final answer"
+    assert streamed == ["Hello ", "world"]
+    assert result.metadata["streamed_delta_count"] == 2
+
+
+def test_hao_bridge_v5_run_claude_cli_streams_after_safety_init(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = type("Config", (), {"home": tmp_path / "hao-home"})()
+    root_ref = hao_main_module._save_bridge_workspace_root(config, workspace)
+    state = {
+        "adapter_kind": "claude_code",
+        "workspace_root_ref": root_ref,
+        "workspace_identity_hash": hao_main_module._workspace_identity_hash(
+            workspace,
+            adapter_kind="claude_code",
+        ),
+    }
+    streamed: list[str] = []
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            del command, kwargs
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO(
+                '{"type":"assistant","content":"queued "}\n'
+                '{"type":"system","subtype":"init","tools":[],"mcp_servers":[]}\n'
+                '{"type":"assistant","content":"streamed"}\n'
+                '{"type":"result","result":"queued streamed","session_id":"session-1"}\n'
+            )
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            del timeout
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(
+        hao_main_module,
+        "_probe_claude_code_cli",
+        lambda: _claude_probe(hao_main_module),
+    )
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+
+    result = hao_main_module._run_claude_code_cli(
+        config=config,
+        state=state,
+        payload={
+            "message": "hello",
+            "workspace_identity_hash": state["workspace_identity_hash"],
+        },
+        on_delta=streamed.append,
+    )
+
+    assert result.status == "completed"
+    assert result.content == "queued streamed"
+    assert result.session_id == "session-1"
+    assert streamed == ["queued ", "streamed"]
+    assert result.metadata["streamed_delta_count"] == 2
 
 
 def test_hao_bridge_v4_codex_jsonl_parser_uses_fallback_and_redaction() -> None:
@@ -2525,7 +3458,8 @@ def test_hao_bridge_v5_claude_jsonl_parser_requires_empty_tool_safety_proof() ->
         "system_init_safe": True,
         "tools_count": 0,
         "mcp_servers_count": 0,
-        "delta_count": 2,
+        "delta_count": 1,
+        "result_text_present": True,
         "used_fallback": False,
     }
 
@@ -2560,6 +3494,7 @@ def test_hao_bridge_v5_claude_jsonl_parser_ignores_generic_non_assistant_records
         "tools_count": 0,
         "mcp_servers_count": 0,
         "delta_count": 1,
+        "result_text_present": False,
         "used_fallback": False,
     }
 
