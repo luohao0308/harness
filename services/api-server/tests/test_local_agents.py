@@ -2443,6 +2443,33 @@ def test_local_agent_v4_codex_second_turn_replays_redacted_harness_context(
         },
     )
     assert first_done.status_code == 201, first_done.text
+    agent_session_id = binding.json()["agent_session_id"]
+    db_session.add(
+        AgentMessage(
+            session_id=agent_session_id,
+            agent_id="default",
+            role="user",
+            content="STALE_SOURCE_ONLY_CONTEXT",
+            metadata_json={"source": "local_agent"},
+            created_at=utc_now(),
+        )
+    )
+    db_session.add(
+        AgentMessage(
+            session_id=agent_session_id,
+            agent_id="default",
+            role="assistant",
+            content="OTHER_BINDING_CONTEXT",
+            metadata_json={
+                "source": "local_agent",
+                "connection_id": "other-connection",
+                "binding_id": "other-binding",
+                "agent_session_id": agent_session_id,
+            },
+            created_at=utc_now(),
+        )
+    )
+    db_session.commit()
 
     second = client.post(
         f"/api/agents/local-agent/bindings/{binding_id}/messages",
@@ -2460,6 +2487,8 @@ def test_local_agent_v4_codex_second_turn_replays_redacted_harness_context(
     context_text = json.dumps(context, ensure_ascii=False)
     assert "remember TOKEN=[REDACTED] .../private/file.txt" in context_text
     assert "stored [REDACTED]" in context_text
+    assert "STALE_SOURCE_ONLY_CONTEXT" not in context_text
+    assert "OTHER_BINDING_CONTEXT" not in context_text
     assert "raw-token" not in context_text
     assert "sk-proj-1234567890abcdef" not in context_text
     assert "/Users/luohao" not in context_text
@@ -3115,6 +3144,9 @@ def test_local_agent_owner_can_send_and_bridge_events_are_idempotent(
     assert messages[1].metadata_json["model_call_id"] == model_call.id
     assert messages[1].metadata_json["model_provider"] == "deepseek"
     assert messages[1].metadata_json["model_name"] == "deepseek-v4"
+    assert messages[1].metadata_json["connection_id"] == connection["id"]
+    assert messages[1].metadata_json["binding_id"] == binding_id
+    assert messages[1].metadata_json["agent_session_id"] == sent_payload["agent_session_id"]
     assistant_io = messages[1].metadata_json["local_agent_io"]
     assert assistant_io["input"]["adapter_kind"] == "hao"
     assert assistant_io["input"]["connection_id"] == connection["id"]
@@ -5708,6 +5740,70 @@ def test_local_agent_client_message_id_is_scoped_to_binding(
     )
     assert second_sent.status_code == 202, second_sent.text
     assert second_sent.json()["bridge_task_id"] != first_sent.json()["bridge_task_id"]
+
+
+def test_local_agent_session_cannot_be_rebound_to_another_connection(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    hao_connection, _hao_device_token = _registered_connection(client, db_session)
+    claude_connection, _claude_device_token = _registered_claude_v6_connection(client, db_session)
+    first_binding = client.post(
+        f"/api/agents/local-agent/connections/{hao_connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={"title": "hao local session"},
+    )
+    assert first_binding.status_code == 201, first_binding.text
+
+    rebound = client.post(
+        f"/api/agents/local-agent/connections/{claude_connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={
+            "agent_session_id": first_binding.json()["agent_session_id"],
+            "title": "claude should not reuse hao session",
+        },
+    )
+
+    assert rebound.status_code == 409, rebound.text
+    assert "different local Agent connection" in rebound.text
+
+
+def test_local_agent_conflict_session_binding_cannot_send(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    hao_connection, _hao_device_token = _registered_connection(client, db_session)
+    claude_connection, _claude_device_token = _registered_claude_v6_connection(client, db_session)
+    binding = client.post(
+        f"/api/agents/local-agent/connections/{hao_connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={"title": "hao local session"},
+    )
+    assert binding.status_code == 201, binding.text
+    stale_binding = LocalAgentConversationBinding(
+        organization_id="dev-org",
+        owner_user_id="dev-engineer",
+        connection_id=claude_connection["id"],
+        agent_id="default",
+        agent_session_id=binding.json()["agent_session_id"],
+        adapter_session_id=None,
+        resume_mode="context_replay_new_session",
+        status="conflict",
+        metadata_json={"test_fixture": "historical_cross_connection_session"},
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(stale_binding)
+    db_session.flush()
+
+    rejected = client.post(
+        f"/api/agents/local-agent/bindings/{stale_binding.id}/messages",
+        headers=AUTH_HEADERS,
+        json={"content": "must not continue shared session", "client_message_id": "shared-1"},
+    )
+
+    assert rejected.status_code == 409, rejected.text
+    assert "not active" in rejected.text
 
 
 def test_local_agent_non_owner_and_operator_cannot_execute(
