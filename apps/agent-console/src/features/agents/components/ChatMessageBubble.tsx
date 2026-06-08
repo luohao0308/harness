@@ -198,6 +198,7 @@ export function ChatMessageBubble({
         )}
 
         {!isEditing && <MetadataLine node={node} aligned={isUser ? "end" : "start"} />}
+        {!isEditing && <LocalAgentIoPanel node={node} aligned={isUser ? "end" : "start"} />}
 
         {!isEditing && (node.role === "user" || node.role === "assistant") && (
           <div className={cn("flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
@@ -409,4 +410,165 @@ function MetadataLine({
       {typeof duration_ms === "number" && <span>{duration_ms}ms</span>}
     </div>
   );
+}
+
+function LocalAgentIoPanel({
+  node,
+  aligned,
+}: {
+  node: ConversationNode;
+  aligned: "start" | "end";
+}): JSX.Element | null {
+  const io = readLocalAgentIo(node.metadata.orchestration) ?? readLocalAgentIo(node.metadata);
+  if (io === null) return null;
+  const input = io.input;
+  const output = io.output;
+  const model = joinCompact(
+    [readString(input, "model_provider"), readString(input, "model_name")],
+    "/",
+  );
+  const contextCount = readNumber(input, "conversation_context_count");
+  const tools = readStringList(input, "tool_mentions", "name");
+  const attachments = readStringList(input, "attachments", "name");
+  const inputPreview =
+    readString(input, "message") ||
+    firstPreviewText(readArray(input, "conversation_context_preview"));
+  const outputPreview = output ? readString(output, "content_preview") : "";
+  const bindingId = readString(input, "binding_id");
+  const sessionId = readString(input, "agent_session_id");
+  const bridgeTaskId = output ? readString(output, "bridge_task_id") : "";
+  const modelCallId = output ? readString(output, "model_call_id") : "";
+  const durationMs = output ? readNumber(output, "duration_ms") : null;
+  const tokenSummary = output
+    ? joinCompact(
+        [
+          formatTokenPair("输入", readNumber(output, "prompt_tokens")),
+          formatTokenPair("输出", readNumber(output, "completion_tokens")),
+          formatTokenPair("总计", readNumber(output, "total_tokens")),
+        ],
+        " · ",
+      )
+    : "";
+  const rows = [
+    ["模型", model],
+    ["Binding", shortId(bindingId)],
+    ["Session", shortId(sessionId)],
+    ["Bridge", shortId(bridgeTaskId)],
+    ["ModelCall", shortId(modelCallId)],
+    ["上下文", typeof contextCount === "number" ? `${contextCount} 条` : ""],
+    ["工具", tools.join(", ")],
+    ["附件", attachments.join(", ")],
+    ["用量", tokenSummary],
+    ["耗时", typeof durationMs === "number" ? `${durationMs}ms` : ""],
+  ].filter(([, value]) => value.length > 0);
+
+  return (
+    <div
+      className={cn(
+        "mt-2 flex",
+        aligned === "end" ? "justify-end" : "justify-start",
+      )}
+    >
+      <div className="w-full max-w-[min(34rem,100%)] rounded-md border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
+        <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-800">
+          <span>本地 Agent I/O</span>
+          <span className="font-mono text-slate-400">
+            {readString(input, "adapter_kind") || "local"}
+          </span>
+        </div>
+        {rows.length > 0 ? (
+          <dl className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 gap-y-1">
+            {rows.map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-slate-400">{label}</dt>
+                <dd className="min-w-0 truncate font-mono text-slate-700" title={value}>
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        {inputPreview ? (
+          <PreviewBlock label="输入预览" value={inputPreview} />
+        ) : null}
+        {outputPreview ? (
+          <PreviewBlock label="输出预览" value={outputPreview} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PreviewBlock({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div className="mt-2 border-t border-slate-100 pt-2">
+      <div className="mb-1 text-slate-400">{label}</div>
+      <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-slate-50 px-2 py-1.5 font-mono text-[11px] leading-5 text-slate-700">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function readLocalAgentIo(value: unknown): {
+  input: Record<string, unknown>;
+  output: Record<string, unknown> | null;
+} | null {
+  if (!isRecord(value)) return null;
+  const raw = value.local_agent_io;
+  if (!isRecord(raw) || !isRecord(raw.input)) return null;
+  return {
+    input: raw.input,
+    output: isRecord(raw.output) ? raw.output : null,
+  };
+}
+
+function readString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readArray(record: Record<string, unknown>, key: string): unknown[] {
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function readStringList(record: Record<string, unknown>, key: string, itemKey: string): string[] {
+  return readArray(record, key)
+    .map((item) =>
+      isRecord(item) ? readString(item, itemKey) : typeof item === "string" ? item : "",
+    )
+    .filter((value) => value.length > 0)
+    .slice(0, 6);
+}
+
+function firstPreviewText(items: unknown[]): string {
+  for (const item of items) {
+    if (!isRecord(item)) continue;
+    const content = readString(item, "content");
+    if (content) return content;
+  }
+  return "";
+}
+
+function joinCompact(parts: string[], separator: string): string {
+  return parts.filter((part) => part.length > 0).join(separator);
+}
+
+function formatTokenPair(label: string, value: number | null): string {
+  return typeof value === "number" ? `${label} ${value}` : "";
+}
+
+function shortId(value: string): string {
+  if (!value) return "";
+  return value.length <= 16 ? value : value.slice(0, 12);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

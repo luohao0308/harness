@@ -403,6 +403,8 @@ export type LocalAgentConnection = {
   id: string;
   agent_id: string;
   owner_user_id: string;
+  pairing_token_id: string | null;
+  onboarding_confirmed: boolean;
   display_name: string;
   adapter_kind: string;
   protocol_version: string;
@@ -437,6 +439,25 @@ export type LocalAgentConversationBindingPage = {
   items: LocalAgentConversationBinding[];
 };
 
+export type LocalAgentSendMessagePayload = {
+  content: string;
+  client_message_id: string;
+  workspace_context_provided?: boolean;
+  workspace_mode?: AgentChatStreamPayload["mode"];
+  model_provider?: string | null;
+  model_name?: string | null;
+  messages?: AgentChatStreamMessage[];
+  active_leaf_id?: string | null;
+  active_branch_id?: string | null;
+  pinned_node_ids?: string[];
+  context_window_turns?: number;
+  tool_mentions?: ToolMention[];
+  attachment_names?: string[];
+  attachments?: AgentAttachmentPayload[];
+  context_max_tokens?: number;
+  compressed_context?: AgentChatStreamPayload["compressed_context"];
+};
+
 export type LocalAgentSendMessageResponse = {
   bridge_task_id: string;
   run_id: string;
@@ -454,6 +475,7 @@ export type LocalAgentBindingTask = {
   user_message_id: string;
   client_message_id: string;
   status: string;
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1292,6 +1314,7 @@ export type CacheSourceSummary = {
 export type TokenSavingsRunItem = {
   run_id: string;
   agent_id: string | null;
+  model_names: string[];
   title: string;
   status: string;
   created_at: string;
@@ -3178,12 +3201,11 @@ export async function selectAgentTokenOptimizer(
   });
 }
 
-export async function createLocalAgentPairingToken(agentId: string, adapterKind: string = "hao") {
-  const scope: Record<string, unknown> = { executable: true, adapters: [adapterKind] };
-  if (adapterKind === "claude_code_v6") {
-    scope.adapters = ["claude_code"];
-    scope.permission_bridge = ["sdk"];
-  }
+export async function createLocalAgentPairingToken(agentId: string) {
+  const scope: Record<string, unknown> = {
+    executable: true,
+    adapters: ["hao", "codex", "claude_code"],
+  };
   return request<LocalAgentPairing>("/api/agents/local-agent/pairing-tokens", {
     method: "POST",
     body: JSON.stringify({
@@ -3194,8 +3216,21 @@ export async function createLocalAgentPairingToken(agentId: string, adapterKind:
   });
 }
 
+export async function revokeLocalAgentPairingToken(tokenId: string) {
+  return request<LocalAgentPairing>(`/api/agents/local-agent/pairing-tokens/${tokenId}/revoke`, {
+    method: "POST",
+  });
+}
+
 export async function listLocalAgentConnections() {
   return request<LocalAgentConnectionPage>("/api/agents/local-agent/connections");
+}
+
+export async function updateLocalAgentConnection(connectionId: string, payload: { display_name: string }) {
+  return request<LocalAgentConnection>(`/api/agents/local-agent/connections/${connectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function revokeLocalAgentConnection(connectionId: string) {
@@ -3242,7 +3277,7 @@ export async function listLocalAgentBindingTasks(bindingId: string) {
 
 export async function sendLocalAgentMessage(
   bindingId: string,
-  payload: { content: string; client_message_id: string },
+  payload: LocalAgentSendMessagePayload,
 ) {
   return request<LocalAgentSendMessageResponse>(
     `/api/agents/local-agent/bindings/${bindingId}/messages`,
