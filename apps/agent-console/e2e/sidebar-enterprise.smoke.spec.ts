@@ -93,6 +93,7 @@ test.describe("enterprise sidebar route coverage", () => {
       "/agents/default/workspace",
       `/teams/${enterpriseIds.teamId}`,
       `/runs/${enterpriseIds.runId}`,
+      "/token-savings",
       "/settings/models",
     ]) {
       test(`${routePath} has no document overflow at ${viewport.name}`, async ({ page }) => {
