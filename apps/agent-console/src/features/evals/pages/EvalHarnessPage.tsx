@@ -1,12 +1,13 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { FlaskConical, GitCompare, Plus, Save, ShieldCheck, UserCheck } from "lucide-react";
+import { ChevronRight, Database, FlaskConical, GitCompare, Plus, Save, ShieldCheck, UserCheck } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
-import { Badge, statusTone } from "../../../components/ui/badge";
+import { Badge, statusTone, type BadgeTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
@@ -64,6 +65,9 @@ export function EvalHarnessPage() {
   const [langGraphEvalRunId, setLangGraphEvalRunId] = useState("");
   const [contractJsonText, setContractJsonText] = useState("");
   const [contractError, setContractError] = useState<string | null>(null);
+  const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
+  const [saveCaseDialogOpen, setSaveCaseDialogOpen] = useState(false);
+  const [experimentDialogOpen, setExperimentDialogOpen] = useState(false);
 
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
   const datasetsQuery = useQuery({ queryKey: ["eval-datasets"], queryFn: listEvalDatasets });
@@ -116,6 +120,7 @@ export function EvalHarnessPage() {
     mutationFn: () => createEvalDataset({ name: datasetName, description: datasetDescription }),
     onSuccess: (dataset) => {
       setSelectedDatasetId(dataset.id);
+      setDatasetDialogOpen(false);
       notifyFeedback({
         tone: "success",
         title: text("数据集已创建", "Dataset created"),
@@ -160,6 +165,7 @@ export function EvalHarnessPage() {
     },
     onSuccess: () => {
       setSourceRunId("");
+      setSaveCaseDialogOpen(false);
       notifyFeedback({
         tone: "success",
         title: text("评测用例已保存", "Eval case saved"),
@@ -238,6 +244,7 @@ export function EvalHarnessPage() {
         ],
       }),
     onSuccess: (experiment) => {
+      setExperimentDialogOpen(false);
       notifyFeedback({
         tone: "success",
         title: text("对照实验已创建", "Contrast experiment created"),
@@ -256,12 +263,22 @@ export function EvalHarnessPage() {
 
   const canSaveCase = Boolean(activeDatasetId && sourceRunId.trim());
   const canRunEval = Boolean(activeDatasetId && (casesQuery.data?.items.length ?? 0) > 0);
+  const nativeEvalRunInActiveDataset = evalRunOptions.some((option) => option.value === nativeEvalRunId);
+  const langGraphEvalRunInActiveDataset = evalRunOptions.some((option) => option.value === langGraphEvalRunId);
   const canCreateExperiment = Boolean(
     activeDatasetId &&
-      nativeEvalRunId &&
-      langGraphEvalRunId &&
+      nativeEvalRunInActiveDataset &&
+      langGraphEvalRunInActiveDataset &&
       nativeEvalRunId !== langGraphEvalRunId,
   );
+
+  function handleDatasetSelection(datasetId: string) {
+    if (datasetId !== activeDatasetId) {
+      setNativeEvalRunId("");
+      setLangGraphEvalRunId("");
+    }
+    setSelectedDatasetId(datasetId);
+  }
 
   function handleCreateDataset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -277,197 +294,279 @@ export function EvalHarnessPage() {
 
   return (
     <ConsoleShell title={text("评测中心", "Eval Harness")}>
-      <div className="mx-auto grid max-w-[1500px] grid-cols-[320px_minmax(0,1fr)_360px] gap-4 p-6">
-        <section className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <FlaskConical className="h-4 w-4" />
-                {text("数据集", "Datasets")}
+      <div className="space-y-4 p-4 lg:p-6">
+        <div className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
+          <section className="space-y-4">
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-900">
+                  <FlaskConical className="h-4 w-4 text-slate-500" />
+                  {text("评测配置", "Eval configuration")}
+                </div>
+                <Badge tone={activeDatasetId ? "success" : "warning"}>
+                  {activeDataset ? activeDataset.name : text("未选择数据集", "No dataset")}
+                </Badge>
               </div>
-            </CardHeader>
-            <form className="space-y-3 p-3" onSubmit={handleCreateDataset}>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                <EvalConfigEntryCard
+                  icon={<Plus className="h-4 w-4" />}
+                  title={text("创建数据集", "Create dataset")}
+                  status={datasets.length > 0 ? text(`${datasets.length} 个数据集`, `${datasets.length} datasets`) : text("可创建", "Ready")}
+                  statusTone={datasets.length > 0 ? "success" : "info"}
+                  summary={datasetName}
+                  detail={datasetDescription}
+                  actionLabel={text("配置数据集", "Configure dataset")}
+                  onAction={() => setDatasetDialogOpen(true)}
+                />
+                <EvalConfigEntryCard
+                  icon={<Save className="h-4 w-4" />}
+                  title={text("从运行保存用例", "Save case from run")}
+                  status={canSaveCase ? text("可保存", "Ready") : activeDatasetId ? text("等待运行 ID", "Needs run ID") : text("先选数据集", "Pick dataset")}
+                  statusTone={canSaveCase ? "success" : activeDatasetId ? "warning" : "neutral"}
+                  summary={sourceRunId.trim() || text("尚未填写运行 ID", "No run ID yet")}
+                  detail={activeDataset ? text(`目标：${activeDataset.name}`, `Target: ${activeDataset.name}`) : text("保存前先在下方选择或创建数据集。", "Select or create a dataset first.")}
+                  actionLabel={text("配置保存用例", "Configure save case")}
+                  onAction={() => setSaveCaseDialogOpen(true)}
+                />
+              </div>
+            </section>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                  <Database className="h-4 w-4" />
+                  {text("数据集", "Datasets")}
+                </div>
+                <Badge tone="neutral">{datasets.length} {text("个", "total")}</Badge>
+              </CardHeader>
+              <div className="p-2">
+                {datasets.map((dataset) => (
+                  <button
+                    key={dataset.id}
+                    className={`mb-1 w-full rounded-md px-2 py-2 text-left text-xs ${
+                      activeDatasetId === dataset.id
+                        ? "bg-slate-100 text-slate-900"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                    onClick={() => handleDatasetSelection(dataset.id)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate font-medium">{dataset.name}</span>
+                      <span className="shrink-0 font-mono text-[10px]">{dataset.case_count} 个用例</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      {dataset.baseline_run_id && (
+                        <Badge tone="success">基线</Badge>
+                      )}
+                      <span className="truncate text-[11px] text-slate-500">
+                        {dataset.description || dataset.id}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+                {!datasetsQuery.isLoading && datasets.length === 0 && (
+                  <div className="px-2 py-8 text-center text-xs text-slate-500">
+                    {text("还没有数据集", "No datasets yet")}
+                  </div>
+                )}
+              </div>
+            </Card>
+          </section>
+
+          <section className="space-y-4">
+            <EvalCaseList
+              cases={casesQuery.data?.items ?? []}
+              isLoading={casesQuery.isLoading}
+              agentId={agentId}
+              onAgentIdChange={setAgentId}
+              agentOptions={agentOptions}
+              canRunEval={canRunEval}
+              onRunEval={() => runEvalMutation.mutate()}
+            />
+
+            <EvalRunResults
+              latestRun={latestRun}
+              regressionDelta={regressionDelta}
+              activeDatasetId={activeDatasetId}
+              hasBaseline={Boolean(activeDataset?.baseline_run_id)}
+              onSetBaseline={(evalRunId) => setBaselineMutation.mutate(evalRunId)}
+            />
+          </section>
+
+          <aside className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="text-sm font-semibold text-slate-900">
+                  {text("回归门禁", "Regression Gate")}
+                </div>
+                <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
+                  {latestRun?.status === "COMPLETED" ? "接口已接入" : "等待中"}
+                </Badge>
+              </CardHeader>
+              <div className="space-y-2 p-3 text-xs">
+                <EvalReadiness
+                  icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                  label={text("轨迹评分器", "Trace Grader")}
+                  status={latestRun ? "已启用" : "等待中"}
+                />
+                <EvalReadiness
+                  icon={<GitCompare className="h-3.5 w-3.5" />}
+                  label={<TermHint description="双版本对比评测">双版本对比</TermHint>}
+                  status={text("已接入", "API-backed")}
+                />
+                <EvalReadiness
+                  icon={<UserCheck className="h-3.5 w-3.5" />}
+                  label={text("人工复核", "Human Review")}
+                  status={text("未启用", "Disabled")}
+                  disabled
+                />
+              </div>
+            </Card>
+            <LangGraphExperimentPanel
+              evalRunOptions={evalRunOptions}
+              nativeEvalRunId={nativeEvalRunId}
+              langGraphEvalRunId={langGraphEvalRunId}
+              experiments={experimentsQuery.data?.items ?? []}
+              isLoading={experimentsQuery.isLoading}
+              onConfigure={() => setExperimentDialogOpen(true)}
+            />
+            <Card>
+              <CardHeader>
+                <div className="text-sm font-semibold text-slate-900">
+                  {text("评测运行历史", "Eval Run History")}
+                </div>
+              </CardHeader>
+              <div className="p-2">
+                {(runsQuery.data?.items ?? []).map((run) => (
+                  <div key={run.id} className="mb-2 rounded-md border border-slate-200 p-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-slate-500">{run.id.slice(0, 8)}</span>
+                      <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+                      <span>用例: {metricNumber(run.metrics_json.case_total)}</span>
+                      <span>通过: {metricNumber(run.metrics_json.passed_total)}</span>
+                      <span>
+                        智能体:{" "}
+                        {evalAgentLabel(
+                          run.agent_id ?? "default",
+                          agentsQuery.data?.items?.map((agent) => ({ id: agent.id, name: agent.name })) ?? [],
+                        )}
+                      </span>
+                      <span>{formatShortDate(run.created_at)}</span>
+                    </div>
+                  </div>
+                ))}
+                {!runsQuery.isLoading && (runsQuery.data?.items.length ?? 0) === 0 && (
+                  <div className="px-2 py-8 text-center text-xs text-slate-500">
+                    {text("暂无评测运行", "No eval runs yet")}
+                  </div>
+                )}
+              </div>
+            </Card>
+          </aside>
+        </div>
+
+        <ConfigDialog
+          open={datasetDialogOpen}
+          title={text("创建数据集", "Create Dataset")}
+          description={text("只在需要新增回归集合时填写名称和说明，页面主体保留给数据集状态与运行结果。", "Fill name and description only when creating a new regression set.")}
+          onClose={() => setDatasetDialogOpen(false)}
+        >
+          <form className="space-y-3 text-xs" onSubmit={handleCreateDataset}>
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">{text("数据集名称", "Dataset name")}</span>
               <Input value={datasetName} onChange={(event) => setDatasetName(event.target.value)} />
+            </label>
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">{text("说明", "Description")}</span>
               <Input
                 value={datasetDescription}
                 onChange={(event) => setDatasetDescription(event.target.value)}
               />
-              <Button type="submit" variant="primary" className="w-full gap-1.5">
-                <Plus className="h-3.5 w-3.5" />
-                {text("创建数据集", "Create Dataset")}
-              </Button>
-            </form>
-            <div className="border-t border-slate-100 p-2">
-              {datasets.map((dataset) => (
-                <button
-                  key={dataset.id}
-                  className={`mb-1 w-full rounded-md px-2 py-2 text-left text-xs ${
-                    activeDatasetId === dataset.id
-                      ? "bg-slate-100 text-slate-900"
-                      : "text-slate-600 hover:bg-slate-50"
-                  }`}
-                  onClick={() => setSelectedDatasetId(dataset.id)}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{dataset.name}</span>
-                    <span className="font-mono text-[10px]">{dataset.case_count} 个用例</span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    {dataset.baseline_run_id && (
-                      <Badge tone="success">基线</Badge>
-                    )}
-                    <span className="truncate text-[11px] text-slate-500">
-                      {dataset.description || dataset.id}
-                    </span>
-                  </div>
-                </button>
-              ))}
-              {!datasetsQuery.isLoading && datasets.length === 0 && (
-                <div className="px-2 py-8 text-center text-xs text-slate-500">
-                  {text("还没有数据集", "No datasets yet")}
-                </div>
-              )}
-            </div>
-          </Card>
+            </label>
+            <Button type="submit" variant="primary" className="w-full gap-1.5" disabled={createDatasetMutation.isPending}>
+              <Plus className="h-3.5 w-3.5" />
+              {createDatasetMutation.isPending ? text("创建中", "Creating") : text("创建数据集", "Create Dataset")}
+            </Button>
+          </form>
+        </ConfigDialog>
 
-          <Card>
-            <CardHeader>
-              <div className="text-sm font-semibold text-slate-900">
-                {text("从运行保存用例", "Save Case From Run")}
-              </div>
-            </CardHeader>
-            <form className="space-y-3 p-3" onSubmit={handleSaveCase}>
+        <ConfigDialog
+          open={saveCaseDialogOpen}
+          title={text("从运行保存用例", "Save Case From Run")}
+          description={activeDataset ? text(`目标数据集：${activeDataset.name}`, `Target dataset: ${activeDataset.name}`) : text("保存前先选择或创建一个数据集。", "Select or create a dataset before saving.")}
+          onClose={() => setSaveCaseDialogOpen(false)}
+          className="max-w-3xl"
+        >
+          <form className="space-y-3 text-xs" onSubmit={handleSaveCase}>
+            <label className="grid gap-1">
+              <span className="font-medium text-slate-600">{text("运行 ID", "Run ID")}</span>
               <Input
                 value={sourceRunId}
                 onChange={(event) => setSourceRunId(event.target.value)}
                 placeholder={text("运行 ID", "Run ID")}
               />
-              <MenuSelect
-                ariaLabel={text("选择期望状态", "Select expected status")}
-                value={expectedStatus}
-                onChange={setExpectedStatus}
-                options={expectedStatusOptions}
-                placeholder={text("选择期望状态", "Select expected status")}
-                size="compact"
-              />
-              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-                {text(
-                  `当前保存的期望结果：${statusLabel(expectedStatus)}`,
-                  `Current expected status: ${expectedStatus}`,
-                )}
-              </div>
-              <ContractPresetEditor
-                value={contractJsonText}
-                onChange={(value) => {
-                  setContractJsonText(value);
-                  if (contractError) setContractError(null);
-                }}
-                error={contractError}
-              />
-              <Button type="submit" disabled={!canSaveCase} className="w-full gap-1.5">
-                <Save className="h-3.5 w-3.5" />
-                {text("保存为评测用例", "Save Eval Case")}
-              </Button>
-            </form>
-          </Card>
-        </section>
-
-        <section className="space-y-4">
-          <EvalCaseList
-            cases={casesQuery.data?.items ?? []}
-            isLoading={casesQuery.isLoading}
-            agentId={agentId}
-            onAgentIdChange={setAgentId}
-            agentOptions={agentOptions}
-            canRunEval={canRunEval}
-            onRunEval={() => runEvalMutation.mutate()}
-          />
-
-          <EvalRunResults
-            latestRun={latestRun}
-            regressionDelta={regressionDelta}
-            activeDatasetId={activeDatasetId}
-            hasBaseline={Boolean(activeDataset?.baseline_run_id)}
-            onSetBaseline={(evalRunId) => setBaselineMutation.mutate(evalRunId)}
-          />
-        </section>
-
-        <aside className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="text-sm font-semibold text-slate-900">
-                {text("回归门禁", "Regression Gate")}
-              </div>
-              <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
-                {latestRun?.status === "COMPLETED" ? "接口已接入" : "等待中"}
-              </Badge>
-            </CardHeader>
-            <div className="space-y-2 p-3 text-xs">
-              <EvalReadiness
-                icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                label={text("轨迹评分器", "Trace Grader")}
-                status={latestRun ? "已启用" : "等待中"}
-              />
-              <EvalReadiness
-                icon={<GitCompare className="h-3.5 w-3.5" />}
-                label={<TermHint description="双版本对比评测">双版本对比</TermHint>}
-                status={text("已接入", "API-backed")}
-              />
-              <EvalReadiness
-                icon={<UserCheck className="h-3.5 w-3.5" />}
-                label={text("人工复核", "Human Review")}
-                status={text("未启用", "Disabled")}
-                disabled
-              />
-            </div>
-          </Card>
-          <LangGraphExperimentPanel
-            evalRunOptions={evalRunOptions}
-            nativeEvalRunId={nativeEvalRunId}
-            onNativeEvalRunIdChange={setNativeEvalRunId}
-            langGraphEvalRunId={langGraphEvalRunId}
-            onLangGraphEvalRunIdChange={setLangGraphEvalRunId}
-            canCreate={canCreateExperiment}
-            creating={createExperimentMutation.isPending}
-            onCreate={() => createExperimentMutation.mutate()}
-            experiments={experimentsQuery.data?.items ?? []}
-            isLoading={experimentsQuery.isLoading}
-          />
-          <Card>
-            <CardHeader>
-              <div className="text-sm font-semibold text-slate-900">
-                {text("评测运行历史", "Eval Run History")}
-              </div>
-            </CardHeader>
-            <div className="p-2">
-              {(runsQuery.data?.items ?? []).map((run) => (
-                <div key={run.id} className="mb-2 rounded-md border border-slate-200 p-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-slate-500">{run.id.slice(0, 8)}</span>
-                    <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                    <span>用例: {metricNumber(run.metrics_json.case_total)}</span>
-                    <span>通过: {metricNumber(run.metrics_json.passed_total)}</span>
-                    <span>
-                      智能体:{" "}
-                      {evalAgentLabel(
-                        run.agent_id ?? "default",
-                        agentsQuery.data?.items?.map((agent) => ({ id: agent.id, name: agent.name })) ?? [],
-                      )}
-                    </span>
-                    <span>{formatShortDate(run.created_at)}</span>
-                  </div>
-                </div>
-              ))}
-              {!runsQuery.isLoading && (runsQuery.data?.items.length ?? 0) === 0 && (
-                <div className="px-2 py-8 text-center text-xs text-slate-500">
-                  {text("暂无评测运行", "No eval runs yet")}
-                </div>
+            </label>
+            <MenuSelect
+              ariaLabel={text("选择期望状态", "Select expected status")}
+              value={expectedStatus}
+              onChange={setExpectedStatus}
+              options={expectedStatusOptions}
+              placeholder={text("选择期望状态", "Select expected status")}
+              size="compact"
+            />
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+              {text(
+                `当前保存的期望结果：${statusLabel(expectedStatus)}`,
+                `Current expected status: ${expectedStatus}`,
               )}
             </div>
-          </Card>
-        </aside>
+            <ContractPresetEditor
+              value={contractJsonText}
+              onChange={(value) => {
+                setContractJsonText(value);
+                if (contractError) setContractError(null);
+              }}
+              error={contractError}
+            />
+            <Button type="submit" disabled={!canSaveCase || saveCaseMutation.isPending} className="w-full gap-1.5">
+              <Save className="h-3.5 w-3.5" />
+              {saveCaseMutation.isPending ? text("保存中", "Saving") : text("保存为评测用例", "Save Eval Case")}
+            </Button>
+          </form>
+        </ConfigDialog>
+
+        <ConfigDialog
+          open={experimentDialogOpen}
+          title="LangGraph vs Native"
+          description="对照实验只投影已有 EvalRun/EvalResult；RegressionDelta 仍保留 baseline/current 回归语义。"
+          onClose={() => setExperimentDialogOpen(false)}
+          className="max-w-3xl"
+        >
+          <div className="space-y-3 text-xs">
+            <MenuSelect
+              ariaLabel="选择 Native Harness Eval Run"
+              value={nativeEvalRunId}
+              onChange={setNativeEvalRunId}
+              options={evalRunOptions}
+              placeholder="选择 native Harness run"
+              size="compact"
+            />
+            <MenuSelect
+              ariaLabel="选择 LangGraph Workflow Eval Run"
+              value={langGraphEvalRunId}
+              onChange={setLangGraphEvalRunId}
+              options={evalRunOptions}
+              placeholder="选择 LangGraph workflow run"
+              size="compact"
+            />
+            <Button className="w-full" disabled={!canCreateExperiment || createExperimentMutation.isPending} onClick={() => createExperimentMutation.mutate()}>
+              <GitCompare className="h-3.5 w-3.5" />
+              {createExperimentMutation.isPending ? "创建中" : "创建对照实验"}
+            </Button>
+          </div>
+        </ConfigDialog>
       </div>
     </ConsoleShell>
   );
@@ -493,8 +592,8 @@ function EvalReadiness({
   status,
   disabled = false,
 }: {
-  icon: React.ReactNode;
-  label: React.ReactNode;
+  icon: ReactNode;
+  label: ReactNode;
   status: string;
   disabled?: boolean;
 }) {
@@ -509,29 +608,74 @@ function EvalReadiness({
   );
 }
 
+function EvalConfigEntryCard({
+  icon,
+  title,
+  status,
+  statusTone = "neutral",
+  summary,
+  detail,
+  actionLabel,
+  onAction,
+}: {
+  icon: ReactNode;
+  title: string;
+  status: string;
+  statusTone?: BadgeTone;
+  summary: string;
+  detail: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <Card className="h-full">
+      <div className="flex h-full flex-col gap-3 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-slate-900">
+              <span className="text-slate-500">{icon}</span>
+              <span className="truncate">{title}</span>
+            </div>
+            <div className="mt-1 truncate text-[11px] text-slate-500" title={summary}>
+              {summary}
+            </div>
+          </div>
+          <Badge tone={statusTone} className="shrink-0 whitespace-nowrap text-[10px]">
+            {status}
+          </Badge>
+        </div>
+        <div className="min-h-8 text-xs leading-4 text-slate-500" title={detail}>
+          {detail}
+        </div>
+        <div className="mt-auto">
+          <Button type="button" className="w-full justify-between" onClick={onAction}>
+            <span>{actionLabel}</span>
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function LangGraphExperimentPanel({
   evalRunOptions,
   nativeEvalRunId,
-  onNativeEvalRunIdChange,
   langGraphEvalRunId,
-  onLangGraphEvalRunIdChange,
-  canCreate,
-  creating,
-  onCreate,
   experiments,
   isLoading,
+  onConfigure,
 }: {
   evalRunOptions: Array<{ value: string; label: string; description: string }>;
   nativeEvalRunId: string;
-  onNativeEvalRunIdChange: (value: string) => void;
   langGraphEvalRunId: string;
-  onLangGraphEvalRunIdChange: (value: string) => void;
-  canCreate: boolean;
-  creating: boolean;
-  onCreate: () => void;
   experiments: EvalExperiment[];
   isLoading: boolean;
+  onConfigure: () => void;
 }) {
+  const selectedNative = evalRunOptions.find((option) => option.value === nativeEvalRunId);
+  const selectedLangGraph = evalRunOptions.find((option) => option.value === langGraphEvalRunId);
+
   return (
     <Card>
       <CardHeader>
@@ -545,25 +689,24 @@ function LangGraphExperimentPanel({
         <div className="rounded-md border border-cyan-100 bg-cyan-50 p-2 leading-5 text-cyan-950">
           对照实验只投影已有 EvalRun/EvalResult；RegressionDelta 仍保留 baseline/current 回归语义。
         </div>
-        <MenuSelect
-          ariaLabel="选择 Native Harness Eval Run"
-          value={nativeEvalRunId}
-          onChange={onNativeEvalRunIdChange}
-          options={evalRunOptions}
-          placeholder="选择 native Harness run"
-          size="compact"
-        />
-        <MenuSelect
-          ariaLabel="选择 LangGraph Workflow Eval Run"
-          value={langGraphEvalRunId}
-          onChange={onLangGraphEvalRunIdChange}
-          options={evalRunOptions}
-          placeholder="选择 LangGraph workflow run"
-          size="compact"
-        />
-        <Button className="w-full" disabled={!canCreate || creating} onClick={onCreate}>
-          <GitCompare className="h-3.5 w-3.5" />
-          {creating ? "创建中" : "创建对照实验"}
+        <div className="grid gap-2">
+          <EvalExperimentRunSummary
+            label="Native Harness"
+            value={selectedNative?.label ?? "未选择"}
+            detail={selectedNative?.description ?? "从同一数据集选择 baseline run"}
+          />
+          <EvalExperimentRunSummary
+            label="LangGraph Workflow"
+            value={selectedLangGraph?.label ?? "未选择"}
+            detail={selectedLangGraph?.description ?? "从同一数据集选择 candidate run"}
+          />
+        </div>
+        <Button className="w-full justify-between" onClick={onConfigure}>
+          <span className="inline-flex items-center gap-1.5">
+            <GitCompare className="h-3.5 w-3.5" />
+            配置对照实验
+          </span>
+          <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
         <div className="space-y-2 border-t border-slate-100 pt-3">
           {experiments.map((experiment) => (
@@ -605,6 +748,31 @@ function LangGraphExperimentPanel({
         </div>
       </div>
     </Card>
+  );
+}
+
+function EvalExperimentRunSummary({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: ReactNode;
+  detail: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-slate-100 bg-slate-50 px-2 py-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-slate-500">{label}</span>
+        <Badge tone={value === "未选择" ? "warning" : "success"}>{value === "未选择" ? "待选择" : "已选择"}</Badge>
+      </div>
+      <div className="mt-1 truncate font-mono text-[11px] text-slate-800" title={typeof value === "string" ? value : undefined}>
+        {value}
+      </div>
+      <div className="mt-0.5 truncate text-[10px] text-slate-500" title={typeof detail === "string" ? detail : undefined}>
+        {detail}
+      </div>
+    </div>
   );
 }
 
