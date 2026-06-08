@@ -44,7 +44,7 @@ export function SlashCommandMenu({
     <div
       role="listbox"
       aria-label={text("命令菜单", "Slash command menu")}
-      className="absolute bottom-full left-0 right-0 z-20 mb-2 mx-auto w-[360px] max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-1 shadow-xl"
+      className="absolute bottom-full left-0 right-0 z-20 mb-2 mx-auto w-[360px] max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-1 shadow-none"
     >
       {candidates.length === 0 ? (
         <p className="px-3 py-4 text-center text-xs text-slate-500">

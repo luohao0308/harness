@@ -212,7 +212,7 @@ export function ComposerOptionsPopover({
       role="dialog"
       aria-modal="false"
       aria-labelledby={titleId}
-      className="absolute bottom-full right-3 z-30 mb-2 w-[min(460px,calc(100vw-1.5rem))] max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+      className="absolute bottom-full right-3 z-30 mb-2 w-[min(460px,calc(100vw-1.5rem))] max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-none"
     >
       <div className="flex items-center justify-between">
         <h2

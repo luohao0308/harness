@@ -102,7 +102,7 @@ export function ContextPopover({ value, onChange }: ContextPopoverProps): JSX.El
         <div
           role="dialog"
           aria-label={text("上下文轮数", "Context turns")}
-          className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-slate-200 bg-white p-3 shadow-lg"
+          className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-slate-200 bg-white p-3 shadow-none"
         >
           <div className="flex items-baseline justify-between">
             <span className="text-xs font-medium text-slate-700">

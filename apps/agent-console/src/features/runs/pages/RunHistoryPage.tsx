@@ -63,11 +63,7 @@ export function RunHistoryPage() {
               {text("运行列表", "Run List")}
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span>
-                {runs.isLoading
-                  ? text("加载中...", "Loading...")
-                  : text(`${items.length} 个运行`, `${items.length} runs`)}
-              </span>
+              {runs.isLoading ? <span>{text("加载中...", "Loading...")}</span> : null}
               {runs.hasNextPage ? (
                 <button
                   type="button"
@@ -101,18 +97,18 @@ export function RunHistoryPage() {
               />
             </div>
           ) : (
-            <div className="min-w-[860px]">
-              <Table>
+            <div className="min-w-[860px]" role="region" aria-label={text("运行列表", "Run List")}>
+              <Table className="table-fixed">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <Th>运行</Th>
-                    <Th>{text("状态", "Status")}</Th>
-                    <Th>{text("模型", "Model")}</Th>
+                    <Th className="w-[34%]">运行</Th>
+                    <Th className="w-[12%]">{text("状态", "Status")}</Th>
+                    <Th className="w-[18%]">{text("模型", "Model")}</Th>
                     <Th>
                       <TermHint description="智能体运行平台">运行平台</TermHint>
                     </Th>
-                    <Th>{text("更新时间", "Updated")}</Th>
-                    <Th />
+                    <Th className="w-[14%]">{text("更新时间", "Updated")}</Th>
+                    <Th className="w-12" />
                   </tr>
                 </thead>
               </Table>
@@ -121,7 +117,7 @@ export function RunHistoryPage() {
                 estimateSize={64}
                 height={Math.min(620, Math.max(260, items.length * 64))}
                 renderItem={(run) => (
-                  <Table>
+                  <Table className="table-fixed">
                     <tbody>
                       <RunRow run={run} />
                     </tbody>

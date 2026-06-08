@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -105,6 +105,11 @@ function renderShell(path: string, title: string, content: string) {
 
 afterEach(() => {
   resetAuthMock();
+  useConsoleStore.setState({
+    environment: "production",
+    locale: "zh-CN",
+    sidebarNavScrollTop: 0,
+  });
   vi.unstubAllGlobals();
 });
 
@@ -129,6 +134,53 @@ describe("ConsoleShell", () => {
 
     expect(screen.getByText("知识库内容")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "知识库" })).toHaveAttribute("href", "/knowledge");
+  });
+
+  it("groups secondary navigation without removing primary routes", async () => {
+    const user = userEvent.setup();
+    renderShell("/tools", "工具市场", "工具内容");
+
+    expect(screen.getByRole("navigation", { name: "控制台导航" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "智能体" })).toHaveAttribute("href", "/agents");
+    expect(screen.getByRole("link", { name: "团队" })).toHaveAttribute("href", "/teams");
+    expect(screen.getByRole("link", { name: "知识库" })).toHaveAttribute("href", "/knowledge");
+
+    const agentMarketplace = screen.getByRole("button", { name: /专家与子代理/ });
+    expect(agentMarketplace).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "子代理" })).not.toBeInTheDocument();
+    await user.click(agentMarketplace);
+    expect(agentMarketplace).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "子代理" })).toHaveAttribute("href", "/subagents");
+    expect(screen.getByRole("link", { name: "专家库" })).toHaveAttribute("href", "/subagent-specialists");
+    expect(screen.getByRole("link", { name: "专家市场" })).toHaveAttribute("href", "/subagent-marketplace");
+
+    const toolsGroup = screen.getByRole("button", { name: /工具与能力/ });
+    expect(toolsGroup).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "工具市场" })).toHaveAttribute("href", "/tools");
+    expect(screen.getByRole("link", { name: "工具配置" })).toHaveAttribute("href", "/tools/config");
+    expect(screen.getByRole("link", { name: "沙箱" })).toHaveAttribute("href", "/sandboxes");
+  });
+
+  it("keeps collapsed team navigation links at the 44px touch target width", () => {
+    renderShell("/teams/team-enterprise", "团队", "团队内容");
+
+    const nav = screen.getByRole("navigation", { name: "控制台导航" });
+    expect(nav).toHaveClass("px-0");
+    expect(screen.getByRole("link", { name: "智能体" })).toHaveClass("w-full");
+  });
+
+  it("restores sidebar scroll after route-owned shell remounts", async () => {
+    const first = renderShell("/knowledge", "知识库", "知识库内容");
+    const firstNav = screen.getByRole("navigation", { name: "控制台导航" });
+    firstNav.scrollTop = 420;
+    fireEvent.scroll(firstNav);
+    expect(useConsoleStore.getState().sidebarNavScrollTop).toBe(420);
+
+    first.unmount();
+    renderShell("/tools", "工具市场", "工具内容");
+
+    const secondNav = screen.getByRole("navigation", { name: "控制台导航" });
+    await waitFor(() => expect(secondNav.scrollTop).toBe(420));
   });
 
   it("shows a dev-token account menu without the formal logout action", async () => {
@@ -172,6 +224,40 @@ describe("ConsoleShell", () => {
 
     await user.click(screen.getByRole("menuitem", { name: "退出登录" }));
     await waitFor(() => expect(authMock.logoutCurrentUser).toHaveBeenCalledTimes(1));
+  });
+
+  it("supports keyboard navigation inside the account menu", async () => {
+    authMock.value = {
+      ...authMock.value,
+      user: {
+        ...authMock.value.user,
+        user_id: "user-1",
+        email: "owner@example.com",
+        name: "Owner User",
+        avatar_data_url: null,
+        organization_id: "org-1",
+        role: "owner",
+        organizations: [{ id: "org-1", name: "Acme Production", slug: "acme-prod", role: "owner" }],
+      },
+      isUsingDevToken: false,
+      currentOrganization: { id: "org-1", name: "Acme Production", slug: "acme-prod", role: "owner" },
+      logoutCurrentUser: authMock.logoutCurrentUser,
+      uploadAvatar: authMock.uploadAvatar,
+    };
+    const user = userEvent.setup();
+    renderShell("/settings/secrets", "密钥库", "密钥库内容");
+
+    const accountButton = screen.getByRole("button", { name: "账号菜单" });
+    accountButton.focus();
+    await user.keyboard("{ArrowDown}");
+
+    const uploadAvatar = await screen.findByRole("menuitem", { name: "上传头像" });
+    await waitFor(() => expect(uploadAvatar).toHaveFocus());
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "退出登录" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "账号菜单" })).not.toBeInTheDocument());
+    expect(accountButton).toHaveFocus();
   });
 
   it("uploads an avatar from the account menu for JWT sessions", async () => {
