@@ -32,6 +32,9 @@ npm install -g @harness/hao
 ```
 
 不要用 `npm install -g hao`。npm 上已有旧的同名 `hao` 包，它不是 Harness CLI。
+如果平台弹出的“接入本地 Agent”命令使用 `npx`，当前私有部署应显示
+`npx -y /path/to/harness/services/api-server bridge pair ...` 这类本地包路径。
+只有发布 `@harness/hao` 后，才应切到 `npx -y @harness/hao@latest ...`。
 
 ## 确认装到的是正确的 hao
 

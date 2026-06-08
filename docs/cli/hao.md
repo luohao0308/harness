@@ -99,6 +99,41 @@ hao auth status
 
 `HAO_HOME` 会改变配置和会话根目录，默认是 `~/.hao`。
 
+## 本地 Agent Bridge 配对
+
+Agent Studio 的“接入本地 Agent”向导会先生成一条通用连接命令，不需要在生成命令前选择 adapter。当前私有开发部署默认使用仓库里的本地 npm package 路径，避免访问尚未发布到 npm registry 的 `@harness/hao`：
+
+```bash
+npx -y /path/to/harness/services/api-server bridge pair --api http://127.0.0.1:8000 --pair-token <token> --pair-code <code> --daemon
+```
+
+如果以后把包发布到 npm registry，后端可设置 `LOCAL_AGENT_NPX_PACKAGE=@harness/hao@latest` 和可选的 `LOCAL_AGENT_NPX_REGISTRY=https://registry.npmmirror.com`，生成命令会自动切回 registry 包形式。
+
+省略 `--adapter` 时，CLI 会自动探测本机可用的真实本地 Agent：
+
+- `hao`
+- `Codex CLI`
+- `Claude Code`
+
+探测到的默认 adapter 会分别登记到同一个 pairing token 下，并把运行状态写入独立目录，例如 `~/.hao/bridges/hao`、`~/.hao/bridges/codex`、`~/.hao/bridges/claude_code`。这样多个 daemon 不会抢同一个 `bridge.json`。登记后连接会以 `pending_confirmation` 出现在平台发现列表里；只有用户在 Agent Studio 勾选并保存后，连接才会 PATCH 确认并进入可用接入态。未确认 daemon 只会保持心跳等待确认，不会拉取任务或执行工具。
+
+默认通用向导会自动发现已安装的 `hao`、Codex CLI 和 Claude Code，但发现不等于接入。三个真实本地 Agent 在确认接入后都暴露同一套 Harness 管理的本机工具链：`read/write/shell/test/git/network` 能力由本机 bridge 执行，但必须通过 Harness 审批、审计和事件回放路径，不走未记录的原生旁路。
+
+下面示例只用于测试或高级 CLI 路径，说明显式 adapter 参数仍然保留；它们不是 Agent Studio 默认生成给用户执行的命令，Agent Studio 默认仍保持上面的通用 `npx` 形态：
+
+```bash
+npx -y /path/to/harness/services/api-server bridge pair --api http://127.0.0.1:8000 --pair-token <token> --pair-code <code> --adapter codex --daemon
+npx -y /path/to/harness/services/api-server bridge pair --api http://127.0.0.1:8000 --pair-token <token> --pair-code <code> --adapter claude_code --permission-bridge sdk --daemon
+```
+
+显式单 adapter token 仍按单次使用处理；通用多 adapter token 可按默认 adapter 各注册一次，重复注册同一 adapter 会被拒绝。`fake` adapter 仍可用于显式测试和 smoke 场景，但不属于默认通用接入列表。
+
+Agent Studio 的识别卡片会展示每个本地 Agent 的名称、图标、模型来源、恢复方式和工具状态。未确认行会显示“待确认 / 未接入”，需要勾选并保存后才进入下面的可用状态：
+
+- `hao`：本机工具链可用，支持本地 session 原生恢复。
+- `Codex CLI`：本机工具链可用；平台模型、上下文、工具和附件证据会传入，离线后通过上下文重放恢复。
+- `Claude Code`：本机工具链可用；平台模型、上下文、工具和附件证据会传入，离线后通过上下文重放恢复。SDK permission bridge 仍可作为高级意图捕获路径，但不是获得本机工具能力的前提。
+
 ## 启动会话
 
 ```bash

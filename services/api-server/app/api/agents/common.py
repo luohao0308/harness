@@ -63,6 +63,7 @@ from app.api.schemas import (
     LocalAgentConnectionRegisterRequest,
     LocalAgentConnectionRegisterResponse,
     LocalAgentConnectionResponse,
+    LocalAgentConnectionUpdateRequest,
     LocalAgentConversationBindRequest,
     LocalAgentConversationBindingPage,
     LocalAgentConversationBindingResponse,
@@ -195,6 +196,7 @@ from app.knowledge_dify import (
     store_connector_secret_ref,
 )
 from app.security.auth import Principal, require_role
+from app.security.jwt_utils import issue_access_token
 from app.tools.capabilities import (
     CAPABILITY_TYPE_CONTEXT_OPTIMIZER,
     CapabilityResolutionError,

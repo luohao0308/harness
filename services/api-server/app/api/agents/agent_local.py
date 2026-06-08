@@ -2,23 +2,31 @@
 
 # ruff: noqa: F401,F403,F405,I001,UP037
 import secrets
+import shlex
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi import Header
 from sqlalchemy.exc import IntegrityError
 
 from .common import *
 from ._workspace_chat_helpers import _create_workspace_chat_run
+from app.core.config import get_settings
+from app.security.auth import LOCAL_AGENT_BRIDGE_STREAM_SCOPE
 
 LOCAL_AGENT_PROTOCOL_VERSION = "local-agent-v1"
 LOCAL_AGENT_SUPPORTED_ADAPTERS = {"fake", "hao", "codex", "claude_code"}
 LOCAL_AGENT_DISABLED_ADAPTERS: set[str] = set()
-LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS = ["fake", "hao", "codex", "claude_code"]
-LOCAL_AGENT_COMMAND = (
-    "hao bridge pair "
-    "--api {api_url} --pair-token {pair_token} --pair-code {pair_code} --daemon"
-)
+LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS = ["hao", "codex", "claude_code"]
+LOCAL_AGENT_APPROVED_LOCAL_TOOL_POLICY = "harness_approved_local_bridge"
+LOCAL_AGENT_TOOL_POLICY_ADAPTERS = {"hao", "codex", "claude_code"}
+LOCAL_AGENT_SERVER_METADATA_KEYS = {
+    "local_tool_policy",
+    "server_permission_bridge_entitlement",
+}
+LOCAL_AGENT_FULL_RISK_CAPABILITIES = ["host_read", "host_write", "shell", "git", "network"]
 DEVICE_TOKEN_BYTES = 32
 PAIR_TOKEN_BYTES = 32
 PAIR_CODE_DIGITS = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -66,10 +74,14 @@ LOCAL_AGENT_CAPABILITY_TOOL_ALIASES = {
     "network": "network_request",
 }
 LOCAL_AGENT_SAFE_TOOLS = {"fake.noop", "local_status", "read_metadata"}
-LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS = {"codex", "claude_code"}
-LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES = {"workspace_read_constrained"}
+LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS: set[str] = set()
+LOCAL_AGENT_HARNESS_TOOL_PROTOCOL_ADAPTERS = {"codex", "claude_code"}
+LOCAL_AGENT_CODEX_ALLOWED_RISK_CAPABILITIES = set(LOCAL_AGENT_FULL_RISK_CAPABILITIES)
 LOCAL_AGENT_CLAUDE_CODE_ALLOWED_RISK_CAPABILITIES = {
+    *LOCAL_AGENT_FULL_RISK_CAPABILITIES,
+    # Keep accepting older bridge labels, then normalize them to the full parity surface.
     "workspace_read",
+    "workspace_read_constrained",
     "host_write_approval_required",
     "shell_approval_required",
     "git_approval_required",
@@ -131,6 +143,58 @@ LOCAL_AGENT_CODEX_CONTEXT_MESSAGE_CHARS = 2000
 LOCAL_AGENT_CODEX_CONTEXT_TOTAL_CHARS = 12000
 
 
+def _local_agent_workspace_run_mode(connection: LocalAgentConnection, workspace_mode: str) -> str:
+    if workspace_mode in {"markdown_plan", "plan"}:
+        return "markdown_plan"
+    if connection.adapter_kind == "hao":
+        return "cli_agent"
+    return "chat"
+
+
+def _local_agent_bridge_stream_token(
+    principal: Principal,
+    *,
+    agent_id: str,
+    run_id: str,
+    bridge_task_id: str,
+) -> str:
+    return _local_agent_bridge_stream_token_for_subject(
+        user_id=principal.user_id,
+        organization_id=principal.organization_id,
+        role=principal.role,
+        roles=principal.roles,
+        agent_id=agent_id,
+        run_id=run_id,
+        bridge_task_id=bridge_task_id,
+    )
+
+
+def _local_agent_bridge_stream_token_for_subject(
+    *,
+    user_id: str,
+    organization_id: str | None,
+    role: str,
+    roles: list[str],
+    agent_id: str,
+    run_id: str,
+    bridge_task_id: str,
+) -> str:
+    expires_at = datetime.now(UTC) + timedelta(minutes=LOCAL_AGENT_TOOL_DECISION_TTL_MINUTES)
+    return issue_access_token(
+        user_id=user_id,
+        organization_id=organization_id,
+        role=role,
+        roles=roles,
+        extra={
+            "scope": LOCAL_AGENT_BRIDGE_STREAM_SCOPE,
+            "agent_id": agent_id,
+            "run_id": run_id,
+            "bridge_task_id": bridge_task_id,
+            "exp": int(expires_at.timestamp()),
+        },
+    )
+
+
 def _sha256_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -160,14 +224,88 @@ def _redact_path(value: str | None) -> str | None:
     return f".../{'/'.join(parts[-2:])}"
 
 
+def _local_agent_public_api_url() -> str:
+    return str(get_settings().api_base_url).rstrip("/")
+
+
+def _default_local_agent_npx_package() -> str:
+    return str(Path(__file__).resolve().parents[3])
+
+
+def _local_agent_npx_package_spec() -> str:
+    configured = get_settings().local_agent_npx_package.strip()
+    if configured:
+        return configured
+    return _default_local_agent_npx_package()
+
+
+def _local_agent_npx_uses_registry(package_spec: str) -> bool:
+    normalized = package_spec.strip()
+    if not normalized:
+        return False
+    if normalized.startswith(
+        (
+            "/",
+            "./",
+            "../",
+            "~/",
+            "file:",
+            "http://",
+            "https://",
+            "git+",
+            "git:",
+            "github:",
+            "gitlab:",
+            "bitbucket:",
+            "ssh:",
+            "git@",
+        )
+    ):
+        return False
+    if "/" in normalized and not normalized.startswith("@"):
+        return False
+    return True
+
+
+def _local_agent_pairing_command(
+    *,
+    api_url: str,
+    pair_token: str,
+    pair_code: str,
+) -> str:
+    package_spec = _local_agent_npx_package_spec()
+    parts = ["npx", "-y"]
+    registry = get_settings().local_agent_npx_registry.strip()
+    if registry and _local_agent_npx_uses_registry(package_spec):
+        parts.append(f"--registry={registry}")
+    parts.extend(
+        [
+            package_spec,
+            "bridge",
+            "pair",
+            "--api",
+            api_url,
+            "--pair-token",
+            pair_token,
+            "--pair-code",
+            pair_code,
+            "--daemon",
+        ]
+    )
+    return " ".join(shlex.quote(part) for part in parts)
+
+
 def _pairing_response(
-    token: LocalAgentPairingToken, *, pair_token: str | None = None
+    token: LocalAgentPairingToken,
+    *,
+    pair_token: str | None = None,
+    api_url: str | None = None,
 ) -> LocalAgentPairingResponse:
     command = None
     if pair_token is not None:
         adapter_kind = _pairing_command_adapter(token.scope_json)
-        command = LOCAL_AGENT_COMMAND.format(
-            api_url="http://127.0.0.1:8000",
+        command = _local_agent_pairing_command(
+            api_url=(api_url or _local_agent_public_api_url()),
             pair_token=pair_token,
             pair_code=token.pair_code,
         )
@@ -190,7 +328,10 @@ def _pairing_response(
 
 def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnectionResponse:
     effective_status = connection.status
-    if (
+    onboarding_confirmed = _connection_onboarding_confirmed(connection)
+    if not onboarding_confirmed and effective_status != "revoked":
+        effective_status = "pending_confirmation"
+    elif (
         effective_status in {"online", "busy"}
         and connection.last_seen_at is not None
         and (_as_aware_utc(utc_now()) - _as_aware_utc(connection.last_seen_at)).total_seconds()
@@ -201,6 +342,8 @@ def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnecti
         id=connection.id,
         agent_id=connection.agent_id,
         owner_user_id=connection.owner_user_id,
+        pairing_token_id=connection.pairing_token_id,
+        onboarding_confirmed=onboarding_confirmed,
         display_name=connection.display_name,
         adapter_kind=connection.adapter_kind,
         protocol_version=connection.protocol_version,
@@ -213,6 +356,30 @@ def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnecti
         revoked_at=connection.revoked_at,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
+    )
+
+
+def _connection_onboarding_confirmed(connection: LocalAgentConnection) -> bool:
+    metadata = connection.metadata_json if isinstance(connection.metadata_json, dict) else {}
+    return metadata.get("onboarding_confirmed") is True
+
+
+def _ensure_connection_onboarding_confirmed(connection: LocalAgentConnection) -> None:
+    if (
+        _connection_onboarding_confirmed(connection)
+        and connection.status != "pending_confirmation"
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Local Agent connection has not been confirmed",
+    )
+
+
+def _connection_pending_confirmation(connection: LocalAgentConnection) -> bool:
+    return (
+        not _connection_onboarding_confirmed(connection)
+        or connection.status == "pending_confirmation"
     )
 
 
@@ -249,6 +416,13 @@ def _owned_connection(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the device owner can execute local Agent messages",
         )
+    if executable:
+        if connection.revoked_at is not None or connection.status == "revoked":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Local Agent connection revoked",
+            )
+        _ensure_connection_onboarding_confirmed(connection)
     return connection
 
 
@@ -256,6 +430,7 @@ def _bridge_connection(
     *,
     session: Session,
     device_token: str | None,
+    require_confirmed: bool = True,
 ) -> LocalAgentConnection:
     if not device_token:
         raise HTTPException(
@@ -274,19 +449,24 @@ def _bridge_connection(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Local Agent connection revoked"
         )
+    if require_confirmed:
+        _ensure_connection_onboarding_confirmed(connection)
     return connection
 
 
 def _ensure_host_tool_protocol_allowed(connection: LocalAgentConnection) -> None:
-    if connection.adapter_kind == "claude_code" and _claude_code_permission_bridge_enabled(
-        connection
-    ):
+    metadata = connection.metadata_json if isinstance(connection.metadata_json, dict) else {}
+    if metadata.get("local_tool_policy") == LOCAL_AGENT_APPROVED_LOCAL_TOOL_POLICY:
         return
     if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"{connection.adapter_kind} adapter cannot use local host tool protocol",
         )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"{connection.adapter_kind} adapter cannot use local host tool protocol",
+    )
 
 
 def _claude_code_permission_bridge_enabled(connection: LocalAgentConnection) -> bool:
@@ -334,13 +514,30 @@ def _pairing_command_permission_bridge(scope: dict) -> str | None:
 def _connection_metadata_with_permission_bridge_entitlement(
     metadata: dict,
     *,
+    adapter_kind: str,
     permission_bridge: str | None,
 ) -> dict:
     safe_metadata = _safe_metadata(metadata)
+    for key in LOCAL_AGENT_SERVER_METADATA_KEYS:
+        safe_metadata.pop(key, None)
     safe_metadata["server_permission_bridge_entitlement"] = (
         "sdk" if permission_bridge == "sdk" else "none"
     )
+    if adapter_kind in LOCAL_AGENT_TOOL_POLICY_ADAPTERS:
+        safe_metadata["local_tool_policy"] = LOCAL_AGENT_APPROVED_LOCAL_TOOL_POLICY
     return safe_metadata
+
+
+def _ensure_connection_local_tool_policy(connection: LocalAgentConnection) -> None:
+    if connection.adapter_kind not in LOCAL_AGENT_TOOL_POLICY_ADAPTERS:
+        return
+    metadata = connection.metadata_json if isinstance(connection.metadata_json, dict) else {}
+    if metadata.get("local_tool_policy") == LOCAL_AGENT_APPROVED_LOCAL_TOOL_POLICY:
+        return
+    connection.metadata_json = {
+        **metadata,
+        "local_tool_policy": LOCAL_AGENT_APPROVED_LOCAL_TOOL_POLICY,
+    }
 
 
 def _get_local_target_agent(
@@ -421,7 +618,11 @@ def revoke_local_agent_pairing_token(
     principal: Principal,
 ) -> LocalAgentPairingResponse:
     require_role(principal, {"admin", "engineer"})
-    token = session.get(LocalAgentPairingToken, token_id)
+    token = session.execute(
+        select(LocalAgentPairingToken)
+        .where(LocalAgentPairingToken.id == token_id)
+        .with_for_update()
+    ).scalar_one_or_none()
     if token is None or token.organization_id != principal.organization_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pairing token not found")
     if token.user_id != principal.user_id and "admin" not in principal.roles:
@@ -480,7 +681,7 @@ def register_local_agent_connection(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid local Agent pairing token"
         )
-    if token.status != "active" or token.consumed_at is not None or token.revoked_at is not None:
+    if token.status != "active" or token.revoked_at is not None:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail="Local Agent pairing token already used or revoked",
@@ -524,6 +725,17 @@ def register_local_agent_connection(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Claude Code SDK permission bridge requires a scoped pairing token",
         )
+    existing_adapter_connection = session.execute(
+        select(LocalAgentConnection).where(
+            LocalAgentConnection.pairing_token_id == token.id,
+            LocalAgentConnection.adapter_kind == request.adapter_kind,
+        )
+    ).scalar_one_or_none()
+    if existing_adapter_connection is not None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Local Agent pairing token already registered this adapter",
+        )
 
     device_token = secrets.token_urlsafe(DEVICE_TOKEN_BYTES)
     connection = LocalAgentConnection(
@@ -541,15 +753,18 @@ def register_local_agent_connection(
         capabilities_json=normalized_capabilities,
         risk_capabilities_json=normalized_risk_capabilities,
         metadata_json=_connection_metadata_with_permission_bridge_entitlement(
-            request.metadata,
+            {**request.metadata, "onboarding_confirmed": False},
+            adapter_kind=request.adapter_kind,
             permission_bridge=token_permission_bridge if normalized_claude_v6 else None,
         ),
         last_seen_at=now,
         created_at=now,
         updated_at=now,
     )
-    token.status = "consumed"
-    token.consumed_at = now
+    if token.consumed_at is None:
+        token.consumed_at = now
+    if not _pairing_scope_allows_multiple_adapters(token.scope_json):
+        token.status = "consumed"
     session.add(connection)
     try:
         session.flush()
@@ -570,14 +785,18 @@ def register_local_agent_connection(
         session.commit()
     except IntegrityError as exc:
         token_id = token.id
+        adapter_kind = request.adapter_kind
         session.rollback()
         existing_connection = session.execute(
-            select(LocalAgentConnection).where(LocalAgentConnection.pairing_token_id == token_id)
+            select(LocalAgentConnection).where(
+                LocalAgentConnection.pairing_token_id == token_id,
+                LocalAgentConnection.adapter_kind == adapter_kind,
+            )
         ).scalar_one_or_none()
         if existing_connection is not None:
             raise HTTPException(
                 status_code=status.HTTP_410_GONE,
-                detail="Local Agent pairing token already used or revoked",
+                detail="Local Agent pairing token already registered this adapter",
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Local Agent connection token collision"
@@ -604,13 +823,67 @@ def list_local_agent_connections(
             select(LocalAgentConnection)
             .where(LocalAgentConnection.organization_id == principal.organization_id)
             .order_by(
-                LocalAgentConnection.updated_at.desc(), LocalAgentConnection.created_at.desc()
+                LocalAgentConnection.agent_id.asc(),
+                LocalAgentConnection.adapter_kind.asc(),
+                LocalAgentConnection.display_name.asc(),
+                LocalAgentConnection.workspace_root.asc(),
+                LocalAgentConnection.created_at.asc(),
+                LocalAgentConnection.id.asc(),
             )
         ).scalars()
     )
     if "admin" not in principal.roles:
         rows = [row for row in rows if row.owner_user_id == principal.user_id]
     return LocalAgentConnectionPage(items=[_connection_response(row) for row in rows])
+
+
+@router.patch(
+    "/local-agent/connections/{connection_id}",
+    response_model=LocalAgentConnectionResponse,
+    summary="更新本地 Agent 连接显示名称",
+)
+def update_local_agent_connection(
+    connection_id: str,
+    request: LocalAgentConnectionUpdateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> LocalAgentConnectionResponse:
+    require_role(principal, {"admin", "engineer"})
+    connection = _owned_connection(
+        connection_id=connection_id,
+        session=session,
+        principal=principal,
+        executable=False,
+    )
+    if connection.owner_user_id != principal.user_id and "admin" not in principal.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owner or admin can update connection",
+        )
+    display_name = request.display_name.strip()
+    if not display_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Local Agent display name is required",
+        )
+    connection.display_name = display_name
+    metadata = connection.metadata_json if isinstance(connection.metadata_json, dict) else {}
+    connection.metadata_json = {**metadata, "onboarding_confirmed": True}
+    if connection.status == "pending_confirmation":
+        connection.status = "online"
+    connection.updated_at = utc_now()
+    _record_local_agent_audit(
+        session=session,
+        organization_id=connection.organization_id,
+        actor_id=principal.user_id,
+        action="local_agent.connection.update",
+        resource_type="local_agent_connection",
+        resource_id=connection.id,
+        payload={"agent_id": connection.agent_id, "adapter_kind": connection.adapter_kind},
+    )
+    session.commit()
+    session.refresh(connection)
+    return _connection_response(connection)
 
 
 @router.post(
@@ -624,13 +897,18 @@ def heartbeat_local_agent_connection(
     session: DbSession,
     x_local_agent_device_token: str | None = Header(default=None),
 ) -> LocalAgentHeartbeatResponse:
-    connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
+    connection = _bridge_connection(
+        session=session,
+        device_token=x_local_agent_device_token,
+        require_confirmed=False,
+    )
     if connection.id != connection_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Device token does not match connection"
         )
     now = utc_now()
-    connection.status = request.status
+    if not _connection_pending_confirmation(connection):
+        connection.status = request.status
     connection.protocol_version = request.protocol_version
     connection.bridge_version = request.bridge_version
     if request.capabilities is not None:
@@ -660,6 +938,7 @@ def heartbeat_local_agent_connection(
                 },
             )
         connection.capabilities_json = heartbeat_capabilities
+    _ensure_connection_local_tool_policy(connection)
     connection.last_seen_at = now
     connection.updated_at = now
     _record_local_agent_audit(
@@ -923,13 +1202,55 @@ def send_local_agent_message(
     if agent_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent Session not found")
     now = utc_now()
-    conversation_context = (
-        _codex_conversation_context(
+    conversation_context = _local_agent_workspace_conversation_context(request)
+    if not conversation_context and not request.workspace_context_provided:
+        conversation_context = _codex_conversation_context(
             agent_session_id=agent_session.id,
             session=session,
         )
-        if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS
-        else []
+    requested_model_provider = request.model_provider or "default"
+    requested_model_name = request.model_name or "default"
+    tool_mentions = [
+        {
+            "name": mention.name,
+            "source": mention.source,
+            "payload": _redact_mapping(mention.payload),
+        }
+        for mention in request.tool_mentions
+    ]
+    attachment_payloads = [
+        attachment.model_dump(mode="json", exclude_none=True)
+        for attachment in request.attachments[:12]
+    ]
+    compressed_context = (
+        request.compressed_context.model_dump(mode="json", exclude_none=True)
+        if request.compressed_context is not None
+        else None
+    )
+    workspace_request = {
+        "mode": request.workspace_mode,
+        "model_provider": requested_model_provider,
+        "model_name": requested_model_name,
+        "active_leaf_id": request.active_leaf_id,
+        "active_branch_id": request.active_branch_id,
+        "pinned_node_ids": request.pinned_node_ids,
+        "context_window_turns": request.context_window_turns,
+        "context_max_tokens": request.context_max_tokens,
+        "workspace_context_provided": request.workspace_context_provided,
+        "tool_mentions": tool_mentions,
+        "attachment_names": request.attachment_names[:12],
+        "attachments": attachment_payloads,
+        "compressed_context": compressed_context,
+    }
+    local_io_input = _local_agent_message_input_snapshot(
+        connection=connection,
+        binding=binding,
+        request=request,
+        workspace_request=workspace_request,
+        conversation_context=conversation_context,
+        tool_mentions=tool_mentions,
+        attachment_payloads=attachment_payloads,
+        compressed_context=compressed_context,
     )
     user_message = AgentMessage(
         session_id=agent_session.id,
@@ -941,6 +1262,11 @@ def send_local_agent_message(
             "connection_id": connection.id,
             "binding_id": binding.id,
             "client_message_id": request.client_message_id,
+            "workspace_request": local_io_input["workspace_request"],
+            "local_agent_io": {
+                "input": local_io_input,
+                "output": None,
+            },
         },
         created_at=now,
     )
@@ -951,7 +1277,9 @@ def send_local_agent_message(
         goal=request.content,
         session=session,
         principal=principal,
-        mode="cli_agent" if connection.adapter_kind == "hao" else "chat",
+        mode=_local_agent_workspace_run_mode(connection, request.workspace_mode),
+        model_provider=requested_model_provider,
+        model_name=requested_model_name,
         max_subagents=0,
         commit=False,
     )
@@ -961,6 +1289,13 @@ def send_local_agent_message(
         "adapter_session_id": binding.adapter_session_id,
         "resume_mode": binding.resume_mode,
         "message": request.content,
+        "workspace_request": workspace_request,
+        "model_provider": requested_model_provider,
+        "model_name": requested_model_name,
+        "tool_mentions": tool_mentions,
+        "attachment_names": request.attachment_names[:12],
+        "attachments": attachment_payloads,
+        "compressed_context": compressed_context,
         "agent_id": binding.agent_id,
         "agent_session_id": agent_session.id,
         "run_id": run.id,
@@ -968,9 +1303,18 @@ def send_local_agent_message(
         "capabilities": connection.capabilities_json,
         "workspace_identity_hash": (connection.metadata_json or {}).get("workspace_identity_hash"),
     }
+    bridge_task_id = str(uuid.uuid4())
+    if connection.adapter_kind == "hao":
+        bridge_payload["harness_stream_token"] = _local_agent_bridge_stream_token(
+            principal,
+            agent_id=binding.agent_id,
+            run_id=run.id,
+            bridge_task_id=bridge_task_id,
+        )
     if conversation_context:
         bridge_payload["conversation_context"] = conversation_context
     bridge_task = LocalAgentBridgeTask(
+        id=bridge_task_id,
         organization_id=principal.organization_id,
         owner_user_id=principal.user_id,
         connection_id=connection.id,
@@ -1051,7 +1395,9 @@ def list_local_agent_binding_tasks(
             select(LocalAgentBridgeTask)
             .where(
                 LocalAgentBridgeTask.binding_id == binding.id,
-                LocalAgentBridgeTask.status.in_(("pending", "leased", "running")),
+                LocalAgentBridgeTask.status.in_(
+                    ("pending", "leased", "running", "failed", "cancelled")
+                ),
             )
             .order_by(LocalAgentBridgeTask.created_at.asc(), LocalAgentBridgeTask.id.asc())
         ).scalars()
@@ -1128,6 +1474,7 @@ def ack_local_agent_bridge_task(
             status_code=status.HTTP_409_CONFLICT,
             detail="Local Agent bridge task is already terminal",
         )
+    terminal_error_message = None
     if request.status in {"leased", "running"}:
         if bridge_task.status not in {"pending", "leased", "running"}:
             raise HTTPException(
@@ -1136,7 +1483,23 @@ def ack_local_agent_bridge_task(
             )
         bridge_task.status = "running"
     else:
+        terminal_error_message = (
+            _bounded_text(request.error_message) or "Local Agent bridge task failed"
+        )
         bridge_task.status = "failed"
+        bridge_task.completed_at = now
+        bridge_task.payload_json = {
+            **bridge_task.payload_json,
+            "terminal_error_message": terminal_error_message,
+        }
+        run = session.get(Task, bridge_task.task_id)
+        if run is not None:
+            run.status = "FAILED"
+            run.completed_at = run.completed_at or now
+            run.updated_at = now
+        agent_session = session.get(AgentSession, bridge_task.agent_session_id)
+        if agent_session is not None:
+            agent_session.updated_at = now
     bridge_task.acked_at = now
     bridge_task.updated_at = now
     EventStore(session).append(
@@ -1147,7 +1510,9 @@ def ack_local_agent_bridge_task(
             "bridge_task_id": bridge_task.id,
             "adapter_kind": connection.adapter_kind,
             "status": bridge_task.status,
-            "error_message": request.error_message,
+            "error_message": terminal_error_message
+            if terminal_error_message is not None
+            else request.error_message,
         },
         actor_type="local_agent",
         actor_id=connection.id,
@@ -1326,7 +1691,24 @@ def create_local_agent_tool_request(
         if isinstance(request.pending_change_preview, dict)
         else {}
     )
+    if safe_preview:
+        safe_preview = _normalized_pending_change_preview(
+            tool_request_id=request.tool_request_id,
+            target_paths=request.target_paths,
+            preview=safe_preview,
+        )
     safe_metadata = _safe_metadata(request.metadata)
+    decision_metadata = dict(safe_metadata)
+    if connection.adapter_kind in {"hao", "codex", "claude_code"}:
+        decision_metadata["harness_stream_token"] = _local_agent_bridge_stream_token_for_subject(
+            user_id=connection.owner_user_id,
+            organization_id=connection.organization_id,
+            role="engineer",
+            roles=["engineer"],
+            agent_id=connection.agent_id,
+            run_id=bridge_task.task_id,
+            bridge_task_id=bridge_task.id,
+        )
     executable_input_sha256 = _executable_input_sha256(safe_input)
     initial_status = {
         "allowed": "APPROVED",
@@ -1370,7 +1752,7 @@ def create_local_agent_tool_request(
         "auto_allowed": classification["decision"] == "allowed",
         "input_json": safe_input,
         "executable_input_sha256": executable_input_sha256,
-        "metadata": safe_metadata,
+        "metadata": decision_metadata,
         "pending_change_preview": safe_preview,
         "cwd": _redact_path(request.cwd),
         "expires_at": expires_at.isoformat(),
@@ -2035,9 +2417,14 @@ def cancel_local_agent_command(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner or admin can cancel",
         )
-    connection = session.get(LocalAgentConnection, binding.connection_id)
-    if connection is not None:
-        _ensure_host_tool_protocol_allowed(connection)
+    connection = _owned_connection(
+        connection_id=binding.connection_id,
+        session=session,
+        principal=principal,
+        executable=False,
+    )
+    _ensure_connection_onboarding_confirmed(connection)
+    _ensure_host_tool_protocol_allowed(connection)
     command = session.execute(
         select(LocalAgentCommand).where(
             LocalAgentCommand.binding_id == binding.id,
@@ -2085,9 +2472,13 @@ def retry_local_agent_command(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner can retry local commands",
         )
-    connection = session.get(LocalAgentConnection, binding.connection_id)
-    if connection is not None:
-        _ensure_host_tool_protocol_allowed(connection)
+    connection = _owned_connection(
+        connection_id=binding.connection_id,
+        session=session,
+        principal=principal,
+        executable=True,
+    )
+    _ensure_host_tool_protocol_allowed(connection)
     command = session.execute(
         select(LocalAgentCommand).where(
             LocalAgentCommand.binding_id == binding.id,
@@ -2841,11 +3232,16 @@ def _record_pending_change_preview(
     status: str,
     session: Session,
 ) -> None:
-    change_id = str(preview.get("change_id") or request.tool_request_id)
-    target_paths = request.target_paths or preview.get("target_paths") or []
+    normalized_preview = _normalized_pending_change_preview(
+        tool_request_id=request.tool_request_id,
+        target_paths=request.target_paths,
+        preview=preview,
+    )
+    change_id = str(normalized_preview.get("change_id") or request.tool_request_id)
+    target_paths = request.target_paths or normalized_preview.get("target_paths") or []
     if not isinstance(target_paths, list):
         target_paths = []
-    diff_sha256 = str(preview.get("diff_sha256") or preview.get("diff_hash") or "")
+    diff_sha256 = str(normalized_preview.get("diff_sha256") or "")
     row = LocalAgentPendingChange(
         organization_id=local_request.organization_id,
         connection_id=local_request.connection_id,
@@ -2858,7 +3254,7 @@ def _record_pending_change_preview(
         change_id=change_id,
         target_paths_json=[_redact_path(str(path)) for path in target_paths],
         diff_sha256=diff_sha256,
-        preview_json=preview,
+        preview_json=normalized_preview,
         status=status if status in {"approval_required", "allowed", "denied"} else "previewed",
         created_at=utc_now(),
         updated_at=utc_now(),
@@ -2878,6 +3274,34 @@ def _record_pending_change_preview(
         actor_type="local_agent",
         actor_id=local_request.connection_id,
     )
+
+
+def _normalized_pending_change_preview(
+    *,
+    tool_request_id: str,
+    target_paths: list[str],
+    preview: dict,
+) -> dict:
+    change_id = str(preview.get("change_id") or tool_request_id)
+    preview_target_paths = preview.get("target_paths")
+    normalized_target_paths = (
+        [str(path) for path in preview_target_paths if str(path).strip()]
+        if isinstance(preview_target_paths, list)
+        else [str(path) for path in target_paths if str(path).strip()]
+    )
+    diff_sha256 = str(preview.get("diff_sha256") or preview.get("diff_hash") or "").strip()
+    if not diff_sha256:
+        diff_text = str(preview.get("diff") or "")
+        if diff_text:
+            diff_sha256 = hashlib.sha256(
+                diff_text.encode("utf-8", errors="replace")
+            ).hexdigest()
+    return {
+        **preview,
+        "change_id": change_id,
+        "target_paths": normalized_target_paths,
+        "diff_sha256": diff_sha256,
+    }
 
 
 def _validated_pending_change_refresh_preview(
@@ -3374,6 +3798,13 @@ def _bridge_task_response(task: LocalAgentBridgeTask) -> LocalAgentBridgeTaskRes
 
 
 def _binding_task_response(task: LocalAgentBridgeTask) -> LocalAgentBindingTaskResponse:
+    error_message = None
+    if task.status in {"failed", "cancelled"}:
+        error_message = _bounded_text(
+            task.payload_json.get("error_message")
+            or task.payload_json.get("terminal_error_message")
+            or "",
+        )
     return LocalAgentBindingTaskResponse(
         id=task.id,
         connection_id=task.connection_id,
@@ -3383,6 +3814,7 @@ def _binding_task_response(task: LocalAgentBridgeTask) -> LocalAgentBindingTaskR
         user_message_id=task.user_message_id,
         client_message_id=task.client_message_id,
         status=task.status,
+        error_message=error_message,
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
@@ -3435,11 +3867,43 @@ def _apply_bridge_event(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Local Agent assistant_done cannot bypass unresolved local tool state",
             )
+        content = _bounded_text(request.content)
+        model_provider = bridge_task.payload_json.get("model_provider") or "default"
+        model_name = bridge_task.payload_json.get("model_name") or "default"
+        model_call = _local_agent_existing_model_call(
+            request.metadata,
+            task_id=bridge_task.task_id,
+            bridge_task_id=bridge_task.id,
+            session=session,
+        )
+        if model_call is not None:
+            prompt_tokens = model_call.prompt_tokens
+            completion_tokens = model_call.completion_tokens
+            duration_ms = model_call.duration_ms
+            model_provider = model_call.model_provider
+            model_name = model_call.model_name
+        else:
+            prompt_tokens = _local_agent_estimated_input_tokens(bridge_task.payload_json)
+            completion_tokens = max(1, len(content) // 4)
+            duration_ms = _local_agent_task_duration_ms(bridge_task, now)
+            model_call = _create_local_agent_model_call(
+                connection=connection,
+                bridge_task=bridge_task,
+                request=request,
+                content=content,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                duration_ms=duration_ms,
+                model_provider=model_provider,
+                model_name=model_name,
+                session=session,
+                now=now,
+            )
         assistant = AgentMessage(
             session_id=bridge_task.agent_session_id,
             agent_id=connection.agent_id,
             role="assistant",
-            content=_bounded_text(request.content),
+            content=content,
             metadata_json={
                 "source": "local_agent",
                 "connection_id": connection.id,
@@ -3447,6 +3911,33 @@ def _apply_bridge_event(
                 "adapter_kind": connection.adapter_kind,
                 "event_id": request.event_id,
                 "resume_mode": bridge_task.payload_json.get("resume_mode"),
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "tool_mentions": bridge_task.payload_json.get("tool_mentions") or [],
+                "attachment_names": _local_agent_attachment_name_preview(
+                    bridge_task.payload_json.get("attachment_names") or [],
+                ),
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "duration_ms": duration_ms,
+                "model_call_id": model_call.id,
+                "local_agent_io": {
+                    "input": _local_agent_message_input_snapshot_from_payload(
+                        bridge_task.payload_json,
+                        connection=connection,
+                        binding_id=bridge_task.binding_id,
+                    ),
+                    "output": _local_agent_message_output_snapshot(
+                        connection=connection,
+                        bridge_task=bridge_task,
+                        request=request,
+                        content=content,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        duration_ms=duration_ms,
+                        model_call_id=model_call.id,
+                    ),
+                },
             },
             created_at=now,
         )
@@ -3469,6 +3960,7 @@ def _apply_bridge_event(
                 "connection_id": connection.id,
                 "bridge_task_id": bridge_task.id,
                 "assistant_message_id": assistant.id,
+                "model_call_id": model_call.id,
                 "adapter_kind": connection.adapter_kind,
                 "sequence": request.sequence,
                 "metadata": _safe_metadata(request.metadata),
@@ -3482,13 +3974,22 @@ def _apply_bridge_event(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Local Agent assistant_error cannot bypass unresolved local tool state",
             )
+        bounded_error = _bounded_text(request.error_message)
         bridge_task.status = "failed"
         bridge_task.completed_at = now
         bridge_task.updated_at = now
+        bridge_task.payload_json = {
+            **bridge_task.payload_json,
+            "terminal_error_message": bounded_error,
+        }
         run = session.get(Task, bridge_task.task_id)
         if run is not None:
             run.status = "FAILED"
+            run.completed_at = run.completed_at or now
             run.updated_at = now
+        agent_session = session.get(AgentSession, bridge_task.agent_session_id)
+        if agent_session is not None:
+            agent_session.updated_at = now
         agent_event = EventStore(session).append(
             task_id=bridge_task.task_id,
             event_type=EventType.LOCAL_AGENT_MESSAGE_FAILED,
@@ -3496,7 +3997,7 @@ def _apply_bridge_event(
                 "connection_id": connection.id,
                 "bridge_task_id": bridge_task.id,
                 "adapter_kind": connection.adapter_kind,
-                "error_message": _bounded_text(request.error_message),
+                "error_message": bounded_error,
                 "sequence": request.sequence,
                 "metadata": _safe_metadata(request.metadata),
             },
@@ -3504,7 +4005,7 @@ def _apply_bridge_event(
             actor_id=connection.id,
         )
     elif request.event_type == "tool_result":
-        if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
+        if connection.adapter_kind in LOCAL_AGENT_HARNESS_TOOL_PROTOCOL_ADAPTERS:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"{connection.adapter_kind} adapter cannot report legacy tool_result events",
@@ -3557,6 +4058,478 @@ def _apply_bridge_event(
         )
     session.flush()
     return agent_event, tool_call
+
+
+def _create_local_agent_model_call(
+    *,
+    connection: LocalAgentConnection,
+    bridge_task: LocalAgentBridgeTask,
+    request: LocalAgentBridgeEventRequest,
+    content: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    duration_ms: int,
+    model_provider: str,
+    model_name: str,
+    session: Session,
+    now: datetime,
+) -> ModelCall:
+    request_json = _local_agent_model_call_request_json(bridge_task.payload_json)
+    request_hashes = _local_agent_request_message_hashes(request_json)
+    model_call = ModelCall(
+        task_id=bridge_task.task_id,
+        agent_run_id=None,
+        model_provider=model_provider,
+        model_name=model_name,
+        status="SUCCESS",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        duration_ms=duration_ms,
+        capability_snapshot_json=_local_agent_model_capability_snapshot(
+            connection=connection,
+            bridge_task=bridge_task,
+        ),
+        model_request_sha256=stable_json_sha256(request_json),
+        model_request_hash_schema_version=2,
+        request_message_hashes_json=request_hashes,
+        request_message_hashes_sha256=(
+            stable_json_sha256(request_hashes) if request_hashes else None
+        ),
+        hash_recomputability_status="local_bridge_safe_snapshot",
+        attempt_index=1,
+        terminal_status="success",
+        request_json=request_json,
+        response_json=_local_agent_model_call_response_json(
+            connection=connection,
+            bridge_task=bridge_task,
+            request=request,
+            content=content,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            duration_ms=duration_ms,
+        ),
+        created_at=now,
+    )
+    session.add(model_call)
+    session.flush()
+    event_store = EventStore(session)
+    streaming = bool((connection.capabilities_json or {}).get("supports_streaming", True))
+    event_store.append(
+        task_id=bridge_task.task_id,
+        event_type=EventType.MODEL_CALLED,
+        payload_json={
+            "model_call_id": model_call.id,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "source": "local_agent_bridge",
+            "adapter_kind": connection.adapter_kind,
+            "connection_id": connection.id,
+            "bridge_task_id": bridge_task.id,
+            "prompt_tokens": prompt_tokens,
+            "prompt_message_count": _local_agent_prompt_message_count(request_json),
+            "streaming": streaming,
+            "terminal_status": model_call.terminal_status,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    event_store.append(
+        task_id=bridge_task.task_id,
+        event_type=EventType.MODEL_RESPONSE_RECEIVED,
+        payload_json={
+            "model_call_id": model_call.id,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "source": "local_agent_bridge",
+            "adapter_kind": connection.adapter_kind,
+            "connection_id": connection.id,
+            "bridge_task_id": bridge_task.id,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "duration_ms": duration_ms,
+            "streaming": streaming,
+            "terminal_status": model_call.terminal_status,
+        },
+        actor_type="local_agent",
+        actor_id=connection.id,
+    )
+    return model_call
+
+
+def _local_agent_existing_model_call(
+    metadata: dict,
+    *,
+    task_id: str,
+    bridge_task_id: str,
+    session: Session,
+) -> ModelCall | None:
+    if not isinstance(metadata, dict):
+        return None
+    model_call_id = metadata.get("model_call_id")
+    if not isinstance(model_call_id, str) or not model_call_id.strip():
+        return None
+    model_call = session.get(ModelCall, model_call_id.strip())
+    if model_call is None or model_call.task_id != task_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent model_call_id does not match bridge task run",
+        )
+    request_json = model_call.request_json if isinstance(model_call.request_json, dict) else {}
+    if (
+        model_call.status != "SUCCESS"
+        or model_call.terminal_status != "success"
+        or request_json.get("source") != "local_agent_bridge_stream"
+        or request_json.get("local_bridge_task_id") != bridge_task_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent model_call_id does not match bridge task stream",
+        )
+    return model_call
+
+
+def _local_agent_model_call_request_json(payload: dict) -> dict:
+    conversation_context = []
+    for item in payload.get("conversation_context") or []:
+        if isinstance(item, dict):
+            conversation_context.append(
+                {
+                    "role": str(item.get("role") or ""),
+                    "content": _bounded_text(str(item.get("content") or ""), limit=2000),
+                }
+            )
+    attachment_summaries = []
+    for attachment in payload.get("attachments") or []:
+        if not isinstance(attachment, dict):
+            continue
+        attachment_summaries.append(
+            {
+                "name": _local_agent_attachment_name_value(attachment.get("name")),
+                "mime_type": _bounded_text(str(attachment.get("mime_type") or ""), limit=128),
+                "size_bytes": attachment.get("size_bytes"),
+                "content_status": _bounded_text(
+                    str(attachment.get("content_status") or ""),
+                    limit=128,
+                ),
+                "content_preview": _bounded_text(
+                    str(attachment.get("content_text") or ""),
+                    limit=1000,
+                ),
+            }
+        )
+    workspace_request = _redact_mapping(payload.get("workspace_request") or {}, max_items=80)
+    workspace_request["attachment_names"] = _local_agent_attachment_name_preview(
+        payload.get("attachment_names") or workspace_request.get("attachment_names") or [],
+    )
+    workspace_request["attachments"] = attachment_summaries
+    return {
+        "source": "local_agent_bridge",
+        "protocol_version": payload.get("protocol_version"),
+        "adapter_kind": payload.get("adapter_kind"),
+        "resume_mode": payload.get("resume_mode"),
+        "message": _bounded_text(str(payload.get("message") or ""), limit=4000),
+        "model_provider": payload.get("model_provider") or "default",
+        "model_name": payload.get("model_name") or "default",
+        "workspace_request": workspace_request,
+        "conversation_context": conversation_context,
+        "tool_mentions": _redact_value(payload.get("tool_mentions") or [], max_items=30),
+        "attachment_names": _local_agent_attachment_name_preview(
+            payload.get("attachment_names") or [],
+        ),
+        "attachments": attachment_summaries,
+        "compressed_context": _redact_mapping(
+            payload.get("compressed_context") or {},
+            max_items=40,
+        ),
+    }
+
+
+def _local_agent_model_call_response_json(
+    *,
+    connection: LocalAgentConnection,
+    bridge_task: LocalAgentBridgeTask,
+    request: LocalAgentBridgeEventRequest,
+    content: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    duration_ms: int,
+) -> dict:
+    return {
+        "source": "local_agent_bridge",
+        "content_preview": content[:2000],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+        "stream": bool((connection.capabilities_json or {}).get("supports_streaming", True)),
+        "adapter_kind": connection.adapter_kind,
+        "connection_id": connection.id,
+        "bridge_task_id": bridge_task.id,
+        "event_id": request.event_id,
+        "sequence": request.sequence,
+        "duration_ms": duration_ms,
+        "metadata": _safe_metadata(request.metadata),
+    }
+
+
+def _local_agent_message_input_snapshot(
+    *,
+    connection: LocalAgentConnection,
+    binding: LocalAgentConversationBinding,
+    request: LocalAgentSendMessageRequest,
+    workspace_request: dict,
+    conversation_context: list[dict[str, str]],
+    tool_mentions: list[dict],
+    attachment_payloads: list[dict],
+    compressed_context: dict | None,
+) -> dict:
+    return {
+        "source": "local_agent_bridge",
+        "adapter_kind": connection.adapter_kind,
+        "connection_id": connection.id,
+        "binding_id": binding.id,
+        "agent_session_id": binding.agent_session_id,
+        "client_message_id": request.client_message_id,
+        "model_provider": request.model_provider or "default",
+        "model_name": request.model_name or "default",
+        "workspace_mode": request.workspace_mode,
+        "active_leaf_id": request.active_leaf_id,
+        "active_branch_id": request.active_branch_id,
+        "message": _bounded_text(request.content, limit=4000),
+        "workspace_context_provided": request.workspace_context_provided,
+        "context_window_turns": request.context_window_turns,
+        "context_max_tokens": request.context_max_tokens,
+        "pinned_node_ids": request.pinned_node_ids[:50],
+        "conversation_context_count": len(conversation_context),
+        "conversation_context_preview": _local_agent_context_preview(conversation_context),
+        "workspace_request": _local_agent_workspace_request_preview(
+            workspace_request,
+            attachments=attachment_payloads,
+        ),
+        "tool_mentions": _redact_value(tool_mentions, max_items=30),
+        "attachment_names": _local_agent_attachment_name_preview(request.attachment_names),
+        "attachments": _local_agent_attachment_preview(attachment_payloads),
+        "compressed_context": _local_agent_compressed_context_preview(compressed_context),
+    }
+
+
+def _local_agent_message_input_snapshot_from_payload(
+    payload: dict,
+    *,
+    connection: LocalAgentConnection,
+    binding_id: str,
+) -> dict:
+    workspace_request = payload.get("workspace_request") if isinstance(payload, dict) else {}
+    if not isinstance(workspace_request, dict):
+        workspace_request = {}
+    conversation_context = [
+        item
+        for item in payload.get("conversation_context") or []
+        if isinstance(item, dict)
+    ]
+    attachments = [
+        item
+        for item in payload.get("attachments") or []
+        if isinstance(item, dict)
+    ]
+    compressed_context = payload.get("compressed_context")
+    return {
+        "source": "local_agent_bridge",
+        "adapter_kind": connection.adapter_kind,
+        "connection_id": connection.id,
+        "binding_id": binding_id,
+        "agent_session_id": payload.get("agent_session_id"),
+        "run_id": payload.get("run_id"),
+        "model_provider": payload.get("model_provider") or "default",
+        "model_name": payload.get("model_name") or "default",
+        "workspace_mode": workspace_request.get("mode"),
+        "active_leaf_id": workspace_request.get("active_leaf_id"),
+        "active_branch_id": workspace_request.get("active_branch_id"),
+        "message": _bounded_text(str(payload.get("message") or ""), limit=4000),
+        "workspace_context_provided": workspace_request.get("workspace_context_provided"),
+        "context_window_turns": workspace_request.get("context_window_turns"),
+        "context_max_tokens": workspace_request.get("context_max_tokens"),
+        "pinned_node_ids": _redact_value(
+            workspace_request.get("pinned_node_ids") or [],
+            max_items=50,
+        ),
+        "conversation_context_count": len(conversation_context),
+        "conversation_context_preview": _local_agent_context_preview(conversation_context),
+        "workspace_request": _local_agent_workspace_request_preview(
+            workspace_request,
+            attachments=attachments,
+        ),
+        "tool_mentions": _redact_value(payload.get("tool_mentions") or [], max_items=30),
+        "attachment_names": _local_agent_attachment_name_preview(
+            payload.get("attachment_names") or [],
+        ),
+        "attachments": _local_agent_attachment_preview(attachments),
+        "compressed_context": _local_agent_compressed_context_preview(
+            compressed_context if isinstance(compressed_context, dict) else None,
+        ),
+    }
+
+
+def _local_agent_message_output_snapshot(
+    *,
+    connection: LocalAgentConnection,
+    bridge_task: LocalAgentBridgeTask,
+    request: LocalAgentBridgeEventRequest,
+    content: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    duration_ms: int,
+    model_call_id: str,
+) -> dict:
+    return {
+        "source": "local_agent_bridge",
+        "adapter_kind": connection.adapter_kind,
+        "connection_id": connection.id,
+        "binding_id": bridge_task.binding_id,
+        "agent_session_id": bridge_task.agent_session_id,
+        "bridge_task_id": bridge_task.id,
+        "run_id": bridge_task.task_id,
+        "event_id": request.event_id,
+        "sequence": request.sequence,
+        "model_call_id": model_call_id,
+        "content_preview": _bounded_text(content, limit=4000),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "duration_ms": duration_ms,
+        "streaming": bool((connection.capabilities_json or {}).get("supports_streaming", True)),
+        "metadata": _safe_metadata(request.metadata),
+    }
+
+
+def _local_agent_context_preview(items: list[dict]) -> list[dict[str, str]]:
+    preview: list[dict[str, str]] = []
+    for item in items[:12]:
+        preview.append(
+            {
+                "role": _bounded_text(str(item.get("role") or ""), limit=40),
+                "content": _bounded_text(str(item.get("content") or ""), limit=1000),
+            }
+        )
+    if len(items) > 12:
+        preview.append({"role": "system", "content": "[truncated]"})
+    return preview
+
+
+def _local_agent_attachment_preview(items: list[dict]) -> list[dict]:
+    preview: list[dict] = []
+    for attachment in items[:12]:
+        preview.append(
+            {
+                "name": _local_agent_attachment_name_value(attachment.get("name")),
+                "mime_type": _bounded_text(str(attachment.get("mime_type") or ""), limit=128),
+                "size_bytes": attachment.get("size_bytes"),
+                "content_status": _bounded_text(
+                    str(attachment.get("content_status") or ""),
+                    limit=128,
+                ),
+                "content_preview": _bounded_text(
+                    str(attachment.get("content_text") or ""),
+                    limit=1000,
+                ),
+            }
+        )
+    if len(items) > 12:
+        preview.append({"name": "[truncated]"})
+    return preview
+
+
+def _local_agent_workspace_request_preview(
+    workspace_request: dict,
+    *,
+    attachments: list[dict],
+) -> dict:
+    preview = _redact_mapping(workspace_request, max_items=80)
+    preview["attachment_names"] = _local_agent_attachment_name_preview(
+        workspace_request.get("attachment_names") or [],
+    )
+    preview["attachments"] = _local_agent_attachment_preview(attachments)
+    return preview
+
+
+def _local_agent_attachment_name_preview(items: object) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    return [_local_agent_attachment_name_value(item) for item in items[:30]]
+
+
+def _local_agent_attachment_name_value(value: object) -> str:
+    text = str(value or "")
+    if "/" in text or "\\" in text:
+        text = _redact_path(text) or ""
+    return _bounded_text(text, limit=256)
+
+
+def _local_agent_compressed_context_preview(compressed_context: dict | None) -> dict | None:
+    if not isinstance(compressed_context, dict):
+        return None
+    return {
+        "summary": _bounded_text(str(compressed_context.get("summary") or ""), limit=2000),
+        "branch_id": compressed_context.get("branch_id"),
+        "coverage_node_ids": _redact_value(
+            compressed_context.get("coverage_node_ids") or [],
+            max_items=50,
+        ),
+        "coverage_path_hash": compressed_context.get("coverage_path_hash"),
+        "estimated_original_tokens": compressed_context.get("estimated_original_tokens"),
+        "estimated_summary_tokens": compressed_context.get("estimated_summary_tokens"),
+        "cache_status": compressed_context.get("cache_status"),
+    }
+
+
+def _local_agent_model_capability_snapshot(
+    *,
+    connection: LocalAgentConnection,
+    bridge_task: LocalAgentBridgeTask,
+) -> dict:
+    return {
+        "source": "local_agent_bridge",
+        "server_execution": False,
+        "connection_id": connection.id,
+        "bridge_task_id": bridge_task.id,
+        "binding_id": bridge_task.binding_id,
+        "agent_session_id": bridge_task.agent_session_id,
+        "adapter_kind": connection.adapter_kind,
+        "protocol_version": connection.protocol_version,
+        "bridge_version": connection.bridge_version,
+        "workspace_root": _redact_path(connection.workspace_root),
+        "capabilities": _redact_mapping(connection.capabilities_json or {}, max_items=80),
+        "risk_capabilities": _redact_value(connection.risk_capabilities_json or [], max_items=80),
+    }
+
+
+def _local_agent_request_message_hashes(request_json: dict) -> list[dict]:
+    messages = [
+        {"role": "user", "content": request_json.get("message") or ""},
+        *[
+            {
+                "role": item.get("role") or "",
+                "content": item.get("content") or "",
+            }
+            for item in request_json.get("conversation_context") or []
+            if isinstance(item, dict)
+        ],
+    ]
+    return [
+        {
+            "index": index,
+            "role": message["role"],
+            "sha256": stable_json_sha256(message),
+        }
+        for index, message in enumerate(messages)
+        if message["content"]
+    ]
+
+
+def _local_agent_prompt_message_count(request_json: dict) -> int:
+    count = 1 if request_json.get("message") else 0
+    return count + len(request_json.get("conversation_context") or [])
 
 
 def _legacy_tool_result_requires_authorization(request: LocalAgentBridgeEventRequest) -> bool:
@@ -3686,12 +4659,25 @@ def _validate_pairing_scope_for_adapter(scope: dict, adapter_kind: str) -> None:
         )
 
 
-def _pairing_command_adapter(scope: dict) -> str:
+def _pairing_scope_adapters(scope: dict) -> list[str]:
     adapters = scope.get("adapters") if isinstance(scope, dict) else None
-    if isinstance(adapters, list) and len(adapters) == 1:
-        adapter = str(adapters[0])
-        if adapter in LOCAL_AGENT_SUPPORTED_ADAPTERS:
-            return adapter
+    if not isinstance(adapters, list):
+        return []
+    return [
+        adapter
+        for adapter in (str(item).strip() for item in adapters)
+        if adapter in LOCAL_AGENT_SUPPORTED_ADAPTERS
+    ]
+
+
+def _pairing_scope_allows_multiple_adapters(scope: dict) -> bool:
+    return len(set(_pairing_scope_adapters(scope))) > 1
+
+
+def _pairing_command_adapter(scope: dict) -> str:
+    adapters = _pairing_scope_adapters(scope)
+    if len(adapters) == 1:
+        return adapters[0]
     return "hao"
 
 
@@ -3700,7 +4686,7 @@ def _normalized_resume_mode(
     connection: LocalAgentConnection,
     requested_resume_mode: str,
 ) -> str:
-    if connection.adapter_kind in LOCAL_AGENT_RESTRICTED_ASSISTANT_ADAPTERS:
+    if connection.adapter_kind in LOCAL_AGENT_HARNESS_TOOL_PROTOCOL_ADAPTERS:
         return "context_replay_new_session"
     return requested_resume_mode
 
@@ -3713,10 +4699,12 @@ def _normalized_capabilities(adapter_kind: str, reported: dict | None) -> dict:
             "adapter_kind": "codex",
             "supports_streaming": bool(capabilities.get("supports_streaming", True)),
             "supports_resume": False,
-            "supports_cancel": False,
+            "supports_cancel": True,
             "enabled_in_v1": True,
             "enabled_in_v4": True,
-            "host_tools_authorized": False,
+            "host_tools_authorized": True,
+            "permission_defer_supported": True,
+            "tool_execution_authority": "harness_approved_local_bridge",
             "resume_mode": "context_replay_new_session",
         }
     if adapter_kind == "claude_code":
@@ -3726,10 +4714,13 @@ def _normalized_capabilities(adapter_kind: str, reported: dict | None) -> dict:
             "adapter_kind": "claude_code",
             "supports_streaming": bool(capabilities.get("supports_streaming", True)),
             "supports_resume": False,
+            "supports_cancel": True,
             "enabled_in_v1": True,
             "enabled_in_v5": True,
             "resume_mode": "context_replay_new_session",
-            "permission_defer_supported": False,
+            "permission_defer_supported": True,
+            "host_tools_authorized": True,
+            "tool_execution_authority": "harness_approved_local_bridge",
         }
         if v6_enabled:
             normalized.update(
@@ -3752,10 +4743,10 @@ def _normalized_capabilities(adapter_kind: str, reported: dict | None) -> dict:
             normalized.update(
                 {
                     "enabled_in_v6": False,
-                    "supports_cancel": False,
-                    "host_tools_authorized": False,
+                    "supports_cancel": True,
+                    "host_tools_authorized": True,
                     "permission_bridge": None,
-                    "execution_mode": "headless_bare_no_session_no_tools",
+                    "execution_mode": "headless_harness_tool_bridge",
                     "permission_bridge_mode": "none",
                 }
             )
@@ -3836,6 +4827,8 @@ def _claude_code_reported_v6_capabilities_allowed(capabilities: dict) -> bool:
 
 
 def _normalized_risk_capabilities(adapter_kind: str, reported: list[str]) -> list[str]:
+    if adapter_kind in {"hao", "codex", "claude_code"}:
+        return list(LOCAL_AGENT_FULL_RISK_CAPABILITIES)
     if adapter_kind == "codex":
         return [
             str(capability)
@@ -3874,6 +4867,77 @@ def _bounded_text(value: str | None, limit: int = 4000) -> str:
         return ""
     redacted = _redact_secret_text(value)
     return redacted[:limit] + ("...[truncated]" if len(redacted) > limit else "")
+
+
+def _local_agent_workspace_conversation_context(
+    request: LocalAgentSendMessageRequest,
+) -> list[dict[str, str]]:
+    context: list[dict[str, str]] = []
+    total_chars = 0
+    pinned_ids = set(request.pinned_node_ids)
+    coverage_ids = (
+        set(request.compressed_context.coverage_node_ids)
+        if request.compressed_context is not None
+        else set()
+    )
+    pinned = [
+        node
+        for node in request.messages
+        if node.id in pinned_ids and node.role in {"user", "assistant"}
+    ]
+    carried = [
+        node
+        for node in request.messages[-request.context_window_turns :]
+        if node.role in {"user", "assistant"}
+        and node.id not in pinned_ids
+        and node.id not in coverage_ids
+    ]
+    summary = request.compressed_context.summary.strip() if request.compressed_context else ""
+    if summary:
+        carried = [
+            {
+                "role": "assistant",
+                "content": f"Compressed prior workspace context: {summary}",
+            },
+            *carried,
+        ]
+    for node in [*pinned, *carried]:
+        role = node["role"] if isinstance(node, dict) else node.role
+        content_value = node["content"] if isinstance(node, dict) else node.content
+        content = _bounded_text(content_value, limit=LOCAL_AGENT_CODEX_CONTEXT_MESSAGE_CHARS)
+        if not content:
+            continue
+        remaining = LOCAL_AGENT_CODEX_CONTEXT_TOTAL_CHARS - total_chars
+        if remaining <= 0:
+            break
+        if len(content) > remaining:
+            content = content[:remaining] + "...[truncated]"
+        context.append({"role": role, "content": content})
+        total_chars += len(content)
+    return context
+
+
+def _local_agent_estimated_input_tokens(payload: dict) -> int:
+    text_parts = [str(payload.get("message") or "")]
+    for item in payload.get("conversation_context") or []:
+        if isinstance(item, dict):
+            text_parts.append(str(item.get("content") or ""))
+    for attachment in payload.get("attachments") or []:
+        if isinstance(attachment, dict):
+            text_parts.append(str(attachment.get("content_text") or ""))
+    compressed = payload.get("compressed_context")
+    if isinstance(compressed, dict):
+        text_parts.append(str(compressed.get("summary") or ""))
+    return max(1, sum(len(part) for part in text_parts) // 4)
+
+
+def _local_agent_task_duration_ms(task: LocalAgentBridgeTask, now: datetime) -> int:
+    started = task.leased_at or task.created_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    return max(0, int((now - started).total_seconds() * 1000))
 
 
 def _codex_conversation_context(
