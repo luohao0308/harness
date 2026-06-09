@@ -637,6 +637,13 @@ class LocalAgentConversationBinding(Base):
             sqlite_where=text("status = 'active'"),
             postgresql_where=text("status = 'active'"),
         ),
+        Index(
+            "ix_local_agent_bindings_active_global_session_uidx",
+            "agent_session_id",
+            unique=True,
+            sqlite_where=text("status = 'active' AND organization_id IS NULL"),
+            postgresql_where=text("status = 'active' AND organization_id IS NULL"),
+        ),
         Index("ix_local_agent_bindings_org_user", "organization_id", "owner_user_id"),
     )
 

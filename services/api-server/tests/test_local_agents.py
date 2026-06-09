@@ -2796,12 +2796,28 @@ def test_local_agent_owner_can_send_and_bridge_events_are_idempotent(
                     "role": "user",
                     "content": "此前用户上下文",
                     "state": "done",
+                    "metadata": {
+                        "orchestration": {
+                            "source": "local_agent",
+                            "connection_id": connection["id"],
+                            "binding_id": binding_id,
+                            "agent_session_id": binding.json()["agent_session_id"],
+                        }
+                    },
                 },
                 {
                     "id": "node-context-assistant",
                     "role": "assistant",
                     "content": "此前助手回复",
                     "state": "done",
+                    "metadata": {
+                        "orchestration": {
+                            "source": "local_agent",
+                            "connection_id": connection["id"],
+                            "binding_id": binding_id,
+                            "agent_session_id": binding.json()["agent_session_id"],
+                        }
+                    },
                 },
             ],
             "pinned_node_ids": ["node-context-user"],
@@ -2834,7 +2850,7 @@ def test_local_agent_owner_can_send_and_bridge_events_are_idempotent(
             "compressed_context": {
                 "summary": "压缩后的历史摘要",
                 "branch_id": "node-context-assistant",
-                "coverage_node_ids": ["node-old"],
+                "coverage_node_ids": ["node-context-user"],
                 "coverage_path_hash": "hash",
                 "summary_schema_version": "v1",
                 "compression_prompt_version": "v1",
@@ -3215,6 +3231,86 @@ def test_local_agent_owner_can_send_and_bridge_events_are_idempotent(
     assert model_call_payload["response_json"]["content_preview"] == long_assistant_output
 
 
+def test_local_agent_rejects_cross_binding_compressed_context_from_bridge_payload(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    binding = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={"title": "Compressed context guard"},
+    )
+    assert binding.status_code == 201, binding.text
+    binding_id = binding.json()["id"]
+
+    sent = client.post(
+        f"/api/agents/local-agent/bindings/{binding_id}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "content": "当前 hao 问题",
+            "client_message_id": "compressed-context-guard",
+            "messages": [
+                {
+                    "id": "hao-node",
+                    "role": "user",
+                    "content": "HAO_ONLY_CONTEXT",
+                    "state": "done",
+                    "metadata": {
+                        "orchestration": {
+                            "source": "local_agent",
+                            "connection_id": connection["id"],
+                            "binding_id": binding_id,
+                            "agent_session_id": binding.json()["agent_session_id"],
+                        }
+                    },
+                },
+                {
+                    "id": "claude-node",
+                    "role": "assistant",
+                    "content": "CLAUDE_SECRET_CONTEXT",
+                    "state": "done",
+                    "metadata": {
+                        "orchestration": {
+                            "source": "local_agent",
+                            "connection_id": "conn-claude",
+                            "binding_id": "binding-claude",
+                            "agent_session_id": "session-claude",
+                        }
+                    },
+                },
+            ],
+            "compressed_context": {
+                "summary": "CLAUDE_COMPRESSED_SECRET",
+                "branch_id": "claude-node",
+                "coverage_node_ids": ["claude-node"],
+                "coverage_path_hash": "hash",
+            },
+        },
+    )
+    assert sent.status_code == 202, sent.text
+
+    pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
+    assert pull.status_code == 200, pull.text
+    payload = pull.json()["items"][0]["payload"]
+    assert payload.get("compressed_context") is None
+    assert payload["workspace_request"].get("compressed_context") is None
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    assert "CLAUDE_COMPRESSED_SECRET" not in payload_json
+    assert "CLAUDE_SECRET_CONTEXT" not in payload_json
+    assert payload["conversation_context"] == [{"role": "user", "content": "HAO_ONLY_CONTEXT"}]
+
+    db_session.expire_all()
+    user_message = db_session.execute(
+        select(AgentMessage).where(AgentMessage.session_id == sent.json()["agent_session_id"])
+    ).scalar_one()
+    io_json = json.dumps(user_message.metadata_json["local_agent_io"], ensure_ascii=False)
+    assert "CLAUDE_COMPRESSED_SECRET" not in io_json
+    assert "CLAUDE_SECRET_CONTEXT" not in io_json
+    assert user_message.metadata_json["local_agent_io"]["input"]["compressed_context"] is None
+
+
 def test_local_agent_full_flow_streams_tools_and_observability_like_platform_model(
     db_session: Session,
     monkeypatch,
@@ -3322,6 +3418,14 @@ def test_local_agent_full_flow_streams_tools_and_observability_like_platform_mod
                     "role": "user",
                     "content": "已有上下文",
                     "state": "done",
+                    "metadata": {
+                        "orchestration": {
+                            "source": "local_agent",
+                            "connection_id": connection["id"],
+                            "binding_id": binding_id,
+                            "agent_session_id": binding.json()["agent_session_id"],
+                        }
+                    },
                 }
             ],
             "tool_mentions": [
@@ -5173,6 +5277,102 @@ def test_local_agent_v3_retry_rejects_revoked_connection(
     assert command_ids_after == command_ids_before
 
 
+def test_local_agent_v3_retry_and_cancel_reject_conflict_binding_without_new_work(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    sent_payload, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="v3-command-conflict-binding",
+    )
+    _approved_local_tool_request(
+        client,
+        bridge_headers=bridge_headers,
+        task=task,
+        run_id=sent_payload["run_id"],
+        tool_request_id="tool-req-conflict-retry",
+    )
+    _start_and_finish_command(
+        client,
+        bridge_headers=bridge_headers,
+        tool_request_id="tool-req-conflict-retry",
+        command_id="cmd-conflict-retry",
+        status_value="failed",
+    )
+    _approved_local_tool_request(
+        client,
+        bridge_headers=bridge_headers,
+        task=task,
+        run_id=sent_payload["run_id"],
+        tool_request_id="tool-req-conflict-cancel",
+    )
+    started = client.post(
+        "/api/agents/local-agent/bridge/commands/cmd-conflict-cancel/events",
+        headers=bridge_headers,
+        json={
+            "event_id": "cmd-conflict-cancel-start",
+            "tool_request_id": "tool-req-conflict-cancel",
+            "event_type": "started",
+            "tool_name": "run_shell",
+            "command": "printf ok",
+        },
+    )
+    assert started.status_code == 202, started.text
+    binding = db_session.get(LocalAgentConversationBinding, task["binding_id"])
+    assert binding is not None
+    binding.status = "conflict"
+    binding.updated_at = utc_now()
+    db_session.commit()
+    db_session.expire_all()
+    request_ids_before = {
+        row.tool_request_id
+        for row in db_session.execute(select(LocalAgentToolRequest)).scalars()
+    }
+    command_ids_before = {
+        row.command_id
+        for row in db_session.execute(select(LocalAgentCommand)).scalars()
+    }
+
+    cancelled = client.post(
+        (
+            f"/api/agents/local-agent/bindings/{task['binding_id']}"
+            "/commands/cmd-conflict-cancel/cancel"
+        ),
+        headers=AUTH_HEADERS,
+    )
+    retried = client.post(
+        (
+            f"/api/agents/local-agent/bindings/{task['binding_id']}"
+            "/commands/cmd-conflict-retry/retry"
+        ),
+        headers=AUTH_HEADERS,
+    )
+
+    assert cancelled.status_code == 409, cancelled.text
+    assert "not active" in cancelled.text
+    assert retried.status_code == 409, retried.text
+    assert "not active" in retried.text
+    db_session.expire_all()
+    request_ids_after = {
+        row.tool_request_id
+        for row in db_session.execute(select(LocalAgentToolRequest)).scalars()
+    }
+    command_ids_after = {
+        row.command_id
+        for row in db_session.execute(select(LocalAgentCommand)).scalars()
+    }
+    cancel_command = db_session.execute(
+        select(LocalAgentCommand).where(LocalAgentCommand.command_id == "cmd-conflict-cancel")
+    ).scalar_one()
+    assert request_ids_after == request_ids_before
+    assert command_ids_after == command_ids_before
+    assert cancel_command.cancel_requested_at is None
+
+
 def test_local_agent_v3_retry_rejects_non_retryable_commands(
     db_session: Session,
 ) -> None:
@@ -5436,6 +5636,126 @@ def test_local_agent_v3_pending_discovery_and_recursive_redaction(
     assert items[0]["decision_json"]["metadata"]["nested"][0] == "token=[REDACTED]"
 
 
+def test_local_agent_v3_pending_discovery_hides_conflict_binding_requests(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    _sent_payload, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="v3-pending-conflict-hidden",
+    )
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "tool-req-conflict-hidden",
+            "bridge_task_id": task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "echo safe"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "full-auto",
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    binding = db_session.get(LocalAgentConversationBinding, task["binding_id"])
+    assert binding is not None
+    binding.status = "conflict"
+    binding.updated_at = utc_now()
+    db_session.commit()
+
+    page = client.get(
+        "/api/agents/local-agent/bridge/tool-requests/pending",
+        headers=bridge_headers,
+    )
+
+    assert page.status_code == 200, page.text
+    assert page.json()["items"] == []
+
+
+def test_local_agent_v3_duplicate_tool_request_rechecks_bridge_task_binding(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    first_payload, first_task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="v3-duplicate-tool-first",
+    )
+    decision = _approved_local_tool_request(
+        client,
+        bridge_headers=bridge_headers,
+        task=first_task,
+        run_id=first_payload["run_id"],
+        tool_request_id="tool-req-duplicate-guard",
+    )
+    duplicate_same_task = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "tool-req-duplicate-guard",
+            "bridge_task_id": first_task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf ok"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "full-auto",
+        },
+    )
+    assert duplicate_same_task.status_code == 201, duplicate_same_task.text
+    assert duplicate_same_task.json()["approval_id"] == decision["approval_id"]
+
+    _second_payload, second_task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="v3-duplicate-tool-second",
+    )
+    duplicate_wrong_task = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "tool-req-duplicate-guard",
+            "bridge_task_id": second_task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf ok"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "full-auto",
+        },
+    )
+    assert duplicate_wrong_task.status_code == 409, duplicate_wrong_task.text
+    assert "different bridge task" in duplicate_wrong_task.text
+
+    binding = db_session.get(LocalAgentConversationBinding, first_task["binding_id"])
+    assert binding is not None
+    binding.status = "conflict"
+    binding.updated_at = utc_now()
+    db_session.commit()
+    duplicate_conflict_binding = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "tool-req-duplicate-guard",
+            "bridge_task_id": first_task["id"],
+            "tool_name": "run_shell",
+            "input_json": {"command": "printf ok"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "full-auto",
+        },
+    )
+    assert duplicate_conflict_binding.status_code == 409, duplicate_conflict_binding.text
+    assert "binding is not active" in duplicate_conflict_binding.text
+
+
 def test_local_agent_v3_command_string_redaction_reaches_persisted_audit_rows(
     db_session: Session,
 ) -> None:
@@ -5537,6 +5857,60 @@ def test_local_agent_pending_task_is_api_projected_and_not_released_twice(
     second_pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
     assert second_pull.status_code == 200, second_pull.text
     assert second_pull.json()["items"] == []
+
+
+def test_local_agent_pending_task_with_mismatched_session_is_not_leased_or_acked(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    binding = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={"title": "Mismatched local session"},
+    )
+    assert binding.status_code == 201, binding.text
+    sent = client.post(
+        f"/api/agents/local-agent/bindings/{binding.json()['id']}/messages",
+        headers=AUTH_HEADERS,
+        json={"content": "queue me", "client_message_id": "mismatch-session-task"},
+    )
+    assert sent.status_code == 202, sent.text
+    other_session = AgentSession(
+        organization_id="dev-org",
+        agent_id="default",
+        created_by="dev-engineer",
+        title="Wrong session fixture",
+        status="ACTIVE",
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(other_session)
+    db_session.flush()
+    bridge_task = db_session.get(LocalAgentBridgeTask, sent.json()["bridge_task_id"])
+    assert bridge_task is not None
+    bridge_task.agent_session_id = other_session.id
+    bridge_task.updated_at = utc_now()
+    db_session.commit()
+
+    pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
+    assert pull.status_code == 200, pull.text
+    assert pull.json()["items"] == []
+
+    ack = client.post(
+        f"/api/agents/local-agent/bridge/tasks/{sent.json()['bridge_task_id']}/ack",
+        headers=bridge_headers,
+        json={"status": "running"},
+    )
+    assert ack.status_code == 409, ack.text
+    assert "binding is not active" in ack.text
+    db_session.expire_all()
+    bridge_task = db_session.get(LocalAgentBridgeTask, sent.json()["bridge_task_id"])
+    assert bridge_task is not None
+    assert bridge_task.status == "pending"
+    assert bridge_task.leased_at is None
+    assert bridge_task.acked_at is None
 
 
 def test_local_agent_failed_task_is_projected_with_error_message(
