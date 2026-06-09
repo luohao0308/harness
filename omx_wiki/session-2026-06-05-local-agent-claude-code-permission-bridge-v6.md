@@ -104,6 +104,8 @@ Security-critical fixes already applied before final review:
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-cancel` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-v5-heartbeat-upgrade-denied` passed.
 - `python3 scripts/smoke-test-local-agent-v6.py --scenario claude-modified-approval` passed.
+- 2026-06-06 follow-up for `docs/test-suite-v1-v6-local-agent.md`: fixed the smoke runner contract so `python3 scripts/smoke-test-local-agent-v6.py --all` runs every deterministic V6 scenario instead of failing argument parsing; the aggregate command passed all 11 scenarios.
+- 2026-06-06 follow-up verification: `python3 -m py_compile scripts/smoke-test-local-agent-v6.py`; `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_tool_approvals.py -q` -> `51 passed`; `cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q` -> `174 passed`; targeted Ruff passed; `cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx` -> `15 passed`; frontend lint/build, docs validation, and diff check passed.
 - `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k "v6 or local_agent_v3_approval_after_ttl or revoke_terminalizes or deny"` -> `12 passed, 34 deselected`.
 - `cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "permission_bridge or fake_sdk or bridge_v6"` -> `11 passed, 39 deselected`.
 - `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py` passed.
