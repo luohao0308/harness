@@ -1288,11 +1288,17 @@ SCENARIOS = {
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Deterministic Local Agent V6 smoke scenarios.")
-    parser.add_argument("--scenario", choices=sorted(SCENARIOS), required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--scenario", choices=sorted(SCENARIOS))
+    group.add_argument("--all", action="store_true", help="Run every deterministic V6 smoke scenario.")
     args = parser.parse_args()
-    evidence = SCENARIOS[args.scenario]()
-    print(f"PASS local-agent-v6 {evidence}")
-    app.dependency_overrides.clear()
+    scenario_names = sorted(SCENARIOS) if args.all else [args.scenario]
+    for scenario_name in scenario_names:
+        try:
+            evidence = SCENARIOS[scenario_name]()
+            print(f"PASS local-agent-v6 {evidence}")
+        finally:
+            app.dependency_overrides.clear()
     return 0
 
 
