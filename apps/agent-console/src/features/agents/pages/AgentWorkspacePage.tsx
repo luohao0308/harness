@@ -121,6 +121,11 @@ export function AgentWorkspacePage() {
   const localBindingCreateForRef = useRef<string | null>(null);
   const localTargetRequestSeqRef = useRef(0);
   const localBindingFocusConnectionRef = useRef<string | null>(null);
+  const localBindingTargetHintRef = useRef<{
+    bindingId: string;
+    connectionId: string;
+    agentSessionId: string;
+  } | null>(null);
   const selectedLocalConnectionIdRef = useRef<string | null>(null);
   const localAgentEnabledRef = useRef(localAgentEnabled);
   const focusLocalConversationOnceRef = useRef(false);
@@ -188,7 +193,12 @@ export function AgentWorkspacePage() {
     enabled: localAgentEnabled && selectedLocalConnection !== null,
   });
   const localMessagesQuery = useQuery({
-    queryKey: ["agent-session-messages", activeLocalBinding?.agent_session_id],
+    queryKey: [
+      "agent-session-messages",
+      activeLocalBinding?.agent_session_id,
+      activeLocalBinding?.id,
+      activeLocalBinding?.connection_id,
+    ],
     queryFn: () => listAgentSessionMessages(activeLocalBinding?.agent_session_id ?? ""),
     enabled: localAgentEnabled && activeLocalBinding !== null,
     refetchInterval: localAgentEnabled && activeLocalBinding !== null ? 2000 : false,
@@ -205,6 +215,16 @@ export function AgentWorkspacePage() {
         title: `${agent.data?.name ?? agentId} 本地 Agent 会话`,
       }),
     onSuccess: async (binding) => {
+      queryClient.setQueryData<LocalAgentConversationBindingPage>(
+        ["local-agent-bindings", binding.connection_id],
+        (current) => {
+          const items = current?.items ?? [];
+          const nextItems = items.some((item) => item.id === binding.id)
+            ? items.map((item) => (item.id === binding.id ? binding : item))
+            : [binding, ...items];
+          return { items: nextItems };
+        },
+      );
       if (
         localAgentEnabledRef.current &&
         selectedLocalConnectionIdRef.current === binding.connection_id
@@ -350,7 +370,8 @@ export function AgentWorkspacePage() {
       (selectedLocalConnection === null ||
         activeLocalBinding === null ||
         activeLocalBinding.connection_id !== selectedLocalConnection.id ||
-        localMessagesQuery.data === undefined)) ||
+        localMessagesQuery.data === undefined ||
+        localBindingTasksQuery.data === undefined)) ||
     (localBindingTasksQuery.data?.items.some(isLocalAgentTaskActive) ?? false);
   const createTeamFromConversation = useMutation({
     mutationFn: async () => {
@@ -440,16 +461,21 @@ export function AgentWorkspacePage() {
   ]);
 
   useEffect(() => {
-    if (selectedLocalConnectionId !== null) {
+    if (selectedLocalConnectionId !== null || localAgentEnabled) {
       return;
     }
     setSelectedLocalConnectionId(defaultLocalAgentConnection(localConnections)?.id ?? null);
-  }, [localConnections, selectedLocalConnectionId]);
+  }, [localAgentEnabled, localConnections, selectedLocalConnectionId]);
 
   useEffect(() => {
+    const targetHint = localBindingTargetHintRef.current;
     setActiveLocalBinding(null);
     setLocalPendingAssistant(null);
     localBindingCreateForRef.current = null;
+    localBindingTargetHintRef.current =
+      targetHint !== null && targetHint.connectionId === selectedLocalConnectionId
+        ? targetHint
+        : null;
     localAgentStreamTokenRef.current = null;
     localAgentStreamRef.current?.close();
     localAgentStreamRef.current = null;
@@ -473,24 +499,57 @@ export function AgentWorkspacePage() {
       (conversation) => conversation.id === state.currentConversationId,
     );
     const currentLocalBinding = localAgentBindingHintFromConversation(currentConversation);
+    const targetLocalBinding =
+      localBindingTargetHintRef.current?.connectionId === selectedLocalConnection.id
+        ? localBindingTargetHintRef.current
+        : currentLocalBinding;
     const bindingRequestedForFocus =
       localBindingFocusConnectionRef.current === selectedLocalConnection.id;
+    const currentBindingMatchesConnection =
+      currentLocalBinding?.connectionId === selectedLocalConnection.id;
+    const targetBindingMatchesConnection =
+      targetLocalBinding?.connectionId === selectedLocalConnection.id;
+    const exactTargetBinding =
+      targetBindingMatchesConnection && targetLocalBinding !== null
+        ? bindings.find(
+            (binding) =>
+              binding.status === "active" &&
+              localAgentBindingMatchesHint(binding, targetLocalBinding),
+          )
+        : undefined;
+    const currentActiveBinding =
+      targetBindingMatchesConnection &&
+      targetLocalBinding !== null &&
+      activeLocalBinding !== null &&
+      activeLocalBinding.status === "active" &&
+      localAgentBindingMatchesHint(activeLocalBinding, targetLocalBinding)
+        ? activeLocalBinding
+        : undefined;
     const activeBinding =
-      currentLocalBinding?.connectionId === selectedLocalConnection.id
-        ? bindings.find((binding) => localAgentBindingMatchesHint(binding, currentLocalBinding)) ??
-          (activeLocalBinding !== null &&
-          localAgentBindingMatchesHint(activeLocalBinding, currentLocalBinding)
-            ? activeLocalBinding
-            : localAgentBindingFromHint(currentLocalBinding, agentId))
-        : (bindingRequestedForFocus
+      exactTargetBinding ??
+      currentActiveBinding ??
+      (!targetBindingMatchesConnection && (!currentBindingMatchesConnection || bindingRequestedForFocus)
+        ? (bindingRequestedForFocus
             ? mostRecentActiveBindingForConnection(bindings, selectedLocalConnection.id)
             : undefined) ??
-          bindings.find((binding) => binding.status === "active") ??
-          bindings[0];
+          bindings.find((binding) => binding.status === "active")
+        : undefined);
     if (activeBinding !== undefined) {
       if (activeBinding.connection_id !== selectedLocalConnection.id) return;
       if (activeLocalBinding?.id !== activeBinding.id) {
         setActiveLocalBinding(activeBinding);
+      }
+      if (
+        localBindingTargetHintRef.current !== null &&
+        localAgentBindingMatchesHint(activeBinding, localBindingTargetHintRef.current)
+      ) {
+        localBindingTargetHintRef.current = null;
+      }
+      return;
+    }
+    if ((currentBindingMatchesConnection || targetBindingMatchesConnection) && !bindingRequestedForFocus) {
+      if (activeLocalBinding !== null) {
+        setActiveLocalBinding(null);
       }
       return;
     }
@@ -537,8 +596,8 @@ export function AgentWorkspacePage() {
         : undefined;
     const summary = localAgentConversationFromMessages({
       binding: activeLocalBinding,
-      messages: localMessagesQuery.data.items.filter(
-        (message) => message.session_id === activeLocalBinding.agent_session_id,
+      messages: localMessagesQuery.data.items.filter((message) =>
+        localAgentMessageMatchesBinding(message, activeLocalBinding),
       ),
       pendingTasks: (localBindingTasksQuery.data?.items ?? []).filter(
         (task) => task.binding_id === activeLocalBinding.id,
@@ -832,6 +891,7 @@ export function AgentWorkspacePage() {
       localAgentEnabledRef.current = false;
       focusLocalConversationOnceRef.current = false;
       localBindingFocusConnectionRef.current = null;
+      localBindingTargetHintRef.current = null;
       localAgentStreamTokenRef.current = null;
       localAgentStreamRef.current?.close();
       localAgentStreamRef.current = null;
@@ -859,6 +919,7 @@ export function AgentWorkspacePage() {
     localAgentEnabledRef.current = true;
     focusLocalConversationOnceRef.current = true;
     localBindingFocusConnectionRef.current = connectionId;
+    localBindingTargetHintRef.current = null;
     localAgentStreamTokenRef.current = null;
     localAgentStreamRef.current?.close();
     localAgentStreamRef.current = null;
@@ -866,6 +927,8 @@ export function AgentWorkspacePage() {
     setLocalPendingAssistant(null);
     setSelectedLocalConnectionId(connectionId);
     setLocalAgentEnabled(true);
+    const connection =
+      localConnections.find((item) => item.id === connectionId) ?? null;
     const existingConversation = mostRecentLocalAgentConversationForConnection(
       useWorkspaceStore.getState().conversations,
       connectionId,
@@ -878,22 +941,25 @@ export function AgentWorkspacePage() {
             "local-agent-bindings",
             localBinding.connectionId,
           ])
-          ?.items.find((binding) => localAgentBindingMatchesHint(binding, localBinding));
-        setActiveLocalBinding(
-          bindingFromCache ?? localAgentBindingFromHint(localBinding, agentId),
-        );
-        localBindingFocusConnectionRef.current = null;
+          ?.items.find(
+            (binding) =>
+              binding.status === "active" &&
+              localAgentBindingMatchesHint(binding, localBinding),
+          );
+        if (bindingFromCache !== undefined) {
+          setActiveLocalBinding(bindingFromCache);
+          localBindingFocusConnectionRef.current = null;
+          setCurrentConversation(existingConversation.id);
+          return;
+        }
+        localBindingTargetHintRef.current = localBinding;
       }
-      setCurrentConversation(existingConversation.id);
-    } else {
-      const connection =
-        localConnections.find((item) => item.id === connectionId) ?? null;
-      ensurePendingLocalAgentConversation({
-        connection,
-        fallbackTitle: `${connection?.display_name ?? "本地 Agent"} 正在恢复`,
-        focus: true,
-      });
     }
+    ensurePendingLocalAgentConversation({
+      connection,
+      fallbackTitle: `${connection?.display_name ?? "本地 Agent"} 正在恢复`,
+      focus: true,
+    });
   }, [
     agentId,
     localConnections,
@@ -904,21 +970,28 @@ export function AgentWorkspacePage() {
 
   const handleLocalAgentEnabledChange = useCallback(
     (enabled: boolean): void => {
+      const connection = selectedLocalConnection;
       localAgentEnabledRef.current = enabled;
       if (enabled) {
         localTargetRequestSeqRef.current += 1;
         focusLocalConversationOnceRef.current = true;
-        localBindingFocusConnectionRef.current = selectedLocalConnection?.id ?? null;
+        localBindingFocusConnectionRef.current = connection?.id ?? null;
+        localBindingTargetHintRef.current = null;
+        if (connection !== null) {
+          selectedLocalConnectionIdRef.current = connection.id;
+          setSelectedLocalConnectionId(connection.id);
+        }
       } else {
         focusLocalConversationOnceRef.current = false;
         localBindingFocusConnectionRef.current = null;
+        localBindingTargetHintRef.current = null;
         localAgentStreamTokenRef.current = null;
         localAgentStreamRef.current?.close();
         localAgentStreamRef.current = null;
       }
       setLocalAgentEnabled(enabled);
-      if (!enabled || selectedLocalConnection === null) return;
-      const connectionId = selectedLocalConnection.id;
+      if (!enabled || connection === null) return;
+      const connectionId = connection.id;
       const requestSeq = localTargetRequestSeqRef.current;
       void (async () => {
         try {
@@ -927,8 +1000,22 @@ export function AgentWorkspacePage() {
             queryFn: () => listLocalAgentConversationBindings(connectionId),
           });
           if (localTargetRequestSeqRef.current !== requestSeq) return;
+          const localBindingHint = mostRecentLocalAgentBindingHintForConnection(
+            useWorkspaceStore.getState().conversations,
+            connectionId,
+          );
           const activeBinding =
-            bindings.items.find((binding) => binding.status === "active") ?? bindings.items[0];
+            (localBindingHint !== null
+              ? bindings.items.find(
+                  (binding) =>
+                    binding.status === "active" &&
+                    localAgentBindingMatchesHint(binding, localBindingHint),
+                )
+              : undefined) ??
+            (!localBindingHint
+              ? (bindings.items.find((binding) => binding.status === "active") ??
+                bindings.items[0])
+              : undefined);
           if (activeBinding !== undefined) {
             if (
               localAgentEnabledRef.current &&
@@ -936,6 +1023,15 @@ export function AgentWorkspacePage() {
             ) {
               setActiveLocalBinding(activeBinding);
             }
+            return;
+          }
+          if (localBindingHint !== null) {
+            localBindingTargetHintRef.current = localBindingHint;
+            ensurePendingLocalAgentConversation({
+              connection,
+              fallbackTitle: `${connection.display_name ?? "本地 Agent"} 正在恢复`,
+              focus: true,
+            });
             return;
           }
           localBindingCreateForRef.current = connectionId;
@@ -1001,8 +1097,7 @@ export function AgentWorkspacePage() {
           orchestration?.source === "local_agent" &&
           orchestration.binding_id === binding.id &&
           orchestration.connection_id === connection.id &&
-          (orchestration.agent_session_id === undefined ||
-            orchestration.agent_session_id === binding.agent_session_id) &&
+          orchestration.agent_session_id === binding.agent_session_id &&
           orchestration.bridge_task_id === bridgeTaskId
         );
       };
@@ -1193,6 +1288,14 @@ export function AgentWorkspacePage() {
         });
         return false;
       }
+      if (localBindingTasksQuery.data === undefined) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在同步本地任务状态，请稍后再发送。",
+        });
+        return false;
+      }
 
       const store = useWorkspaceStore.getState();
       focusLocalConversationOnceRef.current = true;
@@ -1252,6 +1355,7 @@ export function AgentWorkspacePage() {
             source: "local_agent",
             connection_id: selectedLocalConnection.id,
             binding_id: activeLocalBinding.id,
+            agent_session_id: activeLocalBinding.agent_session_id,
             client_message_id: clientMessageId,
             model_provider: context.model_provider,
             model_name: context.model_name,
@@ -1281,6 +1385,7 @@ export function AgentWorkspacePage() {
             source: "local_agent",
             connection_id: selectedLocalConnection.id,
             binding_id: activeLocalBinding.id,
+            agent_session_id: activeLocalBinding.agent_session_id,
             client_message_id: clientMessageId,
             adapter_kind: selectedLocalConnection.adapter_kind,
             model_provider: context.model_provider,
@@ -1334,6 +1439,7 @@ export function AgentWorkspacePage() {
               source: "local_agent",
               connection_id: selectedLocalConnection.id,
               binding_id: activeLocalBinding.id,
+              agent_session_id: activeLocalBinding.agent_session_id,
               bridge_task_id: response.bridge_task_id,
               client_message_id: clientMessageId,
               adapter_kind: selectedLocalConnection.adapter_kind,
@@ -1430,6 +1536,7 @@ export function AgentWorkspacePage() {
       localAgentStreamTokenRef.current = null;
       localAgentStreamRef.current?.close();
       localAgentStreamRef.current = null;
+      localBindingTargetHintRef.current = null;
       setActiveLocalBinding(null);
       setLocalPendingAssistant(null);
       void (async () => {
@@ -1508,6 +1615,7 @@ export function AgentWorkspacePage() {
         selectedLocalConnectionIdRef.current = localBinding.connectionId;
         localAgentEnabledRef.current = true;
         localBindingFocusConnectionRef.current = null;
+        localBindingTargetHintRef.current = localBinding;
         localAgentStreamTokenRef.current = null;
         localAgentStreamRef.current?.close();
         localAgentStreamRef.current = null;
@@ -1518,18 +1626,20 @@ export function AgentWorkspacePage() {
           ])
           ?.items.find(
             (binding) =>
-              binding.id === localBinding.bindingId ||
-              binding.agent_session_id === localBinding.agentSessionId,
+              binding.status === "active" &&
+              localAgentBindingMatchesHint(binding, localBinding),
           );
-        setActiveLocalBinding(
-          bindingFromCache ?? localAgentBindingFromHint(localBinding, agentId),
-        );
+        if (bindingFromCache !== undefined) {
+          localBindingTargetHintRef.current = null;
+        }
+        setActiveLocalBinding(bindingFromCache ?? null);
         setLocalPendingAssistant(null);
         setSelectedLocalConnectionId(localBinding.connectionId);
         setLocalAgentEnabled(true);
       } else {
         localAgentEnabledRef.current = false;
         localBindingFocusConnectionRef.current = null;
+        localBindingTargetHintRef.current = null;
         localAgentStreamTokenRef.current = null;
         localAgentStreamRef.current?.close();
         localAgentStreamRef.current = null;
@@ -1958,12 +2068,12 @@ function localAgentConversationFromMessages({
             ? message.metadata_json.model_call_id
             : null,
         orchestration: {
+          message_id: message.id,
+          ...message.metadata_json,
           source: "local_agent",
           binding_id: binding.id,
           connection_id: binding.connection_id,
           agent_session_id: binding.agent_session_id,
-          message_id: message.id,
-          ...message.metadata_json,
         },
       },
       tool_calls: [],
@@ -2214,6 +2324,7 @@ function localAgentBindingHintFromConversation(
   if (conversation === undefined) return null;
   for (const node of Object.values(conversation.nodesById)) {
     const orchestration = node.metadata.orchestration;
+    if (orchestration?.source !== "local_agent") continue;
     const bindingId = orchestration?.binding_id;
     const connectionId = orchestration?.connection_id;
     const agentSessionId = orchestration?.agent_session_id;
@@ -2229,25 +2340,6 @@ function localAgentBindingHintFromConversation(
     }
   }
   return null;
-}
-
-function localAgentBindingFromHint(hint: {
-  bindingId: string;
-  connectionId: string;
-  agentSessionId: string;
-}, agentId: string): LocalAgentConversationBinding {
-  const now = new Date().toISOString();
-  return {
-    id: hint.bindingId,
-    connection_id: hint.connectionId,
-    agent_id: agentId,
-    agent_session_id: hint.agentSessionId,
-    adapter_session_id: null,
-    resume_mode: "context_replay_new_session",
-    status: "active",
-    created_at: now,
-    updated_at: now,
-  };
 }
 
 function localAgentBindingMatchesHint(
@@ -2271,6 +2363,14 @@ function mostRecentLocalAgentConversationForConnection(
       return hint?.connectionId === connectionId;
     })
     .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+}
+
+function mostRecentLocalAgentBindingHintForConnection(
+  conversations: ConversationSummary[],
+  connectionId: string,
+): { bindingId: string; connectionId: string; agentSessionId: string } | null {
+  const conversation = mostRecentLocalAgentConversationForConnection(conversations, connectionId);
+  return localAgentBindingHintFromConversation(conversation);
 }
 
 function mostRecentActiveBindingForConnection(
@@ -2526,18 +2626,29 @@ function localAgentNodeMatchesBinding(
   const orchestration = node.metadata.orchestration;
   if (orchestration === undefined) return false;
   const source = orchestration.source;
-  if (source !== undefined && source !== "local_agent") return false;
+  if (source !== "local_agent") return false;
   const bindingId = orchestration.binding_id;
   const connectionId = orchestration.connection_id;
   const sessionId = orchestration.agent_session_id;
-  if (typeof bindingId === "string" && bindingId !== binding.id) return false;
-  if (typeof connectionId === "string" && connectionId !== binding.connection_id) return false;
-  if (typeof sessionId === "string" && sessionId !== binding.agent_session_id) return false;
-  return (
-    typeof bindingId === "string" ||
-    typeof connectionId === "string" ||
-    typeof sessionId === "string"
-  );
+  if (bindingId !== binding.id) return false;
+  if (connectionId !== binding.connection_id) return false;
+  return sessionId === binding.agent_session_id;
+}
+
+function localAgentMessageMatchesBinding(
+  message: AgentMessage,
+  binding: LocalAgentConversationBinding,
+): boolean {
+  if (message.session_id !== binding.agent_session_id) return false;
+  const metadata = message.metadata_json ?? {};
+  const source = metadata.source;
+  if (source !== "local_agent") return false;
+  const bindingId = metadata.binding_id;
+  const connectionId = metadata.connection_id;
+  const sessionId = metadata.agent_session_id;
+  if (bindingId !== binding.id) return false;
+  if (connectionId !== binding.connection_id) return false;
+  return sessionId === binding.agent_session_id;
 }
 
 function estimateLocalAgentInputTokens(goal: string, context: LocalAgentSubmitContext): number {
@@ -2575,7 +2686,9 @@ function estimateLocalAgentInputTokens(goal: string, context: LocalAgentSubmitCo
 
 function localAgentConnectionIdFromConversation(conversation: ConversationSummary): string | null {
   for (const node of Object.values(conversation.nodesById)) {
-    const connectionId = node.metadata.orchestration?.connection_id;
+    const orchestration = node.metadata.orchestration;
+    if (orchestration?.source !== "local_agent") continue;
+    const connectionId = orchestration.connection_id;
     if (typeof connectionId === "string" && connectionId.length > 0) {
       return connectionId;
     }

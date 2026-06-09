@@ -45,6 +45,7 @@ from app.api.schemas import (
     AgentChatResponse,
     AgentChatStreamRequest,
     AgentCloneRequest,
+    ConversationNode,
     AgentCreateRequest,
     AgentHandoffResponse,
     AgentLocalToolEventRequest,

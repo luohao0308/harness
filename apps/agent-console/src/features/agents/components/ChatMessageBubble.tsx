@@ -45,6 +45,10 @@ import { MessageActions } from "./MessageActions";
 import { MessageEditForm } from "./MessageEditForm";
 import { StreamingCaret } from "./StreamingCaret";
 
+const LOCAL_AGENT_IO_CONTEXT_ROW_LIMIT = 24;
+const LOCAL_AGENT_IO_CONTEXT_CHAR_LIMIT = 1200;
+const LOCAL_AGENT_IO_PREVIEW_CHAR_LIMIT = 8000;
+
 export type ChatMessageBubbleProps = {
   /** Conversation node. Must have `role ∈ {user, assistant, tool}`; error
    * nodes render through {@link ChatErrorBubble} instead. */
@@ -198,7 +202,9 @@ export function ChatMessageBubble({
         )}
 
         {!isEditing && <MetadataLine node={node} aligned={isUser ? "end" : "start"} />}
-        {!isEditing && <LocalAgentIoPanel node={node} aligned={isUser ? "end" : "start"} />}
+        {!isEditing && node.role === "assistant" && (
+          <LocalAgentIoPanel node={node} aligned={isUser ? "end" : "start"} />
+        )}
 
         {!isEditing && (node.role === "user" || node.role === "assistant") && (
           <div className={cn("flex items-center gap-1", isUser ? "justify-end" : "justify-start")}>
@@ -430,10 +436,20 @@ function LocalAgentIoPanel({
   const contextCount = readNumber(input, "conversation_context_count");
   const tools = readStringList(input, "tool_mentions", "name");
   const attachments = readStringList(input, "attachments", "name");
-  const inputPreview =
-    readString(input, "message") ||
-    firstPreviewText(readArray(input, "conversation_context_preview"));
-  const outputPreview = output ? readString(output, "content_preview") : "";
+  const inputPreview = boundedPreviewText(
+    readString(input, "message"),
+    LOCAL_AGENT_IO_PREVIEW_CHAR_LIMIT,
+  );
+  const contextItems = readArray(input, "conversation_context");
+  const contextPreviewItems =
+    contextItems.length > 0 ? contextItems : readArray(input, "conversation_context_preview");
+  const outputPreview = output
+    ? boundedPreviewText(
+        readString(output, "content") || readString(output, "content_preview"),
+        LOCAL_AGENT_IO_PREVIEW_CHAR_LIMIT,
+      )
+    : "";
+  const outputTruncated = output ? output.content_truncated === true : false;
   const bindingId = readString(input, "binding_id");
   const sessionId = readString(input, "agent_session_id");
   const bridgeTaskId = output ? readString(output, "bridge_task_id") : "";
@@ -489,10 +505,16 @@ function LocalAgentIoPanel({
           </dl>
         ) : null}
         {inputPreview ? (
-          <PreviewBlock label="输入预览" value={inputPreview} />
+          <PreviewBlock label="输入" value={inputPreview} />
+        ) : null}
+        {contextPreviewItems.length > 0 ? (
+          <ContextPreviewBlock label="上下文明细" items={contextPreviewItems} />
         ) : null}
         {outputPreview ? (
-          <PreviewBlock label="输出预览" value={outputPreview} />
+          <PreviewBlock
+            label={outputTruncated ? "输出（已截断）" : "输出"}
+            value={outputPreview}
+          />
         ) : null}
       </div>
     </div>
@@ -505,6 +527,44 @@ function PreviewBlock({ label, value }: { label: string; value: string }): JSX.E
       <div className="mb-1 text-slate-400">{label}</div>
       <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded bg-slate-50 px-2 py-1.5 font-mono text-[11px] leading-5 text-slate-700">
         {value}
+      </div>
+    </div>
+  );
+}
+
+function ContextPreviewBlock({ label, items }: { label: string; items: unknown[] }): JSX.Element {
+  const rows = items
+    .slice(0, LOCAL_AGENT_IO_CONTEXT_ROW_LIMIT)
+    .map((item) =>
+      isRecord(item)
+        ? {
+            role: readString(item, "role") || "message",
+            content: boundedPreviewText(
+              readString(item, "content"),
+              LOCAL_AGENT_IO_CONTEXT_CHAR_LIMIT,
+            ),
+          }
+        : null,
+    )
+    .filter(
+      (item): item is { role: string; content: string } =>
+        item !== null && item.content.length > 0,
+    );
+  if (rows.length === 0) return <></>;
+  const truncated = items.length > LOCAL_AGENT_IO_CONTEXT_ROW_LIMIT;
+  return (
+    <div className="mt-2 border-t border-slate-100 pt-2">
+      <div className="mb-1 text-slate-400">
+        {label}
+        {truncated ? `（仅显示前 ${LOCAL_AGENT_IO_CONTEXT_ROW_LIMIT} 条）` : ""}
+      </div>
+      <div className="max-h-36 space-y-1.5 overflow-y-auto rounded bg-slate-50 px-2 py-1.5 font-mono text-[11px] leading-5 text-slate-700">
+        {rows.map((row, index) => (
+          <div key={`${row.role}-${index}`} className="grid grid-cols-[4.25rem_minmax(0,1fr)] gap-2">
+            <span className="truncate text-slate-400">{row.role}</span>
+            <span className="whitespace-pre-wrap break-words">{row.content}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -547,13 +607,9 @@ function readStringList(record: Record<string, unknown>, key: string, itemKey: s
     .slice(0, 6);
 }
 
-function firstPreviewText(items: unknown[]): string {
-  for (const item of items) {
-    if (!isRecord(item)) continue;
-    const content = readString(item, "content");
-    if (content) return content;
-  }
-  return "";
+function boundedPreviewText(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}...[truncated]`;
 }
 
 function joinCompact(parts: string[], separator: string): string {

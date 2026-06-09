@@ -1227,7 +1227,11 @@ def send_local_agent_message(
         )
 
     now = utc_now()
-    conversation_context = _local_agent_workspace_conversation_context(request)
+    conversation_context = _local_agent_workspace_conversation_context(
+        request,
+        connection=connection,
+        binding=binding,
+    )
     if not conversation_context and not request.workspace_context_provided:
         conversation_context = _codex_conversation_context(
             agent_session_id=agent_session.id,
@@ -1249,10 +1253,10 @@ def send_local_agent_message(
         attachment.model_dump(mode="json", exclude_none=True)
         for attachment in request.attachments[:12]
     ]
-    compressed_context = (
-        request.compressed_context.model_dump(mode="json", exclude_none=True)
-        if request.compressed_context is not None
-        else None
+    compressed_context = _local_agent_validated_compressed_context(
+        request,
+        connection=connection,
+        binding=binding,
     )
     workspace_request = {
         "mode": request.workspace_mode,
@@ -1449,9 +1453,17 @@ def pull_local_agent_bridge_tasks(
     tasks = list(
         session.execute(
             select(LocalAgentBridgeTask)
+            .join(
+                LocalAgentConversationBinding,
+                LocalAgentConversationBinding.id == LocalAgentBridgeTask.binding_id,
+            )
             .where(
                 LocalAgentBridgeTask.connection_id == connection.id,
                 LocalAgentBridgeTask.status == "pending",
+                LocalAgentConversationBinding.status == "active",
+                LocalAgentConversationBinding.connection_id == connection.id,
+                LocalAgentConversationBinding.agent_session_id
+                == LocalAgentBridgeTask.agent_session_id,
             )
             .with_for_update(skip_locked=True)
             .order_by(LocalAgentBridgeTask.created_at.asc(), LocalAgentBridgeTask.id.asc())
@@ -1640,6 +1652,29 @@ def create_local_agent_tool_request(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        _ensure_local_tool_request_binding_active(
+            local_request=existing,
+            connection=connection,
+            session=session,
+        )
+        if existing.bridge_task_id != request.bridge_task_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent tool request belongs to a different bridge task",
+            )
+        bridge_task = _owned_bridge_task(
+            bridge_task_id=request.bridge_task_id,
+            connection=connection,
+            session=session,
+        )
+        if (
+            bridge_task.id != existing.bridge_task_id
+            or bridge_task.binding_id != existing.binding_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent tool request binding does not match bridge task",
+            )
         return _local_tool_decision_response(existing, session=session)
     bridge_task = _owned_bridge_task(
         bridge_task_id=request.bridge_task_id,
@@ -2020,9 +2055,15 @@ def list_pending_local_agent_tool_requests(
     rows = list(
         session.execute(
             select(LocalAgentToolRequest)
+            .join(
+                LocalAgentConversationBinding,
+                LocalAgentConversationBinding.id == LocalAgentToolRequest.binding_id,
+            )
             .where(
                 LocalAgentToolRequest.connection_id == connection.id,
                 LocalAgentToolRequest.status.in_(("approval_required", "approved", "allowed")),
+                LocalAgentConversationBinding.status == "active",
+                LocalAgentConversationBinding.connection_id == connection.id,
             )
             .order_by(
                 LocalAgentToolRequest.created_at.asc(),
@@ -2447,6 +2488,11 @@ def cancel_local_agent_command(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner or admin can cancel",
         )
+    if binding.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent binding is not active",
+        )
     connection = _owned_connection(
         connection_id=binding.connection_id,
         session=session,
@@ -2501,6 +2547,11 @@ def retry_local_agent_command(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner can retry local commands",
+        )
+    if binding.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent binding is not active",
         )
     connection = _owned_connection(
         connection_id=binding.connection_id,
@@ -2666,6 +2717,11 @@ def _owned_bridge_task(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Local Agent bridge task not found"
         )
+    _ensure_bridge_task_binding_active(
+        bridge_task=bridge_task,
+        connection=connection,
+        session=session,
+    )
     return bridge_task
 
 
@@ -2686,6 +2742,11 @@ def _owned_local_tool_request(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Local Agent tool request not found",
         )
+    _ensure_local_tool_request_binding_active(
+        local_request=local_request,
+        connection=connection,
+        session=session,
+    )
     return local_request
 
 
@@ -2706,7 +2767,69 @@ def _owned_local_agent_command(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Local Agent command not found",
         )
+    _ensure_local_command_binding_active(
+        command=command,
+        connection=connection,
+        session=session,
+    )
     return command
+
+
+def _ensure_bridge_task_binding_active(
+    *,
+    bridge_task: LocalAgentBridgeTask,
+    connection: LocalAgentConnection,
+    session: Session,
+) -> None:
+    binding = session.get(LocalAgentConversationBinding, bridge_task.binding_id)
+    if (
+        binding is None
+        or binding.connection_id != connection.id
+        or binding.status != "active"
+        or binding.agent_session_id != bridge_task.agent_session_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent bridge task binding is not active",
+        )
+
+
+def _ensure_local_tool_request_binding_active(
+    *,
+    local_request: LocalAgentToolRequest,
+    connection: LocalAgentConnection,
+    session: Session,
+) -> None:
+    binding = session.get(LocalAgentConversationBinding, local_request.binding_id)
+    if (
+        binding is None
+        or binding.connection_id != connection.id
+        or binding.status != "active"
+        or binding.id != local_request.binding_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent tool request binding is not active",
+        )
+
+
+def _ensure_local_command_binding_active(
+    *,
+    command: LocalAgentCommand,
+    connection: LocalAgentConnection,
+    session: Session,
+) -> None:
+    binding = session.get(LocalAgentConversationBinding, command.binding_id)
+    if (
+        binding is None
+        or binding.connection_id != connection.id
+        or binding.status != "active"
+        or binding.id != command.binding_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent command binding is not active",
+        )
 
 
 def _terminalize_local_tool_request(
@@ -4314,9 +4437,12 @@ def _local_agent_model_call_response_json(
     completion_tokens: int,
     duration_ms: int,
 ) -> dict:
+    output_content = _bounded_text(content, limit=120_000)
     return {
         "source": "local_agent_bridge",
+        "content": output_content,
         "content_preview": content[:2000],
+        "content_truncated": output_content.endswith("...[truncated]"),
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -4362,8 +4488,13 @@ def _local_agent_message_input_snapshot(
         "context_max_tokens": request.context_max_tokens,
         "pinned_node_ids": request.pinned_node_ids[:50],
         "conversation_context_count": len(conversation_context),
-        "conversation_context": _local_agent_context_snapshot(conversation_context),
+        "conversation_context": _local_agent_context_snapshot(
+            conversation_context,
+            max_items=50,
+            content_limit=4000,
+        ),
         "conversation_context_preview": _local_agent_context_snapshot(conversation_context),
+        "conversation_context_truncated": len(conversation_context) > 50,
         "workspace_request": _local_agent_workspace_request_preview(
             workspace_request,
             attachments=attachment_payloads,
@@ -4416,8 +4547,13 @@ def _local_agent_message_input_snapshot_from_payload(
             max_items=50,
         ),
         "conversation_context_count": len(conversation_context),
-        "conversation_context": _local_agent_context_snapshot(conversation_context),
+        "conversation_context": _local_agent_context_snapshot(
+            conversation_context,
+            max_items=50,
+            content_limit=4000,
+        ),
         "conversation_context_preview": _local_agent_context_snapshot(conversation_context),
+        "conversation_context_truncated": len(conversation_context) > 50,
         "workspace_request": _local_agent_workspace_request_preview(
             workspace_request,
             attachments=attachments,
@@ -4444,6 +4580,7 @@ def _local_agent_message_output_snapshot(
     duration_ms: int,
     model_call_id: str,
 ) -> dict:
+    output_content = _bounded_text(content, limit=120_000)
     return {
         "source": "local_agent_bridge",
         "adapter_kind": connection.adapter_kind,
@@ -4455,7 +4592,9 @@ def _local_agent_message_output_snapshot(
         "event_id": request.event_id,
         "sequence": request.sequence,
         "model_call_id": model_call_id,
+        "content": output_content,
         "content_preview": _bounded_text(content, limit=4000),
+        "content_truncated": output_content.endswith("...[truncated]"),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
@@ -4465,16 +4604,21 @@ def _local_agent_message_output_snapshot(
     }
 
 
-def _local_agent_context_snapshot(items: list[dict]) -> list[dict[str, str]]:
+def _local_agent_context_snapshot(
+    items: list[dict],
+    *,
+    max_items: int = 12,
+    content_limit: int = 1000,
+) -> list[dict[str, str]]:
     snapshot: list[dict[str, str]] = []
-    for item in items[:12]:
+    for item in items[:max_items]:
         snapshot.append(
             {
                 "role": _bounded_text(str(item.get("role") or ""), limit=40),
-                "content": _bounded_text(str(item.get("content") or ""), limit=1000),
+                "content": _bounded_text(str(item.get("content") or ""), limit=content_limit),
             }
         )
-    if len(items) > 12:
+    if len(items) > max_items:
         snapshot.append({"role": "system", "content": "[truncated]"})
     return snapshot
 
@@ -4933,29 +5077,47 @@ def _bounded_text(value: str | None, limit: int = 4000) -> str:
 
 def _local_agent_workspace_conversation_context(
     request: LocalAgentSendMessageRequest,
+    *,
+    connection: LocalAgentConnection,
+    binding: LocalAgentConversationBinding,
 ) -> list[dict[str, str]]:
     context: list[dict[str, str]] = []
     total_chars = 0
+    eligible_messages = [
+        node
+        for node in request.messages
+        if node.role in {"user", "assistant"}
+        and _local_agent_request_node_matches_binding(
+            node,
+            connection=connection,
+            binding=binding,
+        )
+    ]
+    eligible_message_ids = {node.id for node in eligible_messages}
     pinned_ids = set(request.pinned_node_ids)
-    coverage_ids = (
+    requested_coverage_ids = (
         set(request.compressed_context.coverage_node_ids)
         if request.compressed_context is not None
         else set()
     )
+    coverage_ids = (
+        requested_coverage_ids
+        if requested_coverage_ids and requested_coverage_ids.issubset(eligible_message_ids)
+        else set()
+    )
     pinned = [
         node
-        for node in request.messages
-        if node.id in pinned_ids and node.role in {"user", "assistant"}
+        for node in eligible_messages
+        if node.id in pinned_ids
     ]
     carried = [
         node
-        for node in request.messages[-request.context_window_turns :]
-        if node.role in {"user", "assistant"}
-        and node.id not in pinned_ids
+        for node in eligible_messages[-request.context_window_turns :]
+        if node.id not in pinned_ids
         and node.id not in coverage_ids
     ]
     summary = request.compressed_context.summary.strip() if request.compressed_context else ""
-    if summary:
+    if summary and coverage_ids and coverage_ids.issubset(eligible_message_ids):
         carried = [
             {
                 "role": "assistant",
@@ -4977,6 +5139,52 @@ def _local_agent_workspace_conversation_context(
         context.append({"role": role, "content": content})
         total_chars += len(content)
     return context
+
+
+def _local_agent_validated_compressed_context(
+    request: LocalAgentSendMessageRequest,
+    *,
+    connection: LocalAgentConnection,
+    binding: LocalAgentConversationBinding,
+) -> dict | None:
+    if request.compressed_context is None:
+        return None
+    coverage_ids = set(request.compressed_context.coverage_node_ids)
+    if not coverage_ids:
+        return None
+    eligible_message_ids = {
+        node.id
+        for node in request.messages
+        if node.role in {"user", "assistant"}
+        and _local_agent_request_node_matches_binding(
+            node,
+            connection=connection,
+            binding=binding,
+        )
+    }
+    if not coverage_ids.issubset(eligible_message_ids):
+        return None
+    return request.compressed_context.model_dump(mode="json", exclude_none=True)
+
+
+def _local_agent_request_node_matches_binding(
+    node: ConversationNode,
+    *,
+    connection: LocalAgentConnection,
+    binding: LocalAgentConversationBinding,
+) -> bool:
+    metadata = node.metadata if isinstance(node.metadata, dict) else {}
+    orchestration = metadata.get("orchestration")
+    if not isinstance(orchestration, dict):
+        orchestration = metadata
+    if orchestration.get("source") != "local_agent":
+        return False
+    if orchestration.get("binding_id") != binding.id:
+        return False
+    if orchestration.get("connection_id") != connection.id:
+        return False
+    metadata_session_id = orchestration.get("agent_session_id")
+    return metadata_session_id == binding.agent_session_id
 
 
 def _local_agent_estimated_input_tokens(payload: dict) -> int:
@@ -5058,7 +5266,7 @@ def _local_agent_message_metadata_matches_binding(
     if metadata.get("connection_id") != connection_id:
         return False
     metadata_session_id = metadata.get("agent_session_id")
-    return metadata_session_id is None or metadata_session_id == agent_session_id
+    return metadata_session_id == agent_session_id
 
 
 def _redact_mapping(value: dict, *, max_items: int = 50) -> dict:

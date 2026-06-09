@@ -238,6 +238,10 @@ describe("ChatMessageList render regression (React error #310)", () => {
               model_name: "deepseek-v4",
               message: "请检查本地项目",
               conversation_context_count: 2,
+              conversation_context: [
+                { role: "user", content: "第一条本地上下文" },
+                { role: "assistant", content: "第二条本地上下文" },
+              ],
               tool_mentions: [{ name: "read_file" }],
               attachments: [{ name: "README.md" }],
             },
@@ -270,7 +274,56 @@ describe("ChatMessageList render regression (React error #310)", () => {
     expect(text).toContain("输出 9");
     expect(text).toContain("总计 50");
     expect(text).toContain("请检查本地项目");
+    expect(text).toContain("上下文明细");
+    expect(text).toContain("第一条本地上下文");
+    expect(text).toContain("第二条本地上下文");
     expect(text).toContain("检查完成。");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("does not expand local Agent I/O snapshots on user bubbles", async () => {
+    const userNode = makeNode({
+      id: "u1",
+      role: "user",
+      content: "请检查本地项目",
+      metadata: {
+        orchestration: {
+          source: "local_agent",
+          local_agent_io: {
+            input: {
+              adapter_kind: "hao",
+              binding_id: "binding-hao-1234567890",
+              agent_session_id: "session-hao-1234567890",
+              model_provider: "deepseek",
+              model_name: "deepseek-v4",
+              message: "请检查本地项目",
+              conversation_context_count: 1,
+              conversation_context: [
+                {
+                  role: "assistant",
+                  content: "不应该在用户消息气泡里展开的大段上下文",
+                },
+              ],
+            },
+            output: null,
+          },
+        },
+      },
+    });
+
+    await act(async () => {
+      root.render(<ChatMessageList {...buildProps([userNode])} />);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("请检查本地项目");
+    expect(text).not.toContain("本地 Agent I/O");
+    expect(text).not.toContain("不应该在用户消息气泡里展开的大段上下文");
 
     await act(async () => {
       root.unmount();

@@ -359,7 +359,14 @@ describe("AgentWorkspacePage Team launcher", () => {
 
     const { queryClient } = renderPage(fetchMock);
 
-    await chooseWorkspaceTarget(user, /hao Local/);
+    await user.click(await screen.findByRole("button", { name: "启用本地 Agent" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.map(
+          ([input, init]) => `${init?.method ?? "GET"} ${requestPath(input)}`,
+        ),
+      ).toContain("POST /api/agents/local-agent/connections/conn-local-1/bindings");
+    });
     await screen.findByText("Session session-1");
     expect(await screen.findByRole("button", { name: /claude-sonnet-4/ })).toBeInTheDocument();
 
@@ -469,6 +476,7 @@ describe("AgentWorkspacePage Team launcher", () => {
           source: "local_agent",
           connection_id: "conn-local-1",
           binding_id: "binding-1",
+          agent_session_id: "session-1",
           client_message_id: "local-final",
         },
         created_at: now,
@@ -483,6 +491,7 @@ describe("AgentWorkspacePage Team launcher", () => {
           source: "local_agent",
           connection_id: "conn-local-1",
           binding_id: "binding-1",
+          agent_session_id: "session-1",
           bridge_task_id: "bridge-task-1",
         },
         created_at: now,
@@ -644,6 +653,7 @@ describe("AgentWorkspacePage Team launcher", () => {
           source: "local_agent",
           connection_id: "conn-local-1",
           binding_id: "binding-1",
+          agent_session_id: "session-1",
           client_message_id: "local-no-delta",
         },
         created_at: now,
@@ -658,6 +668,7 @@ describe("AgentWorkspacePage Team launcher", () => {
           source: "local_agent",
           connection_id: "conn-local-1",
           binding_id: "binding-1",
+          agent_session_id: "session-1",
           bridge_task_id: "bridge-task-no-delta",
         },
         created_at: now,
@@ -1143,6 +1154,7 @@ describe("AgentWorkspacePage Team launcher", () => {
               source: "local_agent",
               connection_id: "conn-local-1",
               binding_id: "binding-1",
+              agent_session_id: "session-1",
               client_message_id: "local-polled",
             },
             created_at: "2026-05-24T00:00:02Z",
@@ -2101,6 +2113,7 @@ describe("AgentWorkspacePage Team launcher", () => {
                 source: "local_agent",
                 connection_id: "conn-codex",
                 binding_id: "binding-codex",
+                agent_session_id: "session-codex",
                 client_message_id: "client-codex-1",
               },
               created_at: "2026-05-24T00:00:02Z",
@@ -3129,6 +3142,17 @@ describe("AgentWorkspacePage Team launcher", () => {
               },
               created_at: "2026-05-24T00:01:10Z",
             },
+            {
+              id: "hao-stale-source-only",
+              session_id: "session-h",
+              agent_id: "default",
+              role: "user",
+              content: "STALE_SOURCE_ONLY_HAO_CONTEXT",
+              metadata_json: {
+                source: "local_agent",
+              },
+              created_at: "2026-05-24T00:01:20Z",
+            },
           ],
           next_cursor: null,
         });
@@ -3163,6 +3187,17 @@ describe("AgentWorkspacePage Team launcher", () => {
                 agent_session_id: "session-c",
               },
               created_at: "2026-05-24T00:02:10Z",
+            },
+            {
+              id: "claude-stale-source-only",
+              session_id: "session-c",
+              agent_id: "default",
+              role: "user",
+              content: "STALE_SOURCE_ONLY_CLAUDE_CONTEXT",
+              metadata_json: {
+                source: "local_agent",
+              },
+              created_at: "2026-05-24T00:02:20Z",
             },
           ],
           next_cursor: null,
@@ -3233,6 +3268,8 @@ describe("AgentWorkspacePage Team launcher", () => {
         .join("\n");
       expect(activeText).toContain("CLAUDE_CONTEXT");
       expect(activeText).not.toContain("HAO_CONTEXT");
+      expect(activeText).not.toContain("STALE_SOURCE_ONLY_CLAUDE_CONTEXT");
+      expect(activeText).not.toContain("STALE_SOURCE_ONLY_HAO_CONTEXT");
     });
 
     await chooseWorkspaceTarget(user, /hao Local/);
@@ -3245,6 +3282,8 @@ describe("AgentWorkspacePage Team launcher", () => {
         .join("\n");
       expect(activeText).toContain("HAO_CONTEXT");
       expect(activeText).not.toContain("CLAUDE_CONTEXT");
+      expect(activeText).not.toContain("STALE_SOURCE_ONLY_HAO_CONTEXT");
+      expect(activeText).not.toContain("STALE_SOURCE_ONLY_CLAUDE_CONTEXT");
     });
 
     await user.type(screen.getByPlaceholderText("直接与智能体对话"), "hao follow-up");
@@ -3260,6 +3299,8 @@ describe("AgentWorkspacePage Team launcher", () => {
       expect(body).toMatchObject({ content: "hao follow-up" });
       expect(JSON.stringify(body.messages)).toContain("HAO_CONTEXT");
       expect(JSON.stringify(body.messages)).not.toContain("CLAUDE_CONTEXT");
+      expect(JSON.stringify(body.messages)).not.toContain("STALE_SOURCE_ONLY_HAO_CONTEXT");
+      expect(JSON.stringify(body.messages)).not.toContain("STALE_SOURCE_ONLY_CLAUDE_CONTEXT");
     });
 
     await chooseWorkspaceTarget(user, /Claude Code/);
@@ -3272,6 +3313,8 @@ describe("AgentWorkspacePage Team launcher", () => {
         .join("\n");
       expect(activeText).toContain("CLAUDE_CONTEXT");
       expect(activeText).not.toContain("HAO_CONTEXT");
+      expect(activeText).not.toContain("STALE_SOURCE_ONLY_CLAUDE_CONTEXT");
+      expect(activeText).not.toContain("STALE_SOURCE_ONLY_HAO_CONTEXT");
     });
 
     await user.type(screen.getByPlaceholderText("直接与智能体对话"), "claude follow-up");
@@ -3287,6 +3330,8 @@ describe("AgentWorkspacePage Team launcher", () => {
       expect(body).toMatchObject({ content: "claude follow-up" });
       expect(JSON.stringify(body.messages)).toContain("CLAUDE_CONTEXT");
       expect(JSON.stringify(body.messages)).not.toContain("HAO_CONTEXT");
+      expect(JSON.stringify(body.messages)).not.toContain("STALE_SOURCE_ONLY_CLAUDE_CONTEXT");
+      expect(JSON.stringify(body.messages)).not.toContain("STALE_SOURCE_ONLY_HAO_CONTEXT");
     });
 
     expect(
@@ -3300,6 +3345,256 @@ describe("AgentWorkspacePage Team launcher", () => {
       fetchMock.mock.calls.some(
         ([input, init]) =>
           requestPath(input).endsWith("/connections/conn-claude/bindings") &&
+          init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("restores the exact local binding from persisted history when cache is cold", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "harness.workspace.v3.default.conversations",
+      JSON.stringify({
+        version: 2,
+        currentConversationId: "local-agent:binding-hao-old",
+        conversations: [
+          {
+            id: "local-agent:binding-hao-old",
+            title: "Old hao thread",
+            created_at: "2026-05-24T00:00:00Z",
+            updated_at: "2026-05-24T00:01:00Z",
+            rootNodeId: "root",
+            activeLeafId: "old-user",
+            pinnedNodeIds: [],
+            dismissedPlanNodeIds: [],
+            draft: "",
+            contextWindowTurns: 8,
+            contextCompressions: {},
+            nodesById: {
+              root: {
+                id: "root",
+                parent_id: null,
+                children_ids: ["old-user"],
+                role: "system",
+                content: "Agent Workspace Pro root",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-hao",
+                    binding_id: "binding-hao-old",
+                    agent_session_id: "session-h-old",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:00:00Z",
+              },
+              "old-user": {
+                id: "old-user",
+                parent_id: "root",
+                children_ids: [],
+                role: "user",
+                content: "PERSISTED_OLD_HAO_CONTEXT",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-hao",
+                    binding_id: "binding-hao-old",
+                    agent_session_id: "session-h-old",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:00:10Z",
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({
+          items: [
+            localConnection({
+              id: "conn-hao",
+              display_name: "hao Local",
+              adapter_kind: "hao",
+            }),
+          ],
+        });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-hao/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({
+          items: [
+            localBinding({
+              id: "binding-hao-new",
+              connection_id: "conn-hao",
+              agent_session_id: "session-h-new",
+              updated_at: "2026-05-24T00:03:00Z",
+            }),
+            localBinding({
+              id: "binding-hao-old",
+              connection_id: "conn-hao",
+              agent_session_id: "session-h-old",
+              updated_at: "2026-05-24T00:01:00Z",
+            }),
+          ],
+        });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-hao/bindings" &&
+        method === "POST"
+      ) {
+        return jsonResponse({ detail: "cold-cache restore must not create a new binding" }, 500);
+      }
+      if (path === "/api/agents/sessions/session-h-old/messages" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "old-user-message",
+              session_id: "session-h-old",
+              agent_id: "default",
+              role: "user",
+              content: "OLD_HAO_CONTEXT_FROM_SERVER",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-hao",
+                binding_id: "binding-hao-old",
+                agent_session_id: "session-h-old",
+              },
+              created_at: "2026-05-24T00:01:00Z",
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path === "/api/agents/sessions/session-h-new/messages" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "new-user-message",
+              session_id: "session-h-new",
+              agent_id: "default",
+              role: "user",
+              content: "WRONG_NEW_HAO_CONTEXT",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-hao",
+                binding_id: "binding-hao-new",
+                agent_session_id: "session-h-new",
+              },
+              created_at: "2026-05-24T00:03:00Z",
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-hao-old/tasks" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-hao-new/tasks" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-hao-old/messages" && method === "POST") {
+        return jsonResponse(
+          {
+            bridge_task_id: "bridge-task-hao-old",
+            run_id: "run-hao-old",
+            agent_session_id: "session-h-old",
+            user_message_id: "old-user-followup",
+            status: "pending",
+          },
+          202,
+        );
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-hao-new/messages" && method === "POST") {
+        return jsonResponse({ detail: "wrong binding received the send" }, 500);
+      }
+      if (path === "/api/agents/runs/run-hao-old/workspace" && method === "GET") {
+        return jsonResponse({
+          run: { id: "run-hao-old", status: "RUNNING", created_at: now },
+          events: [],
+          model_calls: [],
+          tool_calls: [],
+          approvals: [],
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await waitFor(() => {
+      expect(
+        useWorkspaceStore
+          .getState()
+          .conversations.some((conversation) => conversation.id === "local-agent:binding-hao-old"),
+      ).toBe(true);
+    });
+    await chooseWorkspaceTarget(user, /hao Local/);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentConversationId).toBe(
+        "local-agent:binding-hao-old",
+      );
+      const activeText = useWorkspaceStore
+        .getState()
+        .activePath()
+        .map((node) => node.content)
+        .join("\n");
+      expect(activeText).toContain("OLD_HAO_CONTEXT_FROM_SERVER");
+      expect(activeText).not.toContain("WRONG_NEW_HAO_CONTEXT");
+    });
+
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "resume old hao");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const oldSend = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/local-agent/bindings/binding-hao-old/messages" &&
+          init?.method === "POST",
+      );
+      const body = JSON.parse(String(oldSend?.[1]?.body));
+      expect(body).toMatchObject({
+        content: "resume old hao",
+        active_leaf_id: "local-msg:old-user-message",
+        active_branch_id: "local-msg:old-user-message",
+      });
+      expect(JSON.stringify(body.messages)).toContain("OLD_HAO_CONTEXT_FROM_SERVER");
+      expect(JSON.stringify(body.messages)).not.toContain("WRONG_NEW_HAO_CONTEXT");
+      expect(JSON.stringify(body.messages)).not.toContain("binding-hao-new");
+      expect(JSON.stringify(body.messages)).not.toContain("session-h-new");
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/local-agent/bindings/binding-hao-new/messages" &&
           init?.method === "POST",
       ),
     ).toBe(false);
