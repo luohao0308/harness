@@ -4,6 +4,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.agent_templates import router as agent_templates_router
 from app.api.agents import router as agents_router
 from app.api.api_keys import router as api_keys_router
 from app.api.audit import router as audit_router
@@ -22,6 +23,7 @@ from app.api.retention import router as retention_router
 from app.api.saml import router as saml_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.secrets import router as secrets_router
+from app.api.sessions import router as sessions_router
 from app.api.settings import router as settings_router
 from app.api.subagent_marketplace import router as subagent_marketplace_router
 from app.api.subagent_specialists import router as subagent_specialists_router
@@ -180,6 +182,7 @@ app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(auth_router, prefix="/api")
 app.include_router(saml_router, prefix="/api")
+app.include_router(sessions_router, prefix="/api")
 app.include_router(api_keys_router, prefix="/api")
 app.include_router(secrets_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
@@ -191,6 +194,7 @@ app.include_router(evals_router, prefix="/api")
 app.include_router(demo_router, prefix="/api")
 app.include_router(frontend_errors_router, prefix="/api")
 app.include_router(onboarding_router, prefix="/api")
+app.include_router(agent_templates_router, prefix="/api")
 app.include_router(autofix_router, prefix="/api")
 app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")

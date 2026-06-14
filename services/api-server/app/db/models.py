@@ -166,6 +166,34 @@ class SAMLProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class UserSession(Base):
+    """
+    User authentication sessions for SSO and standard login.
+
+    Story 4.1 - SSO Session Lifecycle Management
+    Stores JWT tokens and session metadata for authenticated users.
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("ix_user_sessions_user_active", "user_id", "revoked_at"),
+        Index("ix_user_sessions_token_hash", "token_hash"),
+        Index("ix_user_sessions_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    roles_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
     __table_args__ = (
@@ -1907,6 +1935,28 @@ class UserOnboardingState(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentTemplate(Base):
+    """
+    Agent templates for wizard Step 6 (Story 5.1).
+    Pre-configured agent templates with system prompts, tools, and settings.
+    """
+
+    __tablename__ = "agent_templates"
+    __table_args__ = (
+        Index("ix_agent_templates_is_active", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    icon: Mapped[str] = mapped_column(String(32), nullable=False)
+    tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class FrontendError(Base):
