@@ -1,7 +1,9 @@
 """
-API endpoints for autofix operations - Story 3.1: Secret Generation (Auto-Fix)
+API endpoints for autofix operations - Story 3.1 & 3.2: Secret Generation and Database Setup (Auto-Fix)
 
-Provides endpoints to automatically generate and configure missing security secrets.
+Provides endpoints to automatically generate and configure:
+- Missing security secrets (Story 3.1)
+- Database setup (migrations, admin user, configs) (Story 3.2)
 """
 from __future__ import annotations
 
@@ -9,9 +11,11 @@ import os
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from app.db.session import get_db_session
 from app.services.autofix_service import AutofixService
 
 router = APIRouter(prefix="/onboarding/autofix", tags=["onboarding"])
@@ -28,6 +32,26 @@ class AutofixSecretsResponse(BaseModel):
     )
     message: str = Field(description="Human-readable result message")
     timestamp: str = Field(description="ISO timestamp of the operation")
+
+
+class AutofixDatabaseResponse(BaseModel):
+    """Response for database autofix operation - Story 3.2."""
+
+    success: bool = Field(description="Whether the operation succeeded")
+    migrations_run: bool = Field(description="Whether migrations were executed")
+    admin_created: bool = Field(description="Whether admin user was created")
+    admin_email: str | None = Field(
+        description="Email of created admin user (if created)", default=None
+    )
+    admin_password: str | None = Field(
+        description="Generated admin password (if created, save this!)", default=None
+    )
+    configs_created: list[str] = Field(
+        description="List of configuration keys that were created"
+    )
+    message: str = Field(description="Human-readable result message")
+    timestamp: str = Field(description="ISO timestamp of the operation")
+    actions: list[str] = Field(description="List of actions taken (audit trail)")
 
 
 @router.post(
@@ -94,4 +118,70 @@ def autofix_secrets() -> AutofixSecretsResponse:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to autofix secrets: {e}"
+        )
+
+
+@router.post(
+    "/database",
+    response_model=AutofixDatabaseResponse,
+    summary="Auto-fix database setup (Story 3.2)",
+)
+def autofix_database(db: Session = Depends(get_db_session)) -> AutofixDatabaseResponse:
+    """
+    Automatically fix database setup issues.
+
+    Story 3.2: Database Setup Auto-Fix
+
+    This endpoint performs the following actions:
+    1. Runs pending Alembic migrations to bring the database schema up to date
+    2. Creates an initial admin user (admin@example.com) if no users exist
+    3. Seeds default configuration values
+    4. Returns an audit trail of all actions taken
+
+    The operation is safe to run multiple times:
+    - Migrations are only run if pending
+    - Admin user is only created if no active users exist
+    - Default configs are only created if they don't exist
+
+    **IMPORTANT**: If an admin user is created, save the generated password!
+    It will only be displayed once in this response.
+
+    Returns:
+        AutofixDatabaseResponse with details of actions taken
+
+    Raises:
+        HTTPException: If database operations fail
+    """
+    try:
+        # Run database autofix service
+        service = AutofixService()
+        result = service.autofix_database(session=db)
+
+        # Build response message
+        if result["success"]:
+            if result["admin_created"]:
+                message = (
+                    f"Database setup completed. Admin user created with email: {result['admin_email']}. "
+                    f"SAVE THIS PASSWORD: {result['admin_password']}"
+                )
+            else:
+                message = "Database setup completed successfully."
+        else:
+            message = "Database setup encountered issues. See actions for details."
+
+        return AutofixDatabaseResponse(
+            success=result["success"],
+            migrations_run=result["migrations_run"],
+            admin_created=result["admin_created"],
+            admin_email=result["admin_email"],
+            admin_password=result["admin_password"],
+            configs_created=result["configs_created"],
+            message=message,
+            timestamp=result["timestamp"].isoformat(),
+            actions=result["actions"],
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to autofix database setup: {e}"
         )

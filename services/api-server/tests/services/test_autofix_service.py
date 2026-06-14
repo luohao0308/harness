@@ -1,12 +1,21 @@
 """
-Tests for autofix_service.py - Story 3.1: Secret Generation (Auto-Fix)
+Tests for autofix_service.py - Story 3.1 & 3.2: Secret Generation and Database Setup (Auto-Fix)
 
 Tests cover:
+
+Story 3.1:
 1. JWT secret generation (64 bytes, base64 encoded)
 2. Encryption key generation (32 bytes, Fernet format)
 3. .env file updates without overwriting existing secrets
 4. Audit trail logging
 5. .env.example updates
+
+Story 3.2:
+1. Running pending Alembic migrations
+2. Creating initial admin user if no users exist
+3. Seeding default configurations
+4. Complete database autofix flow
+5. Audit trail logging
 """
 import base64
 import os
@@ -299,3 +308,156 @@ class TestAutofixService:
         assert result["jwt_secret_added"] is False
         assert result["encryption_key_added"] is False
         assert len(result["added_secrets"]) == 0
+
+
+# =======================
+# Story 3.2: Database Setup Auto-Fix Tests
+# =======================
+
+
+class TestDatabaseAutofix:
+    """Test suite for database autofix functionality - Story 3.2."""
+
+    def test_run_pending_migrations(self):
+        """
+        Test running pending migrations.
+
+        Requirements:
+        - Use Alembic API to run migrations
+        - Return number of migrations run
+        - Log actions taken
+        """
+        service = AutofixService()
+
+        # Mock Alembic command
+        with patch("app.services.autofix_service.command.upgrade") as mock_upgrade:
+            with patch.object(service, "_find_alembic_ini", return_value="alembic.ini"):
+                mock_upgrade.return_value = None
+
+                result = service.run_pending_migrations()
+
+                # Verify migrations were run
+                assert "migrations_run" in result
+                assert result["success"] is True
+                assert result["migrations_run"] is True
+                mock_upgrade.assert_called_once()
+
+    def test_create_initial_admin_user_when_no_users_exist(self):
+        """
+        Test creating initial admin user when no users exist.
+
+        Requirements:
+        - Create user with email admin@example.com
+        - Generate random password
+        - Only create if no active users exist
+        - Return password for display to user
+        """
+        service = AutofixService()
+
+        # Mock database session
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 0  # No users exist
+        mock_session.execute.return_value = mock_result
+
+        result = service.create_initial_admin_user(session=mock_session)
+
+        # Verify user was created
+        assert result["success"] is True
+        assert result["admin_created"] is True
+        assert "admin_password" in result
+        assert len(result["admin_password"]) >= 16
+        assert result["admin_email"] == "admin@example.com"
+
+        # Verify user was added to session
+        mock_session.add.assert_called_once()
+        mock_session.commit.assert_called_once()
+
+    def test_create_initial_admin_user_when_users_exist(self):
+        """
+        Test that admin user is NOT created when users already exist.
+
+        Requirements:
+        - Check if active users exist
+        - Skip creation if users exist
+        - Return success=False
+        """
+        service = AutofixService()
+
+        # Mock database session with existing users
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 5  # 5 users exist
+        mock_session.execute.return_value = mock_result
+
+        result = service.create_initial_admin_user(session=mock_session)
+
+        # Verify user was NOT created
+        assert result["success"] is False
+        assert result["admin_created"] is False
+        assert "admin_password" not in result
+        assert "reason" in result
+        mock_session.add.assert_not_called()
+
+    def test_seed_default_config(self):
+        """
+        Test seeding default configurations.
+
+        Requirements:
+        - Create default configuration entries
+        - Skip if configurations already exist
+        - Return list of configs created
+        """
+        service = AutofixService()
+
+        # Mock database session
+        mock_session = MagicMock()
+
+        result = service.seed_default_config(session=mock_session)
+
+        # Verify configs were seeded
+        assert "success" in result
+        assert "configs_created" in result
+        assert isinstance(result["configs_created"], list)
+
+    def test_autofix_database_complete_flow(self):
+        """
+        Test complete database autofix flow.
+
+        Requirements:
+        - Run pending migrations
+        - Create initial admin user if needed
+        - Seed default configurations
+        - Log all actions to audit trail
+        - Return comprehensive result
+        """
+        service = AutofixService()
+
+        # Mock database session
+        mock_session = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 0  # No users
+        mock_session.execute.return_value = mock_result
+
+        with patch("app.services.autofix_service.command.upgrade") as mock_upgrade:
+            with patch.object(service, "_find_alembic_ini", return_value="alembic.ini"):
+                mock_upgrade.return_value = None
+
+                result = service.autofix_database(session=mock_session)
+
+                # Verify result structure
+                assert "success" in result
+                assert "migrations_run" in result
+                assert "admin_created" in result
+                assert "configs_created" in result
+                assert "timestamp" in result
+                assert "actions" in result
+
+                # Verify migrations were run
+                mock_upgrade.assert_called_once()
+
+                # Verify admin was created
+                assert result["admin_created"] is True
+
+                # Verify audit trail
+                assert len(result["actions"]) > 0
