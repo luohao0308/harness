@@ -420,6 +420,21 @@ export function AgentWorkspacePage() {
   const setHistoryPanelCollapsed = useWorkspaceStore((s) => s.setHistoryPanelCollapsed);
   const hydrateFromConversations = useWorkspaceStore((s) => s.hydrateFromConversations);
   const upsertConversationSummary = useWorkspaceStore((s) => s.upsertConversationSummary);
+  const visibleConversations = useMemo(() => {
+    if (!localAgentEnabled) {
+      return conversations.filter((conversation) => !isLocalAgentConversation(conversation));
+    }
+    const connectionId = selectedLocalConnection?.id ?? selectedLocalConnectionId;
+    if (connectionId === null) return [];
+    return conversations.filter(
+      (conversation) => localAgentConnectionIdFromConversation(conversation) === connectionId,
+    );
+  }, [
+    conversations,
+    localAgentEnabled,
+    selectedLocalConnection?.id,
+    selectedLocalConnectionId,
+  ]);
 
   const inspectorArtifacts = useMemo<ConversationArtifact[]>(
     () => activePath.flatMap((node) => node.artifacts).slice(-10),
@@ -679,7 +694,9 @@ export function AgentWorkspacePage() {
 
   // ─── Agent scope + rehydration (v3 Req 4.10, Legacy migration) ─────────
   useEffect(() => {
-    useWorkspaceStore.getState().setAgentScope(agentId);
+    const stateBeforeScope = useWorkspaceStore.getState();
+    const hasCurrentAgentScope = stateBeforeScope._agentScope === agentId;
+    stateBeforeScope.setAgentScope(agentId);
     const now = new Date().toISOString();
     const locale = "zh-CN";
     const collapsed = readHistoryPanelCollapsed(agentId);
@@ -720,9 +737,10 @@ export function AgentWorkspacePage() {
           .reduce((total: number, node: any) => total + (node.content?.length ?? 0), 0)
       : 0;
     if (
-      currentState.activeStream !== null ||
-      hasStreamingNode ||
-      storeAssistantContent > snapshotAssistantContent
+      hasCurrentAgentScope &&
+      (currentState.activeStream !== null ||
+        hasStreamingNode ||
+        storeAssistantContent > snapshotAssistantContent)
     ) {
       applyContextMaxTokens();
       return () => {
@@ -732,9 +750,26 @@ export function AgentWorkspacePage() {
 
     const v3 = v3Snapshot;
     if (v3 !== null) {
+      const cloudCurrentConversationId = currentCloudConversationId(
+        v3.conversations,
+        v3.currentConversationId,
+      );
+      const cloudSafeSnapshot =
+        cloudCurrentConversationId !== null
+          ? {
+              conversations: v3.conversations,
+              currentConversationId: cloudCurrentConversationId,
+            }
+          : (() => {
+              const genesis = genesisConversationLocalized(now, locale, generateConversationId);
+              return {
+                conversations: [...v3.conversations, genesis],
+                currentConversationId: genesis.id,
+              };
+            })();
       hydrateFromConversations({
-        conversations: v3.conversations,
-        currentConversationId: v3.currentConversationId,
+        conversations: cloudSafeSnapshot.conversations,
+        currentConversationId: cloudSafeSnapshot.currentConversationId,
         historyPanelCollapsed: collapsed ?? false,
       });
       applyContextMaxTokens();
@@ -776,6 +811,21 @@ export function AgentWorkspacePage() {
     // Locale is fixed Chinese; changing old locale state must not rehydrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, hydrateFromConversations]);
+
+  useEffect(() => {
+    if (localAgentEnabled) return;
+    const store = useWorkspaceStore.getState();
+    const currentConversation = store.conversations.find(
+      (conversation) => conversation.id === store.currentConversationId,
+    );
+    if (!isLocalAgentConversation(currentConversation)) return;
+    const cloudConversationId = currentCloudConversationId(store.conversations);
+    if (cloudConversationId !== null) {
+      store.setCurrentConversation(cloudConversationId);
+      return;
+    }
+    newConversation();
+  }, [conversations, currentConversationId, localAgentEnabled, newConversation]);
 
   // ─── Seed the session model override from settings defaults ────────────
   useEffect(() => {
@@ -899,7 +949,7 @@ export function AgentWorkspacePage() {
       if (nextAgentId === agentId) {
         const store = useWorkspaceStore.getState();
         const cloudConversation = store.conversations
-          .filter((conversation) => localAgentBindingHintFromConversation(conversation) === null)
+          .filter((conversation) => !isLocalAgentConversation(conversation))
           .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
         if (cloudConversation !== undefined) {
           store.setCurrentConversation(cloudConversation.id);
@@ -1691,7 +1741,7 @@ export function AgentWorkspacePage() {
       <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-white">
         <ConversationHistoryPanel
           collapsed={historyCollapsed}
-          conversations={conversations}
+          conversations={visibleConversations}
           currentConversationId={currentConversationId}
           groupLabelForConversation={conversationGroupLabel}
           onNewConversation={handleNewConversation}
@@ -2340,6 +2390,30 @@ function localAgentBindingHintFromConversation(
     }
   }
   return null;
+}
+
+function isLocalAgentConversation(conversation: ConversationSummary | undefined): boolean {
+  if (conversation === undefined) return false;
+  if (conversation.id.startsWith("local-agent:")) return true;
+  if (conversation.id.startsWith("local-agent-pending:")) return true;
+  return Object.values(conversation.nodesById).some(
+    (node) => node.metadata.orchestration?.source === "local_agent",
+  );
+}
+
+function currentCloudConversationId(
+  conversations: ConversationSummary[],
+  preferredId?: string,
+): string | null {
+  if (preferredId !== undefined) {
+    const preferred = conversations.find((conversation) => conversation.id === preferredId);
+    if (preferred !== undefined && !isLocalAgentConversation(preferred)) return preferred.id;
+  }
+  return (
+    conversations
+      .filter((conversation) => !isLocalAgentConversation(conversation))
+      .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0]?.id ?? null
+  );
 }
 
 function localAgentBindingMatchesHint(
