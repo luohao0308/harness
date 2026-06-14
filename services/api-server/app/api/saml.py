@@ -160,7 +160,7 @@ async def saml_login(
     description=(
         "Handles SAML Response from IdP after user authentication. "
         "Validates the SAML assertion, extracts user attributes, "
-        "and creates or updates the user session."
+        "provisions/updates the user, and creates a session."
     ),
 )
 async def saml_acs(
@@ -173,7 +173,7 @@ async def saml_acs(
 
     This endpoint receives the SAML Response after the user authenticates
     at the IdP. It validates the response, extracts user attributes,
-    and creates a session.
+    provisions/updates the user (Story 2.3), and creates a session.
 
     Args:
         saml_response: Base64-encoded SAML Response from IdP.
@@ -213,24 +213,27 @@ async def saml_acs(
                 detail="SAML authentication failed",
             )
 
-        # Extract user attributes
-        user_attrs = saml_service.extract_user_attributes(
+        # Extract user claims (Story 2.2)
+        user_claims = saml_service.extract_user_claims(
             auth_result["attributes"],
             auth_result["nameid"],
         )
 
-        # Create or update session
+        # Create or update session with provisioning (Story 2.3)
         session_data = saml_service.create_or_update_session(
             db,
-            user_attrs,
-            provider.organization_id,
+            user_data={"email": user_claims["email"], "name": user_claims["name"]},
+            organization_id=provider.organization_id,
+            provider=provider,
+            saml_claims=user_claims,
+            subject_id=auth_result["nameid"],
         )
 
         return SAMLACSResponse(
             user={
                 "id": session_data["user_id"],
-                "email": user_attrs["email"],
-                "name": user_attrs["name"],
+                "email": user_claims["email"],
+                "name": user_claims["name"],
             },
             session_token=session_data["session_token"],
             expires_at=session_data["expires_at"],
