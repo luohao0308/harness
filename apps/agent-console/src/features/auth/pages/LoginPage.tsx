@@ -7,7 +7,8 @@ import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { Input } from "../../../components/ui/input";
 import { useAuth } from "../AuthProvider";
-import { getAuthConfig, startOAuth } from "../../tasks/api";
+import { getAuthConfig, startOAuth, startSAML } from "../../tasks/api";
+import { SSOLoginButton } from "../components/SSOLoginButton";
 
 const supportedOAuthProviders = ["github", "google"] as const;
 type SupportedOAuthProvider = (typeof supportedOAuthProviders)[number];
@@ -29,6 +30,7 @@ export function LoginPage() {
   const oauthProviders = supportedOAuthProviders.filter((provider) =>
     authConfig.data?.oauth_providers.includes(provider),
   );
+  const samlProviders = authConfig.data?.saml_providers ?? [];
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -52,6 +54,18 @@ export function LoginPage() {
       window.location.assign(response.authorization_url);
     } catch (oauthError) {
       setError(oauthError instanceof Error ? oauthError.message : "无法启动 OAuth 登录");
+      setPending(false);
+    }
+  }
+
+  async function launchSAML(providerId: string) {
+    setPending(true);
+    setError("");
+    try {
+      const response = await startSAML(providerId);
+      window.location.assign(response.redirect_url);
+    } catch (samlError) {
+      setError(samlError instanceof Error ? samlError.message : "无法启动 SSO 登录");
       setPending(false);
     }
   }
@@ -95,9 +109,13 @@ export function LoginPage() {
             登录
           </Button>
         </form>
+        {samlProviders.length > 0 ? (
+          <div className="mt-4">
+            <SSOLoginButton providers={samlProviders} onInitiateSSO={launchSAML} disabled={pending} />
+          </div>
+        ) : null}
         {oauthProviders.length > 0 ? (
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            {oauthProviders.map((provider) => (
+          <div className="mt-4 grid grid-cols-2 gap-2">{oauthProviders.map((provider) => (
               <Button
                 key={provider}
                 type="button"

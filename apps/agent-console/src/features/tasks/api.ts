@@ -217,9 +217,16 @@ export type AuthTokenResponse = {
   expires_in: number;
 };
 
+export type SamlProvider = {
+  id: string;
+  name: string;
+  enabled: boolean;
+};
+
 export type AuthConfigResponse = {
   public_registration_enabled: boolean;
   oauth_providers: string[];
+  saml_providers: SamlProvider[];
 };
 
 export type OrganizationSummary = {
@@ -2893,6 +2900,14 @@ export async function startOAuth(provider: "github" | "google") {
   );
 }
 
+export async function startSAML(providerId: string) {
+  return request<{ redirect_url: string }>(`/api/auth/saml/login`, {
+    method: "POST",
+    body: JSON.stringify({ provider_id: providerId }),
+    skipRefresh: true,
+  });
+}
+
 export async function listApiKeys() {
   return request<ApiKeyResponse[]>("/api/api-keys");
 }
@@ -3013,6 +3028,82 @@ export async function updateRetentionPolicy(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export type SAMLProvider = {
+  id: string;
+  organization_id: string;
+  name: string;
+  entity_id: string;
+  sso_url: string;
+  idp_metadata_url: string | null;
+  idp_metadata_xml: string | null;
+  certificate: string | null;
+  status: "active" | "inactive" | "testing";
+  test_connection_status: "pending" | "success" | "failed" | null;
+  test_connection_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SAMLProviderCreatePayload = {
+  name: string;
+  entity_id: string;
+  sso_url: string;
+  idp_metadata_url?: string | null;
+  idp_metadata_xml?: string | null;
+};
+
+export type SAMLProviderUpdatePayload = {
+  name?: string;
+  entity_id?: string;
+  sso_url?: string;
+  idp_metadata_url?: string | null;
+  idp_metadata_xml?: string | null;
+  status?: "active" | "inactive";
+};
+
+export type SAMLTestConnectionResult = {
+  status: "success" | "failed";
+  message: string;
+  error?: string | null;
+};
+
+export async function listSAMLProviders() {
+  return request<SAMLProvider[]>("/api/auth/saml/providers");
+}
+
+export async function getSAMLProvider(providerId: string) {
+  return request<SAMLProvider>(`/api/auth/saml/providers/${encodeURIComponent(providerId)}`);
+}
+
+export async function createSAMLProvider(payload: SAMLProviderCreatePayload) {
+  return request<SAMLProvider>("/api/auth/saml/providers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSAMLProvider(providerId: string, payload: SAMLProviderUpdatePayload) {
+  return request<SAMLProvider>(`/api/auth/saml/providers/${encodeURIComponent(providerId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSAMLProvider(providerId: string) {
+  return request<void>(`/api/auth/saml/providers/${encodeURIComponent(providerId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function testSAMLConnection(providerId: string) {
+  return request<SAMLTestConnectionResult>(
+    `/api/auth/saml/providers/${encodeURIComponent(providerId)}/test`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function runRetentionNow() {

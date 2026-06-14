@@ -20,8 +20,10 @@ const apiMock = vi.hoisted(() => ({
   getAuthConfig: vi.fn(async () => ({
     public_registration_enabled: false,
     oauth_providers: [] as string[],
+    saml_providers: [] as Array<{ id: string; name: string; enabled: boolean }>,
   })),
   startOAuth: vi.fn(),
+  startSAML: vi.fn(),
 }));
 
 vi.mock("../../AuthProvider", () => ({
@@ -33,6 +35,7 @@ vi.mock("../../AuthProvider", () => ({
 vi.mock("../../../tasks/api", () => ({
   getAuthConfig: apiMock.getAuthConfig,
   startOAuth: apiMock.startOAuth,
+  startSAML: apiMock.startSAML,
 }));
 
 import { LoginPage } from "../LoginPage";
@@ -59,8 +62,10 @@ afterEach(() => {
   apiMock.getAuthConfig.mockResolvedValue({
     public_registration_enabled: false,
     oauth_providers: [],
+    saml_providers: [],
   });
   apiMock.startOAuth.mockReset();
+  apiMock.startSAML.mockReset();
 });
 
 describe("LoginPage", () => {
@@ -78,6 +83,7 @@ describe("LoginPage", () => {
     apiMock.getAuthConfig.mockResolvedValue({
       public_registration_enabled: true,
       oauth_providers: ["github"],
+      saml_providers: [],
     });
 
     renderLogin();
@@ -99,6 +105,52 @@ describe("LoginPage", () => {
     expect(authMock.loginWithPassword).toHaveBeenCalledWith({
       email: "owner@example.com",
       password: "correct-password",
+    });
+  });
+
+  it("shows SSO button when SAML providers are configured", async () => {
+    apiMock.getAuthConfig.mockResolvedValue({
+      public_registration_enabled: false,
+      oauth_providers: [],
+      saml_providers: [{ id: "okta-1", name: "Okta", enabled: true }],
+    });
+
+    renderLogin();
+
+    expect(await screen.findByRole("button", { name: /使用 SSO 登录/i })).toBeInTheDocument();
+  });
+
+  it("hides SSO button when no SAML providers are configured", async () => {
+    renderLogin();
+
+    await waitFor(() => expect(apiMock.getAuthConfig).toHaveBeenCalledTimes(1));
+
+    expect(screen.queryByRole("button", { name: /使用 SSO 登录/i })).not.toBeInTheDocument();
+  });
+
+  it("initiates SAML SSO flow when SSO button is clicked", async () => {
+    const user = userEvent.setup();
+    const mockRedirectUrl = "https://idp.example.com/saml/login?SAMLRequest=...";
+    apiMock.getAuthConfig.mockResolvedValue({
+      public_registration_enabled: false,
+      oauth_providers: [],
+      saml_providers: [{ id: "okta-1", name: "Okta", enabled: true }],
+    });
+    apiMock.startSAML.mockResolvedValue({ redirect_url: mockRedirectUrl });
+
+    Object.defineProperty(window, "location", {
+      writable: true,
+      value: { assign: vi.fn() },
+    });
+
+    renderLogin();
+
+    const ssoButton = await screen.findByRole("button", { name: /使用 SSO 登录/i });
+    await user.click(ssoButton);
+
+    await waitFor(() => {
+      expect(apiMock.startSAML).toHaveBeenCalledWith("okta-1");
+      expect(window.location.assign).toHaveBeenCalledWith(mockRedirectUrl);
     });
   });
 });
