@@ -127,6 +127,7 @@ describe("ConsoleShell", () => {
     expect(sidebarToggle).toBeInTheDocument();
     expect(sidebarToggle).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByLabelText("搜索")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开快捷操作" })).not.toBeInTheDocument();
   });
 
   it("shows the knowledge base navigation item", () => {
@@ -134,6 +135,7 @@ describe("ConsoleShell", () => {
 
     expect(screen.getByText("知识库内容")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "知识库" })).toHaveAttribute("href", "/knowledge");
+    expect(screen.getByRole("button", { name: "打开快捷操作" })).toBeInTheDocument();
   });
 
   it("groups secondary navigation without removing primary routes", async () => {
@@ -167,6 +169,7 @@ describe("ConsoleShell", () => {
     const nav = screen.getByRole("navigation", { name: "控制台导航" });
     expect(nav).toHaveClass("px-0");
     expect(screen.getByRole("link", { name: "智能体" })).toHaveClass("w-full");
+    expect(screen.queryByRole("button", { name: "打开快捷操作" })).not.toBeInTheDocument();
   });
 
   it("restores sidebar scroll after route-owned shell remounts", async () => {
