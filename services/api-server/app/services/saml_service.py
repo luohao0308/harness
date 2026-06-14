@@ -6,6 +6,8 @@ Uses python3-saml (OneLogin SAML Python Toolkit) for SAML protocol support.
 
 Story 1.1 - SAML Service Provider Setup
 Story 2.1 - SP-Initiated SSO Flow
+Story 2.2 - SAML Assertion Validation
+Story 2.3 - User Provisioning from SAML
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config.saml_config import get_saml_config
 from app.db.models import SAMLProvider, User
+from app.services.user_provisioning_service import UserProvisioningService
 
 
 class SAMLService:
@@ -194,7 +197,13 @@ class SAMLService:
         provider: SAMLProvider,
     ) -> dict[str, Any]:
         """
-        Process and validate SAML Response from IdP.
+        Process and validate SAML Response from IdP with comprehensive validation.
+
+        Performs the following validation steps:
+        1. Validates SAML signature using IdP certificate
+        2. Checks assertion validity period (NotBefore, NotAfter)
+        3. Verifies audience restriction matches SP entity ID
+        4. Extracts user claims (email, name, groups)
 
         Args:
             saml_response: Base64-encoded SAML Response.
@@ -204,7 +213,7 @@ class SAMLService:
             Dictionary with user attributes and authentication status.
 
         Raises:
-            ValueError: If SAML Response is invalid or authentication failed.
+            ValueError: If SAML Response is invalid or validation fails.
         """
         # Build SAML settings with provider-specific IdP config
         settings = self._get_saml_settings(provider)
@@ -221,16 +230,16 @@ class SAMLService:
 
         auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
 
-        # Process the SAML Response
+        # Process the SAML Response (includes signature validation)
         auth.process_response()
 
-        # Check for errors
+        # Step 1: Check for signature validation errors
         errors = auth.get_errors()
         if errors:
             error_reason = auth.get_last_error_reason()
             raise ValueError(f"SAML authentication failed: {error_reason or ', '.join(errors)}")
 
-        # Check if authenticated
+        # Check if authenticated (signature must be valid)
         if not auth.is_authenticated():
             raise ValueError("SAML authentication failed: user not authenticated")
 
@@ -253,6 +262,8 @@ class SAMLService:
         Extract user attributes from SAML Response.
 
         Maps SAML attributes to user profile fields.
+        This is a legacy method kept for backward compatibility.
+        Use extract_user_claims() for new code.
 
         Args:
             saml_attributes: SAML attributes from IdP.
@@ -264,37 +275,11 @@ class SAMLService:
         Raises:
             ValueError: If required attributes are missing.
         """
-        # Extract email - prefer email attribute, fall back to nameid
-        email = None
-        if "email" in saml_attributes and saml_attributes["email"]:
-            email = saml_attributes["email"][0]
-        elif nameid:
-            email = nameid
-
-        if not email:
-            raise ValueError("Email attribute is required but not provided in SAML Response")
-
-        # Extract name - try different attribute combinations
-        name = None
-
-        # Option 1: displayName
-        if "displayName" in saml_attributes and saml_attributes["displayName"]:
-            name = saml_attributes["displayName"][0]
-        # Option 2: firstName + lastName
-        elif "firstName" in saml_attributes and "lastName" in saml_attributes:
-            first = saml_attributes.get("firstName", [""])[0]
-            last = saml_attributes.get("lastName", [""])[0]
-            name = f"{first} {last}".strip()
-        # Option 3: cn (common name)
-        elif "cn" in saml_attributes and saml_attributes["cn"]:
-            name = saml_attributes["cn"][0]
-        # Option 4: Use email as name
-        else:
-            name = email.split("@")[0]
-
+        # Use extract_user_claims and return only email and name for compatibility
+        claims = self.extract_user_claims(saml_attributes, nameid)
         return {
-            "email": email,
-            "name": name,
+            "email": claims["email"],
+            "name": claims["name"],
         }
 
     def create_or_update_session(
@@ -302,6 +287,9 @@ class SAMLService:
         db_session: Session,
         user_data: dict[str, str],
         organization_id: str,
+        provider: SAMLProvider | None = None,
+        saml_claims: dict[str, Any] | None = None,
+        subject_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Create or update user session after successful SAML authentication.
@@ -309,38 +297,54 @@ class SAMLService:
         Creates a new user if they don't exist, or updates existing user's last login.
         Generates a session token for the user.
 
+        Story 2.3: Now uses UserProvisioningService for JIT provisioning and
+        external ID tracking when provider and saml_claims are provided.
+
         Args:
             db_session: Database session.
             user_data: User data from SAML (email, name).
             organization_id: Organization ID for the user.
+            provider: Optional SAML provider for provisioning integration.
+            saml_claims: Optional full SAML claims for provisioning.
+            subject_id: Optional SAML subject ID (NameID).
 
         Returns:
             Dictionary with user_id, session_token, and expires_at.
         """
-        email = user_data["email"]
-        name = user_data["name"]
-
-        # Find or create user
-        user = db_session.query(User).filter(User.email == email).first()
-
-        if user:
-            # Update existing user
-            user.name = name
-            user.last_login_at = datetime.now(UTC)
-        else:
-            # Create new user
-            user = User(
-                email=email,
-                name=name,
-                password_hash=self._generate_random_password_hash(),
-                email_verified=True,  # SAML users are pre-verified
-                status="active",
-                last_login_at=datetime.now(UTC),
+        # Use provisioning service if provider and claims are available (Story 2.3)
+        if provider and saml_claims and subject_id:
+            provisioning_service = UserProvisioningService(db_session)
+            user = provisioning_service.provision_user_from_saml(
+                saml_claims=saml_claims,
+                idp_entity_id=provider.entity_id,
+                subject_id=subject_id,
             )
-            db_session.add(user)
+        else:
+            # Legacy path: direct user creation/update (Story 2.1/2.2 compatibility)
+            email = user_data["email"]
+            name = user_data["name"]
 
-        db_session.commit()
-        db_session.refresh(user)
+            # Find or create user
+            user = db_session.query(User).filter(User.email == email).first()
+
+            if user:
+                # Update existing user
+                user.name = name
+                user.last_login_at = datetime.now(UTC)
+            else:
+                # Create new user
+                user = User(
+                    email=email,
+                    name=name,
+                    password_hash=self._generate_random_password_hash(),
+                    email_verified=True,  # SAML users are pre-verified
+                    status="active",
+                    last_login_at=datetime.now(UTC),
+                )
+                db_session.add(user)
+
+            db_session.commit()
+            db_session.refresh(user)
 
         # Generate session token
         session_token = self._generate_session_token()
@@ -364,4 +368,186 @@ class SAMLService:
         """
         random_password = secrets.token_urlsafe(32)
         return hashlib.sha256(random_password.encode()).hexdigest()
+
+    def validate_saml_signature(
+        self,
+        saml_response: str,
+        provider: SAMLProvider,
+    ) -> bool:
+        """
+        Validate SAML Response signature using IdP certificate.
+
+        Verifies that the SAML Response was signed by the Identity Provider
+        using the configured X.509 certificate.
+
+        Args:
+            saml_response: Base64-encoded SAML Response.
+            provider: SAML Identity Provider configuration with x509_cert.
+
+        Returns:
+            True if signature is valid.
+
+        Raises:
+            ValueError: If signature validation fails.
+        """
+        # Build SAML settings with provider-specific IdP config
+        settings = self._get_saml_settings(provider)
+
+        # Create request data with SAML Response
+        request_data = {
+            "https": "on",
+            "http_host": "localhost",
+            "script_name": "/api/auth/saml/acs",
+            "server_port": "443",
+            "get_data": {},
+            "post_data": {"SAMLResponse": saml_response},
+        }
+
+        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+
+        # Process the SAML Response (includes signature validation)
+        auth.process_response()
+
+        # Check for signature validation errors
+        errors = auth.get_errors()
+        if errors:
+            error_reason = auth.get_last_error_reason()
+            raise ValueError(f"SAML signature validation failed: {error_reason or ', '.join(errors)}")
+
+        # Check if authenticated (signature must be valid)
+        if not auth.is_authenticated():
+            raise ValueError("SAML signature validation failed: invalid signature")
+
+        return True
+
+    def check_assertion_validity(
+        self,
+        not_before: str,
+        not_after: str,
+    ) -> bool:
+        """
+        Check SAML assertion validity period.
+
+        Validates that the current time is within the assertion's NotBefore
+        and NotAfter time window.
+
+        Args:
+            not_before: ISO 8601 timestamp for NotBefore condition.
+            not_after: ISO 8601 timestamp for NotAfter condition.
+
+        Returns:
+            True if assertion is currently valid.
+
+        Raises:
+            ValueError: If assertion is expired or not yet valid.
+        """
+        now = datetime.now(UTC)
+
+        # Parse timestamps
+        try:
+            not_before_dt = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+            not_after_dt = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
+        except (ValueError, AttributeError) as e:
+            raise ValueError(f"Invalid timestamp format in assertion: {e}")
+
+        # Check if assertion is not yet valid
+        if now < not_before_dt:
+            raise ValueError(
+                f"Assertion not yet valid: current time {now.isoformat()} is before NotBefore {not_before}"
+            )
+
+        # Check if assertion is expired
+        if now > not_after_dt:
+            raise ValueError(
+                f"Assertion expired: current time {now.isoformat()} is after NotAfter {not_after}"
+            )
+
+        return True
+
+    def verify_audience(
+        self,
+        audience: str,
+    ) -> bool:
+        """
+        Verify SAML assertion audience restriction.
+
+        Validates that the audience in the SAML assertion matches the
+        Service Provider's entity ID.
+
+        Args:
+            audience: Audience value from SAML assertion.
+
+        Returns:
+            True if audience matches SP entity ID.
+
+        Raises:
+            ValueError: If audience does not match SP entity ID.
+        """
+        sp_entity_id = self._config["sp_entity_id"]
+
+        if audience != sp_entity_id:
+            raise ValueError(
+                f"Audience mismatch: expected {sp_entity_id}, got {audience}"
+            )
+
+        return True
+
+    def extract_user_claims(
+        self,
+        saml_attributes: dict[str, list[str]],
+        nameid: str,
+    ) -> dict[str, Any]:
+        """
+        Extract user claims from SAML assertion attributes.
+
+        Extracts standard SAML attributes including email, name, and groups.
+
+        Args:
+            saml_attributes: SAML attributes from IdP assertion.
+            nameid: SAML NameID (typically email).
+
+        Returns:
+            Dictionary with email, name, and groups.
+
+        Raises:
+            ValueError: If required attributes are missing.
+        """
+        # Extract email - prefer email attribute, fall back to nameid
+        email = None
+        if "email" in saml_attributes and saml_attributes["email"]:
+            email = saml_attributes["email"][0]
+        elif nameid:
+            email = nameid
+
+        if not email:
+            raise ValueError("Email attribute is required but not provided in SAML assertion")
+
+        # Extract name - try different attribute combinations
+        name = None
+
+        # Option 1: displayName
+        if "displayName" in saml_attributes and saml_attributes["displayName"]:
+            name = saml_attributes["displayName"][0]
+        # Option 2: firstName + lastName
+        elif "firstName" in saml_attributes and "lastName" in saml_attributes:
+            first = saml_attributes.get("firstName", [""])[0]
+            last = saml_attributes.get("lastName", [""])[0]
+            name = f"{first} {last}".strip()
+        # Option 3: cn (common name)
+        elif "cn" in saml_attributes and saml_attributes["cn"]:
+            name = saml_attributes["cn"][0]
+        # Option 4: Use email as name
+        else:
+            name = email.split("@")[0]
+
+        # Extract groups - optional attribute
+        groups = []
+        if "groups" in saml_attributes and saml_attributes["groups"]:
+            groups = saml_attributes["groups"]
+
+        return {
+            "email": email,
+            "name": name,
+            "groups": groups,
+        }
 
