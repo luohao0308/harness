@@ -5,15 +5,65 @@ Provides SAML Service Provider endpoints for SSO authentication.
 Serves SP metadata and handles SAML authentication flows.
 
 Story 1.1 - SAML Service Provider Setup
+Story 1.2 - IdP Configuration Management
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response
-from fastapi.responses import PlainTextResponse
+from typing import Annotated, Any
 
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db_session
+from app.services.saml_provider_service import SAMLProviderService
 from app.services.saml_service import SAMLService
 
 router = APIRouter(prefix="/auth/saml", tags=["auth"])
+
+DbSession = Annotated[Session, Depends(get_db_session)]
+
+
+# Pydantic models for request/response
+class SAMLProviderCreate(BaseModel):
+    """Request model for creating SAML provider."""
+
+    organization_id: str = Field(..., description="Organization ID")
+    name: str = Field(..., description="Provider name")
+    entity_id: str = Field(..., description="IdP entity ID")
+    sso_url: str = Field(..., description="SSO service URL")
+    slo_url: str | None = Field(None, description="SLO service URL (optional)")
+    x509_cert: str = Field(..., description="X.509 certificate in PEM format")
+    is_active: bool = Field(True, description="Whether provider is active")
+
+
+class SAMLProviderUpdate(BaseModel):
+    """Request model for updating SAML provider."""
+
+    name: str | None = Field(None, description="Provider name")
+    entity_id: str | None = Field(None, description="IdP entity ID")
+    sso_url: str | None = Field(None, description="SSO service URL")
+    slo_url: str | None = Field(None, description="SLO service URL")
+    x509_cert: str | None = Field(None, description="X.509 certificate")
+    is_active: bool | None = Field(None, description="Whether provider is active")
+
+
+class SAMLProviderResponse(BaseModel):
+    """Response model for SAML provider."""
+
+    id: str
+    organization_id: str
+    name: str
+    entity_id: str
+    sso_url: str
+    slo_url: str | None
+    x509_cert: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get(
@@ -61,4 +111,284 @@ async def get_saml_metadata() -> str:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate SAML metadata: {e}",
+        ) from e
+
+
+# SAML Provider CRUD Endpoints (Story 1.2)
+
+
+@router.post(
+    "/providers",
+    response_model=SAMLProviderResponse,
+    status_code=201,
+    summary="Create SAML Provider",
+    description="Create a new SAML Identity Provider configuration for an organization.",
+)
+async def create_saml_provider(
+    provider_data: SAMLProviderCreate,
+    db: DbSession,
+) -> Any:
+    """
+    Create a new SAML Identity Provider configuration.
+
+    Validates IdP metadata including entity ID, SSO URL, and X.509 certificate.
+    Organizations can configure multiple IdPs for SSO.
+
+    Args:
+        provider_data: SAML provider configuration.
+        db: Database session.
+
+    Returns:
+        Created SAML provider with ID and timestamps.
+
+    Raises:
+        HTTPException: 400 if validation fails.
+    """
+    try:
+        service = SAMLProviderService(db)
+        provider = service.create_provider(
+            organization_id=provider_data.organization_id,
+            name=provider_data.name,
+            entity_id=provider_data.entity_id,
+            sso_url=provider_data.sso_url,
+            slo_url=provider_data.slo_url,
+            x509_cert=provider_data.x509_cert,
+            is_active=provider_data.is_active,
+        )
+
+        return SAMLProviderResponse(
+            id=provider.id,
+            organization_id=provider.organization_id,
+            name=provider.name,
+            entity_id=provider.entity_id,
+            sso_url=provider.sso_url,
+            slo_url=provider.slo_url,
+            x509_cert=provider.x509_cert,
+            is_active=provider.is_active,
+            created_at=provider.created_at.isoformat(),
+            updated_at=provider.updated_at.isoformat(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create SAML provider: {e}",
+        ) from e
+
+
+@router.get(
+    "/providers",
+    response_model=list[SAMLProviderResponse],
+    summary="List SAML Providers",
+    description="List all SAML providers for an organization.",
+)
+async def list_saml_providers(
+    organization_id: str,
+    db: DbSession,
+    active_only: bool = False,
+) -> list[SAMLProviderResponse]:
+    """
+    List all SAML providers for an organization.
+
+    Args:
+        organization_id: Organization ID to filter by.
+        active_only: If True, only return active providers.
+        db: Database session.
+
+    Returns:
+        List of SAML providers.
+    """
+    try:
+        service = SAMLProviderService(db)
+        providers = service.list_providers_by_organization(
+            organization_id=organization_id,
+            active_only=active_only,
+        )
+
+        return [
+            SAMLProviderResponse(
+                id=p.id,
+                organization_id=p.organization_id,
+                name=p.name,
+                entity_id=p.entity_id,
+                sso_url=p.sso_url,
+                slo_url=p.slo_url,
+                x509_cert=p.x509_cert,
+                is_active=p.is_active,
+                created_at=p.created_at.isoformat(),
+                updated_at=p.updated_at.isoformat(),
+            )
+            for p in providers
+        ]
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to list SAML providers: {e}",
+        ) from e
+
+
+@router.get(
+    "/providers/{provider_id}",
+    response_model=SAMLProviderResponse,
+    summary="Get SAML Provider",
+    description="Get a specific SAML provider by ID.",
+)
+async def get_saml_provider(
+    provider_id: str,
+    db: DbSession,
+) -> SAMLProviderResponse:
+    """
+    Retrieve a specific SAML provider by ID.
+
+    Args:
+        provider_id: Provider ID to retrieve.
+        db: Database session.
+
+    Returns:
+        SAML provider details.
+
+    Raises:
+        HTTPException: 404 if provider not found.
+    """
+    try:
+        service = SAMLProviderService(db)
+        provider = service.get_provider_by_id(provider_id)
+
+        if not provider:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SAML provider with ID {provider_id} not found",
+            )
+
+        return SAMLProviderResponse(
+            id=provider.id,
+            organization_id=provider.organization_id,
+            name=provider.name,
+            entity_id=provider.entity_id,
+            sso_url=provider.sso_url,
+            slo_url=provider.slo_url,
+            x509_cert=provider.x509_cert,
+            is_active=provider.is_active,
+            created_at=provider.created_at.isoformat(),
+            updated_at=provider.updated_at.isoformat(),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get SAML provider: {e}",
+        ) from e
+
+
+@router.put(
+    "/providers/{provider_id}",
+    response_model=SAMLProviderResponse,
+    summary="Update SAML Provider",
+    description="Update an existing SAML provider configuration.",
+)
+async def update_saml_provider(
+    provider_id: str,
+    provider_data: SAMLProviderUpdate,
+    db: DbSession,
+) -> SAMLProviderResponse:
+    """
+    Update an existing SAML provider.
+
+    Args:
+        provider_id: Provider ID to update.
+        provider_data: Fields to update.
+        db: Database session.
+
+    Returns:
+        Updated SAML provider.
+
+    Raises:
+        HTTPException: 404 if provider not found, 400 if validation fails.
+    """
+    try:
+        service = SAMLProviderService(db)
+
+        # Build updates dict from non-None fields
+        updates = {}
+        if provider_data.name is not None:
+            updates["name"] = provider_data.name
+        if provider_data.entity_id is not None:
+            updates["entity_id"] = provider_data.entity_id
+        if provider_data.sso_url is not None:
+            updates["sso_url"] = provider_data.sso_url
+        if provider_data.slo_url is not None:
+            updates["slo_url"] = provider_data.slo_url
+        if provider_data.x509_cert is not None:
+            updates["x509_cert"] = provider_data.x509_cert
+        if provider_data.is_active is not None:
+            updates["is_active"] = provider_data.is_active
+
+        provider = service.update_provider(provider_id, **updates)
+
+        return SAMLProviderResponse(
+            id=provider.id,
+            organization_id=provider.organization_id,
+            name=provider.name,
+            entity_id=provider.entity_id,
+            sso_url=provider.sso_url,
+            slo_url=provider.slo_url,
+            x509_cert=provider.x509_cert,
+            is_active=provider.is_active,
+            created_at=provider.created_at.isoformat(),
+            updated_at=provider.updated_at.isoformat(),
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg) from e
+        raise HTTPException(status_code=400, detail=error_msg) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update SAML provider: {e}",
+        ) from e
+
+
+@router.delete(
+    "/providers/{provider_id}",
+    status_code=204,
+    summary="Delete SAML Provider",
+    description="Delete a SAML provider configuration.",
+)
+async def delete_saml_provider(
+    provider_id: str,
+    db: DbSession,
+) -> Response:
+    """
+    Delete a SAML provider.
+
+    Args:
+        provider_id: Provider ID to delete.
+        db: Database session.
+
+    Returns:
+        Empty response with 204 status.
+
+    Raises:
+        HTTPException: 404 if provider not found.
+    """
+    try:
+        service = SAMLProviderService(db)
+        deleted = service.delete_provider(provider_id)
+
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SAML provider with ID {provider_id} not found",
+            )
+
+        return Response(status_code=204)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete SAML provider: {e}",
         ) from e
