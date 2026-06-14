@@ -911,6 +911,18 @@ describe("Team pages", () => {
     await user.click(within(productColumn).getByRole("button", { name: "下一个分支" }));
     expect(await within(productColumn).findByLabelText("分支 2/2")).toBeInTheDocument();
     expect(within(productColumn).getByText("2/2")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(productColumn).queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument();
+    });
+    await user.click(within(productColumn).getByRole("button", { name: "重新生成" }));
+    await waitFor(() => {
+      expect(state.lastMessagePayload).toMatchObject({
+        target: "product",
+        content: "请设计团队窗口",
+      });
+    });
+    expect(await within(productColumn).findByLabelText("分支 3/3")).toBeInTheDocument();
+    expect(within(productColumn).getAllByText("请设计团队窗口")).toHaveLength(1);
     expect(screen.getByLabelText("代理会话列")).toBeInTheDocument();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
     await user.click(screen.getByRole("button", { name: "添加成员" }));
@@ -983,6 +995,8 @@ describe("Team pages", () => {
     });
 
     const leaderColumn = (await screen.findAllByRole("region", { name: /队长 队长 列/ }))[0];
+    expect(within(leaderColumn).getByText(/0 项任务/)).toBeInTheDocument();
+    expect(within(leaderColumn).queryByText("实现多列 UI")).not.toBeInTheDocument();
     await user.click(await screen.findByRole("tab", { name: /队长/ }));
     await user.type(within(leaderColumn).getByRole("textbox"), "Ask 产品负责人 to sync UI 状态");
     await user.click(within(leaderColumn).getByRole("button", { name: "发送" }));

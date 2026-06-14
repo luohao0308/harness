@@ -3821,4 +3821,154 @@ describe("AgentWorkspacePage Team launcher", () => {
       expect(JSON.stringify(body.messages)).not.toContain("conn-claude");
     });
   });
+
+  it("opens platform Agent history even when persisted current history is local Agent", async () => {
+    window.localStorage.setItem(
+      "harness.workspace.v3.default.conversations",
+      JSON.stringify({
+        version: 2,
+        currentConversationId: "local-agent:binding-1",
+        conversations: [
+          {
+            id: "cloud-conversation",
+            title: "Cloud persisted question",
+            created_at: "2026-05-24T00:00:00Z",
+            updated_at: "2026-05-24T00:02:00Z",
+            rootNodeId: "root",
+            activeLeafId: "cloud-user",
+            pinnedNodeIds: [],
+            dismissedPlanNodeIds: [],
+            draft: "",
+            contextWindowTurns: 8,
+            contextCompressions: {},
+            nodesById: {
+              root: {
+                id: "root",
+                parent_id: null,
+                children_ids: ["cloud-user"],
+                role: "system",
+                content: "Agent Workspace Pro root",
+                state: "done",
+                metadata: {},
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:00:00Z",
+              },
+              "cloud-user": {
+                id: "cloud-user",
+                parent_id: "root",
+                children_ids: [],
+                role: "user",
+                content: "Cloud persisted question",
+                state: "done",
+                metadata: {},
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:02:00Z",
+              },
+            },
+          },
+          {
+            id: "local-agent:binding-1",
+            title: "Local leaked question",
+            created_at: "2026-05-24T00:00:00Z",
+            updated_at: "2026-05-24T00:03:00Z",
+            rootNodeId: "root",
+            activeLeafId: "local-user",
+            pinnedNodeIds: [],
+            dismissedPlanNodeIds: [],
+            draft: "",
+            contextWindowTurns: 8,
+            contextCompressions: {},
+            nodesById: {
+              root: {
+                id: "root",
+                parent_id: null,
+                children_ids: ["local-user"],
+                role: "system",
+                content: "Agent Workspace Pro root",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-1",
+                    agent_session_id: "session-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:00:00Z",
+              },
+              "local-user": {
+                id: "local-user",
+                parent_id: "root",
+                children_ids: [],
+                role: "user",
+                content: "Local leaked question",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-1",
+                    agent_session_id: "session-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:03:00Z",
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection()] });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect((await screen.findAllByText("Cloud persisted question")).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentConversationId).toBe("cloud-conversation");
+    });
+    const activeText = useWorkspaceStore
+      .getState()
+      .activePath()
+      .map((node) => node.content)
+      .join("\n");
+    expect(activeText).toContain("Cloud persisted question");
+    expect(activeText).not.toContain("Local leaked question");
+    expect(
+      screen.getByRole("button", { name: "Cloud persisted question" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Local leaked question" }),
+    ).not.toBeInTheDocument();
+  });
 });
