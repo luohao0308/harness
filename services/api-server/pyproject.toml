@@ -30,6 +30,7 @@ dependencies = [
   "cryptography>=46.0.5,<50.0.0",
   "python3-saml>=1.16.0,<2.0.0",
   "psycopg2-binary>=2.9.9,<3.0.0",
+  "psutil>=6.0.0,<7.0.0",
 ]
 
 [project.optional-dependencies]

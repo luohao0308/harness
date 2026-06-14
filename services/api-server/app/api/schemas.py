@@ -2162,6 +2162,56 @@ class OnboardingStatusResponse(BaseModel):
     completed_at: datetime | None = Field(default=None, description="完成时间")
 
 
+class ValidationCheckResult(BaseModel):
+    """Single validation check result."""
+
+    check: str = Field(description="Check name")
+    status: Literal["pass", "warn", "fail"] = Field(description="Check status")
+    message: str = Field(description="Human-readable message")
+    details: dict | None = Field(default=None, description="Additional details")
+
+
+class ValidationSummary(BaseModel):
+    """Summary of validation results."""
+
+    total: int = Field(description="Total number of checks")
+    pass_: int = Field(alias="pass", description="Number of passed checks")
+    warn: int = Field(description="Number of warnings")
+    fail: int = Field(description="Number of failed checks")
+    status: Literal["pass", "warn", "fail"] = Field(description="Overall status")
+
+
+class ValidationResponse(BaseModel):
+    """Response for validation endpoints (Story 2.1 & 2.2)."""
+
+    checks: list[ValidationCheckResult] = Field(description="Validation check results")
+    summary: ValidationSummary = Field(description="Summary statistics")
+
+
+class WizardStateResponse(BaseModel):
+    """Response for Story 1.2: Wizard state persistence."""
+
+    user_id: str = Field(description="用户 ID")
+    current_step: int = Field(ge=0, le=7, description="当前步骤 (0-7)")
+    completed_steps: list[int] = Field(description="已完成步骤列表")
+    is_completed: bool = Field(description="向导是否完成")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+
+class WizardTransitionRequest(BaseModel):
+    """Request to transition to a specific wizard step."""
+
+    step: int = Field(ge=0, le=7, description="目标步骤 (0-7)")
+
+
+class WizardCompleteStepRequest(BaseModel):
+    """Request to mark a step as completed."""
+
+    step: int = Field(ge=1, le=7, description="要完成的步骤 (1-7)")
+
+
 class DemoLoadResponse(BaseModel):
     status: Literal["loaded", "already_loaded", "reset"] = Field(description="Demo 操作状态")
     agent_ids: list[str] = Field(default_factory=list, description="Demo Agent ID")
