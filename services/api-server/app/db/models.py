@@ -110,6 +110,32 @@ class OAuthAccount(Base):
     raw_profile_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class SAMLProvider(Base):
+    """
+    SAML Identity Provider configuration.
+
+    Story 1.2 - IdP Configuration Management
+    Stores IdP metadata for SAML SSO integration.
+    """
+
+    __tablename__ = "saml_providers"
+    __table_args__ = (
+        Index("ix_saml_providers_org_active", "organization_id", "is_active"),
+        Index("ix_saml_providers_entity_id", "entity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sso_url: Mapped[str] = mapped_column(Text, nullable=False)
+    slo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    x509_cert: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
     __table_args__ = (
