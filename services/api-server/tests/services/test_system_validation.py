@@ -294,3 +294,136 @@ def test_check_memory_fail(
     assert result["status"] == "fail"
     assert result["details"] is not None
     assert result["details"]["available_gb"] == 1
+
+
+# =======================
+# Story 2.3: Database Migration Check Tests
+# =======================
+
+
+# Test 1: Migration check - all migrations applied (pass)
+def test_check_migrations_status_pass(
+    validation_service: ValidationService,
+) -> None:
+    """Test migration check passes when all migrations are applied."""
+    with patch("app.services.validation_service.Config") as mock_config_cls, \
+         patch("app.services.validation_service.ScriptDirectory") as mock_script_cls, \
+         patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls:
+
+        # Mock Alembic configuration
+        mock_config = MagicMock()
+        mock_config_cls.return_value = mock_config
+
+        # Mock ScriptDirectory to return latest revision
+        mock_script = MagicMock()
+        mock_script.get_current_head.return_value = "20260610_0037"
+        mock_script_cls.from_config.return_value = mock_script
+
+        # Mock MigrationContext to return current database revision
+        mock_migration_ctx = MagicMock()
+        mock_migration_ctx.get_current_revision.return_value = "20260610_0037"
+        mock_migration_ctx_cls.configure.return_value = mock_migration_ctx
+
+        result = validation_service.check_migrations_status()
+
+        assert result["check"] == "database_migrations"
+        assert result["status"] == "pass"
+        assert "up to date" in result["message"].lower()
+        assert result["details"] is not None
+        assert result["details"]["current_revision"] == "20260610_0037"
+        assert result["details"]["latest_revision"] == "20260610_0037"
+        assert result["details"]["pending_count"] == 0
+
+
+# Test 2: Migration check - pending migrations (warn)
+def test_check_migrations_status_pending(
+    validation_service: ValidationService,
+) -> None:
+    """Test migration check warns when there are pending migrations."""
+    with patch("app.services.validation_service.Config") as mock_config_cls, \
+         patch("app.services.validation_service.ScriptDirectory") as mock_script_cls, \
+         patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls:
+
+        # Mock Alembic configuration
+        mock_config = MagicMock()
+        mock_config_cls.return_value = mock_config
+
+        # Mock ScriptDirectory
+        mock_script = MagicMock()
+        mock_script.get_current_head.return_value = "20260610_0037"
+
+        # Mock pending migrations (2 pending)
+        mock_rev1 = MagicMock()
+        mock_rev1.revision = "20260609_0036"
+        mock_rev1.doc = "add user avatar"
+        mock_rev2 = MagicMock()
+        mock_rev2.revision = "20260610_0037"
+        mock_rev2.doc = "remove deprecated model pricing sources"
+
+        mock_script.iterate_revisions.return_value = [mock_rev2, mock_rev1]
+        mock_script_cls.from_config.return_value = mock_script
+
+        # Mock MigrationContext - database is at older revision
+        mock_migration_ctx = MagicMock()
+        mock_migration_ctx.get_current_revision.return_value = "20260608_0035"
+        mock_migration_ctx_cls.configure.return_value = mock_migration_ctx
+
+        result = validation_service.check_migrations_status()
+
+        assert result["check"] == "database_migrations"
+        assert result["status"] == "warn"
+        assert "pending" in result["message"].lower()
+        assert result["details"] is not None
+        assert result["details"]["current_revision"] == "20260608_0035"
+        assert result["details"]["latest_revision"] == "20260610_0037"
+        assert result["details"]["pending_count"] == 2
+
+
+# Test 3: Migration check - no database revision (fail)
+def test_check_migrations_status_no_revision(
+    validation_service: ValidationService,
+) -> None:
+    """Test migration check fails when database has no migration applied."""
+    with patch("app.services.validation_service.Config") as mock_config_cls, \
+         patch("app.services.validation_service.ScriptDirectory") as mock_script_cls, \
+         patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls:
+
+        # Mock Alembic configuration
+        mock_config = MagicMock()
+        mock_config_cls.return_value = mock_config
+
+        # Mock ScriptDirectory
+        mock_script = MagicMock()
+        mock_script.get_current_head.return_value = "20260610_0037"
+        mock_script_cls.from_config.return_value = mock_script
+
+        # Mock MigrationContext - no revision in database
+        mock_migration_ctx = MagicMock()
+        mock_migration_ctx.get_current_revision.return_value = None
+        mock_migration_ctx_cls.configure.return_value = mock_migration_ctx
+
+        result = validation_service.check_migrations_status()
+
+        assert result["check"] == "database_migrations"
+        assert result["status"] == "fail"
+        assert "not initialized" in result["message"].lower() or "no migration" in result["message"].lower()
+        assert result["details"] is not None
+        assert result["details"]["current_revision"] is None
+
+
+# Test 4: Migration check - error handling
+def test_check_migrations_status_error(
+    validation_service: ValidationService,
+) -> None:
+    """Test migration check handles errors gracefully."""
+    with patch("app.services.validation_service.Config") as mock_config_cls:
+        # Mock Config to raise an exception
+        mock_config_cls.side_effect = Exception("Cannot read alembic.ini")
+
+        result = validation_service.check_migrations_status()
+
+        assert result["check"] == "database_migrations"
+        assert result["status"] == "fail"
+        assert "error" in result["message"].lower()
+        assert result["details"] is not None
+        assert "error" in result["details"]

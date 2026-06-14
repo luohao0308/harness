@@ -1,9 +1,10 @@
 """
-Validation API endpoints - Story 2.1 & 2.2
+Validation API endpoints - Story 2.1, 2.2 & 2.3
 
 Provides endpoints for:
 - System requirements validation (POST /api/onboarding/validate/system)
 - Configuration validation (POST /api/onboarding/validate/config)
+- Deployment validation (POST /api/onboarding/validate/deployment)
 """
 from __future__ import annotations
 
@@ -66,6 +67,36 @@ def validate_config(session: DbSession) -> dict:
     """
     service = ValidationService(session)
     results = service.validate_all_config()
+
+    return {
+        "checks": results,
+        "summary": _generate_summary(results),
+    }
+
+
+@router.post(
+    "/deployment",
+    response_model=ValidationResponse,
+    summary="Validate deployment readiness",
+)
+def validate_deployment(session: DbSession) -> dict:
+    """
+    Validate deployment readiness (Story 2.3).
+
+    Checks:
+    - Database migration status
+    - Migration integrity
+
+    Returns validation results with pass/warn/fail status for each check.
+    """
+    service = ValidationService(session)
+    results = []
+
+    # Check migration status
+    results.append(service.check_migrations_status())
+
+    # Check migration integrity
+    results.append(service.verify_migration_integrity())
 
     return {
         "checks": results,

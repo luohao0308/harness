@@ -8,6 +8,7 @@ from app.api.agents import router as agents_router
 from app.api.api_keys import router as api_keys_router
 from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
+from app.api.autofix import router as autofix_router
 from app.api.data_management import router as data_management_router
 from app.api.demo import router as demo_router
 from app.api.evals import router as evals_router
@@ -188,6 +189,7 @@ app.include_router(evals_router, prefix="/api")
 app.include_router(demo_router, prefix="/api")
 app.include_router(frontend_errors_router, prefix="/api")
 app.include_router(onboarding_router, prefix="/api")
+app.include_router(autofix_router, prefix="/api")
 app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
