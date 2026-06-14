@@ -27,7 +27,9 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-grpc>=1.25.0,<2.0.0",
   "jsonschema>=4.23,<5",
   "aiosmtplib>=3.0.0,<4.0.0",
-  "cryptography>=42.0.0,<45.0.0",
+  "cryptography>=46.0.5,<50.0.0",
+  "python3-saml>=1.16.0,<2.0.0",
+  "psycopg2-binary>=2.9.9,<3.0.0",
 ]
 
 [project.optional-dependencies]
