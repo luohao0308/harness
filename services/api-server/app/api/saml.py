@@ -88,6 +88,7 @@ class SAMLACSResponse(BaseModel):
     session_token: str = Field(..., description="JWT access token")
     refresh_token: str = Field(..., description="JWT refresh token")
     expires_at: str = Field(..., description="Token expiration timestamp")
+    redirect_url: str | None = Field(None, description="Default landing page URL for IdP-initiated SSO")
 
 
 class SAMLLogoutRequest(BaseModel):
@@ -185,6 +186,7 @@ async def saml_login(
     summary="SAML Assertion Consumer Service",
     description=(
         "Handles SAML Response from IdP after user authentication. "
+        "Supports both SP-initiated (with RelayState) and IdP-initiated (without RelayState) SSO. "
         "Validates the SAML assertion, extracts user attributes, "
         "provisions/updates the user, and creates a session."
     ),
@@ -201,37 +203,64 @@ async def saml_acs(
     at the IdP. It validates the response, extracts user attributes,
     provisions/updates the user (Story 2.3), and creates a session.
 
+    Supports two flows:
+    1. SP-Initiated (Story 2.1): RelayState contains provider_id
+    2. IdP-Initiated (Story 3.1): No RelayState, provider identified by SAML issuer
+
     Args:
         saml_response: Base64-encoded SAML Response from IdP.
-        relay_state: Optional relay state (used to pass provider_id).
+        relay_state: Optional relay state (provider_id for SP-initiated, null for IdP-initiated).
         db: Database session.
 
     Returns:
-        User information and session token.
+        User information, session token, and redirect_url (for IdP-initiated).
 
     Raises:
         HTTPException: 400/401 if validation fails or authentication unsuccessful.
     """
     try:
-        # Get provider from relay state
-        if not relay_state:
-            raise HTTPException(
-                status_code=400,
-                detail="RelayState parameter is required",
-            )
-
-        provider_service = SAMLProviderService(db)
-        provider = provider_service.get_provider_by_id(relay_state)
-
-        if not provider:
-            raise HTTPException(
-                status_code=404,
-                detail=f"SAML provider with ID {relay_state} not found",
-            )
-
-        # Process SAML Response
         saml_service = SAMLService()
-        auth_result = saml_service.process_saml_response(saml_response, provider)
+        provider_service = SAMLProviderService(db)
+        is_idp_initiated = False
+
+        # Determine if this is SP-initiated or IdP-initiated SSO
+        if not relay_state:
+            # IdP-Initiated SSO (Story 3.1): Extract issuer from SAML response
+            is_idp_initiated = True
+
+            # Extract issuer to identify the provider
+            try:
+                issuer = saml_service.extract_issuer_from_response(saml_response)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to extract issuer from SAML Response: {e}",
+                ) from e
+
+            # Look up provider by entity_id (issuer)
+            provider = provider_service.get_provider_by_entity_id(issuer)
+
+            if not provider:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"SAML provider with entity ID {issuer} not found",
+                )
+        else:
+            # SP-Initiated SSO (Story 2.1): Use provider_id from RelayState
+            provider = provider_service.get_provider_by_id(relay_state)
+
+            if not provider:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"SAML provider with ID {relay_state} not found",
+                )
+
+        # Process SAML Response with appropriate validation
+        auth_result = saml_service.process_saml_response(
+            saml_response,
+            provider,
+            is_idp_initiated=is_idp_initiated,
+        )
 
         if not auth_result["authenticated"]:
             raise HTTPException(
@@ -255,16 +284,23 @@ async def saml_acs(
             subject_id=auth_result["nameid"],
         )
 
-        return SAMLACSResponse(
-            user={
+        # Build response
+        response_data = {
+            "user": {
                 "id": session_data["user_id"],
                 "email": user_claims["email"],
                 "name": user_claims["name"],
             },
-            session_token=session_data["session_token"],
-            refresh_token=session_data["refresh_token"],
-            expires_at=session_data["expires_at"],
-        )
+            "session_token": session_data["session_token"],
+            "refresh_token": session_data["refresh_token"],
+            "expires_at": session_data["expires_at"],
+        }
+
+        # Add default redirect URL for IdP-initiated flow
+        if is_idp_initiated:
+            response_data["redirect_url"] = "/dashboard"
+
+        return SAMLACSResponse(**response_data)
 
     except HTTPException:
         raise

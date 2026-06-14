@@ -193,10 +193,59 @@ class SAMLService:
             "saml_request": saml_request,
         }
 
+    def extract_issuer_from_response(
+        self,
+        saml_response: str,
+    ) -> str:
+        """
+        Extract IdP entity ID (issuer) from SAML Response.
+
+        Used for IdP-initiated SSO to identify which provider to use.
+
+        Args:
+            saml_response: Base64-encoded SAML Response.
+
+        Returns:
+            IdP entity ID (issuer) from the SAML Response.
+
+        Raises:
+            ValueError: If issuer cannot be extracted.
+        """
+        # Use a temporary settings object to parse the response
+        settings = self._get_saml_settings()
+
+        # Create request data with SAML Response
+        request_data = {
+            "https": "on",
+            "http_host": "localhost",
+            "script_name": "/api/auth/saml/acs",
+            "server_port": "443",
+            "get_data": {},
+            "post_data": {"SAMLResponse": saml_response},
+        }
+
+        try:
+            # Use OneLogin_Saml2_Response directly to parse the SAML response
+            from onelogin.saml2.response import OneLogin_Saml2_Response
+
+            response_obj = OneLogin_Saml2_Response(
+                settings,
+                saml_response,
+            )
+
+            issuer = response_obj.get_issuer()
+            if not issuer:
+                raise ValueError("Could not extract issuer from SAML Response")
+
+            return issuer
+        except Exception as e:
+            raise ValueError(f"Failed to extract issuer from SAML Response: {e}")
+
     def process_saml_response(
         self,
         saml_response: str,
         provider: SAMLProvider,
+        is_idp_initiated: bool = False,
     ) -> dict[str, Any]:
         """
         Process and validate SAML Response from IdP with comprehensive validation.
@@ -207,9 +256,14 @@ class SAMLService:
         3. Verifies audience restriction matches SP entity ID
         4. Extracts user claims (email, name, groups)
 
+        For IdP-initiated flow (is_idp_initiated=True):
+        - Skips InResponseTo validation (no AuthnRequest was sent)
+        - Still validates signature, audience, and timing
+
         Args:
             saml_response: Base64-encoded SAML Response.
             provider: SAML Identity Provider configuration.
+            is_idp_initiated: True if this is IdP-initiated (unsolicited) SSO.
 
         Returns:
             Dictionary with user attributes and authentication status.
@@ -233,7 +287,8 @@ class SAMLService:
         auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
 
         # Process the SAML Response (includes signature validation)
-        auth.process_response()
+        # For IdP-initiated flow, we don't have a request ID to validate against
+        auth.process_response(request_id=None if is_idp_initiated else None)
 
         # Step 1: Check for signature validation errors
         errors = auth.get_errors()
@@ -253,6 +308,7 @@ class SAMLService:
             "authenticated": True,
             "nameid": nameid,
             "attributes": attributes,
+            "is_idp_initiated": is_idp_initiated,
         }
 
     def extract_user_attributes(

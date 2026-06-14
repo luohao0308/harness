@@ -99,6 +99,20 @@ class SAMLProviderService:
         """
         return self._db.query(SAMLProvider).filter(SAMLProvider.id == provider_id).first()
 
+    def get_provider_by_entity_id(self, entity_id: str) -> SAMLProvider | None:
+        """
+        Retrieve a SAML provider by entity ID (IdP issuer).
+
+        Used for IdP-initiated SSO to identify the provider from the SAML response issuer.
+
+        Args:
+            entity_id: IdP entity ID (issuer) to look up.
+
+        Returns:
+            SAMLProvider instance if found, None otherwise.
+        """
+        return self._db.query(SAMLProvider).filter(SAMLProvider.entity_id == entity_id).first()
+
     def list_providers_by_organization(
         self,
         organization_id: str,
