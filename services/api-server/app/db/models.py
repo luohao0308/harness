@@ -110,6 +110,36 @@ class OAuthAccount(Base):
     raw_profile_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class UserExternalId(Base):
+    """
+    External identity mappings for federated authentication.
+
+    Story 2.3 - User Provisioning from SAML
+    Stores mappings between local users and external identity providers (SAML, OAuth, etc).
+    Links users to their IdP-specific identifiers.
+    """
+
+    __tablename__ = "user_external_ids"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "external_entity_id",
+            "external_user_id",
+            name="user_external_ids_provider_entity_user_uidx",
+        ),
+        Index("ix_user_external_ids_user_provider", "user_id", "provider"),
+        Index("ix_user_external_ids_external_entity", "external_entity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    external_entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    external_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class SAMLProvider(Base):
     """
     SAML Identity Provider configuration.
