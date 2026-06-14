@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -81,7 +81,11 @@ export function ToolConfigStep({ onSubmit, initialData }: ToolConfigStepProps) {
     try {
       await onSubmit(data);
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : "Failed to save tool configuration");
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Failed to save tool configuration. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -89,7 +93,7 @@ export function ToolConfigStep({ onSubmit, initialData }: ToolConfigStepProps) {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="animate-slide-up">
         <h2 className="text-2xl font-bold text-slate-900">Tool Configuration</h2>
         <p className="mt-2 text-sm text-slate-600">
           Select the tools your agent can use to perform tasks.
@@ -98,54 +102,73 @@ export function ToolConfigStep({ onSubmit, initialData }: ToolConfigStepProps) {
 
       <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6">
         {/* Tools Selection */}
-        <div>
+        <div className="animate-slide-up" style={{ animationDelay: "50ms" }}>
           <label className="block text-sm font-medium text-slate-700">
-            Available Tools <span className="text-red-500">*</span>
+            Available Tools <span className="text-red-500" aria-label="required">*</span>
           </label>
           <p className="mt-1 text-xs text-slate-500">
             Select at least one tool for your agent
           </p>
 
-          <div className="mt-4 space-y-3">
-            {availableTools.map((tool) => {
+          <div className="mt-4 space-y-3" role="group" aria-label="Available tools">
+            {availableTools.map((tool, index) => {
               const isSelected = selectedTools.includes(tool.id);
               return (
                 <label
                   key={tool.id}
-                  className={`flex cursor-pointer items-start rounded-lg border p-4 transition-colors ${
+                  className={`flex cursor-pointer items-start rounded-lg border p-4 transition-all duration-200 ${
                     isSelected
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-slate-200 bg-white hover:bg-slate-50"
+                      ? "border-blue-500 bg-blue-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50 hover:shadow-sm"
                   }`}
+                  style={{ animationDelay: `${100 + index * 50}ms` }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => handleToolToggle(tool.id)}
-                    className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                    aria-label={tool.name}
-                  />
+                  <div className="flex h-5 items-center">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleToolToggle(tool.id)}
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 transition-colors focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                      disabled={isSubmitting}
+                      aria-label={tool.name}
+                    />
+                  </div>
                   <div className="ml-3 flex-1">
                     <div className="font-medium text-slate-900">{tool.name}</div>
                     <div className="mt-1 text-sm text-slate-600">{tool.description}</div>
                   </div>
+                  {isSelected && (
+                    <CheckCircle2 className="ml-2 h-5 w-5 flex-shrink-0 animate-fade-in text-blue-600" aria-hidden="true" />
+                  )}
                 </label>
               );
             })}
           </div>
 
           {errors.tools && (
-            <p className="mt-2 text-sm text-red-600">{errors.tools.message}</p>
+            <p className="mt-2 flex items-center gap-1 text-sm text-red-600" role="alert">
+              <AlertCircle className="h-4 w-4" aria-hidden="true" />
+              {errors.tools.message}
+            </p>
           )}
         </div>
 
+        {/* Selection Summary */}
+        {selectedTools.length > 0 && (
+          <div className="animate-slide-up rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <p className="text-sm text-blue-800">
+              <span className="font-medium">{selectedTools.length}</span> tool{selectedTools.length !== 1 ? 's' : ''} selected
+            </p>
+          </div>
+        )}
+
         {/* Submit Error */}
         {submitError && (
-          <div className="rounded-md bg-red-50 p-4">
+          <div className="animate-slide-up rounded-md border border-red-200 bg-red-50 p-4" role="alert">
             <div className="flex">
-              <AlertCircle className="h-5 w-5 text-red-400" />
+              <AlertCircle className="h-5 w-5 flex-shrink-0 text-red-400" aria-hidden="true" />
               <div className="ml-3">
-                <h3 className="text-sm font-medium text-red-800">Error</h3>
+                <h3 className="text-sm font-medium text-red-800">Configuration Error</h3>
                 <p className="mt-1 text-sm text-red-700">{submitError}</p>
               </div>
             </div>
@@ -157,10 +180,13 @@ export function ToolConfigStep({ onSubmit, initialData }: ToolConfigStepProps) {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600 disabled:hover:shadow-sm disabled:active:scale-100"
+            aria-label="Save tools"
           >
-            {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save Tools
+            {isSubmitting && (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            )}
+            {isSubmitting ? "Saving..." : "Save Tools"}
           </button>
         </div>
       </form>
