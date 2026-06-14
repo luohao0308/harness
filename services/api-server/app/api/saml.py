@@ -7,6 +7,7 @@ Serves SP metadata and handles SAML authentication flows.
 Story 1.1 - SAML Service Provider Setup
 Story 1.2 - IdP Configuration Management
 Story 2.1 - SP-Initiated SSO Flow
+Story 4.2 - Single Logout (SLO)
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db_session
 from app.services.saml_provider_service import SAMLProviderService
 from app.services.saml_service import SAMLService
+from app.services.session_service import SessionService
 
 router = APIRouter(prefix="/auth/saml", tags=["auth"])
 
@@ -86,6 +88,29 @@ class SAMLACSResponse(BaseModel):
     session_token: str = Field(..., description="JWT access token")
     refresh_token: str = Field(..., description="JWT refresh token")
     expires_at: str = Field(..., description="Token expiration timestamp")
+
+
+class SAMLLogoutRequest(BaseModel):
+    """Request model for initiating SAML Single Logout."""
+
+    provider_id: str = Field(..., description="SAML provider ID")
+    session_id: str = Field(..., description="Session ID to revoke")
+    nameid: str = Field(..., description="SAML NameID from original login")
+
+
+class SAMLLogoutResponse(BaseModel):
+    """Response model for SAML logout initiation."""
+
+    redirect_url: str = Field(..., description="IdP SLO URL with SAMLRequest")
+    message: str = Field(..., description="Status message")
+
+
+class SAMLSLSResponse(BaseModel):
+    """Response model for SAML Single Logout Service."""
+
+    success: bool = Field(..., description="Logout success status")
+    message: str = Field(..., description="Status message")
+
 
 
 # SAML SSO Endpoints (Story 2.1)
@@ -584,4 +609,152 @@ async def delete_saml_provider(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete SAML provider: {e}",
+        ) from e
+
+
+# SAML Single Logout Endpoints (Story 4.2)
+
+
+@router.post(
+    "/logout",
+    response_model=SAMLLogoutResponse,
+    summary="Initiate SAML Single Logout",
+    description=(
+        "Initiates SP-Initiated SAML Single Logout (SLO) flow. "
+        "Revokes the user session, generates SAML LogoutRequest, and returns IdP SLO redirect URL. "
+        "Client should redirect user to the returned URL to complete logout at IdP."
+    ),
+)
+async def saml_logout(
+    logout_request: SAMLLogoutRequest,
+    db: DbSession,
+) -> SAMLLogoutResponse:
+    """
+    Initiate SAML Single Logout flow.
+
+    Revokes the local session and generates a SAML LogoutRequest
+    to log the user out at the Identity Provider.
+
+    Args:
+        logout_request: Contains provider_id, session_id, and nameid.
+        db: Database session.
+
+    Returns:
+        Redirect URL with encoded SAMLRequest parameter.
+
+    Raises:
+        HTTPException: 404 if provider not found, 400 if provider has no SLO URL.
+    """
+    try:
+        # Get provider
+        provider_service = SAMLProviderService(db)
+        provider = provider_service.get_provider_by_id(logout_request.provider_id)
+
+        if not provider:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SAML provider with ID {logout_request.provider_id} not found",
+            )
+
+        # Revoke session in database
+        session_service = SessionService(db)
+        revoked = session_service.revoke_session(logout_request.session_id)
+
+        if not revoked:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session {logout_request.session_id} not found",
+            )
+
+        # Generate LogoutRequest
+        saml_service = SAMLService()
+        logout_data = saml_service.initiate_logout(
+            provider=provider,
+            session_id=logout_request.session_id,
+            nameid=logout_request.nameid,
+        )
+
+        return SAMLLogoutResponse(
+            redirect_url=logout_data["redirect_url"],
+            message="Session revoked. Redirect user to IdP for logout.",
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initiate SAML logout: {e}",
+        ) from e
+
+
+@router.post(
+    "/sls",
+    response_model=SAMLSLSResponse,
+    summary="SAML Single Logout Service",
+    description=(
+        "Handles SAML LogoutResponse from IdP after user logout. "
+        "Validates the LogoutResponse to confirm successful logout at IdP. "
+        "This endpoint is called by the IdP after processing the LogoutRequest."
+    ),
+)
+async def saml_sls(
+    saml_response: Annotated[str, Form(alias="SAMLResponse")],
+    relay_state: Annotated[str | None, Form(alias="RelayState")] = None,
+    db: DbSession = Depends(get_db_session),
+) -> SAMLSLSResponse:
+    """
+    Process SAML LogoutResponse from Identity Provider.
+
+    This endpoint receives the SAML LogoutResponse after the IdP
+    processes the logout. It validates the response to confirm
+    successful logout.
+
+    Args:
+        saml_response: Base64-encoded SAML LogoutResponse from IdP.
+        relay_state: Optional relay state (used to pass provider_id).
+        db: Database session.
+
+    Returns:
+        Logout success status and message.
+
+    Raises:
+        HTTPException: 400/500 if validation fails.
+    """
+    try:
+        # Get provider from relay state
+        if not relay_state:
+            raise HTTPException(
+                status_code=400,
+                detail="RelayState parameter is required",
+            )
+
+        provider_service = SAMLProviderService(db)
+        provider = provider_service.get_provider_by_id(relay_state)
+
+        if not provider:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SAML provider with ID {relay_state} not found",
+            )
+
+        # Process SAML LogoutResponse
+        saml_service = SAMLService()
+        logout_result = saml_service.handle_logout_response(saml_response, provider)
+
+        return SAMLSLSResponse(
+            success=logout_result["success"],
+            message="User successfully logged out from IdP",
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process SAML LogoutResponse: {e}",
         ) from e
