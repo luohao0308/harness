@@ -19,6 +19,7 @@ from app.api.metrics import router as metrics_router
 from app.api.observability import router as observability_router
 from app.api.onboarding import router as onboarding_router
 from app.api.retention import router as retention_router
+from app.api.saml import router as saml_router
 from app.api.sandboxes import router as sandboxes_router
 from app.api.secrets import router as secrets_router
 from app.api.settings import router as settings_router
@@ -178,6 +179,7 @@ except ImportError:
 app.include_router(health_router)
 app.include_router(metrics_router)
 app.include_router(auth_router, prefix="/api")
+app.include_router(saml_router, prefix="/api")
 app.include_router(api_keys_router, prefix="/api")
 app.include_router(secrets_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
