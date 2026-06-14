@@ -29,7 +29,6 @@ import {
   defaultComposerTarget,
   findLastAssistantNodeId,
   isMcpTool,
-  previousUserContent,
   summarizeTeamUsage,
   teamCompressionKey,
   teamComposerPlaceholder,
@@ -165,7 +164,7 @@ export function AgentColumn({
 }: AgentColumnProps) {
   const isLeader = agent.role === "leader";
   const roleLabel = isLeader ? text("队长", "Leader") : text("成员", "Teammate");
-  const taskScope = tasks.filter((task) => isLeader || task.owner_slot_id === agent.slot_id);
+  const taskScope = tasks.filter((task) => task.owner_slot_id === agent.slot_id);
   const selectedTarget = defaultComposerTarget(agent);
   const selectedMode = composer.mode ?? "chat";
   const status = displayAgentStatus(agent, pendingWakeSlotIds, streamingWakes, settledWakeCutoffs);
@@ -508,13 +507,11 @@ export function AgentColumn({
                   return copied;
                 }}
                 onRegenerate={(nodeId) => {
-                  const previousUser = previousUserContent(branchVisibleEntries, nodeId);
-                  if (!previousUser) return;
-                  onMessageActionSend(previousUser.content, previousUser.target);
+                  onBranchMessage(nodeId, branchVisibleEntries);
                 }}
                 onTogglePin={onTogglePin}
                 onOpenInspector={onOpenMessageInspector}
-                onBranch={onBranchMessage}
+                onBranch={(nodeId) => onBranchMessage(nodeId, branchVisibleEntries)}
                 onSwitchBranch={onSwitchBranch}
               />
             ))
