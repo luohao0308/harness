@@ -32,19 +32,23 @@ export function StepIndicator({ steps, currentStep }: StepIndicatorProps) {
                 {/* Step circle */}
                 <div
                   className={cn(
-                    "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+                    "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300",
                     {
-                      "border-blue-600 bg-blue-600": isCompleted,
-                      "border-blue-600 bg-white": isCurrent,
+                      "border-blue-600 bg-blue-600 shadow-md": isCompleted,
+                      "border-blue-600 bg-white ring-2 ring-blue-100": isCurrent,
                       "border-slate-300 bg-white": isUpcoming,
                     },
                   )}
+                  aria-current={isCurrent ? "step" : undefined}
                 >
                   {isCompleted ? (
-                    <Check className="h-5 w-5 text-white" aria-hidden="true" />
+                    <Check
+                      className="h-5 w-5 animate-fade-in text-white"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <span
-                      className={cn("text-sm font-medium", {
+                      className={cn("text-sm font-medium transition-colors duration-200", {
                         "text-blue-600": isCurrent,
                         "text-slate-500": isUpcoming,
                       })}
@@ -57,7 +61,7 @@ export function StepIndicator({ steps, currentStep }: StepIndicatorProps) {
                 {/* Step label */}
                 <div className="ml-3 flex-1">
                   <p
-                    className={cn("text-sm font-medium", {
+                    className={cn("text-sm font-medium transition-colors duration-200", {
                       "text-blue-600": isCurrent,
                       "text-slate-900": isCompleted,
                       "text-slate-500": isUpcoming,
@@ -73,10 +77,13 @@ export function StepIndicator({ steps, currentStep }: StepIndicatorProps) {
                 {/* Connector line */}
                 {index < steps.length - 1 && (
                   <div
-                    className={cn("ml-4 h-0.5 flex-1 transition-colors", {
-                      "bg-blue-600": isCompleted,
-                      "bg-slate-300": !isCompleted,
-                    })}
+                    className={cn(
+                      "ml-4 h-0.5 flex-1 transition-all duration-500",
+                      {
+                        "bg-blue-600": isCompleted,
+                        "bg-slate-300": !isCompleted,
+                      },
+                    )}
                     aria-hidden="true"
                   />
                 )}
