@@ -28,6 +28,7 @@ from app.api.tasks import router as tasks_router
 from app.api.teams import router as teams_router
 from app.api.tools import router as tools_router
 from app.api.users import router as users_router
+from app.api.validation import router as validation_router
 from app.bootstrap.first_admin import bootstrap_first_admin
 from app.core.config import get_settings, validate_startup_settings
 from app.core.logging import configure_json_logging
@@ -187,6 +188,7 @@ app.include_router(evals_router, prefix="/api")
 app.include_router(demo_router, prefix="/api")
 app.include_router(frontend_errors_router, prefix="/api")
 app.include_router(onboarding_router, prefix="/api")
+app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")

@@ -8,9 +8,11 @@ Handles validation checks for:
 """
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 import httpx
+import psutil
 from sqlalchemy import text
 
 from app.core.config import (
@@ -51,6 +53,292 @@ class ValidationService:
         """Initialize validation service with database session."""
         self.session = session
         self.settings = settings or get_settings()
+
+    def validate_all_system(self) -> list[ValidationResult]:
+        """
+        Run all system requirement validation checks.
+
+        Returns:
+            List of validation results for all system checks
+        """
+        results: list[ValidationResult] = []
+
+        results.append(self.check_python_version())
+        results.append(self.check_nodejs_version())
+        results.append(self.check_disk_space())
+        results.append(self.check_memory())
+
+        return results
+
+    def check_python_version(self) -> ValidationResult:
+        """
+        Check Python version (≥ 3.11).
+
+        Returns:
+            ValidationResult for Python version check
+        """
+        required_major = 3
+        required_minor = 11
+
+        try:
+            result = subprocess.run(
+                ["python3", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if result.returncode != 0:
+                return {
+                    "check": "python_version",
+                    "status": "fail",
+                    "message": f"Failed to check Python version: {result.stderr}",
+                    "details": {"error": result.stderr},
+                }
+
+            # Parse version from output like "Python 3.11.5"
+            version_str = result.stdout.strip()
+            version_parts = version_str.split()
+            if len(version_parts) < 2:
+                return {
+                    "check": "python_version",
+                    "status": "fail",
+                    "message": f"Could not parse Python version from: {version_str}",
+                    "details": {"output": version_str},
+                }
+
+            version = version_parts[1]
+            version_numbers = version.split(".")
+            if len(version_numbers) < 2:
+                return {
+                    "check": "python_version",
+                    "status": "fail",
+                    "message": f"Invalid Python version format: {version}",
+                    "details": {"version": version},
+                }
+
+            major = int(version_numbers[0])
+            minor = int(version_numbers[1])
+
+            if major > required_major or (major == required_major and minor >= required_minor):
+                return {
+                    "check": "python_version",
+                    "status": "pass",
+                    "message": f"Python {version} meets requirement (≥ {required_major}.{required_minor})",
+                    "details": {
+                        "version": version,
+                        "required": f"{required_major}.{required_minor}",
+                    },
+                }
+            else:
+                return {
+                    "check": "python_version",
+                    "status": "fail",
+                    "message": f"Python {version} is below required version {required_major}.{required_minor}",
+                    "details": {
+                        "version": version,
+                        "required": f"{required_major}.{required_minor}",
+                    },
+                }
+
+        except FileNotFoundError:
+            return {
+                "check": "python_version",
+                "status": "fail",
+                "message": "Python not found in PATH",
+                "details": {"error": "python3 command not found"},
+            }
+        except Exception as e:
+            return {
+                "check": "python_version",
+                "status": "fail",
+                "message": f"Error checking Python version: {str(e)}",
+                "details": {"error": str(e)},
+            }
+
+    def check_nodejs_version(self) -> ValidationResult:
+        """
+        Check Node.js version (≥ 20).
+
+        Returns:
+            ValidationResult for Node.js version check
+        """
+        required_major = 20
+
+        try:
+            result = subprocess.run(
+                ["node", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if result.returncode != 0:
+                return {
+                    "check": "nodejs_version",
+                    "status": "fail",
+                    "message": f"Failed to check Node.js version: {result.stderr}",
+                    "details": {"error": result.stderr},
+                }
+
+            # Parse version from output like "v20.10.0"
+            version_str = result.stdout.strip()
+            if version_str.startswith("v"):
+                version_str = version_str[1:]
+
+            version_numbers = version_str.split(".")
+            if len(version_numbers) < 1:
+                return {
+                    "check": "nodejs_version",
+                    "status": "fail",
+                    "message": f"Invalid Node.js version format: {version_str}",
+                    "details": {"version": version_str},
+                }
+
+            major = int(version_numbers[0])
+
+            if major >= required_major:
+                return {
+                    "check": "nodejs_version",
+                    "status": "pass",
+                    "message": f"Node.js {version_str} meets requirement (≥ {required_major})",
+                    "details": {
+                        "version": version_str,
+                        "required": str(required_major),
+                    },
+                }
+            else:
+                return {
+                    "check": "nodejs_version",
+                    "status": "fail",
+                    "message": f"Node.js {version_str} is below required version {required_major}",
+                    "details": {
+                        "version": version_str,
+                        "required": str(required_major),
+                    },
+                }
+
+        except FileNotFoundError:
+            return {
+                "check": "nodejs_version",
+                "status": "fail",
+                "message": "Node.js not found in PATH",
+                "details": {"error": "node command not found"},
+            }
+        except Exception as e:
+            return {
+                "check": "nodejs_version",
+                "status": "fail",
+                "message": f"Error checking Node.js version: {str(e)}",
+                "details": {"error": str(e)},
+            }
+
+    def check_disk_space(self) -> ValidationResult:
+        """
+        Check disk space (≥ 10 GB free).
+
+        Returns:
+            ValidationResult for disk space check
+        """
+        required_gb = 10
+        warn_threshold_gb = 5
+
+        try:
+            # Check disk space for current directory
+            disk = psutil.disk_usage("/")
+            free_gb = disk.free / (1024**3)
+
+            if free_gb >= required_gb:
+                return {
+                    "check": "disk_space",
+                    "status": "pass",
+                    "message": f"Disk space sufficient: {free_gb:.1f} GB free",
+                    "details": {
+                        "free_gb": int(free_gb),
+                        "required_gb": required_gb,
+                    },
+                }
+            elif free_gb >= warn_threshold_gb:
+                return {
+                    "check": "disk_space",
+                    "status": "warn",
+                    "message": f"Disk space low: {free_gb:.1f} GB free (recommended: {required_gb} GB)",
+                    "details": {
+                        "free_gb": int(free_gb),
+                        "required_gb": required_gb,
+                    },
+                }
+            else:
+                return {
+                    "check": "disk_space",
+                    "status": "fail",
+                    "message": f"Insufficient disk space: {free_gb:.1f} GB free (minimum: {warn_threshold_gb} GB)",
+                    "details": {
+                        "free_gb": int(free_gb),
+                        "required_gb": required_gb,
+                    },
+                }
+
+        except Exception as e:
+            return {
+                "check": "disk_space",
+                "status": "fail",
+                "message": f"Error checking disk space: {str(e)}",
+                "details": {"error": str(e)},
+            }
+
+    def check_memory(self) -> ValidationResult:
+        """
+        Check available memory (≥ 4 GB).
+
+        Returns:
+            ValidationResult for memory check
+        """
+        required_gb = 4
+        warn_threshold_gb = 2
+
+        try:
+            memory = psutil.virtual_memory()
+            available_gb = memory.available / (1024**3)
+
+            if available_gb >= required_gb:
+                return {
+                    "check": "memory",
+                    "status": "pass",
+                    "message": f"Memory sufficient: {available_gb:.1f} GB available",
+                    "details": {
+                        "available_gb": int(available_gb),
+                        "required_gb": required_gb,
+                    },
+                }
+            elif available_gb >= warn_threshold_gb:
+                return {
+                    "check": "memory",
+                    "status": "warn",
+                    "message": f"Memory low: {available_gb:.1f} GB available (recommended: {required_gb} GB)",
+                    "details": {
+                        "available_gb": int(available_gb),
+                        "required_gb": required_gb,
+                    },
+                }
+            else:
+                return {
+                    "check": "memory",
+                    "status": "fail",
+                    "message": f"Insufficient memory: {available_gb:.1f} GB available (minimum: {warn_threshold_gb} GB)",
+                    "details": {
+                        "available_gb": int(available_gb),
+                        "required_gb": required_gb,
+                    },
+                }
+
+        except Exception as e:
+            return {
+                "check": "memory",
+                "status": "fail",
+                "message": f"Error checking memory: {str(e)}",
+                "details": {"error": str(e)},
+            }
 
     def validate_all_config(self) -> list[ValidationResult]:
         """

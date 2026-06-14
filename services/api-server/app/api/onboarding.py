@@ -11,6 +11,9 @@ from app.api.schemas import (
     OnboardingStateResponse,
     OnboardingStateUpdateRequest,
     OnboardingStatusResponse,
+    WizardCompleteStepRequest,
+    WizardStateResponse,
+    WizardTransitionRequest,
 )
 from app.db.models import UserOnboardingState, utc_now
 from app.db.session import get_db_session
@@ -127,3 +130,68 @@ def _get_or_create_state(*, session: Session, principal) -> UserOnboardingState:
     session.add(state)
     session.flush()
     return state
+
+
+# Story 1.2: Wizard State Persistence Endpoints
+
+
+@router.get(
+    "/wizard/state/{user_id}",
+    response_model=WizardStateResponse,
+    summary="Get wizard state for user (Story 1.2)",
+)
+def get_wizard_state(user_id: str, session: DbSession) -> dict:
+    """
+    Get current wizard state for a user.
+
+    Story 1.2: Returns persisted wizard state including:
+    - current_step: Current step in wizard (0-7)
+    - completed_steps: Array of completed step numbers
+    - is_completed: Whether wizard is fully completed
+    - Supports browser refresh - state persists across sessions
+    """
+    service = OnboardingService(session)
+    return service.get_wizard_state(user_id)
+
+
+@router.post(
+    "/wizard/transition",
+    response_model=WizardStateResponse,
+    summary="Transition to wizard step (Story 1.2)",
+)
+def transition_wizard_step(
+    payload: WizardTransitionRequest,
+    session: DbSession,
+    principal: Principal,
+) -> dict:
+    """
+    Transition user to a specific wizard step.
+
+    Story 1.2: Updates current_step without marking previous step as completed.
+    Used for navigation between wizard steps.
+    """
+    require_role(principal, {"admin", "engineer", "operator"})
+    service = OnboardingService(session)
+    return service.transition_to_step(principal.user_id, payload.step)
+
+
+@router.post(
+    "/wizard/complete-step",
+    response_model=WizardStateResponse,
+    summary="Mark wizard step as completed (Story 1.2)",
+)
+def complete_wizard_step(
+    payload: WizardCompleteStepRequest,
+    session: DbSession,
+    principal: Principal,
+) -> dict:
+    """
+    Mark a specific wizard step as completed.
+
+    Story 1.2: Adds step to completed_steps array.
+    Automatically marks wizard as complete when all 7 steps are done.
+    """
+    require_role(principal, {"admin", "engineer", "operator"})
+    service = OnboardingService(session)
+    return service.complete_step(principal.user_id, payload.step)
+

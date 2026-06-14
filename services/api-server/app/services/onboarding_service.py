@@ -1,7 +1,10 @@
 """
-Onboarding Service - Story 1.1: First-Run Detection Logic
+Onboarding Service - Stories 1.1 & 1.2
 
-Handles first-run detection, wizard state management, and onboarding flow.
+Story 1.1: First-Run Detection Logic
+Story 1.2: Wizard State Persistence
+
+Handles first-run detection, wizard state management, step transitions, and onboarding flow.
 """
 from __future__ import annotations
 
@@ -28,15 +31,39 @@ class OnboardingStatusDict(TypedDict):
     completed_at: datetime | None
 
 
+class WizardStateDict(TypedDict):
+    """Wizard state response structure for Story 1.2."""
+
+    user_id: str
+    current_step: int
+    completed_steps: list[int]
+    is_completed: bool
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
 class OnboardingService:
     """
     Service for managing onboarding state and first-run detection.
 
     This service handles:
-    - Detecting first deployment (no active users in database)
-    - Determining if onboarding wizard should be shown
-    - Managing wizard completion and skip states
+    - Story 1.1: Detecting first deployment (no active users in database)
+    - Story 1.1: Determining if onboarding wizard should be shown
+    - Story 1.1: Managing wizard completion and skip states
+    - Story 1.2: Step transitions with state persistence
+    - Story 1.2: Completed steps tracking
+    - Story 1.2: Browser refresh state recovery
     - Persisting state to onboarding_state table
+
+    Wizard has 7 steps total (steps 1-7):
+    1. Welcome & Setup
+    2. Model Provider Configuration
+    3. Create First Agent
+    4. Knowledge Base Setup
+    5. Tool Configuration
+    6. Run First Task
+    7. Review & Complete
     """
 
     def __init__(self, session: Session) -> None:
@@ -140,6 +167,109 @@ class OnboardingService:
         self.session.commit()
 
         return self.get_onboarding_status(user_id)
+
+    # Story 1.2: Wizard State Persistence Methods
+
+    def transition_to_step(self, user_id: str, step: int) -> WizardStateDict:
+        """
+        Transition user to a specific wizard step.
+
+        Updates current_step without marking previous step as completed.
+        Useful for navigation between steps.
+
+        Args:
+            user_id: User ID
+            step: Target step number (0-7, where 0 is initial state)
+
+        Returns:
+            Updated wizard state
+
+        Raises:
+            ValueError: If step is out of valid range
+        """
+        if not (0 <= step <= 7):
+            raise ValueError("Step must be between 0 and 7")
+
+        state = self._get_or_create_state(user_id)
+        state.current_step = step
+        state.updated_at = utc_now()
+
+        # Check if all steps completed (auto-complete wizard)
+        if step == 7 and len(state.completed_steps) == 7:
+            state.completed_at = utc_now()
+            state.updated_at = state.completed_at
+
+        self.session.commit()
+
+        return self.get_wizard_state(user_id)
+
+    def complete_step(self, user_id: str, step: int) -> WizardStateDict:
+        """
+        Mark a specific step as completed.
+
+        Adds step to completed_steps array if not already present.
+        Does not change current_step.
+
+        Args:
+            user_id: User ID
+            step: Step number to mark complete (1-7)
+
+        Returns:
+            Updated wizard state
+
+        Raises:
+            ValueError: If step is out of valid range
+        """
+        if not (1 <= step <= 7):
+            raise ValueError("Step must be between 1 and 7")
+
+        state = self._get_or_create_state(user_id)
+
+        # Add to completed_steps if not already there
+        if step not in state.completed_steps:
+            state.completed_steps = sorted([*state.completed_steps, step])
+
+        state.updated_at = utc_now()
+
+        # If all 7 steps completed, mark wizard as complete
+        if len(state.completed_steps) == 7 and state.current_step == 7:
+            state.completed_at = utc_now()
+            state.updated_at = state.completed_at
+
+        self.session.commit()
+
+        return self.get_wizard_state(user_id)
+
+    def get_wizard_state(self, user_id: str) -> WizardStateDict:
+        """
+        Get current wizard state for a user.
+
+        Retrieves persisted state from database, supporting browser refresh.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Complete wizard state including:
+            - user_id: User identifier
+            - current_step: Current step in wizard (0-7)
+            - completed_steps: Array of completed step numbers
+            - is_completed: Whether wizard is fully completed
+            - completed_at: Completion timestamp (or None)
+            - created_at: State creation timestamp
+            - updated_at: Last update timestamp
+        """
+        state = self._get_or_create_state(user_id)
+
+        return {
+            "user_id": state.user_id,
+            "current_step": state.current_step,
+            "completed_steps": state.completed_steps,
+            "is_completed": state.completed_at is not None,
+            "completed_at": state.completed_at,
+            "created_at": state.created_at,
+            "updated_at": state.updated_at,
+        }
 
     def _get_user_state(self, user_id: str) -> OnboardingState | None:
         """Get onboarding state for a specific user."""
