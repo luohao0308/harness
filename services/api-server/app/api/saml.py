@@ -83,7 +83,8 @@ class SAMLACSResponse(BaseModel):
     """Response model for SAML ACS (Assertion Consumer Service)."""
 
     user: dict[str, Any] = Field(..., description="User information")
-    session_token: str = Field(..., description="Session token")
+    session_token: str = Field(..., description="JWT access token")
+    refresh_token: str = Field(..., description="JWT refresh token")
     expires_at: str = Field(..., description="Token expiration timestamp")
 
 
@@ -236,6 +237,7 @@ async def saml_acs(
                 "name": user_claims["name"],
             },
             session_token=session_data["session_token"],
+            refresh_token=session_data["refresh_token"],
             expires_at=session_data["expires_at"],
         )
 
