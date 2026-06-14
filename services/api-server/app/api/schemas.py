@@ -2151,6 +2151,17 @@ class OnboardingCompleteRequest(BaseModel):
     demo_task_id: str | None = Field(default=None, description="Demo Run ID")
 
 
+class OnboardingStatusResponse(BaseModel):
+    """Response for GET /api/onboarding/status - First-run detection status."""
+
+    is_first_run: bool = Field(description="是否首次部署（无活跃用户）")
+    should_show_wizard: bool = Field(description="是否应该显示引导向导")
+    is_completed: bool = Field(description="引导是否已完成")
+    wizard_skipped: bool = Field(description="用户是否跳过了引导")
+    redirect_to: str | None = Field(default=None, description="应该重定向到的 URL")
+    completed_at: datetime | None = Field(default=None, description="完成时间")
+
+
 class DemoLoadResponse(BaseModel):
     status: Literal["loaded", "already_loaded", "reset"] = Field(description="Demo 操作状态")
     agent_ids: list[str] = Field(default_factory=list, description="Demo Agent ID")

@@ -1802,6 +1802,31 @@ class NotificationChannel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class OnboardingState(Base):
+    """
+    Global onboarding state per user (Story 1.1).
+    Tracks wizard progress and completion for Onboarding v1.
+    """
+
+    __tablename__ = "onboarding_state"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="onboarding_state_user_uidx"),
+        Index("ix_onboarding_state_user_id", "user_id"),
+        Index("ix_onboarding_state_dismissed", "dismissed"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class UserOnboardingState(Base):
     __tablename__ = "user_onboarding_state"
     __table_args__ = (

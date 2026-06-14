@@ -10,14 +10,34 @@ from app.api.schemas import (
     OnboardingCompleteRequest,
     OnboardingStateResponse,
     OnboardingStateUpdateRequest,
+    OnboardingStatusResponse,
 )
 from app.db.models import UserOnboardingState, utc_now
 from app.db.session import get_db_session
 from app.demo.seed_data import sync_onboarding_demo_state
 from app.security.auth import Principal, require_role
+from app.services.onboarding_service import OnboardingService
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 DbSession = Annotated[Session, Depends(get_db_session)]
+
+
+@router.get(
+    "/status",
+    response_model=OnboardingStatusResponse,
+    summary="Get onboarding status (first-run detection)",
+)
+def get_onboarding_status(session: DbSession) -> dict:
+    """
+    Get onboarding status - detects first deployment and wizard state.
+
+    Story 1.1: First-Run Detection Logic
+    - Detects first deployment (no admin users in database)
+    - Returns redirect URL for first access
+    - Indicates if wizard was completed or skipped
+    """
+    service = OnboardingService(session)
+    return service.get_onboarding_status()
 
 
 @router.get(
