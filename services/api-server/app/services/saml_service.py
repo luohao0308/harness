@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config.saml_config import get_saml_config
 from app.db.models import SAMLProvider, User
+from app.services.session_service import SessionService
 from app.services.user_provisioning_service import UserProvisioningService
 
 
@@ -295,9 +296,9 @@ class SAMLService:
         Create or update user session after successful SAML authentication.
 
         Creates a new user if they don't exist, or updates existing user's last login.
-        Generates a session token for the user.
+        Generates JWT session tokens using SessionService (Story 4.1).
 
-        Story 2.3: Now uses UserProvisioningService for JIT provisioning and
+        Story 2.3: Uses UserProvisioningService for JIT provisioning and
         external ID tracking when provider and saml_claims are provided.
 
         Args:
@@ -309,7 +310,7 @@ class SAMLService:
             subject_id: Optional SAML subject ID (NameID).
 
         Returns:
-            Dictionary with user_id, session_token, and expires_at.
+            Dictionary with user_id, access_token, refresh_token, and expires_at.
         """
         # Use provisioning service if provider and claims are available (Story 2.3)
         if provider and saml_claims and subject_id:
@@ -346,14 +347,22 @@ class SAMLService:
             db_session.commit()
             db_session.refresh(user)
 
-        # Generate session token
-        session_token = self._generate_session_token()
-        expires_at = datetime.now(UTC) + timedelta(hours=24)
+        # Generate JWT session tokens using SessionService (Story 4.1)
+        session_service = SessionService(db_session)
+        roles = saml_claims.get("groups", ["user"]) if saml_claims else ["user"]
+
+        session_data = session_service.create_session(
+            user_id=user.id,
+            email=user.email,
+            roles=roles,
+            ttl_hours=24,
+        )
 
         return {
             "user_id": user.id,
-            "session_token": session_token,
-            "expires_at": expires_at.isoformat(),
+            "session_token": session_data["access_token"],
+            "refresh_token": session_data["refresh_token"],
+            "expires_at": session_data["expires_at"],
         }
 
     def _generate_session_token(self) -> str:
