@@ -120,10 +120,15 @@ export function teamConversationEntries(team: Team, agent: TeamAgent, mailboxMes
   return entries;
 }
 
-export function streamingEntry(team: Team, agent: TeamAgent, wake?: StreamingWake): TeamConversationEntry {
+export function streamingEntry(
+  team: Team,
+  agent: TeamAgent,
+  wake?: StreamingWake,
+  pendingSend?: PendingSend,
+): TeamConversationEntry {
   return {
     node: {
-      id: `team-${team.id}-${agent.slot_id}-streaming`,
+      id: pendingSend?.branchAssistantId ?? wake?.branchAssistantId ?? `team-${team.id}-${agent.slot_id}-streaming`,
       parent_id: null,
       children_ids: [],
       role: "assistant",
@@ -182,6 +187,9 @@ export function teamConversationEntriesWithPending(
 ) {
   const entries = teamConversationEntries(team, agent, mailboxMessages);
   const streamingWake = streamingWakes.find((wake) => wake.slotId === agent.slot_id);
+  const pendingSend =
+    pendingSends.find((send) => send.recipientSlotIds.includes(agent.slot_id) && send.branchAssistantId) ??
+    pendingSends.find((send) => send.recipientSlotIds.includes(agent.slot_id));
   const completedWakeTurn = hasCompletedWakeTurn(agent, pendingWakeSlotIds, streamingWakes);
   const hasLocalWake =
     !completedWakeTurn &&
@@ -196,10 +204,14 @@ export function teamConversationEntriesWithPending(
   if (lastEntry?.node.role === "assistant" && lastEntry.node.state === "streaming") {
     return entries;
   }
-  const pending = streamingEntry(team, agent, streamingWake);
-  pending.node.parent_id = lastEntry?.node.id ?? `team-${team.id}-${agent.slot_id}-root`;
-  if (lastEntry) {
-    lastEntry.node.children_ids = [...new Set([...lastEntry.node.children_ids, pending.node.id])];
+  const pending = streamingEntry(team, agent, streamingWake, pendingSend);
+  const parent =
+    pendingSend?.anchorUserId || streamingWake?.anchorUserId
+      ? entries.find((entry) => entry.node.id === (pendingSend?.anchorUserId ?? streamingWake?.anchorUserId))
+      : lastEntry;
+  pending.node.parent_id = parent?.node.id ?? `team-${team.id}-${agent.slot_id}-root`;
+  if (parent) {
+    parent.node.children_ids = [...new Set([...parent.node.children_ids, pending.node.id])];
   }
   return [...entries, pending];
 }
