@@ -1817,7 +1817,7 @@ class OnboardingState(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completed_steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
