@@ -565,3 +565,173 @@ def test_process_saml_response_with_full_validation(
     assert result["nameid"] == "validated-user@example.com"
     assert "groups" in result["attributes"]
     assert result["attributes"]["groups"] == ["engineering", "platform"]
+
+
+# Story 4.2 - Single Logout (SLO) Tests
+
+
+# Test 21: SAMLService - Initiate logout (generate LogoutRequest)
+def test_saml_service_initiate_logout(saml_provider: SAMLProvider) -> None:
+    """Test generating SAML LogoutRequest for SP-initiated SLO."""
+    service = SAMLService()
+
+    # Generate LogoutRequest
+    logout_data = service.initiate_logout(
+        provider=saml_provider,
+        session_id="test-session-123",
+        nameid="user@example.com",
+    )
+
+    assert "redirect_url" in logout_data
+    assert logout_data["redirect_url"].startswith(saml_provider.slo_url)
+
+    # URL should contain SAMLRequest parameter
+    parsed_url = urlparse(logout_data["redirect_url"])
+    query_params = parse_qs(parsed_url.query)
+    assert "SAMLRequest" in query_params
+
+    # SAMLRequest should be base64 encoded
+    saml_request = query_params["SAMLRequest"][0]
+    assert len(saml_request) > 0
+
+    # Should be decodable and contain LogoutRequest
+    try:
+        decoded = base64.b64decode(saml_request)
+        assert b"LogoutRequest" in decoded or b"samlp:LogoutRequest" in decoded
+    except Exception as e:
+        pytest.fail(f"SAMLRequest not properly base64 encoded: {e}")
+
+
+# Test 22: SAMLService - Handle logout response
+@patch("app.services.saml_service.OneLogin_Saml2_Auth")
+def test_saml_service_handle_logout_response(
+    mock_saml_auth: MagicMock,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test processing SAML LogoutResponse from IdP."""
+    service = SAMLService()
+
+    # Mock OneLogin SAML Auth
+    mock_auth_instance = MagicMock()
+    mock_auth_instance.get_errors.return_value = []
+    mock_auth_instance.get_last_error_reason.return_value = None
+    mock_saml_auth.return_value = mock_auth_instance
+
+    # Process LogoutResponse
+    saml_response = base64.b64encode(b"<fake-logout-response>").decode("utf-8")
+
+    result = service.handle_logout_response(
+        saml_response=saml_response,
+        provider=saml_provider,
+    )
+
+    assert result["success"] is True
+
+
+# Test 23: SAMLService - Handle logout response with error
+@patch("app.services.saml_service.OneLogin_Saml2_Auth")
+def test_saml_service_handle_logout_response_error(
+    mock_saml_auth: MagicMock,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test processing SAML LogoutResponse with errors."""
+    service = SAMLService()
+
+    # Mock OneLogin SAML Auth with errors
+    mock_auth_instance = MagicMock()
+    mock_auth_instance.get_errors.return_value = ["logout_failed"]
+    mock_auth_instance.get_last_error_reason.return_value = "Logout failed at IdP"
+    mock_saml_auth.return_value = mock_auth_instance
+
+    saml_response = base64.b64encode(b"<error-logout-response>").decode("utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        service.handle_logout_response(
+            saml_response=saml_response,
+            provider=saml_provider,
+        )
+    assert "logout" in str(exc_info.value).lower()
+
+
+# Test 24: POST /api/auth/saml/logout - Initiate SLO
+def test_saml_logout_initiate_success(
+    db_session: Session,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test initiating SAML Single Logout."""
+    # Create a session first
+    from app.services.session_service import SessionService
+
+    session_service = SessionService(db_session)
+    session_data = session_service.create_session(
+        user_id="test-user-123",
+        email="user@example.com",
+        roles=["user"],
+        ttl_hours=24,
+    )
+
+    # Extract session ID from access token
+    import jwt
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    claims = jwt.decode(
+        session_data["access_token"],
+        settings.auth_jwt_secret,
+        algorithms=["HS256"],
+    )
+    session_id = claims["jti"]
+
+    # Initiate logout
+    response = client.post(
+        "/api/auth/saml/logout",
+        json={
+            "provider_id": saml_provider.id,
+            "session_id": session_id,
+            "nameid": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return redirect URL
+    assert "redirect_url" in data
+    assert data["redirect_url"].startswith(saml_provider.slo_url)
+
+    # Session should be revoked
+    session = session_service.get_session(session_id)
+    assert session.revoked_at is not None
+
+
+# Test 25: POST /api/auth/saml/sls - Handle LogoutResponse
+@patch("app.services.saml_service.OneLogin_Saml2_Auth")
+def test_saml_sls_success(
+    mock_saml_auth: MagicMock,
+    db_session: Session,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test handling SAML LogoutResponse at Single Logout Service endpoint."""
+    # Mock OneLogin SAML Auth
+    mock_auth_instance = MagicMock()
+    mock_auth_instance.get_errors.return_value = []
+    mock_auth_instance.get_last_error_reason.return_value = None
+    mock_saml_auth.return_value = mock_auth_instance
+
+    # Simulate SAML LogoutResponse
+    saml_response = base64.b64encode(b"<fake-logout-response>").decode("utf-8")
+
+    response = client.post(
+        "/api/auth/saml/sls",
+        data={
+            "SAMLResponse": saml_response,
+            "RelayState": saml_provider.id,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should indicate successful logout
+    assert data["success"] is True
+    assert "message" in data

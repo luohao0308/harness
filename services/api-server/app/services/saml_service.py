@@ -8,6 +8,7 @@ Story 1.1 - SAML Service Provider Setup
 Story 2.1 - SP-Initiated SSO Flow
 Story 2.2 - SAML Assertion Validation
 Story 2.3 - User Provisioning from SAML
+Story 4.2 - Single Logout (SLO)
 """
 from __future__ import annotations
 
@@ -559,4 +560,113 @@ class SAMLService:
             "name": name,
             "groups": groups,
         }
+
+    def initiate_logout(
+        self,
+        provider: SAMLProvider,
+        session_id: str,
+        nameid: str,
+    ) -> dict[str, str]:
+        """
+        Initiate SAML Single Logout (SLO) flow.
+
+        Generates a SAML LogoutRequest and returns the redirect URL to IdP's SLO endpoint.
+        The LogoutRequest includes the NameID from the original login session.
+
+        Args:
+            provider: SAML Identity Provider configuration.
+            session_id: User session ID to be logged out.
+            nameid: SAML NameID from original login (typically email).
+
+        Returns:
+            Dictionary with 'redirect_url' and 'saml_request' keys.
+
+        Raises:
+            ValueError: If LogoutRequest generation fails or provider has no SLO URL.
+        """
+        # Verify provider has SLO URL configured
+        if not provider.slo_url:
+            raise ValueError(f"Provider {provider.name} does not have SLO URL configured")
+
+        # Build SAML settings with provider-specific IdP config
+        settings = self._get_saml_settings(provider)
+
+        # Create OneLogin SAML Auth object
+        # Mock request dict (required by python3-saml)
+        request_data = {
+            "https": "on",
+            "http_host": "localhost",
+            "script_name": "/api/auth/saml/sls",
+            "server_port": "443",
+            "get_data": {},
+            "post_data": {},
+        }
+
+        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+
+        # Generate LogoutRequest and get redirect URL
+        # The logout() method returns the SLO URL with SAMLRequest parameter
+        redirect_url = auth.logout(name_id=nameid, return_to=None)
+
+        # Extract SAMLRequest from URL for response
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(redirect_url)
+        params = parse_qs(parsed.query)
+        saml_request = params.get("SAMLRequest", [""])[0]
+
+        return {
+            "redirect_url": redirect_url,
+            "saml_request": saml_request,
+        }
+
+    def handle_logout_response(
+        self,
+        saml_response: str,
+        provider: SAMLProvider,
+    ) -> dict[str, bool]:
+        """
+        Process SAML LogoutResponse from Identity Provider.
+
+        Validates the LogoutResponse to confirm the user was successfully
+        logged out at the IdP.
+
+        Args:
+            saml_response: Base64-encoded SAML LogoutResponse.
+            provider: SAML Identity Provider configuration.
+
+        Returns:
+            Dictionary with 'success' key indicating logout status.
+
+        Raises:
+            ValueError: If LogoutResponse validation fails.
+        """
+        # Build SAML settings with provider-specific IdP config
+        settings = self._get_saml_settings(provider)
+
+        # Create request data with SAML LogoutResponse
+        request_data = {
+            "https": "on",
+            "http_host": "localhost",
+            "script_name": "/api/auth/saml/sls",
+            "server_port": "443",
+            "get_data": {"SAMLResponse": saml_response},
+            "post_data": {},
+        }
+
+        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+
+        # Process the SAML LogoutResponse
+        auth.process_slo()
+
+        # Check for errors
+        errors = auth.get_errors()
+        if errors:
+            error_reason = auth.get_last_error_reason()
+            raise ValueError(f"SAML logout failed: {error_reason or ', '.join(errors)}")
+
+        return {
+            "success": True,
+        }
+
 
