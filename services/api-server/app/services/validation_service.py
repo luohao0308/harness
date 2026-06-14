@@ -1,18 +1,23 @@
 """
-Validation Service - Story 2.1 & 2.2: System and Configuration Validation
+Validation Service - Story 2.1, 2.2 & 2.3: System, Configuration and Migration Validation
 
 Handles validation checks for:
 - System requirements (Python, Node, disk, memory)
 - Configuration validation (secrets, database, API URLs, CORS)
+- Database migration checks (Alembic)
 - Service health checks
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 import httpx
 import psutil
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from app.core.config import (
@@ -712,3 +717,235 @@ class ValidationService:
             return f"{protocol}://***:***@{host_and_db}"
 
         return f"***:***@{host_and_db}"
+
+    # =======================
+    # Story 2.3: Database Migration Validation
+    # =======================
+
+    def check_migrations_status(self) -> ValidationResult:
+        """
+        Check if database migrations are up to date.
+
+        Returns:
+            ValidationResult for migration status check
+        """
+        try:
+            # Get Alembic configuration
+            alembic_ini_path = self._get_alembic_ini_path()
+            config = Config(alembic_ini_path)
+
+            # Get script directory to access migration files
+            script = ScriptDirectory.from_config(config)
+
+            # Get latest revision from migration files
+            latest_revision = script.get_current_head()
+
+            # Get current revision from database
+            current_revision = self._get_database_revision()
+
+            # Check if database is initialized
+            if current_revision is None:
+                return {
+                    "check": "database_migrations",
+                    "status": "fail",
+                    "message": "Database not initialized - no migration applied",
+                    "details": {
+                        "current_revision": None,
+                        "latest_revision": latest_revision,
+                        "hint": "Run: alembic upgrade head",
+                    },
+                }
+
+            # Get pending migrations
+            pending_migrations = self.get_pending_migrations(
+                current_revision, latest_revision, script
+            )
+
+            if not pending_migrations:
+                return {
+                    "check": "database_migrations",
+                    "status": "pass",
+                    "message": "Database migrations are up to date",
+                    "details": {
+                        "current_revision": current_revision,
+                        "latest_revision": latest_revision,
+                        "pending_count": 0,
+                    },
+                }
+            else:
+                return {
+                    "check": "database_migrations",
+                    "status": "warn",
+                    "message": f"{len(pending_migrations)} pending migration(s) found",
+                    "details": {
+                        "current_revision": current_revision,
+                        "latest_revision": latest_revision,
+                        "pending_count": len(pending_migrations),
+                        "pending_revisions": [m["revision"] for m in pending_migrations[:5]],
+                        "hint": "Run: alembic upgrade head",
+                    },
+                }
+
+        except FileNotFoundError as e:
+            return {
+                "check": "database_migrations",
+                "status": "fail",
+                "message": "Alembic configuration not found",
+                "details": {
+                    "error": str(e),
+                    "hint": "Ensure alembic.ini exists in the project root",
+                },
+            }
+        except Exception as e:
+            return {
+                "check": "database_migrations",
+                "status": "fail",
+                "message": f"Error checking migration status: {str(e)}",
+                "details": {"error": str(e)},
+            }
+
+    def get_pending_migrations(
+        self,
+        current_revision: str | None,
+        latest_revision: str,
+        script: ScriptDirectory,
+    ) -> list[dict[str, str]]:
+        """
+        Get list of pending migrations.
+
+        Args:
+            current_revision: Current database revision
+            latest_revision: Latest revision from migration files
+            script: Alembic ScriptDirectory instance
+
+        Returns:
+            List of pending migration dictionaries with revision and description
+        """
+        if current_revision == latest_revision:
+            return []
+
+        pending = []
+        try:
+            # Iterate from latest to current to find pending migrations
+            for revision in script.iterate_revisions(latest_revision, current_revision):
+                pending.append({
+                    "revision": revision.revision,
+                    "description": revision.doc or "No description",
+                })
+        except Exception:
+            # If iteration fails, we can't determine pending migrations precisely
+            pass
+
+        return pending
+
+    def verify_migration_integrity(self) -> ValidationResult:
+        """
+        Verify migration integrity (check for conflicts or issues).
+
+        Returns:
+            ValidationResult for migration integrity check
+        """
+        try:
+            # Get Alembic configuration
+            alembic_ini_path = self._get_alembic_ini_path()
+            config = Config(alembic_ini_path)
+            script = ScriptDirectory.from_config(config)
+
+            # Check for multiple heads (branching/conflicts)
+            heads = script.get_heads()
+            if len(heads) > 1:
+                return {
+                    "check": "migration_integrity",
+                    "status": "fail",
+                    "message": f"Multiple migration heads detected: {len(heads)} branches",
+                    "details": {
+                        "heads": heads,
+                        "hint": "Merge migration branches with: alembic merge",
+                    },
+                }
+
+            # Check if migrations directory exists and has files
+            versions_dir = script.versions
+            if not os.path.exists(versions_dir):
+                return {
+                    "check": "migration_integrity",
+                    "status": "fail",
+                    "message": "Migrations directory not found",
+                    "details": {
+                        "expected_path": versions_dir,
+                        "hint": "Initialize Alembic with: alembic init alembic",
+                    },
+                }
+
+            # Count migration files
+            migration_files = [
+                f for f in os.listdir(versions_dir)
+                if f.endswith(".py") and not f.startswith("__")
+            ]
+
+            if len(migration_files) == 0:
+                return {
+                    "check": "migration_integrity",
+                    "status": "warn",
+                    "message": "No migration files found",
+                    "details": {
+                        "versions_dir": versions_dir,
+                        "file_count": 0,
+                    },
+                }
+
+            return {
+                "check": "migration_integrity",
+                "status": "pass",
+                "message": "Migration integrity verified",
+                "details": {
+                    "heads": heads,
+                    "migration_count": len(migration_files),
+                    "versions_dir": versions_dir,
+                },
+            }
+
+        except Exception as e:
+            return {
+                "check": "migration_integrity",
+                "status": "fail",
+                "message": f"Error verifying migration integrity: {str(e)}",
+                "details": {"error": str(e)},
+            }
+
+    def _get_alembic_ini_path(self) -> str:
+        """
+        Get the path to alembic.ini file.
+
+        Returns:
+            Path to alembic.ini
+
+        Raises:
+            FileNotFoundError: If alembic.ini not found
+        """
+        # Try relative to current directory
+        candidates = [
+            "alembic.ini",
+            "../alembic.ini",
+            "../../alembic.ini",
+        ]
+
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+
+        raise FileNotFoundError("alembic.ini not found in expected locations")
+
+    def _get_database_revision(self) -> str | None:
+        """
+        Get current database migration revision.
+
+        Returns:
+            Current revision string or None if not initialized
+        """
+        try:
+            with self.session.connection() as connection:
+                migration_ctx = MigrationContext.configure(connection)
+                return migration_ctx.get_current_revision()
+        except Exception:
+            return None
