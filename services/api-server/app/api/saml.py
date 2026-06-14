@@ -6,12 +6,13 @@ Serves SP metadata and handles SAML authentication flows.
 
 Story 1.1 - SAML Service Provider Setup
 Story 1.2 - IdP Configuration Management
+Story 2.1 - SP-Initiated SSO Flow
 """
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -64,6 +65,193 @@ class SAMLProviderResponse(BaseModel):
     updated_at: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SAMLLoginRequest(BaseModel):
+    """Request model for initiating SAML SSO."""
+
+    provider_id: str = Field(..., description="SAML provider ID")
+
+
+class SAMLLoginResponse(BaseModel):
+    """Response model for SAML SSO initiation."""
+
+    redirect_url: str = Field(..., description="IdP SSO URL with SAMLRequest")
+
+
+class SAMLACSResponse(BaseModel):
+    """Response model for SAML ACS (Assertion Consumer Service)."""
+
+    user: dict[str, Any] = Field(..., description="User information")
+    session_token: str = Field(..., description="Session token")
+    expires_at: str = Field(..., description="Token expiration timestamp")
+
+
+# SAML SSO Endpoints (Story 2.1)
+
+
+@router.post(
+    "/login",
+    response_model=SAMLLoginResponse,
+    summary="Initiate SAML SSO",
+    description=(
+        "Initiates SP-Initiated SAML SSO flow. "
+        "Generates SAML AuthnRequest and returns IdP redirect URL. "
+        "Client should redirect user to the returned URL."
+    ),
+)
+async def saml_login(
+    login_request: SAMLLoginRequest,
+    db: DbSession,
+) -> SAMLLoginResponse:
+    """
+    Initiate SAML SSO login flow.
+
+    Generates a SAML AuthnRequest and returns the IdP SSO URL
+    where the user should be redirected for authentication.
+
+    Args:
+        login_request: Contains provider_id.
+        db: Database session.
+
+    Returns:
+        Redirect URL with encoded SAMLRequest parameter.
+
+    Raises:
+        HTTPException: 404 if provider not found, 400 if provider inactive.
+    """
+    try:
+        # Get provider
+        provider_service = SAMLProviderService(db)
+        provider = provider_service.get_provider_by_id(login_request.provider_id)
+
+        if not provider:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SAML provider with ID {login_request.provider_id} not found",
+            )
+
+        # Check if provider is active
+        if not provider.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="SAML provider is inactive",
+            )
+
+        # Generate AuthnRequest
+        saml_service = SAMLService()
+        authn_data = saml_service.generate_authn_request(provider)
+
+        return SAMLLoginResponse(redirect_url=authn_data["redirect_url"])
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initiate SAML SSO: {e}",
+        ) from e
+
+
+@router.post(
+    "/acs",
+    response_model=SAMLACSResponse,
+    summary="SAML Assertion Consumer Service",
+    description=(
+        "Handles SAML Response from IdP after user authentication. "
+        "Validates the SAML assertion, extracts user attributes, "
+        "and creates or updates the user session."
+    ),
+)
+async def saml_acs(
+    saml_response: Annotated[str, Form(alias="SAMLResponse")],
+    relay_state: Annotated[str | None, Form(alias="RelayState")] = None,
+    db: DbSession = Depends(get_db_session),
+) -> SAMLACSResponse:
+    """
+    Process SAML Response from Identity Provider.
+
+    This endpoint receives the SAML Response after the user authenticates
+    at the IdP. It validates the response, extracts user attributes,
+    and creates a session.
+
+    Args:
+        saml_response: Base64-encoded SAML Response from IdP.
+        relay_state: Optional relay state (used to pass provider_id).
+        db: Database session.
+
+    Returns:
+        User information and session token.
+
+    Raises:
+        HTTPException: 400/401 if validation fails or authentication unsuccessful.
+    """
+    try:
+        # Get provider from relay state
+        if not relay_state:
+            raise HTTPException(
+                status_code=400,
+                detail="RelayState parameter is required",
+            )
+
+        provider_service = SAMLProviderService(db)
+        provider = provider_service.get_provider_by_id(relay_state)
+
+        if not provider:
+            raise HTTPException(
+                status_code=404,
+                detail=f"SAML provider with ID {relay_state} not found",
+            )
+
+        # Process SAML Response
+        saml_service = SAMLService()
+        auth_result = saml_service.process_saml_response(saml_response, provider)
+
+        if not auth_result["authenticated"]:
+            raise HTTPException(
+                status_code=401,
+                detail="SAML authentication failed",
+            )
+
+        # Extract user attributes
+        user_attrs = saml_service.extract_user_attributes(
+            auth_result["attributes"],
+            auth_result["nameid"],
+        )
+
+        # Create or update session
+        session_data = saml_service.create_or_update_session(
+            db,
+            user_attrs,
+            provider.organization_id,
+        )
+
+        return SAMLACSResponse(
+            user={
+                "id": session_data["user_id"],
+                "email": user_attrs["email"],
+                "name": user_attrs["name"],
+            },
+            session_token=session_data["session_token"],
+            expires_at=session_data["expires_at"],
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # SAML validation errors
+        error_msg = str(e)
+        if "authentication failed" in error_msg.lower():
+            raise HTTPException(status_code=401, detail=error_msg) from e
+        raise HTTPException(status_code=400, detail=error_msg) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process SAML Response: {e}",
+        ) from e
+
+
+# SAML Metadata Endpoint (Story 1.1)
 
 
 @router.get(
