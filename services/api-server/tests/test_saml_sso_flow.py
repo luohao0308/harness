@@ -327,3 +327,241 @@ def test_saml_service_update_existing_user(db_session: Session) -> None:
     # Verify user name was updated
     db_session.refresh(existing_user)
     assert existing_user.name == "Updated Name"
+
+
+# Story 2.2 - SAML Assertion Validation Tests
+
+# Test 11: Validate SAML signature with valid certificate
+@patch("app.services.saml_service.OneLogin_Saml2_Auth")
+def test_validate_saml_signature_success(
+    mock_saml_auth: MagicMock,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test SAML signature validation with valid IdP certificate."""
+    service = SAMLService()
+
+    # Mock successful signature validation
+    mock_auth_instance = MagicMock()
+    mock_auth_instance.is_authenticated.return_value = True
+    mock_auth_instance.get_errors.return_value = []
+    mock_saml_auth.return_value = mock_auth_instance
+
+    # Should not raise any exception
+    result = service.validate_saml_signature(
+        saml_response="<valid-signed-response>",
+        provider=saml_provider,
+    )
+    assert result is True
+
+
+# Test 12: Validate SAML signature with invalid signature
+@patch("app.services.saml_service.OneLogin_Saml2_Auth")
+def test_validate_saml_signature_invalid(
+    mock_saml_auth: MagicMock,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test SAML signature validation with invalid signature."""
+    service = SAMLService()
+
+    # Mock signature validation failure
+    mock_auth_instance = MagicMock()
+    mock_auth_instance.is_authenticated.return_value = False
+    mock_auth_instance.get_errors.return_value = ["invalid_signature"]
+    mock_auth_instance.get_last_error_reason.return_value = "Invalid signature"
+    mock_saml_auth.return_value = mock_auth_instance
+
+    # Should raise ValueError with signature error
+    with pytest.raises(ValueError) as exc_info:
+        service.validate_saml_signature(
+            saml_response="<invalid-signed-response>",
+            provider=saml_provider,
+        )
+    assert "signature" in str(exc_info.value).lower()
+
+
+# Test 13: Check assertion validity period - valid assertion
+def test_check_assertion_validity_valid() -> None:
+    """Test assertion validity check with valid NotBefore and NotAfter."""
+    service = SAMLService()
+
+    # Create assertion with valid time window
+    now = datetime.now(UTC)
+    not_before = now - timedelta(minutes=5)
+    not_after = now + timedelta(hours=1)
+
+    # Should not raise any exception
+    result = service.check_assertion_validity(
+        not_before=not_before.isoformat(),
+        not_after=not_after.isoformat(),
+    )
+    assert result is True
+
+
+# Test 14: Check assertion validity period - expired assertion
+def test_check_assertion_validity_expired() -> None:
+    """Test assertion validity check with expired assertion."""
+    service = SAMLService()
+
+    # Create expired assertion
+    now = datetime.now(UTC)
+    not_before = now - timedelta(hours=2)
+    not_after = now - timedelta(hours=1)
+
+    # Should raise ValueError
+    with pytest.raises(ValueError) as exc_info:
+        service.check_assertion_validity(
+            not_before=not_before.isoformat(),
+            not_after=not_after.isoformat(),
+        )
+    assert "expired" in str(exc_info.value).lower()
+
+
+# Test 15: Check assertion validity period - not yet valid
+def test_check_assertion_validity_not_yet_valid() -> None:
+    """Test assertion validity check with future NotBefore."""
+    service = SAMLService()
+
+    # Create assertion with future NotBefore
+    now = datetime.now(UTC)
+    not_before = now + timedelta(minutes=10)
+    not_after = now + timedelta(hours=1)
+
+    # Should raise ValueError
+    with pytest.raises(ValueError) as exc_info:
+        service.check_assertion_validity(
+            not_before=not_before.isoformat(),
+            not_after=not_after.isoformat(),
+        )
+    assert "not yet valid" in str(exc_info.value).lower()
+
+
+# Test 16: Verify audience restriction - valid audience
+def test_verify_audience_valid(saml_provider: SAMLProvider) -> None:
+    """Test audience restriction validation with matching SP entity ID."""
+    service = SAMLService()
+
+    # Mock SP entity ID from config
+    with patch("app.services.saml_service.get_saml_config") as mock_config:
+        mock_config.return_value = {
+            "sp_entity_id": "https://sp.example.com/metadata",
+            "sp_acs_url": "https://sp.example.com/acs",
+            "sp_sls_url": "https://sp.example.com/sls",
+            "sp_x509_cert": "test-cert",
+            "sp_private_key": "test-key",
+        }
+        service._config = mock_config.return_value
+
+        # Should not raise exception
+        result = service.verify_audience(
+            audience="https://sp.example.com/metadata",
+        )
+        assert result is True
+
+
+# Test 17: Verify audience restriction - mismatched audience
+def test_verify_audience_mismatch(saml_provider: SAMLProvider) -> None:
+    """Test audience restriction validation with mismatched SP entity ID."""
+    service = SAMLService()
+
+    # Mock SP entity ID from config
+    with patch("app.services.saml_service.get_saml_config") as mock_config:
+        mock_config.return_value = {
+            "sp_entity_id": "https://sp.example.com/metadata",
+            "sp_acs_url": "https://sp.example.com/acs",
+            "sp_sls_url": "https://sp.example.com/sls",
+            "sp_x509_cert": "test-cert",
+            "sp_private_key": "test-key",
+        }
+        service._config = mock_config.return_value
+
+        # Should raise ValueError
+        with pytest.raises(ValueError) as exc_info:
+            service.verify_audience(
+                audience="https://wrong-sp.example.com/metadata",
+            )
+        assert "audience" in str(exc_info.value).lower()
+
+
+# Test 18: Extract user claims including groups
+def test_extract_user_claims_with_groups() -> None:
+    """Test extracting user claims including groups from SAML attributes."""
+    service = SAMLService()
+
+    saml_attributes = {
+        "email": ["user@example.com"],
+        "firstName": ["Alice"],
+        "lastName": ["Johnson"],
+        "groups": ["admin", "developers", "managers"],
+    }
+
+    claims = service.extract_user_claims(
+        saml_attributes=saml_attributes,
+        nameid="user@example.com",
+    )
+
+    assert claims["email"] == "user@example.com"
+    assert claims["name"] == "Alice Johnson"
+    assert "groups" in claims
+    assert claims["groups"] == ["admin", "developers", "managers"]
+
+
+# Test 19: Extract user claims without groups
+def test_extract_user_claims_without_groups() -> None:
+    """Test extracting user claims when groups attribute is missing."""
+    service = SAMLService()
+
+    saml_attributes = {
+        "email": ["user@example.com"],
+        "firstName": ["Bob"],
+        "lastName": ["Smith"],
+    }
+
+    claims = service.extract_user_claims(
+        saml_attributes=saml_attributes,
+        nameid="user@example.com",
+    )
+
+    assert claims["email"] == "user@example.com"
+    assert claims["name"] == "Bob Smith"
+    assert "groups" in claims
+    assert claims["groups"] == []
+
+
+# Test 20: Complete validation flow with all checks
+@patch("app.services.saml_service.OneLogin_Saml2_Auth")
+def test_process_saml_response_with_full_validation(
+    mock_saml_auth: MagicMock,
+    db_session: Session,
+    saml_provider: SAMLProvider,
+) -> None:
+    """Test complete SAML response processing with all validation checks."""
+    service = SAMLService()
+
+    # Mock OneLogin SAML Auth with full validation
+    mock_auth_instance = MagicMock()
+    mock_auth_instance.is_authenticated.return_value = True
+    mock_auth_instance.get_errors.return_value = []
+
+    # Mock assertion attributes
+    now = datetime.now(UTC)
+    mock_auth_instance.get_attributes.return_value = {
+        "email": ["validated-user@example.com"],
+        "firstName": ["Validated"],
+        "lastName": ["User"],
+        "groups": ["engineering", "platform"],
+    }
+    mock_auth_instance.get_nameid.return_value = "validated-user@example.com"
+
+    mock_saml_auth.return_value = mock_auth_instance
+
+    # Process SAML response
+    saml_response = "base64-encoded-saml-response"
+    result = service.process_saml_response(
+        saml_response=saml_response,
+        provider=saml_provider,
+    )
+
+    assert result["authenticated"] is True
+    assert result["nameid"] == "validated-user@example.com"
+    assert "groups" in result["attributes"]
+    assert result["attributes"]["groups"] == ["engineering", "platform"]
