@@ -333,7 +333,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       translate="no"
     >
       <FeedbackToastViewport />
-      <QuickActionFAB />
+      {!isWorkspaceRoute && !isTeamRoute ? <QuickActionFAB /> : null}
       <aside
         className={cn(
           "flex h-screen min-h-0 shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
