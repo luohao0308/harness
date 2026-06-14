@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-09T02:33:28Z
+last_updated_at: 2026-06-10T00:30:26Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,29 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: agent-workspace-team-mode-screenshot-fixes
+    date: 2026-06-10
+    status: completed
+    demo: Agent Workspace and Team Mode screenshot regressions are repaired so platform Agent switching no longer shows local Agent history, Team member add updates immediately, regenerate/branch stay under the original turn, per-agent steps show only that agent's tasks, pause remains stopped after late active events, and Workspace/Team live sends work after clearing browser-context history.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx src/features/teams/__tests__/TeamPages.test.tsx ConsoleShell.render.test.tsx -> 52 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - Live browser smoke on http://127.0.0.1:5173 after clearing same-origin `harness.workspace.v2.*` and `harness.workspace.v3.*` storage keys -> platform Agents 8/8 sent, local Agents 2/2 sent, Team columns 4/4 sent
+      - python3 scripts/validate-docs.py -> passed
+    acceptance_notes:
+      - Agent Workspace hydration now only preserves in-memory stream state when it belongs to the same agent scope, preventing local Agent runtime state from masking the selected platform Agent snapshot.
+      - Platform Agent selection filters every local-Agent conversation form, including pending local binding placeholders, before choosing an existing cloud conversation.
+      - Team add-member success now merges the new member into the detail and list query caches immediately before invalidation, so the new tab/column appears without waiting for polling.
+      - Team branch and regenerate actions now create branch-aware pending assistant entries attached to the original user turn and reuse the branch switcher instead of exposing a duplicate user message as a new conversation-looking turn.
+      - Team column "查看步骤" now scopes tasks by `owner_slot_id` for every agent column; the task board remains the global task surface.
+      - Team wake cancellation records a local cancelled cutoff and ignores stale status/delta/error/team events for that slot until the next explicit wake, so pause/stop does not get undone by late active events.
+      - ConsoleShell now hides the quick-action FAB on Workspace and Team routes, preventing it from intercepting the Team composer send button; it remains visible on non-chat console routes such as Knowledge.
+      - Browser-context Workspace history was cleared before the live retest by removing same-origin `harness.workspace.v2.*` and `harness.workspace.v3.*` keys.
+      - Live retest sent messages through platform Agents `coder`, `default`, `operator`, `researcher`, `reviewer`, `demo-code-reviewer`, `demo-research-assistant`, and `demo-support-agent`.
+      - Live retest sent messages through online local Agents `6fa0f76e-8318-4d7b-83f4-3319f7a15763` / Claude Code and `a321a8ea-6513-4b5c-bfa8-0bb799c009e0` / hao Local Agent.
+      - Live retest sent Team messages through `leader`, `writing-agent`, `research-agent`, and `review-agent`; the final `review-agent` send succeeded after the FAB obstruction fix with `fabVisible: false`.
+
   - id: console-ui-refresh-local-agent-parity
     date: 2026-06-06
     status: completed
