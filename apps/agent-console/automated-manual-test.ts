@@ -76,6 +76,22 @@ async function main() {
 
   try {
     // ========================================
+    // Setup: Configure dev authentication
+    // ========================================
+    logSection('Setup: Configuring Authentication');
+
+    // Visit the site first to get the domain
+    await page.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' });
+
+    // Set dev tokens in localStorage
+    await page.evaluate(() => {
+      localStorage.setItem('harness.auth.access_token', 'dev-engineer-token');
+      localStorage.setItem('harness.auth.refresh_token', 'dev-refresh-token');
+    });
+
+    logInfo('Dev authentication tokens configured');
+
+    // ========================================
     // Test Suite 1: Service Availability
     // ========================================
     logSection('Test Suite 1: Service Availability');
@@ -154,65 +170,37 @@ async function main() {
     });
 
     await runTest('Provider selection buttons are visible', async () => {
-      // Look for provider buttons
-      const selectors = [
-        'button:has-text("DeepSeek")',
-        'button:has-text("OpenAI")',
-        'button:has-text("Claude")',
-        'button:has-text("deepseek")',
-        '[role="button"]'
-      ];
+      // Look for provider buttons with data-testid
+      const deepseek = page.locator('[data-testid="provider-deepseek"]');
+      const openai = page.locator('[data-testid="provider-openai-compatible"]');
+      const anthropic = page.locator('[data-testid="provider-anthropic"]');
 
-      let foundCount = 0;
-      const foundProviders: string[] = [];
+      const deepseekVisible = await deepseek.isVisible({ timeout: 5000 });
+      const openaiVisible = await openai.isVisible({ timeout: 5000 });
+      const anthropicVisible = await anthropic.isVisible({ timeout: 5000 });
 
-      for (const selector of selectors) {
-        try {
-          const count = await page.locator(selector).count();
-          if (count > 0) {
-            foundCount += count;
-            const text = await page.locator(selector).first().textContent();
-            if (text) foundProviders.push(text.trim());
-          }
-        } catch {
-          // Continue
-        }
-      }
-
-      if (foundCount === 0) {
+      if (!deepseekVisible && !openaiVisible && !anthropicVisible) {
         throw new Error('No provider buttons found');
       }
 
-      logInfo(`Found ${foundCount} provider-related buttons: ${foundProviders.join(', ')}`);
+      const visibleProviders: string[] = [];
+      if (deepseekVisible) visibleProviders.push('DeepSeek');
+      if (openaiVisible) visibleProviders.push('OpenAI');
+      if (anthropicVisible) visibleProviders.push('Anthropic');
+
+      logInfo(`Found ${visibleProviders.length} provider button(s): ${visibleProviders.join(', ')}`);
     });
 
     await runTest('Navigation buttons are present', async () => {
-      const selectors = [
-        'button:has-text("下一步")',
-        'button:has-text("Next")',
-        '[data-testid*="next"]',
-        'button[type="submit"]'
-      ];
-
-      let found = false;
-      for (const selector of selectors) {
-        try {
-          const isVisible = await page.locator(selector).first().isVisible({ timeout: 1000 });
-          if (isVisible) {
-            found = true;
-            const text = await page.locator(selector).first().textContent();
-            logInfo(`Found navigation button: "${text}"`);
-            break;
-          }
-        } catch {
-          // Continue
-        }
-      }
+      const nextButton = page.locator('[data-testid="next-button"]');
+      const found = await nextButton.isVisible({ timeout: 5000 });
 
       if (!found) {
-        logWarning('Navigation button not found with expected selectors');
-        results.warnings++;
+        throw new Error('Next button not found');
       }
+
+      const text = await nextButton.textContent();
+      logInfo(`Found navigation button: "${text}"`);
     });
 
     // ========================================
@@ -221,24 +209,16 @@ async function main() {
     logSection('Test Suite 3: Interactive Elements');
 
     await runTest('Provider button is clickable', async () => {
-      const providerButton = page.locator('button:has-text("DeepSeek")').first();
+      const providerButton = page.locator('[data-testid="provider-deepseek"]');
       const exists = await providerButton.count() > 0;
 
       if (!exists) {
-        // Try alternative selectors
-        const altButton = page.locator('button, [role="button"]').first();
-        const altExists = await altButton.count() > 0;
-        if (!altExists) {
-          throw new Error('No clickable buttons found');
-        }
-        logInfo('Using alternative button selector');
-        await altButton.click({ timeout: 5000 });
-      } else {
-        await providerButton.click({ timeout: 5000 });
+        throw new Error('DeepSeek provider button not found');
       }
 
+      await providerButton.click({ timeout: 5000 });
       await page.waitForTimeout(500);
-      logInfo('Successfully clicked a provider button');
+      logInfo('Successfully clicked DeepSeek provider button');
     });
 
     await runTest('Form inputs are interactable (if visible)', async () => {
@@ -264,21 +244,23 @@ async function main() {
     logSection('Test Suite 4: Page Navigation');
 
     await runTest('Can navigate through pages without crashes', async () => {
-      // Try clicking next button if available
-      const nextButton = page.locator('button:has-text("下一步"), button:has-text("Next")').first();
+      // Click next button to go to step 2
+      const nextButton = page.locator('[data-testid="next-button"]');
       const hasNextButton = await nextButton.count() > 0;
 
       if (hasNextButton) {
-        try {
-          await nextButton.click({ timeout: 3000 });
-          await page.waitForTimeout(1000);
-          logInfo('Successfully clicked next button');
-        } catch (error) {
-          logWarning(`Could not click next button: ${error instanceof Error ? error.message : String(error)}`);
-          results.warnings++;
+        await nextButton.click({ timeout: 5000 });
+        await page.waitForTimeout(1000);
+        logInfo('Successfully clicked next button - moved to Step 2');
+
+        // Verify we're on step 2 by checking for endpoint input
+        const endpointInput = page.locator('[data-testid="endpoint-input"]');
+        const onStep2 = await endpointInput.isVisible({ timeout: 3000 });
+        if (onStep2) {
+          logInfo('Confirmed: Now on Step 2 (Configuration)');
         }
       } else {
-        logInfo('Next button not found - may need provider selection first');
+        throw new Error('Next button not found');
       }
     });
 
@@ -312,27 +294,40 @@ async function main() {
     logSection('Test Suite 5: API Endpoints');
 
     await runTest('Onboarding state API is accessible', async () => {
-      const response = await page.request.get('http://localhost:8000/api/onboarding/state');
-      if (!response.ok() && response.status() !== 404) {
-        throw new Error(`API returned status ${response.status()}`);
+      // Use page.evaluate to make request from browser context (with localStorage auth)
+      const response = await page.evaluate(async () => {
+        const res = await fetch('http://localhost:8000/api/onboarding/state');
+        return { status: res.status, ok: res.ok };
+      });
+
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`API returned status ${response.status}`);
       }
-      logInfo(`API response status: ${response.status()}`);
+      logInfo(`API response status: ${response.status}`);
     });
 
     await runTest('Auth config API is accessible', async () => {
-      const response = await page.request.get('http://localhost:8000/api/auth/config');
-      if (!response.ok() && response.status() !== 404) {
-        throw new Error(`API returned status ${response.status()}`);
+      const response = await page.evaluate(async () => {
+        const res = await fetch('http://localhost:8000/api/auth/config');
+        return { status: res.status, ok: res.ok };
+      });
+
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`API returned status ${response.status}`);
       }
-      logInfo(`API response status: ${response.status()}`);
+      logInfo(`API response status: ${response.status}`);
     });
 
     await runTest('SAML providers API is accessible', async () => {
-      const response = await page.request.get('http://localhost:8000/api/auth/saml/providers');
-      if (!response.ok() && response.status() !== 404) {
-        throw new Error(`API returned status ${response.status()}`);
+      const response = await page.evaluate(async () => {
+        const res = await fetch('http://localhost:8000/api/auth/saml/providers');
+        return { status: res.status, ok: res.ok };
+      });
+
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`API returned status ${response.status}`);
       }
-      logInfo(`API response status: ${response.status()}`);
+      logInfo(`API response status: ${response.status}`);
     });
 
   } catch (error) {
