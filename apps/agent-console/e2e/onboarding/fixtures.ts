@@ -77,10 +77,13 @@ export async function setupOnboardingMocks(page: Page, options: OnboardingFixtur
     // Auth
     if (path === "/api/auth/me" && method === "GET") {
       await fulfillJson(route, {
-        id: "user-001",
+        user_id: "user-001",
         email: "test@example.com",
-        role: "admin",
         name: "Test User",
+        organization_id: "org-001",
+        role: "admin",
+        permissions: ["*"],
+        organizations: [{ id: "org-001", name: "Test Org", slug: "test-org", role: "admin" }],
       });
       return;
     }

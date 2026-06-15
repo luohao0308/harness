@@ -193,8 +193,8 @@ async def saml_login(
 )
 async def saml_acs(
     saml_response: Annotated[str, Form(alias="SAMLResponse")],
+    db: DbSession,
     relay_state: Annotated[str | None, Form(alias="RelayState")] = None,
-    db: DbSession = Depends(get_db_session),
 ) -> SAMLACSResponse:
     """
     Process SAML Response from Identity Provider.
@@ -738,8 +738,8 @@ async def saml_logout(
 )
 async def saml_sls(
     saml_response: Annotated[str, Form(alias="SAMLResponse")],
+    db: DbSession,
     relay_state: Annotated[str | None, Form(alias="RelayState")] = None,
-    db: DbSession = Depends(get_db_session),
 ) -> SAMLSLSResponse:
     """
     Process SAML LogoutResponse from Identity Provider.
