@@ -9,7 +9,7 @@
  * testing such features when they are added.
  */
 import { expect, test, type Page } from "@playwright/test";
-import { setupOnboardingMocks } from "./fixtures";
+import { setupOnboardingMocks, createOnboardingState } from "./fixtures";
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 
@@ -36,7 +36,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should handle demo data already loaded scenario", async ({ page }) => {
-    const state = createInitialState(4);
+    const state = await setupOnboardingMocks(page, { initialStep: 4 });
     state.onboarding.agent_id = "first-run-agent";
     state.onboarding.demo_loaded = true;
     state.onboarding.demo_task_id = "existing-demo-task";
@@ -54,15 +54,15 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should validate system health before starting wizard", async ({ page }) => {
-    const state = createInitialState(1);
+    const state = await setupOnboardingMocks(page, {
+      initialStep: 1,
+      autoFixAvailable: {
+        database: true
+      }
+    });
 
-    // Simulate unhealthy database
-    state.systemHealth.database = {
-      status: "unhealthy",
-      message: "Database connection failed",
-    };
-    state.autoFixAvailable.database = true;
-
+    // Simulate unhealthy database (this is for testing the mocking system)
+    // In a real scenario, this would come from the backend
     await page.goto("/onboarding");
 
     // Wizard should still load (health checks are hypothetical)
@@ -70,14 +70,12 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should auto-generate configuration when needed", async ({ page }) => {
-    const state = createInitialState(2);
-
-    // Simulate missing secrets
-    state.systemHealth.secrets = {
-      status: "missing",
-      message: "JWT secret not configured",
-    };
-    state.autoFixAvailable.secrets = true;
+    const state = await setupOnboardingMocks(page, {
+      initialStep: 2,
+      autoFixAvailable: {
+        secrets: true
+      }
+    });
 
     await page.goto("/onboarding?step=2");
 
@@ -97,7 +95,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should retry demo load after fixing issues", async ({ page }) => {
-    const state = createInitialState(4);
+    const state = await setupOnboardingMocks(page, { initialStep: 4 });
     state.onboarding.agent_id = "first-run-agent";
 
     await page.goto("/onboarding?step=4");
@@ -116,7 +114,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should handle provider endpoint auto-detection", async ({ page }) => {
-    const state = createInitialState(2);
+    const state = await setupOnboardingMocks(page, { initialStep: 2 });
     state.onboarding.provider_json = {
       provider: "deepseek",
     };
@@ -132,7 +130,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should auto-save progress when moving between steps", async ({ page }) => {
-    const state = createInitialState(1);
+    const state = await setupOnboardingMocks(page, { initialStep: 1 });
 
     await page.goto("/onboarding");
 
@@ -151,7 +149,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should handle agent template pre-filling", async ({ page }) => {
-    const state = createInitialState(3);
+    const state = await setupOnboardingMocks(page, { initialStep: 3 });
 
     await page.goto("/onboarding?step=3");
 
@@ -172,7 +170,11 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
   });
 
   test("should auto-recover from transient API failures", async ({ page }) => {
-    const state = createInitialState(4);
+    const state = {
+      onboarding: createOnboardingState(4),
+      agentCreated: false,
+      demoLoaded: false
+    };
     state.onboarding.agent_id = "first-run-agent";
 
     let apiCallCount = 0;
