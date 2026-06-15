@@ -28,7 +28,7 @@ export function TeamTaskBoard({
     <div
       role="dialog"
       aria-label={text("团队任务板", "Team task board")}
-      className="absolute right-1 top-full z-40 mt-2 w-[min(360px,calc(100vw-1rem))] overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-xl"
+      className="absolute right-1 top-full z-40 mt-2 w-[min(360px,calc(100vw-1rem))] overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-none"
     >
       <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
         <div className="min-w-0">

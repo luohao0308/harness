@@ -62,7 +62,7 @@ export function ContextSummaryManager({
       >
         <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
       </button>
-      <div className="pointer-events-none absolute right-0 top-full z-40 mt-1.5 hidden w-64 rounded-md border border-slate-200 bg-white p-2 text-left text-[11px] leading-4 text-slate-600 shadow-lg group-hover:block group-focus-within:block">
+      <div className="pointer-events-none absolute right-0 top-full z-40 mt-1.5 hidden w-64 rounded-md border border-slate-200 bg-white p-2 text-left text-[11px] leading-4 text-slate-600 shadow-none group-hover:block group-focus-within:block">
         <div className="mb-1 font-medium text-slate-900">
           {text("上下文摘要", "Context summary")}
         </div>

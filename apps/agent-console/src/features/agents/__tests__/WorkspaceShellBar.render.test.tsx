@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { useConsoleStore } from "../../../stores/consoleStore";
 import { WorkspaceShellBar } from "../components/WorkspaceShellBar";
 import type { ModelOption } from "../components/ModelPicker";
-import type { ToolMetadata } from "../../tasks/api";
+import type { AgentDefinition, LocalAgentConnection, ToolMetadata } from "../../tasks/api";
 
 const providers: ModelOption[] = [
   {
@@ -56,6 +56,49 @@ const tools: ToolMetadata[] = [
     mcp_method: "search",
   },
 ];
+
+function localAgentConnection(overrides: Partial<LocalAgentConnection> = {}): LocalAgentConnection {
+  return {
+    id: "local-hao",
+    agent_id: "default",
+    owner_user_id: "dev-engineer",
+    pairing_token_id: "pair-1",
+    onboarding_confirmed: true,
+    display_name: "hao Local Agent",
+    adapter_kind: "hao",
+    protocol_version: "local-agent-v1",
+    bridge_version: "agent-console-test",
+    status: "online",
+    workspace_root: "/tmp/workspace",
+    capabilities_json: {},
+    risk_capabilities_json: [],
+    last_seen_at: "2026-06-03T00:00:00Z",
+    revoked_at: null,
+    created_at: "2026-06-03T00:00:00Z",
+    updated_at: "2026-06-03T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function agentDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
+  return {
+    id: "default",
+    name: "Default Agent",
+    description: "Default workspace agent",
+    role: "planner",
+    status: "ACTIVE",
+    model_provider: "default",
+    model_name: "default",
+    system_prompt: "Plan with evidence",
+    tools_json: [],
+    routing_tags: [],
+    max_parallel_assignments: 2,
+    capability_attachments: [],
+    created_at: "2026-06-03T00:00:00Z",
+    updated_at: "2026-06-03T00:00:00Z",
+    ...overrides,
+  };
+}
 
 function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]> = {}) {
   const props: Parameters<typeof WorkspaceShellBar>[0] = {
@@ -123,6 +166,56 @@ describe("WorkspaceShellBar", () => {
       "/runs/run-123",
     );
     expect(screen.getByText("待审批")).toBeInTheDocument();
+  });
+
+  it("does not render unconfirmed or revoked local Agents in the target picker", () => {
+    useConsoleStore.getState().setLocale("zh-CN");
+    renderShell({
+      agents: [agentDefinition()],
+      onAgentChange: vi.fn(),
+      onLocalAgentTargetChange: vi.fn(),
+      localAgentEnabled: true,
+      selectedLocalConnectionId: "local-hao",
+      localAgentConnections: [
+        localAgentConnection(),
+        localAgentConnection({
+          id: "local-codex-unconfirmed",
+          onboarding_confirmed: false,
+          display_name: "Codex CLI",
+          adapter_kind: "codex",
+        }),
+        localAgentConnection({
+          id: "local-codex-pending-status",
+          onboarding_confirmed: true,
+          display_name: "Codex Pending",
+          adapter_kind: "codex",
+          status: "pending_confirmation",
+        }),
+        {
+          ...localAgentConnection({
+            id: "local-codex-missing-confirmation",
+            display_name: "Codex Missing Confirmation",
+            adapter_kind: "codex",
+          }),
+          onboarding_confirmed: undefined,
+        } as unknown as LocalAgentConnection,
+        localAgentConnection({
+          id: "local-claude-revoked",
+          display_name: "Claude Code",
+          adapter_kind: "claude_code",
+          status: "revoked",
+          revoked_at: "2026-06-03T00:01:00Z",
+        }),
+      ],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /切换智能体或本地 Agent/ }));
+
+    expect(screen.getAllByText("hao Local Agent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Codex CLI")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex Pending")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex Missing Confirmation")).not.toBeInTheDocument();
+    expect(screen.queryByText("Claude Code")).not.toBeInTheDocument();
   });
 
   it("opens tools capabilities from the lightweight proof chip", () => {

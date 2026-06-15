@@ -25,7 +25,7 @@ import {
   getTeam,
   getModelSettings,
   getToolRegistry,
-  listAgents,
+  listAgentsPage,
   listTeams,
   renameTeamAgent,
   removeTeamAgent,
@@ -59,6 +59,7 @@ import type {
   TeamBottomPanel,
   TeamBranchGroupsBySlot,
   TeamContextCompressions,
+  TeamPageEnvelope,
   TeamModelChangeHandler,
 } from "./types";
 import { useTeamComposerActions } from "./useTeamComposerActions";
@@ -124,7 +125,7 @@ export function TeamPage() {
   });
   const agentsQuery = useQuery({
     queryKey: ["agents"],
-    queryFn: listAgents,
+    queryFn: () => listAgentsPage({ limit: 100 }),
     enabled: addMemberOpen,
   });
   const streamReadyTeamId = teamQuery.data?.id;
@@ -398,6 +399,21 @@ export function TeamPage() {
       setNewMemberName("");
       setNewMemberAgentId(null);
       setActiveSlotId(agent.slot_id);
+      queryClient.setQueryData<Team>(["teams", teamId], (current) =>
+        current ? { ...current, agents: mergeTeamAgent(current.agents, agent) } : current,
+      );
+      queryClient.setQueryData<TeamPageEnvelope>(["teams"], (current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === teamId
+                  ? { ...item, agents: mergeTeamAgent(item.agents, agent) }
+                  : item,
+              ),
+            }
+          : current,
+      );
       notifyFeedback({
         tone: "success",
         title: "团队成员已添加",
@@ -455,6 +471,7 @@ export function TeamPage() {
     teamFileInputsRef,
     setComposerState,
     setPendingSends,
+    setStreamingWakes,
     setAttachmentsBySlotId,
     setBottomPanelBySlotId,
     setBranchGroupsBySlotId,

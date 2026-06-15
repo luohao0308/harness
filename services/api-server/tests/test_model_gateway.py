@@ -224,6 +224,37 @@ def test_audited_model_gateway_writes_stream_success_events(db_session: Session)
     assert gateway.closed is True
 
 
+def test_audited_model_gateway_records_extra_request_metadata(db_session: Session) -> None:
+    task = create_task(db_session)
+    gateway = StreamingSequenceGateway(
+        [
+            ModelStreamChunk(text="local bridge output"),
+            ModelStreamChunk(
+                usage={"prompt_tokens": 2, "completion_tokens": 3},
+                done=True,
+            ),
+        ]
+    )
+
+    list(
+        AuditedModelGateway(
+            session=db_session,
+            task_id=task.id,
+            gateway=gateway,
+            request_metadata={
+                "source": "local_agent_bridge_stream",
+                "local_bridge_task_id": "bridge-task-123",
+            },
+        ).stream(model_request())
+    )
+
+    model_call = db_session.execute(
+        select(ModelCall).where(ModelCall.task_id == task.id)
+    ).scalar_one()
+    assert model_call.request_json["source"] == "local_agent_bridge_stream"
+    assert model_call.request_json["local_bridge_task_id"] == "bridge-task-123"
+
+
 def test_audited_model_gateway_records_success_before_done_chunk_close(
     db_session: Session,
 ) -> None:

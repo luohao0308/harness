@@ -19,6 +19,7 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input, Textarea } from "../../../components/ui/input";
 import { MenuSelect, type MenuSelectOption } from "../../../components/ui/menu-select";
+import { RefreshOverlay } from "../../../components/ui/refresh-overlay";
 import { cn } from "../../../lib/utils";
 import { AdapterHealthBadge } from "../components/AdapterHealthBadge";
 import { AdapterSchemaDrawer } from "../components/AdapterSchemaDrawer";
@@ -218,7 +219,11 @@ export function ToolConfigurationPage() {
           </Card>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(320px,0.42fr)_minmax(0,0.58fr)]">
+        <RefreshOverlay
+          refreshing={configsQuery.isFetching}
+          label="正在同步运行配置"
+          className="grid gap-4 xl:grid-cols-[minmax(320px,0.42fr)_minmax(0,0.58fr)]"
+        >
           <Card className="overflow-hidden">
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -251,18 +256,18 @@ export function ToolConfigurationPage() {
                     </div>
                     <RuntimeStatusBadge config={config} />
                   </div>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      <Badge tone="info">{transportLabel(config.transport)}</Badge>
-                      <Badge tone={config.registry_visible ? "success" : "warning"}>
-                        {config.registry_visible ? "注册表可见" : "注册表不可见"}
-                      </Badge>
-                      <Badge tone={config.secret_configured ? "success" : "neutral"}>
-                        {config.secret_configured ? "密钥已保存" : "密钥未保存"}
-                      </Badge>
-                      {adapterBySlug.has(config.tool_name) ? (
-                        <AdapterHealthBadge slug={config.tool_name} agentId={agentId} compact />
-                      ) : null}
-                    </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <Badge tone="info">{transportLabel(config.transport)}</Badge>
+                    <Badge tone={config.registry_visible ? "success" : "warning"}>
+                      {config.registry_visible ? "注册表可见" : "注册表不可见"}
+                    </Badge>
+                    <Badge tone={config.secret_configured ? "success" : "neutral"}>
+                      {config.secret_configured ? "密钥已保存" : "密钥未保存"}
+                    </Badge>
+                    {adapterBySlug.has(config.tool_name) ? (
+                      <AdapterHealthBadge slug={config.tool_name} agentId={agentId} compact />
+                    ) : null}
+                  </div>
                 </button>
               ))}
               {!configsQuery.isLoading && configs.length === 0 ? (
@@ -467,7 +472,7 @@ export function ToolConfigurationPage() {
               <div className="p-4 text-sm text-slate-500">先选择一个已安装 MCP。</div>
             )}
           </Card>
-        </section>
+        </RefreshOverlay>
       </div>
       <AdapterSchemaDrawer
         adapter={selectedSchemaAdapter}

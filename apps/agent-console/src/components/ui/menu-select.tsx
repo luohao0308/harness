@@ -32,6 +32,7 @@ export type MenuSelectProps = {
   openRequestSeq?: number;
   placement?: "bottom" | "top";
   size?: "default" | "compact";
+  showSelectedDescription?: boolean;
   className?: string;
   buttonClassName?: string;
   menuClassName?: string;
@@ -48,6 +49,7 @@ export function MenuSelect({
   openRequestSeq,
   placement = "bottom",
   size = "default",
+  showSelectedDescription = true,
   className,
   buttonClassName,
   menuClassName,
@@ -231,7 +233,7 @@ export function MenuSelect({
   }, [disabled, openRequestSeq]);
 
   const selectedLabel = selected?.label ?? placeholder;
-  const selectedDescription = selected?.description;
+  const selectedDescription = showSelectedDescription ? selected?.description : null;
   const selectedLeading = leading ?? selected?.leading;
   const selectedMeta = selected?.meta;
   const selectedLabelText = typeof selectedLabel === "string" ? selectedLabel : null;
@@ -296,7 +298,7 @@ export function MenuSelect({
           aria-activedescendant={activeIndex >= 0 ? `${baseId}-option-${activeIndex}` : undefined}
           onKeyDown={handleMenuKeyDown}
           className={cn(
-            "absolute left-0 z-30 max-h-80 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl",
+            "absolute left-0 z-30 max-h-80 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-none",
             placement === "top" ? "bottom-full mb-2 top-auto" : "top-full mt-2",
             menuClassName,
           )}

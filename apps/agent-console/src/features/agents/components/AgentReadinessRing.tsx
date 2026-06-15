@@ -52,10 +52,11 @@ export function AgentReadinessRing({
           stroke="currentColor"
           strokeWidth="3"
           strokeDasharray={`${percentage} 100`}
-          className={percentage === 100 ? "text-green-500" : "text-amber-500"}
+          strokeLinecap="round"
+          className={ready === total ? "text-emerald-500" : ready > 0 ? "text-amber-500" : "text-slate-300"}
         />
       </svg>
-      <div className="absolute inset-0 flex items-center justify-center text-[10px] font-medium">
+      <div className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-slate-700">
         {ready}/{total}
       </div>
     </div>

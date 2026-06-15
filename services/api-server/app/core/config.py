@@ -86,6 +86,11 @@ class Settings(BaseSettings):
         alias="CAPABILITY_TRUSTED_HOSTS",
     )
     mcp_remote_allowed_hosts: str = Field(default="", alias="MCP_REMOTE_ALLOWED_HOSTS")
+    local_agent_npx_package: str = Field(default="", alias="LOCAL_AGENT_NPX_PACKAGE")
+    local_agent_npx_registry: str = Field(
+        default="https://registry.npmmirror.com",
+        alias="LOCAL_AGENT_NPX_REGISTRY",
+    )
 
     model_config = SettingsConfigDict(
         case_sensitive=True,

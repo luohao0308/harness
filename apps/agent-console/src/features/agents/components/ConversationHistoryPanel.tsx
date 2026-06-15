@@ -27,6 +27,7 @@ export type ConversationHistoryPanelProps = {
   collapsed: boolean;
   conversations: ConversationSummary[];
   currentConversationId: string;
+  groupLabelForConversation?: (conversation: ConversationSummary) => string;
   onNewConversation: () => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
@@ -37,15 +38,19 @@ export function ConversationHistoryPanel({
   collapsed,
   conversations,
   currentConversationId,
+  groupLabelForConversation,
   onNewConversation,
   onSelectConversation,
   onDeleteConversation,
   onToggleCollapsed,
 }: ConversationHistoryPanelProps): JSX.Element {
   const { text, isChinese } = useI18n();
-  const sorted = useMemo(
-    () => sortConversationsByUpdatedAt(conversations),
-    [conversations],
+  const grouped = useMemo(
+    () => groupConversations(
+      sortConversationsByUpdatedAt(conversations),
+      groupLabelForConversation ?? (() => text("当前智能体", "Current Agent")),
+    ),
+    [conversations, groupLabelForConversation, text],
   );
   const locale = isChinese ? "zh-CN" : "en";
   const nowMs = Date.now();
@@ -85,7 +90,7 @@ export function ConversationHistoryPanel({
   return (
     <aside
       aria-label={text("历史对话", "Conversation history")}
-      className="flex w-[280px] shrink-0 flex-col border-r border-slate-200 bg-[#f7f7f8] max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:shadow-2xl"
+      className="flex w-[280px] shrink-0 flex-col border-r border-slate-200 bg-[#f7f7f8] max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:shadow-none"
     >
       <header className="flex items-center justify-between gap-2 px-2 py-3">
         <span className="px-2 text-sm font-semibold text-slate-900">
@@ -114,63 +119,85 @@ export function ConversationHistoryPanel({
         </div>
       </header>
 
-      {sorted.length === 0 ? (
+      {conversations.length === 0 ? (
         <p className="px-3 py-6 text-center text-xs text-slate-500">
           {text("暂无历史对话", "No conversations yet")}
         </p>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-          <div className="px-2 pb-2 pt-4 text-xs font-semibold text-slate-700">
-            {text("最近", "Recent")}
-          </div>
-          <ul className="flex flex-col gap-0.5">
-          {sorted.map((c) => {
-            const active = c.id === currentConversationId;
-            const updatedMs = Date.parse(c.updated_at);
-            const title = c.title.length > 0
-              ? c.title
-              : text("新对话", "New conversation");
-            const updatedLabel = Number.isFinite(updatedMs)
-              ? formatRelativeTime(updatedMs, nowMs, locale)
-              : "";
-            return (
-              <li key={c.id}>
-                <div
-                  className={cn(
-                    "group flex items-center gap-1 rounded-lg transition-colors",
-                    active
-                      ? "bg-slate-200/80"
-                      : "hover:bg-slate-200/60",
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => onSelectConversation(c.id)}
-                    aria-current={active ? "page" : undefined}
-                    title={updatedLabel}
-                    className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-                  >
-                    <span className="truncate text-sm text-slate-800">{title}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteConversation(c.id);
-                    }}
-                    aria-label={text("删除对话", "Delete conversation")}
-                    title={text("删除对话", "Delete conversation")}
-                    className="mr-1 rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-white/70 hover:text-red-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 group-hover:opacity-100"
-                  >
-                    <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-          </ul>
+          {grouped.map((group) => (
+            <section key={group.label} className="pt-3">
+              <div className="px-2 pb-1.5 text-xs font-semibold text-slate-700">
+                {group.label}
+              </div>
+              <ul className="flex flex-col gap-0.5">
+                {group.conversations.map((c) => {
+                  const active = c.id === currentConversationId;
+                  const updatedMs = Date.parse(c.updated_at);
+                  const title = c.title.length > 0
+                    ? c.title
+                    : text("新对话", "New conversation");
+                  const updatedLabel = Number.isFinite(updatedMs)
+                    ? formatRelativeTime(updatedMs, nowMs, locale)
+                    : "";
+                  return (
+                    <li key={c.id}>
+                      <div
+                        className={cn(
+                          "group flex items-center gap-1 rounded-lg transition-colors",
+                          active ? "bg-slate-200/80" : "hover:bg-slate-200/60",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => onSelectConversation(c.id)}
+                          aria-current={active ? "page" : undefined}
+                          title={updatedLabel}
+                          className="flex min-w-0 flex-1 items-center rounded-lg px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+                        >
+                          <span className="truncate text-sm text-slate-800">{title}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDeleteConversation(c.id);
+                          }}
+                          aria-label={text("删除对话", "Delete conversation")}
+                          title={text("删除对话", "Delete conversation")}
+                          className="mr-1 rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-white/70 hover:text-red-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 group-hover:opacity-100"
+                        >
+                          <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
         </div>
       )}
     </aside>
   );
+}
+
+function groupConversations(
+  conversations: ConversationSummary[],
+  labelFor: (conversation: ConversationSummary) => string,
+): Array<{ label: string; conversations: ConversationSummary[] }> {
+  const groups: Array<{ label: string; conversations: ConversationSummary[] }> = [];
+  const groupByLabel = new Map<string, { label: string; conversations: ConversationSummary[] }>();
+  for (const conversation of conversations) {
+    const rawLabel = labelFor(conversation).trim();
+    const label = rawLabel.length > 0 ? rawLabel : "Agent";
+    let group = groupByLabel.get(label);
+    if (group === undefined) {
+      group = { label, conversations: [] };
+      groupByLabel.set(label, group);
+      groups.push(group);
+    }
+    group.conversations.push(conversation);
+  }
+  return groups;
 }

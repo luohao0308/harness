@@ -105,7 +105,7 @@ export function InspectorDrawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby="inspector-title"
-        className="fixed inset-y-14 right-0 z-50 w-[420px] overflow-y-auto border-l border-slate-200 bg-white shadow-2xl"
+        className="fixed inset-y-14 right-0 z-50 w-[420px] overflow-y-auto border-l border-slate-200 bg-white shadow-none"
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
           <div>

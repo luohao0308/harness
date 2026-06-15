@@ -99,3 +99,244 @@ class HarnessApiClient:
             )
             response.raise_for_status()
             return response.json()
+
+    def register_local_agent_connection(
+        self,
+        *,
+        pair_token: str,
+        pair_code: str,
+        adapter_kind: str,
+        display_name: str,
+        workspace_root: str,
+        capabilities: dict,
+        risk_capabilities: list[str],
+        bridge_version: str,
+        metadata: dict | None = None,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/connections/register"
+        payload = {
+            "pair_token": pair_token,
+            "pair_code": pair_code,
+            "adapter_kind": adapter_kind,
+            "display_name": display_name,
+            "protocol_version": "local-agent-v1",
+            "bridge_version": bridge_version,
+            "workspace_root": workspace_root,
+            "capabilities": capabilities,
+            "risk_capabilities": risk_capabilities,
+            "metadata": metadata or {},
+        }
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(url, headers={"Accept": "application/json"}, json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    def heartbeat_local_agent_connection(
+        self,
+        *,
+        connection_id: str,
+        device_token: str,
+        status: str,
+        bridge_version: str,
+        capabilities: dict | None = None,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/connections/{connection_id}/heartbeat"
+        payload: dict = {
+            "protocol_version": "local-agent-v1",
+            "bridge_version": bridge_version,
+            "status": status,
+        }
+        if capabilities is not None:
+            payload["capabilities"] = capabilities
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def pull_local_agent_bridge_tasks(self, *, device_token: str) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/tasks"
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def ack_local_agent_bridge_task(
+        self,
+        *,
+        bridge_task_id: str,
+        device_token: str,
+        status: str,
+        error_message: str | None = None,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/tasks/{bridge_task_id}/ack"
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json={"status": status, "error_message": error_message},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def report_local_agent_bridge_event(
+        self,
+        *,
+        device_token: str,
+        payload: dict,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/events"
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def create_local_agent_tool_request(
+        self,
+        *,
+        device_token: str,
+        payload: dict,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/tool-requests"
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def get_local_agent_tool_decision(
+        self,
+        *,
+        device_token: str,
+        tool_request_id: str,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/"
+            f"{tool_request_id}/decision"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def list_pending_local_agent_tool_requests(
+        self,
+        *,
+        device_token: str,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/pending"
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def report_local_agent_tool_result(
+        self,
+        *,
+        device_token: str,
+        tool_request_id: str,
+        payload: dict,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/"
+            f"{tool_request_id}/result"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def refresh_local_agent_pending_change(
+        self,
+        *,
+        device_token: str,
+        tool_request_id: str,
+        payload: dict,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/tool-requests/"
+            f"{tool_request_id}/pending-change-refresh"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def get_local_agent_command_status(
+        self,
+        *,
+        device_token: str,
+        command_id: str,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/commands/{command_id}"
+        with self._client(timeout=self.timeout) as client:
+            response = client.get(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def ack_local_agent_command_cancel(
+        self,
+        *,
+        device_token: str,
+        command_id: str,
+        payload: dict,
+    ) -> dict:
+        url = (
+            f"{self.api_url}/api/agents/local-agent/bridge/commands/"
+            f"{command_id}/cancel-ack"
+        )
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    def report_local_agent_command_event(
+        self,
+        *,
+        device_token: str,
+        command_id: str,
+        payload: dict,
+    ) -> dict:
+        url = f"{self.api_url}/api/agents/local-agent/bridge/commands/{command_id}/events"
+        with self._client(timeout=self.timeout) as client:
+            response = client.post(
+                url,
+                headers={**self.headers, "X-Local-Agent-Device-Token": device_token},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
