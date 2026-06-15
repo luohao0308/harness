@@ -138,6 +138,7 @@ export function OnboardingWizardPage() {
               <button
                 key={item}
                 type="button"
+                data-testid={`step-indicator-${item}`}
                 onClick={() => setLocalStep(item)}
                 className={`h-2 rounded-full ${item <= step ? "bg-slate-900" : "bg-slate-200"}`}
                 aria-label={`步骤 ${item}`}
@@ -167,6 +168,7 @@ export function OnboardingWizardPage() {
                   {providers.map((item) => (
                     <button
                       key={item.id}
+                      data-testid={`provider-${item.id}`}
                       disabled={!item.enabled}
                       onClick={() => setProvider(item.id)}
                       className={`rounded-lg border p-3 text-left text-sm transition ${
@@ -178,7 +180,7 @@ export function OnboardingWizardPage() {
                     </button>
                   ))}
                 </div>
-                <Button variant="primary" onClick={() => moveTo(2)}>下一步</Button>
+                <Button data-testid="next-button" variant="primary" onClick={() => moveTo(2)}>下一步</Button>
               </div>
             ) : null}
 
@@ -190,15 +192,15 @@ export function OnboardingWizardPage() {
                 </div>
                 <label className="grid gap-1 text-xs font-medium text-slate-600">
                   Endpoint
-                  <Input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} />
+                  <Input data-testid="endpoint-input" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} />
                 </label>
                 <label className="grid gap-1 text-xs font-medium text-slate-600">
                   API Key
-                  <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+                  <Input data-testid="api-key-input" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
                 </label>
                 <div className="flex gap-2">
                   <Link to="/settings/models"><Button>打开模型设置</Button></Link>
-                  <Button variant="primary" onClick={() => moveTo(3)}>保存并继续</Button>
+                  <Button data-testid="save-and-continue-button" variant="primary" onClick={() => moveTo(3)}>保存并继续</Button>
                 </div>
               </div>
             ) : null}
@@ -210,6 +212,7 @@ export function OnboardingWizardPage() {
                   {templates.map((template) => (
                     <button
                       key={template.id}
+                      data-testid={`template-${template.id}`}
                       onClick={() => setSelectedTemplate(template.id)}
                       className={`rounded-lg border p-3 text-left text-sm ${
                         selectedTemplate === template.id ? "border-slate-900 bg-slate-50" : "border-slate-200"
@@ -222,9 +225,9 @@ export function OnboardingWizardPage() {
                 </div>
                 <label className="grid gap-1 text-xs font-medium text-slate-600">
                   智能体 ID
-                  <Input value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+                  <Input data-testid="agent-id-input" value={agentId} onChange={(event) => setAgentId(event.target.value)} />
                 </label>
-                <Button variant="primary" onClick={() => createAgent.mutate()} disabled={createAgent.isPending || !agentId.trim()}>
+                <Button data-testid="create-agent-button" variant="primary" onClick={() => createAgent.mutate()} disabled={createAgent.isPending || !agentId.trim()}>
                   <Bot className="h-3.5 w-3.5" />
                   从模板创建
                 </Button>
@@ -244,11 +247,11 @@ export function OnboardingWizardPage() {
                   </div>
                 ) : null}
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="primary" onClick={() => loadDemo.mutate()} disabled={loadDemo.isPending}>
+                  <Button data-testid="trigger-demo-button" variant="primary" onClick={() => loadDemo.mutate()} disabled={loadDemo.isPending}>
                     <Gauge className="h-3.5 w-3.5" />
                     触发演示
                   </Button>
-                  <Button onClick={() => complete.mutate({ agent_id: agentId, demo_task_id: demoTaskId })} disabled={complete.isPending}>
+                  <Button data-testid="complete-setup-button" onClick={() => complete.mutate({ agent_id: agentId, demo_task_id: demoTaskId })} disabled={complete.isPending}>
                     完成设置
                   </Button>
                   {demoTaskId ? <Link to={`/runs/${demoTaskId}`}><Button>打开运行详情</Button></Link> : null}
