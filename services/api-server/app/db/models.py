@@ -166,6 +166,73 @@ class SAMLProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class SAMLAssertionUsage(Base):
+    """
+    Tracks used SAML assertion IDs to prevent replay attacks.
+
+    Story 6.3 - SAML Replay Attack Prevention
+    CRITICAL SECURITY: OWASP A04:2021 - Security Misconfiguration
+
+    Stores assertion IDs that have been successfully processed to ensure
+    each assertion can only be used once. Records expire after 1 hour to
+    prevent unbounded growth while allowing for clock skew tolerance.
+
+    Attack Prevention:
+    - Replay attacks: Attacker cannot reuse intercepted SAML assertions
+    - Timing attacks: Concurrent requests with same assertion ID rejected
+    - Session hijacking: Assertions tied to specific sessions
+    """
+
+    __tablename__ = "saml_assertion_usage"
+    __table_args__ = (
+        UniqueConstraint("assertion_id", name="saml_assertion_usage_assertion_uidx"),
+        Index("ix_saml_assertion_usage_provider", "provider_id"),
+        Index("ix_saml_assertion_usage_expires", "expires_at"),
+        Index("ix_saml_assertion_usage_created", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    assertion_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    provider_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    subject_id: Mapped[str] = mapped_column(Text, nullable=False)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    authn_request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SAMLAuthnRequest(Base):
+    """
+    Tracks issued SAML AuthnRequest IDs for InResponseTo validation.
+
+    Story 6.3 - SAML Replay Attack Prevention
+    CRITICAL SECURITY: Validates that SAML Responses match original requests.
+
+    Stores AuthnRequest IDs issued during SP-initiated SSO flows to verify
+    that incoming SAML Responses contain matching InResponseTo fields.
+
+    Attack Prevention:
+    - Response forgery: Ensures responses are for legitimate requests
+    - Cross-session attacks: Validates response belongs to correct session
+    """
+
+    __tablename__ = "saml_authn_requests"
+    __table_args__ = (
+        UniqueConstraint("request_id", name="saml_authn_requests_request_uidx"),
+        Index("ix_saml_authn_requests_session", "session_id"),
+        Index("ix_saml_authn_requests_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    request_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    provider_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    relay_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class UserSession(Base):
     """
     User authentication sessions for SSO and standard login.
