@@ -230,6 +230,58 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.queryByRole("button", { name: "继续生成" })).not.toBeInTheDocument();
   });
 
+  it("keeps the local Agent draft when submit reports not sent", async () => {
+    const user = userEvent.setup();
+    const onLocalAgentSubmit = vi.fn(() => false);
+    renderSurface({ onLocalAgentSubmit });
+
+    const composer = screen.getByPlaceholderText("直接与智能体对话");
+    await user.type(composer, "keep this draft");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(onLocalAgentSubmit).toHaveBeenCalledWith(
+      "keep this draft",
+      expect.objectContaining({
+        workspace_mode: "chat",
+        mode: "chat",
+        model_provider: "deepseek-flash",
+        model_name: "deepseek-v4-flash",
+        messages: expect.any(Array),
+        pinned_node_ids: expect.any(Array),
+        tool_mentions: expect.any(Array),
+        attachment_names: expect.any(Array),
+        attachments: expect.any(Array),
+      }),
+    );
+    expect(composer).toHaveValue("keep this draft");
+  });
+
+  it("does not clear newer typing or duplicate submit while async submit is pending", async () => {
+    const user = userEvent.setup();
+    let resolveSubmit!: (value: boolean) => void;
+    const submitPromise = new Promise<boolean>((resolve) => {
+      resolveSubmit = resolve;
+    });
+    const onLocalAgentSubmit = vi.fn(() => submitPromise);
+    renderSurface({ onLocalAgentSubmit });
+
+    const composer = screen.getByPlaceholderText("直接与智能体对话");
+    await user.type(composer, "first draft");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(onLocalAgentSubmit).toHaveBeenCalledTimes(1));
+
+    await user.keyboard("{Enter}");
+    expect(onLocalAgentSubmit).toHaveBeenCalledTimes(1);
+
+    await user.type(composer, " plus more");
+    await act(async () => {
+      resolveSubmit(true);
+      await submitPromise;
+    });
+
+    await waitFor(() => expect(composer).toHaveValue("first draft plus more"));
+  });
+
   it("keeps the model picker beside send and top tools panel in the shell", async () => {
     const user = userEvent.setup();
     renderSurface();

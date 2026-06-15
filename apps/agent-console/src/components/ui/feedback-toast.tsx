@@ -78,7 +78,7 @@ export function FeedbackToastViewport() {
           <div
             key={item.id}
             className={cn(
-              "pointer-events-auto rounded-xl border px-4 py-3 shadow-xl backdrop-blur",
+              "pointer-events-auto rounded-xl border px-4 py-3 shadow-none",
               item.tone === "success" && "border-emerald-200 bg-emerald-50/95 text-emerald-900",
               item.tone === "error" && "border-red-200 bg-red-50/95 text-red-900",
               item.tone === "warning" && "border-amber-200 bg-amber-50/95 text-amber-900",

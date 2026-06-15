@@ -165,6 +165,7 @@ def _create_workspace_chat_run(
     model_provider: str | None = None,
     model_name: str | None = None,
     max_subagents: int = 0,
+    commit: bool = True,
 ) -> Task:
     task = Task(
         organization_id=principal.organization_id,
@@ -200,8 +201,11 @@ def _create_workspace_chat_run(
         actor_type="user",
         actor_id=principal.user_id,
     )
-    session.commit()
-    session.refresh(task)
+    if commit:
+        session.commit()
+        session.refresh(task)
+    else:
+        session.flush()
     return task
 
 

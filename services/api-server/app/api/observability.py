@@ -760,19 +760,26 @@ def _token_savings_runs(
     if not rows:
         return []
     run_ids = [task.id for task, _manifest in rows]
+    manifest_ids = [manifest.id for _task, manifest in rows]
     model_calls_by_run: dict[str, list[ModelCall]] = {run_id: [] for run_id in run_ids}
+    model_calls_by_manifest: dict[str, list[ModelCall]] = {
+        manifest_id: [] for manifest_id in manifest_ids
+    }
     model_calls = list(
         session.execute(select(ModelCall).where(ModelCall.task_id.in_(run_ids))).scalars()
     )
     for call in model_calls:
         model_calls_by_run.setdefault(call.task_id, []).append(call)
+        if call.context_manifest_id:
+            model_calls_by_manifest.setdefault(call.context_manifest_id, []).append(call)
 
     items: list[TokenSavingsRunItem] = []
     for task, manifest in rows:
         token_budget = _dict_or_empty(manifest.token_budget_json)
         token_counts = _token_budget_counts(token_budget)
         context_cache = _context_cache_from_budget(token_budget)
-        run_model_calls = model_calls_by_run.get(task.id, [])
+        manifest_model_calls = model_calls_by_manifest.get(manifest.id, [])
+        run_model_calls = manifest_model_calls or model_calls_by_run.get(task.id, [])
         prompt_tokens = sum(int(call.prompt_tokens or 0) for call in run_model_calls)
         completion_tokens = sum(int(call.completion_tokens or 0) for call in run_model_calls)
         version_ids = _string_list(token_budget.get("optimizer_capability_version_ids"))
@@ -782,6 +789,13 @@ def _token_savings_runs(
             TokenSavingsRunItem(
                 run_id=task.id,
                 agent_id=task.agent_id,
+                model_names=sorted(
+                    {
+                        call.model_name
+                        for call in run_model_calls
+                        if isinstance(call.model_name, str) and call.model_name
+                    }
+                ),
                 title=task.title,
                 status=task.status,
                 created_at=task.created_at,

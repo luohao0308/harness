@@ -180,11 +180,12 @@ describe("KnowledgePage", () => {
     expect((await screen.findAllByText("Dify 知识库")).length).toBeGreaterThan(0);
     expect(screen.getByText("API 配置")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /^API Coze \/ Dify \/ LangChain \/ RAGFlow$/ }));
+    expect(screen.queryByText("当前筛选")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^API 1 Coze \/ Dify \/ LangChain \/ RAGFlow$/ }));
     expect(screen.queryByText("本地手册")).not.toBeInTheDocument();
     expect(screen.getAllByText("Dify 知识库").length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: /^全部 本地文档和 API 配置$/ }));
+    await user.click(screen.getByRole("button", { name: /^全部 2 本地文档和 API 配置$/ }));
     await user.click(screen.getByRole("button", { name: /知识库智能体/ }));
     await user.click(await screen.findByText("研究智能体"));
     expect((await screen.findAllByText("研究资料")).length).toBeGreaterThan(0);

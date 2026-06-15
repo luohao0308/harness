@@ -23,6 +23,7 @@ import { ConfigDialog } from "../../../components/ui/config-dialog";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
+import { RefreshOverlay } from "../../../components/ui/refresh-overlay";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
@@ -470,87 +471,89 @@ export function ModelSettingsPage() {
               </Button>
             </div>
           </CardHeader>
-          <div className="grid gap-2.5 p-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-            <div className="rounded-md border border-slate-100 bg-slate-50 p-2.5">
-              <div className="text-[10px] uppercase tracking-widest text-slate-500">{text("当前默认", "Current Default")}</div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <div className="min-w-0 text-[13px] font-semibold leading-5 text-slate-900">
-                  {defaultProvider ? vendorDisplayName(defaultProvider) : settings.data?.default_provider ?? "..."}
+          <RefreshOverlay refreshing={refreshingStatus} label={text("正在刷新模型状态", "Refreshing model status")}>
+            <div className="grid gap-2.5 p-2.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+              <div className="rounded-md border border-slate-100 bg-slate-50 p-2.5">
+                <div className="text-[10px] uppercase tracking-widest text-slate-500">{text("当前默认", "Current Default")}</div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <div className="min-w-0 text-[13px] font-semibold leading-5 text-slate-900">
+                    {defaultProvider ? vendorDisplayName(defaultProvider) : settings.data?.default_provider ?? "..."}
+                  </div>
+                  <Badge tone="neutral">{settings.data?.default_model ?? "default"}</Badge>
                 </div>
-                <Badge tone="neutral">{settings.data?.default_model ?? "default"}</Badge>
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-[11px] text-slate-500">
+                  <span className="font-mono">{defaultProvider?.api_format ?? "openai"}</span>
+                  <span>·</span>
+                  {defaultProvider ? (
+                    <ProviderEndpointLink provider={defaultProvider} />
+                  ) : (
+                    <span className="font-mono">...</span>
+                  )}
+                </div>
               </div>
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-[11px] text-slate-500">
-                <span className="font-mono">{defaultProvider?.api_format ?? "openai"}</span>
-                <span>·</span>
-                {defaultProvider ? (
-                  <ProviderEndpointLink provider={defaultProvider} />
-                ) : (
-                  <span className="font-mono">...</span>
-                )}
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                <Metric label={text("健康状态", "Health")} value={statusLabel(String(settings.data?.health.status ?? "..."))} />
+                <Metric label={<TermHint description="每分钟请求数">RPM</TermHint>} value={formatLimit(settings.data?.rate_limits.rpm, "rpm")} />
+                <Metric label={<TermHint description="每分钟标记数">TPM</TermHint>} value={formatLimit(settings.data?.rate_limits.tpm, "tpm")} />
+                <Metric
+                  label={text("熔断规则", "Circuit Breaker")}
+                  value={`${String(settings.data?.circuit_breaker.failure_threshold ?? "...")} 次失败 / ${String(
+                    settings.data?.circuit_breaker.cooldown_seconds ?? "...",
+                  )} 秒`}
+                />
+                <Metric
+                  label={<TermHint description="主模型失败后的后备切换">Fallback</TermHint>}
+                  value={String(fallbacks.data?.fallback_total ?? "...")}
+                />
+                <Metric label={text("供应商", "Providers")} value={String(providerGroups.length)} />
               </div>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              <Metric label={text("健康状态", "Health")} value={statusLabel(String(settings.data?.health.status ?? "..."))} />
-              <Metric label={<TermHint description="每分钟请求数">RPM</TermHint>} value={formatLimit(settings.data?.rate_limits.rpm, "rpm")} />
-              <Metric label={<TermHint description="每分钟标记数">TPM</TermHint>} value={formatLimit(settings.data?.rate_limits.tpm, "tpm")} />
-              <Metric
-                label={text("熔断规则", "Circuit Breaker")}
-                value={`${String(settings.data?.circuit_breaker.failure_threshold ?? "...")} 次失败 / ${String(
-                  settings.data?.circuit_breaker.cooldown_seconds ?? "...",
-                )} 秒`}
-              />
-              <Metric
-                label={<TermHint description="主模型失败后的后备切换">Fallback</TermHint>}
-                value={String(fallbacks.data?.fallback_total ?? "...")}
-              />
-              <Metric label={text("供应商", "Providers")} value={String(providerGroups.length)} />
+            <div className="grid gap-2.5 border-t border-slate-100 p-2.5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
+              <div className="rounded-md border border-slate-100 bg-white">
+                <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-2">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-800">
+                    <Activity className="h-3.5 w-3.5" />
+                    {text("Harness 探测", "Harness Probe")}
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {health.data
+                      ? text("刚刚刷新", "Refreshed")
+                      : text("使用最近状态", "Recent status")}
+                  </span>
+                </div>
+                <div className="grid gap-1.5 p-2.5 sm:grid-cols-2">
+                  {healthItems.map((item) => (
+                    <ModelHealthStrip key={`${item.provider}:${item.model}`} item={item} />
+                  ))}
+                </div>
+                {health.isError ? (
+                  <div className="border-t border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+                    {modelHealthErrorText(health.error)}
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-md border border-slate-100 bg-white">
+                <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-2">
+                  <div className="text-[11px] font-semibold text-slate-800">
+                    {text("官方状态", "Official Status")}
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {officialStatus.data ? text("外部服务", "External") : text("未刷新", "Not refreshed")}
+                  </span>
+                </div>
+                <div className="grid gap-1.5 p-2.5">
+                  {(officialStatusItems.length > 0 ? officialStatusItems : defaultOfficialStatusItems()).map((item) => (
+                    <OfficialStatusStrip key={item.provider} item={item} />
+                  ))}
+                </div>
+                {officialStatus.isError ? (
+                  <div className="border-t border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+                    {modelHealthErrorText(officialStatus.error)}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-          <div className="grid gap-2.5 border-t border-slate-100 p-2.5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)]">
-            <div className="rounded-md border border-slate-100 bg-white">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-2">
-                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-800">
-                  <Activity className="h-3.5 w-3.5" />
-                  {text("Harness 探测", "Harness Probe")}
-                </div>
-                <span className="text-[10px] text-slate-500">
-                  {health.data
-                    ? text("刚刚刷新", "Refreshed")
-                    : text("使用最近状态", "Recent status")}
-                </span>
-              </div>
-              <div className="grid gap-1.5 p-2.5 sm:grid-cols-2">
-                {healthItems.map((item) => (
-                  <ModelHealthStrip key={`${item.provider}:${item.model}`} item={item} />
-                ))}
-              </div>
-              {health.isError ? (
-                <div className="border-t border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
-                  {modelHealthErrorText(health.error)}
-                </div>
-              ) : null}
-            </div>
-            <div className="rounded-md border border-slate-100 bg-white">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-2.5 py-2">
-                <div className="text-[11px] font-semibold text-slate-800">
-                  {text("官方状态", "Official Status")}
-                </div>
-                <span className="text-[10px] text-slate-500">
-                  {officialStatus.data ? text("外部服务", "External") : text("未刷新", "Not refreshed")}
-                </span>
-              </div>
-              <div className="grid gap-1.5 p-2.5">
-                {(officialStatusItems.length > 0 ? officialStatusItems : defaultOfficialStatusItems()).map((item) => (
-                  <OfficialStatusStrip key={item.provider} item={item} />
-                ))}
-              </div>
-              {officialStatus.isError ? (
-                <div className="border-t border-amber-100 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
-                  {modelHealthErrorText(officialStatus.error)}
-                </div>
-              ) : null}
-            </div>
-          </div>
+          </RefreshOverlay>
         </Card>
         <Card className="overflow-hidden">
           <CardHeader className="items-start gap-3">

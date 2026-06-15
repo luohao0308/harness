@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-03T17:34:42Z
+last_updated_at: 2026-06-10T00:30:26Z
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,765 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: agent-workspace-team-mode-screenshot-fixes
+    date: 2026-06-10
+    status: completed
+    demo: Agent Workspace and Team Mode screenshot regressions are repaired so platform Agent switching no longer shows local Agent history, Team member add updates immediately, regenerate/branch stay under the original turn, per-agent steps show only that agent's tasks, pause remains stopped after late active events, and Workspace/Team live sends work after clearing browser-context history.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx src/features/teams/__tests__/TeamPages.test.tsx ConsoleShell.render.test.tsx -> 52 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - Live browser smoke on http://127.0.0.1:5173 after clearing same-origin `harness.workspace.v2.*` and `harness.workspace.v3.*` storage keys -> platform Agents 8/8 sent, local Agents 2/2 sent, Team columns 4/4 sent
+      - python3 scripts/validate-docs.py -> passed
+    acceptance_notes:
+      - Agent Workspace hydration now only preserves in-memory stream state when it belongs to the same agent scope, preventing local Agent runtime state from masking the selected platform Agent snapshot.
+      - Platform Agent selection filters every local-Agent conversation form, including pending local binding placeholders, before choosing an existing cloud conversation.
+      - Team add-member success now merges the new member into the detail and list query caches immediately before invalidation, so the new tab/column appears without waiting for polling.
+      - Team branch and regenerate actions now create branch-aware pending assistant entries attached to the original user turn and reuse the branch switcher instead of exposing a duplicate user message as a new conversation-looking turn.
+      - Team column "查看步骤" now scopes tasks by `owner_slot_id` for every agent column; the task board remains the global task surface.
+      - Team wake cancellation records a local cancelled cutoff and ignores stale status/delta/error/team events for that slot until the next explicit wake, so pause/stop does not get undone by late active events.
+      - ConsoleShell now hides the quick-action FAB on Workspace and Team routes, preventing it from intercepting the Team composer send button; it remains visible on non-chat console routes such as Knowledge.
+      - Browser-context Workspace history was cleared before the live retest by removing same-origin `harness.workspace.v2.*` and `harness.workspace.v3.*` keys.
+      - Live retest sent messages through platform Agents `coder`, `default`, `operator`, `researcher`, `reviewer`, `demo-code-reviewer`, `demo-research-assistant`, and `demo-support-agent`.
+      - Live retest sent messages through online local Agents `6fa0f76e-8318-4d7b-83f4-3319f7a15763` / Claude Code and `a321a8ea-6513-4b5c-bfa8-0bb799c009e0` / hao Local Agent.
+      - Live retest sent Team messages through `leader`, `writing-agent`, `research-agent`, and `review-agent`; the final `review-agent` send succeeded after the FAB obstruction fix with `fabVisible: false`.
+
+  - id: console-ui-refresh-local-agent-parity
+    date: 2026-06-06
+    status: completed
+    demo: Agent Console follow-up polish preserves sidebar scroll on navigation, removes modal glow effects, adds refresh-overlay masks to refreshing sections, removes Agent Studio filler/expand noise, stabilizes Eval case-queue action layout, and makes local Agent submissions carry platform-equivalent model, context, tool, attachment, usage, and pending-tool resume metadata.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py::test_hao_bridge_pending_tool_preserves_selected_model_for_resume -q -> 1 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 104 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py -> passed
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- ConsoleShell.render.test.tsx routeInventory.test.tsx ChatSurface.shell.test.tsx AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx ModelSettingsPage.test.tsx -> 61 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- EvalHarnessPage.langgraph.test.tsx -> 3 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/components/ui/__tests__/menu-select.test.tsx src/features/evals/pages/__tests__/EvalHarnessPage.langgraph.test.tsx -> 5 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - Mocked browser layout check at 884x444 on `/evals` -> `运行评测` computed `white-space: nowrap`, button width 98px, Agent menu width 256px, menu max-height 256px, card overflow visible, no page horizontal overflow
+      - Follow-up browser layout check at 884x444 on `/evals` with mocked auth/API -> `运行评测` height 32px, width 94px, `white-space: nowrap`; Agent selector trigger height 32px, width 160px, trigger text only `Default Agent With A Long Display Name`; menu still includes `default · 活跃中`, width 256px, max-height 256px; no document horizontal overflow
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - UI/state reviewer Aquinas final verdict PASS
+      - backend/local-agent reviewer Volta final verdict PASS
+      - Eval queue UI reviewer Lovelace final verdict PASS
+      - Eval toolbar density reviewer Lovelace follow-up verdict PASS
+      - Eval toolbar code/test reviewer Aquinas follow-up verdict PASS
+    acceptance_notes:
+      - ConsoleShell now persists sidebar navigation scroll in the console store and restores it after route remounts, so clicking left-sidebar links no longer snaps the nav back to the top.
+      - Dialog, overlay, drawer, menu, toast, composer, team, and context popover surfaces were stripped of unnecessary glow, heavy shadow, and backdrop blur effects while preserving compact interaction behavior.
+      - Refreshing status regions now use a shared `RefreshOverlay` mask on Model Settings, Tool Configuration, and Agent Studio local discovery sections instead of only changing small status text.
+      - Agent Studio capabilities render directly without the extra "more capabilities" expander and without disabled filler cards such as unused templates.
+      - Eval case queue actions now use a responsive compact toolbar: the Agent selector has bounded width, `运行评测` is shrink-protected and non-wrapping, the Agent menu has viewport-bounded width and max height, and the table scrolls horizontally only when its own columns require it.
+      - Eval case queue density follow-up reduces both toolbar controls to 32px height; the Agent selector trigger is a single-line label without the `id · status` subtitle, while the opened menu still preserves that status detail.
+      - Local Agent Workspace sends now include workspace mode, selected model provider/name, active-path conversation context, pinned nodes, context-window turns, tool mentions, attachments, and compressed context to the local bridge.
+      - Backend local-agent task metadata and assistant projections now preserve model/tool/attachment/workspace usage fields, including token, duration, cost, and model-call identifiers where available.
+      - The hao local bridge prompt now includes Harness model/context/tool/attachment metadata, and Codex/Claude/hao local adapters receive selected model provider/name on initial execution.
+      - Pending host-tool approval state stores `model_provider` and `model_name`; API pending-decision sync restores them from metadata, and approval follow-up resumes with the same selected model instead of falling back to default.
+      - Final two-agent review consensus has no blocking UI/state, backend/local-agent parity, model passthrough, or test findings.
+
+  - id: token-savings-table-filter-workbench
+    date: 2026-06-06
+    status: completed
+    demo: Token Savings now uses a compact table workbench with time/model/Agent filters instead of the previous noisy KPI/card grid, while preserving backend all-time summary accuracy and manifest-scoped model evidence.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/observability/pages/__tests__/TokenSavingsPage.test.tsx -> 3 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_observability.py -q -k token_savings -> 2 passed, 22 deselected
+      - cd apps/agent-console && HARNESS_PLAYWRIGHT_EXTERNAL_SERVER=1 HARNESS_PLAYWRIGHT_BASE_URL=http://127.0.0.1:5197 PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx playwright test --project=chromium e2e/sidebar-enterprise.smoke.spec.ts -g "(renders sidebar entry: 标记节省|/token-savings has no document overflow)" -> 3 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/observability.py app/api/schemas.py tests/test_observability.py -> passed
+      - Mocked browser layout check on /token-savings at 1440x900 -> no document horizontal overflow, table not internally scrolling, backend all-time summary visible, literal model name `all` filter works
+      - Mocked browser layout check on /token-savings at 390x844 -> no document horizontal overflow, table scrolls only inside its own container, backend all-time summary visible, literal model name `all` filter works
+      - Follow-up browser check on /token-savings -> native select count 0, combobox count 0, time/model/Agent filters render as app-owned MenuSelect listboxes, model filter still works
+      - git diff --check for touched token-savings/frontend/backend files -> passed
+      - UI reviewer Peirce final verdict PASS
+      - code/API reviewer Poincare final verdict PASS
+    acceptance_notes:
+      - `/token-savings` now renders one operational workbench: compact all-time summary strip, time/model/Agent filters, reset action, and a fixed-column evidence table.
+      - Filtering is client-side over the latest evidence rows; when no filters are active, the summary strip uses the backend organization-level `summary` instead of recomputing from the latest 50 rows.
+      - When filters are active, the summary strip intentionally reflects the filtered visible rows so users can inspect a narrowed model/Agent/time slice.
+      - The frontend filter sentinel is `__all__`, so a real model named `all` remains selectable and test-covered.
+      - The time/model/Agent filter controls use the shared `MenuSelect` component instead of browser-native `<select>` menus, matching the rest of the console UI.
+      - Backend `TokenSavingsRunItem.model_names` is populated from `ModelCall.context_manifest_id` for the current `ContextAssemblyManifest`, with run-level fallback for older unbound data.
+      - Multi-manifest backend regression now proves `model_names`, actual token totals, and low-cost-route evidence do not leak across context manifests in the same run.
+      - Existing enterprise e2e token-savings fixture now uses the current API shape and `/token-savings` participates in compact desktop plus mobile overflow checks.
+      - Two-agent review consensus has no blocking UI, code/API, filtering, summary-accuracy, or manifest-binding findings.
+
+  - id: local-agent-generic-onboarding-flow
+    date: 2026-06-06
+    status: completed
+    demo: Agent Studio now generates one generic `npx -y /path/to/harness/services/api-server bridge pair ...` command before any adapter choice in the private/dev stack; the command auto-detects hao, Codex CLI, and Claude Code, then users select/name the detected local Agents after discovery. All real local Agents expose the same Harness-approved local tool surface as hao. Published registry package form remains available only through `LOCAL_AGENT_NPX_PACKAGE` after `@harness/hao` exists in npm.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k 'pairing or connection_display_name or adapter_scope' -> 8 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k 'bridge_pair_without_adapter or bridge_pair_once_registers or bridge_daemon_uses_protected_state or codex_state_uses_workspace_sidecar or claude_state_uses_workspace_sidecar or codex_pair_fails_before_register or claude_pair_fails_before_register' -> 8 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -k 'pairing or connection_display_name or adapter_scope or bridge_pair_without_adapter or bridge_pair_once_registers or bridge_daemon_uses_protected_state or codex_state_uses_workspace_sidecar or claude_state_uses_workspace_sidecar or codex_pair_fails_before_register or claude_pair_fails_before_register' -> 16 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_pairing_registers_with_hashed_token_and_multi_adapter_default tests/test_local_agents.py::test_local_agent_v4_pairing_command_is_adapter_scoped -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py::test_hao_bridge_pair_without_adapter_auto_registers_detected_local_agents -q -> 1 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 115 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py app/db/models.py tests/test_local_agents.py tests/test_hao_cli.py -> passed
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py app/db/models.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx -> 8 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - cd services/api-server && .venv/bin/alembic upgrade head && .venv/bin/alembic current -> 20260613_0040 (head)
+      - Restarted `harness-api-langgraph` API tmux session on `127.0.0.1:8000`; `/health` returned ok and OpenAPI exposed `PATCH /api/agents/local-agent/connections/{connection_id}`.
+      - Historical live generic local Agent pairing on `127.0.0.1:8000` was observed starting `hao`, `codex`, and `claude_code` daemons when all three CLIs were available, and the authenticated connection list showed all three online in that dev stack. Current 2026-06-08 evidence for the npx path is narrower: command/help generation plus temporary API registration/capability cleanup, while full-flow parity remains API-level deterministic coverage.
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 115 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_host_tool_protocol_requires_server_policy tests/test_local_agents.py::test_local_agent_pairing_registers_with_hashed_token_and_multi_adapter_default tests/test_local_agents.py::test_local_agent_v4_codex_host_tool_protocol_uses_harness_approval -q -> 3 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 116 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py -> passed
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/cli/hao/main.py alembic/versions/20260613_0040_local_agent_multi_adapter_pairing.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx -> 8 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - cd services/api-server && APP_ENV=development AUTH_JWT_SECRET=<local-dev-64-hex> .venv/bin/alembic upgrade head && APP_ENV=development AUTH_JWT_SECRET=<local-dev-64-hex> .venv/bin/alembic current -> 20260613_0040 (head)
+      - Restarted `harness-api-langgraph` and `harness-console-langgraph` from current source; API `/health` returned `{"status":"ok","service":"api-server"}` and Console `/` returned HTTP 200.
+      - Historical pre-404-repair live `POST /api/agents/local-agent/pairing-tokens` on `127.0.0.1:8000` generated the redacted Coze-style `npx -y --registry=https://registry.npmmirror.com @harness/hao@latest bridge pair ... --daemon` command with no `--adapter` and no `--permission-bridge`; this was superseded by the 2026-06-08 local-path command repair, and the temporary pairing token was revoked after the smoke check.
+      - Live temporary registration smoke used that generic token to register `hao`, `codex`, and `claude_code`; all three returned `host_read`, `host_write`, `shell`, `git`, and `network`, while Codex/Claude also returned `host_tools_authorized=true`, `tool_execution_authority=harness_approved_local_bridge`, `permission_defer_supported=true`, and `resume_mode=context_replay_new_session`; the temporary connections were revoked immediately.
+      - OpenAPI from the restarted API exposes `/api/agents/local-agent/pairing-tokens`, `/api/agents/local-agent/connections/register`, `/api/agents/local-agent/connections/{connection_id}`, and bridge tool-request/command routes.
+      - Frontend/docs reviewer Linnaeus returned PASS after the advanced adapter example wording fix; final independent closeout reviewer Descartes returned `PASS - no blockers`.
+      - 2026-06-08 review hardening: frontend reviewer Socrates returned PASS; backend/security reviewer Curie found and then cleared the spoofed `metadata.local_tool_policy` blocker after server-owned metadata stripping and fake metadata-spoof regression coverage.
+      - 2026-06-08 npm 404 repair: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_pairing_registers_with_hashed_token_and_multi_adapter_default tests/test_local_agents.py::test_local_agent_pairing_command_can_use_published_npm_package_override tests/test_local_agents.py::test_local_agent_pairing_command_does_not_add_registry_for_git_package_override tests/test_local_agents.py::test_local_agent_v4_pairing_command_is_adapter_scoped tests/test_local_agents.py::test_local_agent_v6_claude_pairing_command_includes_permission_bridge -q` -> 5 passed
+      - 2026-06-08 npm 404 repair: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 118 passed
+      - 2026-06-08 npm 404 repair: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/core/config.py tests/test_local_agents.py` -> passed
+      - 2026-06-08 npm 404 repair: `cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/core/config.py` -> passed
+      - 2026-06-08 npm 404 repair: `python3 scripts/validate-docs.py` and targeted `git diff --check` -> passed
+      - 2026-06-08 npm 404 repair: `npx -y /Users/luohao/Desktop/agent_workspace/harness/services/api-server --version` -> `hao 0.1.0`; `npx -y /Users/luohao/Desktop/agent_workspace/harness/services/api-server bridge pair --help` displayed the pair command options.
+      - 2026-06-08 npm 404 repair: live `POST /api/agents/local-agent/pairing-tokens` on `127.0.0.1:8000` generated `npx -y /Users/luohao/Desktop/agent_workspace/harness/services/api-server bridge pair --api http://localhost:8000 --pair-token <redacted> --pair-code <redacted> --daemon`, with no `@harness/hao@latest` and no `--registry`; the temporary pairing token was revoked immediately.
+      - 2026-06-08 npm 404 repair: backend/security reviewer Mencius and docs/test reviewer Nash both returned PASS after the pair-code/daemon assertion and npm-spec registry follow-up.
+      - 2026-06-08 unchecked Codex repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx` -> 10 passed
+      - 2026-06-08 unchecked Codex repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx` -> 15 passed
+      - 2026-06-08 unchecked Codex repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false` -> passed
+      - 2026-06-08 unchecked Codex repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build` -> passed
+      - 2026-06-08 unchecked Codex repair: frontend state reviewer Confucius returned PASS; test/regression reviewer Newton returned PASS after the Codex-unchecked mixed scenario was added.
+      - 2026-06-08 unchecked Codex backend gate: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_unconfirmed_connection_cannot_execute_until_confirmed -q` -> 1 passed
+      - 2026-06-08 unchecked Codex backend gate: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_v3_retry_creates_fresh_request_and_command tests/test_local_agents.py::test_local_agent_v3_retry_rejects_non_retryable_commands -q` -> 2 passed
+      - 2026-06-08 unchecked Codex backend gate: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 120 passed
+      - 2026-06-08 unchecked Codex backend gate: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py tests/test_local_agents.py` -> passed
+      - 2026-06-08 unchecked Codex backend gate: `cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py` -> passed
+      - 2026-06-08 unchecked Codex backend gate: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx` -> 25 passed
+      - 2026-06-08 unchecked Codex backend gate: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false` -> passed
+      - 2026-06-08 unchecked Codex backend gate: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build` -> passed
+      - 2026-06-08 unchecked Codex backend gate: `python3 scripts/validate-docs.py` and targeted `git diff --check` -> passed
+      - 2026-06-08 unchecked Codex backend gate: restarted `harness-api-langgraph` and `harness-console-langgraph`; API `/health` returned ok and Console `/` returned HTTP 200.
+      - 2026-06-08 unchecked Codex backend gate: live temporary Codex registration projected `onboarding_confirmed=false`; direct binding returned HTTP 409 `Local Agent connection has not been confirmed`; temporary connection and pairing token were revoked.
+      - 2026-06-08 unchecked Codex backend gate: code/security reviewer Dewey returned PASS after confirming pending connections cannot bind/send/pull/emit/request tools; architecture reviewer Kepler returned CLEAR/PASS after cancel/retry were also gated.
+      - 2026-06-08 strict local Agent checkbox repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx` -> 11 passed
+      - 2026-06-08 strict local Agent checkbox repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx` -> 26 passed
+      - 2026-06-08 strict local Agent checkbox repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false` -> passed
+      - 2026-06-08 strict local Agent checkbox repair: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build` -> passed
+      - 2026-06-08 strict local Agent checkbox repair: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_unconfirmed_connection_cannot_execute_until_confirmed -q` -> 1 passed
+      - 2026-06-08 strict local Agent checkbox repair: reviewer Arendt returned PASS for no default selection, polling not re-checking, selected-only PATCH, and unchecked revoke; reviewer Avicenna returned PASS for frontend/backend boundary, Workspace confirmed filtering, and the old confirmed Codex plus selected hao regression.
+      - 2026-06-08 late Codex token closeout: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx` -> 13 passed
+      - 2026-06-08 late Codex token closeout: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx` -> 28 passed
+      - 2026-06-08 late Codex token closeout: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_revoked_pairing_token_blocks_late_codex_registration tests/test_local_agents.py::test_local_agent_unconfirmed_connection_cannot_execute_until_confirmed -q` -> 2 passed
+      - 2026-06-08 late Codex token closeout: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_v3_retry_creates_fresh_request_and_command tests/test_local_agents.py::test_local_agent_v3_retry_rejects_revoked_connection tests/test_local_agents.py::test_local_agent_v3_retry_rejects_non_retryable_commands tests/test_local_agents.py::test_local_agent_revoke_blocks_bridge_pull -q` -> 4 passed
+      - 2026-06-08 API-level full-flow parity closeout: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_full_flow_streams_tools_and_observability_like_platform_model -q` -> 1 passed
+      - 2026-06-08 pending-confirmation semantics: `cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py::test_hao_bridge_run_waits_for_onboarding_confirmation_before_pulling_tasks tests/test_hao_cli.py::test_hao_bridge_run_treats_unconfirmed_pull_rejection_as_wait_state tests/test_hao_cli.py::test_hao_bridge_pair_without_adapter_auto_registers_detected_local_agents tests/test_local_agents.py::test_local_agent_pairing_registers_with_hashed_token_and_multi_adapter_default tests/test_local_agents.py::test_local_agent_unconfirmed_connection_cannot_execute_until_confirmed -q` -> 5 passed
+      - 2026-06-08 pending-confirmation semantics: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx WorkspaceShellBar.render.test.tsx` -> 18 passed
+      - 2026-06-08 pending-confirmation semantics: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_full_flow_streams_tools_and_observability_like_platform_model -q` -> 1 passed
+      - 2026-06-08 pending-confirmation semantics: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 124 passed
+      - 2026-06-08 pending-confirmation semantics follow-up: `WorkspaceShellBar.render.test.tsx` now also covers stale-cache dirty data where `status=pending_confirmation` must stay hidden even if `onboarding_confirmed=true`; `AgentListPage.studio.test.tsx WorkspaceShellBar.render.test.tsx` -> 18 passed
+      - 2026-06-08 pending-confirmation semantics follow-up: backend Ruff/py_compile, frontend lint/build, docs validation, and targeted `git diff --check` -> passed
+      - 2026-06-08 late Codex token closeout: frontend reviewer Nietzsche returned PASS; backend reviewer Banach initially found the revoked retry gate blocker, then returned PASS after `_owned_connection(..., executable=True)` rejected revoked connections and the revoked retry regression proved no new local requests/commands are created.
+      - 2026-06-08 final subagent review closeout: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 125 passed
+      - 2026-06-08 final subagent review closeout: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py` -> passed; `cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py` -> passed
+      - 2026-06-08 final subagent review closeout: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- WorkspaceShellBar.render.test.tsx AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx` -> 34 passed
+      - 2026-06-08 final subagent review closeout: frontend lint/build, `python3 scripts/validate-docs.py`, and targeted `git diff --check` -> passed
+      - 2026-06-08 final subagent review closeout: reviewer Erdos returned PASS for backend gates, dirty pending regression, Workspace target filters, and API-level full-flow wording; reviewer Harvey initially raised WATCH for ShellBar's missing-confirmation predicate and an older daemon wording line, then returned PASS after both were fixed.
+    acceptance_notes:
+      - The Agent Studio local Agent dialog no longer exposes a pre-command adapter selector. It generates a single generic command and labels the flow as generate command -> run locally -> choose/name detected Agents.
+      - Frontend pairing-token creation now sends real default multi-adapter scope `["hao", "codex", "claude_code"]` and excludes only `fake` from the default generic pairing scope.
+      - The detected list is stable-sorted by adapter/name/created/id and is now strict-checkbox controlled: opening the wizard, regenerating the command, and polling discovery do not auto-select any detected local Agent; only currently checked rows are PATCH-confirmed and saved.
+      - Saving selected detected Agents now treats unchecked rows as "do not connect": the current pairing token is revoked before save, the wizard refreshes the latest connection snapshot, unchecked detected or same-token late connections are revoked, selected rows keep their display-name PATCH, and 0 selected rows can be confirmed to disconnect every detected local Agent.
+      - The strict checkbox regression covers a previously confirmed old Codex connection appearing with a newly discovered hao row; selecting only hao PATCHes hao, revokes Codex, and never sends a Codex PATCH.
+      - The late Codex regression covers a Codex connection that registers from the same pairing token after the user clicks save with only hao selected; the save flow revokes that late Codex while the different-token regression proves unrelated late connections are not touched by the current wizard.
+      - The full-flow parity regression is API-level deterministic coverage rather than a real generated `npx ... bridge pair --daemon` end-to-end daemon run. It proves explicit pairing-token creation, bridge registration, pre-confirm execution rejection, PATCH confirmation, message send, bridge task pull/ack, scoped local bridge SSE (`delta`, `usage`, `done`), direct platform model SSE comparison, all seven local tool categories (`read_file`, `list_files`, `write_file`, `run_shell`, `run_tests`, `git`, `network`), pending-change committed hash evidence for `write_file`, model-call reuse, task events, event stream, model-calls API, and observability summary. The separate live `npx` smoke only proved local-path command/help generation and temporary API registration/capability cleanup without running a long-lived daemon.
+      - New local-agent registrations are projected as `pending_confirmation` until the user PATCH-confirms them from the onboarding dialog; unconfirmed or `status=pending_confirmation` connections may heartbeat/list for discovery but cannot bind, send, pull bridge tasks, ack, emit events, request/poll/result tools, report commands, cancel commands, or retry commands. Backend executable gates now require explicit `onboarding_confirmed=true` plus non-`pending_confirmation`, heartbeat cannot promote pending rows to online, and PATCH confirm can recover dirty pending rows.
+      - `hao bridge run` treats unconfirmed heartbeat or bridge-task pull rejection as a wait state, so discovered-but-unconfirmed Codex/Claude daemons do not pull tasks, resume pending tools, or exit before the user confirms them.
+      - Agent Studio marks unconfirmed rows as `待确认` / `未接入`, and both AgentWorkspacePage and WorkspaceShellBar defensively filter unconfirmed, `pending_confirmation`, or revoked local connections from Workspace targets and the top-left Agent/local-Agent target picker, including stale-cache dirty data where the confirmation flag and status disagree. WorkspaceShellBar now also requires `onboarding_confirmed === true`, matching AgentWorkspacePage and hiding malformed cached rows where the confirmation field is missing.
+      - Revoked local connections are now rejected by the shared executable owner path; retrying an old failed local command after revoke returns 403 and does not create a new approved `LocalAgentToolRequest` or pending `LocalAgentCommand`.
+      - The generated pairing command now uses configured `API_BASE_URL` / `get_settings().api_base_url` instead of a hardcoded `127.0.0.1:8000` base URL.
+      - Host-tool protocol access now depends on server-owned `metadata_json.local_tool_policy=harness_approved_local_bridge`; client-supplied `local_tool_policy` and `server_permission_bridge_entitlement` metadata keys are stripped before the server writes its own values, so fake/untrusted adapters cannot self-authorize by metadata spoofing.
+      - User-facing local readiness/counts now only include real default discovery adapters; explicit `fake` bridge connections no longer light up the Agent readiness ring or local connection count.
+      - `hao bridge pair` without `--adapter` auto-detects hao, Codex CLI, and Claude Code; each paired adapter persists bridge state under its own `HAO_HOME` child directory so daemon state files do not overwrite each other.
+      - The user-facing private/dev connection command is now the Coze-style `npx -y /path/to/harness/services/api-server bridge pair ...` form and does not require choosing an adapter before copying/running it; it avoids the unpublished `@harness/hao@latest` npm 404.
+      - `LOCAL_AGENT_NPX_PACKAGE` can override the package spec for published deployments, and `LOCAL_AGENT_NPX_REGISTRY` is added only for registry package specs, not local paths, URLs, or git/GitHub npm specs.
+      - Codex CLI and Claude Code now normalize to hao-parity Harness-approved local tool capability (`host_read`, `host_write`, `shell`, `git`, `network`) with approval/audit metadata, stream-token resume support, and context replay recovery.
+      - Codex CLI and Claude Code still cannot bypass Harness approval by reporting legacy `tool_result` events or unapproved command events; both adapters force `context_replay_new_session` when bindings ask for native resume.
+      - Explicit `--adapter` remains available for tests and advanced adapter-scoped paths, including explicit fake, adapter-specific Codex/Claude Code V5, and Claude Code V6 permission-bridge scenarios.
+      - Pairing-token storage now allows one connection per `(pairing_token_id, adapter_kind)` so one generic command can register multiple adapter connections while duplicate adapter replay is rejected.
+      - Single-adapter pairing tokens still become `consumed`; multi-adapter tokens stay `active` after first registration until expiry/revoke while retaining `consumed_at` evidence.
+      - Added Alembic `20260613_0040_local_agent_multi_adapter_pairing.py` to replace the old single-token unique constraint with composite pairing-token-plus-adapter uniqueness; downgrade is explicitly blocked as unsafe unless duplicate pairing-token rows are migrated first.
+      - Backend/CLI reviewer Archimedes returned PASS after full local-agent/hao CLI regression (`102 passed`), SQLite Alembic upgrade to `20260613_0040`, targeted Ruff, and diff check; current parity closeout adds full hao-equivalent Codex/Claude host-tool coverage with Harness approval gates.
+      - UI/state reviewer Lorentz returned PASS after confirming revoked/fake filtering, local Agent discovery polling stability, Agent Studio Vitest, and frontend typecheck; current parity closeout supersedes the earlier Claude conservative-default wording.
+      - Final Linnaeus plus Descartes review consensus has no blocking findings for the default npx command, default real adapter scope, Codex/Claude hao-parity tool capability copy, legacy bypass rejection, or advanced adapter-only documentation boundary.
+      - Final Erdos plus Harvey review consensus has no remaining blockers or WATCH items after the pending-confirmation dirty-state gate, ShellBar explicit-confirmation predicate, missing-confirmation UI regression, and API-level evidence wording cleanup.
+      - The live smoke intentionally generated one temporary pairing token, registered three temporary connections, verified the current API's normalized capability payloads, then revoked the temporary connections and token; it did not execute the local npx command, so it did not disrupt the user's existing bridge daemons.
+
+  - id: local-agent-v1-v6-test-suite-all-gate
+    date: 2026-06-06
+    status: completed
+    demo: The V1-V6 local-agent production test-suite checklist now has a working documented aggregate V6 smoke command; `scripts/smoke-test-local-agent-v6.py --all` runs every deterministic Claude Code V6 scenario instead of failing argument parsing.
+    verification_result: passed
+    verification_commands:
+      - python3 scripts/smoke-test-local-agent-v6.py --all -> passed all 11 V6 scenarios
+      - python3 -m py_compile scripts/smoke-test-local-agent-v6.py -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_tool_approvals.py -q -> 51 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -> 174 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py -> passed
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx -> 15 passed
+      - cd apps/agent-console && npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && npm run build -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - The concrete failure found from `docs/test-suite-v1-v6-local-agent.md` was that the documented CI command `python3 scripts/smoke-test-local-agent-v6.py --all` failed because the smoke runner required `--scenario`.
+      - The runner now exposes mutually exclusive `--scenario <name>` and `--all` modes; `--all` executes the sorted scenario registry and clears FastAPI dependency overrides between scenarios.
+      - Individual V6 scenarios were also spot-verified before the aggregate repair, including SDK unavailable, approve write, modified approval, reject bash, revoke pending, approval timeout, bypass attempt, API failure fail-closed, approved shell execution, cancel, and V5 heartbeat upgrade denial.
+      - Existing backend local-agent/tool-approval tests, CLI tests, frontend local-agent UI tests, Ruff, frontend typecheck/build, docs validation, and diff whitespace checks are green on the current tree.
+
+  - id: local-agent-reply-order-repair
+    date: 2026-06-06
+    status: completed
+    demo: Codex CLI and Claude Code local Agents now reply in live local-agent smoke, hao local Agent output mirrors platform stream deltas into Workspace SSE, local Agent model input/output is observable without double-counting hao platform ModelCalls, local Agent stream replies do not lock the composer, bridge stream tokens are endpoint-scoped instead of normal user tokens, unchecked detected local Agents are revoked, Agent Studio discovery does not flicker on background polling, local Agent history is grouped/stable and isolated per binding, manual composer model choices survive local polling, stale local send/SSE responses cannot cross-write after switching local Agents, and local Agent selector ordering is stable instead of heartbeat-driven.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k 'pending_task_is_api_projected or failed_task_is_projected or failed_ack' -> 3 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k 'codex_command_builder or codex_minimal_toml or run_codex_cli_success or run_codex_cli_reports_timeout or claude_command_builder or run_claude_cli_success or run_claude_cli_rejects_workspace' -> 7 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -> 51 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/cli/hao/main.py app/api/agents/agent_local.py app/api/schemas.py tests/test_local_agents.py tests/test_hao_cli.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx -> 10 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_hao_local_agent_plan_mode_queues_markdown_plan_run_with_stream_token tests/test_hao_cli.py::test_hao_bridge_task_uses_plan_command_and_stream_token -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 106 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py::test_hao_headless_forwards_bridge_deltas_and_model_call_usage tests/test_local_agents.py::test_local_agent_assistant_done_reuses_existing_model_call -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py::test_hao_bridge_pending_tool_preserves_selected_model_for_resume -q -> 1 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 108 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 109 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/security/auth.py app/api/agents/agent_chat/streaming.py app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py -> passed
+      - cd services/api-server && .venv/bin/python -m py_compile app/security/auth.py app/api/agents/agent_chat/streaming.py app/api/agents/agent_local.py app/api/agents/common.py app/api/schemas.py app/cli/hao/main.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx -> 19 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx -> 20 passed
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx -> 21 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - Restarted local dev services in tmux sessions `harness-api-langgraph` and `harness-console-langgraph`.
+      - curl --noproxy '*' -fsS http://127.0.0.1:8000/health -> `{"status":"ok","service":"api-server"}`
+      - curl --noproxy '*' -sS -o /dev/null -w 'HTTP %{http_code}' http://127.0.0.1:5173/ -> HTTP 200
+      - curl --noproxy '*' -fsS http://127.0.0.1:8000/openapi.json -> `/api/agents/{agent_id}/runs/chat/stream`, `/api/agents/local-agent/pairing-tokens`, and `/api/agents/local-agent/connections/{connection_id}` present
+      - git diff --check -> passed
+      - Live Codex local Agent smoke through connection 7f204050-3240-48b6-9269-a9ffdbefe1e3: message `只回复 OK` -> assistant `OK`; run 330cbe0e-7e25-4db2-a279-563351157b32 completed and binding task list emptied
+      - Live Claude Code local Agent smoke through connection 8c008bc7-31b7-4028-958a-49f1ec9641a4: message `只回复 OK` -> assistant `OKOK`; run a6c49629-0321-44c8-9ef2-ddcd632b0a76 completed and binding task list emptied
+      - Backend/CLI reviewer Socrates initial REQUEST CHANGES on failed ack terminalization and Codex skip-flag coverage, then Claude literal secret redaction, then Codex TOML provider-name quoting; final verdict PASS
+      - UI/state reviewer Lovelace initial REQUEST CHANGES on local error Retry path and later usable-status ordering; final verdict PASS after terminal-task, optimistic-send retry guards, and `online`/`busy` same-rank sorting
+      - Frontend/UI reviewer Raman follow-up verdict PASS after local Agent SSE completion lifecycle fix
+      - Backend/local-agent reviewer Harvey follow-up verdict PASS after scoped bridge stream token fix
+    acceptance_notes:
+      - The observed non-hao no-reply behavior was real terminal failure, not an active pending state: Codex failed because the CLI required `--skip-git-repo-check`; Claude failed because the isolated subprocess did not receive local Claude auth.
+      - Failed and cancelled local bridge tasks are now projected by the binding task API and include bounded error messages, so Workspace can render visible assistant error bubbles.
+      - Both bridge `assistant_error` and `ack(status=failed)` now persist `terminal_error_message`, complete the bridge task, and mark the associated run `FAILED` with `completed_at`.
+      - Codex command generation adds `--skip-git-repo-check` before stdin `-` when supported while preserving read-only sandbox and dangerous-flag rejection.
+      - Codex isolated subprocesses now copy only `auth.json` plus filtered scalar model settings and the selected provider block into temp `CODEX_HOME`; hooks, MCP servers, features, sandbox policy, plugins, and other host config are not copied.
+      - Codex provider names are emitted as quoted TOML key segments, so dotted provider names work and malicious provider names cannot inject filtered-out TOML tables.
+      - Claude Code still runs with temp `HOME`, temp `CLAUDE_CONFIG_DIR`, private cwd, no unmanaged settings, and no settings/hook/MCP import; host tool side effects go through the Harness-approved local bridge instead of unmanaged native execution.
+      - Claude error redaction now literal-redacts sensitive values actually injected into the subprocess, including `ANTHROPIC_AUTH_TOKEN` and opt-in `ANTHROPIC_API_KEY`.
+      - Agent Workspace local connections display by stable adapter/name/workspace/created/id keys instead of heartbeat `updated_at` or status, while the default target picker chooses a usable `online` / `busy` connection once and preserves that selected id across polling.
+      - Default generic pairing includes Claude Code so regenerated generic commands discover it alongside hao and Codex CLI; Claude's SDK permission bridge remains an explicit advanced intent-capture path, while normal local tool execution is still Harness-approved and audited.
+      - Pending-tool resume stores and resumes bridge delta sequence state, so pre-approval SSE deltas cannot collide with post-approval delta event IDs.
+      - Local failed task and local send error bubbles disable the generic cloud Retry action; manual resubmit remains the local binding path and failed tasks no longer lock submit.
+      - Agent Studio local discovery now separates manual refresh UI state from background polling, so the realtime local Agent section does not flash every few seconds.
+      - Saving the local Agent discovery wizard revokes unchecked detected connections such as unselected Claude Code instead of keeping them connected.
+      - Local Workspace sends preserve selected model provider/name and local connection capabilities can auto-sync the composer model label.
+      - Manual composer model changes now override local connection auto-sync after the connection is selected, so a 3-second local connection polling refresh cannot silently switch the send payload back to the connection-advertised model.
+      - hao headless local bridge now forwards each platform chat-stream `delta` as a local `assistant_delta` bridge event, so Workspace receives real task-event SSE chunks instead of only final assistant hydration.
+      - hao completion metadata carries the platform `model_call_id` from the chat-stream usage event; backend `assistant_done` reuses that same-task `ModelCall` instead of creating a second local bridge row, preventing Run Detail and token rollups from double-counting hao.
+      - hao pending-tool resume preserves the scoped `harness_stream_token`, uses it for the approved-tool follow-up chat stream, and uses the same delta/done sequence plus model_call_id/usage handoff as the primary bridge path, so approved-tool follow-up runs stream reliably and avoid duplicate model-call accounting.
+      - The scoped `harness_stream_token` lifetime now uses the same 30-minute TTL constant as local tool approval decisions, preventing valid approvals from outliving their follow-up stream credential.
+      - Codex/Claude/direct local bridge completions still create a local `ModelCall` when no existing same-task `model_call_id` is supplied, preserving model input/output observability for non-hao local adapters.
+      - hao local bridge stream calls now include `local_bridge_task_id`, and the backend accepts the scoped stream token only for the matching Agent/run/bridge-task stream request.
+      - Normal API auth rejects scoped bridge stream tokens, so a bridge payload token cannot be reused as a general engineer bearer token.
+      - Local Agent SSE completion clears the browser pending assistant id, unlocks the composer, and drops the streamed temporary bubble once the server assistant message with the same `bridge_task_id` arrives.
+      - Local message polling upserts non-current local conversations without jumping the selected history conversation back, and history conversations are grouped by cloud Agent or local connection label.
+      - Plan mode maps consistently through `markdown_plan` for local bridge tasks while hao receives the CLI `plan` command.
+      - The local API and Console dev services are restarted from current source on `127.0.0.1:8000` and `127.0.0.1:5173`.
+      - Final follow-up two-agent consensus has no blocking backend, CLI, security, UI, state, or test findings.
+
+  - id: local-agent-stream-token-replay-hardening
+    date: 2026-06-07
+    status: completed
+    demo: Scoped local-agent bridge stream tokens are now one-time per JWT `jti` without blocking fresh follow-up tokens for the same active bridge task, so pending-tool resume can stream while duplicate token replay remains rejected.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_scoped_stream_token_is_single_use_before_terminal_state tests/test_local_agents.py::test_local_agent_scoped_stream_token_rejects_terminal_bridge_task_replay tests/test_local_agents.py::test_hao_local_agent_plan_mode_queues_markdown_plan_run_with_stream_token tests/test_local_agents.py::test_normal_token_cannot_mark_local_bridge_stream_model_call_metadata -q -> 4 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py tests/test_model_gateway.py -q -> 131 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/security/auth.py app/api/agents/agent_chat/streaming.py app/api/agents/agent_local.py app/api/schemas.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_model_gateway.py -> passed
+      - cd services/api-server && .venv/bin/python -m py_compile app/security/auth.py app/api/agents/agent_chat/streaming.py app/api/agents/agent_local.py app/api/agents/common.py app/api/schemas.py app/cli/hao/main.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx -> 22 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - Backend/security reviewer Popper final verdict PASS; previous HIGH replay/fresh-token blocker is resolved
+      - UI/experience reviewer Dewey final verdict PASS for Coze-like local Agent onboarding, recovery/status visibility, and stable Workspace history/model behavior; current parity closeout supersedes the earlier Claude conservative-default wording while preserving explicit V6 bridge separation for SDK intent-capture smokes.
+    acceptance_notes:
+      - `_consume_local_bridge_stream_token` now rejects missing JWT `jti`, reads the legacy `harness_stream_token_consumed_jti`, tracks consumed values in `harness_stream_token_consumed_jtis`, and rejects only the incoming duplicate `jti`.
+      - The latest consumed token is still mirrored to `harness_stream_token_consumed_jti` and timestamps for compatibility, while the list preserves prior one-time token evidence.
+      - Regression coverage proves first scoped token succeeds, same-token replay returns 401, a freshly issued scoped token for the same active bridge task succeeds, and that fresh token also becomes single-use.
+      - Terminal bridge task replay remains rejected before the model gateway is reached, and normal user-token chat streams still do not receive local bridge stream metadata.
+      - Popper and Dewey both returned PASS after the fix and targeted tests, so the required two-agent review consensus is closed with no blocking findings.
+
+  - id: local-agent-stdout-streaming-approval-hydration
+    date: 2026-06-07
+    status: completed
+    demo: Codex CLI and Claude Code local Agent adapters now stream parsed stdout deltas through bridge task events while the subprocess is still running, and Workspace keeps local-tool approval or pending-hydration state visible instead of freezing a generic placeholder.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k 'run_codex_cli_success or run_codex_cli_streams_stdout_deltas or run_claude_cli_success or run_claude_cli_streams_after_safety_init or terminal_event_ids_are_stable or claude_jsonl_parser_requires_empty_tool_safety_proof or claude_jsonl_parser_ignores_generic' -> 8 passed, 50 deselected
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -> 58 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q -> 115 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/cli/hao/main.py app/api/agents/agent_local.py app/api/schemas.py tests/test_local_agents.py tests/test_hao_cli.py -> passed
+      - python3 -m py_compile services/api-server/app/cli/hao/main.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx -> 15 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx -> 23 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - Restarted `harness-api-langgraph` and `harness-console-langgraph`; API `/health` returned ok and Console `/` returned HTTP 200
+      - Restarted local bridge tmux sessions `harness-bridge-hao`, `harness-bridge-codex`, and `harness-bridge-claude-code`; authenticated connection list showed hao, Codex CLI, and Claude Code all `online`
+      - Frontend reviewer Boole final verdict PASS after approval hydration and no-delta completion races were covered
+      - Backend/CLI reviewer Wegener final verdict PASS after stdout streaming, Claude safety gating, dynamic sequencing, and duplicate-delta checks
+      - 2026-06-08 local Agent conversation isolation: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx -t "isolates local Agent history|stale local Agent pending state|previous local binding"` -> 3 passed
+      - 2026-06-08 local Agent conversation isolation: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx` -> 20 passed
+      - 2026-06-08 local Agent conversation isolation final repro: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- AgentWorkspacePage.team-launch.test.tsx` -> 21 passed
+      - 2026-06-08 local Agent conversation isolation: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false` -> passed
+      - 2026-06-08 local Agent conversation isolation: `cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run build` -> passed
+      - 2026-06-08 local Agent conversation isolation: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_explicit_empty_workspace_context_does_not_replay_session -q` -> 1 passed
+      - 2026-06-08 local Agent conversation isolation: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 126 passed
+      - 2026-06-08 local Agent conversation isolation: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py tests/test_local_agents.py` -> passed
+      - 2026-06-08 local Agent conversation isolation: `python3 scripts/validate-docs.py` -> passed
+      - 2026-06-08 local Agent conversation isolation: `git diff --check` -> passed
+      - 2026-06-08 local Agent conversation isolation: state/竞态 reviewer Mencius returned PASS after the late-SSE stream-token guard and stale-event regression; test coverage reviewer Planck returned PASS for Claude Code/hao isolation, metadata/token coverage, and late SSE coverage. Follow-up frontend reviewer Darwin returned PASS after cloud-return and pending-new-binding guards; backend reviewer Zeno returned PASS for explicit empty workspace context and local input/output replay boundaries. Final repro reviewers Kant and Nietzsche returned PASS for frontend state/SSE/POST/token coverage and backend local Agent I/O plus binding/session isolation.
+      - 2026-06-08 local Agent cross-talk/I/O final: `cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx ChatMessageList.render.test.tsx` -> 28 passed
+      - 2026-06-08 local Agent cross-talk/I/O final: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_owner_can_send_and_bridge_events_are_idempotent tests/test_local_agents.py::test_local_agent_assistant_done_reuses_existing_model_call -q` -> 2 passed
+      - 2026-06-08 local Agent cross-talk/I/O final: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 126 passed
+      - 2026-06-08 local Agent cross-talk/I/O final: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py tests/test_local_agents.py` and `cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py tests/test_local_agents.py` -> passed
+      - 2026-06-08 local Agent cross-talk/I/O final: `python3 scripts/validate-docs.py` and targeted `git diff --check` -> passed
+      - 2026-06-08 local Agent cross-talk/I/O final: frontend reviewer Banach returned PASS for target/binding/message-hydration isolation and the I/O panel; backend reviewer James initially found raw outer `AgentMessage.metadata_json` attachment leaks, then returned PASS after the user/assistant metadata redaction fix and full-metadata regression assertions.
+      - 2026-06-08 local Agent active-session hardening: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py::test_local_agent_v4_codex_second_turn_replays_redacted_harness_context tests/test_local_agents.py::test_local_agent_session_cannot_be_rebound_to_another_connection tests/test_local_agents.py::test_local_agent_conflict_session_binding_cannot_send tests/test_local_agents.py::test_local_agent_owner_can_send_and_bridge_events_are_idempotent -q` -> 4 passed
+      - 2026-06-08 local Agent active-session hardening: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 128 passed
+      - 2026-06-08 local Agent active-session hardening: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/db/models.py tests/test_local_agents.py alembic/versions/20260614_0041_local_agent_active_session_guard.py` -> passed
+      - 2026-06-08 local Agent active-session hardening: `cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/db/models.py alembic/versions/20260614_0041_local_agent_active_session_guard.py` -> passed
+      - 2026-06-08 local Agent active-session hardening: `cd apps/agent-console && /usr/local/bin/npm test -- AgentWorkspacePage.team-launch.test.tsx ChatMessageList.render.test.tsx` -> 28 passed; `/usr/local/bin/npm run lint -- --pretty false` -> passed; `/usr/local/bin/npm run build` -> passed
+      - 2026-06-08 local Agent active-session hardening: `python3 scripts/validate-docs.py` and `git diff --check` -> passed
+      - 2026-06-09 local Agent exact-binding/I/O final: `cd apps/agent-console && /usr/local/bin/npm test -- AgentWorkspacePage.team-launch.test.tsx ChatMessageList.render.test.tsx --reporter=dot` -> 30 passed
+      - 2026-06-09 local Agent exact-binding/I/O final: `cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py -q` -> 133 passed
+      - 2026-06-09 local Agent exact-binding/I/O final: `cd apps/agent-console && npm run lint -- --pretty false` and `cd apps/agent-console && npm run build` -> passed
+      - 2026-06-09 local Agent exact-binding/I/O final: `cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/agents/common.py app/db/models.py tests/test_local_agents.py` and `cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/agents/common.py app/db/models.py alembic/versions/20260614_0041_local_agent_active_session_guard.py` -> passed
+      - 2026-06-09 local Agent exact-binding/I/O final: `git diff --check` -> passed
+      - 2026-06-09 local Agent exact-binding/I/O final: frontend reviewer Raman returned PASS for top enable restore, cold-cache exact binding, Claude/hao/Claude switch isolation, strict source/binding/connection/session filters, and assistant-only local Agent I/O; backend reviewer Gauss returned PASS for compressed-context coverage gating, duplicate tool-request revalidation, active-binding guards, and migration pending-change denial semantics.
+    acceptance_notes:
+      - `_run_codex_cli` and `_run_claude_code_cli` now accept an `on_delta` callback and use a streaming `Popen` stdout reader when the bridge handler needs live output instead of waiting for `subprocess.run(..., capture_output=True)` to finish.
+      - Codex stdout JSONL is parsed with the existing assistant-text extractor and redactor before each bridge `assistant_delta` event, preserving chunk whitespace such as `Hello `.
+      - Claude Code V5 buffers assistant text until the empty-tool `system/init` safety proof appears, then streams redacted assistant chunks; unsafe stream events still fail closed and final `assistant_done` still requires API-side safety metadata.
+      - Codex and Claude bridge handlers now use dynamic event sequences after `adapter_started`; when real deltas streamed, they do not synthesize a duplicate full-content delta before `assistant_done`.
+      - Claude `result` records are treated as final result text instead of another assistant delta, preventing partial-plus-result duplication such as `OKOK`.
+      - Subprocess stdin writing runs on a bounded background thread so a stuck stdin pipe cannot prevent the stdout/timeout loop from killing a hung adapter process.
+      - Agent Workspace now treats `waiting_approval` and `awaiting_message_hydration` as active task-event SSE states, so polling a still-running bridge task cannot replace a specific local-tool approval prompt with the generic "正在处理" copy.
+      - If `LOCAL_AGENT_MESSAGE_COMPLETED` arrives before any delta and before message hydration, the optimistic assistant node stays streaming with `awaiting_message_hydration` instead of freezing the pending placeholder as a completed answer.
+      - Regression tests cover approval prompt survival across task polling, no-delta completion before message hydration, dynamic multi-delta event IDs, Codex stdout streaming, Claude safety-gated stdout streaming, and Claude partial/result dedupe.
+      - Local Workspace now ensures each active local Agent binding has its own `local-agent:<bindingId>` conversation before message hydration or submit, so switching Claude Code -> hao -> Claude Code keeps the visible active path and submit target tied to the selected binding.
+      - Local submit context is rebuilt from the selected binding's own conversation and filters messages, active leaf, pinned ids, turns, and compressed context by binding/connection/session metadata, preventing hao sends from carrying Claude Code context or vice versa.
+      - Backend binding and send paths now enforce that one active `AgentSession` belongs to only one local Agent connection. Existing conflict bindings cannot send, new cross-connection binds return 409, and Alembic `20260614_0041` marks older duplicate active bindings as `conflict` before adding the active-session unique index.
+      - Server-side fallback context replay now filters persisted `AgentMessage` rows by `source=local_agent`, `binding_id`, `connection_id`, and `agent_session_id`, so source-only or other-binding history in the same session cannot be replayed into the selected local Agent bridge payload.
+      - Switching from a local Agent target back to the same cloud Agent now explicitly restores the latest non-local conversation or creates a fresh cloud conversation, so cloud chat payloads cannot continue from the visible local binding after the header label changes.
+      - Starting a new local Agent conversation clears the previous active binding immediately and blocks submit while the new binding is pending; rapid typing/sending during that window cannot enqueue the new message on the old binding/session.
+      - Pending local assistant input-token estimates now include the selected binding's history, metadata, tool mentions, attachments, attachment names, and compressed summary instead of only the current user text.
+      - Late local send responses are ignored if the user has switched local connection or conversation before the response returns; the stale response only invalidates its own binding/session queries and does not set the active run, update the current node, or open an SSE stream.
+      - Active local task-event SSE streams now carry a stream token and verify selected connection, current local conversation, run id, binding id, session id, bridge task id, and assistant node ownership before any event can mutate nodes, clear pending state, invalidate active queries, or close the stream.
+      - Regression tests cover Claude Code -> hao -> Claude Code history isolation, payload isolation in both directions, cloud-return payload filtering, new-local-conversation pending submit blocking, server-provided `input_tokens` / `output_tokens` display preservation, binding-history input-token estimation, late send response discard, and late SSE completion after switching to another local Agent without closing the new stream.
+      - Agent Workspace now renders a compact `本地 Agent I/O` panel for local user/assistant metadata, including adapter, model, binding/session/bridge/model-call ids, context count, tools, attachments, token usage, duration, input preview, and output preview.
+      - Local Agent `AgentMessage.metadata_json.local_agent_io` now persists complete user input and assistant output snapshots; existing same-task `ModelCall` rows with `completion_tokens=0` keep the exact zero instead of being estimated from content.
+      - Persisted user and assistant message metadata now use redacted workspace/attachment previews outside `local_agent_io` as well, so raw local paths or token-like attachment names such as `/Users/luohao/.../sat_secret_README.md` do not leak through outer metadata fields.
+      - Final exact-binding follow-up requires local message query keys, optimistic nodes, hydrated messages, send payloads, and task-event SSE ownership to match `source=local_agent`, `binding_id`, `connection_id`, and `agent_session_id` exactly; source-only or wrong-session rows cannot hydrate, submit, stream, or close another local Agent conversation.
+      - Local Agent I/O is now richer but bounded: assistant bubbles show compact context/input/output details with caps, while user bubbles do not render the expanded I/O panel.
+      - Current runtime is refreshed from this source: API/Console are running in tmux on `127.0.0.1:8000` / `127.0.0.1:5173`, and hao/Codex/Claude Code bridge daemons are online in dedicated tmux sessions.
+      - Final two-agent review consensus has no blocking frontend approval-hydration, backend stdout-streaming, local Agent conversation isolation, local input/output metadata, binding/session isolation, POST payload filtering, stale SSE竞态, compressed-summary replay, duplicate tool-request reuse, or migration conflict-state findings.
+
+  - id: agent-workspace-local-agent-header-draft-fix
+    date: 2026-06-05
+    status: completed
+    demo: Agent Workspace preserves in-progress local Agent composer drafts across polling hydrate and uses one top-left Workspace selector for both cloud Agents and local Agent connections.
+    verification_result: passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx -> 2 files / 26 tests passed
+      - cd apps/agent-console && npm run lint -- --pretty false -> passed
+      - cd apps/agent-console && npm run build -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - Live browser smoke on http://127.0.0.1:18082/agents/default/workspace at 1440px -> Agent switcher visible, 8 Agent options, old full-width Local Agent row count 0, no horizontal overflow
+      - Live browser smoke at 390px -> document/body scrollWidth equals clientWidth, Agent switcher visible, Local Agent control visible, composer visible
+      - Live browser smoke with Local Agent enabled -> header Session visible and composer value `等待几秒也不要消失` remained after 4.5 seconds of polling
+      - Live browser smoke at 390px with Agent and Local Agent menus open -> both menu bounding boxes stayed inside the viewport
+      - Mocked Playwright smoke on http://127.0.0.1:18082/agents/default/workspace -> top-left options included Default Agent, Research Agent, hao Local Agent, and Claude Code; old `选择本地 Agent 连接` control count was 0; local Session appeared; switching back to Default Agent posted `/api/agents/default/runs/chat/stream`; 390px menu stayed inside viewport with no horizontal overflow
+      - UI reviewer Carver initial BLOCKING on fixed left-header min width; fixed and revalidated
+      - UI reviewer Carver second BLOCKING on narrow-screen menu clipping; fixed and revalidated
+      - UI reviewer Aquinas final verdict PASS
+      - Code/state reviewer Fermat final verdict PASS
+      - UI/interaction reviewer Hubble follow-up verdict PASS
+      - Code/state reviewer Poincare follow-up verdict PASS after stale local pending and stale binding response regressions were covered
+    acceptance_notes:
+      - The draft-loss root cause was local Agent polling hydrating a conversation summary whose `draft` field was always empty; the hydrate path now preserves the current store draft.
+      - ChatComposer now waits for submit completion and clears only when the submit path returns success and the textarea still contains the submitted draft, so not-ready, failed, cancelled, or superseded input is preserved.
+      - ChatSurface and the local Agent submit callback now propagate `false` for not-sent paths, preventing the composer from clearing user text.
+      - WorkspaceShellBar now renders the top-left Agent name as a mixed MenuSelect backed by `/api/agents` and `/api/agents/local-agent/connections`; option values are scoped as `agent:{agentId}` and `local:{connectionId}` and grouped as `智能体` / `本地 Agent`.
+      - AgentWorkspacePage navigates to `/agents/{agentId}/workspace` for cloud Agent selections, disables local mode when switching back to cloud, and enables the selected local connection when a local Agent option is chosen.
+      - The previous full-width Local Agent panel and separate local connection dropdown were removed from ChatSurface; Local Agent enablement, status, selected connection, session, queue, offline, and approval hints now render as compact header controls.
+      - Responsive follow-up fixed the review-found narrow-screen issues by allowing the header left group to shrink and constraining both Agent and Local Agent menu popovers to the viewport.
+      - A stale local Agent pending task can no longer block cloud Agent submit after switching back because `localAgentPending` is gated by `localAgentEnabled`; regression coverage verifies the cloud stream POST still happens.
+      - Stale binding responses from a previous local connection no longer overwrite the current local connection binding; mutation success, restore, and submit paths all verify that the binding connection matches the selected connection.
+      - Final two-agent consensus has no blocking UI/UX, responsive, accessibility, state, or test findings.
+
+  - id: local-agent-pairing-live-runtime-repair
+    date: 2026-06-05
+    status: completed
+    demo: Local Agent connection command generation on the live `/agents` page is recovered for all adapter choices after refreshing the local API runtime and upgrading the local Postgres schema to the Local Agent Alembic head.
+    verification_result: passed
+    verification_commands:
+      - Restarted stale `harness-api-langgraph` API tmux session on `127.0.0.1:8000` from current `services/api-server` source.
+      - cd services/api-server && APP_ENV=development AUTH_JWT_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef .venv/bin/alembic upgrade head
+      - cd services/api-server && .venv/bin/alembic current -> `20260612_0039 (head)`
+      - curl --noproxy '*' -s http://127.0.0.1:8000/openapi.json -> 22 `/api/agents/local-agent/*` routes present, including `/api/agents/local-agent/pairing-tokens`
+      - curl --noproxy '*' -s -H 'Authorization: Bearer dev-engineer-token' http://127.0.0.1:8000/api/agents/local-agent/connections -> `{"items":[]}`
+      - Manual POST smoke for `fake`, `hao`, `codex`, `claude_code`, and `claude_code_v6` pairing scopes -> all returned `201 Created` and adapter-correct `hao bridge pair` commands.
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx -> 5 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k "pairing or local_agent_connections" -> 4 passed, 42 deselected
+      - Live Playwright smoke against `http://127.0.0.1:18082/agents` generated commands for `hao`, `fake`, `Codex CLI`, `Claude Code V5`, and `Claude Code V6` with five `201` pairing responses and zero visible `连接命令生成失败` / `目标资源不存在` text.
+      - Runtime/API reviewer Euler final verdict PASS
+      - Frontend/request-path reviewer Averroes final verdict PASS
+    acceptance_notes:
+      - The original visible failure was not an Agent selection bug: the running API process was stale and returned framework-level `404 Not Found` for the entire `/api/agents/local-agent/*` route family.
+      - Restarting the API loaded the current `agent_local` router, then exposed the second runtime gap: the local Postgres database was still at Alembic `20260609_0036` and lacked `local_agent_connections` and pairing-token tables.
+      - Upgrading local Postgres to `20260612_0039 (head)` created the Local Agent V1/V3 tables and restored `/api/agents/local-agent/connections` plus pairing-token creation.
+      - Historical runtime repair generated adapter-scoped smoke commands; current Agent Studio default onboarding generates one generic npx command before adapter selection, while explicit advanced API/CLI paths can still append `--adapter claude_code --permission-bridge sdk` for Claude V6 SDK permission bridge tests.
+      - Frontend code already targets the correct backend path and has Vitest coverage for `hao`, `codex`, and Claude V6 pairing payloads, so no business-code patch was required for this runtime repair.
+      - Local verification created short-lived active pairing tokens with 10-minute TTL; no bridge registration was performed.
+
+  - id: frontend-config-entry-dialog-polish
+    date: 2026-06-05
+    status: completed
+    demo: Agent Studio and Eval Harness low-frequency configuration surfaces now use compact entry cards with ConfigDialog workflows instead of always-visible long forms.
+    verification_result: passed
+    verification_commands:
+      - UX/UI reviewer Hypatia final verdict PASS
+      - code/test reviewer Lagrange initial BLOCKING on stale Eval contrast run IDs after dataset switch; final复审 PASS after reset and active-dataset validation fix
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- EvalHarnessPage.langgraph.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - Browser smoke on http://127.0.0.1:18082 for /agents and /evals entry-card dialogs with no document-level horizontal overflow
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Agent Studio now exposes four compact configuration entry cards for role templates, local Agent connection, capability/readiness, and Token saving plan.
+      - Agent template create/clone and Token optimizer controls are hidden until their ConfigDialog is opened, while local Agent and capability dialogs remain dialog-based.
+      - Eval Harness now keeps dataset status/list, case queue, run results, regression gate, experiment summary, and history visible while moving dataset creation, saved-run case creation, and LangGraph vs Native setup into dialogs.
+      - Eval page layout now stacks before the xl breakpoint instead of forcing the fixed three-column grid on narrow widths.
+      - Switching Eval datasets clears Native/LangGraph experiment selections, and experiment creation requires both selected runs to belong to the active dataset.
+      - Final two-agent consensus has no blocking UX/UI, responsive, accessibility, React state, or test findings.
+
+  - id: agent-studio-card-layout-polish
+    date: 2026-06-05
+    status: completed
+    demo: Agent Studio configuration cards were reworked from oversized metric cards into a compact roster with clearer scan hierarchy, smaller readiness rings, concise tool/tag rows, agent-specific open links, status-driven badges, and responsive narrow-screen grids.
+    verification_result: passed
+    verification_commands:
+      - UX/UI reviewer Rawls final verdict PASS after emerald readiness color, status-driven badges, agent-specific open labels, and responsive grid watch items were closed
+      - code/test reviewer Noether final verdict PASS after the same polish fixes and updated accessible-name test assertion
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Agent cards now render as compact configuration-target roster items instead of large metric-heavy cards, improving first-screen scan density without changing backend contracts.
+      - Each card keeps `配置卡` group semantics, `设为配置` / `当前配置` controls, and a smaller readiness ring for tools, indexed knowledge sources, and active local connections.
+      - Role, parallel count, model, tools, tags, knowledge count, and local connection count are condensed into bounded inline rows with truncation and overflow counts.
+      - Repeated `打开` links now expose agent-specific accessible names such as `打开 默认智能体`, and tests assert the updated name.
+      - The readiness success color now uses the repo emerald semantic color, Agent status badges are status-driven, and surrounding fixed column grids use narrow-screen responsive layouts.
+      - Final two-agent consensus has no blocking UX/UI, responsive, accessibility, code, or test findings.
+
+  - id: console-full-ui-optimization
+    date: 2026-06-05
+    status: completed
+    demo: Console navigation is consolidated into 12 top-level scan targets while preserving all 22 routable sidebar links, Agent Studio is simplified, Run History and Knowledge remove duplicate summary noise, Tool Registry local draft state is grouped into hooks, and account/navigation keyboard accessibility is covered.
+    verification_result: passed
+    verification_commands:
+      - UX/IA/accessibility reviewer Kuhn final verdict PASS after the collapsed team-sidebar touch-target blocker was fixed
+      - UX/IA/accessibility reviewer Socrates final verdict PASS after the same blocker was fixed
+      - code/test reviewer James final verdict PASS; stale `consoleNavItems` export watch was fixed and revalidated
+      - cd apps/agent-console && npm test -- ConsoleShell.render.test.tsx routeInventory.test.tsx KnowledgePage.test.tsx RunHistoryPage.test.tsx AgentListPage.studio.test.tsx ToolRegistryPage.marketplace.test.tsx ToolConfigurationPage.test.tsx
+      - cd apps/agent-console && npm test -- ConsoleShell.render.test.tsx routeInventory.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Console navigation now uses 12 top-level scan targets with collapsible `专家与子代理`, `工具与能力`, and `设置` groups while keeping all 22 flat route targets covered by route inventory tests.
+      - `智能体`, `团队`, `运行历史`, `知识库`, observability, eval, and help remain top-level; Tools and Tool Config remain separate pages and are only grouped in navigation.
+      - Collapsed navigation still exposes all route icons; the team-route collapsed sidebar now uses `px-0 py-2` plus `w-full min-h-11` icon links so the 44px touch-target blocker is closed.
+      - Account menu now supports keyboard open/focus, ArrowUp/ArrowDown/Home/End movement, and Escape return focus behavior with Vitest coverage.
+      - KnowledgePage removes the duplicate `当前筛选` metric, moves counts into filter buttons, removes duplicate selected-agent badge noise, and shortens the page description.
+      - RunHistoryPage removes the duplicate list-header run count while preserving the existing VirtualList structure because that refactor was explicitly rejected in the source plan.
+      - ToolRegistryPage local draft state is grouped into dedicated hooks in `ToolRegistryPage/state.ts`, reducing page-level `useState` clutter without changing install, preflight, or test-invoke behavior.
+      - Final consensus has no blocking UX/IA/accessibility or code/test findings; remaining watch items are limited to the explicitly deferred RunHistory VirtualList semantics and existing English terms like `API Keys`.
+
+  - id: agent-list-page-ui-optimization
+    date: 2026-06-05
+    status: completed
+    demo: Agent Studio now shows Agent cards first, exposes a clear per-Agent configuration target, splits capabilities into core and advanced groups, adds readiness rings, and keeps knowledge management in-flow as a collapsible unframed section.
+    verification_result: passed
+    verification_commands:
+      - UX/IA/accessibility reviewer Aristotle final verdict PASS
+      - code/test reviewer Nash final verdict PASS
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - cd apps/agent-console && npm run build
+      - git diff --check
+    acceptance_notes:
+      - Agent cards moved to the first content block after the title/actions and each card now exposes `设为配置` / `当前配置` for the downstream configuration target.
+      - Agent readiness rings count tools, indexed knowledge sources, and active local connections per Agent instead of reusing only the selected Agent state.
+      - Capability cards now render four core entries by default and five advanced entries behind one accessible expansion control.
+      - Knowledge management remains in the Agent Studio configuration flow, uses an unframed collapsible section, and unmounts collapsed content from the tab order.
+      - Targeted Agent Studio Vitest coverage now covers first-screen cards, capability folding, knowledge folding, per-Agent readiness, local connection readiness, and multi-Agent configuration switching.
+      - Final reviewer consensus has no blocking UX/IA/accessibility or code/test findings.
+
+  - id: local-agent-claude-code-permission-bridge-v6
+    date: 2026-06-05
+    status: completed
+    demo: Local Agent Claude Code Permission Bridge V6 adds an opt-in Claude Agent SDK permission bridge that captures host-tool intent, routes it through Harness V3 approval and execution authority, and keeps assistant conversation inside the existing local-agent Run/Event/Message path.
+    verification_result: passed
+    verification_commands:
+      - architecture/protocol planning reviewer final verdict PASS
+      - security/test planning reviewer initial verdict REVISE/BLOCK; plan revised; final verdict PASS
+      - implementation architecture reviewer final verdict CLEAR
+      - implementation code/security reviewer final verdict APPROVE
+      - V1-V6 cross-review architecture reviewer verdict CLEAR; test reviewer WATCH resolved; design reviewer WATCH resolved; code/security reviewer no blocking findings
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "claude and (bridge or permission or fake_sdk or sdk)"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py tests/test_tool_approvals.py tests/test_tool_runner.py
+      - python3 -m py_compile scripts/smoke-test-local-agent-v6.py services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/app/api/tasks.py services/api-server/tests/test_local_agents.py services/api-server/tests/test_hao_cli.py
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-sdk-unavailable
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-approve-write
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-reject-bash
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-revoke-pending
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-approval-timeout
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-bypass-attempt
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-api-failure-fail-closed
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-approved
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-permission-bridge-cancel
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-v5-heartbeat-upgrade-denied
+      - python3 scripts/smoke-test-local-agent-v6.py --scenario claude-modified-approval
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q -k "v6 or local_agent_v3_approval_after_ttl or revoke_terminalizes or deny"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "permission_bridge or fake_sdk or bridge_v6"
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/tasks.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V6 PRD and test spec remain the authoritative plan docs at `.omx/plans/prd-local-agent-claude-code-permission-bridge-v6.md` and `.omx/plans/test-spec-local-agent-claude-code-permission-bridge-v6.md`.
+      - V6 keeps API/DB as the authority for sessions, Runs, events, approvals, tool calls, pending changes, command lifecycle, assistant completion, and audit; the local bridge only captures intent, polls decisions, and reports back receipts and results.
+      - Claude V6 is now normalized to `permission_bridge=harness_local_tool_request_v1`, `execution_mode=agent_sdk_intent_capture_harness_executor`, `permission_bridge_execution=harness_owned_executor`, and `sdk_native_tool_execution_enabled=false`; the Claude SDK callback denies after Harness-owned execution so native side-effect execution cannot run twice.
+      - V6 enablement is gated by both scoped pairing entitlement and capability normalization; later parity work makes non-SDK Claude connections use the Harness-approved local bridge for host tools instead of the earlier headless no-tools fallback.
+      - Host-tool requests from Claude V6 now create or bind the existing V3 `LocalAgentToolRequest`, `ToolApproval`, `ToolCall`, `AgentEvent`, `LocalAgentPendingChange`, and `LocalAgentCommand` records before local side effects.
+      - Modified approval now updates the executable input hash, requires write/apply-patch pending-change preview refresh against the approved modified input, fail-closes stale original preview results, and records the refreshed preview on both the local request and approval audit path.
+      - Task cancel now terminalizes pending Claude V6 local-tool state, including approvals, tool calls, pending changes, commands, and bridge tasks, and late approval or execution polling fails closed.
+      - The hao CLI V6 path now supports the Claude Agent SDK permission callback, explicit fake-SDK fixture mode, and deterministic smoke coverage for SDK unavailable, approve write, modified approval, reject bash, revoke pending, approval timeout, bypass attempt, API failure fail-closed, approved shell execution, cancelled execution, and V5 heartbeat upgrade denial.
+      - Historical V6 UI distinguished Claude Code V5 from Claude Code V6 and generated scoped pairing commands with `--permission-bridge sdk`; current default onboarding hides that adapter choice until after discovery, while explicit advanced SDK paths remain available for V6 smoke coverage.
+      - Agent Workspace now distinguishes Claude Code V5/V6 in the local connection selector, shows Claude V6 local-tool approval pending state with a Run Detail approvals link, and uses template-scoped `使用此模板` / `Use template` copy in the template creation card.
+      - V1-V6 cross-review consensus is closed: architecture/protocol review remained `CLEAR`, test WATCH was resolved by exact V6 smoke scenarios, design WATCH was resolved by Workspace labels/approval state/template copy, and code/security had no blocking findings.
+      - Final implementation review returned architecture `CLEAR` and code/security `APPROVE`; closeout follow-up corrected stale handoff wording, validation counts, exact V6 smoke coverage, and Workspace V6 UI clarity.
+      - Native Claude Code resume, deferred tool resume after process exit, live credential UX, remote-control/web/cloud sessions, MCP/plugins/hooks/subagents/browser/computer-use, and server-side Claude credential handling remain out of V6 scope.
+
+  - id: local-agent-claude-code-adapter-v5
+    date: 2026-06-05
+    status: completed
+    demo: Local Agent Claude Code Adapter V5 adds Claude Code as a constrained assistant-response local-agent adapter using headless bare Claude Code, no built-in tools, no session persistence, isolated config state, forced context replay, and existing Harness Run/Event/Message authority.
+    verification_result: passed
+    verification_commands:
+      - architecture/protocol planning reviewer final verdict PASS
+      - security/test planning reviewer final verdict PASS
+      - implementation code/security reviewer final verdict APPROVE
+      - implementation architecture reviewer final verdict WATCH with no blockers; server-side Claude Code assistant_done safety proof guard was added and revalidated
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -k "bridge or claude or codex or adapter or pending_state_file"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-unavailable
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-readonly-reply
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-resume-mode
+      - python3 scripts/smoke-test-local-agent-v5.py --scenario claude-side-effect-rejected
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V5 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-claude-code-adapter-v5.md` and `.omx/plans/test-spec-local-agent-claude-code-adapter-v5.md`.
+      - Historical V5 baseline: `adapter_kind=claude_code` was introduced as a restricted assistant-response local-agent adapter; later parity work upgrades current Claude Code connections to the same Harness-approved local tool surface as hao.
+      - Historical V5 UI marked Claude Code as `v5 enabled` and generated adapter-scoped pairing commands; current default onboarding generates the generic npx command and includes Claude Code in post-command discovery.
+      - Backend validates explicit `scope.adapters` before token consumption, so rejected Claude/Codex scope attempts remain replay-safe.
+      - Historical V5 baseline forced `supports_resume=false`, `supports_cancel=false`, `host_tools_authorized=false`, `resume_mode=context_replay_new_session`, and `execution_mode=headless_bare_no_session_no_tools`; current parity normalization now sets `supports_cancel=true`, `host_tools_authorized=true`, `execution_mode=headless_harness_tool_bridge`, and full local risk capabilities.
+      - `hao bridge pair/run --adapter claude_code` probes Claude Code before registration, stores raw device token/workspace root only in `0600` sidecars, and keeps `bridge.json` to safe refs/hashes.
+      - Required command shape is `claude --bare -p --output-format stream-json --verbose --include-partial-messages --no-session-persistence --permission-mode default --tools ""`; prompt text is passed through stdin, never argv.
+      - Claude Code subprocesses use private temp cwd, temp `HOME`, temp `CLAUDE_CONFIG_DIR`, skip prompt history, disable auto memory and built-in agents, and exclude provider/Harness/bridge/proxy secrets by default.
+      - CLI parsing requires `system/init` safety proof with empty tools/MCP/plugins/hooks/custom-agent surfaces before assistant success.
+      - API event ingestion now also requires Claude Code `assistant_done` metadata to include `system_init_safe=true`, `tools_count=0`, and `mcp_servers_count=0`, closing the implementation architecture WATCH.
+      - Claude Code legacy `tool_result` and host tool protocol paths are rejected before `ToolCall` success or receipt creation.
+      - Deterministic V5 smoke covers Claude unavailable, read-only reply, forced context replay, and side-effect rejection without live Claude credentials.
+      - Final validation passed local-agent backend regression (`36 passed`), CLI targeted regression (`32 passed, 130 deselected`), tool safety regression (`17 passed`), V5 smoke scenarios, frontend targeted tests (`22 passed`), frontend typecheck, docs validation, and diff check.
+
+  - id: local-agent-codex-adapter-v4
+    date: 2026-06-04
+    status: completed
+    demo: Local Agent Codex CLI Adapter V4 adds Codex as a constrained local-agent adapter with adapter-scoped pairing, read-only assistant projection, forced context replay, workspace identity enforcement, and disabled host-tool side effects.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -k "bridge or codex or adapter or pending_state_file"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/schemas.py app/events/event_types.py app/cli/hao tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-unavailable
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-readonly-reply
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-resume-mode
+      - python3 scripts/smoke-test-local-agent-v4.py --scenario codex-side-effect-rejected
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx AgentWorkspacePage.team-launch.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V4 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-codex-adapter-v4.md` and `.omx/plans/test-spec-local-agent-codex-adapter-v4.md`.
+      - Historical V4 baseline introduced `adapter_kind=codex`; current generic onboarding includes Codex CLI and Claude Code in the default real-adapter discovery scope.
+      - Historical V4 baseline generated adapter-scoped local pairing commands; current Agent Studio generates one generic npx connection command and lets the user select/name detected Agents after discovery.
+      - Backend validates explicit `scope.adapters` before token consumption, keeping rejected adapter attempts replay-safe.
+      - Historical V4 baseline normalized Codex to no cancel/no host tools; current parity normalization sets `supports_cancel=true`, `host_tools_authorized=true`, and full Harness-approved local risk capabilities.
+      - Codex host write, shell, git, and network requests now enter the Harness approval/audit bridge rather than being hard-disabled.
+      - Claude Code is now part of default real local-agent discovery and parity capability normalization.
+      - `hao bridge pair/run --adapter codex` probes Codex CLI support, uses stdin prompt input, forbids dangerous sandbox bypass args, and launches `codex exec --json --output-last-message ... -C <workspace> --sandbox read-only -`.
+      - Codex subprocess probe/runtime env is allowlisted; runtime uses isolated temp `HOME` and `CODEX_HOME`, strips provider keys, device tokens, Harness tokens, and proxy env.
+      - Raw device tokens persist only in `bridge.device-token`; raw Codex workspace root persists only in `bridge.workspace-root`; `bridge.json` stores refs and hashes only.
+      - API bridge events now include `LOCAL_AGENT_ADAPTER_STARTED`; Codex assistant delta/done/error events project into Harness-owned Run/Event/Message state.
+      - Codex legacy `tool_result` events are rejected before `ToolCall` or bridge receipt creation.
+      - Codex workspace execution now compares the sidecar root hash with the server task `workspace_identity_hash`; mismatches fail before subprocess spawn, and `hao bridge run --adapter codex --cwd` cannot rewrite a paired workspace to a different identity.
+      - Deterministic V4 smoke covers Codex unavailable, read-only reply, forced context replay, and side-effect rejection.
+      - Initial implementation review found one architecture BLOCK for mutable local workspace identity; the closeout fixed it with server-payload hash enforcement and regression coverage.
+      - Final architecture review returned WATCH with no blockers; the native-resume test-spec wording was aligned to V4's forced `context_replay_new_session` contract.
+      - Final code/security review returned APPROVE after the stale `omx_wiki/log.md` EOF whitespace blocker was fixed and `git diff --check` passed.
+
+  - id: local-agent-tool-safety-v3
+    date: 2026-06-04
+    status: completed
+    demo: Local Agent Tool Safety V3 now gates host-side local tools through API-owned authorization, approval, command lifecycle, pending-change hash guards, cancel/retry, TTL/revoke cleanup, and fail-closed audit before bridge execution.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_approvals.py tests/test_tool_runner.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py tests/test_hao_cli_v2.py -q -k "bridge or approval or pending_change or command or cancel or retry or pending_state_file"
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/agents/common.py app/api/schemas.py app/api/tasks.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/local_tools.py app/cli/hao/main.py app/cli/hao/session_store.py tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/agents/common.py app/api/schemas.py app/api/tasks.py app/db/models.py app/events/event_types.py app/cli/hao tests/test_local_agents.py tests/test_hao_cli.py tests/test_hao_cli_v2.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-local-agent-v3.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min HARNESS_SECRET_ENCRYPTION_KEY=test-harness-secret-encryption-key-32-min .venv/bin/alembic upgrade head
+      - python3 scripts/smoke-test-local-agent-v3.py --scenario approve-shell
+      - python3 scripts/smoke-test-local-agent-v3.py --scenario reject-write
+      - python3 scripts/smoke-test-local-agent-v3.py --scenario revoke-pending
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx ChatSurface.shell.test.tsx RunDetailPage.helpers.test.ts RunDetailPage.optimizer.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V3 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-tool-safety-v3.md` and `.omx/plans/test-spec-local-agent-tool-safety-v3.md`.
+      - V3 closes the V1/V2 WATCH by making side-effect local `tool_result` evidence require an authorized `tool_request_id` and `tool_call_id`; legacy side-effect bridge results remain rejected.
+      - The local host approval path does not call server `_execute_approved_tool_call()` or `ToolRunner.execute_approved_call()`; approval only unlocks bridge decision polling.
+      - Bridge-reported risk, permission, network, secret, and path fields are advisory only; server classification remains deny-by-default and capability attachment is enforced before execution.
+      - Added `LocalAgentToolRequest`, `LocalAgentCommand`, and `LocalAgentPendingChange` while preserving `ToolCall`, `ToolApproval`, Run, Event, and `AgentSession` authority.
+      - Command lifecycle rows are terminal-immutable; retry now creates a fresh tool request, ToolCall, and pending command with `retry_of_command_id`, rejects success/running/denied parents, and validates retry source on bridge start.
+      - TTL expiry now fails closed before approval and before execution, marking pending approvals expired, ToolCalls denied, pending changes denied, and allowing bridge assistant cleanup without unresolved tool state.
+      - Connection revoke now terminalizes active local tool requests, pending approvals, pending changes, active commands, bridge tasks, and runs; late bridge access with the revoked device token returns 403.
+      - Privacy redaction covers command strings, secret-looking values, and `/Users` or `/home` paths in persisted audit rows.
+      - hao bridge state now keeps raw cwd, executable input, command text, home paths, and raw device tokens out of `bridge.json`; the raw device token is split into a `0600` `bridge.device-token` file, and legacy inline tokens migrate out on load.
+      - Deterministic smoke covers approved shell execution, rejected write result, and revoke-pending cleanup.
+      - Aristotle architecture review returned PASS with implementation watch items only.
+      - Parfit security/test review returned PASS with implementation watch items only.
+      - Implementation review found retry/revoke/TTL issues; this closeout fixes them with regression coverage.
+      - Final V3 closeout reviewers returned PASS/APPROVE after bridge-state cwd and device-token persistence blockers were fixed.
+
+  - id: local-agent-workspace-chat-v2
+    date: 2026-06-04
+    status: completed
+    demo: Local Agent connections now bind or resume API-owned sessions inside the existing Workspace ChatSurface, with server-backed history, pending/offline state, and local bridge task queue sends.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "bridge_pair_once or api_client_ignores or bridge_daemon"
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py alembic/versions/20260611_0038_create_local_agent_connections.py
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx ChatSurface.shell.test.tsx AgentWorkspacePage.team-launch.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - V2 PRD and test spec are now入库 at `.omx/plans/prd-local-agent-workspace-chat-v2.md` and `.omx/plans/test-spec-local-agent-workspace-chat-v2.md`.
+      - Workspace now lists current-Agent local connections and can switch into local Agent mode without leaving the existing ChatSurface.
+      - Local mode creates or resumes a `LocalAgentConversationBinding`, loads the API-owned `AgentSession` messages, and projects them into the existing conversation tree/history rail.
+      - Sending from Workspace calls `POST /api/agents/local-agent/bindings/{binding_id}/messages`, appends pending local assistant state, and links the resulting Workspace Run.
+      - Offline local connections remain readable and can show queued pending state; bridge completion still comes from authoritative API/DB `AgentMessage` projection.
+      - Backend v2 coverage now includes binding-list ownership/admin/operator behavior and stale-heartbeat offline projection.
+      - API-owned pending task projection now lets Workspace recover queued local assistant state after reload/offline instead of relying on browser memory.
+      - Final code/security review returned APPROVE; final architecture review returned WATCH with no blockers. The WATCH is deferred to V3 tool safety: bridge-reported tool results remain observations, not policy authority.
+
+  - id: local-agent-bridge-conversation-v1
+    date: 2026-06-04
+    status: completed
+    demo: Agent Studio now supports local Agent pairing into the existing Workspace conversation model, with API-owned sessions/runs/events/tool audit and a hao bridge entrypoint for fake and hao adapters.
+    verification_result: passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_local_agents.py -q
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_hao_cli.py -q -k "bridge_pair_once or api_client_ignores or bridge_daemon"
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py -q -k "agent_studio_create_clone"
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py alembic/versions/20260611_0038_create_local_agent_connections.py
+      - cd services/api-server && .venv/bin/python -m py_compile app/api/agents/agent_local.py app/api/agents/_workspace_chat_helpers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/cli/hao/api_client.py app/cli/hao/main.py tests/test_local_agents.py tests/test_hao_cli.py
+      - cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-local-agent-0038.sqlite AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min HARNESS_SECRET_ENCRYPTION_KEY=test-harness-secret-encryption-key-32-min .venv/bin/alembic upgrade head
+      - cd apps/agent-console && npm test -- AgentListPage.studio.test.tsx
+      - cd apps/agent-console && npm test -- AgentWorkspacePage.team-launch.test.tsx AgentListPage.studio.test.tsx ChatSurface.shell.test.tsx
+      - cd apps/agent-console && npm run lint -- --pretty false
+      - python3 scripts/validate-docs.py
+      - git diff --check
+    acceptance_notes:
+      - Added `LocalAgentPairingToken`, `LocalAgentConnection`, `LocalAgentConversationBinding`, `LocalAgentBridgeTask`, and `LocalAgentBridgeEventReceipt` with Alembic revision `20260611_0038`.
+      - Pair tokens are high-entropy, hash-stored, TTL-bound, single-use, and short pair codes remain UX-only.
+      - Bridge device credentials are hash-stored and required for heartbeat, task pull, ack, and event report; revoked connections cannot continue.
+      - Bridge events are idempotently received through receipts and projected into `AgentEvent`, `AgentMessage`, `Task`, and `ToolCall`; bridge cannot write generic messages directly.
+      - Local Agent message send binds an `AgentSession`, creates/uses a Workspace `Task` Run, queues a bridge task, and limits executable sends to the device owner.
+      - Browser UI no longer performs bridge registration; Agent Studio only generates the command, shows discovery/status, and can revoke connections.
+      - Agent Studio exposes "选择职业模板" and "接入本地 Agent" while omitting "新建云端 Agent"; fake/hao are enabled and Codex/Claude are disabled future adapters.
+      - `hao bridge pair --daemon` registers the local bridge, persists `~/.hao/bridge.json`, and starts a background bridge loop; `--once` supports deterministic test/smoke execution.
+      - The fake adapter proves pair/register/heartbeat/pull/ack/delta/done without executing host commands.
+      - The hao adapter reuses existing `run_headless_once` and reports success/error through the bridge protocol; without a valid hao API token it fails closed through `assistant_error` instead of faking completion.
+      - Final review fixes added binding-scoped message idempotency, atomic local sends, pair-token locking plus uniqueness, lifecycle audit, protected daemon state, API-owned pending task projection, terminal bridge-event immutability, and terminal ack immutability.
+      - Final code/security review returned APPROVE; final architecture review returned WATCH with no blockers. The WATCH is V3 scope: local tool result evidence must become policy/approval/audit governed before it is treated as Harness-authorized execution.
+
   - id: product-reference-cleanup-and-history-hygiene
     date: 2026-06-03
     status: verified

@@ -1,6 +1,6 @@
-import { consoleNavEntries } from "./consoleNav";
+import { flattenConsoleNavEntries } from "./consoleNav";
 
-export const sidebarRouteInventory = consoleNavEntries.map((item) => ({
+export const sidebarRouteInventory = flattenConsoleNavEntries().map((item) => ({
   href: item.to,
   label: item.label,
 }));

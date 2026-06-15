@@ -305,6 +305,7 @@ class AgentChatStreamRequest(BaseModel):
     @classmethod
     def normalize_mode(cls, value: str) -> str:
         return normalize_workspace_mode(value)
+
     interaction_mode: Literal["chat", "plan", "act"] = Field(
         default="chat",
         description="CLI 工作流模式",
@@ -323,6 +324,10 @@ class AgentChatStreamRequest(BaseModel):
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
     run_id: str | None = Field(default=None, description="继续生成时绑定的原始 Agent Run ID")
+    local_bridge_task_id: str | None = Field(
+        default=None,
+        description="本地 Agent bridge 任务 ID；仅用于 scoped stream token 授权校验",
+    )
     active_branch_id: str | None = Field(default=None, description="前端当前分支 ID")
     pinned_node_ids: list[str] = Field(default_factory=list, description="强制注入上下文节点")
     context_window_turns: int = Field(default=8, ge=1, le=50, description="最近上下文轮数")
@@ -1731,6 +1736,7 @@ class TokenSavingsLowCostRoute(BaseModel):
 class TokenSavingsRunItem(BaseModel):
     run_id: str = Field(description="Agent Run ID")
     agent_id: str | None = Field(default=None, description="Agent ID")
+    model_names: list[str] = Field(default_factory=list, description="本次运行涉及的模型名称")
     title: str = Field(description="运行标题")
     status: str = Field(description="运行状态")
     created_at: datetime = Field(description="运行创建时间")
@@ -1991,9 +1997,7 @@ class CostRollupSeriesPoint(BaseModel):
 
 class CostRollupResponse(BaseModel):
     window: Literal["24h", "7d", "30d", "all"] = Field(description="时间窗口")
-    group_by: Literal["agent", "provider", "specialist", "adapter"] = Field(
-        description="聚合维度"
-    )
+    group_by: Literal["agent", "provider", "specialist", "adapter"] = Field(description="聚合维度")
     generated_at: datetime = Field(description="生成时间")
     total_cost_usd: float = Field(description="总成本 USD")
     total_tokens: int = Field(description="总 Token")
@@ -2521,6 +2525,337 @@ class AgentLocalToolEventRequest(BaseModel):
 class AgentLocalToolEventResponse(BaseModel):
     tool_call: ToolCallResponse = Field(description="写入的工具调用审计记录")
     event_sequence: int = Field(description="结果事件序号")
+
+
+class LocalAgentPairingCreateRequest(BaseModel):
+    agent_id: str = Field(default="default", min_length=1, description="目标 Agent ID")
+    ttl_minutes: int = Field(default=10, ge=1, le=60, description="配对令牌有效分钟数")
+    scope: dict = Field(default_factory=dict, description="本地 Agent 授权范围")
+
+
+class LocalAgentPairingResponse(BaseModel):
+    id: str = Field(description="配对记录 ID")
+    agent_id: str = Field(description="目标 Agent ID")
+    pair_code: str = Field(description="短配对码，仅用于 UX")
+    pair_token: str | None = Field(default=None, description="明文 token，仅创建时返回一次")
+    command: str | None = Field(default=None, description="可复制连接命令，仅创建时返回")
+    status: str = Field(description="配对状态")
+    expires_at: datetime = Field(description="过期时间")
+    created_at: datetime = Field(description="创建时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LocalAgentConnectionRegisterRequest(BaseModel):
+    pair_token: str = Field(min_length=16, description="一次性配对 token")
+    pair_code: str = Field(min_length=4, max_length=16, description="短配对码")
+    adapter_kind: Literal["fake", "hao", "codex", "claude_code"] = Field(
+        description="本地 Agent 类型",
+    )
+    display_name: str | None = Field(default=None, max_length=120, description="显示名称")
+    protocol_version: str = Field(default="local-agent-v1", description="bridge 协议版本")
+    bridge_version: str = Field(default="", description="bridge 版本")
+    workspace_root: str | None = Field(default=None, max_length=512, description="工作目录")
+    capabilities: dict = Field(default_factory=dict, description="能力声明")
+    risk_capabilities: list[str] = Field(default_factory=list, description="高风险能力")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentConnectionRegisterResponse(BaseModel):
+    connection: "LocalAgentConnectionResponse" = Field(description="连接投影")
+    device_token: str = Field(description="设备凭证，仅注册时返回一次")
+
+
+class LocalAgentConnectionUpdateRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120, description="连接显示名称")
+
+
+class LocalAgentConnectionResponse(BaseModel):
+    id: str = Field(description="连接 ID")
+    agent_id: str = Field(description="目标 Agent ID")
+    owner_user_id: str = Field(description="设备 owner")
+    pairing_token_id: str | None = Field(default=None, description="来源配对记录 ID")
+    onboarding_confirmed: bool = Field(default=True, description="是否已由用户确认接入")
+    display_name: str = Field(description="显示名称")
+    adapter_kind: str = Field(description="本地 Agent 类型")
+    protocol_version: str = Field(description="协议版本")
+    bridge_version: str = Field(description="bridge 版本")
+    status: str = Field(description="连接状态")
+    workspace_root: str | None = Field(default=None, description="脱敏工作目录")
+    capabilities_json: dict = Field(description="能力声明")
+    risk_capabilities_json: list[str] = Field(description="高风险能力")
+    last_seen_at: datetime | None = Field(default=None, description="最后心跳")
+    revoked_at: datetime | None = Field(default=None, description="撤销时间")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LocalAgentConnectionPage(BaseModel):
+    items: list[LocalAgentConnectionResponse] = Field(description="本地 Agent 连接")
+
+
+class LocalAgentHeartbeatRequest(BaseModel):
+    protocol_version: str = Field(default="local-agent-v1", description="协议版本")
+    bridge_version: str = Field(default="", description="bridge 版本")
+    status: Literal["online", "busy"] = Field(default="online", description="bridge 状态")
+    capabilities: dict | None = Field(default=None, description="能力声明更新")
+
+
+class LocalAgentHeartbeatResponse(BaseModel):
+    connection: LocalAgentConnectionResponse = Field(description="连接投影")
+
+
+class LocalAgentConversationBindRequest(BaseModel):
+    agent_session_id: str | None = Field(default=None, description="已有 AgentSession ID")
+    title: str | None = Field(default=None, description="新会话标题")
+    adapter_session_id: str | None = Field(default=None, description="本地适配器会话 ID")
+    resume_mode: Literal["native_resume", "context_replay_new_session"] = Field(
+        default="native_resume",
+        description="恢复模式",
+    )
+
+
+class LocalAgentConversationBindingResponse(BaseModel):
+    id: str = Field(description="绑定 ID")
+    connection_id: str = Field(description="连接 ID")
+    agent_id: str = Field(description="Agent ID")
+    agent_session_id: str = Field(description="AgentSession ID")
+    adapter_session_id: str | None = Field(default=None, description="本地适配器会话 ID")
+    resume_mode: str = Field(description="恢复模式")
+    status: str = Field(description="绑定状态")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LocalAgentConversationBindingPage(BaseModel):
+    items: list[LocalAgentConversationBindingResponse] = Field(description="本地 Agent 会话绑定")
+
+
+class LocalAgentSendMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=120_000, description="用户消息")
+    client_message_id: str = Field(min_length=1, max_length=160, description="客户端幂等 ID")
+    workspace_context_provided: bool = Field(
+        default=False,
+        description="前端是否显式提供了当前 Workspace 上下文；为空时也禁止回放旧 session",
+    )
+    workspace_mode: Literal["chat", "markdown_plan", "plan", "cli_agent"] = Field(
+        default="chat",
+        description="Workspace 输入模式",
+    )
+    model_provider: str | None = Field(default=None, description="本次请求选择的模型供应商")
+    model_name: str | None = Field(default=None, description="本次请求选择的模型名称")
+    messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
+    active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
+    active_branch_id: str | None = Field(default=None, description="前端当前分支 ID")
+    pinned_node_ids: list[str] = Field(default_factory=list, description="强制注入上下文节点")
+    context_window_turns: int = Field(default=8, ge=1, le=50, description="最近上下文轮数")
+    tool_mentions: list[ToolMention] = Field(default_factory=list, description="结构化工具 mention")
+    attachment_names: list[str] = Field(default_factory=list, description="前端选择的附件文件名")
+    attachments: list[AttachmentPayload] = Field(
+        default_factory=list,
+        description="前端读取后的附件内容摘要",
+    )
+    context_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="UI-side context window budget; backend recounts before model calls",
+    )
+    compressed_context: CompressedContext | None = Field(
+        default=None,
+        description="语义压缩后的上下文摘要",
+    )
+
+    @field_validator("workspace_mode", mode="before")
+    @classmethod
+    def normalize_workspace_mode_field(cls, value: str) -> str:
+        return normalize_workspace_mode(value)
+
+
+class LocalAgentSendMessageResponse(BaseModel):
+    bridge_task_id: str = Field(description="bridge 任务 ID")
+    run_id: str = Field(description="关联 Workspace Run ID")
+    agent_session_id: str = Field(description="AgentSession ID")
+    user_message_id: str = Field(description="用户消息 ID")
+    status: str = Field(description="任务状态")
+
+
+class LocalAgentBridgeTaskResponse(BaseModel):
+    id: str = Field(description="bridge 任务 ID")
+    connection_id: str = Field(description="连接 ID")
+    binding_id: str = Field(description="会话绑定 ID")
+    agent_session_id: str = Field(description="AgentSession ID")
+    run_id: str = Field(description="Workspace Run ID")
+    client_message_id: str = Field(description="客户端幂等 ID")
+    status: str = Field(description="任务状态")
+    payload: dict = Field(description="bridge 执行载荷")
+
+
+class LocalAgentBridgeTaskPage(BaseModel):
+    items: list[LocalAgentBridgeTaskResponse] = Field(description="待执行 bridge 任务")
+
+
+class LocalAgentBindingTaskResponse(BaseModel):
+    id: str = Field(description="bridge 任务 ID")
+    connection_id: str = Field(description="连接 ID")
+    binding_id: str = Field(description="会话绑定 ID")
+    agent_session_id: str = Field(description="AgentSession ID")
+    run_id: str = Field(description="Workspace Run ID")
+    user_message_id: str = Field(description="用户消息 ID")
+    client_message_id: str = Field(description="客户端幂等 ID")
+    status: str = Field(description="任务状态")
+    error_message: str | None = Field(default=None, description="失败原因")
+    created_at: datetime = Field(description="创建时间")
+    updated_at: datetime = Field(description="更新时间")
+
+
+class LocalAgentBindingTaskPage(BaseModel):
+    items: list[LocalAgentBindingTaskResponse] = Field(description="本地 Agent 会话未完成任务")
+
+
+class LocalAgentBridgeAckRequest(BaseModel):
+    status: Literal["leased", "running", "failed"] = Field(description="ack 状态")
+    error_message: str | None = Field(default=None, description="错误信息")
+
+
+class LocalAgentBridgeEventRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160, description="bridge 全局事件 ID")
+    bridge_task_id: str = Field(min_length=1, description="bridge 任务 ID")
+    sequence: int | None = Field(default=None, ge=0, description="bridge 侧序号")
+    event_type: Literal[
+        "adapter_started",
+        "assistant_delta",
+        "assistant_done",
+        "assistant_error",
+        "tool_result",
+    ] = Field(description="事件类型")
+    content: str | None = Field(default=None, max_length=120_000, description="输出内容")
+    tool_name: str | None = Field(default=None, max_length=160, description="工具名称")
+    input_json: dict = Field(default_factory=dict, description="工具输入")
+    output_json: dict = Field(default_factory=dict, description="工具输出")
+    status: str | None = Field(default=None, max_length=64, description="事件状态")
+    risk_level: Literal["low", "medium", "high", "critical", "unknown"] = Field(
+        default="unknown",
+        description="工具风险等级",
+    )
+    duration_ms: int = Field(default=0, ge=0, description="执行耗时")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentBridgeEventResponse(BaseModel):
+    receipt_id: str = Field(description="事件收据 ID")
+    duplicate: bool = Field(description="是否重复事件")
+    event_sequence: int | None = Field(default=None, description="AgentEvent 序号")
+    tool_call_id: str | None = Field(default=None, description="ToolCall ID")
+
+
+class LocalAgentToolRequestCreateRequest(BaseModel):
+    tool_request_id: str = Field(min_length=1, max_length=160, description="bridge 工具请求幂等 ID")
+    bridge_task_id: str = Field(min_length=1, description="bridge 任务 ID")
+    tool_name: str = Field(min_length=1, max_length=160, description="工具名称")
+    input_json: dict = Field(default_factory=dict, description="工具输入")
+    execution_target: Literal["host", "sandbox"] = Field(default="host", description="执行目标")
+    risk_level: Literal["low", "medium", "high", "critical", "unknown"] = Field(
+        default="unknown",
+        description="bridge 自报风险，仅作遥测",
+    )
+    permission_mode: Literal["confirm", "auto-edit", "full-auto"] = Field(
+        default="confirm",
+        description="bridge 自报权限模式，仅作遥测",
+    )
+    cwd: str | None = Field(default=None, max_length=512, description="bridge 工作目录")
+    target_paths: list[str] = Field(default_factory=list, description="目标路径遥测")
+    requires_network: bool = Field(default=False, description="bridge 自报是否需要网络")
+    requires_secret_read: bool = Field(default=False, description="bridge 自报是否读取 secret")
+    pending_change_preview: dict | None = Field(default=None, description="diff-first 变更预览")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentToolDecisionResponse(BaseModel):
+    tool_request_id: str = Field(description="bridge 工具请求 ID")
+    bridge_task_id: str = Field(description="bridge 任务 ID")
+    tool_call_id: str = Field(description="ToolCall ID")
+    approval_id: str | None = Field(default=None, description="ToolApproval ID")
+    decision: Literal[
+        "allowed",
+        "approval_required",
+        "approved",
+        "denied",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "expired",
+    ] = Field(description="服务端决策/状态")
+    status: str = Field(description="本地工具请求状态")
+    executable: bool = Field(description="bridge 当前是否可执行")
+    server_execution: bool = Field(default=False, description="是否由服务器执行")
+    tool_name: str = Field(description="工具名称")
+    input_json: dict = Field(default_factory=dict, description="可执行输入")
+    reason: str = Field(default="", description="原因")
+    decision_json: dict = Field(default_factory=dict, description="决策载荷")
+    expires_at: datetime | None = Field(default=None, description="决策过期时间")
+
+
+class LocalAgentPendingToolRequestPage(BaseModel):
+    items: list[LocalAgentToolDecisionResponse] = Field(
+        description="Bridge 可恢复的未决本地工具请求"
+    )
+
+
+class LocalAgentPendingChangeRefreshRequest(BaseModel):
+    input_json: dict = Field(default_factory=dict, description="已批准的可执行输入")
+    target_paths: list[str] = Field(default_factory=list, description="批准后的目标路径")
+    pending_change_preview: dict = Field(description="批准后重建的 pending change 预览")
+
+
+class LocalAgentToolResultRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160, description="结果幂等事件 ID")
+    status: Literal["SUCCESS", "FAILED", "TIMEOUT", "DENIED", "CANCELLED"] = Field(
+        default="SUCCESS",
+        description="执行结果",
+    )
+    output_json: dict = Field(default_factory=dict, description="工具输出")
+    duration_ms: int = Field(default=0, ge=0, description="耗时")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
+    command_id: str | None = Field(default=None, max_length=160, description="本地命令 ID")
+    change_id: str | None = Field(default=None, max_length=160, description="pending change ID")
+    diff_sha256: str | None = Field(default=None, max_length=64, description="提交 diff hash")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentCommandEventRequest(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160, description="命令事件幂等 ID")
+    tool_request_id: str = Field(min_length=1, max_length=160, description="父工具请求 ID")
+    event_type: Literal["started", "output", "finished", "timeout", "cancelled"] = Field(
+        description="命令生命周期事件",
+    )
+    tool_name: str | None = Field(default=None, max_length=160, description="工具名称")
+    command: str | None = Field(default=None, max_length=4000, description="命令文本")
+    stdout: str | None = Field(default=None, max_length=120_000, description="stdout 片段")
+    stderr: str | None = Field(default=None, max_length=120_000, description="stderr 片段")
+    status: str | None = Field(default=None, max_length=64, description="命令状态")
+    exit_code: int | None = Field(default=None, description="退出码")
+    duration_ms: int = Field(default=0, ge=0, description="耗时")
+    retry_of_command_id: str | None = Field(default=None, max_length=160, description="重试来源")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
+    metadata: dict = Field(default_factory=dict, description="附加元数据")
+
+
+class LocalAgentCommandResponse(BaseModel):
+    command_id: str = Field(description="bridge 命令 ID")
+    tool_request_id: str = Field(description="父工具请求 ID")
+    status: str = Field(description="命令状态")
+    cancel_requested: bool = Field(default=False, description="是否请求取消")
+
+
+class LocalAgentCommandCancelAckRequest(BaseModel):
+    status: Literal["cancelled", "failed"] = Field(default="cancelled", description="取消确认状态")
+    error_message: str | None = Field(default=None, max_length=4000, description="错误信息")
 
 
 class AdapterMetadataResponse(BaseModel):

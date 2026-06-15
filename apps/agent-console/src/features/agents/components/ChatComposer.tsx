@@ -32,7 +32,7 @@ import { SlashCommandMenu } from "./SlashCommandMenu";
 export type ChatComposerProps = {
   draft: string;
   onDraftChange: (next: string) => void;
-  onSubmit: () => void;
+  onSubmit: () => boolean | void | Promise<boolean | void>;
   onPause: () => void;
   isStreaming: boolean;
   mode: WorkspaceMode;
@@ -146,6 +146,8 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
   ) {
     const { text } = useI18n();
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const submitInFlightRef = useRef(false);
+    const [submitInFlight, setSubmitInFlight] = useState(false);
 
     // ── v3: slash command state ─────────────────────────────────────────
     const slashState = useMemo(
@@ -181,7 +183,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       });
     }, [candidates.length]);
 
-    const sendDisabled = !draft.trim() || isStreaming || isEditLocked || slashOpen;
+    const sendDisabled = !draft.trim() || isStreaming || isEditLocked || slashOpen || submitInFlight;
     const primaryDisabled = isStreaming ? false : sendDisabled;
     const goalModeActive = mode === "goal";
     const primaryLabel = isStreaming ? text("停止生成", "Stop generation") : text("发送", "Send");
@@ -271,12 +273,27 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       }
     }
 
+    async function submitAndMaybeClear(): Promise<void> {
+      if (submitInFlightRef.current) return;
+      const submittedDraft = draft;
+      submitInFlightRef.current = true;
+      setSubmitInFlight(true);
+      try {
+        const submitted = await onSubmit();
+        if (submitted === false) return;
+        if (textareaRef.current?.value !== submittedDraft) return;
+        onDraftChange("");
+      } finally {
+        submitInFlightRef.current = false;
+        setSubmitInFlight(false);
+      }
+    }
+
     function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
       if (handleSlashKeyDown(event)) return;
       if (composerShouldSubmit(event.nativeEvent, draft, isStreaming, isEditLocked)) {
         event.preventDefault();
-        onSubmit();
-        onDraftChange("");
+        void submitAndMaybeClear();
         textareaRef.current?.focus();
       }
     }
@@ -393,8 +410,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                       return;
                     }
                     if (sendDisabled) return;
-                    onSubmit();
-                    onDraftChange("");
+                    void submitAndMaybeClear();
                     textareaRef.current?.focus();
                   }}
                   disabled={primaryDisabled}

@@ -1,6 +1,17 @@
 """Agent Workspace streaming chat endpoint."""
 
 # ruff: noqa: F401,F403,F405,I001,UP037
+from fastapi.security import HTTPAuthorizationCredentials
+
+from app.security.jwt_utils import token_error
+from app.security.auth import (
+    AuthenticatedPrincipal,
+    LocalAgentBridgeStreamPrincipal,
+    bearer_scheme,
+    get_current_principal,
+    principal_from_local_agent_bridge_stream_token,
+)
+
 from ..common import *
 from .._capability_helpers import *
 from .._grounding_helpers import *
@@ -12,6 +23,46 @@ from .._workspace_chat_helpers import *
 from .._workspace_response_helpers import *
 from ..agent_runs import plan_with_agent
 from ._tool_events import WorkspaceToolEventService
+
+
+async def _agent_chat_stream_principal(
+    http_request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    session: DbSession,
+) -> AuthenticatedPrincipal | LocalAgentBridgeStreamPrincipal:
+    token = (
+        credentials.credentials
+        if credentials is not None
+        else http_request.query_params.get("access_token")
+    )
+    if token is not None:
+        try:
+            body = await http_request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            bridge_task_id = str(body.get("local_bridge_task_id") or "").strip()
+            run_id = str(body.get("run_id") or "").strip()
+            agent_id = str(http_request.path_params.get("agent_id") or "").strip()
+            if bridge_task_id and run_id and agent_id:
+                try:
+                    return principal_from_local_agent_bridge_stream_token(
+                        token,
+                        session,
+                        agent_id=agent_id,
+                        run_id=run_id,
+                        bridge_task_id=bridge_task_id,
+                    )
+                except HTTPException:
+                    pass
+    return get_current_principal(http_request, credentials, session)
+
+
+AgentChatStreamPrincipal = Annotated[
+    AuthenticatedPrincipal | LocalAgentBridgeStreamPrincipal,
+    Depends(_agent_chat_stream_principal),
+]
+
 
 @router.post(
     "/{agent_id}/runs/chat/stream",
@@ -25,8 +76,13 @@ def stream_agent_chat_run(
     agent_id: str,
     request: AgentChatStreamRequest,
     session: DbSession,
-    principal: Principal,
+    principal: AgentChatStreamPrincipal,
 ) -> StreamingResponse:
+    stream_context = (
+        principal if isinstance(principal, LocalAgentBridgeStreamPrincipal) else None
+    )
+    if stream_context is not None:
+        principal = stream_context.principal
     require_role(principal, {"admin", "engineer"})
     _get_agent(agent_id=agent_id, session=session, principal=principal)
 
@@ -64,6 +120,24 @@ def stream_agent_chat_run(
             len(node.content) for node in [*pinned_nodes, *carried]
         )
         return max(1, content_length // 4)
+
+    local_bridge_task_id = (
+        request.local_bridge_task_id.strip() if request.local_bridge_task_id else ""
+    )
+    local_bridge_stream_metadata = (
+        {
+            "source": "local_agent_bridge_stream",
+            "local_bridge_task_id": local_bridge_task_id,
+        }
+        if stream_context is not None and local_bridge_task_id
+        else None
+    )
+    if stream_context is not None:
+        _consume_local_bridge_stream_token(
+            stream_context=stream_context,
+            request=request,
+            session=session,
+        )
 
     tool_events = WorkspaceToolEventService(
         agent_id=agent_id,
@@ -246,6 +320,7 @@ def stream_agent_chat_run(
                     if authoritative_context_manifest is not None
                     else None
                 ),
+                request_metadata=local_bridge_stream_metadata,
             )
             stream_iter = gateway.stream(
                 ModelRequest(
@@ -708,3 +783,50 @@ def stream_agent_chat_run(
         )
 
     return StreamingResponse(iterator(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+def _consume_local_bridge_stream_token(
+    *,
+    stream_context: LocalAgentBridgeStreamPrincipal,
+    request: AgentChatStreamRequest,
+    session: Session,
+) -> None:
+    bridge_task_id = str(request.local_bridge_task_id or "").strip()
+    if not bridge_task_id or bridge_task_id != stream_context.bridge_task_id:
+        raise token_error("Local Agent stream target is not valid")
+    bridge_task = session.execute(
+        select(LocalAgentBridgeTask)
+        .where(LocalAgentBridgeTask.id == bridge_task_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if bridge_task is None or bridge_task.status not in {"pending", "leased", "running"}:
+        raise token_error("Local Agent stream target is not valid")
+    payload = bridge_task.payload_json if isinstance(bridge_task.payload_json, dict) else {}
+    if not stream_context.token_jti:
+        raise token_error("Local Agent stream token is not valid")
+    previous_consumed_jtis = payload.get("harness_stream_token_consumed_jtis", [])
+    if not isinstance(previous_consumed_jtis, list):
+        previous_consumed_jtis = []
+    ordered_previous_consumed_jtis = [str(value) for value in previous_consumed_jtis if value]
+    consumed_jtis = set(ordered_previous_consumed_jtis)
+    legacy_consumed_jti = str(payload.get("harness_stream_token_consumed_jti") or "")
+    if legacy_consumed_jti:
+        consumed_jtis.add(legacy_consumed_jti)
+    if stream_context.token_jti in consumed_jtis:
+        raise token_error("Local Agent stream token has already been used")
+    now = utc_now()
+    ordered_consumed_jtis = [
+        *ordered_previous_consumed_jtis,
+        stream_context.token_jti,
+    ]
+    if legacy_consumed_jti and legacy_consumed_jti not in ordered_consumed_jtis:
+        ordered_consumed_jtis.insert(0, legacy_consumed_jti)
+    bridge_task.payload_json = {
+        **payload,
+        "harness_stream_token_consumed_at": now.isoformat(),
+        "harness_stream_token_consumed_jti": stream_context.token_jti,
+        "harness_stream_token_consumed_jtis": ordered_consumed_jtis,
+        "harness_stream_token_last_consumed_at": now.isoformat(),
+    }
+    bridge_task.updated_at = now
+    session.commit()

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Cable, Database, FileText, Layers, Radar } from "lucide-react";
+import { Bot, Cable, FileText, Layers, Radar } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, type BadgeTone } from "../../../components/ui/badge";
@@ -40,8 +40,13 @@ export function KnowledgePage() {
     [agents.data?.items, selectedAgentId],
   );
   const sources = knowledgeSources.data?.items ?? [];
-  const visibleSources = filterKnowledgeSources(sources, sourceFilter);
   const stats = knowledgeStats(sources);
+  const filterCount = (filter: KnowledgeSourceFilter) =>
+    filterKnowledgeSources(sources, filter).length;
+  const longDescription = text(
+    "Dify 和 Coze 可在本地证据不足时参与运行时检索，LangChain Retriever 保存 grounding adapter 配置，RAGFlow 和本地端点仍为配置和预检状态。",
+    "Dify and Coze can participate in runtime retrieval, LangChain Retriever stores grounding adapter config, and RAGFlow/local endpoints remain configuration and readiness only.",
+  );
 
   return (
     <ConsoleShell title={text("知识库", "Knowledge Base")}>
@@ -51,10 +56,10 @@ export function KnowledgePage() {
             <h1 className="text-lg font-semibold text-slate-950">
               {text("知识库", "Knowledge Base")}
             </h1>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
+            <p className="mt-1 max-w-3xl truncate text-sm leading-6 text-slate-500" title={longDescription}>
               {text(
-                "集中管理本地文档索引和外部知识库 API 配置。Dify 和 Coze 可在本地证据不足时参与运行时检索，LangChain Retriever 保存 grounding adapter 配置，RAGFlow 和本地端点仍为配置和预检状态。",
-                "Manage local document indexes and external knowledge API configuration. Dify and Coze can participate in runtime retrieval, LangChain Retriever stores grounding adapter config, and RAGFlow/local endpoints remain configuration and readiness only.",
+                "集中管理本地文档索引和外部知识库 API 配置；筛选按钮显示当前结果数。",
+                "Manage local indexes and external knowledge APIs; filter buttons show current result counts.",
               )}
             </p>
           </div>
@@ -65,7 +70,6 @@ export function KnowledgePage() {
                   <Bot className="h-4 w-4" />
                   {text("智能体作用域", "Agent scope")}
                 </div>
-                <Badge tone="info">{selectedAgentId}</Badge>
               </CardHeader>
               <div className="p-3">
                 <MenuSelect
@@ -91,12 +95,11 @@ export function KnowledgePage() {
           </div>
         </section>
 
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <KnowledgeMetric icon={<Layers className="h-4 w-4" />} label="全部来源" value={sources.length} tone="info" />
           <KnowledgeMetric icon={<FileText className="h-4 w-4" />} label="本地入库" value={stats.local} tone="success" />
           <KnowledgeMetric icon={<Cable className="h-4 w-4" />} label="API 配置" value={stats.api} tone="warning" />
           <KnowledgeMetric icon={<Radar className="h-4 w-4" />} label="可用" value={stats.usable} tone="success" />
-          <KnowledgeMetric icon={<Database className="h-4 w-4" />} label="当前筛选" value={visibleSources.length} tone="neutral" />
         </section>
 
         <section className="flex flex-wrap gap-2">
@@ -112,7 +115,12 @@ export function KnowledgePage() {
               }`}
               onClick={() => setSourceFilter(option.id)}
             >
-              <span className="block font-semibold">{option.label}</span>
+              <span className="flex items-center justify-between gap-3 font-semibold">
+                <span>{option.label}</span>
+                <span className="rounded border border-current/20 px-1.5 py-0.5 font-mono text-[10px]">
+                  {filterCount(option.id)}
+                </span>
+              </span>
               <span className="text-[11px] text-slate-500">{option.description}</span>
             </button>
           ))}
