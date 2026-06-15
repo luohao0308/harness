@@ -184,7 +184,7 @@ class UserSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
-    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     roles_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -1954,7 +1954,7 @@ class AgentTemplate(Base):
     icon: Mapped[str] = mapped_column(String(32), nullable=False)
     tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

@@ -232,6 +232,124 @@ class TestSAMLProviderServiceDelete:
         assert result is False
 
 
+class TestSAMLProviderServiceGetByEntityId:
+    """Test SAML provider retrieval by entity ID - critical for IdP-initiated SSO."""
+
+    def test_get_provider_by_entity_id_success(self, db_session: Session, sample_idp_metadata: dict):
+        """Test retrieving provider by valid entity ID returns correct provider."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+        created = service.create_provider(**sample_idp_metadata)
+
+        retrieved = service.get_provider_by_entity_id(sample_idp_metadata["entity_id"])
+        assert retrieved is not None
+        assert retrieved.id == created.id
+        assert retrieved.entity_id == sample_idp_metadata["entity_id"]
+        assert retrieved.name == created.name
+
+    def test_get_provider_by_entity_id_not_found(self, db_session: Session):
+        """Test retrieving provider with invalid entity ID returns None."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+        provider = service.get_provider_by_entity_id("http://nonexistent.entity.id")
+
+        assert provider is None
+
+    def test_get_provider_by_entity_id_multiple_providers(
+        self, db_session: Session, sample_idp_metadata: dict
+    ):
+        """Test that correct provider is returned when multiple providers exist."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+
+        # Create first provider
+        provider1 = service.create_provider(**sample_idp_metadata)
+
+        # Create second provider with different entity ID
+        metadata2 = {
+            **sample_idp_metadata,
+            "name": "Azure AD SSO",
+            "entity_id": "https://sts.windows.net/tenant-id/",
+        }
+        provider2 = service.create_provider(**metadata2)
+
+        # Retrieve by first entity ID
+        retrieved1 = service.get_provider_by_entity_id(sample_idp_metadata["entity_id"])
+        assert retrieved1 is not None
+        assert retrieved1.id == provider1.id
+        assert retrieved1.entity_id == sample_idp_metadata["entity_id"]
+
+        # Retrieve by second entity ID
+        retrieved2 = service.get_provider_by_entity_id(metadata2["entity_id"])
+        assert retrieved2 is not None
+        assert retrieved2.id == provider2.id
+        assert retrieved2.entity_id == metadata2["entity_id"]
+
+    def test_get_provider_by_entity_id_case_sensitivity(
+        self, db_session: Session, sample_idp_metadata: dict
+    ):
+        """Test that entity ID lookup is case-sensitive."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+        service.create_provider(**sample_idp_metadata)
+
+        # Try to retrieve with different case
+        uppercase_entity_id = sample_idp_metadata["entity_id"].upper()
+        retrieved = service.get_provider_by_entity_id(uppercase_entity_id)
+
+        # Should not match due to case sensitivity
+        assert retrieved is None
+
+    def test_get_provider_by_entity_id_whitespace_handling(
+        self, db_session: Session, sample_idp_metadata: dict
+    ):
+        """Test that entity ID with extra whitespace does not match."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+        service.create_provider(**sample_idp_metadata)
+
+        # Try to retrieve with leading/trailing whitespace
+        entity_id_with_spaces = f"  {sample_idp_metadata['entity_id']}  "
+        retrieved = service.get_provider_by_entity_id(entity_id_with_spaces)
+
+        # Should not match due to whitespace
+        assert retrieved is None
+
+    def test_get_provider_by_entity_id_empty_string(self, db_session: Session):
+        """Test that empty string entity ID returns None."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+        provider = service.get_provider_by_entity_id("")
+
+        assert provider is None
+
+    def test_get_provider_by_entity_id_inactive_provider(
+        self, db_session: Session, sample_idp_metadata: dict
+    ):
+        """Test that inactive provider with matching entity ID is still returned."""
+        from app.services.saml_provider_service import SAMLProviderService
+
+        service = SAMLProviderService(db_session)
+
+        # Create active provider
+        created = service.create_provider(**sample_idp_metadata)
+
+        # Mark it as inactive
+        service.update_provider(created.id, is_active=False)
+
+        # Should still return the provider (caller decides how to handle inactive status)
+        retrieved = service.get_provider_by_entity_id(sample_idp_metadata["entity_id"])
+        assert retrieved is not None
+        assert retrieved.id == created.id
+        assert retrieved.is_active is False
+
+
 class TestSAMLProviderServiceValidation:
     """Test validation logic for SAML provider metadata."""
 

@@ -20,12 +20,12 @@ from app.main import app  # noqa: E402
 AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def db_session() -> Generator[Session, None, None]:
+    # Create a unique in-memory database for each test
     engine = create_engine(
-        "sqlite+pysqlite://",
+        "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
     Base.metadata.create_all(bind=engine)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -34,6 +34,7 @@ def db_session() -> Generator[Session, None, None]:
         yield session
     finally:
         session.close()
+        engine.dispose()
 
 
 @pytest.fixture(autouse=True)

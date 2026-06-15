@@ -153,7 +153,7 @@ export function SuccessChecklistStep({ onContinue, onViewDocs }: SuccessChecklis
           disabled={!allComplete || isLoading}
           className="w-full rounded-lg bg-blue-600 px-8 py-3 text-base font-medium text-white shadow-sm transition-all duration-200 hover:bg-blue-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600 disabled:hover:shadow-sm disabled:active:scale-100 sm:w-auto"
           type="button"
-          aria-label="Continue to dashboard"
+          aria-label="Continue to Dashboard"
         >
           Continue to Dashboard
         </button>
@@ -162,7 +162,7 @@ export function SuccessChecklistStep({ onContinue, onViewDocs }: SuccessChecklis
           onClick={onViewDocs}
           className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-8 py-3 text-base font-medium text-slate-700 shadow-sm transition-all duration-200 hover:bg-slate-50 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 active:scale-95 sm:w-auto"
           type="button"
-          aria-label="View documentation"
+          aria-label="View Documentation"
         >
           View Documentation
           <ExternalLink className="h-4 w-4" aria-hidden="true" />

@@ -9,241 +9,14 @@
  * testing such features when they are added.
  */
 import { expect, test, type Page } from "@playwright/test";
+import { setupOnboardingMocks } from "./fixtures";
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5177|15174)\/api\/.*/;
 
-type OnboardingState = {
-  id: string;
-  organization_id: string;
-  user_id: string;
-  current_step: number;
-  completed: boolean;
-  skipped: boolean;
-  demo_loaded: boolean;
-  provider_json: Record<string, unknown>;
-  agent_id: string | null;
-  demo_task_id: string | null;
-  created_at: string;
-  updated_at: string;
-  completed_at: string | null;
-};
-
-type SystemHealthCheck = {
-  database: { status: "healthy" | "unhealthy"; message?: string };
-  secrets: { status: "configured" | "missing"; message?: string };
-  models: { status: "available" | "unavailable"; message?: string };
-};
-
-type ApiState = {
-  onboardingState: OnboardingState;
-  systemHealth: SystemHealthCheck;
-  autoFixAvailable: {
-    database?: boolean;
-    secrets?: boolean;
-  };
-};
-
-function createInitialState(step = 1): ApiState {
-  return {
-    onboardingState: {
-      id: "onboarding-001",
-      organization_id: "org-001",
-      user_id: "user-001",
-      current_step: step,
-      completed: false,
-      skipped: false,
-      demo_loaded: false,
-      provider_json: {},
-      agent_id: null,
-      demo_task_id: null,
-      created_at: "2026-06-14T00:00:00.000Z",
-      updated_at: "2026-06-14T00:00:00.000Z",
-      completed_at: null,
-    },
-    systemHealth: {
-      database: { status: "healthy" },
-      secrets: { status: "configured" },
-      models: { status: "available" },
-    },
-    autoFixAvailable: {},
-  };
-}
-
-async function setupMockApi(page: Page, state: ApiState) {
-  await page.route(API_RE, async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    const path = url.pathname;
-    const method = request.method();
-
-    // Auth
-    if (path === "/api/auth/me" && method === "GET") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: "user-001",
-          email: "test@example.com",
-          role: "admin",
-        }),
-      });
-      return;
-    }
-
-    // Get onboarding state
-    if (path === "/api/onboarding/state" && method === "GET") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(state.onboardingState),
-      });
-      return;
-    }
-
-    // System health check (hypothetical endpoint for auto-fix features)
-    if (path === "/api/system/health" && method === "GET") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(state.systemHealth),
-      });
-      return;
-    }
-
-    // Auto-fix database initialization (hypothetical endpoint)
-    if (path === "/api/system/auto-fix/database" && method === "POST") {
-      if (!state.autoFixAvailable.database) {
-        await route.fulfill({
-          status: 400,
-          contentType: "application/json",
-          body: JSON.stringify({
-            error: "Auto-fix not available",
-            detail: "Database is already initialized or manual intervention required",
-          }),
-        });
-        return;
-      }
-
-      // Simulate successful auto-fix
-      state.systemHealth.database = { status: "healthy", message: "Database initialized successfully" };
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          message: "Database tables created and migrations applied",
-        }),
-      });
-      return;
-    }
-
-    // Auto-fix secret generation (hypothetical endpoint)
-    if (path === "/api/system/auto-fix/secrets" && method === "POST") {
-      if (!state.autoFixAvailable.secrets) {
-        await route.fulfill({
-          status: 400,
-          contentType: "application/json",
-          body: JSON.stringify({
-            error: "Auto-fix not available",
-            detail: "Secrets are already configured or manual setup required",
-          }),
-        });
-        return;
-      }
-
-      // Simulate successful auto-fix
-      state.systemHealth.secrets = { status: "configured", message: "Secrets generated successfully" };
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          message: "JWT secret and encryption keys generated",
-          secrets_generated: ["JWT_SECRET", "ENCRYPTION_KEY"],
-        }),
-      });
-      return;
-    }
-
-    // Update onboarding state
-    if (path === "/api/onboarding/state" && method === "PATCH") {
-      const payload = JSON.parse(request.postData() ?? "{}");
-      state.onboardingState = {
-        ...state.onboardingState,
-        ...payload,
-        updated_at: new Date().toISOString(),
-      };
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(state.onboardingState),
-      });
-      return;
-    }
-
-    // Create agent
-    if (path === "/api/agents/definitions" && method === "POST") {
-      const payload = JSON.parse(request.postData() ?? "{}");
-      state.onboardingState.agent_id = payload.id;
-      await route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: payload.id,
-          name: payload.name,
-          description: payload.description,
-          role: payload.role,
-          model_provider: payload.model_provider,
-          model_name: payload.model_name,
-          status: "ACTIVE",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }),
-      });
-      return;
-    }
-
-    // Load demo data
-    if (path === "/api/demo/load" && method === "POST") {
-      state.onboardingState.demo_task_id = "demo-task-001";
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          status: "loaded",
-          agent_ids: ["first-run-agent"],
-          task_id: "demo-task-001",
-        }),
-      });
-      return;
-    }
-
-    // Complete onboarding
-    if (path === "/api/onboarding/complete" && method === "POST") {
-      state.onboardingState.completed = true;
-      state.onboardingState.completed_at = new Date().toISOString();
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(state.onboardingState),
-      });
-      return;
-    }
-
-    // Default fallback
-    await route.fulfill({
-      status: 404,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "Not found" }),
-    });
-  });
-}
-
 test.describe("Onboarding Wizard - Auto-fix Features", () => {
   test("should successfully load demo data on first attempt", async ({ page }) => {
-    const state = createInitialState(4);
-    state.onboardingState.agent_id = "first-run-agent";
-    await setupMockApi(page, state);
+    const state = await setupOnboardingMocks(page, { initialStep: 4 });
+    state.onboarding.agent_id = "first-run-agent";
 
     await page.goto("/onboarding?step=4");
 
@@ -259,15 +32,14 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
     await expect(page.locator("text=演示运行已创建")).toBeVisible();
 
     // Verify demo was loaded
-    expect(state.onboardingState.demo_task_id).toBe("demo-task-001");
+    expect(state.onboarding.demo_task_id).toBe("demo-task-001");
   });
 
   test("should handle demo data already loaded scenario", async ({ page }) => {
     const state = createInitialState(4);
-    state.onboardingState.agent_id = "first-run-agent";
-    state.onboardingState.demo_loaded = true;
-    state.onboardingState.demo_task_id = "existing-demo-task";
-    await setupMockApi(page, state);
+    state.onboarding.agent_id = "first-run-agent";
+    state.onboarding.demo_loaded = true;
+    state.onboarding.demo_task_id = "existing-demo-task";
 
     await page.goto("/onboarding?step=4");
 
@@ -291,7 +63,6 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
     };
     state.autoFixAvailable.database = true;
 
-    await setupMockApi(page, state);
     await page.goto("/onboarding");
 
     // Wizard should still load (health checks are hypothetical)
@@ -308,7 +79,6 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
     };
     state.autoFixAvailable.secrets = true;
 
-    await setupMockApi(page, state);
     await page.goto("/onboarding?step=2");
 
     // Step 2 should load normally
@@ -328,8 +98,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
 
   test("should retry demo load after fixing issues", async ({ page }) => {
     const state = createInitialState(4);
-    state.onboardingState.agent_id = "first-run-agent";
-    await setupMockApi(page, state);
+    state.onboarding.agent_id = "first-run-agent";
 
     await page.goto("/onboarding?step=4");
 
@@ -348,10 +117,9 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
 
   test("should handle provider endpoint auto-detection", async ({ page }) => {
     const state = createInitialState(2);
-    state.onboardingState.provider_json = {
+    state.onboarding.provider_json = {
       provider: "deepseek",
     };
-    await setupMockApi(page, state);
 
     await page.goto("/onboarding?step=2");
 
@@ -365,7 +133,6 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
 
   test("should auto-save progress when moving between steps", async ({ page }) => {
     const state = createInitialState(1);
-    await setupMockApi(page, state);
 
     await page.goto("/onboarding");
 
@@ -379,13 +146,12 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
     await page.waitForTimeout(300);
 
     // Verify state was auto-saved
-    expect(state.onboardingState.current_step).toBe(2);
-    expect(state.onboardingState.provider_json).toHaveProperty("provider");
+    expect(state.onboarding.current_step).toBe(2);
+    expect(state.onboarding.provider_json).toHaveProperty("provider");
   });
 
   test("should handle agent template pre-filling", async ({ page }) => {
     const state = createInitialState(3);
-    await setupMockApi(page, state);
 
     await page.goto("/onboarding?step=3");
 
@@ -407,7 +173,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
 
   test("should auto-recover from transient API failures", async ({ page }) => {
     const state = createInitialState(4);
-    state.onboardingState.agent_id = "first-run-agent";
+    state.onboarding.agent_id = "first-run-agent";
 
     let apiCallCount = 0;
     await page.route(API_RE, async (route) => {
@@ -435,7 +201,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify(state.onboardingState),
+          body: JSON.stringify(state.onboarding),
         });
         return;
       }
@@ -458,7 +224,7 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
         }
 
         // Second attempt succeeds
-        state.onboardingState.demo_task_id = "demo-task-001";
+        state.onboarding.demo_task_id = "demo-task-001";
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -473,11 +239,11 @@ test.describe("Onboarding Wizard - Auto-fix Features", () => {
 
       // Complete onboarding
       if (path === "/api/onboarding/complete" && method === "POST") {
-        state.onboardingState.completed = true;
+        state.onboarding.completed = true;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify(state.onboardingState),
+          body: JSON.stringify(state.onboarding),
         });
         return;
       }
