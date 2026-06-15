@@ -410,6 +410,102 @@ export type AgentAssignment = {
   completed_at: string | null;
 };
 
+export type LocalAgentPairing = {
+  id: string;
+  agent_id: string;
+  pair_code: string;
+  pair_token: string | null;
+  command: string | null;
+  status: string;
+  expires_at: string;
+  created_at: string;
+};
+
+export type LocalAgentConnection = {
+  id: string;
+  agent_id: string;
+  owner_user_id: string;
+  pairing_token_id: string | null;
+  onboarding_confirmed: boolean;
+  display_name: string;
+  adapter_kind: string;
+  protocol_version: string;
+  bridge_version: string;
+  status: string;
+  workspace_root: string | null;
+  capabilities_json: Record<string, unknown>;
+  risk_capabilities_json: string[];
+  last_seen_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentConnectionPage = {
+  items: LocalAgentConnection[];
+};
+
+export type LocalAgentConversationBinding = {
+  id: string;
+  connection_id: string;
+  agent_id: string;
+  agent_session_id: string;
+  adapter_session_id: string | null;
+  resume_mode: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentConversationBindingPage = {
+  items: LocalAgentConversationBinding[];
+};
+
+export type LocalAgentSendMessagePayload = {
+  content: string;
+  client_message_id: string;
+  workspace_context_provided?: boolean;
+  workspace_mode?: AgentChatStreamPayload["mode"];
+  model_provider?: string | null;
+  model_name?: string | null;
+  messages?: AgentChatStreamMessage[];
+  active_leaf_id?: string | null;
+  active_branch_id?: string | null;
+  pinned_node_ids?: string[];
+  context_window_turns?: number;
+  tool_mentions?: ToolMention[];
+  attachment_names?: string[];
+  attachments?: AgentAttachmentPayload[];
+  context_max_tokens?: number;
+  compressed_context?: AgentChatStreamPayload["compressed_context"];
+};
+
+export type LocalAgentSendMessageResponse = {
+  bridge_task_id: string;
+  run_id: string;
+  agent_session_id: string;
+  user_message_id: string;
+  status: string;
+};
+
+export type LocalAgentBindingTask = {
+  id: string;
+  connection_id: string;
+  binding_id: string;
+  agent_session_id: string;
+  run_id: string;
+  user_message_id: string;
+  client_message_id: string;
+  status: string;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentBindingTaskPage = {
+  items: LocalAgentBindingTask[];
+};
+
 export type AgentHandoff = {
   id: string;
   run_id: string;
@@ -3173,6 +3269,87 @@ export async function createTask(payload: TaskCreatePayload) {
 
 export async function listAgents() {
   return listAgentsPage();
+}
+
+export async function createLocalAgentPairingToken(agentId: string) {
+  const scope: Record<string, unknown> = {
+    executable: true,
+    adapters: ["hao", "codex", "claude_code"],
+  };
+  return request<LocalAgentPairing>("/api/agents/local-agent/pairing-tokens", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: agentId,
+      ttl_minutes: 10,
+      scope,
+    }),
+  });
+}
+
+export async function revokeLocalAgentPairingToken(tokenId: string) {
+  return request<LocalAgentPairing>(`/api/agents/local-agent/pairing-tokens/${tokenId}/revoke`, {
+    method: "POST",
+  });
+}
+
+export async function listLocalAgentConnections() {
+  return request<LocalAgentConnectionPage>("/api/agents/local-agent/connections");
+}
+
+export async function updateLocalAgentConnection(connectionId: string, payload: { display_name: string }) {
+  return request<LocalAgentConnection>(`/api/agents/local-agent/connections/${connectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function revokeLocalAgentConnection(connectionId: string) {
+  return request<LocalAgentConnection>(`/api/agents/local-agent/connections/${connectionId}/revoke`, {
+    method: "POST",
+  });
+}
+
+export async function listLocalAgentConversationBindings(connectionId: string) {
+  return request<LocalAgentConversationBindingPage>(
+    `/api/agents/local-agent/connections/${connectionId}/bindings`,
+  );
+}
+
+export async function bindLocalAgentConversation(
+  connectionId: string,
+  payload: {
+    agent_session_id?: string | null;
+    title?: string | null;
+    adapter_session_id?: string | null;
+    resume_mode?: "native_resume" | "context_replay_new_session";
+  } = {},
+) {
+  return request<LocalAgentConversationBinding>(
+    `/api/agents/local-agent/connections/${connectionId}/bindings`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function listLocalAgentBindingTasks(bindingId: string) {
+  return request<LocalAgentBindingTaskPage>(
+    `/api/agents/local-agent/bindings/${bindingId}/tasks`,
+  );
+}
+
+export async function sendLocalAgentMessage(
+  bindingId: string,
+  payload: LocalAgentSendMessagePayload,
+) {
+  return request<LocalAgentSendMessageResponse>(
+    `/api/agents/local-agent/bindings/${bindingId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function listAgentsPage(options: { cursor?: string | null; limit?: number } = {}) {
