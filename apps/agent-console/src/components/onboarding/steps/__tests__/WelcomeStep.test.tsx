@@ -35,7 +35,7 @@ describe("WelcomeStep", () => {
 
     render(<WelcomeStep onGetStarted={onGetStarted} />);
 
-    const getStartedButton = screen.getByRole("button", { name: /get started/i });
+    const getStartedButton = screen.getByRole("button", { name: /start setup wizard/i });
     expect(getStartedButton).toBeInTheDocument();
 
     await user.click(getStartedButton);
