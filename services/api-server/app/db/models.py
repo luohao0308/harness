@@ -188,7 +188,7 @@ class SAMLAssertionUsage(Base):
         UniqueConstraint("assertion_id", name="saml_assertion_usage_assertion_uidx"),
         Index("ix_saml_assertion_usage_provider", "provider_id"),
         Index("ix_saml_assertion_usage_expires", "expires_at"),
-        Index("ix_saml_assertion_usage_created", "created_at"),
+        Index("ix_saml_assertion_usage_used", "used_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
