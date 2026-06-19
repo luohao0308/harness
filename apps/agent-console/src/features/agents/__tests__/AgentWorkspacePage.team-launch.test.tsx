@@ -142,13 +142,16 @@ function localBinding(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
+function renderPage(
+  fetchMock: ReturnType<typeof vi.fn>,
+  initialEntry = "/agents/default/workspace",
+) {
   vi.stubGlobal("fetch", fetchMock);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const renderResult = render(
-    <MemoryRouter initialEntries={["/agents/default/workspace"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <Routes>
           <Route path="/agents/:agentId/workspace" element={<AgentWorkspacePage />} />
@@ -2520,8 +2523,16 @@ describe("AgentWorkspacePage Team launcher", () => {
     expect((await screen.findAllByText(/等待 Claude Code 本地工具审批/)).length).toBeGreaterThan(0);
     const approvalLink = screen
       .getAllByRole("link", { name: "运行详情" })
-      .find((link) => link.getAttribute("href") === "/runs/run-v6#approvals");
+      .find((link) => {
+        const href = link.getAttribute("href") ?? "";
+        return href.startsWith("/runs/run-v6?") && href.endsWith("#approvals");
+      });
     expect(approvalLink).toBeDefined();
+    const approvalUrl = new URL(approvalLink?.getAttribute("href") ?? "", "http://localhost");
+    expect(approvalUrl.searchParams.get("conversation_id")).toMatch(/^local-agent:/);
+    expect(approvalUrl.searchParams.get("return_to")).toMatch(
+      /^\/agents\/default\/workspace\?conversation_id=local-agent%3A/,
+    );
   });
 
   it("does not let stale local Agent pending state block cloud Agent submit after switching back", async () => {
@@ -3970,5 +3981,182 @@ describe("AgentWorkspacePage Team launcher", () => {
     expect(
       screen.queryByRole("button", { name: "Local leaked question" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("restores the requested local conversation when returning from Run Detail", async () => {
+    window.localStorage.setItem(
+      "harness.workspace.v3.default.conversations",
+      JSON.stringify({
+        version: 2,
+        currentConversationId: "cloud-conversation",
+        conversations: [
+          {
+            id: "cloud-conversation",
+            title: "Cloud conversation",
+            created_at: now,
+            updated_at: now,
+            rootNodeId: "root",
+            activeLeafId: "cloud-user",
+            pinnedNodeIds: [],
+            dismissedPlanNodeIds: [],
+            draft: "",
+            contextWindowTurns: 8,
+            contextCompressions: {},
+            nodesById: {
+              root: {
+                id: "root",
+                parent_id: null,
+                children_ids: ["cloud-user"],
+                role: "system",
+                content: "Agent Workspace Pro root",
+                state: "done",
+                metadata: {},
+                tool_calls: [],
+                artifacts: [],
+                created_at: now,
+              },
+              "cloud-user": {
+                id: "cloud-user",
+                parent_id: "root",
+                children_ids: [],
+                role: "user",
+                content: "CLOUD_SHOULD_NOT_STAY_SELECTED",
+                state: "done",
+                metadata: {},
+                tool_calls: [],
+                artifacts: [],
+                created_at: now,
+              },
+            },
+          },
+          {
+            id: "local-agent:binding-local-1",
+            title: "Local returned conversation",
+            created_at: now,
+            updated_at: "2026-05-24T00:01:00Z",
+            rootNodeId: "root",
+            activeLeafId: "local-user",
+            pinnedNodeIds: [],
+            dismissedPlanNodeIds: [],
+            draft: "",
+            contextWindowTurns: 8,
+            contextCompressions: {},
+            nodesById: {
+              root: {
+                id: "root",
+                parent_id: null,
+                children_ids: ["local-user"],
+                role: "system",
+                content: "Agent Workspace Pro root",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-local-1",
+                    agent_session_id: "session-local-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: now,
+              },
+              "local-user": {
+                id: "local-user",
+                parent_id: "root",
+                children_ids: [],
+                role: "user",
+                content: "LOCAL_RETURN_TARGET",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-local-1",
+                    agent_session_id: "session-local-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: "2026-05-24T00:01:00Z",
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection()] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({
+          items: [
+            localBinding({
+              id: "binding-local-1",
+              connection_id: "conn-local-1",
+              agent_session_id: "session-local-1",
+              updated_at: now,
+            }),
+          ],
+        });
+      }
+      if (path === "/api/agents/sessions/session-local-1/messages" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "local-message-1",
+              session_id: "session-local-1",
+              agent_id: "default",
+              role: "user",
+              content: "LOCAL_RETURN_TARGET",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-local-1",
+                agent_session_id: "session-local-1",
+              },
+              created_at: now,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-local-1/tasks" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock, "/agents/default/workspace?conversation_id=local-agent%3Abinding-local-1");
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentConversationId).toBe("local-agent:binding-local-1");
+    });
+    expect(await screen.findByText("LOCAL_RETURN_TARGET")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /关闭本地 Agent/ })).toBeInTheDocument();
   });
 });

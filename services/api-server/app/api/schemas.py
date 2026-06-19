@@ -296,7 +296,7 @@ class AgentChatStreamRequest(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    mode: Literal["chat", "markdown_plan", "plan", "cli_agent"] = Field(
+    mode: Literal["chat", "markdown_plan", "plan", "goal", "cli_agent"] = Field(
         default="chat",
         description="Workspace 输入模式",
     )
@@ -318,9 +318,15 @@ class AgentChatStreamRequest(BaseModel):
             "multi_agent 强制具名 Agent 编排，subagent 强制派生可检查子 Agent"
         ),
     )
+    specialist_slug: str | None = Field(
+        default=None,
+        description="Workspace 子 Agent 模式下显式选择的专家模板 slug",
+    )
     goal: str | None = Field(default=None, description="用户目标")
     model_provider: str | None = Field(default=None, description="本次请求选择的模型供应商")
     model_name: str | None = Field(default=None, description="本次请求选择的模型名称")
+    enable_sandbox: bool = Field(default=False, description="本次 Workspace Run 是否启用容器沙箱")
+    enable_network: bool = Field(default=False, description="本次 Workspace Run 是否启用网络访问")
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
     run_id: str | None = Field(default=None, description="继续生成时绑定的原始 Agent Run ID")
@@ -2642,7 +2648,7 @@ class LocalAgentSendMessageRequest(BaseModel):
         default=False,
         description="前端是否显式提供了当前 Workspace 上下文；为空时也禁止回放旧 session",
     )
-    workspace_mode: Literal["chat", "markdown_plan", "plan", "cli_agent"] = Field(
+    workspace_mode: Literal["chat", "markdown_plan", "plan", "goal", "cli_agent"] = Field(
         default="chat",
         description="Workspace 输入模式",
     )

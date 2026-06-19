@@ -70,6 +70,8 @@ function contextCompressionLabel(contextSummary: Record<string, unknown>) {
   return `总计 ${total} · 保留 ${numberValue(contextSummary.retained_tool_results)} · 压缩 ${numberValue(contextSummary.omitted_tool_results)}`;
 }
 
+const terminalSubagentStatuses = new Set(["SUCCESS", "FAILED", "TIMEOUT", "CANCELLED", "BUDGET_EXCEEDED"]);
+
 function JsonBlock({ value }: { value: unknown }) {
   return (
     <pre className="max-h-[360px] overflow-auto rounded-md bg-slate-950 p-3 text-[11px] leading-relaxed text-slate-100">
@@ -156,7 +158,18 @@ export function SubagentDetailPage() {
   const reactTrace = taskResult?.react_trace ?? arrayValue(result.react_trace);
   const contextSummary = taskResult?.context_summary ?? objectValue(result.context_summary);
   const artifacts: SubagentResult["artifacts"] = taskResult?.artifacts ?? [];
-  const canCancel = subagent ? ["PENDING", "RUNNING"].includes(subagent.status) : false;
+  const resultSummary = taskResult?.summary ?? stringValue(result.summary);
+  const executedToolCount = reactTrace.reduce(
+    (total, round) => total + numberValue(round.executed_tool_count),
+    0,
+  );
+  const canCancel = subagent ? ["PENDING", "QUEUED", "RUNNING"].includes(subagent.status) : false;
+  const isTerminal = subagent ? terminalSubagentStatuses.has(subagent.status) : false;
+  const structuredOutputFallback = resultSummary
+    ? specialistSummary
+      ? text("未写入结构化专家输出；上方执行结果来自 worker 结果摘要。", "No structured specialist output was written; the execution result above comes from the worker summary.")
+      : text("这个子代理未绑定专家模板，因此没有结构化专家输出；上方执行结果来自 worker 结果摘要。", "This subagent is not bound to a specialist template, so there is no structured specialist output; the execution result above comes from the worker summary.")
+    : text("尚未写入结构化专家输出。", "No structured specialist output has been written yet.");
 
   if (!subagent) {
     return (
@@ -250,18 +263,25 @@ export function SubagentDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button>
-              <Link to={`/runs/${subagent.task_id}/subagents`}>
-                <ListChecks className="h-3.5 w-3.5" /> {text("任务子代理", "Task Subagents")}
-              </Link>
-            </Button>
-            <Button
-              disabled={!canCancel || cancelMutation.isPending}
-              onClick={() => cancelMutation.mutate()}
-              variant="danger"
+            <Link
+              to={`/runs/${subagent.task_id}/subagents`}
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-[background-color,color,border-color,transform,box-shadow] hover:bg-slate-50 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
             >
-              <Ban className="h-3.5 w-3.5" /> {text("取消子代理", "Cancel Subagent")}
-            </Button>
+              <ListChecks className="h-3.5 w-3.5" /> {text("查看所属任务子代理", "View Task Subagents")}
+            </Link>
+            {canCancel ? (
+              <Button
+                disabled={cancelMutation.isPending}
+                onClick={() => cancelMutation.mutate()}
+                variant="danger"
+              >
+                <Ban className="h-3.5 w-3.5" /> {text("取消子代理", "Cancel Subagent")}
+              </Button>
+            ) : (
+              <Badge tone={isTerminal ? "neutral" : "pending"}>
+                {isTerminal ? text("终态不可取消", "Terminal state") : text("当前状态不可取消", "Cannot cancel")}
+              </Badge>
+            )}
           </div>
         </div>
       </div>
@@ -281,6 +301,8 @@ export function SubagentDetailPage() {
                 [text("完成时间", "Completed"), subagent.completed_at ? formatShortDate(subagent.completed_at) : "-"],
                 [text("工具结果", "Tool results"), String(toolResults.length)],
                 [text("产物", "Artifacts"), String(artifacts.length)],
+                [text("执行轮次", "Rounds"), String(reactTrace.length)],
+                [text("工具调用", "Tool calls"), String(executedToolCount)],
               ].map(([label, value]) => (
                 <div key={label} className="bg-white p-3">
                   <div className="text-[11px] text-slate-500">{label}</div>
@@ -288,6 +310,11 @@ export function SubagentDetailPage() {
                 </div>
               ))}
             </div>
+            {toolResults.length === 0 && resultSummary ? (
+              <div className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-500">
+                {text("本次子代理没有调用工具；worker 已完成并写入执行结果摘要。", "This subagent did not call tools; the worker completed and wrote an execution summary.")}
+              </div>
+            ) : null}
           </Card>
 
           <Card>
@@ -337,6 +364,38 @@ export function SubagentDetailPage() {
         </section>
 
         <section className="col-span-8 space-y-4">
+          <Card className={subagent.status === "SUCCESS" ? "border-emerald-200 bg-emerald-50/30" : undefined}>
+            <CardHeader>
+              <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
+                <FileText className="h-3 w-3" /> {text("执行结果", "Execution Result")}
+              </div>
+              <Badge tone={statusTone(subagent.status)}>{statusLabel(subagent.status)}</Badge>
+            </CardHeader>
+            <div className="space-y-2 p-3 text-sm text-slate-700">
+              {resultSummary ? (
+                <div className="font-medium text-slate-900">{resultSummary}</div>
+              ) : (
+                <div className="text-xs text-slate-500">
+                  {text("子代理尚未写入执行结果摘要。", "The subagent has not written an execution summary yet.")}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
+                <span>
+                  {text("状态", "Status")} <span className="font-mono text-slate-700">{statusLabel(subagent.status)}</span>
+                </span>
+                <span>
+                  {text("完成于", "Completed at")}{" "}
+                  <span className="font-mono text-slate-700">
+                    {subagent.completed_at ? formatShortDate(subagent.completed_at) : "-"}
+                  </span>
+                </span>
+                <span>
+                  {text("轨迹", "Trace")} <span className="font-mono text-slate-700">{reactTrace.length}</span>
+                </span>
+              </div>
+            </div>
+          </Card>
+
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-1.5 text-[11px] tracking-widest text-slate-500">
@@ -353,7 +412,7 @@ export function SubagentDetailPage() {
                 <JsonBlock value={specialistOutput?.output_json ?? taskResult?.specialist_output} />
               ) : (
                 <div className="py-8 text-center text-xs text-slate-500">
-                  {text("尚未写入结构化专家输出。", "No structured specialist output has been written yet.")}
+                  {structuredOutputFallback}
                 </div>
               )}
             </div>
@@ -380,8 +439,7 @@ export function SubagentDetailPage() {
               </span>
             </CardHeader>
             <div className="border-b border-slate-100 p-3 text-xs text-slate-600">
-              {taskResult?.summary ??
-                stringValue(result.summary) ??
+              {resultSummary ??
                 text("子代理尚未写入结果摘要。", "The subagent has not written a result summary yet.")}
             </div>
             <Table>
@@ -409,7 +467,9 @@ export function SubagentDetailPage() {
                 {artifacts.length === 0 && (
                   <tr>
                     <Td colSpan={6} className="py-8 text-center text-slate-500">
-                      {text("暂无可预览产物。工具成功返回后会在这里聚合展示。", "No previewable artifacts yet. Successful tool outputs will appear here.")}
+                      {resultSummary
+                        ? text("本次没有生成可预览产物；执行结果已记录在摘要中。", "No previewable artifacts were generated; the execution result is recorded in the summary.")
+                        : text("暂无可预览产物。工具成功返回后会在这里聚合展示。", "No previewable artifacts yet. Successful tool outputs will appear here.")}
                     </Td>
                   </tr>
                 )}
@@ -453,7 +513,9 @@ export function SubagentDetailPage() {
                 {toolResults.length === 0 && (
                   <tr>
                     <Td colSpan={5} className="py-8 text-center text-slate-500">
-                      {text("暂无工具执行结果。", "No tool execution results yet.")}
+                      {resultSummary
+                        ? text("本次子代理没有调用工具；worker 已完成并写入执行结果摘要。", "This subagent did not call tools; the worker completed and wrote an execution summary.")
+                        : text("暂无工具执行结果。", "No tool execution results yet.")}
                     </Td>
                   </tr>
                 )}

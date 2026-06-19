@@ -92,7 +92,7 @@ def get_agent_run_workspace(
     ).scalar_one_or_none()
     return AgentRunWorkspaceResponse(
         run=run,
-        plan=_plan_response(plan) if plan is not None else None,
+        plan=build_plan_response(plan, session=session) if plan is not None else None,
         events=[EventResponse.model_validate(event) for event in events],
         knowledge_grounding=_knowledge_grounding_response(
             session,
@@ -109,7 +109,7 @@ def get_agent_run_workspace(
             context_manifest=context_manifest,
             model_calls=model_calls,
         ),
-        subagents=[SubagentResponse.model_validate(subagent) for subagent in subagents],
+        subagents=[_subagent_response(subagent) for subagent in subagents],
         tool_calls=[
             _tool_call_response(call, trace_id=trace_ids.get(("tool", call.id)))
             for call in tool_calls

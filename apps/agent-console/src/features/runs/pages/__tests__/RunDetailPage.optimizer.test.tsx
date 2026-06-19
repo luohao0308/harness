@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +19,7 @@ function workspacePayload() {
   return {
     run: {
       id: "run-1",
+      agent_id: "default",
       title: "Optimizer run",
       goal: "Use token optimizer",
       status: "COMPLETED",
@@ -168,16 +170,107 @@ function langGraphWorkspacePayload() {
   };
 }
 
-function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
+function failedOrchestrationWorkspacePayload() {
+  const base = workspacePayload();
+  return {
+    ...base,
+    run: {
+      ...base.run,
+      status: "FAILED",
+      max_subagents: 5,
+    },
+    events: [
+      {
+        id: "event-failed",
+        task_id: "run-1",
+        agent_run_id: null,
+        sequence: 13,
+        event_type: "STEP_FAILED",
+        payload_json: {
+          step_key: "generate_outline",
+          summary: "agent 客服 is not attached to capability read_file",
+          tool_call_id: "tool-call-1",
+          permission_boundary: "agent_capability_attachment",
+        },
+        actor_type: "system",
+        actor_id: null,
+        trace_id: "trace-1",
+        created_at: "2026-05-25T00:00:02Z",
+      },
+      {
+        id: "event-agent",
+        task_id: "run-1",
+        agent_run_id: null,
+        sequence: 22,
+        event_type: "AGENT_ASSIGNMENT_CREATED",
+        payload_json: {
+          assignment_id: "assignment-1",
+          agent_id: "coder",
+          status: "PENDING",
+        },
+        actor_type: "system",
+        actor_id: null,
+        trace_id: "trace-1",
+        created_at: "2026-05-25T00:00:03Z",
+      },
+    ],
+    assignments: [
+      {
+        id: "assignment-1",
+        run_id: "run-1",
+        agent_id: "coder",
+        parent_assignment_id: null,
+        step_key: null,
+        role: "coder",
+        status: "PENDING",
+        input_json: {},
+        output_json: {},
+        created_at: "2026-05-25T00:00:03Z",
+        started_at: null,
+        completed_at: null,
+      },
+      {
+        id: "assignment-2",
+        run_id: "run-1",
+        agent_id: "reviewer",
+        parent_assignment_id: null,
+        step_key: null,
+        role: "reviewer",
+        status: "SUCCESS",
+        input_json: {},
+        output_json: { summary: "reviewer inspected outputs" },
+        created_at: "2026-05-25T00:00:04Z",
+        started_at: "2026-05-25T00:00:04Z",
+        completed_at: "2026-05-25T00:00:05Z",
+      },
+    ],
+    handoffs: [
+      {
+        id: "handoff-1",
+        run_id: "run-1",
+        from_assignment_id: "assignment-1",
+        to_assignment_id: "assignment-2",
+        handoff_type: "reduce_input",
+        status: "COMPLETED",
+        payload_json: {},
+        created_at: "2026-05-25T00:00:05Z",
+        completed_at: "2026-05-25T00:00:05Z",
+      },
+    ],
+  };
+}
+
+function renderPage(fetchMock: ReturnType<typeof vi.fn>, initialEntry = "/runs/run-1") {
   vi.stubGlobal("fetch", fetchMock);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <MemoryRouter initialEntries={["/runs/run-1"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={queryClient}>
         <Routes>
           <Route path="/runs/:runId" element={<RunDetailPage />} />
+          <Route path="/agents/:agentId/workspace" element={<div>workspace target</div>} />
         </Routes>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -186,6 +279,7 @@ function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.sessionStorage.clear();
 });
 
 describe("RunDetailPage token optimizer evidence", () => {
@@ -225,5 +319,148 @@ describe("RunDetailPage token optimizer evidence", () => {
     expect(screen.getAllByText(/graph: triage/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/tool: raw_network/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/denial: bridge_required/).length).toBeGreaterThan(0);
+  });
+
+  it("shows failure diagnosis and executable multi-agent orchestration evidence", async () => {
+    const user = userEvent.setup();
+    const executedPayload = failedOrchestrationWorkspacePayload();
+    executedPayload.assignments = executedPayload.assignments.map((assignment) => ({
+      ...assignment,
+      status: "SUCCESS",
+    }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents/runs/run-1/workspace") {
+        return jsonResponse(failedOrchestrationWorkspacePayload());
+      }
+      if (path === "/api/evals/datasets") return jsonResponse({ items: [], next_cursor: null });
+      if (path === "/api/agents/runs/run-1/orchestrate/execute" && init?.method === "POST") {
+        return jsonResponse({
+          run_id: "run-1",
+          strategy: "parallel_fanout_reduce",
+          routing_reasoning: "coder handles file writes",
+          assignments: executedPayload.assignments,
+          handoffs: executedPayload.handoffs,
+          message: "executed",
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("失败原因")).toBeInTheDocument();
+    expect(screen.getByText("agent 客服 is not attached to capability read_file")).toBeInTheDocument();
+    expect(screen.getByText("步骤 generate_outline")).toBeInTheDocument();
+    expect(screen.getByText("多智能体编排")).toBeInTheDocument();
+    expect(screen.getAllByText("coder").length).toBeGreaterThan(0);
+    expect(screen.getByText("reviewer inspected outputs")).toBeInTheDocument();
+    expect(within(screen.getByText(/reduce_input:/).closest("div")!).getByText("已完成")).toBeInTheDocument();
+    expect(screen.getByText("0/5")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /执行多智能体/ }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/agents/runs/run-1/orchestrate/execute"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect((await screen.findAllByText(/executed 当前证据/)).length).toBeGreaterThan(0);
+  });
+
+  it("keeps execute orchestration clickable when all assignments are already successful", async () => {
+    const user = userEvent.setup();
+    const completed = failedOrchestrationWorkspacePayload();
+    completed.assignments = completed.assignments.map((assignment) => ({
+      ...assignment,
+      status: "SUCCESS",
+    }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents/runs/run-1/workspace") return jsonResponse(completed);
+      if (path === "/api/evals/datasets") return jsonResponse({ items: [], next_cursor: null });
+      if (path === "/api/agents/runs/run-1/orchestrate/execute" && init?.method === "POST") {
+        return jsonResponse({
+          run_id: "run-1",
+          strategy: "parallel_fanout_reduce",
+          routing_reasoning: "already complete",
+          assignments: completed.assignments,
+          handoffs: completed.handoffs,
+          message: "already complete",
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    const executeButton = await screen.findByRole("button", { name: /多智能体已完成/ });
+    expect(executeButton).not.toBeDisabled();
+
+    await user.click(executeButton);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/agents/runs/run-1/orchestrate/execute"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect((await screen.findAllByText(/already complete 当前证据/)).length).toBeGreaterThan(0);
+  });
+
+  it("persists the originating workspace target across a Run Detail refresh", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents/runs/run-1/workspace") {
+        return jsonResponse({
+          ...workspacePayload(),
+          run: { ...workspacePayload().run, agent_id: "support-agent" },
+        });
+      }
+      if (path === "/api/evals/datasets") return jsonResponse({ items: [], next_cursor: null });
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    const { unmount } = renderPage(
+      fetchMock,
+      "/runs/run-1?return_to=%2Fagents%2Fsupport-agent%2Fworkspace%3Fconversation_id%3Dconv-42&conversation_id=conv-42",
+    );
+    expect(await screen.findByRole("link", { name: /回到工作台/ })).toHaveAttribute(
+      "href",
+      "/agents/support-agent/workspace?conversation_id=conv-42",
+    );
+    unmount();
+
+    renderPage(fetchMock, "/runs/run-1");
+
+    expect(await screen.findByRole("link", { name: /回到工作台/ })).toHaveAttribute(
+      "href",
+      "/agents/support-agent/workspace?conversation_id=conv-42",
+    );
+  });
+
+  it("returns to the originating workspace conversation from query parameters", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path === "/api/agents/runs/run-1/workspace") {
+        return jsonResponse({
+          ...workspacePayload(),
+          run: { ...workspacePayload().run, agent_id: "support-agent" },
+        });
+      }
+      if (path === "/api/evals/datasets") return jsonResponse({ items: [], next_cursor: null });
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(
+      fetchMock,
+      "/runs/run-1?return_to=%2Fagents%2Fsupport-agent%2Fworkspace%3Fconversation_id%3Dconv-42&conversation_id=conv-42",
+    );
+
+    expect(await screen.findByRole("link", { name: /回到工作台/ })).toHaveAttribute(
+      "href",
+      "/agents/support-agent/workspace?conversation_id=conv-42",
+    );
   });
 });

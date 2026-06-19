@@ -10,7 +10,9 @@ from app.agents.model_gateway import (
 )
 from app.agents.model_gateway import (
     ModelHealthChecker,
+    model_provider_secret_provider,
     normalize_model_settings,
+    resolve_model_provider_secret,
 )
 from app.api.schemas import (
     CountItem,
@@ -32,7 +34,6 @@ from app.security.secrets import (
     SECRET_SCOPE_ORG,
     SECRET_SOURCE_ORG,
     SecretEncryptionError,
-    resolve_secret,
     upsert_secret,
 )
 from app.settings.model_pricing_sources import (
@@ -192,6 +193,7 @@ def _store_model_provider_secrets(
             provider_name = str(provider.get("name") or "").strip()
             if not provider_name:
                 continue
+            secret_provider = model_provider_secret_provider(provider)
             try:
                 row = upsert_secret(
                     session,
@@ -199,9 +201,9 @@ def _store_model_provider_secrets(
                     actor_id=principal.user_id,
                     scope=SECRET_SCOPE_ORG,
                     owner_user_id=None,
-                    provider=provider_name,
+                    provider=secret_provider,
                     purpose=SECRET_PURPOSE_MODEL_PROVIDER,
-                    secret_ref=f"secret://models/{provider_name}/api-key",
+                    secret_ref=f"secret://models/{secret_provider}/api-key",
                     secret_value=raw_key,
                 )
             except (SecretEncryptionError, ValueError) as exc:
@@ -233,15 +235,13 @@ def _model_settings_response_value(
         provider_name = str(provider.get("name") or "").strip()
         if not provider_name:
             continue
-        resolved = resolve_secret(
-            session,
+        resolved = resolve_model_provider_secret(
+            session=session,
             organization_id=organization_id,
             user_id=user_id,
-            provider=provider_name,
-            purpose=SECRET_PURPOSE_MODEL_PROVIDER,
-            env_candidates=[
-                str(provider.get("api_key_env") or ""),
-            ],
+            provider_name=provider_name,
+            secret_provider=str(provider.get("secret_provider") or ""),
+            api_key_env=str(provider.get("api_key_env") or ""),
         )
         raw_legacy = str(original.get("api_key") or "").strip()
         provider["api_key_configured"] = resolved.found or bool(

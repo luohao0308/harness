@@ -192,6 +192,7 @@ function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 afterEach(() => {
+  window.localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -397,7 +398,7 @@ describe("AgentListPage Studio controls", () => {
       return jsonResponse({ detail: `unexpected ${path}` }, 404);
     });
 
-    renderPage(fetchMock);
+    const rendered = renderPage(fetchMock);
 
     expect(await screen.findByRole("img", { name: /默认智能体 · 就绪: 1\/3/ })).toBeInTheDocument();
     expect(await screen.findByRole("img", { name: /研究智能体 · 就绪: 3\/3/ })).toBeInTheDocument();
@@ -409,6 +410,13 @@ describe("AgentListPage Studio controls", () => {
     expect(within(researchCard).getByRole("button", { name: "当前配置" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(/知识 1 · 本地 1/)).toBeInTheDocument();
     expect(screen.getByText("mcp_research")).toBeInTheDocument();
+
+    rendered.unmount();
+    renderPage(fetchMock);
+
+    const refreshedResearchCard = await screen.findByRole("group", { name: "研究智能体 配置卡" });
+    expect(within(refreshedResearchCard).getByRole("button", { name: "当前配置" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/知识 1 · 本地 1/)).toBeInTheDocument();
   });
 
   it("generates a local Agent pairing command, discovers local bridges, and revokes one", async () => {

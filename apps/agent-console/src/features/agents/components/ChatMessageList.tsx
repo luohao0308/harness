@@ -76,6 +76,10 @@ export type ChatMessageListProps = {
   activeRunId: string | null;
   runStatus?: string;
   runCreatedAt?: string;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 
   // v2 additions (Req 4 / Req 5 / Req 10)
   editingNodeId: string | null;
@@ -301,11 +305,17 @@ export const ChatMessageList = forwardRef<
 
   const lastAssistant = findLastAssistant(props.activePath);
   const lastAssistantId = lastAssistant?.id ?? null;
+  const hasGoalModeNode = props.activePath.some(
+    (node) =>
+      node.role === "assistant" &&
+      (node.metadata.workspace_mode === "goal" || Boolean(node.metadata.goal_status)),
+  );
   const showRunSummary =
     props.activeRunId != null &&
     props.activeRunId.length > 0 &&
     lastAssistant !== null &&
     lastAssistant.state === "done" &&
+    !hasGoalModeNode &&
     typeof lastAssistant.run_id === "string" &&
     lastAssistant.run_id.length > 0;
 
@@ -400,6 +410,7 @@ export const ChatMessageList = forwardRef<
               runId={props.activeRunId}
               runStatus={props.runStatus}
               runCreatedAt={props.runCreatedAt}
+              returnTarget={props.runReturnTarget}
             />
           )}
         </div>

@@ -5,7 +5,7 @@ import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { RouteSkeleton } from "../components/ui/RouteSkeleton";
 import { useAuth } from "../features/auth/AuthProvider";
-import { getOnboardingState } from "../features/tasks/api";
+import { API_BASE_URL, getOnboardingState } from "../features/tasks/api";
 
 const AgentListPage = lazy(() => import("../features/agents/pages/AgentListPage").then((module) => ({ default: module.AgentListPage })));
 const AgentWorkspacePage = lazy(() => import("../features/agents/pages/AgentWorkspacePage").then((module) => ({ default: module.AgentWorkspacePage })));
@@ -110,6 +110,30 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">
         正在验证登录状态...
+      </div>
+    );
+  }
+  if (!auth.user && auth.error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-md rounded-lg border border-red-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-600">API 连接异常</p>
+          <h1 className="mt-2 text-lg font-semibold text-slate-950">无法打开控制台页面</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            登录态验证没有完成，请确认本地 API 正在响应。
+          </p>
+          <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+            <div>API：{API_BASE_URL || "/"}</div>
+            <div className="mt-1 break-words">错误：{auth.error}</div>
+          </div>
+          <button
+            type="button"
+            className="mt-4 inline-flex h-8 items-center justify-center rounded-md border border-slate-900 bg-slate-900 px-3 text-xs font-medium text-white hover:bg-slate-800"
+            onClick={() => void auth.reload()}
+          >
+            重新验证
+          </button>
+        </div>
       </div>
     );
   }

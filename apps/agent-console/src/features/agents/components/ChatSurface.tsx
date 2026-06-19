@@ -23,13 +23,19 @@ import {
   ChevronRight,
   ListChecks,
   Paperclip,
+  PauseCircle,
+  Pencil,
+  PlayCircle,
   PlugZap,
   Target,
+  Trash2,
   X,
 } from "lucide-react";
 
-import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
 import { notifyFeedback } from "../../../components/ui/feedback-toast";
+import { Button } from "../../../components/ui/button";
+import { Textarea } from "../../../components/ui/input";
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
 import {
@@ -78,6 +84,7 @@ import { PlanApprovalPanel } from "./PlanApprovalPanel";
 import { ContextRing } from "./ContextRing";
 import { ContextSummaryManager } from "./ContextSummaryManager";
 import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
+import { editFormShouldSubmit } from "./MessageEditForm";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
 const MAX_ATTACHMENT_TEXT_BYTES = 120_000;
@@ -109,6 +116,10 @@ export type ChatSurfaceProps = {
   activeRunId: string | null;
   runStatus?: string;
   runCreatedAt?: string;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
   pendingApprovalCount: number;
   metadataUsage: UsageSummary;
   onOpenInspector: (section: InspectorSection) => void;
@@ -157,6 +168,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     activeRunId,
     runStatus,
     runCreatedAt,
+    runReturnTarget,
     metadataUsage,
     onOpenInspector,
     stream,
@@ -183,7 +195,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   } = props;
 
   const { text } = useI18n();
-  const { confirm, confirmDialog } = useConfirmDialog();
   const draft = useWorkspaceStore((state) => state.draft);
   const setDraft = useWorkspaceStore((state) => state.setDraft);
   const nodesById = useWorkspaceStore((state) => state.nodesById);
@@ -206,6 +217,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const activePath = useMemo(
     () => buildActivePath(nodesById, activeLeafId, rootNodeId),
     [nodesById, activeLeafId, rootNodeId],
+  );
+  const activeGoalNode = useMemo(
+    () => findActiveGoalNode(activePath),
+    [activePath],
   );
 
   // Raw context usage is the full visible history. Effective usage mirrors the
@@ -297,6 +312,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   );
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [goalEditOpen, setGoalEditOpen] = useState(false);
   const [planSubmitting, setPlanSubmitting] = useState(false);
   const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | "mcp" | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -321,6 +337,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [],
   );
 
+  useEffect(() => {
+    if (!activeGoalNode) setGoalEditOpen(false);
+  }, [activeGoalNode]);
+
   const attachmentNames = useMemo(
     () => attachments.map((attachment) => attachment.name),
     [attachments],
@@ -344,7 +364,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       const path = store.activePath();
       return {
         workspace_mode: workspaceMode,
-        mode: workspaceMode === "goal" ? "plan" : workspaceMode,
+        mode: workspaceMode,
         model_provider: selectedProviderId,
         model_name: selectedModelId,
         messages: serializeLocalAgentMessages(path),
@@ -606,18 +626,6 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     if (goal.length === 0) return false;
     if (stream.isStreaming || localAgentPending) return false;
 
-    if (workspaceMode === "plan" || workspaceMode === "goal") {
-      const confirmed = await confirm({
-        title: workspaceMode === "goal" ? "进入追求目标模式" : "创建规划后执行运行",
-        description:
-          workspaceMode === "goal"
-            ? "这会进入追求目标模式，并立即创建可执行运行。"
-            : "这会创建规划后执行运行，并立即触发可执行执行链路。",
-        confirmText: workspaceMode === "goal" ? "确认进入" : "确认创建",
-      });
-      if (!confirmed) return false;
-    }
-
     if (contextUsageRatio >= autoCompressionRatio) {
       const usable = isCompressionSummaryUsable({
         summary: activeCompression,
@@ -678,6 +686,91 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const handlePause = useCallback((): void => {
     stream.pause();
   }, [stream]);
+
+  const handleResumeGoal = useCallback((): void => {
+    if (!activeGoalNode) return;
+    setGoalEditOpen(false);
+    void stream.resume(activeGoalNode.id);
+  }, [activeGoalNode, stream]);
+
+  const handleEditGoal = useCallback((): void => {
+    if (!activeGoalNode) return;
+    if (stream.isStreaming && activeStream?.node_id === activeGoalNode.id) {
+      stream.pause();
+    }
+    setGoalEditOpen(true);
+  }, [activeGoalNode, activeStream, stream]);
+
+  const handleCancelGoalEdit = useCallback((): void => {
+    setGoalEditOpen(false);
+  }, []);
+
+  const handleSaveGoalEdit = useCallback(
+    async (nextGoal: string): Promise<void> => {
+      if (!activeGoalNode) return;
+      const trimmed = nextGoal.trim();
+      if (trimmed.length === 0) return;
+      const storeState = useWorkspaceStore.getState();
+      const previousGoal =
+        activeGoalNode.metadata.goal_text || findPrevUserContent(activePath, activeGoalNode.id);
+      const previousUserNode = findPrevUserNode(activePath, activeGoalNode.id);
+
+      if (stream.isStreaming && activeStream?.node_id === activeGoalNode.id) {
+        stream.pause();
+      }
+
+      if (previousUserNode) {
+        storeState.updateNode(previousUserNode.id, {
+          content: trimmed,
+        });
+      }
+
+      storeState.updateNode(activeGoalNode.id, {
+        state: "paused",
+        metadata: {
+          ...activeGoalNode.metadata,
+          workspace_mode: "goal",
+          goal_status: "paused",
+          goal_text: trimmed,
+          goal_phase: "paused",
+          goal_message: text("目标已更新，准备继续追踪。", "Goal updated and ready to resume."),
+          goal_cleared: false,
+        },
+      });
+
+      setGoalEditOpen(false);
+      onWorkspaceModeChange("goal");
+      void stream.resume(activeGoalNode.id);
+
+      if (previousGoal !== trimmed) {
+        notifyFeedback({
+          tone: "success",
+          title: text("目标已更新", "Goal updated"),
+          description: text(
+            "已基于新目标继续追踪执行。",
+            "The pursuit has resumed from the updated goal.",
+          ),
+        });
+      }
+    },
+    [activeGoalNode, activePath, activeStream, onWorkspaceModeChange, stream, text],
+  );
+
+  const handleClearGoal = useCallback((): void => {
+    if (!activeGoalNode) return;
+    setGoalEditOpen(false);
+    if (stream.isStreaming && activeStream?.node_id === activeGoalNode.id) {
+      stream.pause();
+    }
+    useWorkspaceStore.getState().updateNode(activeGoalNode.id, {
+      metadata: {
+        ...activeGoalNode.metadata,
+        goal_status: "cancelled",
+        goal_message: text("目标追踪已清除。", "Goal tracking cleared."),
+        goal_cleared: true,
+      },
+    });
+  }, [activeGoalNode, activeStream, stream, text]);
 
   const handleRetry = useCallback(
     (nodeId: string): void => {
@@ -1077,6 +1170,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         selectedLocalConnectionId={selectedLocalConnectionId}
         onLocalAgentTargetChange={onLocalAgentTargetChange}
         localAgentControl={localAgentControl}
+        runReturnTarget={runReturnTarget}
         summaryManager={
           <ContextSummaryManager
             summary={activeCompression}
@@ -1100,6 +1194,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         activeRunId={activeRunId}
         runStatus={runStatus}
         runCreatedAt={runCreatedAt}
+        runReturnTarget={runReturnTarget}
         editingNodeId={editingNodeId}
         onStartEdit={handleStartEdit}
         onCancelEdit={handleCancelEdit}
@@ -1136,6 +1231,17 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.16)]" />
               <span>{text("正在压缩上下文...", "Compressing context...")}</span>
             </div>
+          )}
+          {activeGoalNode && (
+            <GoalProgressRow
+              node={activeGoalNode}
+              isActiveStream={stream.isStreaming && activeStream?.node_id === activeGoalNode.id}
+              onPause={handlePause}
+              onResume={handleResumeGoal}
+              onEdit={handleEditGoal}
+              onClear={handleClearGoal}
+              text={text}
+            />
           )}
           <div className="relative">
             <BottomToolsPopover
@@ -1187,6 +1293,11 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               onPause={handlePause}
               isStreaming={stream.isStreaming}
               mode={workspaceMode}
+              streamingLabel={
+                activeGoalNode && activeStream?.node_id === activeGoalNode.id
+                  ? text("暂停目标", "Pause goal")
+                  : undefined
+              }
               onChangeMode={onWorkspaceModeChange}
               placeholder={placeholder}
               optionsOpen={bottomPanel !== null}
@@ -1221,7 +1332,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               }
               attachments={attachments}
               onRemoveAttachment={handleRemoveAttachment}
-              isEditLocked={editingNodeId !== null || localAgentPending}
+              isEditLocked={editingNodeId !== null || goalEditOpen || localAgentPending}
               onSlashDispatch={handleSlashDispatch}
             />
           </div>
@@ -1240,7 +1351,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             : text(`工作台 ${agentId}`, `Workspace for ${agentId}`)}
         </p>
       </footer>
-      {confirmDialog}
+      {goalEditOpen && activeGoalNode ? (
+        <GoalEditDialog
+          goal={activeGoalNode.metadata.goal_text || activeGoalNode.content || ""}
+          onCancel={handleCancelGoalEdit}
+          onSave={handleSaveGoalEdit}
+          text={text}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1695,6 +1813,304 @@ function ComposerMetadataRow({
       ))}
     </div>
   );
+}
+
+function GoalProgressRow({
+  node,
+  isActiveStream,
+  onPause,
+  onResume,
+  onEdit,
+  onClear,
+  text,
+}: {
+  node: ConversationNode;
+  isActiveStream: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  onEdit: () => void;
+  onClear: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const status = node.metadata.goal_status ?? (node.state === "paused" ? "paused" : "running");
+  const goal = node.metadata.goal_text || node.content || text("未命名目标", "Untitled goal");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const isLive = status === "running" && (isActiveStream || node.state === "streaming");
+  useEffect(() => {
+    if (!isLive) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isLive, node.id, node.metadata.goal_started_at, node.metadata.goal_elapsed_ms]);
+
+  const elapsedMs = goalElapsedMs(node, nowMs, isLive);
+  const phaseLabel = goalPhaseLabel(node.metadata.goal_phase, status, text);
+  const canResume = node.state === "paused" || status === "paused";
+  const canPause = status === "running" && isActiveStream && !canResume;
+  const titleLabel =
+    status === "completed"
+      ? text("目标已完成", "Goal completed")
+      : canResume
+        ? text("目标已暂停", "Paused goal")
+        : text("进行中的目标", "Goal in progress");
+  const resumeLabel = text("恢复目标", "Resume goal");
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mx-auto w-[calc(100%-56px)] max-w-[760px] min-w-0 rounded-[18px] border border-slate-200/90 bg-white/95 px-3 py-1.5 text-[11px] leading-4 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className={cn(
+            "mt-0.5 h-2 w-2 shrink-0 rounded-full",
+            status === "failed" || status === "cancelled"
+              ? "bg-rose-500"
+              : status === "completed"
+                ? "bg-emerald-500"
+                : status === "paused" || status === "needs_input"
+                  ? "bg-amber-500"
+                  : "animate-pulse bg-sky-500",
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-medium text-slate-900">{titleLabel}</span>
+            <span className="truncate text-slate-700" title={goal}>
+              {goal}
+            </span>
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-slate-500">
+            <span>{formatGoalElapsed(elapsedMs)}</span>
+            {phaseLabel && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span>{phaseLabel}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <IconButton
+            label={text("编辑目标", "Edit goal")}
+            onClick={onEdit}
+            disabled={status === "completed" || status === "cancelled"}
+          >
+            <Pencil aria-hidden="true" className="h-3 w-3" />
+          </IconButton>
+          {canResume ? (
+            <IconButton label={resumeLabel} onClick={onResume}>
+              <PlayCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          ) : (
+            <IconButton
+              label={text("暂停目标", "Pause goal")}
+              onClick={onPause}
+              disabled={!canPause}
+            >
+              <PauseCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          )}
+          <IconButton label={text("清除目标", "Clear goal")} onClick={onClear}>
+            <Trash2 aria-hidden="true" className="h-3 w-3" />
+          </IconButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoalEditDialog({
+  goal,
+  onCancel,
+  onSave,
+  text,
+}: {
+  goal: string;
+  onCancel: () => void;
+  onSave: (value: string) => void | Promise<void>;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const [value, setValue] = useState(goal);
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isComposingRef = useRef(false);
+
+  useEffect(() => {
+    setValue(goal);
+  }, [goal]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => textareaRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [goal]);
+
+  const canSubmit = value.trim().length > 0 && !saving;
+
+  async function submit(): Promise<void> {
+    if (!canSubmit) return;
+    setSaving(true);
+    try {
+      await onSave(value);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ConfigDialog
+      open
+      title={text("编辑目标", "Edit goal")}
+      description={text("修改当前追踪中的目标内容。", "Edit the current pursuit goal.")}
+      onClose={onCancel}
+      className="max-w-lg"
+    >
+      <div className="grid gap-4 text-xs">
+        <label className="grid gap-1.5">
+          <span className="font-medium text-slate-600">{text("目标", "Goal")}</span>
+          <Textarea
+            id="goal-edit-textarea"
+            ref={textareaRef}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancel();
+                return;
+              }
+              if (editFormShouldSubmit(event.nativeEvent, value, isComposingRef.current)) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
+            rows={5}
+            aria-label={text("编辑目标", "Edit goal")}
+            className="min-h-32 max-h-[40vh] w-full resize-y text-sm leading-6"
+          />
+        </label>
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            aria-label={text("取消编辑目标", "Cancel goal edit")}
+          >
+            {text("取消", "Cancel")}
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={!canSubmit}
+            onClick={() => {
+              void submit();
+            }}
+            aria-label={text("保存目标", "Save goal")}
+          >
+            {saving ? text("保存中", "Saving") : text("保存", "Save")}
+          </Button>
+        </div>
+      </div>
+    </ConfigDialog>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function findActiveGoalNode(activePath: ConversationNode[]): ConversationNode | null {
+  for (let index = activePath.length - 1; index >= 0; index -= 1) {
+    const node = activePath[index];
+    if (node.role !== "assistant") continue;
+    if (node.metadata.workspace_mode !== "goal" && !node.metadata.goal_status) continue;
+    if (node.metadata.goal_cleared) return null;
+    const status = node.metadata.goal_status;
+    if (status === "cancelled" || status === undefined) return null;
+    return node;
+  }
+  return null;
+}
+
+function findPrevUserContent(activePath: ConversationNode[], nodeId: string): string {
+  return findPrevUserNode(activePath, nodeId)?.content ?? "";
+}
+
+function findPrevUserNode(activePath: ConversationNode[], nodeId: string): ConversationNode | null {
+  const index = activePath.findIndex((node) => node.id === nodeId);
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const node = activePath[cursor];
+    if (node.role === "user") return node;
+  }
+  return null;
+}
+
+function goalPhaseLabel(
+  phase: string | undefined,
+  status: ConversationNode["metadata"]["goal_status"],
+  text: (zh: string, en: string) => string,
+): string {
+  if (status === "paused") return text("已暂停", "Paused");
+  if (status === "needs_input") return text("需要输入", "Needs input");
+  if (status === "failed") return text("失败", "Failed");
+  if (status === "completed") return text("已完成", "Completed");
+  if (phase === "planning") return text("规划中", "Planning");
+  if (phase === "executing") return text("执行中", "Executing");
+  if (phase === "orchestrating") return text("编排中", "Orchestrating");
+  return text("运行中", "Running");
+}
+
+function goalElapsedMs(node: ConversationNode, nowMs: number, isLive: boolean): number {
+  const serverElapsed =
+    typeof node.metadata.goal_elapsed_ms === "number" ? node.metadata.goal_elapsed_ms : 0;
+  if (!isLive) return serverElapsed;
+  const startedAtMs = parseGoalStartedAtMs(node.metadata.goal_started_at);
+  if (startedAtMs === null) return serverElapsed;
+  return Math.max(serverElapsed, nowMs - startedAtMs);
+}
+
+function parseGoalStartedAtMs(value: string | null | undefined): number | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatGoalElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.round(elapsedMs / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}m ${rest}s`;
 }
 
 async function toComposerAttachment(file: File): Promise<ComposerAttachment> {

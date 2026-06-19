@@ -3,6 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelRequest, ModelResponse
@@ -13,7 +14,16 @@ from app.agents.subagent_manager import (
     FanoutCapacityExceededError,
     SubagentManager,
 )
-from app.db.models import Agent, AgentRun, SubagentRecoveryBatch, SubagentSpecialist, Task, utc_now
+from app.db.models import (
+    Agent,
+    AgentRun,
+    ExecutionPlan,
+    SubagentRecoveryBatch,
+    SubagentSpecialist,
+    Task,
+    TaskStep,
+    utc_now,
+)
 from app.events.event_store import EventStore
 from app.main import app
 from app.tools.capabilities import CapabilityRegistry
@@ -122,6 +132,43 @@ def test_worker_success_flow_writes_started_and_completed(db_session: Session) -
     assert "MODEL_CALLED" in event_types
     assert "MODEL_RESPONSE_RECEIVED" in event_types
     assert event_types[-1] == "SUBAGENT_COMPLETED"
+
+
+def test_worker_success_syncs_origin_plan_step(db_session: Session) -> None:
+    task = create_task(db_session)
+    plan = ExecutionPlan(
+        task_id=task.id,
+        version=1,
+        status="READY",
+        plan_json={
+            "summary": "Subagent step sync",
+            "steps": [
+                {
+                    "key": "review",
+                    "description": "Run async review",
+                    "execution_mode": "async",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": True,
+                }
+            ],
+        },
+        created_at=utc_now(),
+    )
+    db_session.add(plan)
+    db_session.flush()
+    agent_run = SubagentManager(db_session).spawn(task=task, assignment={"step_key": "review"})
+    db_session.commit()
+
+    status = execute_subagent(agent_run.id, session=db_session)
+
+    assert status == "SUCCESS"
+    step = db_session.execute(
+        select(TaskStep).where(TaskStep.task_id == task.id, TaskStep.step_key == "review")
+    ).scalar_one()
+    assert step.plan_id == plan.id
+    assert step.status == "STEP_COMPLETED"
+    assert step.assigned_agent_id == agent_run.id
+    assert step.error_message is None
 
 
 def test_worker_executes_assignment_tools_and_writes_results(

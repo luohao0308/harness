@@ -99,11 +99,75 @@ describe("DashboardPage Demo loading", () => {
     renderPage(fetchMock);
 
     expect(await screen.findByText("Demo 数据未加载")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /一键加载 Demo/ }));
+    expect(screen.queryByRole("link", { name: /跑演示任务/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /加载演示任务/ }));
 
     await waitFor(() => {
       expect(screen.queryByText("Demo 数据未加载")).not.toBeInTheDocument();
     });
     expect(await screen.findByText("Demo 数据已存在")).toBeInTheDocument();
+  });
+
+  it("opens the loaded demo run from Quick Actions", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/onboarding/state" && method === "GET") {
+        return jsonResponse(onboardingState(true));
+      }
+      if (path === "/api/agents" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/runs" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/observability/summary" && method === "GET") {
+        return jsonResponse({ tasks_by_status: [], failed_task_total: 0 });
+      }
+      if (path === "/api/observability/cost-rollup" && method === "GET") {
+        return jsonResponse({ total_cost_usd: 0, total_runs: 0, items: [] });
+      }
+      if (path === "/api/observability/alert-events" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    const demoLink = await screen.findByRole("link", { name: /打开演示运行/ });
+    expect(demoLink).toHaveAttribute("href", "/runs/demo-run-1");
+    expect(screen.queryByRole("link", { name: /跑演示任务/ })).not.toBeInTheDocument();
+  });
+
+  it("links the Active Alerts card to alert rules", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/onboarding/state" && method === "GET") {
+        return jsonResponse(onboardingState(true));
+      }
+      if (path === "/api/agents" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/runs" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/observability/summary" && method === "GET") {
+        return jsonResponse({ tasks_by_status: [{ name: "FAILED", count: 2 }], failed_task_total: 2 });
+      }
+      if (path === "/api/observability/cost-rollup" && method === "GET") {
+        return jsonResponse({ total_cost_usd: 0, total_runs: 0, items: [] });
+      }
+      if (path === "/api/observability/alert-events" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    const alertsLink = await screen.findByRole("link", { name: /Active Alerts/ });
+    expect(alertsLink).toHaveAttribute("href", "/observability/alerts");
   });
 });

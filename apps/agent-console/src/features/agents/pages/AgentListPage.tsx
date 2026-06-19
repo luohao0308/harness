@@ -60,11 +60,31 @@ import { AgentReadinessRing } from "../components/AgentReadinessRing";
 import { CollapsibleCapabilitySection } from "../components/CollapsibleCapabilitySection";
 import { copyText } from "../lib/clipboard";
 
+const SELECTED_AGENT_STORAGE_KEY = "harness.agent-studio.selectedAgentId.v1";
+
+function readStoredSelectedAgentId() {
+  if (typeof window === "undefined") return "default";
+  try {
+    return window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY) || "default";
+  } catch {
+    return "default";
+  }
+}
+
+function writeStoredSelectedAgentId(agentId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, agentId);
+  } catch {
+    // Selection persistence is best-effort; the in-memory state still works.
+  }
+}
+
 export function AgentListPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const agents = useQuery({ queryKey: ["agents"], queryFn: listAgents });
-  const [selectedAgentId, setSelectedAgentId] = useState("default");
+  const [selectedAgentId, setSelectedAgentId] = useState(readStoredSelectedAgentId);
   const [draftAgentId, setDraftAgentId] = useState("research-agent");
   const [draftAgentName, setDraftAgentName] = useState(text("研究智能体", "Research Agent"));
   const [draftSystemPrompt, setDraftSystemPrompt] = useState("Answer with grounded evidence and cite run details.");
@@ -444,13 +464,17 @@ export function AgentListPage() {
     localAgentConnections.data?.items.filter(
       (connection) => connection.agent_id === agentId && localAgentIsConfirmedUserFacing(connection),
     ).length ?? 0;
+  const selectConfigurationAgent = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+    writeStoredSelectedAgentId(agentId);
+  }, []);
 
   useEffect(() => {
-    if (
-      agents.data?.items.length &&
-      !agents.data.items.some((agent) => agent.id === selectedAgentId)
-    ) {
-      setSelectedAgentId(agents.data.items[0].id);
+    if (!agents.data?.items.length) return;
+    if (!agents.data.items.some((agent) => agent.id === selectedAgentId)) {
+      const fallbackAgentId = agents.data.items[0].id;
+      setSelectedAgentId(fallbackAgentId);
+      writeStoredSelectedAgentId(fallbackAgentId);
     }
   }, [agents.data?.items, selectedAgentId]);
 
@@ -570,7 +594,7 @@ export function AgentListPage() {
                   selected={agent.id === selectedAgentId}
                   knowledgeCount={readyKnowledgeCountForAgent(agent.id, index)}
                   connectionsCount={activeLocalAgentCountForAgent(agent.id)}
-                  onSelect={() => setSelectedAgentId(agent.id)}
+                  onSelect={() => selectConfigurationAgent(agent.id)}
                 />
               ))}
             </div>

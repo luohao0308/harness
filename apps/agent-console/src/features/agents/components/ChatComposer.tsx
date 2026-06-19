@@ -35,6 +35,7 @@ export type ChatComposerProps = {
   onSubmit: () => boolean | void | Promise<boolean | void>;
   onPause: () => void;
   isStreaming: boolean;
+  streamingLabel?: string;
   mode: WorkspaceMode;
   onChangeMode: (m: WorkspaceMode) => void;
   placeholder: string;
@@ -126,6 +127,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       onSubmit,
       onPause,
       isStreaming,
+      streamingLabel,
       mode,
       onChangeMode,
       placeholder,
@@ -186,7 +188,9 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     const sendDisabled = !draft.trim() || isStreaming || isEditLocked || slashOpen || submitInFlight;
     const primaryDisabled = isStreaming ? false : sendDisabled;
     const goalModeActive = mode === "goal";
-    const primaryLabel = isStreaming ? text("停止生成", "Stop generation") : text("发送", "Send");
+    const primaryLabel = isStreaming
+      ? streamingLabel ?? text("停止生成", "Stop generation")
+      : text("发送", "Send");
 
     function assignTextareaRef(node: HTMLTextAreaElement | null) {
       textareaRef.current = node;

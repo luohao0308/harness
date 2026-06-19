@@ -58,6 +58,9 @@ import { useStreamFlush } from "./useStreamFlush";
 const CONNECTION_TIMEOUT_MS = 10_000;
 /** Maximum body preview kept when the Content-Type rejects the stream. */
 const NON_SSE_PREVIEW_BYTES = 256;
+type ServerStreamErrorKind = NonNullable<
+  Extract<AgentChatStreamEvent, { type: "error" }>["kind"]
+>;
 
 export type UseChatStreamArgs = {
   agentId: string;
@@ -195,6 +198,27 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
             clearWatchdog();
             return;
           }
+          case "goal_progress": {
+            store.updateNode(assistantNodeId, {
+              run_id: event.run_id || current.run_id,
+              metadata: {
+                ...current.metadata,
+                workspace_mode: "goal",
+                goal_status: event.status,
+                goal_text: event.goal,
+                goal_phase: event.phase,
+                goal_turn: event.turn,
+                goal_step_count: event.step_count,
+                goal_message: event.message,
+                goal_started_at: event.started_at,
+                goal_elapsed_ms: event.elapsed_ms,
+                goal_run_id: event.run_id || current.run_id,
+                goal_cleared: false,
+              },
+            });
+            clearWatchdog();
+            return;
+          }
           case "delta": {
             if (firstDeltaAt === null) firstDeltaAt = performance.now();
             // Write directly to store to survive component unmount during navigation.
@@ -262,31 +286,63 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
           }
           case "done": {
             flush.drain();
+            const isGoalMode = current.metadata.workspace_mode === "goal";
+            const doneGoalStatus =
+              isGoalMode
+                ? goalStatusFromRunStatus(event.status)
+                : current.metadata.goal_status;
+            const doneState = isGoalMode && event.status === "PAUSED" ? "paused" : "done";
             store.updateNode(assistantNodeId, {
-              state: "done",
+              state: doneState,
               run_id: event.run_id,
               metadata: {
                 ...current.metadata,
                 knowledge_grounding: event.knowledge_grounding,
+                ...(doneGoalStatus ? { goal_status: doneGoalStatus } : {}),
+                ...(isGoalMode
+                  ? {
+                      goal_phase: goalPhaseFromRunStatus(event.status),
+                      goal_run_id: event.run_id,
+                      goal_step_count: event.step_count,
+                      goal_message: event.message || current.metadata.goal_message,
+                    }
+                  : {}),
               },
             });
             releaseActiveStream();
+            if (
+              isGoalMode &&
+              event.status === "PAUSED" &&
+              typeof current.metadata.goal_message === "string" &&
+              (current.metadata.goal_message.includes("推进轮次上限") ||
+                current.metadata.goal_message.includes("单次推进上限"))
+            ) {
+              window.setTimeout(() => {
+                const latest = useWorkspaceStore.getState().nodesById[assistantNodeId];
+                if (!latest || latest.state !== "paused") return;
+                void resume(assistantNodeId);
+              }, 0);
+            }
             return;
           }
           case "error": {
             flush.drain();
             const detail = event.message;
-            const isRateLimited = /429|rate[- ]?limit|too many requests/i.test(
-              detail,
-            );
+            const kind = classifyServerStreamErrorKind(event.kind, detail);
             const meta: ConversationErrorMeta = {
-              kind: isRateLimited ? "rate_limited" : "server",
+              kind,
               detail,
               happened_at: new Date().toISOString(),
             };
             store.updateNode(assistantNodeId, {
               state: "error",
-              metadata: mergeErrorMeta(current.metadata, meta),
+              run_id: event.run_id ?? current.run_id,
+              metadata: {
+                ...mergeErrorMeta(current.metadata, meta),
+                ...(current.metadata.workspace_mode === "goal" || current.metadata.goal_status
+                  ? { goal_status: "failed" as const, goal_message: detail }
+                  : {}),
+              },
             });
             releaseActiveStream();
             return;
@@ -466,6 +522,21 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
     // The terminal state is decided inside driveStream's catch block — this
     // keeps the error-over-abort precedence (Req 4.8) in one place.
     current.abort();
+    const store = useWorkspaceStore.getState();
+    const activeStream = store.activeStream;
+    if (!activeStream) return;
+    const node = store.nodesById[activeStream.node_id];
+    if (!node || node.metadata.workspace_mode !== "goal") return;
+    store.updateNode(activeStream.node_id, {
+      state: "paused",
+      metadata: {
+        ...node.metadata,
+        goal_status: "paused",
+        goal_phase: "paused",
+        goal_elapsed_ms: clientGoalElapsedMs(node, activeStream.started_at),
+        goal_message: "目标追踪已暂停。",
+      },
+    });
   }, []);
 
   const resume = useCallback(
@@ -508,7 +579,18 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         extractToolMentions(prevUser.content, tools).length,
       );
       store.updateNode(pausedNodeId, {
-        metadata: { ...paused.metadata, workspace_mode: mode },
+        state: "streaming",
+        metadata: {
+          ...paused.metadata,
+          workspace_mode: mode,
+          ...(paused.metadata.workspace_mode === "goal" || paused.metadata.goal_status
+            ? {
+                goal_status: "running" as const,
+                goal_message: "目标追踪继续执行中。",
+                goal_cleared: false,
+              }
+            : {}),
+        },
       });
 
       await driveStream({
@@ -601,7 +683,7 @@ function toolAwareWorkspaceMode(mode: WorkspaceMode, toolMentionCount: number): 
 }
 
 function backendWorkspaceMode(mode: WorkspaceMode): AgentChatStreamPayload["mode"] {
-  return mode === "goal" ? "plan" : mode;
+  return mode;
 }
 
 function inferWorkspaceOrchestrationMode({
@@ -814,6 +896,26 @@ async function tryParseDetail(res: Response): Promise<string | undefined> {
   }
 }
 
+function classifyServerStreamErrorKind(
+  explicitKind: ServerStreamErrorKind | undefined,
+  detail: string,
+): ServerStreamErrorKind {
+  if (explicitKind === "model_auth") return explicitKind;
+  if (explicitKind === "rate_limited") return explicitKind;
+  if (
+    /HTTP\s+(401|403)\b/i.test(detail) &&
+    (/api\s*key/i.test(detail) ||
+      /upstream model gateway/i.test(detail) ||
+      /(model|provider).*(auth|credential|key)/i.test(detail))
+  ) {
+    return "model_auth";
+  }
+  if (/429|rate[- ]?limit|too many requests/i.test(detail)) {
+    return "rate_limited";
+  }
+  return explicitKind ?? "server";
+}
+
 /**
  * Translate a caught value into the final assistant-node terminal state.
  * Called from the single `catch` in `driveStream`.
@@ -845,11 +947,30 @@ function writeTerminalState(
 
   if (context.aborted && !context.watchdogTimedOut) {
     // User pressed pause. Req 4.7.
-    if (isEmptyAssistantPlaceholder(current)) {
+    const isGoalNode =
+      current.metadata.workspace_mode === "goal" || Boolean(current.metadata.goal_status);
+    if (!isGoalNode && isEmptyAssistantPlaceholder(current)) {
       store.removeLeafNode(assistantNodeId);
       return;
     }
-    store.updateNode(assistantNodeId, { state: "paused" });
+    const activeStream = store.activeStream;
+    store.updateNode(assistantNodeId, {
+      state: "paused",
+      metadata: {
+        ...current.metadata,
+        ...(current.metadata.workspace_mode === "goal" || current.metadata.goal_status
+          ? {
+              goal_status: "paused" as const,
+              goal_phase: "paused",
+              goal_elapsed_ms: clientGoalElapsedMs(
+                current,
+                activeStream?.node_id === assistantNodeId ? activeStream.started_at : undefined,
+              ),
+              goal_message: "目标追踪已暂停。",
+            }
+          : {}),
+      },
+    });
     return;
   }
 
@@ -876,6 +997,46 @@ function writeTerminalState(
     state: "error",
     metadata: mergeErrorMeta(current.metadata, meta),
   });
+}
+
+function goalStatusFromRunStatus(
+  status: string,
+): "running" | "paused" | "needs_input" | "completed" | "failed" | "cancelled" {
+  if (status === "COMPLETED") return "completed";
+  if (status === "PAUSED") return "paused";
+  if (status === "WAITING_APPROVAL") return "needs_input";
+  if (status === "FAILED") return "failed";
+  if (status === "CANCELLED") return "cancelled";
+  return "running";
+}
+
+function goalPhaseFromRunStatus(status: string): string {
+  if (status === "COMPLETED") return "completed";
+  if (status === "WAITING_APPROVAL") return "needs_input";
+  if (status === "FAILED") return "failed";
+  if (status === "CANCELLED") return "cancelled";
+  if (status === "PAUSED") return "paused";
+  return "running";
+}
+
+function clientGoalElapsedMs(node: ConversationNode, streamStartedAt?: number): number {
+  const serverElapsed =
+    typeof node.metadata.goal_elapsed_ms === "number" ? node.metadata.goal_elapsed_ms : 0;
+  const startedAtMs = parseGoalStartedAtMs(node.metadata.goal_started_at);
+  if (startedAtMs !== null) return Math.max(serverElapsed, Date.now() - startedAtMs);
+  if (typeof streamStartedAt === "number") {
+    return Math.max(
+      serverElapsed,
+      serverElapsed + Math.max(0, performance.now() - streamStartedAt),
+    );
+  }
+  return serverElapsed;
+}
+
+function parseGoalStartedAtMs(value: string | null | undefined): number | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function isEmptyAssistantPlaceholder(node: ConversationNode): boolean {

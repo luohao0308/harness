@@ -14,6 +14,7 @@ from app.agents.model_gateway import (
     ModelMessage,
     ModelRequest,
 )
+from app.agents.plan_steps import sync_subagent_plan_step
 from app.agents.specialists import (
     SpecialistBudgetState,
     budget_state_for_run,
@@ -98,6 +99,11 @@ def _execute_subagent_with_session(
                     "timeout_seconds": DEFAULT_SUBAGENT_TIMEOUT_SECONDS,
                 },
             )
+            sync_subagent_plan_step(
+                session=session,
+                agent_run=agent_run,
+                summary="Subagent timed out",
+            )
             session.commit()
             return agent_run.status
 
@@ -159,6 +165,11 @@ def _execute_subagent_with_session(
                     "budget_consumed": budget_state.consumed,
                 },
             )
+            sync_subagent_plan_step(
+                session=session,
+                agent_run=agent_run,
+                summary="Subagent budget exceeded",
+            )
             session.commit()
             return agent_run.status
         if agent_run.specialist_id:
@@ -185,6 +196,7 @@ def _execute_subagent_with_session(
             event_type=EventType.SUBAGENT_COMPLETED,
             payload_json={"agent_run_id": agent_run.id, "summary": summary},
         )
+        sync_subagent_plan_step(session=session, agent_run=agent_run, summary=summary)
         session.commit()
         return agent_run.status
     except Exception:
@@ -198,6 +210,7 @@ def _execute_subagent_with_session(
             event_type=EventType.SUBAGENT_FAILED,
             payload_json={"agent_run_id": agent_run.id},
         )
+        sync_subagent_plan_step(session=session, agent_run=agent_run)
         session.commit()
         raise
 

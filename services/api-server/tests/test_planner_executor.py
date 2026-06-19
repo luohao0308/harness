@@ -2,9 +2,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.executor import Executor
 from app.agents.model_gateway import ModelRequest, ModelResponse
 from app.agents.planner import PLANNER_PROMPT_VERSION, DeterministicPlanner
-from app.db.models import AgentRun, ExecutionPlan, Task, TaskStep
+from app.agents.schemas import PlanStep
+from app.db.models import AgentEvent, AgentRun, ExecutionPlan, SubagentOutput, Task, TaskStep
 from app.main import app
 from tests.conftest import AUTH_HEADERS
 
@@ -71,6 +73,68 @@ def test_planner_uses_model_generated_sync_and_async_steps(db_session: Session) 
     assert plan.planner_prompt_version == PLANNER_PROMPT_VERSION
     assert plan.quality_gates["unique_step_keys"] is True
     assert plan.quality_score > 0
+
+
+def test_planner_repairs_review_plan_with_required_expert_subagent(
+    db_session: Session,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="审查本次会话逻辑",
+        goal="审查本次会话逻辑，输出专家证据",
+        status="CREATED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_subagents=5,
+        enable_sandbox=False,
+        enable_network=False,
+    )
+    db_session.add(task)
+    db_session.flush()
+
+    plan = DeterministicPlanner().create_plan(
+        task,
+        model_content="""
+        {
+          "summary": "模型生成了全同步审查计划",
+          "steps": [
+            {
+              "key": "fetch_session_transcript",
+              "description": "Fetch the current session transcript",
+              "execution_mode": "sync",
+              "requires_sandbox": true,
+              "can_spawn_subagent": false,
+              "tool_hints": ["run_shell"],
+              "acceptance_criteria": ["拿到会话文本"],
+              "risk_level": "medium",
+              "artifact_expectations": ["session.md"]
+            },
+            {
+              "key": "summarize_logic",
+              "description": "Summarize the session logic",
+              "execution_mode": "sync",
+              "requires_sandbox": false,
+              "can_spawn_subagent": false,
+              "tool_hints": ["read_file"],
+              "acceptance_criteria": ["总结逻辑问题"],
+              "risk_level": "low",
+              "artifact_expectations": ["logic.md"]
+            }
+          ]
+        }
+        """,
+    )
+
+    expert_steps = [step for step in plan.steps if step.key == "expert_review"]
+    assert len(expert_steps) == 1
+    expert = expert_steps[0]
+    assert expert.execution_mode == "async"
+    assert expert.can_spawn_subagent is True
+    assert expert.requires_sandbox is False
+    assert expert.recommended_specialist_slug == "code-reviewer"
+    assert expert.fanout_specialist_slugs == ["code-reviewer", "safety-checker"]
+    assert any("自动补充专家审查步骤" in warning for warning in plan.validation_warnings)
 
 
 def test_start_task_repairs_invalid_model_plan(
@@ -263,7 +327,7 @@ def test_plan_api_returns_quality_report_and_step_execution_trace(
         "STEP_STARTED",
         "STEP_COMPLETED",
     ]
-    assert step["execution_trace"][1]["payload_json"]["tool_name"] == "read_file"
+    assert step["execution_trace"][1]["payload_json"]["tool_name"] == "mcp_artifact_put"
 
 
 def test_start_task_generates_plan_steps_and_completion_events(db_session: Session) -> None:
@@ -329,7 +393,8 @@ def test_start_task_rejects_missing_task() -> None:
     assert response.status_code == 404
 
 
-def test_start_task_spawns_subagent_for_async_plan(db_session: Session) -> None:
+def test_start_task_spawns_subagent_for_async_plan(db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.workers.subagent_worker.run_subagent.send", lambda _id: None)
     client = TestClient(app)
     created = client.post(
         "/api/tasks",
@@ -355,3 +420,159 @@ def test_start_task_spawns_subagent_for_async_plan(db_session: Session) -> None:
     ).scalar_one()
     async_steps = [step for step in plan.plan_json["steps"] if step["execution_mode"] == "async"]
     assert async_steps[0]["can_spawn_subagent"] is True
+
+
+def test_start_task_inline_executes_expert_subagent_when_queue_is_deferred(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class FakeGateway:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def complete(self, request_payload: ModelRequest) -> ModelResponse:
+            return ModelResponse(
+                content="""
+                {
+                  "summary": "模型遗漏专家分支",
+                  "steps": [
+                    {
+                      "key": "draft_findings",
+                      "description": "Draft review findings",
+                      "execution_mode": "sync",
+                      "requires_sandbox": false,
+                      "can_spawn_subagent": false,
+                      "tool_hints": ["write_file"],
+                      "acceptance_criteria": ["写入初步审查摘要"],
+                      "risk_level": "low",
+                      "artifact_expectations": ["findings.md"]
+                    }
+                  ]
+                }
+                """,
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={},
+                raw_response={"mode": "fake"},
+            )
+
+    def fail_queue(_agent_run_id: str) -> None:
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr("app.agents.executor.AuditedModelGateway", FakeGateway)
+    monkeypatch.setattr("app.workers.subagent_worker.run_subagent.send", fail_queue)
+    client = TestClient(app)
+    created = client.post(
+        "/api/tasks",
+        headers=AUTH_HEADERS,
+        json={
+            "title": "审查本次会话逻辑",
+            "goal": "审查本次会话逻辑，输出专家证据",
+            "model_provider": "openai-compatible",
+            "model_name": "default",
+            "enable_sandbox": False,
+        },
+    ).json()
+
+    response = client.post(f"/api/tasks/{created['id']}/start", headers=AUTH_HEADERS)
+
+    assert response.status_code == 202
+    task = db_session.get(Task, created["id"])
+    assert task is not None
+    assert task.status == "COMPLETED"
+    subagents = list(
+        db_session.execute(
+            select(AgentRun).where(AgentRun.task_id == task.id).order_by(AgentRun.id)
+        ).scalars()
+    )
+    assert len(subagents) == 2
+    assert {subagent.status for subagent in subagents} == {"SUCCESS"}
+    outputs = list(
+        db_session.execute(
+            select(SubagentOutput).where(SubagentOutput.task_id == task.id)
+        ).scalars()
+    )
+    assert len(outputs) == 2
+    event_stages = [
+        event.payload_json.get("stage")
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == task.id).order_by(AgentEvent.sequence)
+        ).scalars()
+        if isinstance(event.payload_json, dict)
+    ]
+    assert "queue_deferred" in event_stages
+    assert "inline_executor_fallback" in event_stages
+    workspace = client.get(f"/api/agents/runs/{task.id}/workspace", headers=AUTH_HEADERS)
+    assert workspace.status_code == 200
+    workspace_subagents = workspace.json()["subagents"]
+    assert {item["specialist"]["slug"] for item in workspace_subagents} == {
+        "code-reviewer",
+        "safety-checker",
+    }
+    assert all(item["output"]["output_json"] for item in workspace_subagents)
+
+
+def test_workspace_plan_stream_does_not_force_sandbox(db_session: Session) -> None:
+    goal = "只生成计划，不启用 Docker 沙箱"
+
+    response = TestClient(app).post(
+        "/api/agents/default/runs/chat/stream",
+        headers=AUTH_HEADERS,
+        json={
+            "mode": "plan",
+            "goal": goal,
+            "messages": [
+                {
+                    "id": "user-plan-no-sandbox",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": goal,
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            "active_leaf_id": "user-plan-no-sandbox",
+            "active_branch_id": "branch-plan-no-sandbox",
+            "pinned_node_ids": [],
+            "context_window_turns": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    task = db_session.execute(select(Task).where(Task.goal == goal)).scalar_one()
+    assert task.enable_sandbox is False
+    assert task.enable_network is False
+
+
+def test_executor_defaults_creative_sync_steps_to_artifact_without_sandbox(
+    db_session: Session,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="500字的小说",
+        goal="500字的小说",
+        status="CREATED",
+        model_provider="openai-compatible",
+        model_name="default",
+    )
+    db_session.add(task)
+    db_session.flush()
+    step = PlanStep(
+        key="generate_outline",
+        description="Generate a brief outline for the 500-character story.",
+        execution_mode="sync",
+        requires_sandbox=False,
+        can_spawn_subagent=False,
+        artifact_expectations=["File: outline.md with story outline."],
+    )
+
+    tool_name, tool_input = Executor(db_session)._default_tool_for_step(task=task, step=step)
+
+    assert tool_name == "mcp_artifact_put"
+    assert tool_input["name"] == "outline.md"
+    assert tool_input["idempotency_key"] == f"{task.id}:generate_outline:mcp_artifact_put"
+    assert "500字的小说" in tool_input["content"]

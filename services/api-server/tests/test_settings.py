@@ -3,8 +3,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelResponse, OpenAICompatibleModelGateway
+from app.api.settings import _model_settings_response_value, _store_model_provider_secrets
 from app.db.models import AdminAuditEvent, StoredSecret, SystemSetting
 from app.main import app
+from app.security.auth import AuthenticatedPrincipal
 from tests.conftest import AUTH_HEADERS
 
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
@@ -235,12 +237,134 @@ def test_model_settings_health_endpoint_probes_real_provider(
     assert setting.value_json["providers"][0]["last_health"]["mode"] == "probe"
     assert setting.value_json["providers"][0]["api_key"] == ""
     secret = db_session.execute(select(StoredSecret)).scalar_one()
-    assert secret.provider == "deepseek-pro"
+    assert secret.provider == "deepseek"
     assert secret.purpose == "model_provider"
     assert secret.scope == "org"
     assert secret.owner_user_id is None
     assert saved_provider["api_key_secret_id"] == secret.id
     assert "secret-key" not in secret.encrypted_value
+
+
+def test_deepseek_model_settings_store_one_secret_for_multiple_models(
+    db_session: Session,
+) -> None:
+    principal = AuthenticatedPrincipal(
+        user_id="dev-admin",
+        organization_id="dev-org",
+        roles=["admin", "engineer"],
+        role="owner",
+    )
+    value = {
+        "default_provider": "deepseek-flash",
+        "default_model": "deepseek-v4-flash",
+        "providers": [
+            {
+                "name": "deepseek-flash",
+                "label": "DeepSeek Flash",
+                "model": "deepseek-v4-flash",
+                "api_format": "openai",
+                "base_url": "https://api.deepseek.com",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "api_key": "secret-key",
+            },
+            {
+                "name": "deepseek-pro",
+                "label": "DeepSeek Pro",
+                "model": "deepseek-v4-pro",
+                "api_format": "openai",
+                "base_url": "https://api.deepseek.com",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "api_key": "",
+            },
+        ],
+        "rate_limits": {"rpm": 600, "tpm": 120000},
+        "health": {"status": "healthy", "updated_at": None},
+        "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+    }
+
+    stored = _store_model_provider_secrets(
+        session=db_session,
+        principal=principal,
+        value=value,
+    )
+    reloaded = _model_settings_response_value(
+        session=db_session,
+        organization_id=principal.organization_id,
+        user_id=principal.user_id,
+        value=stored,
+    )
+
+    secrets = list(db_session.execute(select(StoredSecret)).scalars())
+    assert [secret.provider for secret in secrets] == ["deepseek"]
+    providers = {provider["name"]: provider for provider in reloaded["providers"]}
+    assert providers["deepseek-flash"]["api_key_configured"] is True
+    assert providers["deepseek-pro"]["api_key_configured"] is True
+    assert providers["deepseek-flash"]["api_key_secret_id"] == secrets[0].id
+    assert providers["deepseek-pro"]["api_key_secret_id"] == secrets[0].id
+    assert providers["deepseek-flash"]["api_key"] == ""
+    assert providers["deepseek-pro"]["api_key"] == ""
+
+
+def test_model_settings_store_explicit_secret_provider_for_multiple_models(
+    db_session: Session,
+) -> None:
+    principal = AuthenticatedPrincipal(
+        user_id="dev-admin",
+        organization_id="dev-org",
+        roles=["admin", "engineer"],
+        role="owner",
+    )
+    value = {
+        "default_provider": "openai-compatible",
+        "default_model": "gpt-5.5",
+        "providers": [
+            {
+                "name": "openai-compatible",
+                "label": "OpenAI GPT-5.5",
+                "model": "gpt-5.5",
+                "secret_provider": "openai",
+                "api_format": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+                "api_key": "secret-openai-key",
+            },
+            {
+                "name": "openai-gpt-5-3-codex-spark",
+                "label": "OpenAI GPT-5.3 Codex Spark",
+                "model": "gpt-5.3-codex-spark",
+                "secret_provider": "openai",
+                "api_format": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+                "api_key": "",
+            },
+        ],
+        "rate_limits": {"rpm": 600, "tpm": 120000},
+        "health": {"status": "healthy", "updated_at": None},
+        "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+    }
+
+    stored = _store_model_provider_secrets(
+        session=db_session,
+        principal=principal,
+        value=value,
+    )
+    reloaded = _model_settings_response_value(
+        session=db_session,
+        organization_id=principal.organization_id,
+        user_id=principal.user_id,
+        value=stored,
+    )
+
+    secrets = list(db_session.execute(select(StoredSecret)).scalars())
+    assert [secret.provider for secret in secrets] == ["openai"]
+    providers = {provider["name"]: provider for provider in reloaded["providers"]}
+    assert providers["openai-compatible"]["api_key_configured"] is True
+    assert providers["openai-gpt-5-3-codex-spark"]["api_key_configured"] is True
+    assert providers["openai-compatible"]["api_key_secret_id"] == secrets[0].id
+    assert providers["openai-gpt-5-3-codex-spark"]["api_key_secret_id"] == secrets[0].id
+    assert providers["openai-compatible"]["api_key"] == ""
+    assert providers["openai-gpt-5-3-codex-spark"]["api_key"] == ""
 
 
 def test_model_official_status_endpoint_returns_external_reference(monkeypatch) -> None:

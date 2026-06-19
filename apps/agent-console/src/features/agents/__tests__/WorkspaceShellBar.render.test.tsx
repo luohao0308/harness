@@ -168,6 +168,24 @@ describe("WorkspaceShellBar", () => {
     expect(screen.getByText("待审批")).toBeInTheDocument();
   });
 
+  it("includes the active conversation return target in Run Detail links", () => {
+    useConsoleStore.getState().setLocale("en-US");
+
+    renderShell({
+      activeRunId: "run-123",
+      runStatus: "WAITING_APPROVAL",
+      runReturnTarget: {
+        agentId: "support-agent",
+        conversationId: "conv-42",
+      },
+    });
+
+    expect(screen.getByRole("link", { name: "运行详情" })).toHaveAttribute(
+      "href",
+      "/runs/run-123?return_to=%2Fagents%2Fsupport-agent%2Fworkspace%3Fconversation_id%3Dconv-42&conversation_id=conv-42",
+    );
+  });
+
   it("does not render unconfirmed or revoked local Agents in the target picker", () => {
     useConsoleStore.getState().setLocale("zh-CN");
     renderShell({

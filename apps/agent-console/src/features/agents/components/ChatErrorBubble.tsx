@@ -24,7 +24,8 @@
  */
 
 import { useEffect, useRef, useState, type JSX } from "react";
-import { AlertTriangle, Check, Copy, RotateCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, Check, Copy, KeyRound, RotateCw } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
@@ -34,6 +35,7 @@ import { renderMarkdown } from "../lib/markdown";
 import {
   ERROR_COPY_KEYS,
   formatErrorMessage,
+  isModelAuthError,
   type ConversationErrorMeta,
 } from "../lib/sseErrors";
 import type { ConversationNode } from "../../../stores/workspaceStore";
@@ -93,6 +95,8 @@ export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps):
   const partialContent = node.content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   const retryLabel = text(ERROR_COPY_KEYS.RETRY[0], ERROR_COPY_KEYS.RETRY[1]);
   const canRetry = onRetry !== undefined && node.metadata.retry_disabled !== true;
+  const showModelSettingsAction = isModelAuthError(error);
+  const modelSettingsLabel = text("打开模型设置", "Open Model Settings");
 
   // `justCopied` mirrors the `MessageActions` UI pattern: flip to true on a
   // successful clipboard write and auto-reset after 1500ms. A ref holds the
@@ -160,6 +164,16 @@ export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps):
           </pre>
         )}
         <div className="mt-3 flex items-center justify-end gap-2">
+          {showModelSettingsAction && (
+            <Link
+              to="/settings/models"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-[background-color,color,border-color,transform,box-shadow] hover:bg-slate-50 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+              aria-label={modelSettingsLabel}
+            >
+              <KeyRound aria-hidden="true" className="h-3.5 w-3.5" />
+              {modelSettingsLabel}
+            </Link>
+          )}
           <Button
             type="button"
             variant="ghost"
