@@ -4,6 +4,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agents.plan_steps import sync_subagent_plan_step
 from app.agents.specialists import (
     MAX_SPECIALIST_DEPTH,
     SpecialistValidationError,
@@ -361,6 +362,7 @@ class SubagentManager:
                     "error": str(exc),
                 },
             )
+            sync_subagent_plan_step(session=self.session, agent_run=agent_run, summary=str(exc))
             self.session.flush()
             raise
         output = SubagentOutput(
@@ -393,6 +395,7 @@ class SubagentManager:
                 "budget_exceeded": output.budget_exceeded_json,
             },
         )
+        sync_subagent_plan_step(session=self.session, agent_run=agent_run)
         self.session.flush()
         return output
 

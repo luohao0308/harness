@@ -230,6 +230,217 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.queryByRole("button", { name: "继续生成" })).not.toBeInTheDocument();
   });
 
+  it("renders a Codex-style active goal row above the composer", async () => {
+    const user = userEvent.setup();
+    const stream = { ...streamController(), isStreaming: true };
+    const store = useWorkspaceStore.getState();
+    const userNodeId = store.appendNode({
+      parent_id: store.rootNodeId,
+      role: "user",
+      content: "写一个完整结局的短篇",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    const assistantNodeId = store.appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "",
+      state: "streaming",
+      run_id: "run-goal-row",
+      metadata: {
+        workspace_mode: "goal",
+        goal_status: "running",
+        goal_text: "写一个完整结局的短篇",
+        goal_phase: "executing",
+        goal_elapsed_ms: 4200,
+        goal_run_id: "run-goal-row",
+      },
+      tool_calls: [],
+      artifacts: [],
+    });
+    store.setActiveStream({
+      node_id: assistantNodeId,
+      controller: new AbortController(),
+      started_at: performance.now(),
+    });
+
+    const props = renderSurface({ stream });
+
+    const goalStatus = screen
+      .getAllByRole("status")
+      .find((element) => element.textContent?.includes("进行中的目标"));
+    expect(goalStatus).toBeDefined();
+    expect(goalStatus).toHaveTextContent("进行中的目标");
+    expect(goalStatus).toHaveTextContent("写一个完整结局的短篇");
+    expect(goalStatus).toHaveTextContent("4s");
+    expect(goalStatus).not.toHaveTextContent("已推进");
+    expect(goalStatus).not.toHaveTextContent("Run Detail");
+    expect(goalStatus?.className).toContain("w-[calc(100%-56px)]");
+    expect(goalStatus?.className).toContain("py-1.5");
+
+    await user.click(goalStatus!.querySelectorAll("button")[1]);
+    expect(stream.pause).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "编辑目标" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑目标" });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.className).toContain("max-w-lg");
+    expect(dialog.className).toContain("bg-white");
+    expect(within(dialog).queryByText("目标模型")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox", { name: "编辑目标" })).toHaveValue(
+      "写一个完整结局的短篇",
+    );
+    expect(within(dialog).getByRole("button", { name: "保存目标" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "取消编辑目标" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "取消编辑目标" }));
+
+    await user.click(screen.getByRole("button", { name: "清除目标" }));
+    expect(screen.queryByText("进行中的目标")).not.toBeInTheDocument();
+  });
+
+  it("ticks active goal elapsed time locally between server progress events", async () => {
+    vi.useFakeTimers();
+    const baseNow = new Date("2026-06-19T00:00:00.000Z");
+    vi.setSystemTime(baseNow);
+    try {
+      const stream = { ...streamController(), isStreaming: true };
+      const store = useWorkspaceStore.getState();
+      const userNodeId = store.appendNode({
+        parent_id: store.rootNodeId,
+        role: "user",
+        content: "持续写完目标",
+        state: "done",
+        metadata: {},
+        tool_calls: [],
+        artifacts: [],
+      });
+      const assistantNodeId = store.appendNode({
+        parent_id: userNodeId,
+        role: "assistant",
+        content: "",
+        state: "streaming",
+        run_id: "run-goal-timer",
+        metadata: {
+          workspace_mode: "goal",
+          goal_status: "running",
+          goal_text: "持续写完目标",
+          goal_phase: "executing",
+          goal_started_at: new Date(baseNow.getTime() - 1500).toISOString(),
+          goal_elapsed_ms: 0,
+          goal_run_id: "run-goal-timer",
+        },
+        tool_calls: [],
+        artifacts: [],
+      });
+      store.setActiveStream({
+        node_id: assistantNodeId,
+        controller: new AbortController(),
+        started_at: performance.now(),
+      });
+
+      renderSurface({ stream });
+
+      const statusBefore = screen
+        .getAllByRole("status")
+        .find((element) => element.textContent?.includes("进行中的目标"));
+      expect(statusBefore).toBeDefined();
+      expect(statusBefore!).toHaveTextContent("2s");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      const statusAfter = screen
+        .getAllByRole("status")
+        .find((element) => element.textContent?.includes("进行中的目标"));
+      expect(statusAfter).toBeDefined();
+      expect(statusAfter!).toHaveTextContent("3s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes a paused active goal from the progress row", async () => {
+    const user = userEvent.setup();
+    const stream = streamController();
+    const store = useWorkspaceStore.getState();
+    const userNodeId = store.appendNode({
+      parent_id: store.rootNodeId,
+      role: "user",
+      content: "继续目标",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    const assistantNodeId = store.appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "partial",
+      state: "paused",
+      run_id: "run-paused-goal-row",
+      metadata: {
+        workspace_mode: "goal",
+        goal_status: "paused",
+        goal_text: "继续目标",
+        goal_phase: "paused",
+        goal_elapsed_ms: 1000,
+        goal_run_id: "run-paused-goal-row",
+      },
+      tool_calls: [],
+      artifacts: [],
+    });
+
+    renderSurface({ stream });
+
+    await user.click(screen.getByRole("button", { name: "恢复目标" }));
+    expect(stream.resume).toHaveBeenCalledWith(assistantNodeId);
+  });
+
+  it("keeps the goal row visible after a completed goal instead of falling back to run summary affordances", () => {
+    const store = useWorkspaceStore.getState();
+    const userNodeId = store.appendNode({
+      parent_id: store.rootNodeId,
+      role: "user",
+      content: "写个故事直到主角出现",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    store.appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "目标已达成。",
+      state: "done",
+      run_id: "run-complete",
+      metadata: {
+        workspace_mode: "goal",
+        goal_status: "completed",
+        goal_text: "写个故事直到主角出现",
+        goal_phase: "completed",
+        goal_elapsed_ms: 6400,
+        goal_message: "目标已达成。",
+        goal_run_id: "run-complete",
+      },
+      tool_calls: [],
+      artifacts: [],
+    });
+
+    renderSurface({
+      activeRunId: "run-complete",
+      runStatus: "COMPLETED",
+      runCreatedAt: "2026-06-18T07:54:48Z",
+    });
+
+    expect(screen.getByText("目标已完成")).toBeInTheDocument();
+    expect(screen.getAllByText("写个故事直到主角出现").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/已推进/)).not.toBeInTheDocument();
+    expect(screen.queryByText("查看运行详情")).not.toBeInTheDocument();
+  });
+
   it("keeps the local Agent draft when submit reports not sent", async () => {
     const user = userEvent.setup();
     const onLocalAgentSubmit = vi.fn(() => false);
@@ -453,9 +664,6 @@ describe("ChatSurface Workspace shell integration", () => {
       "ship the goal",
     );
     await user.keyboard("{Enter}");
-    const confirmDialog = await screen.findByRole("dialog", { name: "进入追求目标模式" });
-    expect(confirmDialog).toBeInTheDocument();
-    await user.click(within(confirmDialog).getByRole("button", { name: "确认进入" }));
 
     expect(stream.start).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -463,6 +671,27 @@ describe("ChatSurface Workspace shell integration", () => {
         mode: "goal",
       }),
     );
+    expect(screen.queryByRole("dialog", { name: "进入追求目标模式" })).not.toBeInTheDocument();
+  });
+
+  it("submits executable run mode without a second confirmation dialog", async () => {
+    const user = userEvent.setup();
+    const stream = streamController();
+    renderSurface({ stream, workspaceMode: "plan" });
+
+    await user.type(
+      screen.getByPlaceholderText("描述目标，创建规划后执行运行"),
+      "run the task",
+    );
+    await user.keyboard("{Enter}");
+
+    expect(stream.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "run the task",
+        mode: "plan",
+      }),
+    );
+    expect(screen.queryByRole("dialog", { name: "创建规划后执行运行" })).not.toBeInTheDocument();
   });
 
   it("opens a working model picker from slash /model", async () => {

@@ -51,6 +51,16 @@ export type ConversationNode = {
     model_call_id?: string | null;
     active_branch_id?: string | null;
     workspace_mode?: "chat" | "markdown_plan" | "plan" | "goal";
+    goal_status?: "running" | "paused" | "needs_input" | "completed" | "failed" | "cancelled";
+    goal_text?: string;
+    goal_phase?: string;
+    goal_turn?: number;
+    goal_step_count?: number;
+    goal_message?: string;
+    goal_started_at?: string | null;
+    goal_elapsed_ms?: number;
+    goal_run_id?: string;
+    goal_cleared?: boolean;
     knowledge_grounding?: string | null;
     orchestration?: Record<string, unknown>;
     error?: ConversationErrorMeta;

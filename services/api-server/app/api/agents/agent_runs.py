@@ -172,6 +172,7 @@ def plan_with_agent(
         planner_response_content,
         planner_source="llm",
         planner_attempts=1,
+        task=task,
     )
     if plan is None:
         event_store.append(
@@ -194,6 +195,7 @@ def plan_with_agent(
                 repaired_content,
                 planner_source="llm_repaired",
                 planner_attempts=2,
+                task=task,
             )
             if plan is None:
                 event_store.append(
@@ -291,7 +293,7 @@ def auto_with_agent(
         agent_id=request.agent_id,
         run_id=executed.id,
         task=executed,
-        plan=_plan_response(plan),
+        plan=build_plan_response(plan, session=session),
         orchestration=AgentOrchestrateResponse(
             run_id=executed.id,
             strategy=routing_strategy,

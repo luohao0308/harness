@@ -157,3 +157,23 @@ describe("v4 rate_limited error copy", () => {
     expect(title).toContain("429");
   });
 });
+
+describe("model auth error copy", () => {
+  it("points users at model settings instead of generic backend errors", async () => {
+    const { formatErrorMessage } = await import("../lib/sseErrors");
+    const { title, description } = formatErrorMessage(
+      {
+        kind: "model_auth",
+        detail:
+          'upstream model gateway returned HTTP 401: {"error":{"message":"Authentication Fails, Your api key: ****9b48 is invalid"}}',
+        happened_at: "2026-06-15T15:41:35.923Z",
+      },
+      (zh, _en) => zh,
+      { apiBaseUrl: "http://127.0.0.1:8000" },
+    );
+
+    expect(title).toBe("模型密钥无效");
+    expect(description).toContain("模型设置");
+    expect(description).toContain("****9b48");
+  });
+});

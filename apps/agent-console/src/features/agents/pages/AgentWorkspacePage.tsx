@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
@@ -87,13 +87,17 @@ import {
   isNodeVisibleInPath,
   summarizeUsage,
 } from "./agentWorkspaceDerive";
+import { runDetailPath } from "../lib/runLinks";
 
 export function AgentWorkspacePage() {
   const { text } = useI18n();
   const { confirm, confirmDialog } = useConfirmDialog();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { agentId = "default" } = useParams();
+  const requestedConversationId = searchParams.get("conversation_id");
+  const requestedConversationAppliedRef = useRef<string | null>(null);
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
   const [inspectorSection, setInspectorSection] = useState<InspectorSection | null>(null);
@@ -435,6 +439,13 @@ export function AgentWorkspacePage() {
     selectedLocalConnection?.id,
     selectedLocalConnectionId,
   ]);
+  const runReturnTarget = useMemo(
+    () => ({
+      agentId,
+      conversationId: currentConversationId,
+    }),
+    [agentId, currentConversationId],
+  );
 
   const inspectorArtifacts = useMemo<ConversationArtifact[]>(
     () => activePath.flatMap((node) => node.artifacts).slice(-10),
@@ -750,12 +761,21 @@ export function AgentWorkspacePage() {
 
     const v3 = v3Snapshot;
     if (v3 !== null) {
+      const requestedConversation = requestedConversationId
+        ? v3.conversations.find((conversation) => conversation.id === requestedConversationId)
+        : undefined;
+      const currentConversationIdForHydration = requestedConversation?.id ?? v3.currentConversationId;
       const cloudCurrentConversationId = currentCloudConversationId(
         v3.conversations,
-        v3.currentConversationId,
+        currentConversationIdForHydration,
       );
       const cloudSafeSnapshot =
-        cloudCurrentConversationId !== null
+        requestedConversation !== undefined
+          ? {
+              conversations: v3.conversations,
+              currentConversationId: requestedConversation.id,
+            }
+          : cloudCurrentConversationId !== null
           ? {
               conversations: v3.conversations,
               currentConversationId: cloudCurrentConversationId,
@@ -814,6 +834,12 @@ export function AgentWorkspacePage() {
 
   useEffect(() => {
     if (localAgentEnabled) return;
+    if (requestedConversationId !== null) {
+      const requestedConversation = useWorkspaceStore
+        .getState()
+        .conversations.find((conversation) => conversation.id === requestedConversationId);
+      if (isLocalAgentConversation(requestedConversation)) return;
+    }
     const store = useWorkspaceStore.getState();
     const currentConversation = store.conversations.find(
       (conversation) => conversation.id === store.currentConversationId,
@@ -825,7 +851,71 @@ export function AgentWorkspacePage() {
       return;
     }
     newConversation();
-  }, [conversations, currentConversationId, localAgentEnabled, newConversation]);
+  }, [
+    conversations,
+    currentConversationId,
+    localAgentEnabled,
+    newConversation,
+    requestedConversationId,
+  ]);
+
+  useEffect(() => {
+    if (!requestedConversationId) return;
+    if (requestedConversationAppliedRef.current === requestedConversationId) return;
+    const target = conversations.find((conversation) => conversation.id === requestedConversationId);
+    if (target === undefined) return;
+    requestedConversationAppliedRef.current = requestedConversationId;
+    const localBinding = localAgentBindingHintFromConversation(target);
+    if (localBinding !== null) {
+      selectedLocalConnectionIdRef.current = localBinding.connectionId;
+      localAgentEnabledRef.current = true;
+      localBindingFocusConnectionRef.current = null;
+      localBindingTargetHintRef.current = localBinding;
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      const bindingFromCache = queryClient
+        .getQueryData<LocalAgentConversationBindingPage>([
+          "local-agent-bindings",
+          localBinding.connectionId,
+        ])
+        ?.items.find(
+          (binding) =>
+            binding.status === "active" &&
+            localAgentBindingMatchesHint(binding, localBinding),
+        );
+      if (bindingFromCache !== undefined) {
+        localBindingTargetHintRef.current = null;
+      }
+      setActiveLocalBinding(bindingFromCache ?? null);
+      setLocalPendingAssistant(null);
+      setSelectedLocalConnectionId(localBinding.connectionId);
+      setLocalAgentEnabled(true);
+    } else {
+      localAgentEnabledRef.current = false;
+      localBindingFocusConnectionRef.current = null;
+      localBindingTargetHintRef.current = null;
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      setActiveLocalBinding(null);
+      setLocalPendingAssistant(null);
+      setLocalAgentEnabled(false);
+    }
+    if (target.id === currentConversationId) return;
+    setCurrentConversation(target.id);
+  }, [
+    conversations,
+    currentConversationId,
+    queryClient,
+    requestedConversationId,
+    setCurrentConversation,
+    setLocalPendingAssistant,
+  ]);
+
+  useEffect(() => {
+    requestedConversationAppliedRef.current = null;
+  }, [agentId]);
 
   // ─── Seed the session model override from settings defaults ────────────
   useEffect(() => {
@@ -1759,6 +1849,7 @@ export function AgentWorkspacePage() {
           activeRunId={activeRunId}
           runStatus={workspace.data?.run.status}
           runCreatedAt={workspace.data?.run.created_at}
+          runReturnTarget={runReturnTarget}
           pendingApprovalCount={pendingApprovalCount}
           metadataUsage={inspectorUsage}
           onOpenInspector={setInspectorSection}
@@ -1798,6 +1889,9 @@ export function AgentWorkspacePage() {
               isSending={localSendMutation.isPending}
               pendingApprovalCount={pendingApprovalCount}
               activeRunId={activeRunId}
+              runDetailHref={
+                activeRunId ? runDetailPath(activeRunId, runReturnTarget, "approvals") : null
+              }
               onEnabledChange={handleLocalAgentEnabledChange}
               onOpenStudio={() => navigate("/agents")}
             />
@@ -1813,6 +1907,7 @@ export function AgentWorkspacePage() {
           activeRunId={activeRunId}
           pendingApprovalCount={pendingApprovalCount}
           artifacts={inspectorArtifacts}
+          runReturnTarget={runReturnTarget}
           onClose={() => setInspectorSection(null)}
         />
       </div>
@@ -1901,6 +1996,7 @@ function LocalAgentWorkspaceControl({
   isSending,
   pendingApprovalCount,
   activeRunId,
+  runDetailHref,
   onEnabledChange,
   onOpenStudio,
 }: {
@@ -1912,6 +2008,7 @@ function LocalAgentWorkspaceControl({
   isSending: boolean;
   pendingApprovalCount: number;
   activeRunId: string | null;
+  runDetailHref: string | null;
   onEnabledChange: (enabled: boolean) => void;
   onOpenStudio: () => void;
 }) {
@@ -1990,10 +2087,10 @@ function LocalAgentWorkspaceControl({
       {enabled && usesClaudePermissionBridge && pendingApprovalCount > 0 ? (
         <span className="max-w-[18rem] truncate text-[11px] text-amber-700">
           等待 Claude Code 本地工具审批
-          {activeRunId ? (
+          {activeRunId && runDetailHref ? (
             <a
               className="ml-1 font-medium underline-offset-2 hover:underline"
-              href={`/runs/${activeRunId}#approvals`}
+              href={runDetailHref}
             >
               运行详情
             </a>

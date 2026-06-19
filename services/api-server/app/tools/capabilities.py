@@ -540,6 +540,43 @@ class CapabilityRegistry:
             )
         self.session.flush()
 
+    def ensure_builtin_tool_attachment(
+        self,
+        agent_id: str,
+        tool_name: str,
+        *,
+        attached_by: str | None = None,
+        priority: int = 100,
+    ) -> AgentCapabilityAttachment:
+        agent = self._agent(agent_id)
+        version = self.ensure_builtin_capabilities().get(tool_name)
+        if version is None:
+            raise CapabilityResolutionError(f"unknown builtin capability: {tool_name}")
+        existing = self.session.execute(
+            select(AgentCapabilityAttachment).where(
+                AgentCapabilityAttachment.agent_id == agent.id,
+                AgentCapabilityAttachment.capability_version_id == version.id,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.enabled = True
+            existing.priority = min(existing.priority, priority)
+            self.session.flush()
+            return existing
+        attachment = AgentCapabilityAttachment(
+            organization_id=agent.organization_id,
+            agent_id=agent.id,
+            capability_id=version.capability_id,
+            capability_version_id=version.id,
+            enabled=True,
+            priority=priority,
+            attached_by=attached_by,
+            attached_at=utc_now(),
+        )
+        self.session.add(attachment)
+        self.session.flush()
+        return attachment
+
     def resolve_tool(
         self,
         *,

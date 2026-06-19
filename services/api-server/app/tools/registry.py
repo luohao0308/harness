@@ -133,7 +133,7 @@ class ToolRegistry(BaseModel):
                 description="通过 MCP Adapter 写入任务 Artifact 记录。",
                 category="mcp",
                 source="mcp",
-                risk_level="high",
+                risk_level="low",
                 requires_sandbox=False,
                 network_policy="none",
                 timeout_seconds=30,

@@ -144,4 +144,53 @@ def _tool_call_response(
         created_at=tool_call.created_at,
     )
 
+
+def _subagent_response(agent_run: AgentRun) -> SubagentResponse:
+    return SubagentResponse(
+        id=agent_run.id,
+        task_id=agent_run.task_id,
+        parent_agent_id=agent_run.parent_agent_id,
+        agent_type=agent_run.agent_type,
+        status=agent_run.status,
+        specialist_id=agent_run.specialist_id,
+        fanout_batch_id=_subagent_context_string(agent_run, "fanout_batch_id"),
+        fanout_index=_subagent_context_int(agent_run, "fanout_index"),
+        fanout_total=_subagent_context_int(agent_run, "fanout_total"),
+        dynamic_fanout_origin=_subagent_context_string(agent_run, "dynamic_fanout_origin"),
+        dynamic_fanout_requested_by=_subagent_context_string(
+            agent_run,
+            "dynamic_fanout_requested_by",
+        ),
+        dynamic_fanout_reason=_subagent_context_string(agent_run, "dynamic_fanout_reason"),
+        context_json=agent_run.context_json,
+        started_at=agent_run.started_at,
+        completed_at=agent_run.completed_at,
+        timeout_at=agent_run.timeout_at,
+        specialist=(
+            SubagentSpecialistSummary.model_validate(agent_run.specialist)
+            if agent_run.specialist is not None
+            else None
+        ),
+        output=(
+            SubagentOutputResponse.model_validate(agent_run.subagent_output)
+            if agent_run.subagent_output is not None
+            else None
+        ),
+    )
+
+
+def _subagent_context_string(agent_run: AgentRun, key: str) -> str | None:
+    value = agent_run.context_json.get(key)
+    return str(value) if value is not None else None
+
+
+def _subagent_context_int(agent_run: AgentRun, key: str) -> int | None:
+    value = agent_run.context_json.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
 __all__ = [name for name in globals() if not name.startswith("__") and name != "annotations"]

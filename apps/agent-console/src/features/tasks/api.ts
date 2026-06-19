@@ -45,6 +45,7 @@ const DEV_ADMIN_BEARER_TOKEN =
   import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-admin-token" : "");
 const AUTH_ACCESS_TOKEN_KEY = "harness.auth.access_token";
 const AUTH_REFRESH_TOKEN_KEY = "harness.auth.refresh_token";
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 5_000;
 export const AUTH_SESSION_EXPIRED_EVENT = "harness.auth.session_expired";
 export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
 const KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS = 12_000;
@@ -196,6 +197,7 @@ export type TaskStatus =
 
 export type Task = {
   id: string;
+  agent_id?: string | null;
   title: string;
   goal: string;
   status: TaskStatus;
@@ -829,8 +831,9 @@ export type AgentAttachmentPayload = {
 };
 
 export type AgentChatStreamPayload = {
-  mode?: "chat" | "markdown_plan" | "plan";
+  mode?: "chat" | "markdown_plan" | "plan" | "goal";
   orchestration_mode?: "auto" | "none" | "multi_agent" | "subagent";
+  specialist_slug?: string | null;
   goal?: string | null;
   model_provider?: string | null;
   model_name?: string | null;
@@ -900,9 +903,29 @@ export type WorkspaceContextCompressionResponse = {
   error?: string | null;
 };
 
+export type GoalProgressStatus =
+  | "running"
+  | "paused"
+  | "needs_input"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
 export type AgentChatStreamEvent =
   | { type: "delta"; content: string }
   | { type: "think_delta"; content: string }
+  | {
+      type: "goal_progress";
+      run_id: string;
+      goal: string;
+      status: GoalProgressStatus;
+      phase: string;
+      turn: number;
+      step_count: number;
+      message: string;
+      started_at: string | null;
+      elapsed_ms: number;
+    }
   | {
       type: "orchestration";
       mode: string;
@@ -974,7 +997,13 @@ export type AgentChatStreamEvent =
       message: string;
       knowledge_grounding?: string | null;
     }
-  | { type: "error"; message: string; recoverable?: boolean };
+  | {
+      type: "error";
+      message: string;
+      recoverable?: boolean;
+      kind?: "server" | "rate_limited" | "model_auth";
+      run_id?: string;
+    };
 
 export type AgentEvent = {
   id: string;
@@ -2977,7 +3006,7 @@ export async function logout() {
 }
 
 export async function getMe() {
-  return request<AuthMeResponse>("/api/auth/me");
+  return request<AuthMeResponse>("/api/auth/me", { timeoutMs: AUTH_BOOTSTRAP_TIMEOUT_MS });
 }
 
 export async function uploadCurrentUserAvatar(file: File) {
@@ -4739,6 +4768,20 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
   if (eventType === "think_delta") {
     return { type: "think_delta", content: String(payload.content ?? "") };
   }
+  if (eventType === "goal_progress") {
+    return {
+      type: "goal_progress",
+      run_id: String(payload.run_id ?? ""),
+      goal: String(payload.goal ?? ""),
+      status: goalProgressStatus(payload.status),
+      phase: String(payload.phase ?? "running"),
+      turn: Number(payload.turn ?? 0),
+      step_count: Number(payload.step_count ?? 0),
+      message: String(payload.message ?? ""),
+      started_at: typeof payload.started_at === "string" ? payload.started_at : null,
+      elapsed_ms: Number(payload.elapsed_ms ?? 0),
+    };
+  }
   if (eventType === "run_created") {
     const contextAssembly = asRecord(payload.context_assembly);
     return {
@@ -4839,6 +4882,8 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
       type: "error",
       message: String(payload.message ?? "stream failed"),
       recoverable: Boolean(payload.recoverable ?? false),
+      kind: chatStreamErrorKind(payload.kind),
+      run_id: typeof payload.run_id === "string" ? payload.run_id : undefined,
     };
   }
   return null;
@@ -4848,6 +4893,27 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function chatStreamErrorKind(value: unknown): "server" | "rate_limited" | "model_auth" | undefined {
+  if (value === "server" || value === "rate_limited" || value === "model_auth") {
+    return value;
+  }
+  return undefined;
+}
+
+function goalProgressStatus(value: unknown): GoalProgressStatus {
+  if (
+    value === "running" ||
+    value === "paused" ||
+    value === "needs_input" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  return "running";
 }
 
 function artifactType(value: unknown): "code" | "json" | "diff" | "chart" | "text" {

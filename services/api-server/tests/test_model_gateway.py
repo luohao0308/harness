@@ -13,6 +13,7 @@ from app.agents.model_gateway import (
     AnthropicCompatibleModelGateway,
     AuditedModelGateway,
     MockModelGateway,
+    ModelAuthError,
     ModelCircuitBreaker,
     ModelGatewayError,
     ModelMessage,
@@ -27,6 +28,11 @@ from app.db.models import ContextAssemblyManifest, ModelCall, SystemSetting, Tas
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.main import app
+from app.security.secrets import (
+    SECRET_PURPOSE_MODEL_PROVIDER,
+    SECRET_SCOPE_ORG,
+    upsert_secret,
+)
 from tests.conftest import AUTH_HEADERS
 
 
@@ -472,6 +478,41 @@ def test_openai_compatible_gateway_reports_upstream_http_body(monkeypatch) -> No
         raise AssertionError("expected ModelGatewayError")
 
 
+def test_openai_compatible_gateway_classifies_and_redacts_upstream_auth_error(
+    monkeypatch,
+) -> None:
+    raw_key = "sk-test-secret-9b48"
+
+    def fake_urlopen(http_request, timeout):
+        raise error.HTTPError(
+            url=http_request.full_url,
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=BytesIO(
+                (
+                    '{"error":{"message":"Authentication Fails, '
+                    f'Your api key: {raw_key} is invalid"}}'
+                ).encode(),
+            ),
+        )
+
+    monkeypatch.setattr("app.agents.model_gateway.request.urlopen", fake_urlopen)
+
+    gateway = OpenAICompatibleModelGateway(
+        base_url="https://models.example.test/v1",
+        api_key=raw_key,
+    )
+
+    with pytest.raises(ModelAuthError) as exc_info:
+        gateway.complete(model_request("deepseek-v4-flash"))
+
+    message = str(exc_info.value)
+    assert "HTTP 401" in message
+    assert "****9b48" in message
+    assert raw_key not in message
+
+
 def test_provider_api_key_reads_deepseek_key_from_settings_when_env_is_not_exported(
     monkeypatch,
 ) -> None:
@@ -489,6 +530,104 @@ def test_provider_api_key_reads_deepseek_key_from_settings_when_env_is_not_expor
             }
         )
         == "settings-deepseek-key"
+    )
+
+
+def test_provider_api_key_reuses_deepseek_secret_across_model_providers(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    upsert_secret(
+        db_session,
+        organization_id="dev-org",
+        actor_id="dev-admin",
+        scope=SECRET_SCOPE_ORG,
+        owner_user_id=None,
+        provider="deepseek-flash",
+        purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+        secret_ref="secret://models/deepseek-flash/api-key",
+        secret_value="stored-deepseek-key",
+    )
+
+    assert (
+        provider_api_key(
+            {
+                "name": "deepseek-pro",
+                "api_key": "",
+                "api_key_env": "DEEPSEEK_API_KEY",
+            },
+            session=db_session,
+            organization_id="dev-org",
+            user_id="dev-admin",
+        )
+        == "stored-deepseek-key"
+    )
+
+
+def test_provider_api_key_uses_explicit_secret_provider_for_any_vendor(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    upsert_secret(
+        db_session,
+        organization_id="dev-org",
+        actor_id="dev-admin",
+        scope=SECRET_SCOPE_ORG,
+        owner_user_id=None,
+        provider="openai",
+        purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+        secret_ref="secret://models/openai/api-key",
+        secret_value="stored-openai-key",
+    )
+
+    assert (
+        provider_api_key(
+            {
+                "name": "openai-gpt-5-3-codex-spark",
+                "secret_provider": "openai",
+                "api_key": "",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+            session=db_session,
+            organization_id="dev-org",
+            user_id="dev-admin",
+        )
+        == "stored-openai-key"
+    )
+
+
+def test_provider_api_key_prefers_explicit_secret_provider_over_model_alias(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    upsert_secret(
+        db_session,
+        organization_id="dev-org",
+        actor_id="dev-admin",
+        scope=SECRET_SCOPE_ORG,
+        owner_user_id=None,
+        provider="openai",
+        purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+        secret_ref="secret://models/openai/api-key",
+        secret_value="stored-openai-key",
+    )
+
+    assert (
+        provider_api_key(
+            {
+                "name": "deepseek-pro",
+                "secret_provider": "openai",
+                "api_key": "",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+            session=db_session,
+            organization_id="dev-org",
+            user_id="dev-admin",
+        )
+        == "stored-openai-key"
     )
 
 

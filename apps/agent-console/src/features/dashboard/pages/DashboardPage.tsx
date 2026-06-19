@@ -10,6 +10,7 @@ import { Card, CardHeader } from "../../../components/ui/card";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { SkeletonCard, SkeletonTable } from "../../../components/ui/Skeleton";
 import { Walkthrough } from "../../../components/ui/Walkthrough";
+import { cn } from "../../../lib/utils";
 import {
   getCostRollup,
   getObservabilitySummary,
@@ -77,6 +78,8 @@ export function DashboardPage() {
     0;
   const onboardingIncomplete = onboarding.data && !onboarding.data.completed;
   const demoLoaded = onboarding.data?.demo_loaded ?? false;
+  const demoTaskId = onboarding.data?.demo_task_id ?? null;
+  const demoQuickActionTo = demoLoaded ? (demoTaskId ? `/runs/${demoTaskId}` : "/runs") : null;
 
   return (
     <ConsoleShell title="看板">
@@ -171,6 +174,7 @@ export function DashboardPage() {
                 value={activeAlerts}
                 trend="失败任务计入活跃风险"
                 tone="amber"
+                to="/observability/alerts"
               />
             </>
           )}
@@ -192,7 +196,13 @@ export function DashboardPage() {
               </CardHeader>
               <div className="grid gap-2 p-3">
                 <QuickAction to="/agents" icon={<Plus className="h-3.5 w-3.5" />} label="新建智能体" />
-                <QuickAction to="/onboarding?step=4" icon={<Gauge className="h-3.5 w-3.5" />} label="跑演示任务" />
+                <QuickAction
+                  to={demoQuickActionTo}
+                  icon={<Gauge className="h-3.5 w-3.5" />}
+                  label={demoLoaded ? "打开演示运行" : "加载演示任务"}
+                  onClick={demoLoaded ? undefined : () => loadDemo.mutate()}
+                  disabled={!demoLoaded && loadDemo.isPending}
+                />
                 <QuickAction to="/observability/cost" icon={<BarChart3 className="h-3.5 w-3.5" />} label="看 Cost" />
                 <QuickAction to="/settings/models" icon={<Settings2 className="h-3.5 w-3.5" />} label="配 LLM" />
               </div>
@@ -212,11 +222,38 @@ export function DashboardPage() {
   );
 }
 
-function QuickAction({ to, icon, label }: { to: string; icon: ReactNode; label: string }) {
+function QuickAction({
+  to,
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  to: string | null;
+  icon: ReactNode;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  const className = cn(
+    "inline-flex h-8 w-full items-center justify-start gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-[background-color,color,border-color,transform,box-shadow] hover:bg-slate-50 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
+    disabled && "cursor-not-allowed opacity-50",
+  );
+
+  if (to) {
+    return (
+      <Link to={to} className={className}>
+        {icon}
+        {label}
+      </Link>
+    );
+  }
+
   return (
-    <Link to={to}>
-      <Button className="w-full justify-start">{icon}{label}</Button>
-    </Link>
+    <button type="button" className={className} onClick={onClick} disabled={disabled}>
+      {icon}
+      {label}
+    </button>
   );
 }
 

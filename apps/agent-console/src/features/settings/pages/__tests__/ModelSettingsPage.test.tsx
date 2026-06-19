@@ -238,6 +238,15 @@ function renderPage(fetchMock: ReturnType<typeof vi.fn>) {
   );
 }
 
+async function findPricingRow(displayName: string) {
+  await waitFor(() => {
+    expect(screen.getByRole("link", { name: `官方来源 ${displayName}` })).toBeInTheDocument();
+  });
+  const row = screen.getByRole("link", { name: `官方来源 ${displayName}` }).closest("tr");
+  expect(row).not.toBeNull();
+  return row as HTMLElement;
+}
+
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
@@ -339,6 +348,7 @@ describe("ModelSettingsPage", () => {
     const user = userEvent.setup();
     renderPage(fetchMock);
 
+    await user.click(await screen.findByRole("button", { name: /DeepSeek.*2 个模型/ }));
     await user.click(await screen.findByRole("button", { name: /deepseek-v4-flash 配置并启用/ }));
     const dialog = await screen.findByRole("dialog", { name: /配置 DeepSeek Flash/ });
     await user.type(within(dialog).getByLabelText(/接口访问密钥/), "sk-deepseek-test");
@@ -362,6 +372,7 @@ describe("ModelSettingsPage", () => {
           }),
           expect.objectContaining({
             name: "deepseek-flash",
+            secret_provider: "deepseek",
             api_key: "sk-deepseek-test",
           }),
         ]),
@@ -426,6 +437,173 @@ describe("ModelSettingsPage", () => {
     expect(document.body).not.toHaveTextContent("sk-");
   });
 
+  it("reuses a configured DeepSeek key when switching between DeepSeek models", async () => {
+    const settings = {
+      ...modelSettingsPayload(),
+      default_provider: "deepseek-flash",
+      default_model: "deepseek-v4-flash",
+      providers: [
+        {
+          name: "deepseek-flash",
+          label: "DeepSeek Flash",
+          model: "deepseek-v4-flash",
+          model_kind: "文本模型",
+          api_format: "openai",
+          base_url: "https://api.deepseek.com",
+          api_key_configured: true,
+          api_key_source: "stored_secret_org",
+          api_key_secret_id: "secret-deepseek",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models" && !init?.method) return jsonResponse(settings);
+      if (path === "/api/settings/models" && init?.method === "PUT") {
+        return jsonResponse(JSON.parse(String(init.body)));
+      }
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") return jsonResponse(pricingSourcesPayload());
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    const user = userEvent.setup();
+    renderPage(fetchMock);
+
+    const proSwitch = await screen.findByRole("button", { name: /deepseek-v4-pro 切换/ });
+    expect(screen.queryByRole("button", { name: /deepseek-v4-pro 配置并启用/ })).not.toBeInTheDocument();
+
+    await user.click(proSwitch);
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/settings/models" && init?.method === "PUT",
+      );
+      expect(saveCall).toBeDefined();
+      expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({
+        default_provider: "deepseek-pro",
+        default_model: "deepseek-v4-pro",
+        providers: expect.arrayContaining([
+          expect.objectContaining({
+            name: "deepseek-flash",
+            api_key_configured: true,
+            api_key_source: "stored_secret_org",
+            api_key_secret_id: "secret-deepseek",
+          }),
+          expect.objectContaining({
+            name: "deepseek-pro",
+            model: "deepseek-v4-pro",
+            api_key: "",
+            api_key_configured: true,
+            api_key_source: "stored_secret_org",
+            api_key_secret_id: "secret-deepseek",
+          }),
+        ]),
+      });
+    });
+    expect(document.body).not.toHaveTextContent("sk-");
+  });
+
+  it("adds another model under a configured provider without resending the raw key or changing default", async () => {
+    const settings = {
+      ...modelSettingsPayload(),
+      default_provider: "openai-compatible",
+      default_model: "gpt-5.5",
+      providers: [
+        {
+          ...modelSettingsPayload().providers[0],
+          secret_provider: "openai",
+          api_key_configured: true,
+          api_key_source: "stored_secret_org",
+          api_key_secret_id: "secret-openai",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models" && !init?.method) return jsonResponse(settings);
+      if (path === "/api/settings/models" && init?.method === "PUT") {
+        return jsonResponse(JSON.parse(String(init.body)));
+      }
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") return jsonResponse(pricingSourcesPayload());
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    const user = userEvent.setup();
+    renderPage(fetchMock);
+
+    const sparkAdd = await screen.findByRole("button", {
+      name: /gpt-5\.3-codex-spark 添加/,
+    });
+    await user.click(sparkAdd);
+    const dialog = await screen.findByRole("dialog", { name: /添加模型 gpt-5\.3-codex-spark/ });
+    expect(within(dialog).getByLabelText("共享密钥标识")).toHaveValue("openai");
+    expect(within(dialog).getByLabelText(/接口访问密钥/)).not.toBeRequired();
+    await user.click(within(dialog).getByRole("button", { name: /保存模型/ }));
+
+    await waitFor(() => {
+      const saveCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/settings/models" && init?.method === "PUT",
+      );
+      expect(saveCall).toBeDefined();
+      const body = JSON.parse(String(saveCall?.[1]?.body));
+      expect(body).toMatchObject({
+        default_provider: "openai-compatible",
+        default_model: "gpt-5.5",
+        providers: expect.arrayContaining([
+          expect.objectContaining({
+            name: "openai-compatible",
+            model: "gpt-5.5",
+            secret_provider: "openai",
+          }),
+          expect.objectContaining({
+            name: "openai-gpt-5-3-codex-spark",
+            model: "gpt-5.3-codex-spark",
+            secret_provider: "openai",
+            api_key: "",
+            api_key_configured: true,
+            api_key_source: "stored_secret_org",
+            api_key_secret_id: "secret-openai",
+          }),
+        ]),
+      });
+      expect(String(saveCall?.[1]?.body)).not.toContain("sk-");
+    });
+  });
+
+  it("filters the provider rail and model rows by provider or model search", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/settings/models") return jsonResponse(modelSettingsPayload());
+      if (path === "/api/settings/models/health") return jsonResponse({ items: [] });
+      if (path === "/api/settings/models/fallbacks") return jsonResponse(fallbackSummaryPayload());
+      if (path === "/api/settings/models/pricing-sources") return jsonResponse(pricingSourcesPayload());
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+    const user = userEvent.setup();
+    renderPage(fetchMock);
+
+    expect(await screen.findByRole("button", { name: /OpenAI.*2 个模型/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /DeepSeek.*2 个模型/ })).toBeInTheDocument();
+
+    const search = screen.getByLabelText("搜索供应商或模型");
+    await user.type(search, "qwen");
+
+    expect(screen.getByRole("button", { name: /Qwen.*1 个模型/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /OpenAI.*2 个模型/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /qwen-max-latest 配置并启用/ })).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "spark");
+
+    expect(screen.getByRole("button", { name: /OpenAI.*2 个模型/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /gpt-5\.3-codex-spark 配置并启用/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /gpt-5\.5 配置并启用/ })).not.toBeInTheDocument();
+  });
+
   it("opens custom model configuration from the quick action instead of rendering the form inline", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
@@ -449,7 +627,8 @@ describe("ModelSettingsPage", () => {
     await user.click(screen.getByLabelText("打开快捷操作"));
     await user.click(screen.getAllByRole("button", { name: "添加自定义模型" })[0]);
 
-    const dialog = await screen.findByRole("dialog", { name: "添加自定义模型" });
+    const dialog = await screen.findByRole("dialog", { name: "添加自定义供应商" });
+    expect(within(dialog).getByLabelText("共享密钥标识")).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("供应商标识"));
     await user.type(within(dialog).getByLabelText("供应商标识"), "custom-llm");
     await user.clear(within(dialog).getByLabelText("显示名称"));
@@ -472,6 +651,7 @@ describe("ModelSettingsPage", () => {
         providers: expect.arrayContaining([
           expect.objectContaining({
             name: "custom-llm",
+            secret_provider: "custom-llm",
             api_key: "sk-custom-test",
           }),
         ]),
@@ -493,20 +673,18 @@ describe("ModelSettingsPage", () => {
     renderPage(fetchMock);
 
     await screen.findByText("内置模型成本");
-    expect(await screen.findByText("DeepSeek Flash")).toBeInTheDocument();
-    expect(screen.getAllByText("OpenAI GPT-5.5").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("kimi-k2.6").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("glm-5.1").length).toBeGreaterThan(0);
+    expect(within(await findPricingRow("DeepSeek Flash")).getByText("deepseek-v4-flash")).toBeInTheDocument();
+    expect(within(await findPricingRow("OpenAI GPT-5.5")).getByText("gpt-5.5")).toBeInTheDocument();
+    expect(within(await findPricingRow("Kimi K2.6")).getByText("kimi-k2.6")).toBeInTheDocument();
+    expect(within(await findPricingRow("Z.AI GLM-5.1")).getByText("glm-5.1")).toBeInTheDocument();
     expect(screen.getAllByText("已验证")).toHaveLength(5);
-    const deepSeekProRow = screen.getByText("DeepSeek Pro").closest("tr");
-    expect(deepSeekProRow).not.toBeNull();
-    expect(within(deepSeekProRow as HTMLElement).getByText("输入 USD 0.435")).toBeInTheDocument();
-    expect(within(deepSeekProRow as HTMLElement).queryByText("已过期")).not.toBeInTheDocument();
-    expect(within(deepSeekProRow as HTMLElement).queryByText(/有效至/)).not.toBeInTheDocument();
-    const kimiRow = screen.getByText("Kimi K2.6").closest("tr");
-    expect(kimiRow).not.toBeNull();
-    expect(within(kimiRow as HTMLElement).getByText("输入 USD 0.95")).toBeInTheDocument();
-    expect(within(kimiRow as HTMLElement).getByText("已验证")).toBeInTheDocument();
+    const deepSeekProRow = await findPricingRow("DeepSeek Pro");
+    expect(within(deepSeekProRow).getByText("输入 USD 0.435")).toBeInTheDocument();
+    expect(within(deepSeekProRow).queryByText("已过期")).not.toBeInTheDocument();
+    expect(within(deepSeekProRow).queryByText(/有效至/)).not.toBeInTheDocument();
+    const kimiRow = await findPricingRow("Kimi K2.6");
+    expect(within(kimiRow).getByText("输入 USD 0.95")).toBeInTheDocument();
+    expect(within(kimiRow).getByText("已验证")).toBeInTheDocument();
     expect(screen.queryByText("USD 汇总已阻塞")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("openai-compatible/gpt");
   });
@@ -550,10 +728,10 @@ describe("ModelSettingsPage", () => {
     });
     renderPage(fetchMock);
 
-    expect(await screen.findByText("DeepSeek Flash")).toBeInTheDocument();
-    expect(screen.getAllByText("OpenAI GPT-5.5").length).toBeGreaterThan(0);
-    expect(screen.getByText("Kimi K2.6")).toBeInTheDocument();
-    expect(screen.getByText("Z.AI GLM-5.1")).toBeInTheDocument();
+    expect(within(await findPricingRow("DeepSeek Flash")).getByText("deepseek-v4-flash")).toBeInTheDocument();
+    expect(within(await findPricingRow("OpenAI GPT-5.5")).getByText("gpt-5.5")).toBeInTheDocument();
+    expect(within(await findPricingRow("Kimi K2.6")).getByText("kimi-k2.6")).toBeInTheDocument();
+    expect(within(await findPricingRow("Z.AI GLM-5.1")).getByText("glm-5.1")).toBeInTheDocument();
     expect(screen.queryByText("成本来源暂不可用")).not.toBeInTheDocument();
     expect(screen.queryByText(/价格来源接口返回 404/)).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("404: Not Found");
@@ -727,15 +905,15 @@ describe("ModelSettingsPage", () => {
 
     expect(deepSeekRow).not.toBeNull();
     await waitFor(() => {
-      expect(within(deepSeekRow as HTMLElement).getByText("部分已配置")).toBeInTheDocument();
-      expect(within(deepSeekRow as HTMLElement).queryByText("密钥已配")).not.toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByText("已配置")).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).queryByText("部分已配置")).not.toBeInTheDocument();
       expect(within(deepSeekRow as HTMLElement).queryByText("未配置")).not.toBeInTheDocument();
       expect(within(deepSeekRow as HTMLElement).getByText("文本模型")).toBeInTheDocument();
       expect(within(deepSeekRow as HTMLElement).getByText("推理模型")).toBeInTheDocument();
       expect(within(deepSeekRow as HTMLElement).getByText(/300 rpm/)).toBeInTheDocument();
       expect(within(deepSeekRow as HTMLElement).getByText(/120 rpm/)).toBeInTheDocument();
       expect(within(deepSeekRow as HTMLElement).queryByRole("button", { name: "删除：deepseek-v4-pro" })).not.toBeInTheDocument();
-      expect(within(deepSeekRow as HTMLElement).getByRole("button", { name: "配置：deepseek-v4-pro" })).toBeInTheDocument();
+      expect(within(deepSeekRow as HTMLElement).getByRole("button", { name: "切换：deepseek-v4-pro" })).toBeInTheDocument();
     });
     expect(document.body).not.toHaveTextContent(/\bmissing\b/);
   });

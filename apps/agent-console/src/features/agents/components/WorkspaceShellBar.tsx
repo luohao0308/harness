@@ -21,6 +21,7 @@ import { cn } from "../../../lib/utils";
 import { statusLabel } from "../../../lib/labels";
 import type { AgentDefinition, LocalAgentConnection, ToolMetadata } from "../../tasks/api";
 import { useOutsideClick } from "../hooks/useOutsideClick";
+import { runDetailPath } from "../lib/runLinks";
 import type { InspectorSection } from "../lib/types";
 import { InspectorMenu } from "./InspectorMenu";
 import type { ModelOption } from "./ModelPicker";
@@ -49,6 +50,10 @@ export type WorkspaceShellBarProps = {
   selectedLocalConnectionId?: string | null;
   onLocalAgentTargetChange?: (connectionId: string) => void;
   localAgentControl?: ReactNode;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 };
 
 export function WorkspaceShellBar({
@@ -71,6 +76,7 @@ export function WorkspaceShellBar({
   selectedLocalConnectionId = null,
   onLocalAgentTargetChange,
   localAgentControl = null,
+  runReturnTarget,
 }: WorkspaceShellBarProps): JSX.Element {
   const { text } = useI18n();
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -79,6 +85,8 @@ export function WorkspaceShellBar({
     ? text("运行详情", "Run Detail")
     : text("运行未创建", "No run yet");
   const runStatusText = runStatus ? statusLabel(runStatus) : text("已创建", "Created");
+  const activeRunPath =
+    activeRunId && runReturnTarget ? runDetailPath(activeRunId, runReturnTarget) : activeRunId ? `/runs/${activeRunId}` : "";
   const toolsChipLabel = text(
     `工具/MCP（模型上下文协议）: ${tools.length} 个可用`,
     `Tools/MCP: ${tools.length} available`,
@@ -282,7 +290,7 @@ export function WorkspaceShellBar({
 
           {activeRunId ? (
             <Link
-              to={`/runs/${activeRunId}`}
+              to={activeRunPath}
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
               aria-label={runLabel}
               title={runLabel}

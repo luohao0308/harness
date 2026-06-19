@@ -28,6 +28,7 @@ import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
 import type { ConversationArtifact } from "../../../stores/workspaceStore";
+import { runDetailPath } from "../lib/runLinks";
 import type { InspectorSection } from "../lib/types";
 
 export type UsageSummary = {
@@ -50,6 +51,10 @@ export type InspectorDrawerProps = {
   artifacts: ConversationArtifact[];
   /** Callback to close the drawer (triggered by backdrop, close button, Esc). */
   onClose: () => void;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 };
 
 export function InspectorDrawer({
@@ -58,6 +63,7 @@ export function InspectorDrawer({
   pendingApprovalCount,
   artifacts,
   onClose,
+  runReturnTarget,
 }: InspectorDrawerProps): JSX.Element | null {
   const { text } = useI18n();
   // Remember the element that had focus when the drawer opened so we can
@@ -135,6 +141,7 @@ export function InspectorDrawer({
             <RuntimeSection
               activeRunId={activeRunId}
               pendingApprovalCount={pendingApprovalCount}
+              runReturnTarget={runReturnTarget}
             />
           )}
         </div>
@@ -225,9 +232,14 @@ function ArtifactPreview({ artifact }: { artifact: ConversationArtifact }): JSX.
 function RuntimeSection({
   activeRunId,
   pendingApprovalCount,
+  runReturnTarget,
 }: {
   activeRunId: string | null;
   pendingApprovalCount: number;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 }): JSX.Element {
   const { text } = useI18n();
 
@@ -259,7 +271,7 @@ function RuntimeSection({
             )}
           />
         ) : (
-          <LinkGroup runId={activeRunId} />
+          <LinkGroup runId={activeRunId} returnTarget={runReturnTarget} />
         )}
       </div>
     </section>
@@ -272,27 +284,39 @@ type LinkItem = {
   hint: string;
 };
 
-function LinkGroup({ runId }: { runId: string }): JSX.Element {
+function LinkGroup({
+  runId,
+  returnTarget,
+}: {
+  runId: string;
+  returnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
+}): JSX.Element {
   const { text } = useI18n();
+  const runLink = (hash: string) => (
+    returnTarget ? runDetailPath(runId, returnTarget, hash) : `/runs/${runId}#${hash}`
+  );
 
   const items: LinkItem[] = [
     {
-      to: `/runs/${runId}#approvals`,
+      to: runLink("approvals"),
       label: text("审批", "Approvals"),
       hint: text("在运行详情内处理审批", "Handle approvals inside Run Detail"),
     },
     {
-      to: `/runs/${runId}#plan`,
+      to: runLink("plan"),
       label: text("计划", "Plan"),
       hint: text("查看计划 DAG 视图", "Open the plan graph view"),
     },
     {
-      to: `/runs/${runId}#model-calls`,
+      to: runLink("model-calls"),
       label: text("模型调用", "Model Calls"),
       hint: text("完整模型调用表格", "Full model-call table"),
     },
     {
-      to: `/runs/${runId}#tool-runtime`,
+      to: runLink("tool-runtime"),
       label: text("工具运行时", "Tool Runtime"),
       hint: text("工具调用运行时表格", "Tool-call runtime table"),
     },

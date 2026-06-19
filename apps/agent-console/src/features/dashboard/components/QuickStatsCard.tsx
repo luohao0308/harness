@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 import { Card } from "../../../components/ui/card";
 import { cn } from "../../../lib/utils";
@@ -9,15 +10,17 @@ export function QuickStatsCard({
   value,
   trend,
   tone = "slate",
+  to,
 }: {
   icon: ReactNode;
   label: string;
   value: string | number;
   trend: string;
   tone?: "slate" | "emerald" | "amber" | "cyan";
+  to?: string;
 }) {
-  return (
-    <Card className="p-3">
+  const content = (
+    <>
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs text-slate-500">{label}</div>
@@ -45,6 +48,22 @@ export function QuickStatsCard({
         ))}
       </div>
       <div className="mt-2 text-[11px] text-slate-500">{trend}</div>
+    </>
+  );
+
+  if (to) {
+    return (
+      <Link to={to} className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300">
+        <Card className="p-3 transition hover:border-slate-300 hover:bg-slate-50">
+          {content}
+        </Card>
+      </Link>
+    );
+  }
+
+  return (
+    <Card className="p-3">
+      {content}
     </Card>
   );
 }

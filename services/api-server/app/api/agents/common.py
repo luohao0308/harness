@@ -27,6 +27,7 @@ from app.agents.context_router import (
 from app.agents.executor import PLANNER_SYSTEM_PROMPT, Executor
 from app.agents.model_gateway import (
     AuditedModelGateway,
+    ModelAuthError,
     ModelGatewayError,
     ModelMessage,
     ModelRequest,
@@ -115,7 +116,9 @@ from app.api.schemas import (
     ModelCallResponse,
     PromptAssemblyManifestResponse,
     RetrievalSessionResponse,
+    SubagentOutputResponse,
     SubagentResponse,
+    SubagentSpecialistSummary,
     TaskPage,
     TaskPlanResponse,
     TaskPlanStepState,

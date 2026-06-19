@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-10T00:30:26Z
+last_updated_at: 2026-06-19T13:00:32+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,439 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: run-detail-expert-subagent-plan-repair
+    date: 2026-06-19
+    status: completed
+    demo: Run planning now repairs review/session-logic plans that omit expert branches, Workspace Plan mode no longer forces Docker sandbox, and queue-deferred subagents are executed inline locally so specialist evidence is written.
+    verification_result: targeted_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_planner_executor.py -q -> 11 passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_planner_executor.py services/api-server/tests/test_agents.py::test_agent_plan_mode_creates_plan_without_execution services/api-server/tests/test_agents.py::test_agent_execute_run_uses_existing_plan_without_replanning services/api-server/tests/test_agents.py::test_agent_run_create_entry_and_workspace_projection services/api-server/tests/test_agents.py::test_agent_run_workspace_merges_plan_step_state services/api-server/tests/test_subagents.py::test_worker_success_flow_writes_started_and_completed services/api-server/tests/test_subagents.py::test_worker_success_syncs_origin_plan_step -q -> 17 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/agents/planner.py services/api-server/app/agents/executor.py services/api-server/app/api/agents/common.py services/api-server/app/api/agents/_workspace_response_helpers.py services/api-server/app/api/agents/agent_manifest.py services/api-server/app/api/agents/agent_runs.py services/api-server/app/api/agents/agent_chat/streaming.py services/api-server/tests/test_planner_executor.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/agents/planner.py services/api-server/app/agents/executor.py services/api-server/app/api/agents/common.py services/api-server/app/api/agents/_workspace_response_helpers.py services/api-server/app/api/agents/agent_manifest.py services/api-server/app/api/agents/agent_runs.py services/api-server/app/api/agents/agent_chat/streaming.py services/api-server/tests/test_planner_executor.py -> passed
+    acceptance_notes:
+      - Root cause for Run `fb32aab0-dfe1-41e9-8e4b-37ab6d5844cc` was a model-generated plan with five synchronous steps and no `async + can_spawn_subagent` step, so Executor never had a subagent/expert branch to spawn.
+      - The same Run then failed on the first sync step because it required sandboxed shell execution while local Docker was unavailable; Workspace Plan mode had been hardcoding `enable_sandbox=True`.
+      - `DeterministicPlanner` now repairs review/audit/risk/compliance/session-logic goals with `max_subagents > 0` by adding an independent `expert_review` async subagent step, using `code-reviewer` and `safety-checker` fanout when capacity allows.
+      - `Executor` and Agent Plan API now pass the task into planner parsing so LLM plans and repaired LLM plans receive the same Harness constraint repair before persistence.
+      - Workspace Plan mode now preserves `request.enable_sandbox` and `request.enable_network` instead of forcing Docker.
+      - When Dramatiq/Redis enqueue emits `queue_deferred`, Executor now runs the freshly spawned subagent inline in the current worker and reuses the existing `execute_subagent`/`SubagentOutput` path, so Run Detail expert evidence is populated in local dev.
+      - Run workspace projection now uses the same subagent response shape as `/api/subagents/{id}`, including nested specialist summary and structured output, so Run Detail can render expert evidence after `SubagentOutput` is written.
+
+  - id: agent-workspace-subagent-specialist-binding
+    date: 2026-06-19
+    status: completed
+    demo: Agent Workspace subagent orchestration now binds a SubagentSpecialist instead of creating an untyped ordinary subagent, and the SSE/workspace/subagent projections expose the selected expert slug.
+    verification_result: targeted_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_workspace_subagent_enterprise_flow.py services/api-server/tests/test_agents.py::test_agent_workspace_chat_force_subagent_persists_inspectable_agent_run -q -> 5 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/api/agents/_workspace_chat_helpers.py services/api-server/app/api/schemas.py services/api-server/tests/test_workspace_subagent_enterprise_flow.py services/api-server/tests/test_agents.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/api/agents/_workspace_chat_helpers.py services/api-server/app/api/schemas.py services/api-server/tests/test_workspace_subagent_enterprise_flow.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/tasks/api.ts -> passed
+      - tmux restart harness_api; curl --noproxy '*' http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+      - Direct API SSE POST /api/agents/default/runs/chat/stream with `orchestration_mode=subagent` and `请调用子 Agent 检查发布清单` -> emitted `specialist_slug=safety-checker`, `specialist_role=checker`, `subagent_id=1938f2a1-221a-48da-868e-66023de9e90a`, `run_id=09c123c1-a5b8-4c59-8729-12a48ba7a17c`
+      - GET /api/agents/runs/09c123c1-a5b8-4c59-8729-12a48ba7a17c/workspace and GET /api/subagents/1938f2a1-221a-48da-868e-66023de9e90a -> `parent_agent_id=null`, `specialist_id=system-specialist-safety-checker`, `specialist.slug=safety-checker`, `context_json.specialist_slug=safety-checker`
+    acceptance_notes:
+      - Root cause of "没用专家" was the Workspace `orchestration_mode=subagent` shortcut calling `SubagentManager.spawn(...)` without passing `specialist=...`.
+      - Workspace subagent orchestration now uses existing `SubagentSpecialistRegistry`, honors optional request `specialist_slug`, falls back to registry keyword matching, and otherwise uses deterministic workspace heuristics/default `researcher`.
+      - Release/checklist/readiness requests route to `safety-checker`; explicit `specialist_slug=code-reviewer` routes to `code-reviewer`; vague follow-up invocation defaults to `researcher`.
+      - The spawned `AgentRun` now snapshots `specialist_id`, `specialist_slug`, `specialist_role`, schema, capability whitelist, and budget through the existing `SubagentManager` contract.
+      - The Workspace `orchestration` SSE payload now includes `specialist_id`, `specialist_slug`, `specialist_role`, and selection trace so the UI/debug surface can show which expert was used.
+      - Live Postgres smoke exposed and fixed a latent FK bug: Workspace had been passing platform Agent id `default` as `parent_agent_id`, but that column references `agent_runs.id`; Workspace shortcut subagents now leave `parent_agent_id=null` and rely on `task_id` for Run ownership.
+
+  - id: agent-workspace-goal-auth-error-compact-ui
+    date: 2026-06-19
+    status: completed
+    demo: Agent Workspace `追踪目标模式` now surfaces model-key 401 failures as the existing model-auth error UI, returns visible completed goal output in the assistant bubble, keeps the goal row more compact, and opens goal editing in the shared light ConfigDialog instead of the oversized dark modal.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact tests/test_agents.py::test_agent_workspace_goal_mode_sanitizes_unexpected_docker_runtime_error -q -> 3 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_chat/streaming.py tests/test_agents.py && python3 -m py_compile app/api/agents/agent_chat/streaming.py tests/test_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/useChatStream.test.tsx src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 39 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/components/ui/input.tsx src/features/agents/components/ChatSurface.tsx src/features/agents/hooks/useChatStream.ts src/features/tasks/api.ts -> passed
+      - tmux new-session -d -s harness_api ...; curl --noproxy '*' http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+      - Browser Playwright smoke on http://127.0.0.1:5173/agents/default/workspace with mocked goal model_auth SSE -> row 712x48, dialog 512x343, dialogBg rgb(255, 255, 255), old `目标模型` label absent
+      - Direct API SSE POST /api/agents/default/runs/chat/stream with invalid DeepSeek key -> emitted event:error kind=model_auth and did not emit the generic `目标暂未达成，遇到需要处理的阻塞` text
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_returns_visible_completed_output tests/test_agents.py::test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact -q -> 3 passed
+      - Browser Playwright smoke with mocked completed goal SSE -> final story text rendered in the assistant chat bubble while the bottom goal row stayed `目标已完成`
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_returns_visible_completed_output tests/test_agents.py::test_agent_workspace_goal_mode_writing_goal_ignores_unattached_read_hint tests/test_agents.py::test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error tests/test_agents.py::test_agent_workspace_goal_mode_uses_artifact_tool_without_sandbox -q -> 4 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact tests/test_agents.py::test_agent_workspace_goal_mode_continues_paused_existing_plan tests/test_agents.py::test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error tests/test_agents.py::test_agent_workspace_goal_mode_returns_visible_completed_output tests/test_agents.py::test_agent_workspace_goal_mode_writing_goal_ignores_unattached_read_hint tests/test_agents.py::test_agent_workspace_goal_mode_uses_artifact_tool_without_sandbox tests/test_agents.py::test_agent_workspace_goal_mode_reports_sandbox_runtime_unavailable tests/test_agents.py::test_agent_workspace_goal_mode_sanitizes_unexpected_docker_runtime_error -q -> 8 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/executor.py app/api/agents/agent_chat/streaming.py tests/test_agents.py && python3 -m py_compile app/agents/executor.py app/api/agents/agent_chat/streaming.py tests/test_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/useChatStream.test.tsx -> 16 passed
+      - tmux kill-session -t harness_api; tmux new-session -d -s harness_api ...; curl --noproxy '*' http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_returns_visible_completed_output tests/test_agents.py::test_agent_workspace_goal_mode_writing_goal_ignores_unattached_read_hint tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact tests/test_agents.py::test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error -q -> 4 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact tests/test_agents.py::test_agent_workspace_goal_mode_continues_paused_existing_plan tests/test_agents.py::test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error tests/test_agents.py::test_agent_workspace_goal_mode_returns_visible_completed_output tests/test_agents.py::test_agent_workspace_goal_mode_writing_goal_ignores_unattached_read_hint tests/test_agents.py::test_agent_workspace_goal_mode_uses_artifact_tool_without_sandbox tests/test_agents.py::test_agent_workspace_goal_mode_reports_sandbox_runtime_unavailable tests/test_agents.py::test_agent_workspace_goal_mode_sanitizes_unexpected_docker_runtime_error -q -> 8 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_chat/streaming.py tests/test_agents.py && python3 -m py_compile app/api/agents/agent_chat/streaming.py tests/test_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/useChatStream.test.tsx -> 16 passed
+      - tmux kill-session -t harness_api; tmux new-session -d -s harness_api ...; curl --noproxy '*' http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 24 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/components/ChatSurface.tsx src/features/agents/components/ChatModeBanner.tsx -> passed
+    acceptance_notes:
+      - Root cause of the screenshot error was a real DeepSeek upstream HTTP 401 for the stored key suffix `****9b48`; Executor persisted it as MODEL_CALL_FAILED/TASK_FAILED, but the goal stream previously collapsed terminal FAILED runs into generic blocker copy.
+      - Goal stream now extracts the newest useful failure detail from EventStore and classifies API-key 401/403 failures as `model_auth`, so the existing Agent Console `模型密钥无效` bubble and model-settings action render instead of a vague goal failure.
+      - Non-auth goal failures still receive a concrete failure detail in the goal progress message rather than the old generic line.
+      - The goal progress row is narrower and shorter above the composer, with smaller controls and a 48px browser-smoke height at 1280px width.
+      - `编辑目标` now uses the shared light `ConfigDialog` and `Textarea`, maxes at the smaller project-dialog width, removes the old dark full modal, and keeps Cmd/Ctrl+Enter save plus Escape close behavior.
+      - Completed writing/reply/summary-style goals now synthesize and emit the final deliverable as `delta` content, so the output appears in the main assistant bubble; the bottom goal row remains status-only.
+      - Follow-up screenshot failure `agent 客服 is not attached to capability read_file` was caused by a pure writing goal honoring a generic `read_file` tool hint; Executor now folds task title/goal into tool selection and ignores read/list hints for pure writing/reply/story goals without project/file-reading intent, choosing `mcp_artifact_put` instead.
+      - Goal final-output rendering now uses `AuditedModelGateway.stream(response_format="text")` and forwards each model chunk as a separate `delta`, instead of blocking on `complete()` and sending one final blob.
+      - Follow-up screenshot showed the goal row switching to `目标已完成` before the final answer streamed. Goal SSE ordering now emits `goal_progress` as `running/generating`, streams final `delta` chunks, then emits the completed progress event so the visible goal state does not finish before the assistant answer finishes.
+      - Run mode and Goal mode composer submission no longer open a second confirmation dialog; pressing Enter sends immediately, and the Plan-Act banner copy no longer says to confirm creation.
+      - The current dev-token DeepSeek key still fails upstream with HTTP 401 for suffix `****9b48`; that is now surfaced as model-auth UI, not treated as a hidden output.
+
+  - id: local-omx-hooks-config-repair
+    date: 2026-06-19
+    status: completed
+    demo: User-level OMX/Codex hooks parse cleanly again after removing invalid hooks.json state fields and refreshing oh-my-codex to 0.18.13 across the active Node v24 install and the legacy Node v20 hook path.
+    verification_result: targeted_passed
+    verification_commands:
+      - jq 'keys, (.hooks | keys)' /Users/luohao/.codex/hooks.json -> top-level keys only ["hooks"]; hook keys are PostCompact, PostToolUse, PreCompact, PreToolUse, SessionStart, Stop, UserPromptSubmit
+      - omx --version -> oh-my-codex v0.18.13, Node.js v24.15.0
+      - /Users/luohao/.nvm/versions/node/v20.9.0/bin/node -p "require('/Users/luohao/.nvm/versions/node/v20.9.0/lib/node_modules/oh-my-codex/package.json').version" -> 0.18.13
+      - omx doctor -> 16 passed, 1 warning, 0 failed
+      - codex exec --help -> passed without hooks config parse error
+      - omx status -> returned active mode states
+      - omx sparkshell pwd -> raw fallback printed /Users/luohao/Desktop/agent_workspace/harness
+    acceptance_notes:
+      - Root cause was invalid legacy trust state serialized into /Users/luohao/.codex/hooks.json, including a top-level state object that Codex 0.141.0 rejects because hooks.json expects only the hooks root.
+      - Removed the invalid JSON state fields, upgraded the active OMX install to 0.18.13, explicitly upgraded the legacy Node v20 package path still referenced by the loaded hook commands, and regenerated hooks.json from the clean current generator.
+      - /Users/luohao/.codex/hooks.json now contains only the hooks root with the seven OMX-managed native hook events; trust state remains in /Users/luohao/.codex/config.toml under [hooks.state].
+      - omx explore is intentionally hard-deprecated in 0.18.13; use normal Codex repo inspection or omx sparkshell for explicit shell-native read-only evidence.
+
+  - id: agent-workspace-goal-progress-row
+    date: 2026-06-18
+    status: completed
+    demo: Agent Workspace `追踪目标模式` now behaves like a persistent Codex-style goal loop with a compact goal row above the composer, a dedicated dark edit modal, pause/resume controls, and completion that keeps the goal row visible instead of falling back to the old run-summary card.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact tests/test_agents.py::test_agent_workspace_goal_mode_continues_paused_existing_plan -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_chat/streaming.py tests/test_agents.py -> passed
+      - python3 -m py_compile services/api-server/app/api/agents/agent_chat/streaming.py services/api-server/tests/test_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/useChatStream.test.tsx src/features/agents/__tests__/ChatSurface.shell.test.tsx src/features/agents/__tests__/ChatMessageList.render.test.tsx -> 46 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/components/ChatSurface.tsx src/features/agents/components/ChatMessageList.tsx src/features/agents/hooks/useChatStream.ts -> passed for touched files
+      - curl --noproxy '*' -s http://127.0.0.1:8000/health -> {"status":"ok","service":"api-server"}
+      - Playwright / Chrome DevTools browser smoke on http://127.0.0.1:5173/agents/default/workspace -> goal row rendered, edit opened in a dark modal, pause/resume worked, completed goal stayed as a goal row, and the old run-summary fallback no longer appeared for goal-mode completions
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Codex manual goal semantics were used as the behavior source: a goal is a persistent objective that stays visible above the composer and can pause, resume, edit, or clear.
+      - Backend goal mode now emits structured `goal_progress` events with goal text, status, phase, turn, step count, start time, elapsed time, and message.
+      - Goal execution keeps `WAITING_SUBAGENTS` and other active states in the live pursuit loop, and stream disconnects mark the goal as resumable `PAUSED` instead of a hard cancel.
+      - Frontend stream handling persists goal metadata on the assistant node, keeps paused goal nodes resumable, and preserves the latest goal progress message on completion instead of replacing it with a generic run-ending line.
+      - ChatSurface now renders the active goal row above the composer with a smaller, rounder bar that feels attached to the composer, and goal editing opens in a dedicated dark modal matching the requested reference.
+      - The bottom-right action shows `暂停目标` / `继续目标` for goal mode so the goal reads as an ongoing pursuit rather than a one-shot answer.
+
+  - id: local-codex-mcp-browser-tools
+    date: 2026-06-19
+    status: completed
+    demo: User-level Codex MCP configuration includes Playwright MCP and Chrome DevTools MCP for local browser automation/debugging, with Chrome DevTools MCP refreshed to 1.3.0.
+    verification_result: targeted_passed
+    verification_commands:
+      - /Users/luohao/.nvm/versions/node/v24.15.0/bin/npm install -g @playwright/mcp@latest chrome-devtools-mcp@latest -> changed 4 packages
+      - /Users/luohao/.nvm/versions/node/v24.15.0/bin/playwright-mcp --version -> Version 0.0.76
+      - /Users/luohao/.nvm/versions/node/v24.15.0/bin/chrome-devtools-mcp --version -> 1.3.0
+      - codex mcp list -> playwright and chrome_devtools enabled
+      - MCP initialize plus tools/list smoke -> playwright 23 tools, chrome_devtools 29 tools
+    acceptance_notes:
+      - Global npm packages are installed under Node v24.15.0 so chrome-devtools-mcp satisfies its Node engine requirement.
+      - `~/.codex/config.toml` has enabled stdio servers `playwright` and `chrome_devtools` using absolute Node v24 binary paths.
+      - Playwright MCP runs Chrome in headless isolated mode and writes output under `~/.codex/mcp-output/playwright`.
+      - Chrome DevTools MCP runs headless isolated with 1280x720 viewport and usage statistics disabled through `--no-usage-statistics` and `CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1`.
+
+  - id: agent-workspace-goal-mode-dockerless-artifacts
+    date: 2026-06-16
+    status: completed
+    demo: Agent Workspace `追踪目标模式` no longer forces Docker-backed sandbox execution for ordinary artifact/writing steps; artifact-only goal work uses the Harness MCP artifact tool by default, while intentionally sandboxed steps fail with a clear recoverable sandbox-runtime message when Docker is unavailable.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py -q -> 71 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_goal_mode_uses_artifact_tool_without_sandbox tests/test_agents.py::test_agent_workspace_goal_mode_reports_sandbox_runtime_unavailable tests/test_agents.py::test_agent_workspace_goal_mode_sanitizes_unexpected_docker_runtime_error -q -> 3 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tasks.py -q -> 14 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tool_registry.py tests/test_tool_runner.py tests/test_tool_approvals.py -q -> 5 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/schemas.py app/api/agents/agent_chat/streaming.py app/api/agents/_workspace_chat_helpers.py app/agents/executor.py app/tools/registry.py app/tools/capabilities.py tests/test_agents.py -> passed
+      - python3 -m py_compile services/api-server/app/api/schemas.py services/api-server/app/api/agents/agent_chat/streaming.py services/api-server/app/api/agents/_workspace_chat_helpers.py services/api-server/app/agents/executor.py services/api-server/app/tools/registry.py services/api-server/app/tools/capabilities.py services/api-server/tests/test_agents.py -> passed
+      - curl --noproxy '*' http://127.0.0.1:8000/openapi.json -> AgentChatStreamRequest exposes enable_sandbox/default=false and enable_network/default=false after local API restart
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Goal-mode request schema now keeps `enable_sandbox=false` and `enable_network=false` unless the caller explicitly asks for them, instead of force-enabling sandbox during Run creation.
+      - Goal Run setup attaches `mcp_artifact_put`, and Executor default tool selection maps ordinary writing/artifact expectations to `mcp_artifact_put` unless the step explicitly requires sandbox.
+      - `mcp_artifact_put` is low-risk but still critically audited, so artifact writes can complete through the Harness tool path without admin approval or Docker allocation.
+      - Sandbox acquisition failures are caught at execution time and recorded as `STEP_FAILED` with `permission_boundary=sandbox_runtime`, `recoverable=true`, and a user-facing `Sandbox runtime unavailable...` message instead of leaking Docker SDK API-version / `FileNotFoundError` text.
+      - Stream-level fallback also sanitizes unexpected Docker API-version exceptions before they reach the UI, covering any missed lower-level WarmPool path.
+      - The browser repro after the first code fix was caused by the local 8000 API process still running old imported code; after restart, OpenAPI exposes the new request fields.
+      - Regression coverage proves artifact-only goal mode does not call WarmPool/Docker, explicitly sandboxed goal work reports the clear failure shape when Docker is missing, and raw Docker API-version exceptions are sanitized if they escape unexpectedly.
+
+  - id: agent-console-agents-auth-timeout-recovery
+    date: 2026-06-16
+    status: completed
+    demo: Agent Console `/agents/` no longer hangs forever on `正在验证登录状态...` when the local API accepts connections but does not respond; auth bootstrap now times out and protected routes show an actionable API error, and the local Harness API was restarted so the page renders.
+    verification_result: targeted_passed
+    verification_commands:
+      - curl --noproxy '*' http://127.0.0.1:8000/health -> 200 OK {"status":"ok","service":"api-server"}
+      - curl --noproxy '*' http://127.0.0.1:8000/api/auth/me -H 'Authorization: Bearer dev-engineer-token' -> 200 OK dev-engineer / dev-org
+      - Playwright browser check on http://127.0.0.1:5173/agents/ -> rendered 智能体工作室 with 5 agent cards; /api/auth/me, /api/agents, token optimizer, local-agent connections, and knowledge-source calls returned 200
+      - cd apps/agent-console && npm test -- src/app/__tests__/routes.auth.test.tsx src/features/agents/__tests__/AgentListPage.studio.test.tsx -> 17 passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/app/routes.tsx src/features/tasks/api.ts -> passed
+      - python3 scripts/validate-docs.py -> passed
+    acceptance_notes:
+      - `getMe()` now uses the existing request timeout path with a 5 second auth bootstrap timeout, so a half-dead API cannot leave protected routes in the auth-loading state indefinitely.
+      - `RequireAuth` now displays an API connection error with the configured API base URL, the timeout/error detail, and a `重新验证` action instead of redirecting dev-token users to login or appearing stuck.
+      - The immediate local failure was a stale `uvicorn --reload` process on port 8000 that accepted connections but did not answer; after clearing it and starting the Harness API from `services/api-server`, `/agents/` opened normally.
+
+  - id: backend-testclient-sqlite-staticpool
+    date: 2026-06-16
+    status: completed
+    demo: Backend TestClient regressions no longer fail with SQLite in-memory `no such table` errors; the test fixture now shares one per-test SQLite connection across pytest and TestClient worker threads.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_orchestration_execute_continues_after_terminal_failed_assignment tests/test_agents.py::test_agent_orchestration_execute_runs_assignments_and_reduces -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py::test_provider_api_key_reuses_deepseek_secret_across_model_providers tests/test_settings.py::test_deepseek_model_settings_store_one_secret_for_multiple_models tests/test_settings.py::test_model_settings_health_endpoint_probes_real_provider -q -> 3 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_orchestration_execute_continues_after_terminal_failed_assignment tests/test_agents.py::test_agent_orchestration_execute_runs_assignments_and_reduces tests/test_model_gateway.py::test_provider_api_key_reuses_deepseek_secret_across_model_providers tests/test_settings.py::test_deepseek_model_settings_store_one_secret_for_multiple_models tests/test_settings.py::test_model_settings_health_endpoint_probes_real_provider -q -> 5 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_chat_stream_rewrites_unbound_citation_keys tests/test_agents.py::test_agent_workspace_chat_executes_xml_function_call_for_installed_mcp tests/test_agents.py::test_agent_workspace_chat_infers_installed_mcp_from_pending_search_text tests/test_agents.py::test_agent_plan_mode_surfaces_model_gateway_failure_without_fallback tests/test_agents.py::test_agent_run_create_surfaces_model_gateway_failure_without_fallback tests/test_agents.py::test_agent_run_create_uses_deterministic_plan_when_model_output_is_unparseable tests/test_agents.py::test_agent_run_create_records_repair_failure_before_deterministic_plan -q -> 7 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_settings.py tests/test_model_gateway.py -q -> 32 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py -q -> 68 passed
+      - cd services/api-server && .venv/bin/python -m ruff check tests/conftest.py app/agents/model_gateway.py app/api/agents/agent_chat/streaming.py -> passed
+      - python3 -m py_compile services/api-server/tests/conftest.py services/api-server/app/agents/model_gateway.py services/api-server/app/api/agents/agent_chat/streaming.py -> passed
+    acceptance_notes:
+      - `tests/conftest.py` now creates the per-test in-memory SQLite engine as `sqlite+pysqlite://` with `StaticPool`, so schema creation and TestClient request handling use the same DB connection across threads.
+      - The previously blocked orchestration and model-settings TestClient combinations now pass without `no such table: agents` or `no such table: system_settings`.
+      - Full `tests/test_agents.py` now passes after also fixing two surfaced dirty-branch regressions: raw streamed content is buffered when function-call/search/citation post-processing is required, and model-gateway factory monkeypatches with the older `provider, timeout_seconds` shape remain compatible.
+
+  - id: agent-workspace-goal-mode-streaming
+    date: 2026-06-16
+    status: completed
+    demo: Agent Workspace `追踪目标模式` now behaves as a goal-pursuit Run loop instead of a one-shot plan artifact, and normal assistant replies stream incremental SSE deltas when safe.
+    verification_result: targeted_passed_broader_testclient_fixed_by_backend_staticpool
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/useChatStream.test.tsx -> 12 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 19 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/useChatStream.test.tsx src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 31 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/hooks/useChatStream.ts src/features/agents/components/ChatSurface.tsx src/features/tasks/api.ts src/features/agents/__tests__/useChatStream.test.tsx -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_workspace_pro_chat_stream_emits_incremental_deltas_with_grounding tests/test_agents.py::test_agent_workspace_goal_mode_executes_without_plan_artifact -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/schemas.py app/api/agents/agent_chat/streaming.py app/api/agents/_workspace_chat_helpers.py tests/test_agents.py -> passed
+      - python3 -m py_compile services/api-server/app/api/schemas.py services/api-server/app/api/agents/agent_chat/streaming.py services/api-server/app/api/agents/_workspace_chat_helpers.py services/api-server/tests/test_agents.py -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Frontend `goal` mode is no longer converted to `plan`; both cloud stream payloads and local-agent submit context preserve `mode: goal`.
+      - Backend schemas and workspace Run creation now accept `goal`, so goal mode creates or continues a real Run with `mode="goal"`.
+      - Goal mode emits `run_created`, progress `delta`, optional orchestration evidence, `usage`, and `done`, and drives execution through `Executor(session)` without emitting `artifact_created plan.json`.
+      - Normal chat stream chunks now emit incremental `delta` events when the content is safe to show immediately; grounded answers that may need citation/rewrite correction still buffer until final content is known.
+      - The earlier broader backend TestClient blocker (`no such table: agents`) is now resolved by post-stage hardening `backend-testclient-sqlite-staticpool`.
+
+  - id: subagent-detail-worker-summary-terminal-ux
+    date: 2026-06-16
+    status: completed
+    demo: Subagent Detail now makes terminal worker execution evidence visible for successful subagents with no specialist template, no tool calls, and no artifacts, instead of showing disabled actions and empty panels that look unresponsive.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/subagents/__tests__/SubagentDetailPage.test.tsx -> 2 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/subagents/pages/SubagentDetailPage.tsx src/features/tasks/api.ts -> passed
+      - Playwright browser check on `http://127.0.0.1:5173/subagents/1224e7d9-7947-4f07-95c8-16a36ba7b510` with the matching org JWT -> new header action, terminal badge, execution result card, worker summary, and explanatory empty states all visible; subagent/task result API calls returned 200
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Header action `任务子代理` is now a clearer link-style action labeled `查看所属任务子代理` pointing to `/runs/{task_id}/subagents`.
+      - Terminal subagents no longer show an inert red cancel button; `SUCCESS` / `FAILED` / `TIMEOUT` / `CANCELLED` / `BUDGET_EXCEEDED` states render a read-only `终态不可取消` badge instead.
+      - The page now promotes `taskResult.summary` or `context_json.result.summary` into a top `执行结果` card with status, completion time, and trace count.
+      - Empty structured-output, artifact, and tool-result panels now explain successful worker-summary-only execution instead of implying the subagent did nothing.
+      - Regression coverage locks the real proof shape for subagent `1224e7d9-7947-4f07-95c8-16a36ba7b510`: terminal `SUCCESS`, no specialist output, zero tool calls, and a worker-written summary.
+
+  - id: run-detail-dev-org-visible-multi-agent-proof
+    date: 2026-06-16
+    status: completed
+    demo: Run Detail now has a current-org proof Run visible with `dev-engineer-token`, showing completed Plan DAG steps, a successful subagent worker result, successful multi-agent assignments, and completed reduce handoff status in the UI.
+    verification_result: targeted_passed
+    verification_commands:
+      - POST /api/agents/default/runs with `dev-engineer-token` -> created Run `89d91c78-c759-4a6a-9659-cc773b0d4421` in `dev-org` with async `subagent_research` step (`execution_mode=async`, `can_spawn_subagent=true`)
+      - POST /api/agents/runs/89d91c78-c759-4a6a-9659-cc773b0d4421/execute with `dev-engineer-token` -> parent Run `COMPLETED`, subagent `7b2565a9-5d44-4ab2-ad55-db45a87a4df9` spawned
+      - PYTHONPATH=services/api-server services/api-server/.venv/bin/python direct `app.workers.subagent_worker.execute_subagent("7b2565a9-5d44-4ab2-ad55-db45a87a4df9")` -> `SUCCESS`
+      - POST /api/agents/runs/89d91c78-c759-4a6a-9659-cc773b0d4421/orchestrate/execute with `dev-engineer-token` -> `default` and `reviewer` assignments `SUCCESS`, handoff `reduce_input COMPLETED`
+      - GET /api/agents/runs/89d91c78-c759-4a6a-9659-cc773b0d4421/workspace with `dev-engineer-token` -> all Plan DAG steps `STEP_COMPLETED`, subagent `SUCCESS`, assignments `SUCCESS`, handoff `COMPLETED`, events include `SUBAGENT_COMPLETED` and `AGENT_REDUCE_COMPLETED`
+      - Playwright browser check on `http://127.0.0.1:5173/runs/89d91c78-c759-4a6a-9659-cc773b0d4421` -> run visible, multi-agent panel visible, subagent success visible, handoff status visible, no `Agent Run 未找到`
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx -> 6 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/runs/pages/RunDetailPage.tsx src/features/tasks/api.ts -> passed
+    acceptance_notes:
+      - Earlier proof Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` is still valid but belongs to org `56173d66-0eb1-4982-bec8-6e8e3cf5d673`, so current dev fallback tokens cannot see it; this caused the browser to look like there was no execution evidence.
+      - New proof Run `89d91c78-c759-4a6a-9659-cc773b0d4421` belongs to `dev-org` and is visible to the default local dev browser session.
+      - The subagent initially stayed `PENDING` because local Redis/Dramatiq is not running (`queue_deferred`, connection refused on localhost:6379); directly running the same worker consumed the queued subagent and wrote terminal `SUCCESS` evidence.
+      - Run Detail already rendered Plan DAG and subagent status from backend fields; the remaining frontend gap was handoff visibility, now fixed by rendering `handoff.status` as a status badge beside each handoff row.
+
+  - id: run-detail-plan-dag-subagent-state-projection
+    date: 2026-06-16
+    status: completed
+    demo: Run Detail workspace now projects real Plan DAG step status from `TaskStep` rows and step events instead of hard-coding every step as `PENDING`; subagent worker completion also reconciles the originating plan step so子代理详情、执行证据和计划 DAG 不再互相矛盾.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_run_workspace_merges_plan_step_state tests/test_subagents.py::test_worker_success_syncs_origin_plan_step -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_tasks.py::test_plan_state_uses_latest_step_attempt tests/test_subagents.py::test_worker_success_flow_writes_started_and_completed tests/test_subagents.py::test_worker_success_syncs_origin_plan_step tests/test_agents.py::test_agent_run_workspace_merges_plan_step_state -q -> 4 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_run_workspace_merges_plan_step_state tests/test_subagents.py::test_worker_success_syncs_origin_plan_step tests/test_tasks.py::test_plan_state_uses_latest_step_attempt -q -> 3 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/api/agents/agent_runs.py app/api/agents/agent_manifest.py app/api/agents/_plan_helpers.py app/api/plan_projection.py app/api/tasks.py app/agents/plan_steps.py app/workers/subagent_worker.py app/agents/subagent_manager.py tests/test_agents.py tests/test_subagents.py -> passed
+      - DATABASE_URL=postgresql+psycopg://agent:agent@localhost:5432/agent_harness direct `build_plan_response` check for Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` -> `parallel_subagent_probe` and `inline_completion_probe` both `STEP_COMPLETED`
+      - GET /api/agents/runs/48a1cdb8-390d-41fb-affd-a5c7d86bb16e/workspace with a JWT for org `56173d66-0eb1-4982-bec8-6e8e3cf5d673` -> run `COMPLETED`, both plan steps `STEP_COMPLETED`, subagent `1224e7d9-7947-4f07-95c8-16a36ba7b510` `SUCCESS` with result summary
+      - git diff --check -> passed
+    acceptance_notes:
+      - Added shared backend plan projection in `app/api/plan_projection.py` so Run workspace and compatibility `/api/tasks/{task_id}/plan` use the same merge logic for `TaskStep` rows and step execution events.
+      - Fixed `/api/agents/runs/{run_id}/workspace`, the data source for Run Detail, so Plan DAG cards no longer render every step as `待处理` when execution already wrote `STEP_COMPLETED` / `STEP_FAILED`.
+      - Kept pure plan-generation responses as pending-only, but changed the internal `/api/agents/auto` response to return the executed plan projection after execution.
+      - Added `sync_subagent_plan_step` and wired it into ordinary subagent worker success, timeout, budget-exceeded, failure, and specialist structured-output finalize paths.
+      - The proof Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` belongs to org `56173d66-0eb1-4982-bec8-6e8e3cf5d673`; dev tokens intentionally return 404 for it because of organization isolation, while the correct org JWT returns the completed DAG and subagent evidence.
+
+  - id: run-detail-return-and-orchestration-retry-follow-up
+    date: 2026-06-16
+    status: completed
+    demo: Repeated `刷新编排` / `执行多智能体` now produces real backend progress even when one assignment is already terminal failed, and `回到工作台` restores the requested persisted local/cloud conversation during Workspace hydration instead of briefly selecting then falling back to default.
+    verification_result: targeted_passed_broader_testclient_blocked_by_existing_sqlite_table_scope_issue
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_orchestration_execute_continues_after_terminal_failed_assignment -q -> 1 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/orchestrator.py tests/test_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/contextTruncation.test.ts src/features/agents/__tests__/runLinks.test.ts src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx -> 59 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/lib/runLinks.ts src/features/agents/lib/contextTruncation.ts src/features/agents/pages/AgentWorkspacePage.tsx src/features/runs/pages/RunDetailPage.tsx src/features/tasks/api.ts -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_orchestration_execute_continues_after_terminal_failed_assignment tests/test_agents.py::test_agent_orchestration_execute_runs_assignments_and_reduces -q -> failed on existing SQLite in-memory TestClient table-scope issue (`no such table: agents`) after the new direct orchestrator regression passed
+    acceptance_notes:
+      - `MultiAgentOrchestrator.execute_assignments` now skips terminal `SUCCESS` / `FAILED` / `CANCELLED` assignments and continues executing `PENDING` / `QUEUED` assignments, so one failed branch no longer makes repeated `执行多智能体` appear inert.
+      - Added a direct backend regression proving a failed assignment remains failed while a later pending reviewer assignment executes successfully on retry.
+      - Agent Workspace hydration now prefers a valid `?conversation_id=` from the return link before cloud-default fallback selection, so `回到工作台` opens the exact persisted conversation requested by Run Detail.
+      - Added frontend regression coverage for returning to a persisted local-agent conversation with a cold binding cache.
+      - Added explicit string-array typing in context truncation token estimation to keep targeted Workspace TypeScript verification unblocked without behavior changes.
+
+  - id: run-detail-workspace-return-and-orchestration-refresh-ux
+    date: 2026-06-16
+    status: completed
+    demo: Run Detail links opened from Agent Workspace now preserve the source Agent workspace and conversation id, `回到工作台` returns to that exact conversation, and repeated `刷新编排` / `执行多智能体` clicks produce visible idempotent assignment/handoff evidence instead of appearing inert.
+    verification_result: targeted_passed_repo_lint_blocked_by_existing_unrelated_test_typing_debt
+    verification_commands:
+      - cd apps/agent-console && npm test -- src/features/agents/__tests__/runLinks.test.ts src/features/agents/__tests__/WorkspaceShellBar.render.test.tsx src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 38 passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --skipLibCheck --target ES2020 --useDefineForClassFields true --lib DOM,DOM.Iterable,ES2022 --allowJs false --esModuleInterop --allowSyntheticDefaultImports --strict --forceConsistentCasingInFileNames --module ESNext --moduleResolution Bundler --resolveJsonModule --isolatedModules --jsx react-jsx --types vite/client src/vite-env.d.ts src/features/agents/lib/runLinks.ts src/features/agents/components/WorkspaceShellBar.tsx src/features/agents/components/ChatRunSummary.tsx src/features/agents/components/ChatMessageList.tsx src/features/agents/components/ChatSurface.tsx src/features/agents/components/InspectorDrawer.tsx src/features/agents/pages/AgentWorkspacePage.tsx src/features/runs/pages/RunDetailPage.tsx src/features/tasks/api.ts -> passed
+      - cd apps/agent-console && npm run lint -- --pretty false -> failed on existing unrelated stale test/a11y typing debt including missing jest-axe declarations, stale navigation imports, old ChatMessageBubble props, SAMLProvider fixture drift, and onboarding mock return typing
+      - git diff --check -> passed
+    acceptance_notes:
+      - Added shared Run link helpers so Workspace header, chat Run summaries, inspector runtime links, and local approval links include `return_to` plus `conversation_id`.
+      - Agent Workspace now consumes `?conversation_id=` after hydration and applies it only once, so returning from Run Detail selects the origin conversation without trapping later manual conversation switches.
+      - Run Detail accepts only safe internal `/agents/.../workspace` return paths and otherwise falls back to the Run's `agent_id` plus `conversation_id`.
+      - `执行多智能体` now remains clickable after assignments are already successful and still calls the backend idempotent execute endpoint, surfacing the returned assignment/handoff summary both as toast and inline page feedback.
+      - Run Detail tests now cover failure diagnosis, pending assignment execution, all-success idempotent execution, and return-to-workspace link restoration.
+
+  - id: run-detail-failure-and-multi-agent-execution-ux
+    date: 2026-06-16
+    status: completed
+    demo: Run Detail now explains failed plan execution causes, shows actual subagent count as active/max, separates multi-agent orchestration creation from execution, exposes assignment/handoff evidence for Run `9ef51bd6-9129-4c93-9baf-d4e46463848b`, and has a fresh complete local proof Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` covering multi-agent orchestration plus subagent worker execution.
+    verification_result: targeted_passed_broader_testclient_and_repo_lint_blocked_by_existing_unrelated_debt
+    verification_commands:
+      - PGPASSWORD=agent psql -h localhost -U agent -d agent_harness read-only inspection -> Run `9ef51bd6-9129-4c93-9baf-d4e46463848b` is FAILED, title `500字的小说`, model `deepseek-pro/deepseek-v4-pro`, max_subagents=5, all plan steps are `execution_mode=sync` and `can_spawn_subagent=false`, first failed step is `generate_outline`, selected tool was `read_file`, and current multi-agent assignments are `default/coder/reviewer` all `PENDING`.
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/executor.py tests/test_planner_executor.py -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_planner_executor.py::test_executor_defaults_creative_sync_steps_to_write_file -q -> 1 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/runs/pages/__tests__/RunDetailPage.optimizer.test.tsx -> 3 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/runs/pages/RunDetailPage.tsx src/features/tasks/api.ts -> passed
+      - Created deterministic local proof Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` because the configured DeepSeek key still returns upstream HTTP 401; initial plan execution completed and spawned subagent `1224e7d9-7947-4f07-95c8-16a36ba7b510`.
+      - POST /api/agents/runs/48a1cdb8-390d-41fb-affd-a5c7d86bb16e/orchestrate/execute with dev-engineer-token -> `default` and `reviewer` assignments `SUCCESS`, reduce handoff `COMPLETED`.
+      - PYTHONPATH=services/api-server services/api-server/.venv/bin/python direct call to `app.workers.subagent_worker.execute_subagent("1224e7d9-7947-4f07-95c8-16a36ba7b510")` with deterministic ModelGateway -> `SUCCESS`.
+      - GET /api/agents/runs/48a1cdb8-390d-41fb-affd-a5c7d86bb16e/workspace with dev-engineer-token -> run `COMPLETED`, subagent `SUCCESS`, assignments `default/reviewer SUCCESS`, handoff `reduce_input COMPLETED`, events include `AGENT_REDUCE_COMPLETED` and `SUBAGENT_COMPLETED`.
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agents.py::test_agent_orchestrate_run_creates_named_assignments_and_events tests/test_agents.py::test_agent_orchestration_execute_runs_assignments_and_reduces tests/test_agents.py::test_agent_orchestration_enqueue_marks_assignments_for_worker -q -> failed on existing SQLite in-memory TestClient table-scope issue (`no such table: agents`)
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> failed on existing unrelated stale test/a11y typing debt including missing jest-axe declarations, stale navigation imports, old ChatMessageBubble props, SAMLProvider fixture drift, and onboarding mock return typing
+    acceptance_notes:
+      - The failed Run's `子代理 5` number was max capacity, not five running subagents; Run Detail now renders actual/max such as `0/5`.
+      - The original Plan DAG had five synchronous steps and no `can_spawn_subagent=true` async steps, so the normal executor never spawned Subagent rows for that run.
+      - The immediate failure was a policy denial: Agent `客服` has no tool attachments, the executor selected `read_file` for `generate_outline`, and policy rejected `agent 客服 is not attached to capability read_file`.
+      - The executor now defaults creative/generative sync steps such as outlines, drafts, stories, and final artifacts to `write_file`, derives a safe artifact path from artifact expectations, includes a stable idempotency key, and treats tool needs such as `write_file` and `run_shell` as sandbox-requiring even when the plan forgot `requires_sandbox`.
+      - Run Detail now shows a `失败原因` card with latest `STEP_FAILED` summary, failed step, tool call id, and permission boundary guidance.
+      - The former `编排多智能体` button only called `/api/agents/runs/{run_id}/orchestrate`, which creates assignments/handoffs without executing them; the UI now separates `创建多智能体编排` / `刷新编排` from `执行多智能体`, which calls `/api/agents/runs/{run_id}/orchestrate/execute`.
+      - Run Detail now displays multi-agent evidence from assignments, handoffs, and `AGENT_*` events so pending versus executed branches are visible instead of looking unresponsive.
+      - Fresh proof Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` is available at `http://127.0.0.1:5173/runs/48a1cdb8-390d-41fb-affd-a5c7d86bb16e`; it uses a deterministic manual plan with an async `can_spawn_subagent=true` step and a sync parent completion step.
+      - The proof Run first recorded `SUBAGENT_SPAWNED` plus `queue_deferred` because Redis/Dramatiq is not running locally, then direct worker execution consumed the same subagent row and wrote `SUBAGENT_STARTED`, `MODEL_CALLED`, `MODEL_RESPONSE_RECEIVED`, `react_round_completed`, and `SUBAGENT_COMPLETED`.
+      - The same proof Run's multi-agent orchestration selected `default` and `reviewer`, executed both assignments through `/orchestrate/execute`, and wrote `AGENT_ASSIGNMENT_STARTED`, `AGENT_ASSIGNMENT_COMPLETED`, `AGENT_PARALLEL_BRANCH_COMPLETED`, and `AGENT_REDUCE_COMPLETED`.
+      - This proof avoids the invalid configured DeepSeek key by using deterministic plan/model responses; it proves Harness orchestration/execution plumbing, not live provider quality.
+
+  - id: model-settings-cc-switch-style-selector-implementation
+    date: 2026-06-16
+    status: completed
+    demo: `/settings/models` now uses a cc-switch-style provider rail and searchable model switchboard backed by a provider-first catalog, split configuration dialogs, and generic backend `secret_provider` sharing so one provider key can unlock multiple models across DeepSeek, OpenAI-compatible, custom, and future providers.
+    verification_result: targeted_passed_repo_lint_blocked_by_existing_unrelated_test_typing_debt
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx -> 16 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py::test_provider_api_key_reuses_deepseek_secret_across_model_providers tests/test_model_gateway.py::test_provider_api_key_uses_explicit_secret_provider_for_any_vendor tests/test_model_gateway.py::test_provider_api_key_prefers_explicit_secret_provider_over_model_alias tests/test_settings.py::test_deepseek_model_settings_store_one_secret_for_multiple_models tests/test_settings.py::test_model_settings_store_explicit_secret_provider_for_multiple_models -q -> 5 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/model_gateway.py app/api/settings.py tests/test_model_gateway.py tests/test_settings.py -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> failed on existing unrelated stale test/a11y typing debt including missing jest-axe declarations, stale navigation/ConsoleShell imports, old ChatMessageBubble test props, SAMLProvider fixture drift, and onboarding mock return typing
+    acceptance_notes:
+      - Added `apps/agent-console/src/features/settings/modelCatalog.ts` as the provider-first catalog and merge layer for DeepSeek, OpenAI, Anthropic, Gemini, Kimi, Z.AI, Qwen, Doubao, OpenRouter, Ollama/local, and Custom providers while preserving legacy provider names such as `deepseek-flash`, `deepseek-pro`, and `openai-compatible`.
+      - The top Model Settings area now uses a provider rail, search input, configured/unconfigured filters, and compact model rows; long endpoint URLs stay in the lower grouped provider table instead of the switchboard rows.
+      - Provider-key, add-model, and custom-provider flows now use split dialog semantics: provider-key/custom-provider saves and enables a default model, while add-model can reuse an existing provider secret and does not change the default.
+      - Custom providers expose `共享密钥标识`; by default it follows the provider id so unrelated custom providers do not accidentally share the same secret.
+      - Backend storage and runtime resolution now honor generic `secret_provider` metadata before provider-name fallback, while DeepSeek still canonicalizes to `secret://models/deepseek/api-key` and resolves legacy `deepseek-flash` / `deepseek-pro` secrets.
+      - Regression coverage proves DeepSeek and OpenAI-compatible multi-model secret reuse, explicit `secret_provider` priority over provider aliases, no raw key resend when adding a model under a configured provider, provider/model search, custom-provider dialog fields, and stable pricing-table assertions after the switchboard rewrite.
+
+  - id: model-settings-cc-switch-style-selector-plan
+    date: 2026-06-16
+    status: planned
+    demo: Planned a cc-switch-style Model Settings selector so `/settings/models` can support provider search, provider-level keys, multiple models per provider, and custom providers without changing implementation yet.
+    verification_result: docs_passed_plan_only
+    verification_commands:
+      - python3 scripts/validate-docs.py -> passed
+    acceptance_notes:
+      - Plan saved at `.omx/plans/prd-model-settings-cc-switch-style-selector.md`.
+      - The plan replaces the fixed top model-card grid with a provider rail plus searchable model switchboard.
+      - The plan keeps existing `default_provider`, `default_model`, and `providers[]` compatibility while adding optional provider/catalog/secret metadata.
+      - The plan requires provider-level secret identity through `secret_provider`, so one provider key can unlock multiple model rows.
+      - No source implementation was made for this planning step.
+
+  - id: model-settings-deepseek-provider-secret-sharing
+    date: 2026-06-16
+    status: completed
+    demo: Model Settings now treats the DeepSeek API Key as a provider-level secret, so configuring DeepSeek once unlocks direct switching between DeepSeek Flash and DeepSeek Pro without asking for another key.
+    verification_result: targeted_passed_broader_testclient_grouping_blocked_by_existing_sqlite_memory_table_issue
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx -> 14 passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py::test_provider_api_key_reuses_deepseek_secret_across_model_providers tests/test_settings.py::test_deepseek_model_settings_store_one_secret_for_multiple_models -q -> 2 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/model_gateway.py app/api/settings.py tests/test_model_gateway.py tests/test_settings.py -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py::test_provider_api_key_reuses_deepseek_secret_across_model_providers tests/test_settings.py::test_deepseek_model_settings_store_one_secret_for_multiple_models tests/test_settings.py::test_model_settings_health_endpoint_probes_real_provider -q -> failed on existing SQLite TestClient in-memory table-scope issue (`no such table: system_settings`) for TestClient-backed settings tests; direct helper and gateway regressions above passed
+    acceptance_notes:
+      - `/settings/models` model switch cards now look for a configured same-vendor provider before opening the API Key dialog, so DeepSeek Pro shows `切换` when DeepSeek Flash already has a stored key.
+      - Switching to a same-vendor model persists the target provider/model as default while carrying only secret metadata (`api_key_configured`, source, secret id) and never copying a raw API key in the browser.
+      - Provider table actions use the same same-vendor key check, so DeepSeek Flash/Pro are no longer rendered as partially unusable when one DeepSeek key is configured.
+      - Backend model-provider secrets now canonicalize DeepSeek storage to `secret://models/deepseek/api-key` and resolve legacy `deepseek-flash` / `deepseek-pro` secrets for compatibility.
+      - Settings responses now mark both DeepSeek Flash and DeepSeek Pro configured when the canonical or legacy DeepSeek secret exists.
+
+  - id: workspace-model-auth-error-ux
+    date: 2026-06-16
+    status: completed
+    demo: Workspace model-provider authentication failures now surface as a model configuration problem instead of a generic backend error, with API keys redacted and a direct Model Settings action.
+    verification_result: targeted_passed_repo_build_and_broader_backend_regression_blocked_by_existing_unrelated_debt
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py::test_openai_compatible_gateway_classifies_and_redacts_upstream_auth_error -q -> 1 passed
+      - cd services/api-server && .venv/bin/python -m ruff check app/agents/model_gateway.py app/api/agents/common.py app/api/agents/agent_chat/streaming.py tests/test_model_gateway.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/useChatStream.test.tsx src/features/agents/__tests__/sseErrors.property.test.ts src/features/agents/__tests__/ChatMessageList.render.test.tsx src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 53 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> failed on existing unrelated test typing debt such as missing jest-axe declarations, stale a11y imports, old ChatMessageBubble test prop shapes, SAMLProvider fixture shape drift, and onboarding configuration mock return typing
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - OpenAI-compatible model gateway HTTP 401/403 responses now raise ModelAuthError, including streaming responses.
+      - Upstream error bodies that echo the configured provider API key are redacted to a masked suffix such as `****9b48`; the full raw key is not stored in the error message.
+      - Workspace SSE error events now emit `kind: model_auth` for ModelAuthError and preserve the run id.
+      - Agent Console parses the SSE error kind/run id, persists `metadata.error.kind=model_auth`, and also recognizes legacy server-wrapped upstream 401/403 API-key details as model-auth failures.
+      - Chat error copy now says `模型密钥无效`, tells the user to update the DeepSeek API Key or switch provider, and shows an `打开模型设置` action linked to `/settings/models`.
+      - Existing broader validation gaps remain unrelated to this change: frontend build is blocked by stale test/a11y typings such as missing `jest-axe` declarations and old test prop shapes; broader backend settings/model-gateway grouping is blocked by existing SQLite in-memory TestClient table-scope issues.
+
+  - id: onboarding-completion-redirect
+    date: 2026-06-15
+    status: completed
+    demo: First-run onboarding closes after Step 4 completion, Dashboard red-box follow-up entries route to usable destinations, and Agent Studio configuration target selection persists across page switches/refreshes.
+    verification_result: targeted_passed_repo_typecheck_blocked_by_existing_test_typing_debt
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/agents/__tests__/AgentListPage.studio.test.tsx -> 13 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm test -- src/features/dashboard/pages/__tests__/DashboardPage.test.tsx src/features/onboarding/__tests__/OnboardingWizardPage.test.tsx -> 5 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npm run lint -- --pretty false -> failed on existing unrelated test typing debt such as missing jest-axe declarations, stale navigation/onboarding a11y imports, and old ChatMessageBubble/SAMLProvider test prop shapes
+    acceptance_notes:
+      - Onboarding completion now writes the returned OnboardingState into the React Query cache before navigation, so the root OnboardingGate sees completed/skipped state immediately.
+      - Completion navigation uses replace to close the onboarding route instead of leaving it in browser history.
+      - Direct visits to /onboarding when the API already reports completed or skipped now redirect back to the Dashboard.
+      - Dashboard Active Alerts is now a real link to /observability/alerts.
+      - Dashboard Quick Actions no longer shows 跑演示任务 after onboarding closes; it loads demo data when missing and opens the demo run when loaded.
+      - Agent Studio 设为配置 now persists the selected configuration target in localStorage and validates the saved target against the loaded Agent list before using it.
+      - Regression coverage proves clicking 完成设置 leaves the onboarding page, already-completed onboarding auto-closes, Active Alerts links to alert rules, the demo quick action resolves to a usable action or run detail link, and 设为配置 survives an Agent Studio remount.
+
   - id: agent-workspace-team-mode-screenshot-fixes
     date: 2026-06-10
     status: completed

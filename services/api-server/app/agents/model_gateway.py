@@ -40,6 +40,7 @@ from app.security.secrets import (
     SECRET_PURPOSE_MODEL_PROVIDER,
     SECRET_SCOPE_ORG,
     SECRET_SOURCE_ORG,
+    SecretResolution,
     env_candidates_for_provider,
     resolve_secret,
     upsert_secret,
@@ -90,6 +91,10 @@ class ModelGatewayError(RuntimeError):
     pass
 
 
+class ModelAuthError(ModelGatewayError):
+    pass
+
+
 MODEL_SETTINGS_KEY = "settings.models"
 LEGACY_BUILTIN_PROVIDER_NAMES = {"minimax", "deepseek"}
 LEGACY_BUILTIN_MODEL_NAMES = {
@@ -101,6 +106,8 @@ DEEPSEEK_CONTEXT_WINDOW_TOKENS = 1_000_000
 DEEPSEEK_MAX_OUTPUT_TOKENS = 384_000
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_SECRET_PROVIDER = "deepseek"
+DEEPSEEK_SECRET_ALIASES = ("deepseek", "deepseek-flash", "deepseek-pro")
 
 DEEPSEEK_FLASH_PROVIDER = {
     "name": "deepseek-flash",
@@ -108,6 +115,7 @@ DEEPSEEK_FLASH_PROVIDER = {
     "status": "healthy",
     "api_format": "openai",
     "model": "deepseek-v4-flash",
+    "secret_provider": DEEPSEEK_SECRET_PROVIDER,
     "base_url": DEEPSEEK_BASE_URL,
     "api_key": "replace-me",
     "api_key_env": DEEPSEEK_API_KEY_ENV,
@@ -141,6 +149,7 @@ DEFAULT_MODEL_SETTINGS = {
             "name": "openai-compatible",
             "label": "OpenAI GPT-5.5",
             "model": "gpt-5.5",
+            "secret_provider": "openai",
             "api_format": "openai",
             "base_url": "https://api.openai.com/v1",
             "api_key": "",
@@ -211,6 +220,7 @@ def _upsert_builtin_deepseek_provider(*, providers: list, default_provider: dict
         "label",
         "api_format",
         "model",
+        "secret_provider",
         "base_url",
         "api_key_env",
         "model_context_window_tokens",
@@ -226,6 +236,129 @@ def _upsert_builtin_deepseek_provider(*, providers: list, default_provider: dict
             providers[index] = merged
             return
     providers.append(deepcopy(default_provider))
+
+
+def model_provider_secret_provider(
+    provider: str | dict,
+    secret_provider: str | None = None,
+) -> str:
+    names = model_provider_secret_names(provider, secret_provider=secret_provider)
+    if names:
+        return names[0]
+    return _model_provider_name(provider).strip()
+
+
+def model_provider_secret_names(
+    provider: str | dict,
+    *,
+    secret_provider: str | None = None,
+) -> list[str]:
+    provider_name = _model_provider_name(provider).strip()
+    explicit_secret_provider = _model_provider_secret_provider_value(
+        provider,
+        explicit=secret_provider,
+    )
+    ordered: list[str] = []
+    if explicit_secret_provider:
+        ordered.append(
+            DEEPSEEK_SECRET_PROVIDER
+            if _is_deepseek_secret_name(explicit_secret_provider)
+            else explicit_secret_provider
+        )
+        if provider_name:
+            ordered.append(provider_name)
+    elif _is_deepseek_secret_name(provider_name):
+        ordered.append(DEEPSEEK_SECRET_PROVIDER)
+    elif provider_name:
+        ordered.append(provider_name)
+    if _is_deepseek_secret_name(explicit_secret_provider) or _is_deepseek_secret_name(
+        provider_name
+    ):
+        ordered.extend(DEEPSEEK_SECRET_ALIASES)
+    deduped: list[str] = []
+    for name in ordered:
+        if name and name not in deduped:
+            deduped.append(name)
+    return deduped
+
+
+def _model_provider_name(provider: str | dict) -> str:
+    if isinstance(provider, dict):
+        return str(provider.get("name") or provider.get("model_provider") or "").strip()
+    return str(provider or "").strip()
+
+
+def _model_provider_secret_provider_value(
+    provider: str | dict,
+    *,
+    explicit: str | None = None,
+) -> str:
+    if explicit is not None:
+        return str(explicit or "").strip()
+    if isinstance(provider, dict):
+        return str(provider.get("secret_provider") or "").strip()
+    return ""
+
+
+def _is_deepseek_secret_name(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized in DEEPSEEK_SECRET_ALIASES
+
+
+def _model_provider_env_candidates(
+    *,
+    provider_name: str,
+    secret_provider: str | None,
+    api_key_env: str | None,
+) -> list[str]:
+    candidates = env_candidates_for_provider(provider_name, api_key_env)
+    if secret_provider:
+        candidates.extend(env_candidates_for_provider(secret_provider, api_key_env))
+    deduped: list[str] = []
+    for candidate in candidates:
+        name = candidate.strip().upper()
+        if name and name not in deduped:
+            deduped.append(name)
+    return deduped
+
+
+def resolve_model_provider_secret(
+    *,
+    session: Session | None,
+    organization_id: str | None,
+    user_id: str | None,
+    provider_name: str,
+    secret_provider: str | None = None,
+    api_key_env: str | None = None,
+) -> SecretResolution:
+    secret_names = model_provider_secret_names(
+        provider_name,
+        secret_provider=secret_provider,
+    )
+    for secret_name in secret_names:
+        resolved = resolve_secret(
+            session,
+            organization_id=organization_id,
+            user_id=user_id,
+            provider=secret_name,
+            purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+            env_candidates=[],
+        )
+        if resolved.found:
+            return resolved
+    env_provider_name = secret_names[0] if secret_names else provider_name
+    return resolve_secret(
+        session,
+        organization_id=organization_id,
+        user_id=user_id,
+        provider=env_provider_name,
+        purpose=SECRET_PURPOSE_MODEL_PROVIDER,
+        env_candidates=_model_provider_env_candidates(
+            provider_name=provider_name,
+            secret_provider=secret_provider,
+            api_key_env=api_key_env,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -448,7 +581,10 @@ class OpenAICompatibleModelGateway:
                 raw = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             model_call_errors_total.inc()
-            raise ModelGatewayError(self._format_http_error(exc)) from exc
+            formatted = self._format_http_error(exc)
+            if exc.code in {401, 403}:
+                raise ModelAuthError(formatted) from exc
+            raise ModelGatewayError(formatted) from exc
         except (OSError, json.JSONDecodeError) as exc:
             model_call_errors_total.inc()
             raise ModelGatewayError(str(exc)) from exc
@@ -541,7 +677,10 @@ class OpenAICompatibleModelGateway:
                         usage = frame_usage
         except error.HTTPError as exc:
             model_call_errors_total.inc()
-            raise ModelGatewayError(self._format_http_error(exc)) from exc
+            formatted = self._format_http_error(exc)
+            if exc.code in {401, 403}:
+                raise ModelAuthError(formatted) from exc
+            raise ModelGatewayError(formatted) from exc
         except (OSError, json.JSONDecodeError) as exc:
             model_call_errors_total.inc()
             raise ModelGatewayError(str(exc)) from exc
@@ -592,12 +731,19 @@ class OpenAICompatibleModelGateway:
             body = exc.read().decode("utf-8", errors="replace")
         except OSError:
             body = ""
-        detail = body.strip()
+        detail = self._redact_known_secret(body.strip())
         if len(detail) > 500:
             detail = f"{detail[:500]}..."
         if detail:
             return f"upstream model gateway returned HTTP {exc.code}: {detail}"
         return f"upstream model gateway returned HTTP {exc.code}: {exc.reason}"
+
+    def _redact_known_secret(self, value: str) -> str:
+        secret = str(self.api_key or "").strip()
+        if not secret or secret == "replace-me" or secret not in value:
+            return value
+        suffix = secret[-4:] if len(secret) >= 4 else "****"
+        return value.replace(secret, f"****{suffix}")
 
 
 class AnthropicCompatibleModelGateway:
@@ -904,7 +1050,7 @@ class ModelHealthChecker:
             else:
                 mode = "probe"
                 try:
-                    model_gateway_for_provider(
+                    _model_gateway_for_provider_compat(
                         provider,
                         timeout_seconds=int(provider.get("health_timeout_seconds") or 5),
                         session=self.session,
@@ -1706,8 +1852,9 @@ class AuditedModelGateway:
         return max(1, (content_length // 4) + message_overhead)
 
     def _gateway_from_settings(self, settings: ResolvedModelSettings) -> ModelGateway:
-        return model_gateway_for_provider(
+        return _model_gateway_for_provider_compat(
             settings.provider,
+            timeout_seconds=None,
             session=self.session,
             organization_id=settings.organization_id,
             user_id=settings.owner_user_id,
@@ -1722,18 +1869,16 @@ def provider_api_key(
     user_id: str | None = None,
 ) -> str | None:
     provider_name = str(provider.get("name") or provider.get("model_provider") or "").strip()
+    secret_provider = str(provider.get("secret_provider") or "").strip()
     api_key_env = provider.get("api_key_env")
     if provider_name and session is not None and organization_id:
-        resolved = resolve_secret(
-            session,
+        resolved = resolve_model_provider_secret(
+            session=session,
             organization_id=organization_id,
             user_id=user_id,
-            provider=provider_name,
-            purpose=SECRET_PURPOSE_MODEL_PROVIDER,
-            env_candidates=env_candidates_for_provider(
-                provider_name,
-                str(api_key_env) if isinstance(api_key_env, str) else None,
-            ),
+            provider_name=provider_name,
+            secret_provider=secret_provider,
+            api_key_env=str(api_key_env) if isinstance(api_key_env, str) else None,
         )
         if resolved.found:
             return resolved.value
@@ -1771,15 +1916,16 @@ def _store_provider_api_keys_for_gateway(
         provider_name = str(provider.get("name") or "").strip()
         if not provider_name:
             continue
+        secret_provider = model_provider_secret_provider(provider)
         row = upsert_secret(
             session,
             organization_id=organization_id,
             actor_id="system",
             scope=SECRET_SCOPE_ORG,
             owner_user_id=None,
-            provider=provider_name,
+            provider=secret_provider,
             purpose=SECRET_PURPOSE_MODEL_PROVIDER,
-            secret_ref=f"secret://models/{provider_name}/api-key",
+            secret_ref=f"secret://models/{secret_provider}/api-key",
             secret_value=raw_key,
         )
         provider["api_key_configured"] = True
@@ -1793,6 +1939,28 @@ def _settings_api_key_for_env(api_key_env: str) -> str | None:
     if api_key_env == DEEPSEEK_API_KEY_ENV:
         return settings.deepseek_api_key or None
     return None
+
+
+def _model_gateway_for_provider_compat(
+    provider: dict,
+    *,
+    timeout_seconds: int | None = None,
+    session: Session | None = None,
+    organization_id: str | None = None,
+    user_id: str | None = None,
+) -> ModelGateway:
+    try:
+        return model_gateway_for_provider(
+            provider,
+            timeout_seconds=timeout_seconds,
+            session=session,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        return model_gateway_for_provider(provider, timeout_seconds=timeout_seconds)
 
 
 def model_gateway_for_provider(

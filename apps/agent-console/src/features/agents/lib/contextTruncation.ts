@@ -43,10 +43,10 @@ export function estimateTokens(node: ConversationNode): number {
 
 export function estimateTextTokens(content: string): number {
   if (content.length === 0) return 0;
-  const cjkMatches = content.match(CJK_RE) ?? [];
+  const cjkMatches: string[] = content.match(CJK_RE) ?? [];
   const cjkCount = cjkMatches.length;
   const withoutCjk = content.replace(CJK_RE, " ");
-  const wordMatches = withoutCjk.match(ASCII_WORD_RE) ?? [];
+  const wordMatches: string[] = withoutCjk.match(ASCII_WORD_RE) ?? [];
   const asciiWordChars = wordMatches.reduce((sum, word) => sum + word.length, 0);
   const visibleNonSpace = withoutCjk.replace(/\s/g, "").length;
   const symbolChars = Math.max(0, visibleNonSpace - asciiWordChars);

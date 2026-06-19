@@ -22,10 +22,12 @@ AUTH_HEADERS = {"Authorization": "Bearer dev-engineer-token"}
 
 @pytest.fixture(scope="function")
 def db_session() -> Generator[Session, None, None]:
-    # Create a unique in-memory database for each test
+    # Keep each test isolated while sharing one in-memory SQLite connection
+    # across TestClient's worker thread and the test thread.
     engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
+        "sqlite+pysqlite://",
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(bind=engine)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

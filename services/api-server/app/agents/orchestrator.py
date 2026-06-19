@@ -341,9 +341,9 @@ class MultiAgentOrchestrator:
         )
 
         for assignment in assignments:
+            if assignment.status in {"SUCCESS", "FAILED", "CANCELLED"}:
+                continue
             self.execute_assignment(run=run, assignment=assignment)
-            if assignment.status == "FAILED":
-                return assignments, handoffs
 
         self._reduce(run=run, assignments=assignments)
         self.session.flush()

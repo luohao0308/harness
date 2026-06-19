@@ -40,6 +40,87 @@ afterEach(() => {
 });
 
 describe("SubagentDetailPage", () => {
+  it("surfaces worker summary and terminal action state when no specialist output exists", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/subagents/subagent-1") {
+        return jsonResponse({
+          id: "subagent-1",
+          task_id: "task-1",
+          parent_agent_id: null,
+          agent_type: "subagent",
+          status: "SUCCESS",
+          specialist_id: null,
+          fanout_batch_id: null,
+          fanout_index: null,
+          fanout_total: null,
+          dynamic_fanout_origin: null,
+          dynamic_fanout_requested_by: null,
+          dynamic_fanout_reason: null,
+          context_json: {
+            label: "并行探针",
+            step_key: "parallel_subagent_probe",
+            result: {
+              summary: "子代理已执行：完成并行探针，确认 Harness 子代理 worker 链路可消费任务。",
+              tool_results: [],
+              artifacts: [],
+              react_trace: [
+                {
+                  round: 1,
+                  executed_tool_count: 0,
+                  next_tool_count: 0,
+                  done: true,
+                },
+              ],
+              context_summary: { total_tool_results: 0 },
+            },
+          },
+          started_at: "2026-06-16T10:03:01Z",
+          completed_at: "2026-06-16T10:03:02Z",
+          timeout_at: null,
+          specialist: null,
+          output: null,
+        });
+      }
+      if (path === "/api/tasks/task-1/result") {
+        return jsonResponse({
+          task_id: "task-1",
+          status: "COMPLETED",
+          summary: "Parent done",
+          execution_plan: null,
+          artifacts: [],
+          subagent_results: [],
+          last_sequence: 4,
+          pending: false,
+        });
+      }
+      if (path === "/api/tasks/task-1/fanout-batches") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("并行探针")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /查看所属任务子代理/ })).toHaveAttribute(
+      "href",
+      "/runs/task-1/subagents",
+    );
+    expect(screen.queryByRole("button", { name: /取消子代理/ })).not.toBeInTheDocument();
+    expect(screen.getByText("终态不可取消")).toBeInTheDocument();
+    expect(screen.getByText("执行结果")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("子代理已执行：完成并行探针，确认 Harness 子代理 worker 链路可消费任务。").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText("这个子代理未绑定专家模板，因此没有结构化专家输出；上方执行结果来自 worker 结果摘要。"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("本次子代理没有调用工具；worker 已完成并写入执行结果摘要。").length,
+    ).toBeGreaterThan(0);
+  });
+
   it("renders specialist badge, structured output, and budget consumption", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = requestPath(input);

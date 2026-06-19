@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, CheckCircle2, Gauge, KeyRound, Play, Settings2 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -98,11 +98,18 @@ export function OnboardingWizardPage() {
   });
   const complete = useMutation({
     mutationFn: completeOnboarding,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["onboarding", "state"] });
-      navigate("/");
+    onSuccess: (next) => {
+      queryClient.setQueryData(["onboarding", "state"], next);
+      void queryClient.invalidateQueries({ queryKey: ["onboarding", "state"] });
+      navigate("/", { replace: true });
     },
   });
+
+  useEffect(() => {
+    if (state.data?.completed || state.data?.skipped) {
+      navigate("/", { replace: true });
+    }
+  }, [navigate, state.data?.completed, state.data?.skipped]);
 
   const providerSummary = useMemo(
     () => ({ provider, endpoint, key_configured: apiKey.trim().length > 0 }),
