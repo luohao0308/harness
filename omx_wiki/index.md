@@ -1,6 +1,6 @@
 # Wiki Index
 
-> 28 pages | Last updated: 2026-06-19T13:00:32+08:00
+> 27 pages | Last updated: 2026-06-19T13:00:32+08:00
 
 ## session-log
 
@@ -12,7 +12,6 @@
 - [Frontend Agents Auth Timeout Recovery](session-2026-06-16-frontend-agents-auth-timeout-recovery.md) — Agent Console `/agents/` no longer hangs on auth bootstrap when the local API accepts connections but does not respond; protected routes show an actionable API error, and the local API/browser check renders the Agents page.
 - [Local Dev TestClient SQLite StaticPool](session-2026-06-16-local-dev-testclient-sqlite-staticpool.md) — Backend TestClient regressions no longer fail with SQLite in-memory `no such table` errors; the per-test SQLite engine now uses `StaticPool`, and `test_agents.py` plus settings/model gateway targets pass.
 - [Agent Workspace Goal Mode Streaming](session-2026-06-16-agent-workspace-goal-mode-streaming.md) — Agent Workspace `追踪目标模式` now creates or continues a real goal Run loop instead of returning `plan.json`, and normal assistant replies stream incremental SSE deltas when safe.
-- [Agent Workspace And Team Mode Screenshot Fixes](session-2026-06-10-agent-workspace-team-mode-screenshot-fixes.md) — Agent Workspace platform/local switching, Team add-member cache updates, branch/regenerate turn placement, per-agent steps, pause/stop late-event handling, browser-context history clearing, live sends, and Workspace/Team FAB obstruction are repaired and regression-covered.
 - [Local Agent Generic Onboarding Flow](session-2026-06-06-local-agent-generic-onboarding-flow.md) — Agent Studio now generates one generic local Agent command first, hao bridge auto-detects hao/Codex/Claude without preselecting an adapter, detected Agents are selected/named after discovery, and multi-adapter pairing tokens are constrained by token+adapter uniqueness.
 - [Local Agent Reply And Order Repair](session-2026-06-06-local-agent-reply-order-repair.md) — Codex and Claude Code local Agents now pass live OK smokes; hao local Agent output mirrors platform deltas through task-event SSE; local Agent model calls are observable without hao double-counting; manual composer model choices survive local polling; history is grouped/stable; Agent Studio discovery no longer flickers or keeps unchecked local connections; hao plan mode uses a scoped bridge token bound to the matching Agent/run/task; and two-agent review consensus closed.
 - [Agent Workspace Local Agent Header Draft Fix](session-2026-06-05-agent-workspace-local-agent-header-draft-fix.md) — Agent Workspace now preserves Local Agent composer drafts across polling, moves Local Agent controls into the top-left header, supports header Agent switching, and closes UI plus state/test review consensus after responsive fixes.
