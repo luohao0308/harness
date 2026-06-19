@@ -70,6 +70,7 @@ REQUIRED_FILES = [
     *TOP_LEVEL_SPECS,
     *STAGE_FILES,
     "scripts/agent-context-brief.py",
+    "docs/module-map.json",
 ]
 
 STAGE_SECTIONS = [
@@ -298,6 +299,39 @@ def check_agent_context_brief_fixtures() -> None:
             )
 
 
+def check_module_map() -> None:
+    """Parse docs/module-map.json and assert every path/doc exists on disk (R4, R5)."""
+    map_path = ROOT / "docs/module-map.json"
+    try:
+        data = json.loads(read_text(map_path))
+    except json.JSONDecodeError as exc:
+        fail(f"docs/module-map.json is not valid JSON: {exc}")
+    modules = data.get("modules")
+    if not isinstance(modules, list) or not modules:
+        fail("docs/module-map.json must have a non-empty 'modules' list")
+    for m in modules:
+        name = m.get("name", "<unnamed>")
+        for field in ("name", "path", "summary"):
+            if not m.get(field):
+                fail(f"docs/module-map.json module {name!r} missing field {field!r}")
+        if not (ROOT / m["path"]).exists():
+            fail(f"docs/module-map.json module {name!r} path not found: {m['path']}")
+        for doc in m.get("docs", []):
+            if not (ROOT / doc).exists():
+                fail(f"docs/module-map.json module {name!r} references missing doc: {doc}")
+
+
+def check_memory_files() -> None:
+    """Assert error-registry.md and anti-patterns.md each have at least one ## heading (R4)."""
+    for rel in ("docs/ai/error-registry.md", "docs/ai/anti-patterns.md"):
+        path = ROOT / rel
+        if not path.is_file():
+            fail(f"missing memory file: {rel}")
+        headings = [line for line in read_text(path).splitlines() if line.startswith("## ")]
+        if not headings:
+            fail(f"{rel} has no '## ' section headings — must contain at least one entry")
+
+
 def check_readme_links() -> None:
     readme = read_text(ROOT / "README.md")
     for rel in TOP_LEVEL_SPECS + STAGE_FILES:
@@ -313,6 +347,8 @@ def main() -> None:
     check_stage_docs()
     check_progress_alignment()
     check_agent_context_contract()
+    check_module_map()
+    check_memory_files()
     check_readme_links()
     print("docs validation passed")
 
