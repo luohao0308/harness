@@ -12,15 +12,12 @@ docs/ai/reference/architecture-and-decisions.md
 
 | 技术 | 执行文档 |
 |---|---|
-| Agent Graph Runtime | [01-agent-graph-runtime.md](../ai/stages/01-agent-graph-runtime.md) |
-| Event Store + Recovery | [02-event-store-recovery.md](../ai/stages/02-event-store-recovery.md) |
-| Agent Run Console | [03-agent-run-console.md](../ai/stages/03-agent-run-console.md) |
-| Tool / MCP Runtime | [04-tool-mcp-runtime.md](../ai/stages/04-tool-mcp-runtime.md) |
-| Guardrail / Policy Engine | [05-guardrail-policy-engine.md](../ai/stages/05-guardrail-policy-engine.md) |
-| Eval Harness | [06-eval-harness.md](../ai/stages/06-eval-harness.md) |
-| Memory / Context / Model Routing | [07-memory-context-router.md](../ai/stages/07-memory-context-router.md) |
-| WarmPool + Benchmark | [08-warmpool-benchmark.md](../ai/stages/08-warmpool-benchmark.md) |
-| Portfolio Demo + Docs | [09-portfolio-demo-docs.md](../ai/stages/09-portfolio-demo-docs.md) |
+| Agent Workspace Console | [01-agent-workspace-console.md](../ai/stages/01-agent-workspace-console.md) |
+| Agent Studio Config | [02-agent-studio-config.md](../ai/stages/02-agent-studio-config.md) |
+| Harness Tool MCP | [03-harness-tool-mcp.md](../ai/stages/03-harness-tool-mcp.md) |
+| Event Sourcing Replay UI | [04-event-sourcing-replay-ui.md](../ai/stages/04-event-sourcing-replay-ui.md) |
+| Eval Regression | [05-eval-regression.md](../ai/stages/05-eval-regression.md) |
+| WarmPool Infra | [06-warmpool-infra.md](../ai/stages/06-warmpool-infra.md) |
 
 ## 机器契约
 

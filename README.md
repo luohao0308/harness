@@ -195,7 +195,7 @@ harness/
 
 ## Roadmap And Community
 
-Current roadmap source: [.omx/plans/roadmap-production-readiness.md](.omx/plans/roadmap-production-readiness.md).
+Current roadmap source: [docs/roadmap.md](docs/roadmap.md).
 
 Community links are operator-owned placeholders for the private distribution:
 

@@ -45,11 +45,7 @@ One valid shape is a left/context region, a central conversation region, and a r
 
 The Workspace can center on auditable planning and execution behavior. Planning, streamed conversation output, tool approval, and artifact preview may share the same screen or be split across coordinated views as long as the run remains traceable. Execution, orchestration, replay, and eval saving remain Run/Harness capabilities shown around the Run and in Run Detail.
 
-Workspace mode semantics are explicit:
-
-- `chat` is the default conversational mode.
-- `markdown_plan` is the user-facing planning mode for markdown plan output.
-- `plan` is the explicit Plan-Act execution mode and should not be conflated with `markdown_plan`.
+Workspace mode semantics (`chat` / `markdown_plan` / `plan`) are defined in [SPEC.md §Workspace Mode Semantics](./SPEC.md).
 
 Workspace Pro reference behaviors:
 

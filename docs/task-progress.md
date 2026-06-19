@@ -323,7 +323,7 @@ Full implementation of multi-step DAG execution, eval regression, browser e2e co
 - contextTruncation.ts: truncateForContext() with content.length/4 estimation
 - ContextUsageBar: amber 80%, red 95%
 - useChatStream: integrated truncation into buildPayload (payload-only)
-- Pin toggle UI (📌) on messages
+- Pin toggle UI on messages
 - Branch from here action on assistant messages
 - BranchSwitcher: N/M with left/right arrows
 - 22 new unit tests
