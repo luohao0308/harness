@@ -17,10 +17,17 @@ import {
   updateOnboardingState,
 } from "../../tasks/api";
 
+const STEP_LABELS: Record<number, string> = {
+  1: "第 1 步 · 选择模型",
+  2: "第 2 步 · 配置连接",
+  3: "第 3 步 · 创建智能体",
+  4: "第 4 步 · 运行演示",
+};
+
 const providers = [
-  { id: "deepseek", label: "DeepSeek", enabled: true },
-  { id: "openai-compatible", label: "OpenAI GPT-5.5", enabled: true },
-  { id: "anthropic", label: "Anthropic", enabled: false },
+  { id: "deepseek", label: "DeepSeek", enabled: true, defaultEndpoint: "https://api.deepseek.com" },
+  { id: "openai-compatible", label: "OpenAI GPT-5.5", enabled: true, defaultEndpoint: "https://api.openai.com/v1" },
+  { id: "anthropic", label: "Anthropic", enabled: false, defaultEndpoint: "https://api.anthropic.com" },
 ];
 
 const templates = [
@@ -44,6 +51,11 @@ export function OnboardingWizardPage() {
   const [selectedTemplate, setSelectedTemplate] = useState("research");
   const [agentId, setAgentId] = useState("first-run-agent");
   const [demoTaskId, setDemoTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const found = providers.find((item) => item.id === provider);
+    if (found) setEndpoint(found.defaultEndpoint);
+  }, [provider]);
 
   const saveProgress = useMutation({
     mutationFn: updateOnboardingState,
@@ -148,7 +160,7 @@ export function OnboardingWizardPage() {
                 data-testid={`step-indicator-${item}`}
                 onClick={() => setLocalStep(item)}
                 className={`h-2 rounded-full ${item <= step ? "bg-slate-900" : "bg-slate-200"}`}
-                aria-label={`步骤 ${item}`}
+                aria-label={STEP_LABELS[item] ?? `步骤 ${item}`}
               />
             ))}
           </div>
@@ -161,7 +173,7 @@ export function OnboardingWizardPage() {
               {step === 2 && <Settings2 className="h-4 w-4" />}
               {step === 3 && <Bot className="h-4 w-4" />}
               {step === 4 && <Play className="h-4 w-4" />}
-              Step {step}
+              {STEP_LABELS[step] ?? `第 ${step} 步`}
             </div>
             <Badge tone={state.data?.completed ? "success" : "info"}>
               {state.data?.completed ? "已完成" : "进行中"}

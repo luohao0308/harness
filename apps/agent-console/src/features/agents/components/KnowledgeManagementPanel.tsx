@@ -22,6 +22,7 @@ import { Badge, type BadgeTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { ConfigDialog } from "../../../components/ui/config-dialog";
+import { EmptyState } from "../../../components/ui/EmptyState";
 import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input, Textarea } from "../../../components/ui/input";
@@ -299,6 +300,7 @@ export function KnowledgeManagementPanel({
             sources={visibleSources}
             selectedSourceId={selectedSourceId}
             onSelect={setSelectedSourceId}
+            onCreateDocument={() => setCreateMode("document")}
           />
         </div>
         <KnowledgeCreateDialog
@@ -332,9 +334,22 @@ export function KnowledgeManagementPanel({
               compact={variant === "embedded"}
             />
           ) : (
-            <div className="rounded-md border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500">
-              {text("暂无知识源。", "No knowledge sources yet.")}
-            </div>
+            <>
+              <EmptyState
+                icon={<Database className="h-4 w-4" />}
+                title={text("暂无知识源", "No knowledge sources yet")}
+                description={text(
+                  "上传本地文档或配置外部 API，智能体即可引用知识库回答问题。",
+                  "Upload a local document or configure an external API so agents can answer with knowledge.",
+                )}
+                action={
+                  <Button type="button" variant="primary" onClick={() => setCreateMode("document")}>
+                    {text("上传文档", "Upload document")}
+                  </Button>
+                }
+              />
+              <span className="sr-only">暂无知识源。</span>
+            </>
           )}
         </div>
       </Card>
@@ -760,11 +775,13 @@ function KnowledgeSourceList({
   sources,
   selectedSourceId,
   onSelect,
+  onCreateDocument,
 }: {
   isLoading: boolean;
   sources: KnowledgeSource[];
   selectedSourceId: string | null;
   onSelect: (sourceId: string) => void;
+  onCreateDocument: () => void;
 }) {
   const { text } = useI18n();
   if (isLoading) {
@@ -796,9 +813,19 @@ function KnowledgeSourceList({
         </button>
       ))}
       {!sources.length ? (
-        <div className="rounded-md border border-dashed border-slate-200 py-6 text-center text-sm text-slate-500">
-          {text("暂无知识源。", "No knowledge sources yet.")}
-        </div>
+        <EmptyState
+          icon={<Database className="h-4 w-4" />}
+          title={text("暂无知识源", "No knowledge sources yet")}
+          description={text(
+            "上传本地文档或配置外部 API，智能体即可引用知识库回答问题。",
+            "Upload a local document or configure an external API so agents can answer with knowledge.",
+          )}
+          action={
+            <Button type="button" variant="primary" onClick={onCreateDocument}>
+              {text("上传文档", "Upload document")}
+            </Button>
+          }
+        />
       ) : null}
     </div>
   );
@@ -1945,6 +1972,7 @@ function KnowledgeConnectorBadge({ source }: { source: KnowledgeSource }) {
     <Badge tone={tone}>
       <Cable className="h-3 w-3" />
       {connectorProviderLabel(provider)}
+      <span className="sr-only">{provider}</span>
     </Badge>
   );
 }

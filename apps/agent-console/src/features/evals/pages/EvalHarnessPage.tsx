@@ -8,6 +8,7 @@ import { Badge, statusTone, type BadgeTone } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { ConfigDialog } from "../../../components/ui/config-dialog";
+import { EmptyState } from "../../../components/ui/EmptyState";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
 import { Input } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
@@ -295,7 +296,7 @@ export function EvalHarnessPage() {
   return (
     <ConsoleShell title={text("评测中心", "Eval Harness")}>
       <div className="space-y-4 p-4 lg:p-6">
-        <div className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
+        <div className="mx-auto grid max-w-[1500px] grid-cols-1 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
           <section className="space-y-4">
             <section className="space-y-2">
               <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
@@ -346,8 +347,8 @@ export function EvalHarnessPage() {
                     className={`mb-1 w-full rounded-md px-2 py-2 text-left text-xs ${
                       activeDatasetId === dataset.id
                         ? "bg-slate-100 text-slate-900"
-                      : "text-slate-600 hover:bg-slate-50"
-                  }`}
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
                     onClick={() => handleDatasetSelection(dataset.id)}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -355,20 +356,28 @@ export function EvalHarnessPage() {
                       <span className="shrink-0 font-mono text-[10px]">{dataset.case_count} 个用例</span>
                     </div>
                     <div className="mt-1 flex items-center gap-1.5">
-                      {dataset.baseline_run_id && (
-                        <Badge tone="success">基线</Badge>
-                      )}
+                      {dataset.baseline_run_id ? <Badge tone="success">基线</Badge> : null}
                       <span className="truncate text-[11px] text-slate-500">
                         {dataset.description || dataset.id}
                       </span>
                     </div>
                   </button>
                 ))}
-                {!datasetsQuery.isLoading && datasets.length === 0 && (
-                  <div className="px-2 py-8 text-center text-xs text-slate-500">
-                    {text("还没有数据集", "No datasets yet")}
-                  </div>
-                )}
+                {!datasetsQuery.isLoading && datasets.length === 0 ? (
+                  <EmptyState
+                    icon={<Database className="h-4 w-4" />}
+                    title={text("还没有数据集", "No datasets yet")}
+                    description={text(
+                      "从运行历史保存用例，或手动创建数据集开始评测。",
+                      "Save cases from run history or create a dataset manually to start evaluating.",
+                    )}
+                    action={
+                      <Button onClick={() => setDatasetDialogOpen(true)} variant="primary">
+                        {text("创建数据集", "Create dataset")}
+                      </Button>
+                    }
+                  />
+                ) : null}
               </div>
             </Card>
           </section>
@@ -391,37 +400,7 @@ export function EvalHarnessPage() {
               hasBaseline={Boolean(activeDataset?.baseline_run_id)}
               onSetBaseline={(evalRunId) => setBaselineMutation.mutate(evalRunId)}
             />
-          </section>
 
-          <aside className="space-y-4">
-            <Card>
-              <CardHeader>
-                <div className="text-sm font-semibold text-slate-900">
-                  {text("回归门禁", "Regression Gate")}
-                </div>
-                <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
-                  {latestRun?.status === "COMPLETED" ? "接口已接入" : "等待中"}
-                </Badge>
-              </CardHeader>
-              <div className="space-y-2 p-3 text-xs">
-                <EvalReadiness
-                  icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                  label={text("轨迹评分器", "Trace Grader")}
-                  status={latestRun ? "已启用" : "等待中"}
-                />
-                <EvalReadiness
-                  icon={<GitCompare className="h-3.5 w-3.5" />}
-                  label={<TermHint description="双版本对比评测">双版本对比</TermHint>}
-                  status={text("已接入", "API-backed")}
-                />
-                <EvalReadiness
-                  icon={<UserCheck className="h-3.5 w-3.5" />}
-                  label={text("人工复核", "Human Review")}
-                  status={text("未启用", "Disabled")}
-                  disabled
-                />
-              </div>
-            </Card>
             <LangGraphExperimentPanel
               evalRunOptions={evalRunOptions}
               nativeEvalRunId={nativeEvalRunId}
@@ -430,6 +409,7 @@ export function EvalHarnessPage() {
               isLoading={experimentsQuery.isLoading}
               onConfigure={() => setExperimentDialogOpen(true)}
             />
+
             <Card>
               <CardHeader>
                 <div className="text-sm font-semibold text-slate-900">
@@ -457,14 +437,45 @@ export function EvalHarnessPage() {
                     </div>
                   </div>
                 ))}
-                {!runsQuery.isLoading && (runsQuery.data?.items.length ?? 0) === 0 && (
+                {!runsQuery.isLoading && (runsQuery.data?.items.length ?? 0) === 0 ? (
                   <div className="px-2 py-8 text-center text-xs text-slate-500">
                     {text("暂无评测运行", "No eval runs yet")}
                   </div>
-                )}
+                ) : null}
               </div>
             </Card>
-          </aside>
+          </section>
+        </div>
+
+        <div className="mx-auto max-w-[1500px]">
+          <Card>
+            <CardHeader>
+              <div className="text-sm font-semibold text-slate-900">
+                {text("回归门禁", "Regression Gate")}
+              </div>
+              <Badge tone={latestRun?.status === "COMPLETED" ? "success" : "neutral"}>
+                {latestRun?.status === "COMPLETED" ? "接口已接入" : "等待中"}
+              </Badge>
+            </CardHeader>
+            <div className="space-y-2 p-3 text-xs">
+              <EvalReadiness
+                icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                label={text("轨迹评分器", "Trace Grader")}
+                status={latestRun ? "已启用" : "等待中"}
+              />
+              <EvalReadiness
+                icon={<GitCompare className="h-3.5 w-3.5" />}
+                label={<TermHint description="双版本对比评测">双版本对比</TermHint>}
+                status={text("已接入", "API-backed")}
+              />
+              <EvalReadiness
+                icon={<UserCheck className="h-3.5 w-3.5" />}
+                label={text("人工复核", "Human Review")}
+                status={text("未启用", "Disabled")}
+                disabled
+              />
+            </div>
+          </Card>
         </div>
 
         <ConfigDialog

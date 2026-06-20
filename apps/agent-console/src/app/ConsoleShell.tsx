@@ -195,9 +195,13 @@ function ConsoleNavLink({ item, child = false }: { item: ConsoleNavItem; child?:
         cn(
           "mb-1 flex min-h-11 items-center rounded-md text-[13px]",
           child ? "gap-2 px-2" : "gap-2 px-2.5",
-          isActive
-            ? "bg-slate-100 text-slate-900"
-            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+          child && isActive
+            ? "border-l-2 border-slate-900 bg-slate-100 pl-[10px] font-semibold text-slate-900"
+            : child
+              ? "pl-3 text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+              : isActive
+                ? "bg-slate-100 text-slate-900"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
         )
       }
     >

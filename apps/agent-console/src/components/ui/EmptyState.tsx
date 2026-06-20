@@ -14,11 +14,13 @@ export function EmptyState({
   icon,
   title,
   description,
+  action,
   actions = [],
 }: {
   icon: ReactNode;
   title: string;
   description: string;
+  action?: ReactNode;
   actions?: EmptyStateAction[];
 }) {
   return (
@@ -29,7 +31,9 @@ export function EmptyState({
         </div>
         <div className="mt-3 text-sm font-semibold text-slate-900">{title}</div>
         <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
-        {actions.length ? (
+        {action ? (
+          <div className="mt-4 flex justify-center">{action}</div>
+        ) : actions.length ? (
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             {actions.map((action) =>
               action.href ? (

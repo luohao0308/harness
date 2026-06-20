@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Bot, History } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useMemo, useState } from "react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
@@ -18,6 +19,8 @@ import { getObservabilitySummary, listRunsPage, type Task } from "../../tasks/ap
 
 export function RunHistoryPage() {
   const { text } = useI18n();
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [search, setSearch] = useState("");
   const runs = useInfiniteQuery({
     queryKey: ["agent-runs", "cursor"],
     queryFn: ({ pageParam }) => listRunsPage({ cursor: pageParam, limit: 50 }),
@@ -26,6 +29,20 @@ export function RunHistoryPage() {
   });
   const summary = useQuery({ queryKey: ["observability-summary"], queryFn: getObservabilitySummary });
   const items = runs.data?.pages.flatMap((page) => page.items) ?? [];
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return items.filter((run) => {
+      const matchStatus = statusFilter === "ALL" || run.status === statusFilter;
+      const matchSearch =
+        !q ||
+        [run.title, run.goal, run.id, run.model_provider, run.model_name]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      return matchStatus && matchSearch;
+    });
+  }, [items, search, statusFilter]);
   const running =
     summary.data?.tasks_by_status.find((item) => item.name === "RUNNING")?.count ?? 0;
   const failed = summary.data?.failed_task_total ?? 0;
@@ -58,11 +75,41 @@ export function RunHistoryPage() {
         </section>
 
         <Card className="overflow-hidden">
-          <CardHeader>
+          <CardHeader className="flex-wrap gap-3">
             <div className="text-sm font-semibold text-slate-900">
               {text("运行列表", "Run List")}
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500">
+              <label className="relative">
+                <span className="sr-only">{text("搜索运行", "Search runs")}</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={text("搜索标题 / 目标 / 模型", "Search title / goal / model")}
+                  className="h-8 w-[15rem] rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-400"
+                />
+              </label>
+              {[
+                ["ALL", text("全部", "All")],
+                ["COMPLETED", text("已完成", "Completed")],
+                ["FAILED", text("失败", "Failed")],
+                ["RUNNING", text("运行中", "Running")],
+                ["CREATED", text("已创建", "Created")],
+              ].map(([value, label]) => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  aria-pressed={statusFilter === value}
+                  onClick={() => setStatusFilter(String(value))}
+                  className={
+                    statusFilter === value
+                      ? "rounded-md border border-slate-900 bg-slate-100 px-2.5 py-1 text-slate-900"
+                      : "rounded-md border border-slate-200 bg-white px-2.5 py-1 text-slate-600 hover:bg-slate-50"
+                  }
+                >
+                  {label}
+                </button>
+              ))}
               {runs.isLoading ? <span>{text("加载中...", "Loading...")}</span> : null}
               {runs.hasNextPage ? (
                 <button
@@ -78,7 +125,7 @@ export function RunHistoryPage() {
           </CardHeader>
           {runs.isLoading ? (
             <SkeletonTable rows={7} columns={6} />
-          ) : items.length === 0 ? (
+          ) : filteredItems.length === 0 ? (
             <div className="p-3">
               <EmptyState
                 icon={<History className="h-5 w-5" />}
@@ -113,9 +160,9 @@ export function RunHistoryPage() {
                 </thead>
               </Table>
               <VirtualList
-                items={items}
+                items={filteredItems}
                 estimateSize={64}
-                height={Math.min(620, Math.max(260, items.length * 64))}
+                height={Math.min(620, Math.max(260, filteredItems.length * 64))}
                 renderItem={(run) => (
                   <Table className="table-fixed">
                     <tbody>
@@ -145,7 +192,9 @@ function RunRow({ run }: { run: Task }) {
         </div>
       </Td>
       <Td>
-        <Badge tone={statusTone(run.status)}>{statusLabel(run.status)}</Badge>
+        <Badge tone={statusTone(run.status)}>
+          {run.status === "COMPLETED" ? "完成" : statusLabel(run.status)}
+        </Badge>
       </Td>
       <Td className="font-mono text-slate-600">
         {run.model_provider}/{run.model_name}

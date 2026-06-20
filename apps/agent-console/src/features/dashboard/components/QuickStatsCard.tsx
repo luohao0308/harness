@@ -11,6 +11,7 @@ export function QuickStatsCard({
   trend,
   tone = "slate",
   to,
+  ariaLabel,
 }: {
   icon: ReactNode;
   label: string;
@@ -18,6 +19,7 @@ export function QuickStatsCard({
   trend: string;
   tone?: "slate" | "emerald" | "amber" | "cyan";
   to?: string;
+  ariaLabel?: string;
 }) {
   const content = (
     <>
@@ -53,7 +55,11 @@ export function QuickStatsCard({
 
   if (to) {
     return (
-      <Link to={to} className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300">
+      <Link
+        to={to}
+        aria-label={ariaLabel}
+        className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+      >
         <Card className="p-3 transition hover:border-slate-300 hover:bg-slate-50">
           {content}
         </Card>
