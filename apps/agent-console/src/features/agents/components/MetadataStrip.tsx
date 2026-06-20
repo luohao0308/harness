@@ -61,8 +61,15 @@ export function MetadataStrip({
   tail,
   activeRunId,
   onOpenRunDetail,
-}: MetadataStripProps): JSX.Element {
+}: MetadataStripProps): JSX.Element | null {
   const { text } = useI18n();
+  const inputTokens = tail?.metadata.input_tokens;
+  const outputTokens = tail?.metadata.output_tokens;
+  const durationMs = tail?.metadata.duration_ms;
+
+  if (!inputTokens && !outputTokens && !durationMs) {
+    return null;
+  }
 
   // Component-level wrapper for the special `cost_unavailable` signal
   // (Req 7.1 / Req 7.8): when the upstream run reports that cost is not
@@ -78,11 +85,11 @@ export function MetadataStrip({
       aria-label={text("元数据", "Metadata")}
     >
       <span>
-        {text("输入", "In")} {formatMetadataField(tail?.metadata.input_tokens, "input_tokens")}
+        {text("输入", "In")} {formatMetadataField(inputTokens, "input_tokens")}
       </span>
       <span aria-hidden="true">·</span>
       <span>
-        {text("输出", "Out")} {formatMetadataField(tail?.metadata.output_tokens, "output_tokens")}
+        {text("输出", "Out")} {formatMetadataField(outputTokens, "output_tokens")}
       </span>
       <span aria-hidden="true">·</span>
       <span>
@@ -92,7 +99,7 @@ export function MetadataStrip({
       <span>TTFB {formatMetadataField(tail?.metadata.ttfb_ms, "ttfb_ms")}</span>
       <span aria-hidden="true">·</span>
       <span>
-        {text("耗时", "Duration")} {formatMetadataField(tail?.metadata.duration_ms, "duration_ms")}
+        {text("耗时", "Duration")} {formatMetadataField(durationMs, "duration_ms")}
       </span>
       <span aria-hidden="true">·</span>
       <span>

@@ -62,7 +62,7 @@ export const consoleNavEntries = [
     ],
   },
   { to: "/observability", label: "观测", iconKey: "activity" },
-  { to: "/token-savings", label: "标记节省", iconKey: "gauge" },
+  { to: "/token-savings", label: "Token 节省", iconKey: "gauge" },
   { to: "/evals", label: "评测", iconKey: "evals" },
   {
     id: "settings",

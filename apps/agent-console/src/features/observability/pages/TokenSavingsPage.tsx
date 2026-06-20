@@ -99,7 +99,7 @@ export function TokenSavingsPage() {
   );
 
   return (
-    <ConsoleShell title={text("标记节省", "Token Savings")}>
+    <ConsoleShell title={text("Token 节省", "Token Savings")}>
       <div className="space-y-4 bg-slate-50/70 p-4">
         <Card className="overflow-visible border-slate-200 shadow-sm">
           <CardHeader className="flex-col items-start gap-2 sm:flex-row sm:items-center">
@@ -119,7 +119,9 @@ export function TokenSavingsPage() {
               {activePlans.length ? (
                 <Badge tone="info">{activePlans.join(" / ")}</Badge>
               ) : (
-                <Badge tone="pending">{text("暂无优化方案证据", "No optimizer evidence")}</Badge>
+                <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">
+                  {text("暂无优化方案证据", "No optimizer evidence")}
+                </span>
               )}
             </div>
           </CardHeader>

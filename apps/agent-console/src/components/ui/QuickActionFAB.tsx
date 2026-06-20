@@ -1,11 +1,25 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BarChart3, Bot, Gauge, Plus, Settings2, X } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { Button } from "./button";
 import { cn } from "../../lib/utils";
+import { Button } from "./button";
 
-const actions = [
+type RouteQuickAction = {
+  label: string;
+  to: string;
+  icon: React.ElementType;
+};
+
+type EventQuickAction = {
+  label: string;
+  icon: React.ElementType;
+  eventName: string;
+};
+
+type QuickAction = RouteQuickAction | EventQuickAction;
+
+const actions: RouteQuickAction[] = [
   { label: "新建 Agent", to: "/agents", icon: Bot },
   { label: "跑 Demo Task", to: "/onboarding?step=4", icon: Gauge },
   { label: "看 Cost", to: "/observability/cost", icon: BarChart3 },
@@ -14,17 +28,43 @@ const actions = [
 
 const MODEL_SETTINGS_ADD_CUSTOM_EVENT = "harness:model-settings:add-custom-model";
 
+const ROUTE_ACTIONS: Record<string, RouteQuickAction[]> = {
+  "/agents": [{ label: "新建智能体", to: "/agents", icon: Bot }],
+  "/runs": [
+    { label: "新建运行", to: "/agents/default/workspace", icon: Bot },
+    { label: "看 Cost", to: "/observability/cost", icon: BarChart3 },
+  ],
+  "/knowledge": [
+    { label: "上传文档", to: "/knowledge", icon: Plus },
+    { label: "配 LLM", to: "/settings/models", icon: Settings2 },
+  ],
+  "/observability": [
+    { label: "看 Cost", to: "/observability/cost", icon: BarChart3 },
+    { label: "配 LLM", to: "/settings/models", icon: Settings2 },
+  ],
+};
+
 export function QuickActionFAB() {
   const navigate = useNavigate();
   const location = useLocation();
   const [open, setOpen] = useState(false);
-  const visibleActions = location.pathname === "/settings/models"
-    ? actions.map((action) =>
+  const visibleActions = useMemo(() => {
+    if (location.pathname === "/settings/models") {
+      return actions.map((action) =>
         action.to === "/settings/models"
           ? { label: "添加自定义模型", eventName: MODEL_SETTINGS_ADD_CUSTOM_EVENT, icon: Plus }
           : action,
-      )
-    : actions;
+      );
+    }
+
+    const exact = ROUTE_ACTIONS[location.pathname];
+    if (exact) {
+      return exact;
+    }
+
+    const prefix = Object.keys(ROUTE_ACTIONS).find((key) => location.pathname.startsWith(key) && key !== "/");
+    return prefix ? ROUTE_ACTIONS[prefix] : actions;
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -47,9 +87,10 @@ export function QuickActionFAB() {
       >
         {visibleActions.map((action) => {
           const Icon = action.icon;
+          const actionKey = "eventName" in action ? action.eventName : action.to;
           return (
             <Button
-              key={"to" in action ? action.to : action.eventName}
+              key={actionKey}
               className="justify-start bg-white shadow-panel"
               onClick={() => {
                 if ("eventName" in action) {

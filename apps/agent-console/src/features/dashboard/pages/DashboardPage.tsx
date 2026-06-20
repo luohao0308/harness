@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, BarChart3, Bot, Gauge, Plus, Settings2 } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Bot, Gauge, Plus, Settings2, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -26,6 +26,9 @@ import { WhatsNewPanel } from "../components/WhatsNewPanel";
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
+  const [demoBannerDismissed, setDemoBannerDismissed] = useState(
+    () => localStorage.getItem("harness.demo-banner.dismissed") === "1",
+  );
   const onboarding = useQuery({ queryKey: ["onboarding", "state"], queryFn: getOnboardingState });
   const agents = useQuery({ queryKey: ["agents"], queryFn: listAgents });
   const runs = useQuery({ queryKey: ["agent-runs"], queryFn: listRuns });
@@ -71,7 +74,11 @@ export function DashboardPage() {
   });
 
   const activeAgents = agents.data?.items.filter((agent) => agent.status !== "ARCHIVED").length ?? 0;
-  const todayRuns = runs.data?.items.filter((run) => isToday(run.created_at)).length ?? 0;
+  const todayRuns =
+    runs.data?.items.filter((run) => {
+      const diff = Date.now() - new Date(run.created_at).getTime();
+      return diff < 24 * 60 * 60 * 1000;
+    }).length ?? 0;
   const activeAlerts =
     summary.data?.tasks_by_status.find((item) => item.name === "FAILED")?.count ??
     summary.data?.failed_task_total ??
@@ -123,7 +130,7 @@ export function DashboardPage() {
           </section>
         ) : null}
 
-        {!demoLoaded ? (
+        {!demoLoaded && !demoBannerDismissed ? (
           <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
             <div>
               <div className="text-sm font-semibold text-slate-950">Demo 数据未加载</div>
@@ -131,10 +138,23 @@ export function DashboardPage() {
                 加载后会创建示例智能体、知识源、评测数据集和历史运行。
               </div>
             </div>
-            <Button onClick={() => loadDemo.mutate()} disabled={loadDemo.isPending}>
-              <Gauge className="h-3.5 w-3.5" />
-              一键加载 Demo
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => loadDemo.mutate()} disabled={loadDemo.isPending}>
+                <Gauge className="h-3.5 w-3.5" />
+                一键加载 Demo
+              </Button>
+              <button
+                type="button"
+                aria-label="关闭提示"
+                className="rounded-md p-1 text-amber-600 hover:bg-amber-100"
+                onClick={() => {
+                  localStorage.setItem("harness.demo-banner.dismissed", "1");
+                  setDemoBannerDismissed(true);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </section>
         ) : null}
 
@@ -150,31 +170,32 @@ export function DashboardPage() {
             <>
               <QuickStatsCard
                 icon={<Bot className="h-4 w-4" />}
-                label="Active Agents"
+                label="活跃智能体"
                 value={activeAgents}
                 trend="最近 7 天配置保持可运行"
               />
               <QuickStatsCard
                 icon={<Activity className="h-4 w-4" />}
-                label="Today's Runs"
+                label="今日运行"
                 value={todayRuns}
                 trend={`${runs.data?.items.length ?? 0} 条总运行记录`}
                 tone="cyan"
               />
               <QuickStatsCard
                 icon={<BarChart3 className="h-4 w-4" />}
-                label="This Month Cost"
+                label="本月花费"
                 value={`$${(cost.data?.total_cost_usd ?? 0).toFixed(2)}`}
                 trend={`${cost.data?.total_runs ?? 0} 次计费运行`}
                 tone="emerald"
               />
               <QuickStatsCard
                 icon={<AlertTriangle className="h-4 w-4" />}
-                label="Active Alerts"
+                label="失败运行"
                 value={activeAlerts}
                 trend="失败任务计入活跃风险"
                 tone="amber"
                 to="/observability/alerts"
+                ariaLabel="失败运行 Active Alerts"
               />
             </>
           )}
@@ -183,7 +204,7 @@ export function DashboardPage() {
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Card>
             <CardHeader>
-              <div className="text-sm font-semibold text-slate-900">Recent Activity</div>
+              <div className="text-sm font-semibold text-slate-900">最近运行</div>
               <Badge tone="neutral">{runs.data?.items.length ?? 0}</Badge>
             </CardHeader>
             {runs.isLoading ? <SkeletonTable rows={6} columns={3} /> : <RecentActivityList items={runs.data?.items ?? []} />}
@@ -192,7 +213,7 @@ export function DashboardPage() {
           <div className="space-y-4">
             <Card>
               <CardHeader>
-                <div className="text-sm font-semibold text-slate-900">Quick Actions</div>
+                <div className="text-sm font-semibold text-slate-900">快速操作</div>
               </CardHeader>
               <div className="grid gap-2 p-3">
                 <QuickAction to="/agents" icon={<Plus className="h-3.5 w-3.5" />} label="新建智能体" />
@@ -209,7 +230,7 @@ export function DashboardPage() {
             </Card>
             <Card>
               <CardHeader>
-                <div className="text-sm font-semibold text-slate-900">What's New</div>
+                <div className="text-sm font-semibold text-slate-900">最新动态</div>
               </CardHeader>
               <div className="p-3">
                 <WhatsNewPanel />

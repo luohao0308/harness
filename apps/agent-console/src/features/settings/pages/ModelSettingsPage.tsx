@@ -309,7 +309,7 @@ export function ModelSettingsPage() {
     const configuredCount = providerRows.filter((row) => row.isConfigured || row.catalogProvider.isLocal).length;
     const modelCount = providerRows.length;
     if (configuredCount === 0) {
-      return { label: text("未配置", "Not configured"), tone: "warning" as BadgeTone, modelCount };
+      return { label: text("未配置", "Not configured"), tone: "neutral" as BadgeTone, modelCount };
     }
     if (configuredCount === modelCount) {
       return { label: text("已配置", "Configured"), tone: "success" as BadgeTone, modelCount };
@@ -330,6 +330,9 @@ export function ModelSettingsPage() {
   return (
     <ConsoleShell title={text("模型设置", "Model Settings")}>
       <div className="space-y-4 p-4 pb-24">
+        <p className="px-4 pt-3 text-xs text-slate-500">
+          只需配置您计划使用的供应商；未配置的不影响已配置供应商的正常使用。
+        </p>
         <Card className="overflow-hidden">
           <CardHeader className="items-start gap-3">
             <div>
@@ -1350,7 +1353,7 @@ function groupSecretStatus(providers: ProviderConfig[]): { label: string; tone: 
     providers.filter(providerHasUsableApiKey).map((provider) => providerSecretKey(provider)),
   );
   const configuredCount = providers.filter((provider) => configuredVendors.has(providerSecretKey(provider))).length;
-  if (configuredCount === 0) return { label: "未配置", tone: "warning" };
+  if (configuredCount === 0) return { label: "未配置", tone: "neutral" };
   if (configuredCount === providers.length) return { label: "已配置", tone: "success" };
   return { label: "部分已配置", tone: "warning" };
 }

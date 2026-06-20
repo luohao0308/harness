@@ -2036,6 +2036,7 @@ function LocalAgentWorkspaceControl({
         <button
           type="button"
           onClick={onOpenStudio}
+          title="打开智能体工作室"
           className="inline-flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
         >
           接入本地 Agent
@@ -2051,6 +2052,7 @@ function LocalAgentWorkspaceControl({
               : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
           )}
           aria-label={enabled ? "关闭本地 Agent" : "启用本地 Agent"}
+          title={enabled ? "关闭本地 Agent" : "启用本地 Agent"}
         >
           {localAgentSummary}
         </button>

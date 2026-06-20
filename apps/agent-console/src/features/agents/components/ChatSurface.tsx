@@ -1790,7 +1790,16 @@ function ComposerMetadataRow({
 }: {
   usage: UsageSummary;
   text: (zh: string, en: string) => string;
-}): JSX.Element {
+}): JSX.Element | null {
+  const isEmpty =
+    usage.inputTokens === 0 &&
+    usage.outputTokens === 0 &&
+    usage.modelCalls === 0 &&
+    usage.toolCalls === 0 &&
+    usage.durationMs === 0;
+
+  if (isEmpty) return null;
+
   const items = [
     [text("输入", "In"), formatMetricNumber(usage.inputTokens)],
     [text("输出", "Out"), formatMetricNumber(usage.outputTokens)],

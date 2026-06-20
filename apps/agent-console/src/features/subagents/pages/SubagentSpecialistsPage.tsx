@@ -228,13 +228,11 @@ export function SubagentSpecialistsPage() {
               <tr>
                 <Th>{text("专家", "Specialist")}</Th>
                 <Th>{text("角色", "Role")}</Th>
-                <Th>{text("30 天成功率", "30d Success")}</Th>
-                <Th>{text("调用", "Invocations")}</Th>
+                <Th>{text("30 天成功率 / 调用", "30d Success / Invocations")}</Th>
                 <Th>{text("可见性", "Visibility")}</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("工具白名单", "Tool Whitelist")}</Th>
                 <Th>{text("预算", "Budget")}</Th>
-                <Th>Schema</Th>
                 <Th>{text("更新", "Updated")}</Th>
                 <Th>{text("操作", "Actions")}</Th>
               </tr>
@@ -258,10 +256,16 @@ export function SubagentSpecialistsPage() {
                     </Td>
                     <Td className="font-mono text-slate-600">{specialist.role}</Td>
                     <Td className="font-mono text-[11px] text-slate-700">
-                      {formatRate(stats?.success_rate)}
-                    </Td>
-                    <Td className="font-mono text-[11px] text-slate-700">
-                      {stats ? stats.total_invocations.toLocaleString() : "-"}
+                      {stats ? (
+                        <>
+                          <span>{formatRate(stats.success_rate)}</span>
+                          <span aria-hidden="true"> / </span>
+                          <span>{stats.total_invocations.toLocaleString()}</span>
+                          <span aria-hidden="true">次</span>
+                        </>
+                      ) : (
+                        "- / -"
+                      )}
                     </Td>
                     <Td>
                       <Badge tone={specialist.visibility === "system" ? "purple" : "info"}>
@@ -271,16 +275,26 @@ export function SubagentSpecialistsPage() {
                     <Td>
                       <Badge tone={statusTone(specialist.status)}>{statusLabel(specialist.status)}</Badge>
                     </Td>
-                    <Td className="max-w-[180px] truncate font-mono text-[11px] text-slate-500">
-                      {specialist.capability_slugs_json.length > 0
-                        ? specialist.capability_slugs_json.join(", ")
-                        : text("未限制", "Unrestricted")}
+                    <Td className="font-mono text-[11px] text-slate-500">
+                      {specialist.capability_slugs_json.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {specialist.capability_slugs_json.slice(0, 3).map((capability) => (
+                            <Badge key={capability} tone="neutral" className="font-mono text-[10px]">
+                              {capability}
+                            </Badge>
+                          ))}
+                          {specialist.capability_slugs_json.length > 3 ? (
+                            <Badge tone="info" className="font-mono text-[10px]">
+                              +{specialist.capability_slugs_json.length - 3}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      ) : (
+                        text("未限制", "Unrestricted")
+                      )}
                     </Td>
                     <Td className="font-mono text-[11px] text-slate-500">
                       {budgetSummary(specialist.budget_json)}
-                    </Td>
-                    <Td className="font-mono text-[10px] text-slate-500">
-                      {specialist.output_schema_sha256.slice(0, 12)}
                     </Td>
                     <Td className="font-mono text-slate-500">{formatShortDate(specialist.updated_at)}</Td>
                     <Td>
@@ -298,7 +312,7 @@ export function SubagentSpecialistsPage() {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <Td colSpan={11} className="py-8 text-center text-slate-500">
+                  <Td colSpan={9} className="py-8 text-center text-slate-500">
                     {text("当前筛选下没有专家模板。", "No specialist templates match this filter.")}
                   </Td>
                 </tr>

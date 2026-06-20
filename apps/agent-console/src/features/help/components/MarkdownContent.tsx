@@ -32,7 +32,7 @@ export function MarkdownContent({ source }: { source: string }) {
         }
         if (block.type === "code") {
           return (
-            <pre key={index} className="overflow-x-auto rounded-md bg-slate-950 p-3 text-xs leading-5 text-slate-50">
+            <pre key={index} className="overflow-x-auto whitespace-pre rounded-md bg-slate-950 p-3 text-xs leading-5 text-slate-50">
               <code>{block.code}</code>
             </pre>
           );
