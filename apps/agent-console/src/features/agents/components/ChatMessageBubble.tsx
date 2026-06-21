@@ -396,12 +396,13 @@ function MetadataLine({
   node: ConversationNode;
   aligned: "start" | "end";
 }): JSX.Element | null {
-  const { input_tokens, output_tokens, cost_usd, duration_ms } = node.metadata;
+  const { input_tokens, output_tokens, cost_usd, duration_ms, ttfb_ms } = node.metadata;
   const hasAny =
     typeof input_tokens === "number" ||
     typeof output_tokens === "number" ||
     (typeof cost_usd === "string" && cost_usd.length > 0) ||
-    typeof duration_ms === "number";
+    typeof duration_ms === "number" ||
+    typeof ttfb_ms === "number";
   if (!hasAny) return null;
   return (
     <div
@@ -414,6 +415,7 @@ function MetadataLine({
       {typeof output_tokens === "number" && <span>{output_tokens} 输出</span>}
       {typeof cost_usd === "string" && cost_usd.length > 0 && <span>${cost_usd}</span>}
       {typeof duration_ms === "number" && <span>{duration_ms}ms</span>}
+      {typeof ttfb_ms === "number" && <span>TTFB: {ttfb_ms}ms</span>}
     </div>
   );
 }
