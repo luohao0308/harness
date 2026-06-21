@@ -4,7 +4,7 @@
 
 ## session-log
 
-- [Documentation Status Correction](session-2026-06-21-doc-status-correction.md) — Historical implemented P1/P2/P3/P4/P5/P6/P7 entries now use `completed`, and the tool approval Modify UI gap is marked pending on the docs-status branch.
+- [Message TTFB Display](session-2026-06-21-message-ttfb-display.md) — Chat message metadata now renders `ttfb_ms` after duration as `TTFB: <ms>ms`, with render test coverage for the fifth metadata field.
 - [Agent Workspace Subagent Specialist Binding](session-2026-06-19-agent-workspace-subagent-specialist-binding.md) — Agent Workspace `subagent` orchestration now binds a SubagentSpecialist, exposes the selected expert in SSE/workspace/subagent projections, and covers automatic, Chinese, explicit, and fallback expert selection paths.
 - [Frontend Goal Auth Error Compact UI](session-2026-06-19-frontend-goal-auth-error-compact-ui.md) — Agent Workspace `追踪目标模式` now surfaces model-key 401 failures as the existing model-auth error UI, streams completed goal deliverables into the assistant bubble, keeps the goal row compact, and opens goal editing in the shared light ConfigDialog.
 - [Agent Workspace Goal Progress Row](session-2026-06-18-agent-workspace-goal-progress-row.md) — Agent Workspace `追踪目标模式` now emits `goal_progress` SSE events and renders a Codex-style active goal row above the composer with pause/resume/edit/clear controls.

@@ -2,7 +2,7 @@
 
 ## 2026-06-21
 
-- Added [[session-2026-06-21-doc-status-correction]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the documentation status correction. Captured completed status normalization for the already implemented P1/P2/P3/P4/P5/P6/P7 entries, gap-register pending status for the tool approval Modify UI, production Vite build, and the existing docs-validation/full-build/full-pytest blockers in the independent worktree.
+- Added [[session-2026-06-21-message-ttfb-display]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the message TTFB metadata display. Captured the `ttfb_ms` render change, regression test update, targeted TypeScript, focused Vitest pass, production Vite build, and the existing full-build/full-pytest blockers.
 
 ## 2026-06-19
 

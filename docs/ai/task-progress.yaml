@@ -117,22 +117,22 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
-  - id: doc-status-correction
+  - id: message-ttfb-display
     date: 2026-06-21
     status: completed
-    demo: Historical implemented P1/P2/P3/P4/P5/P6/P7 status entries are normalized to `completed`, while the tool approval Modify UI gap is explicitly pending before the UI branch lands.
-    verification_result: docs_updated_with_existing_repo_blockers
+    demo: 'Chat message metadata now renders ttfb_ms after duration as "TTFB: <ms>ms", preserving the existing token, cost, and duration metadata row.'
+    verification_result: targeted_passed_with_existing_repo_blockers
     verification_commands:
-      - python3 scripts/validate-docs.py with temporary AGENTS.md and full .omx runtime links from the main workspace -> passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/components/ChatMessageBubble.tsx src/features/agents/__tests__/ChatMessageList.render.test.tsx -> passed
+      - cd apps/agent-console && npm test -- src/features/agents/__tests__/ChatMessageList.render.test.tsx --run -> 10 passed
       - cd apps/agent-console && npx vite build -> passed
+      - python3 scripts/validate-docs.py with temporary AGENTS.md and full .omx runtime links from the main workspace -> passed
       - cd apps/agent-console && npm run build -> blocked by existing stale a11y/test TypeScript debt (`jest-axe` declarations, stale imports, old ChatMessageBubble/SAML fixture shapes)
       - cd services/api-server && uv run pytest tests/ -q -> blocked by existing collection error in tests/integration/test_okta_logout.py importing missing `Session` from app.db.models
     acceptance_notes:
-      - p4-p8-docs-help-performance-scale is marked completed for Help Center and frontend polish evidence already recorded in the entry.
-      - p3-p6-p7-auth-retention-cicd is marked completed for AuthN/RBAC, data lifecycle, and CI/CD evidence already recorded in the entry.
-      - p1-p2-p5-production-onboarding-frontend-polish is marked completed for private deployment, onboarding, and frontend polish evidence already recorded in the entry.
-      - private-deployment-experience was already completed and remains unchanged.
-      - docs/workspace-pro-gap-register.md marks "Approve, Reject, Modify tool approvals" as pending implementation on this documentation-status branch.
+      - MetadataLine now treats numeric ttfb_ms as renderable metadata.
+      - 'TTFB renders after duration_ms as "TTFB: 123ms".'
+      - The render regression test now includes a sample `ttfb_ms` value and asserts the visible metadata text.
 
   - id: run-detail-expert-subagent-plan-repair
     date: 2026-06-19
@@ -2173,7 +2173,7 @@ post_stage_hardening:
 
   - id: p4-p8-docs-help-performance-scale
     date: 2026-05-29
-    status: completed
+    status: verified
     demo: Documentation Help Center and performance/scale foundations are implemented with review fixes for signed cursors, cache invalidation, and cache-safe semantics.
     verification_result: passed_with_environment_gaps
     verification_commands:
@@ -2200,7 +2200,7 @@ post_stage_hardening:
 
   - id: p3-p6-p7-auth-retention-cicd
     date: 2026-05-29
-    status: completed
+    status: verified
     demo: Auth/RBAC, data lifecycle retention/export/delete, and CI/CD release engineering are implemented with review fixes for stale-token authorization, export redaction, and CI health gates.
     verification_result: passed_with_environment_gaps
     verification_commands:
@@ -2228,7 +2228,7 @@ post_stage_hardening:
 
   - id: p1-p2-p5-production-onboarding-frontend-polish
     date: 2026-05-29
-    status: completed
+    status: verified
     demo: Production deployment hardening, first-run onboarding, Dashboard, Demo loading, and frontend resilience/polish are implemented for private deployable Harness demos.
     verification_result: passed_with_environment_gaps
     verification_commands:

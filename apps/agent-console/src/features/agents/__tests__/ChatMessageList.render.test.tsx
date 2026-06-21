@@ -206,6 +206,7 @@ describe("ChatMessageList render regression (React error #310)", () => {
         output_tokens: 34,
         cost_usd: "0.01",
         duration_ms: 56,
+        ttfb_ms: 123,
       },
     });
 
@@ -216,6 +217,7 @@ describe("ChatMessageList render regression (React error #310)", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("12 输入");
     expect(text).toContain("34 输出");
+    expect(text).toContain("TTFB: 123ms");
     expect(text).not.toContain("12 in");
     expect(text).not.toContain("34 out");
 
