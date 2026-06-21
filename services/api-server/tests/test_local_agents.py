@@ -26,6 +26,7 @@ from app.db.models import (
     LocalAgentToolRequest,
     ModelCall,
     OrganizationMember,
+    SystemSetting,
     Task,
     ToolApproval,
     ToolCall,
@@ -1017,6 +1018,42 @@ def test_local_agent_revoked_pairing_token_blocks_late_codex_registration(
         select(LocalAgentConnection).order_by(LocalAgentConnection.adapter_kind.asc())
     ).scalars().all()
     assert [connection.adapter_kind for connection in connections] == ["hao"]
+
+
+def test_local_agent_recovery_command_restarts_confirmed_connection(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    row = db_session.get(LocalAgentConnection, connection["id"])
+    assert row is not None
+    row.status = "online"
+    row.last_seen_at = utc_now() - timedelta(minutes=10)
+    db_session.commit()
+
+    response = client.get(
+        f"/api/agents/local-agent/connections/{connection['id']}/recovery-command",
+        headers=AUTH_HEADERS,
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    command = payload["command"]
+    package_spec = shlex.quote(str(Path(__file__).resolve().parents[1]))
+    assert payload["connection_id"] == connection["id"]
+    assert payload["adapter_kind"] == "hao"
+    assert payload["state_home"] == "$HOME/.hao/bridges/hao"
+    assert payload["status"] == "offline"
+    assert command.startswith(
+        f'HAO_HOME="${{HAO_HOME:-$HOME/.hao/bridges/hao}}" '
+        f"npx -y {package_spec} bridge run"
+    )
+    assert f"--connection-id {connection['id']}" in command
+    assert "--adapter hao" in command
+    assert command.endswith(" --daemon")
+    assert "bridge pair" not in command
+    assert "--device-token" not in command
+    assert device_token not in command
 
 
 def test_local_agent_pairing_command_can_use_published_npm_package_override(
@@ -2755,6 +2792,110 @@ def test_local_agent_pairing_registration_replay_cannot_create_second_connection
         == pairing["id"]
     )
     assert len(db_session.execute(select(LocalAgentConnection)).scalars().all()) == 1
+
+
+def test_hao_local_agent_send_falls_back_from_mock_provider_to_real_default(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    setting = db_session.execute(
+        select(SystemSetting).where(
+            SystemSetting.organization_id == "dev-org",
+            SystemSetting.key == "settings.models",
+        )
+    ).scalar_one_or_none()
+    settings_value = {
+        "default_provider": "deepseek-flash",
+        "default_model": "deepseek-v4-flash",
+        "providers": [
+            {
+                "name": "openai-compatible",
+                "label": "OpenAI GPT-5.5",
+                "api_format": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key": "",
+                "api_key_env": "OPENAI_API_KEY",
+                "model": "gpt-5.5",
+            },
+            {
+                "name": "deepseek-flash",
+                "api_key": "test-deepseek-key",
+            },
+        ],
+    }
+    if setting is None:
+        db_session.add(
+            SystemSetting(
+                organization_id="dev-org",
+                key="settings.models",
+                value_json=settings_value,
+                updated_by="test",
+            )
+        )
+    else:
+        setting.value_json = settings_value
+        setting.updated_by = "test"
+    db_session.commit()
+
+    binding = client.post(
+        f"/api/agents/local-agent/connections/{connection['id']}/bindings",
+        headers=AUTH_HEADERS,
+        json={"title": "Local coding session", "resume_mode": "native_resume"},
+    )
+    assert binding.status_code == 201, binding.text
+
+    sent = client.post(
+        f"/api/agents/local-agent/bindings/{binding.json()['id']}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "content": "你好",
+            "client_message_id": "msg-mock-provider-fallback",
+            "model_provider": "openai-compatible",
+            "model_name": "gpt-5.5",
+        },
+    )
+    assert sent.status_code == 202, sent.text
+    sent_payload = sent.json()
+
+    run = db_session.get(Task, sent_payload["run_id"])
+    assert run is not None
+    assert run.model_provider == "deepseek-flash"
+    assert run.model_name == "deepseek-v4-flash"
+
+    pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
+    assert pull.status_code == 200, pull.text
+    [task] = pull.json()["items"]
+    assert task["payload"]["model_provider"] == "deepseek-flash"
+    assert task["payload"]["model_name"] == "deepseek-v4-flash"
+    assert task["payload"]["workspace_request"]["model_provider"] == "deepseek-flash"
+    assert task["payload"]["workspace_request"]["model_name"] == "deepseek-v4-flash"
+    assert task["payload"]["model_fallback"] == {
+        "requested_model_provider": "openai-compatible",
+        "requested_model_name": "gpt-5.5",
+        "fallback_model_provider": "deepseek-flash",
+        "fallback_model_name": "deepseek-v4-flash",
+        "fallback_reason": "selected_provider_would_use_local_mock",
+    }
+    assert task["payload"]["workspace_request"]["model_fallback"] == task["payload"][
+        "model_fallback"
+    ]
+
+    [message] = list(
+        db_session.execute(
+            select(AgentMessage).where(
+                AgentMessage.session_id == sent_payload["agent_session_id"],
+                AgentMessage.role == "user",
+            )
+        ).scalars()
+    )
+    local_io = message.metadata_json["local_agent_io"]
+    assert local_io["input"]["model_provider"] == "deepseek-flash"
+    assert local_io["input"]["model_name"] == "deepseek-v4-flash"
+    assert local_io["input"]["model_fallback"]["requested_model_provider"] == (
+        "openai-compatible"
+    )
 
 
 def test_local_agent_owner_can_send_and_bridge_events_are_idempotent(
@@ -5857,6 +5998,162 @@ def test_local_agent_pending_task_is_api_projected_and_not_released_twice(
     second_pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
     assert second_pull.status_code == 200, second_pull.text
     assert second_pull.json()["items"] == []
+
+
+def test_local_agent_stale_active_task_auto_fails_on_binding_poll(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    sent_payload, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="stale-active-task",
+    )
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    assert bridge_task is not None
+    stale_at = utc_now() - timedelta(minutes=10)
+    bridge_task.created_at = stale_at
+    bridge_task.leased_at = stale_at
+    bridge_task.acked_at = stale_at
+    bridge_task.updated_at = stale_at
+    db_session.commit()
+
+    page = client.get(
+        f"/api/agents/local-agent/bindings/{task['binding_id']}/tasks",
+        headers=AUTH_HEADERS,
+    )
+
+    assert page.status_code == 200, page.text
+    assert page.json()["items"][0]["status"] == "failed"
+    assert "没有返回" in page.json()["items"][0]["error_message"]
+    db_session.expire_all()
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    run = db_session.get(Task, sent_payload["run_id"])
+    assert bridge_task is not None
+    assert bridge_task.status == "failed"
+    assert bridge_task.completed_at is not None
+    assert bridge_task.payload_json["timeout"] is True
+    assert run is not None
+    assert run.status == "FAILED"
+    failed_event = db_session.execute(
+        select(AgentEvent).where(
+            AgentEvent.task_id == sent_payload["run_id"],
+            AgentEvent.event_type == "LOCAL_AGENT_MESSAGE_FAILED",
+        )
+    ).scalar_one()
+    assert failed_event.payload_json["bridge_task_id"] == task["id"]
+    assert failed_event.payload_json["timeout"] is True
+
+
+def test_local_agent_stale_task_waiting_on_local_tool_does_not_timeout(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    sent_payload, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="stale-tool-wait",
+    )
+    tool_request = client.post(
+        "/api/agents/local-agent/bridge/tool-requests",
+        headers=bridge_headers,
+        json={
+            "tool_request_id": "tool-req-stale-wait",
+            "bridge_task_id": task["id"],
+            "tool_name": "write_file",
+            "input_json": {"path": "notes.md", "content": "new\n"},
+            "execution_target": "host",
+            "risk_level": "low",
+            "permission_mode": "full-auto",
+            "target_paths": ["notes.md"],
+            "pending_change_preview": {
+                "change_id": "change-stale-wait",
+                "target_paths": ["notes.md"],
+                "diff_sha256": "d" * 64,
+            },
+        },
+    )
+    assert tool_request.status_code == 201, tool_request.text
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    assert bridge_task is not None
+    stale_at = utc_now() - timedelta(minutes=10)
+    bridge_task.created_at = stale_at
+    bridge_task.leased_at = stale_at
+    bridge_task.acked_at = stale_at
+    bridge_task.updated_at = stale_at
+    db_session.commit()
+
+    page = client.get(
+        f"/api/agents/local-agent/bindings/{task['binding_id']}/tasks",
+        headers=AUTH_HEADERS,
+    )
+
+    assert page.status_code == 200, page.text
+    assert page.json()["items"][0]["status"] == "running"
+    db_session.expire_all()
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    run = db_session.get(Task, sent_payload["run_id"])
+    assert bridge_task is not None
+    assert bridge_task.status == "running"
+    assert bridge_task.completed_at is None
+    assert run is not None
+    assert run.status != "FAILED"
+
+
+def test_local_agent_adapter_heartbeat_keeps_active_task_alive(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    connection, device_token = _registered_connection(client, db_session)
+    bridge_headers = {"X-Local-Agent-Device-Token": device_token}
+    sent_payload, task = _leased_bridge_task(
+        client,
+        connection["id"],
+        device_token,
+        client_message_id="stale-heartbeat",
+    )
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    assert bridge_task is not None
+    stale_at = utc_now() - timedelta(minutes=10)
+    bridge_task.created_at = stale_at
+    bridge_task.leased_at = stale_at
+    bridge_task.acked_at = stale_at
+    bridge_task.updated_at = stale_at
+    db_session.commit()
+
+    heartbeat = client.post(
+        "/api/agents/local-agent/bridge/events",
+        headers=bridge_headers,
+        json={
+            "event_id": f"{task['id']}:heartbeat:test",
+            "bridge_task_id": task["id"],
+            "event_type": "adapter_heartbeat",
+            "sequence": 10000,
+            "metadata": {"adapter_kind": "hao", "heartbeat": True},
+        },
+    )
+    assert heartbeat.status_code == 201, heartbeat.text
+
+    page = client.get(
+        f"/api/agents/local-agent/bindings/{task['binding_id']}/tasks",
+        headers=AUTH_HEADERS,
+    )
+
+    assert page.status_code == 200, page.text
+    assert page.json()["items"][0]["status"] == "running"
+    db_session.expire_all()
+    bridge_task = db_session.get(LocalAgentBridgeTask, task["id"])
+    run = db_session.get(Task, sent_payload["run_id"])
+    assert bridge_task is not None
+    assert bridge_task.status == "running"
+    assert bridge_task.completed_at is None
+    assert run is not None
+    assert run.status != "FAILED"
 
 
 def test_local_agent_pending_task_with_mismatched_session_is_not_leased_or_acked(

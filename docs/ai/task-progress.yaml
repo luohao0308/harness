@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-21T06:02:47+08:00
+last_updated_at: 2026-06-22T01:47:59+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,255 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: local-agent-pause-continue-after-send
+    date: 2026-06-22
+    status: completed
+    demo: Agent Workspace local Agent turns can be paused after the message has been sent and continued later without duplicating the visible user bubble.
+    verification_result: targeted_and_browser_passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 31 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 26 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client,vitest/globals,@testing-library/jest-dom --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/agents/components/ChatSurface.tsx src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx src/features/agents/__tests__/ChatSurface.shell.test.tsx src/features/tasks/api.ts src/features/agents/pages/agentWorkspaceDerive.ts src/stores/workspaceStore.ts -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/api/agents/agent_local.py services/api-server/app/api/schemas.py -> passed
+      - Browser verification on http://127.0.0.1:5173/agents/default/workspace?conversation_id=conv-chart-artifact-demo&run_id=demo-tool-approval-run with `hao Local Agent` selected showed an existing paused sent turn with `继续发送`; clicking continue sent `POST /api/agents/local-agent/bindings/7ea3bec8-aea2-4f3c-934c-bd21e46e5615/messages => 202` with a fresh `client_message_id` and `resume_of_client_message_id=local-1782062842695-15e255cf140b2`, then the UI showed `暂停发送`. A unique new message `暂停继续浏览器验证-1782063996356` sent with POST 202, showed `暂停发送`, had `userBubbleCount=1`, cleared the composer, paused via `POST /api/tasks/9179794a-0832-4e61-ad76-aee5e29c1460/cancel => 202`, ended with enabled `继续发送`, had no error page, console errors/warnings 0, and screenshot `local-agent-pause-continue-after-send.png`.
+    acceptance_notes:
+      - Root cause for missing pause controls was local Agent polling hydration dropping the optimistic pending assistant when a matching active bridge task existed but no persisted assistant message was available yet; the task loop then skipped that same bridge task.
+      - Root cause for the live resume crash was a hydrated resume user node being overwritten with `parent_id` equal to itself, creating a parent-cycle and crashing `buildActivePath(...)` with `Invalid array length`.
+      - `localAgentConversationFromMessages(...)` now keeps pending assistants for active local bridge tasks and preserves existing hydrated user nodes instead of reparenting them, so resume reuses the visible turn without duplicating the user bubble.
+      - Workspace active-path derivation in `AgentWorkspacePage`, `ChatSurface`, and the store helpers now guards against cycles so a bad persisted branch cannot crash the route.
+      - Live browser proof used real HAO local Agent binding/network state and did not rely on backend local mock assistant content.
+
+  - id: local-agent-composer-clear-after-send
+    date: 2026-06-22
+    status: completed
+    demo: Agent Workspace local Agent sends now clear the composer as soon as the backend accepts the message, and later local polling hydration does not restore the sent draft.
+    verification_result: targeted_and_browser_passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "sends through a local Agent binding|stale local Agent send responses" -> 2 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 30 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client,vitest/globals,@testing-library/jest-dom --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx src/features/tasks/api.ts -> passed
+      - Browser verification on http://127.0.0.1:5173/agents/default/workspace?conversation_id=conv-chart-artifact-demo&run_id=demo-tool-approval-run with `hao Local Agent` selected sent `清空输入框验证 003`; network showed `POST /api/agents/local-agent/bindings/7ea3bec8-aea2-4f3c-934c-bd21e46e5615/messages => 202 Accepted`, immediate DOM showed `composerValue=""`, `hasSentTextInComposer=false`, `sentTextVisibleInThread=true`, and after several local message/task polling cycles the composer stayed empty with screenshot `local-agent-composer-cleared-after-send.png`.
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Root cause was the local Agent submit path returning `false` after a successful `mutateAsync(...)` when `responseStillTargetsCurrentLocalConversation` failed during live local hydration; `ChatComposer` treats `false` as "keep draft", so the sent text remained in the textarea even though the backend accepted the message.
+      - `onLocalAgentSubmit(...)` now clears the submitted draft immediately after the local message POST returns successfully, guarded by the active connection id and by `currentDraft.trim() === goal` so newer user typing is not removed.
+      - The existing post-invalidation clear remains as a second safeguard, and regression coverage asserts the composer is empty after the local Agent POST and still empty after final hydration.
+      - Live browser proof used the composer value and local Agent POST/polling network evidence; it did not rely on backend local mock model replies or assistant content.
+
+  - id: local-agent-context-compression-hydration
+    date: 2026-06-21
+    status: completed
+    demo: Agent Workspace local Agent context compression summaries survive message/task polling hydration, so a compressed HAO conversation stays reduced instead of returning to 100.
+    verification_result: targeted_and_browser_passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "preserves local Agent context compression summaries" -> 1 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 30 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client,vitest/globals,@testing-library/jest-dom --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx src/features/tasks/api.ts -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 26 passed
+      - Browser verification on http://127.0.0.1:5173/agents/default/workspace?conversation_id=conv-chart-artifact-demo&run_id=demo-tool-approval-run with `hao Local Agent` selected after several local polling cycles -> `36 条已摘要`, context button `背景信息窗口：2% 已用，预计发送 245 标记，共 16k。点击压缩上下文`, `100%` absent, HAO session and binding task polling requests returned 200, console warnings/errors 0, screenshot `local-agent-context-compression-fixed-verified.png`.
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Root cause was local Agent polling hydration rebuilding `local-agent:<bindingId>` conversations from backend messages/tasks with `contextCompressions: {}` every cycle.
+      - After manual or automatic compression succeeded, the next local Agent session-message/task poll replaced the active local conversation and erased the ready summary, making the right-bottom context ring jump back to raw usage.
+      - `localAgentConversationFromMessages(...)` now accepts preserved `pinnedNodeIds`, `contextWindowTurns`, and same-conversation `contextCompressions`.
+      - `localAgentHydrationStateForConversation(...)` reads the active store or existing conversation before rebuilding a local Agent conversation.
+      - `localAgentContextCompressionsForConversation(...)` keeps only branch keys under the current `local-agent:<bindingId>:` prefix, so summaries do not leak across local bindings.
+      - Regression coverage verifies that a preserved HAO local-Agent summary remains after hydration and that the next local Agent send includes `compressed_context`.
+      - Live browser proof used the real HAO local connection `c465ba35-3782-44d9-a66c-0edfdf7933b2`, binding `aee0f1fb-ce2d-4f8c-a987-41b36bbba47b`, and session `130bc185-25ab-437e-a9d4-62ad7a7aa8ab`; it did not rely on backend local mock model replies.
+
+  - id: agent-workspace-context-compression-fallback
+    date: 2026-06-21
+    status: completed
+    demo: Agent Workspace context compression summaries remain usable when the backend reports the effective fallback compressor model, so manual compression and automatic over-threshold compression reduce the context ring instead of returning to 100.
+    verification_result: targeted_and_browser_passed_with_known_repo_wide_lint_blockers
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/ChatSurface.shell.test.tsx -t "compression|fallback compressor|auto-compresses|usage ring|slash command menu|original branch" -> 5 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/ChatSurface.shell.test.tsx -> 26 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client,vitest/globals,@testing-library/jest-dom --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/components/ChatSurface.tsx src/features/agents/__tests__/ChatSurface.shell.test.tsx -> passed
+      - curl --noproxy '*' http://127.0.0.1:5173/agents/default/workspace?conversation_id=conv-chart-artifact-demo&run_id=demo-tool-approval-run -> HTTP 200
+      - curl --noproxy '*' http://127.0.0.1:8000/health -> HTTP 200
+      - Browser verification on the target Workspace URL injected a completed two-node conversation into the active Vite store module, real UI auto-compressed through POST /api/agents/default/context/compress -> 200, response used DeepSeek compressor with status ok/cache recomputed, stored summary became ready with 2 covered nodes, and the right-bottom ring showed `背景信息窗口：1% 已用，预计发送 61 标记，共 16k` instead of 100.
+      - git diff --check -> passed
+      - cd apps/agent-console && npm run lint -> blocked by existing unrelated TypeScript debt in stale a11y tests, missing `jest-axe` matcher declarations, old ChatMessageBubble props, and missing Eval/Tools API exports; no error pointed at the touched files.
+    acceptance_notes:
+      - Root cause was a frontend identity mismatch. `ChatSurface` stored `response.compressor_provider` / `response.compressor_model`, but `isCompressionSummaryUsable(...)` validates summaries against the current UI-selected provider/model. Backend fallback made a freshly generated summary look unusable, so the context ring returned to raw usage.
+      - `commitCompressionResponse(...)` now stores the normalized requested provider/model as the frontend usability key while leaving backend response fields and audit behavior unchanged.
+      - Regression coverage locks manual ring compression and automatic over-threshold compression when the backend response reports a different fallback compressor model.
+      - Live browser proof used the real compression endpoint and a DeepSeek summary, not a local mock model response.
+
+  - id: local-agent-hao-mock-provider-fallback
+    date: 2026-06-21
+    status: completed
+    demo: HAO local Agent sends that request an unconfigured mock-backed provider now fall back to a configured real provider before the bridge task is executed.
+    verification_result: targeted_full_and_live_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_local_agents.py::test_hao_local_agent_send_falls_back_from_mock_provider_to_real_default services/api-server/tests/test_hao_cli.py::test_hao_headless_rejects_local_bridge_mock_model_response -q -> 2 passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_local_agents.py services/api-server/tests/test_hao_cli.py -q -> 145 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/api/agents/agent_local.py services/api-server/tests/test_local_agents.py services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/api/agents/agent_local.py services/api-server/tests/test_local_agents.py services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - Live model settings check showed default `deepseek-flash` / `deepseek-v4-flash` with API key configured and `openai-compatible` / `gpt-5.5` with `api_key_configured=false`.
+      - Restarted local api-server and adapter-scoped HAO/Codex bridge daemons; HAO connection `c465ba35-3782-44d9-a66c-0edfdf7933b2` and Codex connection `fd9aed0d-a5ef-458a-92c6-5b8254ef9b14` reported `online`.
+      - Live HAO send on binding `aee0f1fb-ce2d-4f8c-a987-41b36bbba47b` intentionally requested `openai-compatible` / `gpt-5.5`; bridge task `d611959f-ece4-4a1a-aaf1-381157fe871c` completed, Run `16496264-1f69-4e34-a6bc-a8e830d9b4c4` completed, payload recorded fallback to `deepseek-flash` / `deepseek-v4-flash`, ModelCall `335db88e-0cb9-43b8-a68b-2e5c712428b9` was `SUCCESS`, assistant reply was `HAO_REAL_MODEL_OK`, and `LOCAL_AGENT_MESSAGE_FAILED` count was 0.
+      - Connection check after 35 seconds showed both HAO and Codex local Agent connections still `online`.
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Root cause for Run `31d88315-589e-4b43-a9e2-e0a8e05e279c` was send-time model routing: the user-selected `openai-compatible` provider had no API key, so the backend model gateway returned the local mock response and the HAO CLI correctly rejected it before emitting assistant content.
+      - `send_local_agent_message(...)` now resolves an effective model for HAO messages before creating the workspace Run and bridge payload. If the selected provider would use the local mock model and a configured real provider exists, it falls back to the real provider, preferring the configured default.
+      - The original request is retained in `model_fallback` metadata on the workspace request, bridge payload, and local message input snapshot, so Run evidence still shows why the provider changed.
+      - Non-HAO adapters keep their requested provider/model unchanged. Test/offline environments with no configured real provider are not blocked at enqueue time; the existing HAO CLI mock-response guard still fails closed if execution would actually return backend mock content.
+      - One stale test expectation was repaired to match the heartbeat API contract: connection heartbeat returns HTTP 200, consistent with the route declaration and the other heartbeat tests.
+
+  - id: local-agent-hao-context-and-mock-response-isolation
+    date: 2026-06-21
+    status: completed
+    demo: HAO local Agent replies no longer expose bridge/system context as user-visible assistant content, and backend local mock model output is rejected instead of being sent as a normal reply.
+    verification_result: targeted_and_live_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_hao_cli.py::test_hao_bridge_task_passes_harness_context_to_headless services/api-server/tests/test_hao_cli.py::test_hao_headless_keeps_user_goal_separate_from_system_context services/api-server/tests/test_hao_cli.py::test_hao_headless_rejects_local_bridge_mock_model_response -q -> 3 passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_hao_cli.py -q -> 67 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - Live HAO send on binding `aee0f1fb-ce2d-4f8c-a987-41b36bbba47b` used bridge task `1efdb336-5b76-4898-b388-0537388c922e` and Run `03a8b04e-5aff-4a52-8007-ba17e83be885`; the selected model call was `deepseek-flash` / `deepseek-v4-flash`, the Run reached `COMPLETED`, assistant deltas were a clean short Chinese greeting/help prompt, no local mock text was emitted, and no `LOCAL_AGENT_MESSAGE_FAILED` event was recorded.
+      - HAO bridge pid `74315` and Codex bridge pid `73187` were active after restart; both local Agent connections remained online after the live check.
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Root cause for the messy HAO reply was that the HAO bridge assembled bridge instructions, resume metadata, workspace context, conversation context, attachments, and the user message into one prompt string. `run_headless_once(...)` then persisted that whole string as the user goal, so the backend local mock model echoed internal bridge context into the assistant reply.
+      - `_hao_prompt_for_task(...)` now returns only the redacted user message. `_hao_system_prompt_for_task(...)` carries bridge/system/request context separately, and `run_headless_once(...)` stores that context as a `system` message before appending the clean `user` message.
+      - Local bridge mock output beginning with the Docker private-delivery mock prefix is now detected before any assistant delta is appended locally or reported to the backend. The bridge fails closed with a configuration error instead of sending mock text to Agent Workspace.
+      - Regression coverage locks all three invariants: bridge context is passed to headless execution outside the user prompt, the stream payload `goal` remains the user's actual message, and local mock model replies are rejected without assistant content or bridge deltas.
+      - The earlier `HAO_LIVE_OK` proof remains useful only for recovery/daemon status. HAO chat correctness now requires a real model call; the live clean-reply proof used DeepSeek Flash and returned normal assistant content without bridge prompt leakage.
+
+  - id: local-agent-approved-tool-request-reuse
+    date: 2026-06-21
+    status: completed
+    demo: HAO local Agent approvals from Run Detail now continue correctly when the model requests another local tool with the same tool_call_id after an approved tool result.
+    verification_result: targeted_and_live_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_hao_cli.py::test_hao_bridge_repeated_tool_call_id_uses_tool_result_sequence services/api-server/tests/test_hao_cli.py::test_hao_bridge_stale_succeeded_pending_tool_does_not_fail_task services/api-server/tests/test_hao_cli.py::test_hao_bridge_pending_tool_expiry_uses_bounded_error_event_id -q -> 3 passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_hao_cli.py -q -> 65 passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - Live HAO Run `a05bf4c8-580c-4a80-97a9-dba3f52f8826` / bridge task `01703ac6-a4e6-44b9-9120-c7c5ff0d4aa9` completed after two Run Detail approvals, with two `list_files` tool calls both `SUCCESS` and `failed_events=[]`.
+      - Live HAO repeated request proof used first tool request `01703ac6-a4e6-44b9-9120-c7c5ff0d4aa9:hao-local-a05bf4c8-580c-4a80-97a9-dba3f52f8826-0` and second request `01703ac6-a4e6-44b9-9120-c7c5ff0d4aa9:hao-local-a05bf4c8-580c-4a80-97a9-dba3f52f8826-0:1`, both approved with reason `Approved from Agent Run Detail`.
+      - Live Codex Run `7683a15b-d5b8-4439-b931-efe54940db38` / bridge task `a357ffab-75b0-4755-b380-3c994f5a79a8` completed with `failed_events=[]`.
+      - Connection check after 35 seconds showed both HAO and Codex local Agent connections still online.
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Root cause for the "Approved from Agent Run Detail" backend internal error was terminal local tool request reuse. After a successful `list_files`, the model requested `list_files` again with the same `tool_call_id`; the bridge reused the same `tool_request_id`, so the backend returned the already-terminal request with `status=succeeded` and reason `Approved from Agent Run Detail`, which the CLI treated as a denied tool result.
+      - `services/api-server/app/cli/hao/main.py` now derives a per-session tool-result sequence and appends `:1`, `:2`, etc. when the same model `tool_call_id` is requested again after persisted local tool results. The first request keeps the original id for compatibility.
+      - Pending-tool resume now clears stale local pending entries when the server decision is already `succeeded`, instead of reporting an `assistant_error` from the approval reason.
+      - Regression coverage locks the repeated `tool_call_id` sequence, stale succeeded pending-tool cleanup, and bounded pending-tool error id paths.
+      - Live HAO and Codex runs both completed after daemon cleanup/restart, and both local Agent connections stayed online beyond the offline threshold.
+
+  - id: local-agent-pending-approval-visibility
+    date: 2026-06-21
+    status: completed
+    demo: Agent Workspace now surfaces non-Claude local tool approvals instead of leaving HAO/Codex turns on the generic `本地 Agent 正在处理` copy.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "non-Claude local tool approvals" -> 1 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "Claude Code permission bridge" -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "old failed local Agent task" -> 1 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 29 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/tasks/api.ts -> passed
+      - Browser verification on http://127.0.0.1:5173/agents/default/workspace?conversation_id=conv-chart-artifact-demo&run_id=demo-tool-approval-run with `hao Local Agent` selected -> `hasProcessing=false`, `hasSpecificPendingApproval=true`, HAO online, `运行详情` link points to Run `d8ee702e-30c8-48f3-9d2c-6b3d188f44ad#approvals`.
+      - Run Detail browser verification for Run `d8ee702e-30c8-48f3-9d2c-6b3d188f44ad#approvals` -> approval section visible, `run_shell` pending approval visible, Approve and Reject buttons visible.
+      - curl --noproxy '*' -H 'Authorization: Bearer dev-engineer-token' http://127.0.0.1:8000/api/agents/local-agent/connections -> HAO `c465ba35-3782-44d9-a66c-0edfdf7933b2` online and Codex `fd9aed0d-a5ef-458a-92c6-5b8254ef9b14` online after recovery-command daemon restart.
+      - live POST /api/agents/local-agent/bindings/f4ceb0ed-3294-42e8-ba6e-a8bf8a705df8/messages after API restart -> Codex bridge_task_id=18f2a94b-ddcc-4c71-ab27-5faaed1f554b, run_id=077ecdb0-de4f-48b6-ac45-bec8071191a2, assistant reply `CODEX_LIVE_OK`, run `COMPLETED`.
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_hao_cli.py::test_hao_bridge_pending_tool_expiry_uses_bounded_error_event_id -q -> 1 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/cli/hao/main.py services/api-server/tests/test_hao_cli.py -> passed
+      - curl --noproxy '*' -H 'Authorization: Bearer dev-engineer-token' http://127.0.0.1:8000/api/agents/runs/63c8955e-7207-4a93-a9ec-138a236c0823/workspace -> Run `WAITING_APPROVAL`, approval `8c88b084-c45e-4594-a097-75a9c27600c0` `PENDING`, tool `run_shell` `PENDING_APPROVAL`.
+      - Browser verification on http://127.0.0.1:5173/agents/default/workspace?conversation_id=local-agent%3Aaee0f1fb-ce2d-4f8c-a987-41b36bbba47b&run_id=63c8955e-7207-4a93-a9ec-138a236c0823 with `hao Local Agent` selected -> `hasSpecificPendingApproval=true`, `hasGenericProcessing=false`, HAO online, `运行详情` link targets Run `63c8955e-7207-4a93-a9ec-138a236c0823#approvals`.
+      - Run Detail browser verification for Run `63c8955e-7207-4a93-a9ec-138a236c0823#approvals` -> `run_shell`, wait state, approval reason, and visible `批准` / `拒绝` buttons.
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Root cause for the 7-minute no-reply repro was not an offline bridge or the 180-second idle fallback. HAO task `af97a48e-6ccf-4de3-93d0-46c16b8dce28` was still running because Run `d8ee702e-30c8-48f3-9d2c-6b3d188f44ad` was `WAITING_APPROVAL` on approval `ed23eaf5-596d-465d-b46d-575937cbd5c6`.
+      - Agent Workspace now restores `activeRunId` from the active local conversation leaf and from local message/task hydration, so pending approvals are loaded after refresh or polling recovery.
+      - Non-Claude local agents now use `等待本地工具审批。可在运行详情处理审批。` when `pendingApprovalCount > 0`; Claude Code permission bridge keeps the Claude-specific copy.
+      - The pending approval control is no longer Claude-only. HAO/Codex local tool approvals expose `运行详情` / `#approvals` instead of the generic `本地 Agent 正在处理，完成后会同步到这里。`.
+      - The original HAO approval later expired and exposed a second root cause: pending-tool resume built an `assistant_error` event id from the long `tool_request_id`, exceeding the backend 160-character schema limit and causing a 422 that could make the daemon exit. The CLI now reports assistant errors with a bounded `{bridge_task_id}:error:{uuid}` id and has a regression test for expired pending tools.
+      - Fresh HAO proof uses bridge task `09f538e0-6b92-49a6-9bb7-948906dd63ee`, Run `63c8955e-7207-4a93-a9ec-138a236c0823`, and approval `8c88b084-c45e-4594-a097-75a9c27600c0`; API and browser both show explicit pending approval instead of an indefinite processing state.
+      - Browser verification left the actual HAO shell approval pending for the user; the fix is that the UI now shows the approval and no longer looks silently hung.
+
+  - id: local-agent-bridge-timeout-fallback
+    date: 2026-06-21
+    status: completed
+    demo: Local Agent bridge tasks that stop returning now fail closed after an idle timeout instead of leaving Agent Workspace stuck on `本地 Agent 正在处理`.
+    verification_result: targeted_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_local_agents.py::test_local_agent_stale_active_task_auto_fails_on_binding_poll services/api-server/tests/test_local_agents.py::test_local_agent_stale_task_waiting_on_local_tool_does_not_timeout -q -> 2 passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_local_agents.py::test_local_agent_pending_task_is_api_projected_and_not_released_twice services/api-server/tests/test_local_agents.py::test_local_agent_stale_active_task_auto_fails_on_binding_poll services/api-server/tests/test_local_agents.py::test_local_agent_stale_task_waiting_on_local_tool_does_not_timeout services/api-server/tests/test_local_agents.py::test_local_agent_failed_task_is_projected_with_error_message services/api-server/tests/test_local_agents.py::test_local_agent_failed_ack_closes_run_and_projects_error_message -q -> 5 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/api/agents/agent_local.py services/api-server/tests/test_local_agents.py && services/api-server/.venv/bin/python -m py_compile services/api-server/app/api/agents/agent_local.py services/api-server/tests/test_local_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/ChatSurface.shell.test.tsx src/features/agents/__tests__/useChatStream.test.tsx -> 40 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/tasks/api.ts -> passed
+    acceptance_notes:
+      - Backend Local Agent bridge tasks now have a 180-second idle fallback for `pending` / `leased` / `running` tasks with no unresolved local tool state.
+      - The timeout finalizes the bridge task as `failed`, closes the associated Run as `FAILED`, stores `terminal_error_message` plus timeout metadata, and emits `LOCAL_AGENT_MESSAGE_FAILED` so active task-event SSE streams can stop the UI spinner.
+      - Pull, ack, and bridge events update task activity, so long-running tasks with deltas or other bridge events are not failed while making progress.
+      - Tasks waiting on local tool approval/request state are excluded from bridge-task timeout and keep the existing tool-decision TTL behavior.
+      - Agent Workspace projects terminal local-agent task failures into an error bubble so the composer unlocks after polling sees terminal failure even if SSE was missed.
+
+  - id: local-agent-offline-inline-restore
+    date: 2026-06-21
+    status: completed
+    demo: Agent Workspace local Agent offline state now exposes an inline `恢复` action that refreshes the connection, binding, session messages, pending tasks, and active Run workspace in place.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "optimistic local Agent bubble" -> 1 passed, 25 skipped
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 26 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/tasks/api.ts -> passed
+    acceptance_notes:
+      - Offline enabled local Agent controls render an accessible `恢复本地 Agent` button with a spinning refresh icon while refresh is pending.
+      - The restore action invalidates/refetches local connections, local bindings, session messages, binding tasks, and the active Run workspace, then reuses the existing local-Agent enable/binding restore path.
+      - Success, still-offline, and failure toasts distinguish an online/busy bridge from a bridge that still needs to be restarted from Agent Studio.
+      - Offline pending assistant copy now points users to the inline `恢复` action instead of only saying the bridge will continue later.
+      - Terminal failed local bridge tasks keep their optimistic user/assistant hydration anchor, so a failed task discovered by polling remains visible as an error bubble instead of being overwritten by an empty local conversation.
+
+  - id: local-agent-offline-bridge-run-recovery
+    date: 2026-06-21
+    status: completed
+    demo: Agent Workspace `恢复` now generates an in-place `bridge run` recovery command for the existing offline Local Agent connection when a status refresh still reports offline.
+    verification_result: targeted_passed
+    verification_commands:
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_local_agents.py::test_local_agent_recovery_command_restarts_confirmed_connection services/api-server/tests/test_local_agents.py::test_local_agent_pairing_command_can_use_published_npm_package_override services/api-server/tests/test_local_agents.py::test_local_agent_pairing_command_does_not_add_registry_for_git_package_override -q -> 3 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/api/agents/agent_local.py services/api-server/app/api/agents/common.py services/api-server/app/api/schemas.py services/api-server/tests/test_local_agents.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/api/agents/agent_local.py services/api-server/app/api/agents/common.py services/api-server/app/api/schemas.py services/api-server/tests/test_local_agents.py -> passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 27 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/pages/AgentWorkspacePage.tsx src/features/tasks/api.ts -> passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_hao_cli.py::test_hao_bridge_run_daemon_uses_project_cwd_and_log_file services/api-server/tests/test_hao_cli.py::test_hao_bridge_daemon_uses_protected_state_without_device_token_argv -q -> 2 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/tests/test_hao_cli.py services/api-server/tests/test_local_agents.py && services/api-server/.venv/bin/python -m py_compile services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/tests/test_hao_cli.py services/api-server/tests/test_local_agents.py -> passed
+      - services/api-server/.venv/bin/python -m pytest services/api-server/tests/test_local_agents.py::test_local_agent_recovery_command_restarts_confirmed_connection services/api-server/tests/test_local_agents.py::test_local_agent_adapter_heartbeat_keeps_active_task_alive services/api-server/tests/test_local_agents.py::test_local_agent_stale_active_task_auto_fails_on_binding_poll services/api-server/tests/test_local_agents.py::test_local_agent_stale_task_waiting_on_local_tool_does_not_timeout services/api-server/tests/test_hao_cli.py::test_hao_bridge_run_daemon_uses_project_cwd_and_log_file services/api-server/tests/test_hao_cli.py::test_hao_bridge_daemon_uses_protected_state_without_device_token_argv services/api-server/tests/test_hao_cli.py::test_bridge_task_reports_heartbeat_while_adapter_is_running -q -> 7 passed
+      - services/api-server/.venv/bin/python -m ruff check services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/app/api/schemas.py services/api-server/tests/test_hao_cli.py services/api-server/tests/test_local_agents.py -> passed
+      - services/api-server/.venv/bin/python -m py_compile services/api-server/app/cli/hao/main.py services/api-server/app/api/agents/agent_local.py services/api-server/app/api/schemas.py services/api-server/tests/test_hao_cli.py services/api-server/tests/test_local_agents.py -> passed
+      - HAO_HOME="$HOME/.hao/bridges/hao" npx -y /Users/luohao/Desktop/agent_workspace/harness/services/api-server bridge run --api http://localhost:8000 --connection-id c465ba35-3782-44d9-a66c-0edfdf7933b2 --adapter hao --daemon -> daemon_started, log_path=/Users/luohao/.hao/bridges/hao/bridge-daemon.log
+      - HAO_HOME="$HOME/.hao/bridges/codex" npx -y /Users/luohao/Desktop/agent_workspace/harness/services/api-server bridge run --api http://localhost:8000 --connection-id fd9aed0d-a5ef-458a-92c6-5b8254ef9b14 --adapter codex --daemon -> daemon_started, log_path=/Users/luohao/.hao/bridges/codex/bridge-daemon.log
+      - curl --noproxy '*' -H 'Authorization: Bearer dev-engineer-token' http://127.0.0.1:8000/api/agents/local-agent/connections -> hao connection c465ba35-3782-44d9-a66c-0edfdf7933b2 status online
+      - live POST /api/agents/local-agent/bindings/aee0f1fb-ce2d-4f8c-a987-41b36bbba47b/messages -> hao bridge_task_id=f2c52b3f-ab42-4d30-8529-86753648910f, run_id=f3fb1581-c5d7-4195-8a99-b548d798b347, assistant reply contained HAO_LIVE_OK, run COMPLETED, connection stayed online after 35s
+      - live POST /api/agents/local-agent/bindings/f4ceb0ed-3294-42e8-ba6e-a8bf8a705df8/messages -> codex bridge_task_id=bf35e4f2-9b8c-4fe3-a227-1105a2a46da0, run_id=0c9e8ce3-2ab9-4377-b0ad-83f98f283854, assistant reply CODEX_LIVE_OK, run COMPLETED, connection stayed online after 35s
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -t "old failed local Agent task" -> 1 passed
+      - cd apps/agent-console && PATH="/Users/luohao/.nvm/versions/node/v20.9.0/bin:/usr/local/bin:$PATH" npx vitest run src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx -> 28 passed
+      - Browser verification on http://127.0.0.1:5173/agents/default/workspace?conversation_id=conv-chart-artifact-demo&run_id=demo-tool-approval-run with hao Local Agent selected -> old 180-second timeout error absent, newer HAO reply visible
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+    acceptance_notes:
+      - Backend exposes `GET /api/agents/local-agent/connections/{connection_id}/recovery-command` for confirmed owner/admin connections and returns a copyable `hao bridge run` command without exposing device tokens.
+      - The generated command uses the same npx package/registry resolution as pairing, targets the current connection id, includes the adapter, uses `--daemon`, and defaults `HAO_HOME` to the Agent Studio multi-adapter state path such as `$HOME/.hao/bridges/hao`.
+      - `hao bridge run --daemon` is now a real supported recovery path. The CLI starts the daemon from the Python project root for all adapters, writes stdout/stderr to `HAO_HOME/bridge-daemon.log`, and keeps the device token out of argv.
+      - Long-running local adapter work now has a `adapter_heartbeat` bridge event. The CLI emits best-effort task heartbeats while an adapter is running, and the backend accepts the heartbeat to refresh bridge-task activity without creating user-visible assistant content.
+      - The hao adapter now reports `adapter_started` before entering headless execution, so Run workspace evidence shows the adapter actually picked up the task before model/tool work begins.
+      - Live repro showed the earlier 404 was a stale api-server process without the new route; after restart, OpenAPI includes `/recovery-command` and the recovery endpoint returns 200 for the confirmed hao connection.
+      - Final live proof restarted both hao and Codex bridges through the generated recovery command, sent one message through each existing binding, observed both assistant responses, confirmed both Runs reached `COMPLETED`, and rechecked after the 30-second offline threshold that both connections were still `online`.
+      - Agent Workspace no longer lets a historical failed local bridge task steal `activeLeafId` from newer local-agent messages. The old failed task remains inspectable as a historical branch, but a later successful assistant reply stays on the visible main path.
+      - Agent Workspace `恢复` first refreshes local connection, binding, message, task, and active Run state; if the selected connection is still offline, it shows the recovery command inline with `复制命令` and `我已执行，刷新`.
+      - The command panel disappears after the bridge reports `online` or `busy`, keeping queued Local Agent messages attached to the existing confirmed connection rather than creating a new pending-confirmation pairing flow.
+
   - id: run-detail-expert-subagent-plan-repair
     date: 2026-06-19
     status: completed

@@ -891,6 +891,160 @@ describe("ChatSurface Workspace shell integration", () => {
     );
   });
 
+  it("keeps a compression usable when the backend reports a fallback compressor model", async () => {
+    const user = userEvent.setup();
+    let compressedNodeId = "";
+    const fetchMock = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body ?? "{}"));
+      expect(payload).toMatchObject({
+        model_provider: "openai-compatible",
+        model_name: "gpt-5.5",
+        compressor_provider: "openai-compatible",
+        compressor_model: "gpt-5.5",
+      });
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          cache_status: "recomputed",
+          summary: "compressed summary",
+          coverage_node_ids: [compressedNodeId],
+          coverage_path_hash: "d".repeat(64),
+          last_covered_node_id: compressedNodeId,
+          summary_schema_version: "workspace-context-summary-v1",
+          compression_prompt_version: "workspace-context-compression-v1",
+          compressor_provider: "deepseek-flash",
+          compressor_model: "deepseek-v4-flash",
+          estimated_original_tokens: 20,
+          estimated_summary_tokens: 4,
+          estimated_uncovered_tokens: 0,
+          created_at: "2026-05-14T00:00:00Z",
+          updated_at: "2026-05-14T00:00:00Z",
+          error: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    useWorkspaceStore.getState().setContextMaxTokens(1_000_000);
+    compressedNodeId = useWorkspaceStore.getState().appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "node that should be compressed",
+      state: "done",
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+    });
+    renderSurface({
+      modelLabel: "gpt-5.5",
+      selectedProviderId: "openai-compatible",
+      selectedModelId: "gpt-5.5",
+    });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /背景信息窗口：1% 已用，预计发送 7 标记，共 1m/,
+      }),
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
+        summary: "compressed summary",
+        status: "ready",
+        compressorProvider: "openai-compatible",
+        compressorModel: "gpt-5.5",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: /背景信息窗口：1% 已用，预计发送 5 标记，共 1m/,
+        }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("auto-compresses an over-threshold completed assistant turn with a fallback compressor model", async () => {
+    let userNodeId = "";
+    let assistantNodeId = "";
+    const fetchMock = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body ?? "{}"));
+      expect(payload).toMatchObject({
+        model_provider: "openai-compatible",
+        model_name: "gpt-5.5",
+        compressor_provider: "openai-compatible",
+        compressor_model: "gpt-5.5",
+      });
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          cache_status: "recomputed",
+          summary: "compressed summary",
+          coverage_node_ids: [userNodeId, assistantNodeId],
+          coverage_path_hash: "e".repeat(64),
+          last_covered_node_id: assistantNodeId,
+          summary_schema_version: "workspace-context-summary-v1",
+          compression_prompt_version: "workspace-context-compression-v1",
+          compressor_provider: "deepseek-flash",
+          compressor_model: "deepseek-v4-flash",
+          estimated_original_tokens: 18_000,
+          estimated_summary_tokens: 4,
+          estimated_uncovered_tokens: 0,
+          created_at: "2026-05-14T00:00:00Z",
+          updated_at: "2026-05-14T00:00:00Z",
+          error: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const store = useWorkspaceStore.getState();
+    store.setContextMaxTokens(16_000);
+    userNodeId = store.appendNode({
+      parent_id: "root",
+      role: "user",
+      content: "large user turn",
+      state: "done",
+      metadata: { input_tokens: 9_000 },
+      tool_calls: [],
+      artifacts: [],
+    });
+    assistantNodeId = store.appendNode({
+      parent_id: userNodeId,
+      role: "assistant",
+      content: "large assistant turn",
+      state: "done",
+      metadata: { output_tokens: 9_000 },
+      tool_calls: [],
+      artifacts: [],
+    });
+    renderSurface({
+      modelLabel: "gpt-5.5",
+      selectedProviderId: "openai-compatible",
+      selectedModelId: "gpt-5.5",
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), {
+      timeout: 1500,
+    });
+    await waitFor(() =>
+      expect(Object.values(useWorkspaceStore.getState().contextCompressions)[0]).toMatchObject({
+        summary: "compressed summary",
+        status: "ready",
+        compressorProvider: "openai-compatible",
+        compressorModel: "gpt-5.5",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: /背景信息窗口：1% 已用，预计发送 5 标记，共 16k/,
+        }),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it("compresses context from the slash command menu", async () => {
     const user = userEvent.setup();
     let compressedNodeId = "";
