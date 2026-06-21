@@ -2,7 +2,7 @@
 
 ## 2026-06-21
 
-- Refreshed [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]], [[project-handoff-current-state]], and `docs/ai/task-progress.yaml` for `chore/demo-artifacts`. Captured real local WarmPool benchmark HTTP evidence from `POST /api/sandboxes/warm-pool/benchmark` with `iterations=30` (`PASS`, `warm_p95_ms=1`, `warm_avg_ms=0`, `cold_avg_ms=275 synthetic baseline`, `hit_rate=100`), updated `docs/reports/benchmark-report.md`, generated `docs/gifs/first-agent-run.gif` plus `docs/gifs/first-agent-run-screenshot.png`, and recorded that the GIF uses Playwright Chromium `recordVideo` converted by `ffmpeg` after macOS `screencapture` returned `capture error`.
+- Added [[session-2026-06-21-doc-status-correction]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the documentation status correction. Captured completed status normalization for the already implemented P1/P2/P3/P4/P5/P6/P7 entries, gap-register pending status for the tool approval Modify UI, production Vite build, and the existing docs-validation/full-build/full-pytest blockers in the independent worktree.
 
 ## 2026-06-19
 
