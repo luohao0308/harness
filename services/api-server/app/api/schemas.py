@@ -82,6 +82,26 @@ class AgentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgentVersionResponse(BaseModel):
+    id: str = Field(description="Agent version ID")
+    agent_id: str = Field(description="Agent ID")
+    version_number: int = Field(description="Monotonic version number")
+    config_snapshot: dict = Field(description="Immutable Agent config snapshot")
+    created_by: str | None = Field(default=None, description="Creator user ID")
+    created_at: datetime = Field(description="Creation time")
+    is_active: bool = Field(description="Whether this version is active")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentVersionPage(BaseModel):
+    items: list[AgentVersionResponse] = Field(description="Agent versions")
+
+
+class AgentVersionCreateRequest(BaseModel):
+    activate: bool = Field(default=False, description="Activate created snapshot")
+
+
 class AgentPage(BaseModel):
     items: list[AgentResponse] = Field(description="Agent 列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")

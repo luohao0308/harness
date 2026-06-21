@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-19T13:00:32+08:00
+last_updated_at: 2026-06-21T06:02:47+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -3754,6 +3754,27 @@ post_stage_hardening:
       - P2c `.txt` / `.md` import uses actual multipart upload endpoints, with backend MIME/size validation and frontend FormData tests.
       - Restore verification is documented in `docs/runbooks/migrations.md` and backed by `test_knowledge_restore_smoke_preserves_current_and_historical_contracts`.
       - Private P2 Knowledge API smoke created agent-scoped and org-scoped sources, added a sibling document, created a v2 document version, checked lifecycle actions, verified same-org org-scope visibility, and confirmed lifecycle audit rows in compose Postgres.
+
+  - id: b6-version-rollout-management
+    date: 2026-06-21
+    status: completed
+    demo: Sandboxes Version Rollout tile lists Agent config snapshots, creates new versions, and activates prior versions to restore Agent config.
+    verification_result: targeted_passed_with_known_repo_wide_validation_blockers
+    verification_commands:
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_agent_versions.py -q -> 3 passed
+      - cd services/api-server && uv run ruff check app/api/agent_versions.py app/api/schemas.py app/db/models.py app/events/event_types.py app/main.py alembic/versions/20260621_0044_create_agent_versions.py tests/test_agent_versions.py -> passed
+      - cd apps/agent-console && npm test -- src/features/sandboxes/pages/__tests__/SandboxesPage.versions.test.tsx --reporter=dot -> 1 file / 1 test passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/sandboxes/pages/SandboxesPage.tsx src/features/sandboxes/pages/__tests__/SandboxesPage.versions.test.tsx src/features/tasks/api.ts -> passed
+      - git diff --check -> passed
+      - cd apps/agent-console && npm run build -> blocked by existing repo-wide stale TypeScript test debt around `jest-axe`, stale a11y imports, SAML fixtures, and old ChatMessageBubble props
+      - cd services/api-server && uv run pytest tests/ -q -> blocked during collection by existing `tests/integration/test_okta_logout.py` import of missing `app.db.models.Session`
+    acceptance_notes:
+      - Spec created at `docs/ai/stages/10-version-rollout.md` and updated to `implemented`.
+      - Added `agent_versions` table, model, Alembic migration, schemas, list/create/activate endpoints, and version event constants.
+      - Version snapshots store immutable Agent config JSON with monotonic per-Agent version numbers.
+      - Activating a version restores snapshot fields onto the Agent record and marks all other versions inactive for that organization/Agent.
+      - Sandboxes Version Rollout tile is no longer disabled and lists, creates, and activates real version rows.
+      - `python3 scripts/validate-docs.py` remains blocked in this isolated worktree because the worktree root does not contain `AGENTS.md`.
 
 stage_completion_rule:
   - run_backend_tests

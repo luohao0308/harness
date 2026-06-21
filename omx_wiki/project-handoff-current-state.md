@@ -488,6 +488,36 @@ python3 scripts/validate-docs.py
 docs validation passed
 ```
 
+## 2026-06-21 B6 Version Rollout Management
+
+Branch `feat/version-rollout-management` implements the previously disabled Sandboxes Version Rollout tile as an Agent configuration snapshot and activation MVP.
+
+Delivered scope:
+
+- `docs/ai/stages/10-version-rollout.md` created and marked implemented.
+- Backend `AgentVersion` model, Alembic migration `20260621_0044_create_agent_versions.py`, schemas, `GET/POST /api/agents/{agent_id}/versions`, and `PATCH /api/agents/{agent_id}/versions/{version_id}/activate`.
+- Version snapshots store immutable Agent config JSON with monotonic per-Agent numbering.
+- Activating a version restores snapshot fields onto the Agent row and marks exactly one version active.
+- Sandboxes Version Rollout tile is unlocked and supports list/create/activate for Agent `default`.
+
+Validation evidence:
+
+```text
+cd services/api-server && .venv/bin/python -m pytest tests/test_agent_versions.py -q -> 3 passed
+cd services/api-server && uv run ruff check app/api/agent_versions.py app/api/schemas.py app/db/models.py app/events/event_types.py app/main.py alembic/versions/20260621_0044_create_agent_versions.py tests/test_agent_versions.py -> passed
+cd apps/agent-console && npm test -- src/features/sandboxes/pages/__tests__/SandboxesPage.versions.test.tsx --reporter=dot -> 1 file / 1 test passed
+cd apps/agent-console && npx tsc --noEmit ... src/features/sandboxes/pages/SandboxesPage.tsx src/features/sandboxes/pages/__tests__/SandboxesPage.versions.test.tsx src/features/tasks/api.ts -> passed
+git diff --check -> passed
+```
+
+Known validation blockers:
+
+```text
+cd apps/agent-console && npm run build -> existing repo-wide TypeScript test debt around jest-axe typings, stale a11y imports, SAML fixtures, and old ChatMessageBubble props
+cd services/api-server && uv run pytest tests/ -q -> existing collection failure in tests/integration/test_okta_logout.py importing missing app.db.models.Session
+python3 scripts/validate-docs.py -> isolated worktree lacks AGENTS.md at repository root
+```
+
 ## Next Known Work
 
 The latest completed post-stage lane is **Production Critical Hardening v2**, with review fixes and validation recorded in [[session-2026-05-30-production-critical-hardening-v2]].
