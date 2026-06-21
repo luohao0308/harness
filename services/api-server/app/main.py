@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.agent_templates import router as agent_templates_router
+from app.api.agent_versions import router as agent_versions_router
 from app.api.agents import router as agents_router
 from app.api.api_keys import router as api_keys_router
 from app.api.audit import router as audit_router
@@ -197,6 +198,7 @@ app.include_router(demo_router, prefix="/api")
 app.include_router(frontend_errors_router, prefix="/api")
 app.include_router(onboarding_router, prefix="/api")
 app.include_router(agent_templates_router, prefix="/api")
+app.include_router(agent_versions_router, prefix="/api")
 app.include_router(autofix_router, prefix="/api")
 app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")

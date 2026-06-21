@@ -386,6 +386,16 @@ export type AgentDefinition = {
   updated_at: string;
 };
 
+export type AgentVersion = {
+  id: string;
+  agent_id: string;
+  version_number: number;
+  config_snapshot: Partial<AgentDefinition> & Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  is_active: boolean;
+};
+
 export type AgentCapabilityAttachmentSummary = {
   attachment_id: string;
   capability_id: string;
@@ -5125,6 +5135,7 @@ export async function listWarmPoolBenchmarks(limit = 20) {
   );
 }
 
+<<<<<<< HEAD
 export async function listAgentGatewayRoutes(agentId: string) {
   return request<{ items: AgentGatewayRoute[] }>(`/api/agents/${agentId}/gateway-routes`);
 }
@@ -5139,11 +5150,20 @@ export async function createAgentGatewayRoute(
   },
 ) {
   return request<AgentGatewayRouteCreateResponse>(`/api/agents/${agentId}/gateway-routes`, {
+=======
+export async function listAgentVersions(agentId: string) {
+  return request<{ items: AgentVersion[] }>(`/api/agents/${agentId}/versions`);
+}
+
+export async function createAgentVersion(agentId: string, payload: { activate?: boolean } = {}) {
+  return request<AgentVersion>(`/api/agents/${agentId}/versions`, {
+>>>>>>> feat/version-rollout-management
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
+<<<<<<< HEAD
 export async function updateAgentGatewayRoute(
   agentId: string,
   routeId: string,
@@ -5158,6 +5178,11 @@ export async function updateAgentGatewayRoute(
 export async function deleteAgentGatewayRoute(agentId: string, routeId: string) {
   return request<void>(`/api/agents/${agentId}/gateway-routes/${routeId}`, {
     method: "DELETE",
+=======
+export async function activateAgentVersion(agentId: string, versionId: string) {
+  return request<AgentVersion>(`/api/agents/${agentId}/versions/${versionId}/activate`, {
+    method: "PATCH",
+>>>>>>> feat/version-rollout-management
   });
 }
 

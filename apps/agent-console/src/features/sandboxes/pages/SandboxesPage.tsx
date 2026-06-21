@@ -13,11 +13,19 @@ import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
+<<<<<<< HEAD
   createAgentGatewayRoute,
   deleteAgentGatewayRoute,
   getSandboxQuotaUsage,
   getWarmPool,
   listAgentGatewayRoutes,
+=======
+  activateAgentVersion,
+  createAgentVersion,
+  getSandboxQuotaUsage,
+  getWarmPool,
+  listAgentVersions,
+>>>>>>> feat/version-rollout-management
   listSandboxQuotaHistory,
   listWarmPoolBenchmarks,
   runWarmPoolBenchmark,
@@ -28,6 +36,7 @@ export function SandboxesPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const agentId = "default";
+<<<<<<< HEAD
   const [gatewaySlug, setGatewaySlug] = useState("");
   const [gatewayDescription, setGatewayDescription] = useState("");
   const [gatewayRateLimit, setGatewayRateLimit] = useState("60");
@@ -35,6 +44,11 @@ export function SandboxesPage() {
   const gatewayRoutes = useQuery({
     queryKey: ["agent-gateway-routes", agentId],
     queryFn: () => listAgentGatewayRoutes(agentId),
+=======
+  const agentVersions = useQuery({
+    queryKey: ["agent-versions", agentId],
+    queryFn: () => listAgentVersions(agentId),
+>>>>>>> feat/version-rollout-management
   });
   const warmPool = useQuery({ queryKey: ["warm-pool"], queryFn: getWarmPool });
   const quota = useQuery({ queryKey: ["sandbox-quota"], queryFn: getSandboxQuotaUsage });
@@ -65,6 +79,7 @@ export function SandboxesPage() {
       });
     },
   });
+<<<<<<< HEAD
   const createGatewayRoute = useMutation({
     mutationFn: () =>
       createAgentGatewayRoute(agentId, {
@@ -84,10 +99,22 @@ export function SandboxesPage() {
         description: text("API Key 只会显示一次，请立即保存。", "The API key is shown once. Store it now."),
       });
       await queryClient.invalidateQueries({ queryKey: ["agent-gateway-routes", agentId] });
+=======
+  const createVersion = useMutation({
+    mutationFn: () => createAgentVersion(agentId, { activate: (agentVersions.data?.items ?? []).length === 0 }),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("版本快照已创建", "Version snapshot created"),
+        description: text("当前 Agent 配置已保存为新版本。", "The current Agent configuration was saved as a new version."),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agent-versions", agentId] });
+>>>>>>> feat/version-rollout-management
     },
     onError: (error) => {
       notifyFeedback({
         tone: "error",
+<<<<<<< HEAD
         title: text("发布路由创建失败", "Gateway route creation failed"),
         description: feedbackErrorMessage(error, text("请检查 slug 是否重复或格式是否正确。", "Check whether the slug is duplicated or invalid.")),
       });
@@ -103,20 +130,40 @@ export function SandboxesPage() {
       notifyFeedback({
         tone: "error",
         title: text("发布路由更新失败", "Gateway route update failed"),
+=======
+        title: text("版本快照创建失败", "Version snapshot creation failed"),
+>>>>>>> feat/version-rollout-management
         description: feedbackErrorMessage(error, text("请稍后重试。", "Retry later.")),
       });
     },
   });
+<<<<<<< HEAD
   const deleteGatewayRoute = useMutation({
     mutationFn: (routeId: string) => deleteAgentGatewayRoute(agentId, routeId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["agent-gateway-routes", agentId] });
+=======
+  const activateVersion = useMutation({
+    mutationFn: (versionId: string) => activateAgentVersion(agentId, versionId),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("版本已激活", "Version activated"),
+        description: text("Agent 配置已恢复到所选快照。", "The Agent configuration was restored from the selected snapshot."),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agent-versions", agentId] });
+>>>>>>> feat/version-rollout-management
     },
     onError: (error) => {
       notifyFeedback({
         tone: "error",
+<<<<<<< HEAD
         title: text("发布路由删除失败", "Gateway route deletion failed"),
         description: feedbackErrorMessage(error, text("需要删除权限或稍后重试。", "Deletion permission is required, or retry later.")),
+=======
+        title: text("版本激活失败", "Version activation failed"),
+        description: feedbackErrorMessage(error, text("请确认版本仍存在并稍后重试。", "Confirm the version still exists and retry later.")),
+>>>>>>> feat/version-rollout-management
       });
     },
   });
@@ -201,14 +248,14 @@ export function SandboxesPage() {
           <InfraTile
             icon={<Tags className="h-4 w-4" />}
             title={text("版本灰度", "Version Rollout")}
-            status={text("未启用", "Disabled")}
-            description={text("版本与灰度发布状态保留禁用态，不展示伪造发布数据。", "Version and rollout state stays disabled and shows no fake release data.")}
-            disabled
+            status={text("接口已接入", "API-backed")}
+            description={text("保存 Agent 配置快照并可激活历史版本，先实现恢复型版本管理。", "Save Agent config snapshots and activate historical versions for recovery-first rollout management.")}
           />
         </section>
         <Card className="overflow-hidden">
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+<<<<<<< HEAD
               <Globe2 className="h-4 w-4" />
               <TermHint description="应用程序接口">API 网关</TermHint>
             </div>
@@ -281,10 +328,39 @@ export function SandboxesPage() {
                 <Th>{text("限制", "Limit")}</Th>
                 <Th>{text("状态", "Status")}</Th>
                 <Th>{text("最近调用", "Last Invoke")}</Th>
+=======
+              <Tags className="h-4 w-4" />
+              {text("版本灰度", "Version Rollout")}
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge tone="success">
+                {text(`${agentVersions.data?.items.length ?? 0} 个版本`, `${agentVersions.data?.items.length ?? 0} versions`)}
+              </Badge>
+              <Button
+                onClick={() => createVersion.mutate()}
+                disabled={createVersion.isPending}
+                className="h-8 gap-1.5"
+              >
+                <Tags className="h-3.5 w-3.5" />
+                {text("创建快照", "Create Snapshot")}
+              </Button>
+            </div>
+          </CardHeader>
+          <Table>
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <Th>{text("版本", "Version")}</Th>
+                <Th>{text("状态", "Status")}</Th>
+                <Th>{text("模型", "Model")}</Th>
+                <Th>{text("工具", "Tools")}</Th>
+                <Th>{text("创建者", "Creator")}</Th>
+                <Th>{text("创建时间", "Created")}</Th>
+>>>>>>> feat/version-rollout-management
                 <Th>{text("操作", "Actions")}</Th>
               </tr>
             </thead>
             <tbody>
+<<<<<<< HEAD
               {(gatewayRoutes.data?.items ?? []).map((route) => (
                 <tr key={route.id} className="border-t border-slate-100">
                   <Td>
@@ -337,6 +413,42 @@ export function SandboxesPage() {
                 <tr>
                   <Td colSpan={6} className="py-10 text-center text-slate-500">
                     {text("暂无 API Gateway 发布路由", "No API Gateway routes")}
+=======
+              {(agentVersions.data?.items ?? []).map((version) => (
+                <tr key={version.id} className="border-t border-slate-100">
+                  <Td className="font-mono">v{version.version_number}</Td>
+                  <Td>
+                    <Badge tone={version.is_active ? "success" : "neutral"}>
+                      {version.is_active ? text("当前", "Active") : text("历史", "History")}
+                    </Badge>
+                  </Td>
+                  <Td className="font-mono text-xs text-slate-600">
+                    {String(version.config_snapshot.model_provider ?? "default")} /{" "}
+                    {String(version.config_snapshot.model_name ?? "default")}
+                  </Td>
+                  <Td className="font-mono text-xs text-slate-600">
+                    {Array.isArray(version.config_snapshot.tools_json)
+                      ? version.config_snapshot.tools_json.length
+                      : 0}
+                  </Td>
+                  <Td className="font-mono text-slate-500">{version.created_by ?? "-"}</Td>
+                  <Td className="font-mono text-slate-500">{formatShortDate(version.created_at)}</Td>
+                  <Td>
+                    <Button
+                      variant="ghost"
+                      onClick={() => activateVersion.mutate(version.id)}
+                      disabled={version.is_active || activateVersion.isPending}
+                    >
+                      {version.is_active ? text("已激活", "Active") : text("激活", "Activate")}
+                    </Button>
+                  </Td>
+                </tr>
+              ))}
+              {!agentVersions.isLoading && (agentVersions.data?.items ?? []).length === 0 && (
+                <tr>
+                  <Td colSpan={7} className="py-10 text-center text-slate-500">
+                    {text("暂无 Agent 版本快照", "No Agent version snapshots")}
+>>>>>>> feat/version-rollout-management
                   </Td>
                 </tr>
               )}
