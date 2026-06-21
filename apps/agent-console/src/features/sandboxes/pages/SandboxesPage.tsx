@@ -15,7 +15,6 @@ import {
   createAgentVersion,
   getSandboxQuotaUsage,
   getWarmPool,
-  listAgentGatewayRoutes,
   listAgentVersions,
   listSandboxQuotaHistory,
   listWarmPoolBenchmarks,
@@ -29,10 +28,6 @@ export function SandboxesPage() {
   const agentVersions = useQuery({
     queryKey: ["agent-versions", agentId],
     queryFn: () => listAgentVersions(agentId),
-  });
-  const gatewayRoutes = useQuery({
-    queryKey: ["agent-gateway-routes", agentId],
-    queryFn: () => listAgentGatewayRoutes(agentId),
   });
   const warmPool = useQuery({ queryKey: ["warm-pool"], queryFn: getWarmPool });
   const quota = useQuery({ queryKey: ["sandbox-quota"], queryFn: getSandboxQuotaUsage });
@@ -174,8 +169,9 @@ export function SandboxesPage() {
           <InfraTile
             icon={<Globe2 className="h-4 w-4" />}
             title={<TermHint description="应用程序接口">API 网关</TermHint>}
-            status={text("接口已接入", "API-backed")}
-            description={text("将 Agent 发布为外部 HTTP invoke 端点，并用 API Key 与限流保护访问。", "Publish Agents as external HTTP invoke endpoints protected by API keys and rate limits.")}
+            status={text("未启用", "Disabled")}
+            description={text("对外发布智能体能力的入口保留禁用态，等待接口支撑。", "External Agent publishing entry remains disabled until API-backed.")}
+            disabled
           />
           <InfraTile
             icon={<Tags className="h-4 w-4" />}
@@ -184,54 +180,6 @@ export function SandboxesPage() {
             description={text("保存 Agent 配置快照并可激活历史版本，先实现恢复型版本管理。", "Save Agent config snapshots and activate historical versions for recovery-first rollout management.")}
           />
         </section>
-        <Card className="overflow-hidden">
-          <CardHeader>
-            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <Globe2 className="h-4 w-4" />
-              <TermHint description="应用程序接口">API 网关</TermHint>
-            </div>
-            <Badge tone={(gatewayRoutes.data?.items.length ?? 0) > 0 ? "success" : "neutral"}>
-              {text(`${gatewayRoutes.data?.items.length ?? 0} 个端点`, `${gatewayRoutes.data?.items.length ?? 0} routes`)}
-            </Badge>
-          </CardHeader>
-          <Table>
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <Th>{text("Slug", "Slug")}</Th>
-                <Th>{text("公开端点", "Public Endpoint")}</Th>
-                <Th>{text("状态", "Status")}</Th>
-                <Th>{text("限流", "Rate Limit")}</Th>
-                <Th>{text("说明", "Description")}</Th>
-                <Th>{text("最近调用", "Last Invoked")}</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {(gatewayRoutes.data?.items ?? []).map((route) => (
-                <tr key={route.id} className="border-t border-slate-100">
-                  <Td className="font-mono">{route.slug}</Td>
-                  <Td className="font-mono text-xs text-slate-600">
-                    POST /api/gateway/{route.slug}/invoke
-                  </Td>
-                  <Td>
-                    <Badge tone={route.enabled ? "success" : "neutral"}>
-                      {route.enabled ? text("已启用", "Enabled") : text("已停用", "Disabled")}
-                    </Badge>
-                  </Td>
-                  <Td className="font-mono text-slate-600">{route.rate_limit}/min</Td>
-                  <Td className="text-slate-600">{route.description || "-"}</Td>
-                  <Td className="font-mono text-slate-500">{formatShortDate(route.last_invoked_at)}</Td>
-                </tr>
-              ))}
-              {!gatewayRoutes.isLoading && (gatewayRoutes.data?.items ?? []).length === 0 && (
-                <tr>
-                  <Td colSpan={6} className="py-10 text-center text-slate-500">
-                    {text("暂无 API 网关端点", "No API Gateway routes")}
-                  </Td>
-                </tr>
-              )}
-            </tbody>
-          </Table>
-        </Card>
         <Card className="overflow-hidden">
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
