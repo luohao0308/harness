@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-19T13:00:32+08:00
+last_updated_at: 2026-06-21T04:46:17+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,20 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: workspace-chart-artifact-rendering
+    date: 2026-06-21
+    status: completed
+    demo: Workspace Inspector chart artifacts render through ECharts instead of falling back to raw preformatted JSON.
+    verification_result: targeted_passed
+    verification_commands:
+      - cd apps/agent-console && npm test -- src/features/agents/__tests__/chartArtifacts.test.ts --reporter=dot -> 1 file / 2 tests passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/agents/lib/chartArtifacts.ts src/features/agents/components/InspectorDrawer.tsx -> passed
+      - cd services/api-server && uv run --extra dev python -m pytest tests/test_tool_runner.py::test_mcp_artifact_put_preserves_chart_artifact_payload -q -> 1 passed
+    acceptance_notes:
+      - ArtifactPreview now detects `artifact_type=chart`, converts Harness chart payloads or direct ECharts options into an ECharts option, and renders a fixed-height chart preview in the Inspector drawer.
+      - The chart parser supports `{ chartType, xAxis, series }` for line/bar, pie slices, JSON-string payloads, and direct ECharts option objects while preserving the raw preview fallback for invalid chart data.
+      - `mcp_artifact_put` now accepts optional `artifact_type` / `data`, preserves chart payloads in explicit `artifacts`, and ToolRunner promotes MCP artifacts to top-level output so Workspace extraction can create chart artifacts.
+
   - id: run-detail-expert-subagent-plan-repair
     date: 2026-06-19
     status: completed

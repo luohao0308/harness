@@ -144,6 +144,13 @@ class ToolRegistry(BaseModel):
                     "properties": {
                         "name": {"type": "string"},
                         "content": {"type": "string"},
+                        "artifact_type": {
+                            "type": "string",
+                            "enum": ["text", "json", "code", "diff", "chart"],
+                        },
+                        "data": {
+                            "type": ["object", "array", "string", "number", "boolean", "null"],
+                        },
                         "idempotency_key": {"type": "string"},
                     },
                     "required": ["name", "content", "idempotency_key"],
