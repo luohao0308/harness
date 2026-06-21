@@ -204,11 +204,8 @@ app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
-<<<<<<< HEAD
 app.include_router(triggers_router, prefix="/api")
-=======
 app.include_router(gateway_router, prefix="/api")
->>>>>>> feat/api-gateway-external-publish
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(subagent_marketplace_router, prefix="/api")

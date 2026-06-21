@@ -1,54 +1,33 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Box, Copy, Gauge, Globe2, KeyRound, Play, ShieldCheck, Tags, Trash2 } from "lucide-react";
+import { Box, Gauge, Globe2, Play, ShieldCheck, Tags } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
-import { Input } from "../../../components/ui/input";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
-<<<<<<< HEAD
-  createAgentGatewayRoute,
-  deleteAgentGatewayRoute,
-  getSandboxQuotaUsage,
-  getWarmPool,
-  listAgentGatewayRoutes,
-=======
   activateAgentVersion,
   createAgentVersion,
   getSandboxQuotaUsage,
   getWarmPool,
   listAgentVersions,
->>>>>>> feat/version-rollout-management
   listSandboxQuotaHistory,
   listWarmPoolBenchmarks,
   runWarmPoolBenchmark,
-  updateAgentGatewayRoute,
 } from "../../tasks/api";
 
 export function SandboxesPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const agentId = "default";
-<<<<<<< HEAD
-  const [gatewaySlug, setGatewaySlug] = useState("");
-  const [gatewayDescription, setGatewayDescription] = useState("");
-  const [gatewayRateLimit, setGatewayRateLimit] = useState("60");
-  const [gatewayApiKey, setGatewayApiKey] = useState<string | null>(null);
-  const gatewayRoutes = useQuery({
-    queryKey: ["agent-gateway-routes", agentId],
-    queryFn: () => listAgentGatewayRoutes(agentId),
-=======
   const agentVersions = useQuery({
     queryKey: ["agent-versions", agentId],
     queryFn: () => listAgentVersions(agentId),
->>>>>>> feat/version-rollout-management
   });
   const warmPool = useQuery({ queryKey: ["warm-pool"], queryFn: getWarmPool });
   const quota = useQuery({ queryKey: ["sandbox-quota"], queryFn: getSandboxQuotaUsage });
@@ -79,27 +58,6 @@ export function SandboxesPage() {
       });
     },
   });
-<<<<<<< HEAD
-  const createGatewayRoute = useMutation({
-    mutationFn: () =>
-      createAgentGatewayRoute(agentId, {
-        slug: gatewaySlug.trim(),
-        description: gatewayDescription.trim(),
-        rate_limit: Number(gatewayRateLimit) || 60,
-        enabled: true,
-      }),
-    onSuccess: async (result) => {
-      setGatewaySlug("");
-      setGatewayDescription("");
-      setGatewayRateLimit("60");
-      setGatewayApiKey(result.api_key);
-      notifyFeedback({
-        tone: "success",
-        title: text("发布路由已创建", "Gateway route created"),
-        description: text("API Key 只会显示一次，请立即保存。", "The API key is shown once. Store it now."),
-      });
-      await queryClient.invalidateQueries({ queryKey: ["agent-gateway-routes", agentId] });
-=======
   const createVersion = useMutation({
     mutationFn: () => createAgentVersion(agentId, { activate: (agentVersions.data?.items ?? []).length === 0 }),
     onSuccess: async () => {
@@ -109,40 +67,15 @@ export function SandboxesPage() {
         description: text("当前 Agent 配置已保存为新版本。", "The current Agent configuration was saved as a new version."),
       });
       await queryClient.invalidateQueries({ queryKey: ["agent-versions", agentId] });
->>>>>>> feat/version-rollout-management
     },
     onError: (error) => {
       notifyFeedback({
         tone: "error",
-<<<<<<< HEAD
-        title: text("发布路由创建失败", "Gateway route creation failed"),
-        description: feedbackErrorMessage(error, text("请检查 slug 是否重复或格式是否正确。", "Check whether the slug is duplicated or invalid.")),
-      });
-    },
-  });
-  const updateGatewayRoute = useMutation({
-    mutationFn: (payload: { routeId: string; enabled: boolean }) =>
-      updateAgentGatewayRoute(agentId, payload.routeId, { enabled: payload.enabled }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agent-gateway-routes", agentId] });
-    },
-    onError: (error) => {
-      notifyFeedback({
-        tone: "error",
-        title: text("发布路由更新失败", "Gateway route update failed"),
-=======
         title: text("版本快照创建失败", "Version snapshot creation failed"),
->>>>>>> feat/version-rollout-management
         description: feedbackErrorMessage(error, text("请稍后重试。", "Retry later.")),
       });
     },
   });
-<<<<<<< HEAD
-  const deleteGatewayRoute = useMutation({
-    mutationFn: (routeId: string) => deleteAgentGatewayRoute(agentId, routeId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agent-gateway-routes", agentId] });
-=======
   const activateVersion = useMutation({
     mutationFn: (versionId: string) => activateAgentVersion(agentId, versionId),
     onSuccess: async () => {
@@ -152,18 +85,12 @@ export function SandboxesPage() {
         description: text("Agent 配置已恢复到所选快照。", "The Agent configuration was restored from the selected snapshot."),
       });
       await queryClient.invalidateQueries({ queryKey: ["agent-versions", agentId] });
->>>>>>> feat/version-rollout-management
     },
     onError: (error) => {
       notifyFeedback({
         tone: "error",
-<<<<<<< HEAD
-        title: text("发布路由删除失败", "Gateway route deletion failed"),
-        description: feedbackErrorMessage(error, text("需要删除权限或稍后重试。", "Deletion permission is required, or retry later.")),
-=======
         title: text("版本激活失败", "Version activation failed"),
         description: feedbackErrorMessage(error, text("请确认版本仍存在并稍后重试。", "Confirm the version still exists and retry later.")),
->>>>>>> feat/version-rollout-management
       });
     },
   });
@@ -242,8 +169,9 @@ export function SandboxesPage() {
           <InfraTile
             icon={<Globe2 className="h-4 w-4" />}
             title={<TermHint description="应用程序接口">API 网关</TermHint>}
-            status={text("接口已接入", "API-backed")}
-            description={text("将 Agent 发布为外部 HTTP API，用独立 API Key 调用并进入 Run 审计链路。", "Publish Agents as external HTTP APIs with scoped API keys and Run audit evidence.")}
+            status={text("未启用", "Disabled")}
+            description={text("对外发布智能体能力的入口保留禁用态，等待接口支撑。", "External Agent publishing entry remains disabled until API-backed.")}
+            disabled
           />
           <InfraTile
             icon={<Tags className="h-4 w-4" />}
@@ -255,80 +183,6 @@ export function SandboxesPage() {
         <Card className="overflow-hidden">
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-<<<<<<< HEAD
-              <Globe2 className="h-4 w-4" />
-              <TermHint description="应用程序接口">API 网关</TermHint>
-            </div>
-            <span className="text-xs text-slate-500">
-              {text("对外发布 default Agent，并用 X-Harness-Gateway-Key 调用。", "Publish the default Agent and invoke with X-Harness-Gateway-Key.")}
-            </span>
-          </CardHeader>
-          <div className="space-y-3 p-3">
-            <div className="grid grid-cols-[1fr_1.5fr_120px_auto] gap-2">
-              <label className="sr-only" htmlFor="gateway-slug">
-                {text("路由 slug", "Route slug")}
-              </label>
-              <Input
-                id="gateway-slug"
-                value={gatewaySlug}
-                onChange={(event) => setGatewaySlug(event.target.value)}
-                placeholder={text("release-review", "release-review")}
-                aria-label={text("路由 slug", "Route slug")}
-              />
-              <label className="sr-only" htmlFor="gateway-description">
-                {text("路由描述", "Route description")}
-              </label>
-              <Input
-                id="gateway-description"
-                value={gatewayDescription}
-                onChange={(event) => setGatewayDescription(event.target.value)}
-                placeholder={text("发布用途", "Route purpose")}
-                aria-label={text("路由描述", "Route description")}
-              />
-              <label className="sr-only" htmlFor="gateway-rate-limit">
-                {text("每分钟限制", "Rate limit")}
-              </label>
-              <Input
-                id="gateway-rate-limit"
-                type="number"
-                min={1}
-                max={600}
-                value={gatewayRateLimit}
-                onChange={(event) => setGatewayRateLimit(event.target.value)}
-                aria-label={text("每分钟限制", "Rate limit")}
-              />
-              <Button
-                onClick={() => createGatewayRoute.mutate()}
-                disabled={createGatewayRoute.isPending}
-                className="gap-1.5"
-              >
-                <KeyRound className="h-3.5 w-3.5" />
-                {text("创建发布", "Create Route")}
-              </Button>
-            </div>
-            {gatewayApiKey && (
-              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <span className="truncate font-mono">{gatewayApiKey}</span>
-                <Button
-                  variant="ghost"
-                  onClick={() => navigator.clipboard?.writeText(gatewayApiKey)}
-                  className="h-7 shrink-0 gap-1"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  {text("复制", "Copy")}
-                </Button>
-              </div>
-            )}
-          </div>
-          <Table>
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <Th>{text("Slug", "Slug")}</Th>
-                <Th>{text("调用地址", "Invoke URL")}</Th>
-                <Th>{text("限制", "Limit")}</Th>
-                <Th>{text("状态", "Status")}</Th>
-                <Th>{text("最近调用", "Last Invoke")}</Th>
-=======
               <Tags className="h-4 w-4" />
               {text("版本灰度", "Version Rollout")}
             </div>
@@ -355,65 +209,10 @@ export function SandboxesPage() {
                 <Th>{text("工具", "Tools")}</Th>
                 <Th>{text("创建者", "Creator")}</Th>
                 <Th>{text("创建时间", "Created")}</Th>
->>>>>>> feat/version-rollout-management
                 <Th>{text("操作", "Actions")}</Th>
               </tr>
             </thead>
             <tbody>
-<<<<<<< HEAD
-              {(gatewayRoutes.data?.items ?? []).map((route) => (
-                <tr key={route.id} className="border-t border-slate-100">
-                  <Td>
-                    <div className="font-mono text-slate-900">{route.slug}</div>
-                    {route.description && (
-                      <div className="mt-1 max-w-64 truncate text-xs text-slate-500">
-                        {route.description}
-                      </div>
-                    )}
-                  </Td>
-                  <Td className="font-mono text-xs text-slate-600">
-                    {gatewayInvokeUrl(route.slug)}
-                  </Td>
-                  <Td className="font-mono">{route.rate_limit}/min</Td>
-                  <Td>
-                    <Badge tone={route.enabled ? "success" : "neutral"}>
-                      {route.enabled ? text("已启用", "Enabled") : text("关闭", "Disabled")}
-                    </Badge>
-                  </Td>
-                  <Td className="font-mono text-slate-500">
-                    {route.last_invoked_at ? formatShortDate(route.last_invoked_at) : "-"}
-                  </Td>
-                  <Td>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        onClick={() =>
-                          updateGatewayRoute.mutate({
-                            routeId: route.id,
-                            enabled: !route.enabled,
-                          })
-                        }
-                        disabled={updateGatewayRoute.isPending}
-                      >
-                        {route.enabled ? text("停用", "Disable") : text("启用", "Enable")}
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() => deleteGatewayRoute.mutate(route.id)}
-                        disabled={deleteGatewayRoute.isPending}
-                        aria-label={text("删除发布路由", "Delete gateway route")}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
-              {!gatewayRoutes.isLoading && (gatewayRoutes.data?.items ?? []).length === 0 && (
-                <tr>
-                  <Td colSpan={6} className="py-10 text-center text-slate-500">
-                    {text("暂无 API Gateway 发布路由", "No API Gateway routes")}
-=======
               {(agentVersions.data?.items ?? []).map((version) => (
                 <tr key={version.id} className="border-t border-slate-100">
                   <Td className="font-mono">v{version.version_number}</Td>
@@ -448,7 +247,6 @@ export function SandboxesPage() {
                 <tr>
                   <Td colSpan={7} className="py-10 text-center text-slate-500">
                     {text("暂无 Agent 版本快照", "No Agent version snapshots")}
->>>>>>> feat/version-rollout-management
                   </Td>
                 </tr>
               )}
@@ -604,13 +402,6 @@ function hitRate(hit?: number, miss?: number) {
   const total = hit + miss;
   if (total === 0) return "0%";
   return `${Math.round((hit / total) * 100)}%`;
-}
-
-function gatewayInvokeUrl(slug: string) {
-  if (typeof window === "undefined") {
-    return `/api/gateway/${slug}/invoke`;
-  }
-  return `${window.location.origin}/api/gateway/${slug}/invoke`;
 }
 
 function Metric({ label, value }: { label: React.ReactNode; value: string }) {
