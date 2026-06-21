@@ -2,7 +2,7 @@
 
 ## 2026-06-21
 
-- Added [[session-2026-06-21-tool-approval-modify-ui]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the tool approval Modify UI. Captured Run Detail and Workspace Inspector Modify buttons, object-JSON validation, `modifyToolApproval` submission, approval refresh behavior, targeted TypeScript, production Vite build, backend tool-approval regression, and the existing full-build/full-pytest blockers.
+- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for Workspace chart artifact rendering on `feat/chart-artifact-echarts-rendering`. Captured ECharts Inspector rendering for `artifact_type=chart`, parser support for Harness chart payloads and direct ECharts options, backend `mcp_artifact_put` chart artifact preservation, top-level ToolRunner artifact promotion, parser Vitest (`2 passed`), touched-file TypeScript, and focused ToolRunner regression (`1 passed`).
 
 ## 2026-06-19
 
