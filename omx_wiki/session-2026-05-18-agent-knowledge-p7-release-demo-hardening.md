@@ -118,6 +118,38 @@ Pull request URL:
 https://github.com/luohao0308/harness/pull/new/p7-release-demo-hardening
 ```
 
+## 2026-06-21 Demo Artifact Refresh
+
+Branch `chore/demo-artifacts` refreshed the demo evidence files only.
+
+```text
+POST /api/sandboxes/warm-pool/benchmark
+request: {"iterations":30}
+environment: local-dev, isolated SQLite database, one seeded IDLE WarmPoolContainer
+status: PASS
+warm_p95_ms: 1
+warm_avg_ms: 0
+cold_avg_ms: 275 synthetic baseline
+hit_rate: 100
+sample_size: 30
+```
+
+Updated files:
+
+```text
+docs/reports/benchmark-report.md
+docs/gifs/README.md
+docs/gifs/first-agent-run.gif
+docs/gifs/first-agent-run-screenshot.png
+```
+
+Capture notes: `ffmpeg` and Docker Compose were available. macOS
+`screencapture` initially produced a short test recording, then returned
+`capture error` during the full-flow attempt, so the final GIF uses Playwright
+Chromium `recordVideo` converted with `ffmpeg`. The GIF exercises the real
+Agent Console UI with mocked local API/SSE responses and does not require
+external model-provider credentials or a Docker worker.
+
 ## Boundaries
 
 - P7 does not reopen Stage 07.
