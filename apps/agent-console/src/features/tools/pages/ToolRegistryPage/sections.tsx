@@ -16,12 +16,14 @@ import {
 import { Badge, statusTone } from "../../../../components/ui/badge";
 import { Button } from "../../../../components/ui/button";
 import { Card, CardHeader } from "../../../../components/ui/card";
+import { Input } from "../../../../components/ui/input";
 import { Table, Td, Th } from "../../../../components/ui/table";
 import { TermHint } from "../../../../components/ui/term";
 import { useI18n } from "../../../../lib/i18n";
 import { booleanLabel, riskLabel, toolSourceLabel } from "../../../../lib/labels";
 import type {
   AdapterMetadata,
+  AgentTrigger,
   CapabilityMarketplaceItem,
   CapabilityPackage,
   ToolMetadata,
@@ -60,6 +62,15 @@ type ToolRegistryOverviewProps = {
   selectedMarketplaceInstallState: MarketplaceInstallState;
   latestPackage: CapabilityPackage | null;
   marketplaceCardError: unknown;
+  triggers: AgentTrigger[];
+  triggersLoading: boolean;
+  triggerEndpointPath: string;
+  triggerSecret: string | null;
+  triggerPending: boolean;
+  onTriggerEndpointPathChange: (value: string) => void;
+  onCreateTrigger: () => void;
+  onToggleTrigger: (trigger: AgentTrigger) => void;
+  onDeleteTrigger: (trigger: AgentTrigger) => void;
   onOpenDialog: OpenDialog;
 };
 
@@ -80,10 +91,20 @@ export function ToolRegistryOverview({
   selectedMarketplaceInstallState,
   latestPackage,
   marketplaceCardError,
+  triggers,
+  triggersLoading,
+  triggerEndpointPath,
+  triggerSecret,
+  triggerPending,
+  onTriggerEndpointPathChange,
+  onCreateTrigger,
+  onToggleTrigger,
+  onDeleteTrigger,
   onOpenDialog,
 }: ToolRegistryOverviewProps) {
   const { text } = useI18n();
   const navigate = useNavigate();
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
 
   return (
     <>
@@ -245,11 +266,103 @@ export function ToolRegistryOverview({
         <HarnessTile
           icon={<Workflow className="h-4 w-4" />}
           title={text("触发器", "Triggers")}
-          status={text("未启用", "Disabled")}
-          description={text("触发器配置保留禁用态，不展示伪造数据。", "Trigger configuration stays disabled and shows no fake data.")}
-          disabled
+          status={`${triggers.length} ${text("个", "configured")}`}
+          description={text("Webhook 触发器已接入后端；外部系统可用一次性密钥触发新的 Agent Run。", "Webhook triggers are API-backed and create new Agent Runs with a one-time secret.")}
         />
       </section>
+
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Workflow className="h-4 w-4" />
+            {text("触发器", "Triggers")}
+          </div>
+          <Badge tone={triggers.length > 0 ? "success" : "neutral"}>
+            {triggersLoading ? text("同步中", "Syncing") : `${triggers.length} webhook`}
+          </Badge>
+        </CardHeader>
+        <div className="grid gap-3 border-t border-slate-100 p-3 text-xs">
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <Input
+              aria-label="触发器路径"
+              value={triggerEndpointPath}
+              onChange={(event) => onTriggerEndpointPathChange(event.target.value)}
+              placeholder={text("可选路径，例如 release-check", "Optional path, for example release-check")}
+            />
+            <Button type="button" onClick={onCreateTrigger} disabled={triggerPending}>
+              <Workflow className="h-3.5 w-3.5" />
+              {text("创建触发器", "Create trigger")}
+            </Button>
+          </div>
+          {triggerSecret ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+              <div className="font-semibold">{text("只显示一次的 Secret", "One-time secret")}</div>
+              <div className="mt-1 break-all font-mono">{triggerSecret}</div>
+            </div>
+          ) : null}
+        </div>
+        <Table>
+          <thead className="bg-slate-50 text-slate-500">
+            <tr>
+              <Th>{text("路径", "Path")}</Th>
+              <Th>{text("状态", "Status")}</Th>
+              <Th>{text("最近触发", "Last Triggered")}</Th>
+              <Th>{text("操作", "Actions")}</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {triggers.map((trigger) => (
+              <tr key={trigger.id} className="border-t border-slate-100">
+                <Td>
+                  <div className="font-mono text-slate-900">
+                    /api/webhook/trigger/{trigger.endpoint_path}
+                  </div>
+                  <div className="mt-1 break-all text-[11px] text-slate-500">
+                    {origin ? `${origin}/api/webhook/trigger/${trigger.endpoint_path}` : trigger.endpoint_path}
+                  </div>
+                </Td>
+                <Td>
+                  <Badge tone={trigger.enabled ? "success" : "neutral"}>
+                    {trigger.enabled ? text("已启用", "Enabled") : text("已停用", "Disabled")}
+                  </Badge>
+                </Td>
+                <Td className="font-mono text-slate-500">
+                  {trigger.last_triggered_at ? new Date(trigger.last_triggered_at).toLocaleString() : "-"}
+                </Td>
+                <Td>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-7 px-2"
+                      onClick={() => onToggleTrigger(trigger)}
+                      disabled={triggerPending}
+                    >
+                      {trigger.enabled ? text("停用", "Disable") : text("启用", "Enable")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-7 px-2 text-rose-700"
+                      onClick={() => onDeleteTrigger(trigger)}
+                      disabled={triggerPending}
+                    >
+                      {text("删除", "Delete")}
+                    </Button>
+                  </div>
+                </Td>
+              </tr>
+            ))}
+            {!triggersLoading && triggers.length === 0 ? (
+              <tr>
+                <Td colSpan={4} className="py-8 text-center text-slate-500">
+                  {text("暂无 webhook 触发器", "No webhook triggers yet")}
+                </Td>
+              </tr>
+            ) : null}
+          </tbody>
+        </Table>
+      </Card>
     </>
   );
 }

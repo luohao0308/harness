@@ -430,3 +430,7 @@
 ## [2026-06-10] session-log
 
 - Added [[session-2026-06-10-agent-workspace-team-mode-screenshot-fixes]] and refreshed [[index]] plus `docs/ai/task-progress.yaml` for Agent Workspace and Team Mode screenshot regressions. Captured same-scope Workspace hydration, local/pending conversation filtering when selecting platform Agents, immediate Team add-member query-cache merge, branch-aware pending assistant placement for branch/regenerate, owner-scoped per-agent step lists, wake cancellation cutoffs for late active events, browser-context Workspace history clearing, live sends through platform Agents (`8/8`), online local Agents (`2/2`), and Team columns (`4/4`), the Workspace/Team FAB obstruction fix, frontend typecheck, docs validation, and targeted Agent Workspace plus Team Mode plus shell Vitest (`52 passed`).
+
+## [2026-06-21] session-log
+
+- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for B4 Triggers System on branch `feat/triggers-system`. Captured spec `docs/ai/stages/08-triggers-system.md`, `triggers` model/migration/API/public webhook endpoint, one-time hashed secret behavior, Tool Registry Triggers UI, targeted backend tests (`4 passed`), frontend Tool Registry tests (`5 passed`), Ruff, targeted TypeScript, `git diff --check`, and existing repo-wide blockers for full frontend build, full backend pytest collection, and docs validation in isolated worktree.
