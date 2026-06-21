@@ -9,6 +9,7 @@ from app.db.models import (
     AgentEvent,
     AgentRun,
     EvalCase,
+    EvalDataset,
     EvalResult,
     EvalRun,
     ModelCall,
@@ -20,11 +21,14 @@ from app.db.models import (
     SystemSetting,
     Task,
     ToolCall,
+    User,
     utc_now,
 )
 from app.knowledge import ground_query, ingest_knowledge_source, set_web_research_provider
 from app.main import app
 from tests.conftest import AUTH_HEADERS
+
+ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 
 
 def _create_completed_run(client: TestClient) -> str:
@@ -73,6 +77,91 @@ def _ensure_agent(session: Session, agent_id: str = "default") -> Agent:
     session.add(agent)
     session.flush()
     return agent
+
+
+def _create_manual_review_eval_result(
+    session: Session,
+    *,
+    result_id: str = "eval-result-review-1",
+    verdict: str | None = None,
+    scores_json: dict | None = None,
+    grader_trace_json: dict | None = None,
+) -> EvalResult:
+    if session.get(User, "dev-admin") is None:
+        session.add(
+            User(
+                id="dev-admin",
+                email="dev-admin@example.com",
+                name="Dev Admin",
+                password_hash="test",
+                email_verified=True,
+                status="active",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
+    dataset = session.get(EvalDataset, "dataset-review-1")
+    if dataset is None:
+        dataset = EvalDataset(
+            id="dataset-review-1",
+            organization_id="dev-org",
+            name="Human Review Dataset",
+            description="review queue fixture",
+            status="ACTIVE",
+            baseline_run_id=None,
+            created_by="dev-admin",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        session.add(dataset)
+    eval_case = session.get(EvalCase, "eval-case-review-1")
+    if eval_case is None:
+        eval_case = EvalCase(
+            id="eval-case-review-1",
+            dataset_id=dataset.id,
+            source_task_id=None,
+            input_json={"prompt": "Needs review"},
+            expected_json={"status": "COMPLETED"},
+            capability_snapshot_json={},
+            tags_json=["human-review"],
+            created_at=utc_now(),
+        )
+        session.add(eval_case)
+    eval_run = session.get(EvalRun, "eval-run-review-1")
+    if eval_run is None:
+        eval_run = EvalRun(
+            id="eval-run-review-1",
+            dataset_id=dataset.id,
+            organization_id="dev-org",
+            agent_id="default",
+            status="COMPLETED",
+            capability_snapshot_json={},
+            metrics_json={},
+            created_by="dev-admin",
+            started_at=utc_now(),
+            completed_at=utc_now(),
+            created_at=utc_now(),
+        )
+        session.add(eval_run)
+    result = EvalResult(
+        id=result_id,
+        eval_run_id=eval_run.id,
+        eval_case_id=eval_case.id,
+        task_id=None,
+        status="FAILED",
+        scores_json=scores_json if scores_json is not None else {"human_escalation": 1},
+        grader_trace_json=grader_trace_json
+        if grader_trace_json is not None
+        else {"requires_manual_review": True},
+        latency_ms=123,
+        cost_usd="0.01",
+        error_message="Needs human review",
+        human_verdict=verdict,
+        created_at=utc_now(),
+    )
+    session.add(result)
+    session.commit()
+    return result
 
 
 def _enable_web_research_policy(session: Session) -> None:
@@ -567,6 +656,80 @@ def test_low_cost_route_cannot_pass_without_quality_guard_metric() -> None:
 
     assert metrics["low_cost_route_guard_failure_total"] == 1
     assert metrics["low_cost_route_guard_failure_rate"] == 0.5
+
+
+def test_pending_human_review_results_returns_unreviewed_manual_items(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    pending = _create_manual_review_eval_result(
+        db_session,
+        result_id="eval-result-review-pending",
+    )
+    _create_manual_review_eval_result(
+        db_session,
+        result_id="eval-result-review-approved",
+        verdict="approved",
+    )
+    _create_manual_review_eval_result(
+        db_session,
+        result_id="eval-result-review-not-required",
+        scores_json={"human_escalation": 0},
+        grader_trace_json={"requires_manual_review": False},
+    )
+
+    response = client.get("/api/evals/results/pending-review", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    items = response.json()
+    assert [item["id"] for item in items] == [pending.id]
+    assert items[0]["human_verdict"] is None
+    assert items[0]["reviewer_id"] is None
+    assert items[0]["reviewed_at"] is None
+
+
+def test_review_eval_result_approves_manual_review_result(db_session: Session) -> None:
+    client = TestClient(app)
+    result = _create_manual_review_eval_result(db_session)
+
+    response = client.patch(
+        f"/api/evals/results/{result.id}/review",
+        headers=ADMIN_HEADERS,
+        json={"verdict": "approved"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["human_verdict"] == "approved"
+    assert payload["reviewer_id"] == "dev-admin"
+    assert payload["reviewed_at"] is not None
+    db_session.expire_all()
+    stored = db_session.get(EvalResult, result.id)
+    assert stored is not None
+    assert stored.human_verdict == "approved"
+    assert stored.reviewer_id == "dev-admin"
+    assert stored.reviewed_at is not None
+    assert stored.grader_trace_json["human_review"]["verdict"] == "approved"
+
+
+def test_review_eval_result_rejects_and_records_notes(db_session: Session) -> None:
+    client = TestClient(app)
+    result = _create_manual_review_eval_result(db_session)
+
+    response = client.patch(
+        f"/api/evals/results/{result.id}/review",
+        headers=ADMIN_HEADERS,
+        json={"verdict": "rejected", "notes": "Output missed safety evidence."},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["human_verdict"] == "rejected"
+    db_session.expire_all()
+    stored = db_session.get(EvalResult, result.id)
+    assert stored is not None
+    assert stored.human_verdict == "rejected"
+    assert stored.grader_trace_json["human_review"]["notes"] == "Output missed safety evidence."
 
 
 def _traced_completed_run(

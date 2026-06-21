@@ -31,6 +31,7 @@ class Permission(StrEnum):
     RUN_CREATE = "run:create"
     RUN_CANCEL = "run:cancel"
     EVAL_RUN = "eval:run"
+    EVAL_MANAGE = "eval:manage"
     TOOL_CONFIGURE = "tool:configure"
     MARKETPLACE_PUBLISH = "marketplace:publish"
     SETTINGS_READ = "settings:read"
@@ -56,6 +57,7 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
         Permission.RUN_CREATE,
         Permission.RUN_CANCEL,
         Permission.EVAL_RUN,
+        Permission.EVAL_MANAGE,
         Permission.TOOL_CONFIGURE,
         Permission.MARKETPLACE_PUBLISH,
         Permission.SETTINGS_READ,
