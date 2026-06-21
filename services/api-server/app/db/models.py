@@ -421,6 +421,29 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class AgentVersion(Base):
+    __tablename__ = "agent_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "agent_id",
+            "version_number",
+            name="agent_versions_org_agent_number_uidx",
+        ),
+        Index("ix_agent_versions_org_agent_active", "organization_id", "agent_id", "is_active"),
+        Index("ix_agent_versions_org_agent_created", "organization_id", "agent_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class Team(Base):
     __tablename__ = "teams"
     __table_args__ = (

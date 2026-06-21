@@ -11,8 +11,11 @@ import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { formatShortDate } from "../../../lib/utils";
 import {
+  activateAgentVersion,
+  createAgentVersion,
   getSandboxQuotaUsage,
   getWarmPool,
+  listAgentVersions,
   listSandboxQuotaHistory,
   listWarmPoolBenchmarks,
   runWarmPoolBenchmark,
@@ -21,6 +24,11 @@ import {
 export function SandboxesPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
+  const agentId = "default";
+  const agentVersions = useQuery({
+    queryKey: ["agent-versions", agentId],
+    queryFn: () => listAgentVersions(agentId),
+  });
   const warmPool = useQuery({ queryKey: ["warm-pool"], queryFn: getWarmPool });
   const quota = useQuery({ queryKey: ["sandbox-quota"], queryFn: getSandboxQuotaUsage });
   const history = useQuery({
@@ -47,6 +55,42 @@ export function SandboxesPage() {
         tone: "error",
         title: text("基准测试启动失败", "Benchmark start failed"),
         description: feedbackErrorMessage(error, text("请检查沙箱服务状态或稍后重试。", "Check the sandbox service and retry.")),
+      });
+    },
+  });
+  const createVersion = useMutation({
+    mutationFn: () => createAgentVersion(agentId, { activate: (agentVersions.data?.items ?? []).length === 0 }),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("版本快照已创建", "Version snapshot created"),
+        description: text("当前 Agent 配置已保存为新版本。", "The current Agent configuration was saved as a new version."),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agent-versions", agentId] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("版本快照创建失败", "Version snapshot creation failed"),
+        description: feedbackErrorMessage(error, text("请稍后重试。", "Retry later.")),
+      });
+    },
+  });
+  const activateVersion = useMutation({
+    mutationFn: (versionId: string) => activateAgentVersion(agentId, versionId),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "success",
+        title: text("版本已激活", "Version activated"),
+        description: text("Agent 配置已恢复到所选快照。", "The Agent configuration was restored from the selected snapshot."),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["agent-versions", agentId] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("版本激活失败", "Version activation failed"),
+        description: feedbackErrorMessage(error, text("请确认版本仍存在并稍后重试。", "Confirm the version still exists and retry later.")),
       });
     },
   });
@@ -132,11 +176,83 @@ export function SandboxesPage() {
           <InfraTile
             icon={<Tags className="h-4 w-4" />}
             title={text("版本灰度", "Version Rollout")}
-            status={text("未启用", "Disabled")}
-            description={text("版本与灰度发布状态保留禁用态，不展示伪造发布数据。", "Version and rollout state stays disabled and shows no fake release data.")}
-            disabled
+            status={text("接口已接入", "API-backed")}
+            description={text("保存 Agent 配置快照并可激活历史版本，先实现恢复型版本管理。", "Save Agent config snapshots and activate historical versions for recovery-first rollout management.")}
           />
         </section>
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Tags className="h-4 w-4" />
+              {text("版本灰度", "Version Rollout")}
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge tone="success">
+                {text(`${agentVersions.data?.items.length ?? 0} 个版本`, `${agentVersions.data?.items.length ?? 0} versions`)}
+              </Badge>
+              <Button
+                onClick={() => createVersion.mutate()}
+                disabled={createVersion.isPending}
+                className="h-8 gap-1.5"
+              >
+                <Tags className="h-3.5 w-3.5" />
+                {text("创建快照", "Create Snapshot")}
+              </Button>
+            </div>
+          </CardHeader>
+          <Table>
+            <thead className="bg-slate-50 text-slate-500">
+              <tr>
+                <Th>{text("版本", "Version")}</Th>
+                <Th>{text("状态", "Status")}</Th>
+                <Th>{text("模型", "Model")}</Th>
+                <Th>{text("工具", "Tools")}</Th>
+                <Th>{text("创建者", "Creator")}</Th>
+                <Th>{text("创建时间", "Created")}</Th>
+                <Th>{text("操作", "Actions")}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {(agentVersions.data?.items ?? []).map((version) => (
+                <tr key={version.id} className="border-t border-slate-100">
+                  <Td className="font-mono">v{version.version_number}</Td>
+                  <Td>
+                    <Badge tone={version.is_active ? "success" : "neutral"}>
+                      {version.is_active ? text("当前", "Active") : text("历史", "History")}
+                    </Badge>
+                  </Td>
+                  <Td className="font-mono text-xs text-slate-600">
+                    {String(version.config_snapshot.model_provider ?? "default")} /{" "}
+                    {String(version.config_snapshot.model_name ?? "default")}
+                  </Td>
+                  <Td className="font-mono text-xs text-slate-600">
+                    {Array.isArray(version.config_snapshot.tools_json)
+                      ? version.config_snapshot.tools_json.length
+                      : 0}
+                  </Td>
+                  <Td className="font-mono text-slate-500">{version.created_by ?? "-"}</Td>
+                  <Td className="font-mono text-slate-500">{formatShortDate(version.created_at)}</Td>
+                  <Td>
+                    <Button
+                      variant="ghost"
+                      onClick={() => activateVersion.mutate(version.id)}
+                      disabled={version.is_active || activateVersion.isPending}
+                    >
+                      {version.is_active ? text("已激活", "Active") : text("激活", "Activate")}
+                    </Button>
+                  </Td>
+                </tr>
+              ))}
+              {!agentVersions.isLoading && (agentVersions.data?.items ?? []).length === 0 && (
+                <tr>
+                  <Td colSpan={7} className="py-10 text-center text-slate-500">
+                    {text("暂无 Agent 版本快照", "No Agent version snapshots")}
+                  </Td>
+                </tr>
+              )}
+            </tbody>
+          </Table>
+        </Card>
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">

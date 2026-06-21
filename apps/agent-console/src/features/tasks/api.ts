@@ -386,6 +386,16 @@ export type AgentDefinition = {
   updated_at: string;
 };
 
+export type AgentVersion = {
+  id: string;
+  agent_id: string;
+  version_number: number;
+  config_snapshot: Partial<AgentDefinition> & Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  is_active: boolean;
+};
+
 export type AgentCapabilityAttachmentSummary = {
   attachment_id: string;
   capability_id: string;
@@ -5035,6 +5045,23 @@ export async function listWarmPoolBenchmarks(limit = 20) {
   return request<{ items: WarmPoolBenchmark[]; next_cursor: string | null }>(
     `/api/sandboxes/warm-pool/benchmarks?limit=${limit}`,
   );
+}
+
+export async function listAgentVersions(agentId: string) {
+  return request<{ items: AgentVersion[] }>(`/api/agents/${agentId}/versions`);
+}
+
+export async function createAgentVersion(agentId: string, payload: { activate?: boolean } = {}) {
+  return request<AgentVersion>(`/api/agents/${agentId}/versions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function activateAgentVersion(agentId: string, versionId: string) {
+  return request<AgentVersion>(`/api/agents/${agentId}/versions/${versionId}/activate`, {
+    method: "PATCH",
+  });
 }
 
 export async function getSandboxQuotaUsage() {
