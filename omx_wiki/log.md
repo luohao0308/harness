@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-06-21
+
+- Refreshed [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]], [[project-handoff-current-state]], and `docs/ai/task-progress.yaml` for `chore/demo-artifacts`. Captured real local WarmPool benchmark HTTP evidence from `POST /api/sandboxes/warm-pool/benchmark` with `iterations=30` (`PASS`, `warm_p95_ms=1`, `warm_avg_ms=0`, `cold_avg_ms=275 synthetic baseline`, `hit_rate=100`), updated `docs/reports/benchmark-report.md`, generated `docs/gifs/first-agent-run.gif` plus `docs/gifs/first-agent-run-screenshot.png`, and recorded that the GIF uses Playwright Chromium `recordVideo` converted by `ffmpeg` after macOS `screencapture` returned `capture error`.
+
 ## 2026-06-19
 
 - Added [[session-2026-06-19-agent-workspace-subagent-specialist-binding]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the Workspace subagent expert-binding repair. Captured the root cause that the `subagent` shortcut called `SubagentManager.spawn(...)` without `specialist=...`, the fix using existing `SubagentSpecialistRegistry` plus optional `specialist_slug`, keyword matching, and deterministic Workspace fallback, SSE projection of `specialist_id` / `specialist_slug` / `specialist_role`, backend regressions (`5 passed`), backend Ruff/py_compile, frontend request-type TypeScript, local API restart, live SSE proof with `specialist_slug=safety-checker`, workspace/subagent projection proof, and the live Postgres FK fix leaving Workspace shortcut `parent_agent_id=null` instead of platform Agent id `default`.

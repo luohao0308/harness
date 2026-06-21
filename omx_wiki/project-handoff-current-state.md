@@ -488,6 +488,41 @@ python3 scripts/validate-docs.py
 docs validation passed
 ```
 
+## 2026-06-21 Demo Artifacts
+
+Branch `chore/demo-artifacts` refreshed portfolio demo artifacts without changing
+product code.
+
+WarmPool benchmark evidence:
+
+```text
+POST http://127.0.0.1:18080/api/sandboxes/warm-pool/benchmark
+body: {"iterations":30}
+status: PASS
+warm_p95_ms: 1
+warm_avg_ms: 0
+cold_avg_ms: 275 synthetic baseline
+hit_rate: 100
+sample_size: 30
+environment: local-dev isolated SQLite seed with one IDLE WarmPoolContainer
+```
+
+Updated report: `docs/reports/benchmark-report.md`.
+
+Demo capture evidence:
+
+```text
+docs/gifs/first-agent-run.gif
+docs/gifs/first-agent-run-screenshot.png
+docs/gifs/README.md
+```
+
+The GIF uses Playwright Chromium browser video converted with `ffmpeg`; macOS
+`screencapture` was available but returned `capture error` during this session.
+The browser capture exercises the real Agent Console UI with mocked local API/SSE
+responses so it does not require external model-provider credentials or a Docker
+worker.
+
 ## Next Known Work
 
 The latest completed post-stage lane is **Production Critical Hardening v2**, with review fixes and validation recorded in [[session-2026-05-30-production-critical-hardening-v2]].
