@@ -53,6 +53,25 @@ function evalRun(id: string, capability: Record<string, unknown> = {}, datasetId
   };
 }
 
+function pendingReviewResult(id = "eval-result-review-1") {
+  return {
+    id,
+    eval_run_id: "eval-run-review-1",
+    eval_case_id: "eval-case-review-1",
+    task_id: "task-review-1",
+    status: "FAILED",
+    scores_json: { human_escalation: 1 },
+    grader_trace_json: { requires_manual_review: true },
+    latency_ms: 123,
+    cost_usd: "0.01",
+    error_message: "Needs human review",
+    human_verdict: null,
+    reviewer_id: null,
+    reviewed_at: null,
+    created_at: "2026-06-02T00:00:00Z",
+  };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -188,6 +207,9 @@ describe("EvalHarnessPage LangGraph contrast experiments", () => {
           low_sample_count: false,
           low_sample_caveat: null,
         });
+      }
+      if (path === "/api/evals/results/pending-review" && !init?.method) {
+        return jsonResponse([]);
       }
       if (path === "/api/evals/experiments" && !init?.method) {
         return jsonResponse({ items: createdExperiment ? [experiment] : [], next_cursor: null });
@@ -336,6 +358,9 @@ describe("EvalHarnessPage LangGraph contrast experiments", () => {
           low_sample_caveat: null,
         });
       }
+      if (path === "/api/evals/results/pending-review" && !init?.method) {
+        return jsonResponse([]);
+      }
       if (path === "/api/evals/experiments" && !init?.method) {
         return jsonResponse({ items: [], next_cursor: null });
       }
@@ -429,6 +454,9 @@ describe("EvalHarnessPage LangGraph contrast experiments", () => {
       if (path === "/api/evals/runs" && !init?.method) {
         return jsonResponse({ items: [], next_cursor: null });
       }
+      if (path === "/api/evals/results/pending-review" && !init?.method) {
+        return jsonResponse([]);
+      }
       if (path === "/api/evals/experiments" && !init?.method) {
         return jsonResponse({ items: [], next_cursor: null });
       }
@@ -448,5 +476,54 @@ describe("EvalHarnessPage LangGraph contrast experiments", () => {
     expect(within(agentMenu).getByText("default · 活跃中")).toBeInTheDocument();
     expect(agentMenu).toHaveClass("max-h-64");
     expect(agentMenu.className).toContain("w-[min(16rem,calc(100vw-3rem))]");
+  });
+
+  it("shows the human review queue and approves a pending eval result", async () => {
+    const user = userEvent.setup();
+    let approved = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/evals/datasets" && !init?.method) {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/evals/runs" && !init?.method) {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/evals/experiments" && !init?.method) {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/evals/results/pending-review" && !init?.method) {
+        return jsonResponse(approved ? [] : [pendingReviewResult()]);
+      }
+      if (path === "/api/evals/results/eval-result-review-1/review" && init?.method === "PATCH") {
+        expect(JSON.parse(String(init.body))).toEqual({ verdict: "approved" });
+        approved = true;
+        return jsonResponse({
+          ...pendingReviewResult(),
+          human_verdict: "approved",
+          reviewer_id: "dev-admin",
+          reviewed_at: "2026-06-02T00:02:00Z",
+        });
+      }
+      return jsonResponse({ detail: `unexpected request ${path}` }, 404);
+    });
+    renderPage(fetchMock);
+
+    expect(await screen.findByText("eval-result-review-1")).toBeInTheDocument();
+    expect(screen.getAllByText("已接入").length).toBeGreaterThanOrEqual(2);
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => {
+      const approveCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/evals/results/eval-result-review-1/review" &&
+          init?.method === "PATCH",
+      );
+      expect(approveCall).toBeDefined();
+    });
+    expect(await screen.findByText("暂无待人工复核结果。")).toBeInTheDocument();
   });
 });

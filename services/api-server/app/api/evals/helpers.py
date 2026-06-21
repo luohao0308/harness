@@ -443,6 +443,9 @@ def _eval_result_response(result: EvalResult) -> EvalResultResponse:
         latency_ms=result.latency_ms,
         cost_usd=result.cost_usd,
         error_message=result.error_message,
+        human_verdict=result.human_verdict,
+        reviewer_id=result.reviewer_id,
+        reviewed_at=result.reviewed_at,
         created_at=result.created_at,
     )
 

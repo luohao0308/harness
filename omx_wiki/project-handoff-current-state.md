@@ -54,7 +54,6 @@ Evidence from `docs/ai/task-progress.yaml`:
 - `product`: `AI Harness Platform`
 - `formula`: `Model + Harness = Agent`
 - Stage 01-07 are recorded as completed.
-- 2026-06-21 Workspace chart artifact rendering is implemented on branch `feat/chart-artifact-echarts-rendering`. Inspector `ArtifactPreview` now renders `artifact_type=chart` through the existing `echarts` dependency, with a pure parser for Harness `{ chartType, xAxis, series }` payloads plus direct ECharts options and a raw fallback for invalid chart data. Backend `mcp_artifact_put` now preserves optional `artifact_type` / `data` and exposes explicit `artifacts` at the ToolRunner output layer so Workspace artifact extraction can create chart artifacts. Validation passed chart parser Vitest (`2 passed`), touched-file TypeScript, and the focused ToolRunner chart artifact regression (`1 passed`).
 - 2026-06-19 Run Detail expert/subagent evidence gap for Run `fb32aab0-dfe1-41e9-8e4b-37ab6d5844cc` is fixed at the backend planning/execution layer. Root cause was not UI: the LLM plan contained only synchronous steps, so Executor had no `async + can_spawn_subagent` branch and the first sandbox-required sync step failed when Docker was unavailable. Planner now repairs review/audit/risk/compliance/session-logic goals with `max_subagents > 0` by adding an independent `expert_review` async specialist step, usually fanning out to `code-reviewer` and `safety-checker`; Executor and Plan API pass task context into LLM plan parsing so persisted plans are repaired before execution. Workspace Plan mode now preserves `request.enable_sandbox` / `request.enable_network` instead of hardcoding Docker, Executor consumes `queue_deferred` subagents inline via the existing worker path, and Run workspace subagent projection now includes nested specialist summaries plus structured outputs so Run Detail can render expert evidence after `SubagentOutput` is written. Validation passed targeted planner/executor/API/subagent pytest (`17 passed`), Ruff, and py_compile.
 - 2026-06-19 Agent Workspace subagent orchestration now binds experts. The root cause of "没用专家" was the direct `orchestration_mode=subagent` shortcut calling `SubagentManager.spawn(...)` without `specialist=...`; it now selects through `SubagentSpecialistRegistry`, honors optional request `specialist_slug`, falls back through keyword/Workspace heuristics, snapshots the expert onto the `AgentRun`, and exposes `specialist_slug` in the `orchestration` SSE payload plus subagent/workspace projections. Live Postgres smoke also fixed the latent `parent_agent_id=default` FK failure by leaving Workspace shortcut subagents parentless and relying on `task_id` for ownership. Validation passed the targeted Workspace subagent regressions (`5 passed`), backend Ruff/py_compile, frontend request-type TypeScript, local API restart, direct SSE proof, and workspace/subagent projection proof.
 - 2026-06-19 local OMX/Codex hooks config was repaired after Codex reported `failed to parse hooks config /Users/luohao/.codex/hooks.json: unknown field state, expected hooks`. The root cause was legacy hook trust state serialized into `~/.codex/hooks.json`, including a top-level `state` object rejected by Codex 0.141.0. The active OMX install and the legacy Node v20 hook package path were both refreshed to `oh-my-codex 0.18.13`, `~/.codex/hooks.json` was regenerated so it contains only the `hooks` root and the seven managed events, and trust state remains in `~/.codex/config.toml` under `[hooks.state]`. Validation passed `jq` schema checks, `omx doctor` (`16 passed, 1 warning, 0 failed`), `codex exec --help` without hook parse errors, `omx status`, and `omx sparkshell pwd`.
@@ -489,40 +488,45 @@ python3 scripts/validate-docs.py
 docs validation passed
 ```
 
-## 2026-06-21 Demo Artifacts
+## 2026-06-21 Eval Human Review MVP
 
-Branch `chore/demo-artifacts` refreshed portfolio demo artifacts without changing
-product code.
+Branch `feat/human-review-workflow-mvp` implements the Eval Harness Human Review MVP:
 
-WarmPool benchmark evidence:
+- `EvalResult` now has `human_verdict`, `reviewer_id`, and `reviewed_at` via Alembic revision `20260621_0042`.
+- Owner/admin now have `eval:manage`; member/viewer do not.
+- `GET /api/evals/results/pending-review` returns current-org EvalResult rows with existing manual-review signals (`human_escalation` / `requires_manual_review`) and no human verdict.
+- `PATCH /api/evals/results/{result_id}/review` records `approved` / `rejected`, reviewer timing, and optional notes under `grader_trace_json.human_review`.
+- Eval Harness no longer renders Human Review as disabled; it shows a compact queue with Approve / Reject actions.
 
-```text
-POST http://127.0.0.1:18080/api/sandboxes/warm-pool/benchmark
-body: {"iterations":30}
-status: PASS
-warm_p95_ms: 1
-warm_avg_ms: 0
-cold_avg_ms: 275 synthetic baseline
-hit_rate: 100
-sample_size: 30
-environment: local-dev isolated SQLite seed with one IDLE WarmPoolContainer
-```
-
-Updated report: `docs/reports/benchmark-report.md`.
-
-Demo capture evidence:
+Validation evidence:
 
 ```text
-docs/gifs/first-agent-run.gif
-docs/gifs/first-agent-run-screenshot.png
-docs/gifs/README.md
+cd services/api-server && uv run --extra dev python -m pytest tests/test_evals.py::test_pending_human_review_results_returns_unreviewed_manual_items tests/test_evals.py::test_review_eval_result_approves_manual_review_result tests/test_evals.py::test_review_eval_result_rejects_and_records_notes -q
+3 passed
+
+cd apps/agent-console && npm test -- src/features/evals/pages/__tests__/EvalHarnessPage.langgraph.test.tsx --reporter=dot
+4 passed
+
+cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/evals/pages/EvalHarnessPage.tsx src/features/tasks/api.ts
+passed
+
+cd services/api-server && uv run alembic heads
+20260621_0042 (head)
+
+cd services/api-server && DATABASE_URL=sqlite:///$tmpdb uv run alembic upgrade head
+passed
+
+python3 scripts/validate-docs.py
+docs validation passed
+
+git diff --check
+passed
 ```
 
-The GIF uses Playwright Chromium browser video converted with `ffmpeg`; macOS
-`screencapture` was available but returned `capture error` during this session.
-The browser capture exercises the real Agent Console UI with mocked local API/SSE
-responses so it does not require external model-provider credentials or a Docker
-worker.
+Known repo-level validation blockers observed on this worktree:
+
+- `cd apps/agent-console && npm run build` is still blocked by existing a11y/SAML/ChatMessageBubble/onboarding TypeScript test debt.
+- `cd services/api-server && uv run pytest tests/ -q` is still blocked during collection by `tests/integration/test_okta_logout.py` importing missing `Session` from `app.db.models`.
 
 ## Next Known Work
 
