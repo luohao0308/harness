@@ -15,6 +15,7 @@ from app.api.demo import router as demo_router
 from app.api.evals import router as evals_router
 from app.api.events import router as events_router
 from app.api.frontend_errors import router as frontend_errors_router
+from app.api.gateway import router as gateway_router
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.observability import router as observability_router
@@ -200,6 +201,7 @@ app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
+app.include_router(gateway_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(subagent_marketplace_router, prefix="/api")

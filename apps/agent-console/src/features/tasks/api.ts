@@ -1206,6 +1206,23 @@ export type WarmPoolBenchmark = {
   created_at: string;
 };
 
+export type AgentGatewayRoute = {
+  id: string;
+  agent_id: string;
+  slug: string;
+  rate_limit: number;
+  enabled: boolean;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  last_invoked_at: string | null;
+};
+
+export type AgentGatewayRouteCreateResponse = {
+  route: AgentGatewayRoute;
+  api_key: string;
+};
+
 export type SandboxQuotaUsage = {
   organization_id: string | null;
   configured_memory_mb: number;
@@ -5035,6 +5052,42 @@ export async function listWarmPoolBenchmarks(limit = 20) {
   return request<{ items: WarmPoolBenchmark[]; next_cursor: string | null }>(
     `/api/sandboxes/warm-pool/benchmarks?limit=${limit}`,
   );
+}
+
+export async function listAgentGatewayRoutes(agentId: string) {
+  return request<{ items: AgentGatewayRoute[] }>(`/api/agents/${agentId}/gateway-routes`);
+}
+
+export async function createAgentGatewayRoute(
+  agentId: string,
+  payload: {
+    slug?: string;
+    description?: string;
+    rate_limit?: number;
+    enabled?: boolean;
+  },
+) {
+  return request<AgentGatewayRouteCreateResponse>(`/api/agents/${agentId}/gateway-routes`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAgentGatewayRoute(
+  agentId: string,
+  routeId: string,
+  payload: Partial<Pick<AgentGatewayRoute, "description" | "enabled" | "rate_limit">>,
+) {
+  return request<AgentGatewayRoute>(`/api/agents/${agentId}/gateway-routes/${routeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAgentGatewayRoute(agentId: string, routeId: string) {
+  return request<void>(`/api/agents/${agentId}/gateway-routes/${routeId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getSandboxQuotaUsage() {
