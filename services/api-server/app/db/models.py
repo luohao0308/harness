@@ -421,6 +421,30 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class Trigger(Base):
+    __tablename__ = "triggers"
+    __table_args__ = (
+        UniqueConstraint("endpoint_path", name="triggers_endpoint_path_uidx"),
+        Index("ix_triggers_org_agent_enabled", "organization_id", "agent_id", "enabled"),
+        Index("ix_triggers_org_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String(32), nullable=False, default="webhook")
+    endpoint_path: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
 class Team(Base):
     __tablename__ = "teams"
     __table_args__ = (
