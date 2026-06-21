@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-06-21
+
+- Added [[session-2026-06-21-message-ttfb-display]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the message TTFB metadata display. Captured the `ttfb_ms` render change, regression test update, targeted TypeScript, focused Vitest pass, production Vite build, and the existing full-build/full-pytest blockers.
+
 ## 2026-06-19
 
 - Added [[session-2026-06-19-agent-workspace-subagent-specialist-binding]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the Workspace subagent expert-binding repair. Captured the root cause that the `subagent` shortcut called `SubagentManager.spawn(...)` without `specialist=...`, the fix using existing `SubagentSpecialistRegistry` plus optional `specialist_slug`, keyword matching, and deterministic Workspace fallback, SSE projection of `specialist_id` / `specialist_slug` / `specialist_role`, backend regressions (`5 passed`), backend Ruff/py_compile, frontend request-type TypeScript, local API restart, live SSE proof with `specialist_slug=safety-checker`, workspace/subagent projection proof, and the live Postgres FK fix leaving Workspace shortcut `parent_agent_id=null` instead of platform Agent id `default`.
