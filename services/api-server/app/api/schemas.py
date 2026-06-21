@@ -154,6 +154,51 @@ class AgentTokenOptimizerSelectionResponse(BaseModel):
     priority: int | None = Field(default=None, description="Attachment priority")
 
 
+class AgentTriggerResponse(BaseModel):
+    id: str = Field(description="Trigger ID")
+    agent_id: str = Field(description="Agent ID")
+    type: Literal["webhook"] = Field(description="Trigger type")
+    endpoint_path: str = Field(description="Public webhook endpoint path")
+    enabled: bool = Field(description="Whether trigger is enabled")
+    created_at: datetime = Field(description="Created time")
+    updated_at: datetime = Field(description="Updated time")
+    last_triggered_at: datetime | None = Field(default=None, description="Last successful trigger")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentTriggerPage(BaseModel):
+    items: list[AgentTriggerResponse] = Field(description="Agent trigger list")
+
+
+class AgentTriggerCreateRequest(BaseModel):
+    type: Literal["webhook"] = Field(default="webhook", description="Trigger type")
+    endpoint_path: str | None = Field(default=None, max_length=128, description="Optional path")
+    enabled: bool = Field(default=True, description="Whether trigger starts enabled")
+
+
+class AgentTriggerCreateResponse(BaseModel):
+    trigger: AgentTriggerResponse = Field(description="Created trigger")
+    secret: str = Field(description="Plaintext secret shown once")
+
+
+class AgentTriggerUpdateRequest(BaseModel):
+    enabled: bool | None = Field(default=None, description="Whether trigger is enabled")
+
+
+class WebhookTriggerRequest(BaseModel):
+    goal: str | None = Field(default=None, description="Run goal override")
+    title: str | None = Field(default=None, description="Run title")
+    payload: dict = Field(default_factory=dict, description="External webhook payload")
+
+
+class WebhookTriggerResponse(BaseModel):
+    run_id: str = Field(description="Created Agent Run ID")
+    agent_id: str = Field(description="Agent ID")
+    status: str = Field(description="Run status")
+    trigger_id: str = Field(description="Trigger ID")
+
+
 class AgentSessionCreateRequest(BaseModel):
     title: str | None = Field(default=None, description="会话标题")
 
