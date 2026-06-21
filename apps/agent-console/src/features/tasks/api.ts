@@ -397,6 +397,26 @@ export type AgentCapabilityAttachmentSummary = {
   status: string;
 };
 
+export type AgentTrigger = {
+  id: string;
+  agent_id: string;
+  type: "webhook";
+  endpoint_path: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_triggered_at: string | null;
+};
+
+export type AgentTriggerPage = {
+  items: AgentTrigger[];
+};
+
+export type AgentTriggerCreateResponse = {
+  trigger: AgentTrigger;
+  secret: string;
+};
+
 export type LocalAgentPairing = {
   id: string;
   agent_id: string;
@@ -3302,6 +3322,40 @@ export async function createTask(payload: TaskCreatePayload) {
 
 export async function listAgents() {
   return listAgentsPage();
+}
+
+export async function listAgentTriggers(agentId: string) {
+  return request<AgentTriggerPage>(`/api/agents/${encodeURIComponent(agentId)}/triggers`);
+}
+
+export async function createAgentTrigger(
+  agentId: string,
+  payload: { endpoint_path?: string | null; enabled?: boolean },
+) {
+  return request<AgentTriggerCreateResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/triggers`,
+    {
+      method: "POST",
+      body: JSON.stringify({ type: "webhook", ...payload }),
+    },
+  );
+}
+
+export async function updateAgentTrigger(
+  agentId: string,
+  triggerId: string,
+  payload: { enabled: boolean },
+) {
+  return request<AgentTrigger>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAgentTrigger(agentId: string, triggerId: string) {
+  return request<void>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function createLocalAgentPairingToken(agentId: string) {

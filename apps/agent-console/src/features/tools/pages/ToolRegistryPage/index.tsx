@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Code2, GitBranch, Play, RefreshCw } from "lucide-react";
 
@@ -15,14 +15,18 @@ import { AdapterSchemaDrawer } from "../../components/AdapterSchemaDrawer";
 import {
   approveCapabilityPackage,
   type AgentDefinition,
+  type AgentTrigger,
   attachCapabilityPackage,
   attachAgentCapability,
   capabilityDependencyPreflight,
+  createAgentTrigger,
+  deleteAgentTrigger,
   enableStagedCapability,
   getToolRegistry,
   installTrustedUrlCapability,
   installUploadedCapability,
   discoverMCPServer,
+  listAgentTriggers,
   listMCPServers,
   listAgents,
   listAdapters,
@@ -35,6 +39,7 @@ import {
   stagePublicCapabilityPackage,
   testInvokeCapability,
   uninstallCapabilityPackage,
+  updateAgentTrigger,
   updateCapabilityPackageAttachment,
   validateCapabilityPackage,
   type CapabilityMarketplaceItem,
@@ -182,11 +187,17 @@ export function ToolRegistryPage() {
     defaultLangGraphJson: DEFAULT_LANGGRAPH_JSON,
     defaultLangChainInvokeInput: DEFAULT_LANGCHAIN_INVOKE_INPUT,
   });
+  const [triggerEndpointPath, setTriggerEndpointPath] = useState("");
+  const [lastTriggerSecret, setLastTriggerSecret] = useState<string | null>(null);
   const registryQuery = useQuery({
     queryKey: ["tool-registry", simpleAgentId],
     queryFn: () => getToolRegistry(simpleAgentId),
   });
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const triggersQuery = useQuery({
+    queryKey: ["agent-triggers", simpleAgentId],
+    queryFn: () => listAgentTriggers(simpleAgentId),
+  });
   const adaptersQuery = useQuery({ queryKey: ["tool-adapters"], queryFn: listAdapters });
   const mcpServersQuery = useQuery({
     queryKey: ["mcp-servers", simpleAgentId],
@@ -252,6 +263,52 @@ export function ToolRegistryPage() {
     },
     [],
   );
+  const refreshTriggers = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["agent-triggers", simpleAgentId] });
+  };
+  const createTriggerMutation = useMutation({
+    mutationFn: () =>
+      createAgentTrigger(simpleAgentId, {
+        endpoint_path: triggerEndpointPath.trim() || null,
+        enabled: true,
+      }),
+    onSuccess: async (result) => {
+      setTriggerEndpointPath("");
+      setLastTriggerSecret(result.secret);
+      notifyFeedback({
+        tone: "success",
+        title: "触发器已创建",
+        description: `路径 ${result.trigger.endpoint_path} 已启用；Secret 只在当前页面显示一次。`,
+      });
+      await refreshTriggers();
+    },
+    onError: (error) => notifyMutationError("触发器创建失败", error, "请检查路径是否重复或格式是否正确。"),
+  });
+  const updateTriggerMutation = useMutation({
+    mutationFn: (trigger: AgentTrigger) =>
+      updateAgentTrigger(simpleAgentId, trigger.id, { enabled: !trigger.enabled }),
+    onSuccess: async (trigger) => {
+      notifyFeedback({
+        tone: "success",
+        title: trigger.enabled ? "触发器已启用" : "触发器已停用",
+        description: trigger.endpoint_path,
+      });
+      await refreshTriggers();
+    },
+    onError: (error) => notifyMutationError("触发器更新失败", error, "请检查权限或稍后重试。"),
+  });
+  const deleteTriggerMutation = useMutation({
+    mutationFn: (trigger: AgentTrigger) => deleteAgentTrigger(simpleAgentId, trigger.id),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "warning",
+        title: "触发器已删除",
+        description: "外部系统将不能再通过该路径触发 Run。",
+      });
+      await refreshTriggers();
+    },
+    onError: (error) => notifyMutationError("触发器删除失败", error, "请检查权限或稍后重试。"),
+  });
   const validationMutation = useMutation({
     mutationFn: () =>
       validateCapabilityPackage({
@@ -784,6 +841,19 @@ export function ToolRegistryPage() {
             marketplaceTrustedInstallMutation.error ??
             marketplaceUploadInstallMutation.error
           }
+          triggers={triggersQuery.data?.items ?? []}
+          triggersLoading={triggersQuery.isLoading}
+          triggerEndpointPath={triggerEndpointPath}
+          triggerSecret={lastTriggerSecret}
+          triggerPending={
+            createTriggerMutation.isPending ||
+            updateTriggerMutation.isPending ||
+            deleteTriggerMutation.isPending
+          }
+          onTriggerEndpointPathChange={setTriggerEndpointPath}
+          onCreateTrigger={() => createTriggerMutation.mutate()}
+          onToggleTrigger={(trigger) => updateTriggerMutation.mutate(trigger)}
+          onDeleteTrigger={(trigger) => deleteTriggerMutation.mutate(trigger)}
           onOpenDialog={(dialog) => setActiveConfigDialog(dialog)}
         />
 

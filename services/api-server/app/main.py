@@ -31,6 +31,7 @@ from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
 from app.api.teams import router as teams_router
 from app.api.tools import router as tools_router
+from app.api.triggers import router as triggers_router
 from app.api.users import router as users_router
 from app.api.validation import router as validation_router
 from app.bootstrap.first_admin import bootstrap_first_admin
@@ -200,6 +201,7 @@ app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
+app.include_router(triggers_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(subagent_marketplace_router, prefix="/api")
