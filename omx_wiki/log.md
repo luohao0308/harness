@@ -1,9 +1,5 @@
 # Wiki Log
 
-## 2026-06-21
-
-- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for Workspace chart artifact rendering on `feat/chart-artifact-echarts-rendering`. Captured ECharts Inspector rendering for `artifact_type=chart`, parser support for Harness chart payloads and direct ECharts options, backend `mcp_artifact_put` chart artifact preservation, top-level ToolRunner artifact promotion, parser Vitest (`2 passed`), touched-file TypeScript, and focused ToolRunner regression (`1 passed`).
-
 ## 2026-06-19
 
 - Added [[session-2026-06-19-agent-workspace-subagent-specialist-binding]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the Workspace subagent expert-binding repair. Captured the root cause that the `subagent` shortcut called `SubagentManager.spawn(...)` without `specialist=...`, the fix using existing `SubagentSpecialistRegistry` plus optional `specialist_slug`, keyword matching, and deterministic Workspace fallback, SSE projection of `specialist_id` / `specialist_slug` / `specialist_role`, backend regressions (`5 passed`), backend Ruff/py_compile, frontend request-type TypeScript, local API restart, live SSE proof with `specialist_slug=safety-checker`, workspace/subagent projection proof, and the live Postgres FK fix leaving Workspace shortcut `parent_agent_id=null` instead of platform Agent id `default`.
@@ -423,14 +419,10 @@
 
 - Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for the Run Detail expert/subagent evidence repair. Captured Run `fb32aab0-dfe1-41e9-8e4b-37ab6d5844cc` root cause: LLM plan had only sync steps, no executable subagent branch, and the first sandbox-required step failed with Docker unavailable. Planner now enforces an `expert_review` async specialist step for review/session-logic goals, Workspace Plan no longer forces sandbox/network flags, queue-deferred local subagents execute inline through the existing worker so `SubagentOutput` evidence is written, and Run workspace projection includes nested specialist/output data for Run Detail. Validation passed targeted pytest (`17 passed`), Ruff, and py_compile.
 
-## [2026-06-21] session-log
-
-- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for the Eval Human Review MVP on branch `feat/human-review-workflow-mvp`. Captured `EvalResult` human verdict/reviewer/timestamp columns, Alembic head `20260621_0042`, clean SQLite migration to head, owner/admin `eval:manage`, pending-review and review PATCH endpoints, reviewer FK-safe dev-token handling, Eval Harness pending queue UI with Approve/Reject, backend review tests (`3 passed`), Eval Harness Vitest (`4 passed`), touched-file TypeScript pass, docs validation, diff check, plus known repo-level full-build/full-pytest blockers.
-
 ## [2026-06-10] session-log
 
 - Added [[session-2026-06-10-agent-workspace-team-mode-screenshot-fixes]] and refreshed [[index]] plus `docs/ai/task-progress.yaml` for Agent Workspace and Team Mode screenshot regressions. Captured same-scope Workspace hydration, local/pending conversation filtering when selecting platform Agents, immediate Team add-member query-cache merge, branch-aware pending assistant placement for branch/regenerate, owner-scoped per-agent step lists, wake cancellation cutoffs for late active events, browser-context Workspace history clearing, live sends through platform Agents (`8/8`), online local Agents (`2/2`), and Team columns (`4/4`), the Workspace/Team FAB obstruction fix, frontend typecheck, docs validation, and targeted Agent Workspace plus Team Mode plus shell Vitest (`52 passed`).
 
 ## [2026-06-21] session-log
 
-- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for B4 Triggers System on branch `feat/triggers-system`. Captured spec `docs/ai/stages/08-triggers-system.md`, `triggers` model/migration/API/public webhook endpoint, one-time hashed secret behavior, Tool Registry Triggers UI, targeted backend tests (`4 passed`), frontend Tool Registry tests (`5 passed`), Ruff, targeted TypeScript, `git diff --check`, and existing repo-wide blockers for full frontend build, full backend pytest collection, and docs validation in isolated worktree.
+- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for B5 API Gateway External Publish on branch `feat/api-gateway-external-publish`. Captured spec `docs/ai/stages/09-api-gateway-publish.md`, `api_gateway_routes` model/migration/API/public invoke endpoint, one-time hashed API key behavior, process-local rate limiting, Sandboxes API Gateway UI, targeted backend tests (`5 passed`), frontend Sandboxes Gateway test (`1 passed`), Ruff, targeted TypeScript, `git diff --check`, and existing repo-wide blockers for full frontend build, full backend pytest collection, and docs validation in isolated worktree.

@@ -3755,25 +3755,25 @@ post_stage_hardening:
       - Restore verification is documented in `docs/runbooks/migrations.md` and backed by `test_knowledge_restore_smoke_preserves_current_and_historical_contracts`.
       - Private P2 Knowledge API smoke created agent-scoped and org-scoped sources, added a sibling document, created a v2 document version, checked lifecycle actions, verified same-org org-scope visibility, and confirmed lifecycle audit rows in compose Postgres.
 
-  - id: b4-triggers-system
+  - id: b5-api-gateway-external-publish
     date: 2026-06-21
     status: completed
-    demo: Tool Registry Triggers tab manages webhook triggers that create planned Agent Runs through a public shared-secret endpoint.
+    demo: Sandboxes API Gateway tile publishes Agent `default` as a public key-authenticated HTTP invoke route that creates planned Agent Runs.
     verification_result: targeted_passed_with_known_repo_wide_validation_blockers
     verification_commands:
-      - cd services/api-server && .venv/bin/python -m pytest tests/test_triggers.py -q -> 4 passed
-      - cd services/api-server && uv run ruff check app/api/triggers.py app/api/schemas.py app/db/models.py app/events/event_types.py app/main.py alembic/versions/20260621_0042_create_triggers.py tests/test_triggers.py -> passed
-      - cd apps/agent-console && npm test -- src/features/tools/__tests__/ToolRegistryPage.marketplace.test.tsx --reporter=dot -> 1 file / 5 tests passed
-      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/tasks/api.ts src/features/tools/pages/ToolRegistryPage/index.tsx src/features/tools/pages/ToolRegistryPage/sections.tsx -> passed
+      - cd services/api-server && .venv/bin/python -m pytest tests/test_api_gateway.py -q -> 5 passed
+      - cd services/api-server && uv run ruff check app/api/gateway.py app/api/schemas.py app/db/models.py app/events/event_types.py app/main.py alembic/versions/20260621_0043_create_api_gateway_routes.py tests/test_api_gateway.py -> passed
+      - cd apps/agent-console && npm test -- src/features/sandboxes/pages/__tests__/SandboxesPage.gateway.test.tsx --reporter=dot -> 1 file / 1 test passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/sandboxes/pages/SandboxesPage.tsx src/features/sandboxes/pages/__tests__/SandboxesPage.gateway.test.tsx src/features/tasks/api.ts -> passed
       - git diff --check -> passed
       - cd apps/agent-console && npm run build -> blocked by existing repo-wide stale TypeScript test debt around `jest-axe`, stale a11y imports, SAML fixtures, and old ChatMessageBubble props
       - cd services/api-server && uv run pytest tests/ -q -> blocked during collection by existing `tests/integration/test_okta_logout.py` import of missing `app.db.models.Session`
     acceptance_notes:
-      - Spec created at `docs/ai/stages/08-triggers-system.md` and updated to `implemented`.
-      - Added `triggers` table, model, Alembic migration, schemas, management CRUD, public webhook route, and trigger event constants.
-      - Trigger secrets are generated once, stored only as SHA-256 hashes through the existing `hash_api_key` helper, and verified with constant-time comparison.
-      - `POST /api/webhook/trigger/{endpoint_path}` is public, requires `X-Harness-Trigger-Secret`, and creates a planned Agent Run with redacted payload metadata.
-      - Tool Registry Triggers tab is no longer disabled and lists, creates, toggles, and deletes real trigger rows.
+      - Spec created at `docs/ai/stages/09-api-gateway-publish.md` and updated to `implemented`.
+      - Added `api_gateway_routes` table, model, Alembic migration, schemas, management CRUD, public invoke route, and API Gateway event constants.
+      - API Gateway keys are generated once, stored only as SHA-256 hashes through the existing `hash_api_key` helper, and verified with constant-time comparison.
+      - `POST /api/gateway/{slug}/invoke` is public, requires `X-Harness-Gateway-Key`, applies a process-local per-minute rate limit, and creates a planned Agent Run with redacted input metadata.
+      - Sandboxes API Gateway tile is no longer disabled and lists, creates, toggles, and deletes real gateway route rows.
       - `python3 scripts/validate-docs.py` remains blocked in this isolated worktree because the worktree root does not contain `AGENTS.md`.
 
 stage_completion_rule:
