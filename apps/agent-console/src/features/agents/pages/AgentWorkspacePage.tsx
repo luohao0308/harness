@@ -1906,8 +1906,10 @@ export function AgentWorkspacePage() {
           section={inspectorSection}
           activeRunId={activeRunId}
           pendingApprovalCount={pendingApprovalCount}
+          approvals={workspace.data?.approvals ?? []}
           artifacts={inspectorArtifacts}
           runReturnTarget={runReturnTarget}
+          onApprovalsChanged={() => workspace.refetch()}
           onClose={() => setInspectorSection(null)}
         />
       </div>

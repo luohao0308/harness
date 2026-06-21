@@ -2,7 +2,7 @@
 
 ## 2026-06-21
 
-- Added [[session-2026-06-21-message-ttfb-display]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the message TTFB metadata display. Captured the `ttfb_ms` render change, regression test update, targeted TypeScript, focused Vitest pass, production Vite build, and the existing full-build/full-pytest blockers.
+- Added [[session-2026-06-21-tool-approval-modify-ui]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the tool approval Modify UI. Captured Run Detail and Workspace Inspector Modify buttons, object-JSON validation, `modifyToolApproval` submission, approval refresh behavior, targeted TypeScript, production Vite build, backend tool-approval regression, and the existing full-build/full-pytest blockers.
 
 ## 2026-06-19
 

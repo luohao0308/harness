@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Search, Shield, Wrench, X } from "lucide-react";
+import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Pencil, Play, RotateCcw, Search, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
-import { Input } from "../../../components/ui/input";
+import { Input, Textarea } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
@@ -28,6 +29,7 @@ import {
   executeAgentOrchestration,
   getAgentRunWorkspace,
   listEvalDatasets,
+  modifyToolApproval,
   orchestrateAgentRun,
   rejectToolApproval,
   replayTask,
@@ -48,6 +50,11 @@ type OrchestrationFeedback = {
   at: string;
 };
 
+type ModifyApprovalDialogState = {
+  approval: ToolApproval;
+  jsonText: string;
+};
+
 export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const { text } = useI18n();
   const { runId } = useParams();
@@ -62,6 +69,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const [orchestrationFeedback, setOrchestrationFeedback] = useState<OrchestrationFeedback | null>(null);
   const [saveEvalSuccess, setSaveEvalSuccess] = useState(false);
   const [selectedEvalDatasetId, setSelectedEvalDatasetId] = useState("");
+  const [modifyApprovalDialog, setModifyApprovalDialog] = useState<ModifyApprovalDialogState | null>(null);
   const workspaceQueryKey = useMemo(
     () => ["agent-run-workspace", runId, retrievalSessionId, promptManifestId] as const,
     [promptManifestId, retrievalSessionId, runId],
@@ -245,6 +253,47 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       void queryClient.refetchQueries({ queryKey: workspaceQueryKey, type: "active" });
     },
   });
+  const modify = useMutation({
+    mutationFn: ({
+      approvalId,
+      modifiedInputJson,
+    }: {
+      approvalId: string;
+      modifiedInputJson: Record<string, unknown>;
+    }) =>
+      modifyToolApproval(
+        runId!,
+        approvalId,
+        modifiedInputJson,
+        "Modified and approved from Agent Run Detail",
+      ),
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("修改审批失败", "Modify approval failed"),
+        description: feedbackErrorMessage(error, text("请检查 JSON 后重试。", "Check the JSON and retry.")),
+      });
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData<AgentRunWorkspace>(
+        workspaceQueryKey,
+        mergeApprovalPage(queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey), result.items),
+      );
+      setModifyApprovalDialog(null);
+      notifyFeedback({
+        tone: "success",
+        title: text("审批已修改并批准", "Approval modified and accepted"),
+        description: text("工具将使用修改后的 JSON 参数执行。", "The tool will run with the modified JSON payload."),
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceQueryKey, refetchType: "active" });
+      void queryClient.refetchQueries({ queryKey: workspaceQueryKey, type: "active" });
+    },
+  });
+  const handleSubmitModifyApproval = (approvalId: string, modifiedInputJson: Record<string, unknown>) => {
+    modify.mutate({ approvalId, modifiedInputJson });
+  };
   const saveEvalCase = useMutation({
     mutationFn: async () => {
       let datasetId = selectedEvalDatasetId;
@@ -906,6 +955,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             approvals={data?.approvals ?? []}
             onApprove={(id) => approve.mutate(id)}
             onReject={(id) => reject.mutate(id)}
+            onModify={(approval) =>
+              setModifyApprovalDialog({
+                approval,
+                jsonText: JSON.stringify(approvalInputJson(approval), null, 2),
+              })
+            }
           />
           </div>
           <Card>
@@ -979,6 +1034,19 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
           </Card>
         </aside>
       </div>
+      <ModifyToolApprovalDialog
+        state={modifyApprovalDialog}
+        isSubmitting={modify.isPending}
+        onChange={(jsonText) => {
+          setModifyApprovalDialog((current) => (
+            current ? { ...current, jsonText } : current
+          ));
+        }}
+        onClose={() => {
+          if (!modify.isPending) setModifyApprovalDialog(null);
+        }}
+        onSubmit={handleSubmitModifyApproval}
+      />
     </ConsoleShell>
   );
 }
@@ -1201,10 +1269,12 @@ function ApprovalsPanel({
   approvals,
   onApprove,
   onReject,
+  onModify,
 }: {
   approvals: ToolApproval[];
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onModify: (approval: ToolApproval) => void;
 }) {
   return (
     <Card>
@@ -1224,10 +1294,14 @@ function ApprovalsPanel({
             </div>
             <div className="mt-2 text-xs text-slate-600">{approval.reason}</div>
             {approval.status === "PENDING" && (
-              <div className="mt-2 flex gap-1">
+              <div className="mt-2 flex flex-wrap gap-1">
                 <Button onClick={() => onApprove(approval.id)}>
                   <Check className="h-3.5 w-3.5" />
                   批准
+                </Button>
+                <Button variant="secondary" onClick={() => onModify(approval)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  修改
                 </Button>
                 <Button onClick={() => onReject(approval.id)}>
                   <X className="h-3.5 w-3.5" />
@@ -1240,6 +1314,79 @@ function ApprovalsPanel({
         {approvals.length === 0 && <div className="text-xs text-slate-500">暂无审批请求。</div>}
       </div>
     </Card>
+  );
+}
+
+function ModifyToolApprovalDialog({
+  state,
+  isSubmitting,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  state: ModifyApprovalDialogState | null;
+  isSubmitting: boolean;
+  onChange: (jsonText: string) => void;
+  onClose: () => void;
+  onSubmit: (approvalId: string, modifiedInputJson: Record<string, unknown>) => void;
+}) {
+  const { text } = useI18n();
+  const parsed = state ? parseApprovalJson(state.jsonText) : { value: null, error: null };
+  const errorId = state ? `modify-approval-json-error-${state.approval.id}` : undefined;
+  if (!state) return null;
+
+  const submitDisabled = isSubmitting || parsed.value === null;
+
+  return (
+    <ConfigDialog
+      open
+      title={text("修改工具审批参数", "Modify tool approval payload")}
+      description={text(
+        "编辑 JSON 参数后将立即按修改后的内容批准此工具调用。",
+        "Edit the JSON payload before approving this tool call with the modified input.",
+      )}
+      onClose={onClose}
+      className="max-w-2xl"
+    >
+      <div className="space-y-4">
+        <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">
+          <div className="font-mono text-slate-900">{state.approval.tool_call_id}</div>
+          <div className="mt-1">{state.approval.reason}</div>
+        </div>
+        <label className="block text-xs font-medium text-slate-700" htmlFor="modify-approval-json">
+          {text("JSON 参数", "JSON payload")}
+        </label>
+        <Textarea
+          id="modify-approval-json"
+          value={state.jsonText}
+          onChange={(event) => onChange(event.target.value)}
+          spellCheck={false}
+          disabled={isSubmitting}
+          aria-invalid={parsed.error ? true : undefined}
+          aria-describedby={parsed.error ? errorId : undefined}
+          className="min-h-72 font-mono text-xs leading-5"
+        />
+        {parsed.error ? (
+          <div id={errorId} className="text-xs text-rose-600">
+            {text(`JSON 无效：${parsed.error}`, `Invalid JSON: ${parsed.error}`)}
+          </div>
+        ) : null}
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>
+            {text("取消", "Cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              if (parsed.value) onSubmit(state.approval.id, parsed.value);
+            }}
+            disabled={submitDisabled}
+          >
+            {isSubmitting ? text("提交中...", "Submitting...") : text("修改并批准", "Modify and approve")}
+          </Button>
+        </div>
+      </div>
+    </ConfigDialog>
   );
 }
 
@@ -1430,6 +1577,37 @@ export function mergeApprovalPage(
       };
     }),
   };
+}
+
+function approvalInputJson(approval: ToolApproval): Record<string, unknown> {
+  const requestInput = approval.request_json.input_json;
+  if (isJsonRecord(requestInput)) return requestInput;
+  return {};
+}
+
+function parseApprovalJson(jsonText: string): {
+  value: Record<string, unknown> | null;
+  error: string | null;
+} {
+  if (jsonText.trim().length === 0) {
+    return { value: null, error: "JSON payload is required" };
+  }
+  try {
+    const value = JSON.parse(jsonText) as unknown;
+    if (!isJsonRecord(value)) {
+      return { value: null, error: "payload must be a JSON object" };
+    }
+    return { value, error: null };
+  } catch (error) {
+    return {
+      value: null,
+      error: error instanceof Error ? error.message : "parse failed",
+    };
+  }
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function EventRow({ event }: { event: AgentEvent }) {
