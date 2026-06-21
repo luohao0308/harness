@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-19T13:00:32+08:00
+last_updated_at: 2026-06-21T03:40:44+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,6 +117,25 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: tool-approval-modify-ui
+    date: 2026-06-21
+    status: completed
+    demo: Pending tool approval cards now expose Approve, Modify, and Reject in Run Detail plus Workspace Inspector; Modify opens an object-JSON editor, submits through `modifyToolApproval`, and refreshes approval state.
+    verification_result: targeted_passed_with_existing_repo_blockers
+    verification_commands:
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/runs/pages/RunDetailPage.tsx src/features/agents/components/InspectorDrawer.tsx src/features/agents/pages/AgentWorkspacePage.tsx -> passed
+      - cd apps/agent-console && npx vite build -> passed
+      - cd services/api-server && uv run pytest tests/test_tool_approvals.py -q -> 3 passed
+      - python3 scripts/validate-docs.py with temporary AGENTS.md and full .omx runtime links from the main workspace -> passed
+      - cd apps/agent-console && npm run build -> blocked by existing stale a11y/test TypeScript debt (`jest-axe` declarations, stale imports, old ChatMessageBubble/SAML fixture shapes)
+      - cd services/api-server && uv run pytest tests/ -q -> blocked by existing collection error in tests/integration/test_okta_logout.py importing missing `Session` from app.db.models
+    acceptance_notes:
+      - Run Detail pending approvals now show a third Modify action beside Approve and Reject.
+      - Workspace Inspector runtime pending approvals now show the same compact decision controls.
+      - The Modify dialog seeds from request_json.input_json, validates that edited JSON is an object, disables submission while invalid or pending, and closes after success.
+      - The successful modify path uses the existing backend/frontend contract, `POST /api/tasks/{task_id}/tool-approvals/{approval_id}/modify`, which modifies the payload and approves the tool call.
+      - docs/workspace-pro-gap-register.md marks Approve, Reject, Modify tool approvals as implemented.
+
   - id: run-detail-expert-subagent-plan-repair
     date: 2026-06-19
     status: completed
