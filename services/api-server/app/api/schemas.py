@@ -3362,6 +3362,11 @@ class EvalRunCreateRequest(BaseModel):
     agent_id: str | None = Field(default=None, description="Agent 版本或 Agent ID")
 
 
+class EvalHumanReviewRequest(BaseModel):
+    verdict: Literal["approved", "rejected"] = Field(description="人工审核结论")
+    notes: str | None = Field(default=None, description="人工审核备注")
+
+
 class EvalResultResponse(BaseModel):
     id: str = Field(description="Result ID")
     eval_run_id: str = Field(description="Eval Run ID")
@@ -3373,6 +3378,9 @@ class EvalResultResponse(BaseModel):
     latency_ms: int = Field(description="耗时毫秒")
     cost_usd: str = Field(description="成本美元")
     error_message: str | None = Field(default=None, description="错误信息")
+    human_verdict: str | None = Field(default=None, description="人工审核结论")
+    reviewer_id: str | None = Field(default=None, description="审核人 ID")
+    reviewed_at: datetime | None = Field(default=None, description="审核时间")
     created_at: datetime = Field(description="创建时间")
 
     model_config = ConfigDict(from_attributes=True)

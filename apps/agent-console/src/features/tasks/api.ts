@@ -2808,6 +2808,9 @@ export type EvalResult = {
   latency_ms: number;
   cost_usd: string;
   error_message: string | null;
+  human_verdict?: string | null;
+  reviewer_id?: string | null;
+  reviewed_at?: string | null;
   created_at: string;
 };
 
@@ -4628,6 +4631,20 @@ export async function listEvalRuns() {
 
 export async function getEvalRun(evalRunId: string) {
   return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
+}
+
+export async function listPendingHumanReviewResults() {
+  return request<EvalResult[]>("/api/evals/results/pending-review");
+}
+
+export async function reviewEvalResult(
+  resultId: string,
+  payload: { verdict: "approved" | "rejected"; notes?: string },
+) {
+  return request<EvalResult>(`/api/evals/results/${resultId}/review`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createEvalExperiment(datasetId: string, payload: EvalExperimentCreatePayload) {

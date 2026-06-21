@@ -2067,6 +2067,13 @@ class EvalResult(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[str] = mapped_column(String(32), nullable=False, default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    reviewer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-19T13:00:32+08:00
+last_updated_at: 2026-06-21T05:04:06+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -76,7 +76,7 @@ stages:
     acceptance_notes:
       - Eval page displays Dataset, Case Queue, Eval Run metrics, Trace Grader, and history from API.
       - Regression Gate shows API-backed state when Eval Run exists.
-      - A/B and Human Review entries render disabled until API-backed.
+      - A/B remains disabled until API-backed; Human Review is now API-backed with a pending-review queue and approve/reject workflow.
   - id: 06-warmpool-infra
     document: docs/ai/stages/06-warmpool-infra.md
     status: completed
@@ -117,6 +117,29 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: eval-human-review-workflow-mvp
+    date: 2026-06-21
+    status: completed
+    demo: Eval Harness Human Review now exposes an API-backed pending-review queue and approve/reject workflow for EvalResult rows requiring manual review.
+    verification_result: targeted_passed_with_known_repo_blockers
+    verification_commands:
+      - cd services/api-server && uv run --extra dev python -m pytest tests/test_evals.py::test_pending_human_review_results_returns_unreviewed_manual_items tests/test_evals.py::test_review_eval_result_approves_manual_review_result tests/test_evals.py::test_review_eval_result_rejects_and_records_notes -q -> 3 passed
+      - cd apps/agent-console && npm test -- src/features/evals/pages/__tests__/EvalHarnessPage.langgraph.test.tsx --reporter=dot -> 4 passed
+      - cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/evals/pages/EvalHarnessPage.tsx src/features/tasks/api.ts -> passed
+      - cd services/api-server && uv run alembic heads -> 20260621_0042 (head)
+      - cd services/api-server && DATABASE_URL=sqlite:///$tmpdb uv run alembic upgrade head -> passed
+      - python3 scripts/validate-docs.py -> passed
+      - git diff --check -> passed
+      - cd apps/agent-console && npm run build -> blocked by pre-existing a11y/SAML/ChatMessageBubble/onboarding test TypeScript debt, not by Human Review files
+      - cd services/api-server && uv run pytest tests/ -q -> blocked during collection by tests/integration/test_okta_logout.py importing missing Session from app.db.models
+    acceptance_notes:
+      - Added Alembic revision 20260621_0042 and EvalResult fields `human_verdict`, `reviewer_id`, and `reviewed_at`.
+      - Added `eval:manage` permission for owner/admin and protected Human Review endpoints with EVAL_MANAGE.
+      - Added GET /api/evals/results/pending-review and PATCH /api/evals/results/{result_id}/review.
+      - Pending review detection follows existing Eval score/trace signals such as `human_escalation` and `requires_manual_review`; no extra `requires_manual_review` column was introduced.
+      - Review notes are stored in `grader_trace_json.human_review`; `reviewer_id` is written only when the principal maps to a real `users.id`, preserving the requested FK in dev-token-only databases.
+      - Eval Harness now removes the disabled Human Review readiness state, renders a compact pending queue, and calls the review endpoint from Approve/Reject actions.
+
   - id: run-detail-expert-subagent-plan-repair
     date: 2026-06-19
     status: completed
