@@ -488,6 +488,36 @@ python3 scripts/validate-docs.py
 docs validation passed
 ```
 
+## 2026-06-21 B5 API Gateway External Publish
+
+Branch `feat/api-gateway-external-publish` implements the previously disabled Sandboxes API Gateway tile as a public key-authenticated Agent invoke MVP.
+
+Delivered scope:
+
+- `docs/ai/stages/09-api-gateway-publish.md` created and marked implemented.
+- Backend `ApiGatewayRoute` model, Alembic migration `20260621_0043_create_api_gateway_routes.py`, schemas, CRUD endpoints under `/api/agents/{agent_id}/gateway-routes`, and public `POST /api/gateway/{slug}/invoke`.
+- Gateway API keys are displayed once, stored as hashes, and verified through `X-Harness-Gateway-Key`.
+- Successful public invocation creates a planned Agent Run and writes API Gateway event evidence.
+- Sandboxes API Gateway tile is unlocked and supports list/create/toggle/delete for Agent `default`.
+
+Validation evidence:
+
+```text
+cd services/api-server && .venv/bin/python -m pytest tests/test_api_gateway.py -q -> 5 passed
+cd services/api-server && uv run ruff check app/api/gateway.py app/api/schemas.py app/db/models.py app/events/event_types.py app/main.py alembic/versions/20260621_0043_create_api_gateway_routes.py tests/test_api_gateway.py -> passed
+cd apps/agent-console && npm test -- src/features/sandboxes/pages/__tests__/SandboxesPage.gateway.test.tsx --reporter=dot -> 1 file / 1 test passed
+cd apps/agent-console && npx tsc --noEmit ... src/features/sandboxes/pages/SandboxesPage.tsx src/features/sandboxes/pages/__tests__/SandboxesPage.gateway.test.tsx src/features/tasks/api.ts -> passed
+git diff --check -> passed
+```
+
+Known validation blockers:
+
+```text
+cd apps/agent-console && npm run build -> existing repo-wide TypeScript test debt around jest-axe typings, stale a11y imports, SAML fixtures, and old ChatMessageBubble props
+cd services/api-server && uv run pytest tests/ -q -> existing collection failure in tests/integration/test_okta_logout.py importing missing app.db.models.Session
+python3 scripts/validate-docs.py -> isolated worktree lacks AGENTS.md at repository root
+```
+
 ## Next Known Work
 
 The latest completed post-stage lane is **Production Critical Hardening v2**, with review fixes and validation recorded in [[session-2026-05-30-production-critical-hardening-v2]].

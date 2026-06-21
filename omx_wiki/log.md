@@ -422,3 +422,7 @@
 ## [2026-06-10] session-log
 
 - Added [[session-2026-06-10-agent-workspace-team-mode-screenshot-fixes]] and refreshed [[index]] plus `docs/ai/task-progress.yaml` for Agent Workspace and Team Mode screenshot regressions. Captured same-scope Workspace hydration, local/pending conversation filtering when selecting platform Agents, immediate Team add-member query-cache merge, branch-aware pending assistant placement for branch/regenerate, owner-scoped per-agent step lists, wake cancellation cutoffs for late active events, browser-context Workspace history clearing, live sends through platform Agents (`8/8`), online local Agents (`2/2`), and Team columns (`4/4`), the Workspace/Team FAB obstruction fix, frontend typecheck, docs validation, and targeted Agent Workspace plus Team Mode plus shell Vitest (`52 passed`).
+
+## [2026-06-21] session-log
+
+- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for B5 API Gateway External Publish on branch `feat/api-gateway-external-publish`. Captured spec `docs/ai/stages/09-api-gateway-publish.md`, `api_gateway_routes` model/migration/API/public invoke endpoint, one-time hashed API key behavior, process-local rate limiting, Sandboxes API Gateway UI, targeted backend tests (`5 passed`), frontend Sandboxes Gateway test (`1 passed`), Ruff, targeted TypeScript, `git diff --check`, and existing repo-wide blockers for full frontend build, full backend pytest collection, and docs validation in isolated worktree.
