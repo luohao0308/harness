@@ -97,6 +97,7 @@ export function AgentWorkspacePage() {
   const queryClient = useQueryClient();
   const { agentId = "default" } = useParams();
   const requestedConversationId = searchParams.get("conversation_id");
+  const requestedRunId = searchParams.get("run_id");
   const requestedConversationAppliedRef = useRef<string | null>(null);
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
@@ -916,6 +917,11 @@ export function AgentWorkspacePage() {
   useEffect(() => {
     requestedConversationAppliedRef.current = null;
   }, [agentId]);
+
+  useEffect(() => {
+    if (!requestedRunId) return;
+    setActiveRunId(requestedRunId);
+  }, [requestedRunId, setActiveRunId]);
 
   // ─── Seed the session model override from settings defaults ────────────
   useEffect(() => {

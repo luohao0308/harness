@@ -386,6 +386,23 @@ export type AgentDefinition = {
   updated_at: string;
 };
 
+export type AgentGatewayRoute = {
+  id: string;
+  agent_id: string;
+  slug: string;
+  rate_limit: number;
+  enabled: boolean;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  last_invoked_at: string | null;
+};
+
+export type AgentGatewayRouteCreateResponse = {
+  route: AgentGatewayRoute;
+  api_key: string;
+};
+
 export type AgentVersion = {
   id: string;
   agent_id: string;
@@ -405,6 +422,26 @@ export type AgentCapabilityAttachmentSummary = {
   enabled: boolean;
   priority: number;
   status: string;
+};
+
+export type AgentTrigger = {
+  id: string;
+  agent_id: string;
+  type: "webhook";
+  endpoint_path: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_triggered_at: string | null;
+};
+
+export type AgentTriggerPage = {
+  items: AgentTrigger[];
+};
+
+export type AgentTriggerCreateResponse = {
+  trigger: AgentTrigger;
+  secret: string;
 };
 
 export type LocalAgentPairing = {
@@ -3311,6 +3348,38 @@ export async function listAgents() {
   return listAgentsPage();
 }
 
+export async function listAgentTriggers(agentId: string) {
+  return request<AgentTriggerPage>(`/api/agents/${encodeURIComponent(agentId)}/triggers`);
+}
+
+export async function createAgentTrigger(
+  agentId: string,
+  payload: { endpoint_path?: string | null; enabled?: boolean },
+) {
+  return request<AgentTriggerCreateResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/triggers`,
+    { method: "POST", body: JSON.stringify({ type: "webhook", ...payload }) },
+  );
+}
+
+export async function updateAgentTrigger(
+  agentId: string,
+  triggerId: string,
+  payload: { enabled: boolean },
+) {
+  return request<AgentTrigger>(
+    `/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`,
+    { method: "PATCH", body: JSON.stringify(payload) },
+  );
+}
+
+export async function deleteAgentTrigger(agentId: string, triggerId: string) {
+  return request<void>(
+    `/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function createLocalAgentPairingToken(agentId: string) {
   const scope: Record<string, unknown> = {
     executable: true,
@@ -4640,6 +4709,20 @@ export async function getEvalRun(evalRunId: string) {
   return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
 }
 
+export async function listPendingHumanReviewResults() {
+  return request<EvalResult[]>("/api/evals/results/pending-review");
+}
+
+export async function reviewEvalResult(
+  resultId: string,
+  payload: { verdict: "approved" | "rejected"; notes?: string },
+) {
+  return request<EvalResult>(`/api/evals/results/${resultId}/review`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function createEvalExperiment(datasetId: string, payload: EvalExperimentCreatePayload) {
   return request<EvalExperiment>(`/api/evals/datasets/${datasetId}/experiments`, {
     method: "POST",
@@ -5045,6 +5128,35 @@ export async function listWarmPoolBenchmarks(limit = 20) {
   return request<{ items: WarmPoolBenchmark[]; next_cursor: string | null }>(
     `/api/sandboxes/warm-pool/benchmarks?limit=${limit}`,
   );
+}
+
+export async function listAgentGatewayRoutes(agentId: string) {
+  return request<{ items: AgentGatewayRoute[] }>(`/api/agents/${agentId}/gateway-routes`);
+}
+
+export async function createAgentGatewayRoute(
+  agentId: string,
+  payload: { slug?: string; description?: string; rate_limit?: number; enabled?: boolean },
+) {
+  return request<AgentGatewayRouteCreateResponse>(`/api/agents/${agentId}/gateway-routes`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAgentGatewayRoute(
+  agentId: string,
+  routeId: string,
+  payload: Partial<Pick<AgentGatewayRoute, "description" | "enabled" | "rate_limit">>,
+) {
+  return request<AgentGatewayRoute>(`/api/agents/${agentId}/gateway-routes/${routeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAgentGatewayRoute(agentId: string, routeId: string) {
+  return request<void>(`/api/agents/${agentId}/gateway-routes/${routeId}`, { method: "DELETE" });
 }
 
 export async function listAgentVersions(agentId: string) {
