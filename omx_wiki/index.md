@@ -1,9 +1,16 @@
 # Wiki Index
 
-> 28 pages | Last updated: 2026-06-21T03:40:44+08:00
+> 35 pages | Last updated: 2026-06-22T01:47:59+08:00
 
 ## session-log
 
+- [Local Agent Pause Continue After Send](session-2026-06-22-local-agent-pause-continue-after-send.md) — Agent Workspace local Agent turns can be paused after the message has been sent and continued later without duplicating the visible user bubble.
+- [Local Agent Composer Clear After Send](session-2026-06-22-local-agent-composer-clear-after-send.md) — Agent Workspace local Agent sends clear the composer after the backend accepts the message, and later local polling hydration does not restore the sent draft.
+- [Local Agent Context Compression Hydration](session-2026-06-21-local-agent-context-compression-hydration.md) — Agent Workspace local Agent context compression summaries survive message/task polling hydration, so compressed HAO conversations stay reduced instead of returning to 100.
+- [Agent Workspace Context Compression Fallback](session-2026-06-21-agent-workspace-context-compression-fallback.md) — Agent Workspace context compression summaries stay usable when the backend reports a fallback compressor model, so manual and automatic compression reduce the right-bottom context ring instead of returning to 100.
+- [Local Agent HAO Mock Provider Fallback](session-2026-06-21-local-agent-hao-mock-provider-fallback.md) — HAO local Agent sends that request unconfigured `openai-compatible` now fall back to configured DeepSeek before bridge execution, preserving `model_fallback` evidence and avoiding backend local mock responses in live chat.
+- [Local Agent Offline Bridge Run Recovery](session-2026-06-21-local-agent-offline-bridge-run-recovery.md) — Agent Workspace `恢复` now generates a copyable `bridge run` command for the existing confirmed offline Local Agent connection, hidden HAO/Codex local tool approvals surface as Run Detail `#approvals` links, expired pending-tool daemon errors use bounded event ids, repeated HAO tool calls after approval get fresh request ids, and HAO chat keeps bridge context out of user-visible replies while rejecting backend local mock output.
+- [Local Agent Bridge Timeout Fallback](session-2026-06-21-local-agent-bridge-timeout-fallback.md) — Agent Workspace local Agent turns no longer remain indefinitely on `本地 Agent 正在处理`; idle bridge tasks fail closed after 180 seconds, offline state exposes inline `恢复`, and polling-discovered task failures stay visible as error bubbles.
 - [Tool Approval Modify UI](session-2026-06-21-tool-approval-modify-ui.md) — Run Detail and Workspace Inspector pending approval cards now expose Modify beside Approve/Reject, edit object JSON in a ConfigDialog, call `modifyToolApproval`, and refresh approval state.
 - [Agent Workspace Subagent Specialist Binding](session-2026-06-19-agent-workspace-subagent-specialist-binding.md) — Agent Workspace `subagent` orchestration now binds a SubagentSpecialist, exposes the selected expert in SSE/workspace/subagent projections, and covers automatic, Chinese, explicit, and fallback expert selection paths.
 - [Frontend Goal Auth Error Compact UI](session-2026-06-19-frontend-goal-auth-error-compact-ui.md) — Agent Workspace `追踪目标模式` now surfaces model-key 401 failures as the existing model-auth error UI, streams completed goal deliverables into the assistant bubble, keeps the goal row compact, and opens goal editing in the shared light ConfigDialog.

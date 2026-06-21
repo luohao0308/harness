@@ -373,7 +373,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const state = get();
     let current = state.nodesById[nodeIdToInspect];
     if (!current) return null;
+    const seenNodeIds = new Set<string>();
     while (current.children_ids.length > 0) {
+      if (seenNodeIds.has(current.id)) break;
+      seenNodeIds.add(current.id);
       const nextId = current.children_ids[current.children_ids.length - 1];
       const next = state.nodesById[nextId];
       if (!next) break;
@@ -387,8 +390,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activePath: () => {
     const state = get();
     const path: ConversationNode[] = [];
+    const seenNodeIds = new Set<string>();
     let current: string | null = state.activeLeafId;
     while (current) {
+      if (seenNodeIds.has(current)) break;
+      seenNodeIds.add(current);
       const node: ConversationNode | undefined = state.nodesById[current];
       if (!node) break;
       if (node.id !== state.rootNodeId) path.push(node);

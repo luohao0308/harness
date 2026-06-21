@@ -2667,6 +2667,14 @@ class LocalAgentPairingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LocalAgentRecoveryCommandResponse(BaseModel):
+    connection_id: str = Field(description="本地 Agent 连接 ID")
+    adapter_kind: str = Field(description="本地 Agent 类型")
+    command: str = Field(description="可复制的 bridge 重启命令")
+    state_home: str = Field(description="命令默认读取的 HAO_HOME")
+    status: str = Field(description="当前连接状态")
+
+
 class LocalAgentConnectionRegisterRequest(BaseModel):
     pair_token: str = Field(min_length=16, description="一次性配对 token")
     pair_code: str = Field(min_length=4, max_length=16, description="短配对码")
@@ -2759,6 +2767,16 @@ class LocalAgentConversationBindingPage(BaseModel):
 class LocalAgentSendMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=120_000, description="用户消息")
     client_message_id: str = Field(min_length=1, max_length=160, description="客户端幂等 ID")
+    resume_of_client_message_id: str | None = Field(
+        default=None,
+        max_length=160,
+        description="续发来源客户端消息 ID，用于前端水合折叠同一用户轮次",
+    )
+    resume_of_user_message_id: str | None = Field(
+        default=None,
+        max_length=200,
+        description="续发来源 Workspace user 节点 ID，用于审计和前端恢复",
+    )
     workspace_context_provided: bool = Field(
         default=False,
         description="前端是否显式提供了当前 Workspace 上下文；为空时也禁止回放旧 session",
@@ -2851,6 +2869,7 @@ class LocalAgentBridgeEventRequest(BaseModel):
         "assistant_delta",
         "assistant_done",
         "assistant_error",
+        "adapter_heartbeat",
         "tool_result",
     ] = Field(description="事件类型")
     content: str | None = Field(default=None, max_length=120_000, description="输出内容")

@@ -13,7 +13,14 @@ from sqlalchemy.exc import IntegrityError
 
 from .common import *
 from ._workspace_chat_helpers import _create_workspace_chat_run
+from app.agents.model_gateway import (
+    DEFAULT_MODEL_SETTINGS,
+    MODEL_SETTINGS_KEY,
+    normalize_model_settings,
+    provider_api_key,
+)
 from app.core.config import get_settings
+from app.db.models import SystemSetting
 from app.security.auth import LOCAL_AGENT_BRIDGE_STREAM_SCOPE
 
 LOCAL_AGENT_PROTOCOL_VERSION = "local-agent-v1"
@@ -31,6 +38,7 @@ DEVICE_TOKEN_BYTES = 32
 PAIR_TOKEN_BYTES = 32
 PAIR_CODE_DIGITS = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 LOCAL_AGENT_OFFLINE_AFTER_SECONDS = 30
+LOCAL_AGENT_BRIDGE_TASK_TIMEOUT_SECONDS = 180
 LOCAL_AGENT_TOOL_DECISION_TTL_MINUTES = 30
 LOCAL_AGENT_TOOL_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "denied", "expired"}
 LOCAL_AGENT_TOOL_ACTIVE_STATUSES = {"approval_required", "approved", "allowed", "running"}
@@ -151,6 +159,121 @@ def _local_agent_workspace_run_mode(connection: LocalAgentConnection, workspace_
     return "chat"
 
 
+def _local_agent_effective_model(
+    *,
+    connection: LocalAgentConnection,
+    requested_provider: str,
+    requested_model: str,
+    session: Session,
+    principal: Principal,
+) -> tuple[str, str, dict | None]:
+    requested_provider = str(requested_provider or "default").strip() or "default"
+    requested_model = str(requested_model or "default").strip() or "default"
+    if connection.adapter_kind != "hao":
+        return requested_provider, requested_model, None
+
+    settings = _local_agent_model_settings(
+        session=session,
+        organization_id=principal.organization_id,
+    )
+    default_provider = str(settings.get("default_provider") or "default").strip() or "default"
+    default_model = str(settings.get("default_model") or "default").strip() or "default"
+    provider_name = default_provider if requested_provider == "default" else requested_provider
+    model_name = default_model if requested_model == "default" else requested_model
+    provider = _local_agent_model_provider(settings=settings, provider_name=provider_name)
+    if not _local_agent_provider_would_use_mock(
+        provider,
+        session=session,
+        principal=principal,
+    ):
+        return provider_name, model_name, None
+
+    fallback_provider = _local_agent_first_real_model_provider(
+        settings=settings,
+        preferred_provider_name=default_provider,
+        session=session,
+        principal=principal,
+    )
+    if fallback_provider is None:
+        return provider_name, model_name, None
+    fallback_provider_name = str(fallback_provider.get("name") or default_provider).strip()
+    fallback_model_name = str(
+        fallback_provider.get("model")
+        or (default_model if fallback_provider_name == default_provider else "")
+        or default_model
+        or model_name
+    ).strip()
+    return (
+        fallback_provider_name,
+        fallback_model_name,
+        {
+            "requested_model_provider": provider_name,
+            "requested_model_name": model_name,
+            "fallback_model_provider": fallback_provider_name,
+            "fallback_model_name": fallback_model_name,
+            "fallback_reason": "selected_provider_would_use_local_mock",
+        },
+    )
+
+
+def _local_agent_model_settings(*, session: Session, organization_id: str | None) -> dict:
+    setting = None
+    if organization_id:
+        setting = session.execute(
+            select(SystemSetting).where(
+                SystemSetting.organization_id == organization_id,
+                SystemSetting.key == MODEL_SETTINGS_KEY,
+            )
+        ).scalar_one_or_none()
+    return normalize_model_settings(
+        setting.value_json if setting is not None else DEFAULT_MODEL_SETTINGS
+    )
+
+
+def _local_agent_model_provider(*, settings: dict, provider_name: str) -> dict:
+    for provider in settings.get("providers", []):
+        if isinstance(provider, dict) and provider.get("name") == provider_name:
+            return provider
+    return {"name": provider_name, "status": "healthy"}
+
+
+def _local_agent_provider_would_use_mock(
+    provider: dict,
+    *,
+    session: Session,
+    principal: Principal,
+) -> bool:
+    api_key = provider_api_key(
+        provider,
+        session=session,
+        organization_id=principal.organization_id,
+        user_id=principal.user_id,
+    )
+    base_url = str(provider.get("base_url") or "")
+    return api_key in {None, "", "replace-me"} or base_url.endswith("/mock-model")
+
+
+def _local_agent_first_real_model_provider(
+    *,
+    settings: dict,
+    preferred_provider_name: str,
+    session: Session,
+    principal: Principal,
+) -> dict | None:
+    providers = [
+        provider for provider in settings.get("providers", []) if isinstance(provider, dict)
+    ]
+    providers.sort(key=lambda provider: 0 if provider.get("name") == preferred_provider_name else 1)
+    for provider in providers:
+        if not _local_agent_provider_would_use_mock(
+            provider,
+            session=session,
+            principal=principal,
+        ):
+            return provider
+    return None
+
+
 def _local_agent_bridge_stream_token(
     principal: Principal,
     *,
@@ -267,20 +390,25 @@ def _local_agent_npx_uses_registry(package_spec: str) -> bool:
     return True
 
 
+def _local_agent_npx_command_parts() -> list[str]:
+    package_spec = _local_agent_npx_package_spec()
+    parts = ["npx", "-y"]
+    registry = get_settings().local_agent_npx_registry.strip()
+    if registry and _local_agent_npx_uses_registry(package_spec):
+        parts.append(f"--registry={registry}")
+    parts.append(package_spec)
+    return parts
+
+
 def _local_agent_pairing_command(
     *,
     api_url: str,
     pair_token: str,
     pair_code: str,
 ) -> str:
-    package_spec = _local_agent_npx_package_spec()
-    parts = ["npx", "-y"]
-    registry = get_settings().local_agent_npx_registry.strip()
-    if registry and _local_agent_npx_uses_registry(package_spec):
-        parts.append(f"--registry={registry}")
+    parts = _local_agent_npx_command_parts()
     parts.extend(
         [
-            package_spec,
             "bridge",
             "pair",
             "--api",
@@ -293,6 +421,55 @@ def _local_agent_pairing_command(
         ]
     )
     return " ".join(shlex.quote(part) for part in parts)
+
+
+def _local_agent_recovery_state_home(
+    connection: LocalAgentConnection,
+    *,
+    session: Session,
+) -> str:
+    token = (
+        session.get(LocalAgentPairingToken, connection.pairing_token_id)
+        if connection.pairing_token_id
+        else None
+    )
+    if (
+        token is not None
+        and token.organization_id == connection.organization_id
+        and _pairing_scope_allows_multiple_adapters(token.scope_json)
+        and connection.adapter_kind in LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS
+    ):
+        return f"$HOME/.hao/bridges/{connection.adapter_kind}"
+    if connection.adapter_kind in LOCAL_AGENT_DEFAULT_PAIR_ADAPTERS:
+        return f"$HOME/.hao/bridges/{connection.adapter_kind}"
+    return "$HOME/.hao"
+
+
+def _local_agent_recovery_command(
+    connection: LocalAgentConnection,
+    *,
+    api_url: str,
+    state_home: str,
+) -> str:
+    parts = _local_agent_npx_command_parts()
+    parts.extend(
+        [
+            "bridge",
+            "run",
+            "--api",
+            api_url,
+            "--connection-id",
+            connection.id,
+            "--adapter",
+            connection.adapter_kind,
+            "--daemon",
+        ]
+    )
+    if _claude_code_permission_bridge_enabled(connection):
+        parts.extend(["--permission-bridge", "sdk"])
+    return f'HAO_HOME="${{HAO_HOME:-{state_home}}}" ' + " ".join(
+        shlex.quote(part) for part in parts
+    )
 
 
 def _pairing_response(
@@ -326,7 +503,7 @@ def _pairing_response(
     )
 
 
-def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnectionResponse:
+def _local_agent_effective_connection_status(connection: LocalAgentConnection) -> str:
     effective_status = connection.status
     onboarding_confirmed = _connection_onboarding_confirmed(connection)
     if not onboarding_confirmed and effective_status != "revoked":
@@ -338,6 +515,11 @@ def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnecti
         > LOCAL_AGENT_OFFLINE_AFTER_SECONDS
     ):
         effective_status = "offline"
+    return effective_status
+
+
+def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnectionResponse:
+    onboarding_confirmed = _connection_onboarding_confirmed(connection)
     return LocalAgentConnectionResponse(
         id=connection.id,
         agent_id=connection.agent_id,
@@ -348,7 +530,7 @@ def _connection_response(connection: LocalAgentConnection) -> LocalAgentConnecti
         adapter_kind=connection.adapter_kind,
         protocol_version=connection.protocol_version,
         bridge_version=connection.bridge_version,
-        status=effective_status,
+        status=_local_agent_effective_connection_status(connection),
         workspace_root=_redact_path(connection.workspace_root),
         capabilities_json=connection.capabilities_json,
         risk_capabilities_json=connection.risk_capabilities_json,
@@ -837,6 +1019,52 @@ def list_local_agent_connections(
     return LocalAgentConnectionPage(items=[_connection_response(row) for row in rows])
 
 
+@router.get(
+    "/local-agent/connections/{connection_id}/recovery-command",
+    response_model=LocalAgentRecoveryCommandResponse,
+    summary="生成本地 Agent bridge 重启命令",
+)
+def get_local_agent_recovery_command(
+    connection_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> LocalAgentRecoveryCommandResponse:
+    require_role(principal, {"admin", "engineer"})
+    connection = _owned_connection(
+        connection_id=connection_id,
+        session=session,
+        principal=principal,
+        executable=False,
+    )
+    if connection.owner_user_id != principal.user_id and "admin" not in principal.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owner or admin can recover connection",
+        )
+    if connection.revoked_at is not None or connection.status == "revoked":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local Agent connection revoked",
+        )
+    if not _connection_onboarding_confirmed(connection):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent connection is not confirmed",
+        )
+    state_home = _local_agent_recovery_state_home(connection, session=session)
+    return LocalAgentRecoveryCommandResponse(
+        connection_id=connection.id,
+        adapter_kind=connection.adapter_kind,
+        command=_local_agent_recovery_command(
+            connection,
+            api_url=_local_agent_public_api_url(),
+            state_home=state_home,
+        ),
+        state_home=state_home,
+        status=_local_agent_effective_connection_status(connection),
+    )
+
+
 @router.patch(
     "/local-agent/connections/{connection_id}",
     response_model=LocalAgentConnectionResponse,
@@ -1241,6 +1469,13 @@ def send_local_agent_message(
         )
     requested_model_provider = request.model_provider or "default"
     requested_model_name = request.model_name or "default"
+    effective_model_provider, effective_model_name, model_fallback = _local_agent_effective_model(
+        connection=connection,
+        requested_provider=requested_model_provider,
+        requested_model=requested_model_name,
+        session=session,
+        principal=principal,
+    )
     tool_mentions = [
         {
             "name": mention.name,
@@ -1260,19 +1495,23 @@ def send_local_agent_message(
     )
     workspace_request = {
         "mode": request.workspace_mode,
-        "model_provider": requested_model_provider,
-        "model_name": requested_model_name,
+        "model_provider": effective_model_provider,
+        "model_name": effective_model_name,
         "active_leaf_id": request.active_leaf_id,
         "active_branch_id": request.active_branch_id,
         "pinned_node_ids": request.pinned_node_ids,
         "context_window_turns": request.context_window_turns,
         "context_max_tokens": request.context_max_tokens,
         "workspace_context_provided": request.workspace_context_provided,
+        "resume_of_client_message_id": request.resume_of_client_message_id,
+        "resume_of_user_message_id": request.resume_of_user_message_id,
         "tool_mentions": tool_mentions,
         "attachment_names": request.attachment_names[:12],
         "attachments": attachment_payloads,
         "compressed_context": compressed_context,
     }
+    if model_fallback is not None:
+        workspace_request["model_fallback"] = model_fallback
     local_io_input = _local_agent_message_input_snapshot(
         connection=connection,
         binding=binding,
@@ -1294,6 +1533,8 @@ def send_local_agent_message(
             "binding_id": binding.id,
             "agent_session_id": agent_session.id,
             "client_message_id": request.client_message_id,
+            "resume_of_client_message_id": request.resume_of_client_message_id,
+            "resume_of_user_message_id": request.resume_of_user_message_id,
             "workspace_request": local_io_input["workspace_request"],
             "local_agent_io": {
                 "input": local_io_input,
@@ -1310,8 +1551,8 @@ def send_local_agent_message(
         session=session,
         principal=principal,
         mode=_local_agent_workspace_run_mode(connection, request.workspace_mode),
-        model_provider=requested_model_provider,
-        model_name=requested_model_name,
+        model_provider=effective_model_provider,
+        model_name=effective_model_name,
         max_subagents=0,
         commit=False,
     )
@@ -1322,8 +1563,8 @@ def send_local_agent_message(
         "resume_mode": binding.resume_mode,
         "message": request.content,
         "workspace_request": workspace_request,
-        "model_provider": requested_model_provider,
-        "model_name": requested_model_name,
+        "model_provider": effective_model_provider,
+        "model_name": effective_model_name,
         "tool_mentions": tool_mentions,
         "attachment_names": request.attachment_names[:12],
         "attachments": attachment_payloads,
@@ -1337,6 +1578,8 @@ def send_local_agent_message(
         "capabilities": connection.capabilities_json,
         "workspace_identity_hash": (connection.metadata_json or {}).get("workspace_identity_hash"),
     }
+    if model_fallback is not None:
+        bridge_payload["model_fallback"] = model_fallback
     bridge_task_id = str(uuid.uuid4())
     if connection.adapter_kind == "hao":
         bridge_payload["harness_stream_token"] = _local_agent_bridge_stream_token(
@@ -1424,6 +1667,14 @@ def list_local_agent_binding_tasks(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only owner or admin can list local Agent tasks",
         )
+    now = utc_now()
+    expired_count = _expire_stale_local_agent_bridge_tasks(
+        session=session,
+        now=now,
+        binding_id=binding.id,
+    )
+    if expired_count:
+        session.commit()
     rows = list(
         session.execute(
             select(LocalAgentBridgeTask)
@@ -1450,6 +1701,11 @@ def pull_local_agent_bridge_tasks(
 ) -> LocalAgentBridgeTaskPage:
     connection = _bridge_connection(session=session, device_token=x_local_agent_device_token)
     now = utc_now()
+    _expire_stale_local_agent_bridge_tasks(
+        session=session,
+        now=now,
+        connection_id=connection.id,
+    )
     tasks = list(
         session.execute(
             select(LocalAgentBridgeTask)
@@ -1609,6 +1865,8 @@ def record_local_agent_bridge_event(
         request=request,
         session=session,
     )
+    recorded_at = utc_now()
+    bridge_task.updated_at = recorded_at
     receipt = LocalAgentBridgeEventReceipt(
         organization_id=connection.organization_id,
         connection_id=connection.id,
@@ -1620,7 +1878,7 @@ def record_local_agent_bridge_event(
         payload_json=_safe_bridge_payload(request),
         agent_event_id=agent_event.id if agent_event else None,
         tool_call_id=tool_call.id if tool_call else None,
-        created_at=utc_now(),
+        created_at=recorded_at,
     )
     session.add(receipt)
     session.commit()
@@ -2978,6 +3236,114 @@ def _refresh_waiting_local_task(
     task.updated_at = now
 
 
+def _expire_stale_local_agent_bridge_tasks(
+    *,
+    session: Session,
+    now: datetime,
+    binding_id: str | None = None,
+    connection_id: str | None = None,
+) -> int:
+    filters = [LocalAgentBridgeTask.status.in_(("pending", "leased", "running"))]
+    if binding_id is not None:
+        filters.append(LocalAgentBridgeTask.binding_id == binding_id)
+    if connection_id is not None:
+        filters.append(LocalAgentBridgeTask.connection_id == connection_id)
+    tasks = list(
+        session.execute(
+            select(LocalAgentBridgeTask)
+            .where(*filters)
+            .order_by(LocalAgentBridgeTask.created_at.asc(), LocalAgentBridgeTask.id.asc())
+        ).scalars()
+    )
+    expired_count = 0
+    for bridge_task in tasks:
+        if _has_unresolved_local_tool_state(bridge_task=bridge_task, session=session):
+            continue
+        last_activity_at = _local_agent_bridge_task_last_activity_at(bridge_task)
+        if now - last_activity_at < timedelta(seconds=LOCAL_AGENT_BRIDGE_TASK_TIMEOUT_SECONDS):
+            continue
+        if _fail_local_agent_bridge_task(
+            bridge_task=bridge_task,
+            session=session,
+            reason=(
+                "本地 Agent 超过 "
+                f"{LOCAL_AGENT_BRIDGE_TASK_TIMEOUT_SECONDS} 秒没有返回，任务已自动失败。"
+                "请确认本地 bridge 仍在运行后重试。"
+            ),
+            actor_type="system",
+            actor_id=bridge_task.connection_id,
+            now=now,
+            timed_out=True,
+        ):
+            expired_count += 1
+    return expired_count
+
+
+def _local_agent_bridge_task_last_activity_at(task: LocalAgentBridgeTask) -> datetime:
+    candidates = [
+        task.updated_at,
+        task.acked_at,
+        task.leased_at,
+        task.created_at,
+    ]
+    return max(_as_aware_utc(value) for value in candidates if value is not None)
+
+
+def _fail_local_agent_bridge_task(
+    *,
+    bridge_task: LocalAgentBridgeTask,
+    session: Session,
+    reason: str,
+    actor_type: str,
+    actor_id: str | None,
+    now: datetime,
+    timed_out: bool = False,
+) -> bool:
+    if bridge_task.status in {"completed", "failed", "cancelled"}:
+        return False
+    safe_reason = _bounded_text(reason)
+    payload = bridge_task.payload_json if isinstance(bridge_task.payload_json, dict) else {}
+    next_payload = {
+        **payload,
+        "terminal_error_message": safe_reason,
+    }
+    if timed_out:
+        next_payload.update(
+            {
+                "timeout": True,
+                "timeout_at": now.isoformat(),
+                "timeout_seconds": LOCAL_AGENT_BRIDGE_TASK_TIMEOUT_SECONDS,
+            }
+        )
+    bridge_task.status = "failed"
+    bridge_task.completed_at = bridge_task.completed_at or now
+    bridge_task.updated_at = now
+    bridge_task.payload_json = next_payload
+    run = session.get(Task, bridge_task.task_id)
+    if run is not None:
+        run.status = "FAILED"
+        run.completed_at = run.completed_at or now
+        run.updated_at = now
+    agent_session = session.get(AgentSession, bridge_task.agent_session_id)
+    if agent_session is not None:
+        agent_session.updated_at = now
+    EventStore(session).append(
+        task_id=bridge_task.task_id,
+        event_type=EventType.LOCAL_AGENT_MESSAGE_FAILED,
+        payload_json={
+            "connection_id": bridge_task.connection_id,
+            "bridge_task_id": bridge_task.id,
+            "adapter_kind": payload.get("adapter_kind"),
+            "error_message": safe_reason,
+            "timeout": timed_out,
+            "timeout_seconds": LOCAL_AGENT_BRIDGE_TASK_TIMEOUT_SECONDS if timed_out else None,
+        },
+        actor_type=actor_type,
+        actor_id=actor_id,
+    )
+    return True
+
+
 def _cancel_local_agent_bridge_task(
     *,
     bridge_task: LocalAgentBridgeTask,
@@ -4025,6 +4391,9 @@ def _apply_bridge_event(
             actor_type="local_agent",
             actor_id=connection.id,
         )
+    elif request.event_type == "adapter_heartbeat":
+        # Receipt persistence updates bridge_task.updated_at, which keeps active work alive.
+        pass
     elif request.event_type == "assistant_delta":
         agent_event = EventStore(session).append(
             task_id=bridge_task.task_id,
@@ -4477,8 +4846,13 @@ def _local_agent_message_input_snapshot(
         "binding_id": binding.id,
         "agent_session_id": binding.agent_session_id,
         "client_message_id": request.client_message_id,
-        "model_provider": request.model_provider or "default",
-        "model_name": request.model_name or "default",
+        "resume_of_client_message_id": request.resume_of_client_message_id,
+        "resume_of_user_message_id": request.resume_of_user_message_id,
+        "model_provider": (
+            workspace_request.get("model_provider") or request.model_provider or "default"
+        ),
+        "model_name": workspace_request.get("model_name") or request.model_name or "default",
+        "model_fallback": workspace_request.get("model_fallback"),
         "workspace_mode": request.workspace_mode,
         "active_leaf_id": request.active_leaf_id,
         "active_branch_id": request.active_branch_id,

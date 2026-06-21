@@ -40,6 +40,10 @@ BRIDGE_WORKSPACE_ROOT_REF = "bridge.workspace-root"
 BRIDGE_AUTO_PAIR_ADAPTERS = ("hao", "codex", "claude_code")
 BRIDGE_FULL_RISK_CAPABILITIES = ["host_read", "host_write", "shell", "git", "network"]
 BRIDGE_UNCONFIRMED_STATUS_PHRASE = "has not been confirmed"
+BRIDGE_TASK_HEARTBEAT_SECONDS = 45.0
+BRIDGE_LOCAL_MOCK_RESPONSE_PREFIX = (
+    "这是本地 mock 模型回复，用于 Docker 私有交付环境的无 API Key 验证。"
+)
 CODEX_SUBPROCESS_TIMEOUT_SECONDS = 120
 CODEX_OUTPUT_LIMIT_BYTES = 64_000
 CODEX_PROMPT_CONTEXT_MESSAGE_LIMIT = 4000
@@ -418,6 +422,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     bridge_run.add_argument("--cwd", default=None)
+    bridge_run.add_argument("--daemon", action="store_true")
     bridge_run.add_argument("--once", action="store_true")
     bridge_run.add_argument("--interval", type=float, default=2.0)
     bridge_run.add_argument(
@@ -1380,7 +1385,10 @@ def _bridge_conversation_context_block(payload: dict[str, Any], *, redactor) -> 
 
 
 def _hao_prompt_for_task(payload: dict[str, Any]) -> str:
-    message = _redact_codex_text(str(payload.get("message") or "").strip(), limit=4000)
+    return _redact_codex_text(str(payload.get("message") or "").strip(), limit=4000)
+
+
+def _hao_system_prompt_for_task(payload: dict[str, Any]) -> str:
     resume_mode = str(payload.get("resume_mode") or "native_resume")
     harness_context = _bridge_workspace_context_prompt(payload, redactor=_redact_codex_text)
     context_block = _bridge_conversation_context_block(payload, redactor=_redact_codex_text)
@@ -1391,8 +1399,6 @@ def _hao_prompt_for_task(payload: dict[str, Any]) -> str:
         f"Resume mode: {resume_mode}.\n\n"
         f"{harness_context}"
         f"{context_block}"
-        "User message:\n"
-        f"{message}\n"
     )
 
 
@@ -2933,11 +2939,36 @@ def _bridge_tool_request_id(
     bridge_task_id: str,
     tool_call_id: str | None,
     tool_name: str,
+    request_sequence: int = 0,
 ) -> str:
-    raw = f"{bridge_task_id}:{tool_call_id or tool_name}".strip(":")
+    tool_identity = str(tool_call_id or tool_name)
+    if request_sequence > 0:
+        tool_identity = f"{tool_identity}:{request_sequence}"
+    raw = f"{bridge_task_id}:{tool_identity}".strip(":")
     if 1 <= len(raw) <= 150:
         return raw
     return f"{bridge_task_id}:tool:{sha256(raw.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _bridge_tool_request_sequence(
+    *,
+    store: SessionStore,
+    session_id: str,
+    run_id: str | None,
+) -> int:
+    try:
+        messages = store.list_active_path(session_id)
+    except Exception:
+        return 0
+    count = 0
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        message_run_id = str(message.get("run_id") or "")
+        if run_id and message_run_id and message_run_id != run_id:
+            continue
+        count += 1
+    return count
 
 
 def _sha256_text(value: str) -> str:
@@ -3703,6 +3734,9 @@ def _spawn_bridge_daemon(
     args: argparse.Namespace,
     state: dict[str, Any],
 ) -> int:
+    project_root = Path(__file__).resolve().parents[3]
+    config.home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    log_path = config.home / "bridge-daemon.log"
     command = [
         sys.executable,
         "-m",
@@ -3728,23 +3762,24 @@ def _spawn_bridge_daemon(
         command.extend(["--cwd", str(state["cwd"])])
     popen_kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
+        "stderr": subprocess.STDOUT,
         "start_new_session": True,
         "env": {**os.environ, "HAO_HOME": str(config.home)},
+        "cwd": str(project_root),
     }
-    if state.get("adapter_kind") in {"codex", "claude_code"}:
-        popen_kwargs["cwd"] = str(Path(__file__).resolve().parents[3])
-    subprocess.Popen(  # noqa: S603
-        command,
-        **popen_kwargs,
-    )
+    with log_path.open("ab") as log_file:
+        subprocess.Popen(  # noqa: S603
+            command,
+            stdout=log_file,
+            **popen_kwargs,
+        )
     print(
         json.dumps(
             {
                 "status": "daemon_started",
                 "connection_id": state["connection_id"],
                 "adapter_kind": state["adapter_kind"],
+                "log_path": str(log_path),
                 "next_step": "return_to_platform_refresh_discovery",
                 "message": "后台 bridge 已启动，请返回到 Harness 平台上点击“我已执行，刷新识别”。",
             },
@@ -3852,6 +3887,8 @@ def _run_bridge(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if args.daemon:
+        return _spawn_bridge_daemon(config=config, args=args, state=state)
     return _run_bridge_loop_from_state(
         config=config,
         state=state,
@@ -3930,6 +3967,67 @@ def _bridge_error_is_unconfirmed(exc: httpx.HTTPStatusError) -> bool:
     return BRIDGE_UNCONFIRMED_STATUS_PHRASE in str(detail)
 
 
+def _local_bridge_mock_response_error() -> str:
+    return (
+        "Local Agent received the backend mock model response. Configure a real model/API key "
+        "for the selected provider before using local Agent chat."
+    )
+
+
+def _is_local_bridge_mock_response(text: str) -> bool:
+    return text.lstrip().startswith(BRIDGE_LOCAL_MOCK_RESPONSE_PREFIX)
+
+
+def _start_bridge_task_heartbeat(
+    *,
+    client: Any,
+    device_token: str,
+    bridge_task_id: str,
+    adapter_kind: str,
+) -> tuple[threading.Event, threading.Thread]:
+    stop_event = threading.Event()
+
+    def heartbeat_loop() -> None:
+        sequence = 10_000
+        while not stop_event.wait(BRIDGE_TASK_HEARTBEAT_SECONDS):
+            try:
+                client.report_local_agent_bridge_event(
+                    device_token=device_token,
+                    payload={
+                        "event_id": f"{bridge_task_id}:heartbeat:{uuid.uuid4().hex}",
+                        "bridge_task_id": bridge_task_id,
+                        "event_type": "adapter_heartbeat",
+                        "sequence": sequence,
+                        "metadata": {
+                            "adapter_kind": adapter_kind,
+                            "heartbeat": True,
+                        },
+                    },
+                )
+            except Exception:
+                # Heartbeat is best-effort; terminal adapter events still own task outcome.
+                continue
+            sequence += 1
+
+    thread = threading.Thread(
+        target=heartbeat_loop,
+        name=f"hao-bridge-heartbeat-{bridge_task_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event, thread
+
+
+def _stop_bridge_task_heartbeat(
+    handle: tuple[threading.Event, threading.Thread] | None,
+) -> None:
+    if handle is None:
+        return
+    stop_event, thread = handle
+    stop_event.set()
+    thread.join(timeout=1)
+
+
 def _handle_bridge_task(
     *,
     config: Any,
@@ -3969,31 +4067,40 @@ def _handle_bridge_task(
             },
         )
         return
-    if adapter_kind == "codex":
-        _handle_codex_bridge_task(
-            config=config,
-            state=state,
-            client=client,
-            device_token=device_token,
-            task=task,
-        )
-        return
-    if adapter_kind == "claude_code":
-        _handle_claude_code_bridge_task(
-            config=config,
-            state=state,
-            client=client,
-            device_token=device_token,
-            task=task,
-        )
-        return
-    _handle_hao_bridge_task(
-        config=config,
-        state=state,
+    heartbeat = _start_bridge_task_heartbeat(
         client=client,
         device_token=device_token,
-        task=task,
+        bridge_task_id=task_id,
+        adapter_kind=adapter_kind,
     )
+    try:
+        if adapter_kind == "codex":
+            _handle_codex_bridge_task(
+                config=config,
+                state=state,
+                client=client,
+                device_token=device_token,
+                task=task,
+            )
+            return
+        if adapter_kind == "claude_code":
+            _handle_claude_code_bridge_task(
+                config=config,
+                state=state,
+                client=client,
+                device_token=device_token,
+                task=task,
+            )
+            return
+        _handle_hao_bridge_task(
+            config=config,
+            state=state,
+            client=client,
+            device_token=device_token,
+            task=task,
+        )
+    finally:
+        _stop_bridge_task_heartbeat(heartbeat)
 
 
 def _handle_codex_bridge_task(
@@ -4218,6 +4325,7 @@ def _handle_hao_bridge_task(
     task_id = str(task["id"])
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
     prompt = _hao_prompt_for_task(payload)
+    system_prompt = _hao_system_prompt_for_task(payload)
     run_id = str(payload.get("run_id") or "")
     agent_id = str(payload.get("agent_id") or "default")
     adapter_session_id = payload.get("adapter_session_id")
@@ -4245,6 +4353,22 @@ def _handle_hao_bridge_task(
         )
     if run_id:
         store.update_run_id(local_session.id, run_id)
+    client.report_local_agent_bridge_event(
+        device_token=device_token,
+        payload={
+            "event_id": f"{task_id}:hao:started",
+            "bridge_task_id": task_id,
+            "event_type": "adapter_started",
+            "sequence": 0,
+            "metadata": {
+                "adapter_kind": "hao",
+                "command_mode": command,
+                "supports_resume": True,
+                "resume_mode": payload.get("resume_mode") or "native_resume",
+                "local_session_id": local_session.id,
+            },
+        },
+    )
     try:
         model_provider = str(payload.get("model_provider") or "default")
         model_name = str(payload.get("model_name") or "default")
@@ -4261,6 +4385,7 @@ def _handle_hao_bridge_task(
         result = run_headless_once(
             command=command,
             prompt=prompt,
+            system_prompt=system_prompt,
             cwd=cwd,
             session_store=store,
             session_id=local_session.id,
@@ -4402,6 +4527,10 @@ def _report_bridge_assistant_done(
     )
 
 
+def _bridge_assistant_error_event_id(bridge_task_id: str) -> str:
+    return f"{bridge_task_id}:error:{uuid.uuid4().hex}"
+
+
 def _resume_bridge_pending_tools(
     *,
     config: Any,
@@ -4426,6 +4555,14 @@ def _resume_bridge_pending_tools(
         )
         if decision.get("decision") == "approval_required":
             continue
+        decision_status = str(decision.get("status") or decision.get("decision") or "").strip()
+        if decision_status == "succeeded":
+            _remove_bridge_pending_tool(
+                config=config,
+                state=state,
+                tool_request_id=tool_request_id,
+            )
+            continue
         if not decision.get("executable"):
             _remove_bridge_pending_tool(
                 config=config,
@@ -4435,7 +4572,7 @@ def _resume_bridge_pending_tools(
             client.report_local_agent_bridge_event(
                 device_token=device_token,
                 payload={
-                    "event_id": f"{bridge_task_id}:error:{tool_request_id}:{uuid.uuid4().hex}",
+                    "event_id": _bridge_assistant_error_event_id(bridge_task_id),
                     "bridge_task_id": bridge_task_id,
                     "event_type": "assistant_error",
                     "error_message": decision.get("reason") or decision.get("decision") or "denied",
@@ -4455,7 +4592,7 @@ def _resume_bridge_pending_tools(
             client.report_local_agent_bridge_event(
                 device_token=device_token,
                 payload={
-                    "event_id": f"{bridge_task_id}:error:{tool_request_id}:{uuid.uuid4().hex}",
+                    "event_id": _bridge_assistant_error_event_id(bridge_task_id),
                     "bridge_task_id": bridge_task_id,
                     "event_type": "assistant_error",
                     "error_message": f"local session not found for pending tool: {session_id}",
@@ -4482,7 +4619,7 @@ def _resume_bridge_pending_tools(
             client.report_local_agent_bridge_event(
                 device_token=device_token,
                 payload={
-                    "event_id": f"{bridge_task_id}:error:{tool_request_id}:{uuid.uuid4().hex}",
+                    "event_id": _bridge_assistant_error_event_id(bridge_task_id),
                     "bridge_task_id": bridge_task_id,
                     "event_type": "assistant_error",
                     "error_message": executed.error_message or executed.status,
@@ -4611,6 +4748,11 @@ def _handle_bridge_host_tool_request(
         bridge_task_id=bridge_context.bridge_task_id,
         tool_call_id=tool_call_id,
         tool_name=tool_name,
+        request_sequence=_bridge_tool_request_sequence(
+            store=store,
+            session_id=session_id,
+            run_id=run_id,
+        ),
     )
     preview_result: ToolExecutionResult | None = None
     pending_change_preview: dict[str, Any] | None = None
@@ -5379,6 +5521,7 @@ def run_headless_once(
     permission_mode: str,
     target: str,
     max_auto_turns: int,
+    system_prompt: str | None = None,
     fake_events: list[SSEEvent] | None = None,
     api_client: Any | None = None,
     agent_id: str = "default",
@@ -5406,6 +5549,18 @@ def run_headless_once(
         raise ValueError("api_client is required for live headless runs")
     store = session_store
     store.update_cli_mode(session.id, command)
+    system_prompt_text = (system_prompt or "").strip()
+    if system_prompt_text:
+        store.append_message(
+            session.id,
+            role="system",
+            content=system_prompt_text,
+            run_id=session.run_id,
+            metadata={
+                **_build_workflow_metadata(command),
+                "source": "hao_bridge_system_context",
+            },
+        )
     store.append_message(
         session.id,
         role="user",
@@ -5463,6 +5618,11 @@ def run_headless_once(
                 delta = str(event.data.get("content") or "")
                 if not delta:
                     continue
+                candidate_content = "".join([*assistant_chunks, delta])
+                if bridge_context is not None and _is_local_bridge_mock_response(candidate_content):
+                    status = "failed"
+                    stderr = _local_bridge_mock_response_error()
+                    break
                 assistant_chunks.append(delta)
                 if bridge_context is not None and api_client is not None:
                     bridge_event_sequence += 1

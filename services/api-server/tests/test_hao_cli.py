@@ -6,6 +6,7 @@ import io
 import json
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 from typing import Any
@@ -286,17 +287,23 @@ def test_hao_bridge_task_passes_harness_context_to_headless(
     )
 
     prompt = str(captured["prompt"])
-    assert "You are running under the AI Harness local-agent bridge as the hao adapter." in prompt
-    assert "Harness selected model: provider=deepseek, model=deepseek-v4." in prompt
-    assert "Harness requested tools: local:read_file." in prompt
-    assert "Harness attachments: README.md." in prompt
-    assert "Compressed workspace context: compressed summary" in prompt
-    assert "Attachment README.md: attachment body" in prompt
-    assert "user: prior user" in prompt
-    assert "assistant: prior answer" in prompt
-    assert "User message:\nhello local" in prompt
+    system_prompt = str(captured["system_prompt"])
+    assert prompt == "hello local"
+    assert (
+        "You are running under the AI Harness local-agent bridge as the hao adapter."
+        in system_prompt
+    )
+    assert "Harness selected model: provider=deepseek, model=deepseek-v4." in system_prompt
+    assert "Harness requested tools: local:read_file." in system_prompt
+    assert "Harness attachments: README.md." in system_prompt
+    assert "Compressed workspace context: compressed summary" in system_prompt
+    assert "Attachment README.md: attachment body" in system_prompt
+    assert "user: prior user" in system_prompt
+    assert "assistant: prior answer" in system_prompt
     assert captured["model_provider"] == "deepseek"
     assert captured["model_name"] == "deepseek-v4"
+    assert events[0]["event_type"] == "adapter_started"
+    assert events[0]["metadata"]["adapter_kind"] == "hao"
     assert events[-1]["event_type"] == "assistant_done"
     assert events[-1]["content"] == "hao done"
 
@@ -358,9 +365,54 @@ def test_hao_bridge_task_uses_plan_command_and_stream_token(
     assert captured["api_client"] is stream_clients[0]
     assert stream_clients[0].api_url == "http://127.0.0.1:8000"
     assert stream_clients[0].token == "stream-token"
+    assert events[0]["event_type"] == "adapter_started"
+    assert events[0]["metadata"]["command_mode"] == "plan"
     assert events[-1]["device_token"] == "device-token"
     assert events[-1]["event_type"] == "assistant_done"
     assert events[-1]["content"] == "plan ready"
+
+
+def test_bridge_task_reports_heartbeat_while_adapter_is_running(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    events: list[dict] = []
+    acks: list[dict] = []
+
+    class FakeClient:
+        def ack_local_agent_bridge_task(self, **payload) -> dict:
+            acks.append(payload)
+            return {"id": payload["bridge_task_id"]}
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            events.append({"device_token": device_token, "payload": payload})
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    def slow_hao_handler(**_kwargs) -> None:
+        time.sleep(0.04)
+
+    monkeypatch.setattr(hao_main_module, "BRIDGE_TASK_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(hao_main_module, "_handle_hao_bridge_task", slow_hao_handler)
+
+    hao_main_module._handle_bridge_task(
+        config=object(),
+        state={"cwd": str(tmp_path)},
+        client=FakeClient(),
+        device_token="device-token",
+        adapter_kind="hao",
+        task={"id": "bridge-task-heartbeat", "payload": {"message": "slow"}},
+    )
+
+    assert acks[0]["status"] == "running"
+    heartbeat_events = [
+        event["payload"]
+        for event in events
+        if event["payload"]["event_type"] == "adapter_heartbeat"
+    ]
+    assert heartbeat_events
+    assert heartbeat_events[0]["bridge_task_id"] == "bridge-task-heartbeat"
+    assert heartbeat_events[0]["metadata"]["adapter_kind"] == "hao"
 
 
 def test_hao_headless_forwards_bridge_deltas_and_model_call_usage(tmp_path: Path) -> None:
@@ -437,6 +489,123 @@ def test_hao_headless_forwards_bridge_deltas_and_model_call_usage(tmp_path: Path
         "bridge-task-1:delta:1",
         "bridge-task-1:delta:2",
     ]
+
+
+def test_hao_headless_keeps_user_goal_separate_from_system_context(tmp_path: Path) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    payloads: list[dict] = []
+
+    class FakeClient:
+        def stream_chat(self, agent_id: str, payload: dict):
+            assert agent_id == "default"
+            payloads.append(payload)
+            yield hao_main_module.SSEEvent(
+                event="run_created",
+                data={"run_id": "run-clean-goal"},
+                raw='event: run_created\ndata: {"run_id":"run-clean-goal"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="delta",
+                data={"content": "clean answer"},
+                raw='event: delta\ndata: {"content":"clean answer"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="done",
+                data={},
+                raw="event: done\ndata: {}\n\n",
+            )
+
+    result = hao_main_module.run_headless_once(
+        command="act",
+        prompt="你回答的啥",
+        system_prompt="internal bridge context must not become the user goal",
+        cwd=workspace,
+        session_store=store,
+        session_id=None,
+        permission_mode="confirm",
+        target="host",
+        max_auto_turns=1,
+        api_client=FakeClient(),
+        agent_id="default",
+        model_provider="deepseek",
+        model_name="deepseek-v4",
+    )
+
+    assert result.exit_code == 0
+    payload = payloads[0]
+    assert payload["goal"] == "你回答的啥"
+    message_roles_and_content = [
+        (message["role"], message["content"]) for message in payload["messages"]
+    ]
+    assert ("system", "internal bridge context must not become the user goal") in (
+        message_roles_and_content
+    )
+    assert ("user", "你回答的啥") in message_roles_and_content
+    assert "internal bridge context" not in payload["goal"]
+
+
+def test_hao_headless_rejects_local_bridge_mock_model_response(tmp_path: Path) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    bridge_events: list[dict] = []
+
+    class FakeClient:
+        def stream_chat(self, agent_id: str, payload: dict):
+            assert agent_id == "default"
+            yield hao_main_module.SSEEvent(
+                event="run_created",
+                data={"run_id": "run-mock-rejected"},
+                raw='event: run_created\ndata: {"run_id":"run-mock-rejected"}\n\n',
+            )
+            yield hao_main_module.SSEEvent(
+                event="delta",
+                data={
+                    "content": (
+                        "这是本地 mock 模型回复，用于 Docker 私有交付环境的无 API Key 验证。"
+                        "我已收到你的请求：internal bridge context"
+                    )
+                },
+                raw="event: delta\ndata: {}\n\n",
+            )
+            yield hao_main_module.SSEEvent(
+                event="done",
+                data={},
+                raw="event: done\ndata: {}\n\n",
+            )
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            bridge_events.append({"device_token": device_token, **payload})
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    result = hao_main_module.run_headless_once(
+        command="act",
+        prompt="你回答的啥",
+        cwd=workspace,
+        session_store=store,
+        session_id=None,
+        permission_mode="confirm",
+        target="host",
+        max_auto_turns=1,
+        api_client=FakeClient(),
+        agent_id="default",
+        model_provider="default",
+        model_name="default",
+        bridge_context=hao_main_module.BridgeToolContext(
+            bridge_task_id="bridge-task-mock",
+            device_token="device-token",
+        ),
+    )
+
+    assert result.exit_code == 1
+    assert result.status == "failed"
+    assert "mock model response" in result.stderr
+    assert "assistant" not in result.stdout_json
+    assert bridge_events == []
 
 
 def test_hao_bridge_pending_tool_preserves_selected_model_for_resume(
@@ -636,20 +805,198 @@ def test_hao_bridge_pending_tool_preserves_selected_model_for_resume(
     assert followup_streams[-1]["payload"]["model_name"] == "deepseek-v4"
     bridge_events = [payload for name, payload in calls if name == "bridge_event"]
     assert [event["event_type"] for event in bridge_events] == [
+        "adapter_started",
         "assistant_delta",
         "assistant_delta",
         "assistant_done",
     ]
-    assert bridge_events[0]["content"] == "pre approval context"
-    assert bridge_events[0]["sequence"] == 1
-    assert bridge_events[1]["content"] == "done with approved tool"
-    assert bridge_events[1]["sequence"] == 2
+    assert bridge_events[0]["metadata"]["adapter_kind"] == "hao"
+    assert bridge_events[1]["content"] == "pre approval context"
+    assert bridge_events[1]["sequence"] == 1
     assert bridge_events[2]["content"] == "done with approved tool"
-    assert bridge_events[2]["sequence"] == 3
-    assert bridge_events[2]["metadata"]["model_call_id"] == "resume-model-call-1"
-    assert bridge_events[2]["metadata"]["usage"]["completion_tokens"] == 3
+    assert bridge_events[2]["sequence"] == 2
+    assert bridge_events[3]["content"] == "done with approved tool"
+    assert bridge_events[3]["sequence"] == 3
+    assert bridge_events[3]["metadata"]["model_call_id"] == "resume-model-call-1"
+    assert bridge_events[3]["metadata"]["usage"]["completion_tokens"] == 3
     reloaded_state = hao_main_module._load_bridge_state(config)
     assert reloaded_state.get("pending_tool_requests") in (None, [])
+
+
+def test_hao_bridge_pending_tool_expiry_uses_bounded_error_event_id(tmp_path: Path) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    config = HaoConfig(home=tmp_path)
+    long_tool_request_id = (
+        "af97a48e-6ccf-4de3-93d0-46c16b8dce28:"
+        "hao-local-d8ee702e-30c8-48f3-9d2c-6b3d188f44ad-0"
+    )
+    state = {
+        "pending_tool_requests": [
+            {
+                "tool_request_id": long_tool_request_id,
+                "bridge_task_id": "af97a48e-6ccf-4de3-93d0-46c16b8dce28",
+                "command": "act",
+            }
+        ]
+    }
+    events: list[dict] = []
+
+    class FakeClient:
+        def get_local_agent_tool_decision(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+        ) -> dict:
+            assert device_token == "device-token"
+            assert tool_request_id == long_tool_request_id
+            return {
+                "tool_request_id": tool_request_id,
+                "bridge_task_id": "af97a48e-6ccf-4de3-93d0-46c16b8dce28",
+                "decision": "expired",
+                "status": "expired",
+                "executable": False,
+                "reason": "approval expired",
+            }
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            assert device_token == "device-token"
+            assert len(payload["event_id"]) <= 160
+            assert long_tool_request_id not in payload["event_id"]
+            events.append(payload)
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    hao_main_module._resume_bridge_pending_tools(
+        config=config,
+        state=state,
+        client=FakeClient(),
+        device_token="device-token",
+    )
+
+    assert state.get("pending_tool_requests") == []
+    assert len(events) == 1
+    assert events[0]["event_type"] == "assistant_error"
+    assert events[0]["bridge_task_id"] == "af97a48e-6ccf-4de3-93d0-46c16b8dce28"
+    assert events[0]["error_message"] == "approval expired"
+    assert hao_main_module._load_bridge_state(config).get("pending_tool_requests") in (None, [])
+
+
+def test_hao_bridge_stale_succeeded_pending_tool_does_not_fail_task(tmp_path: Path) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    config = HaoConfig(home=tmp_path)
+    stale_tool_request_id = (
+        "1ddec6b9-75e9-4389-92c3-937bed72ffcc:"
+        "hao-local-76dd4cdc-29b0-4345-983a-393f8f5a074a-0"
+    )
+    state = {
+        "pending_tool_requests": [
+            {
+                "tool_request_id": stale_tool_request_id,
+                "bridge_task_id": "1ddec6b9-75e9-4389-92c3-937bed72ffcc",
+                "command": "act",
+            }
+        ]
+    }
+    events: list[dict] = []
+
+    class FakeClient:
+        def get_local_agent_tool_decision(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+        ) -> dict:
+            assert device_token == "device-token"
+            assert tool_request_id == stale_tool_request_id
+            return {
+                "tool_request_id": stale_tool_request_id,
+                "bridge_task_id": "1ddec6b9-75e9-4389-92c3-937bed72ffcc",
+                "decision": "succeeded",
+                "status": "succeeded",
+                "executable": False,
+                "reason": "Approved from Agent Run Detail",
+            }
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            events.append(payload)
+            return {"receipt_id": payload["event_id"], "duplicate": False}
+
+    hao_main_module._resume_bridge_pending_tools(
+        config=config,
+        state=state,
+        client=FakeClient(),
+        device_token="device-token",
+    )
+
+    assert state.get("pending_tool_requests") == []
+    assert events == []
+    assert hao_main_module._load_bridge_state(config).get("pending_tool_requests") in (None, [])
+
+
+def test_hao_bridge_repeated_tool_call_id_uses_tool_result_sequence(
+    tmp_path: Path,
+) -> None:
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    config = HaoConfig(home=tmp_path)
+    store = SessionStore(config.session_db_path, config.sessions_dir)
+    local_session = store.create_session(
+        cwd=str(tmp_path),
+        agent_id="default",
+        mode="confirm",
+        cli_mode="act",
+        target="host",
+    )
+    store.append_message(
+        local_session.id,
+        role="tool",
+        content="Local tool result list_files status=SUCCESS: {}",
+        run_id="run-repeat",
+    )
+    captured: dict[str, Any] = {}
+
+    class FakeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            captured.update(payload)
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "backend-tool-repeat",
+                "approval_id": "approval-repeat",
+                "decision": "approval_required",
+                "status": "approval_required",
+                "executable": False,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "decision_json": {"metadata": payload["metadata"]},
+            }
+
+    handled = hao_main_module._handle_bridge_host_tool_request(
+        client=FakeClient(),
+        bridge_context=hao_main_module.BridgeToolContext(
+            bridge_task_id="bridge-repeat",
+            device_token="device-token",
+        ),
+        store=store,
+        session_id=local_session.id,
+        run_id="run-repeat",
+        agent_id="default",
+        model_provider="default",
+        model_name="default",
+        command="act",
+        cwd=tmp_path,
+        tool_name="list_files",
+        tool_call_id="hao-local-run-repeat-0",
+        input_json={"path": "."},
+        risk_level="medium",
+        permission_mode="confirm",
+        bridge_delta_count=6,
+    )
+
+    assert handled.status == "pending_approval"
+    assert captured["tool_request_id"] == "bridge-repeat:hao-local-run-repeat-0:1"
+    assert handled.pending_tool is not None
+    assert handled.pending_tool["tool_request_id"] == captured["tool_request_id"]
 
 
 def test_hao_bridge_daemon_uses_protected_state_without_device_token_argv(
@@ -714,6 +1061,65 @@ def test_hao_bridge_daemon_uses_protected_state_without_device_token_argv(
     assert "device-token-secret" not in command
     assert "--cwd" in command
     assert str(tmp_path) in command
+
+
+def test_hao_bridge_run_daemon_uses_project_cwd_and_log_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    popen_commands: list[list[str]] = []
+    popen_kwargs: list[dict] = []
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs) -> None:
+            popen_commands.append(command)
+            popen_kwargs.append(kwargs)
+
+    monkeypatch.setenv("HAO_HOME", str(tmp_path))
+    hao_main_module = importlib.import_module("app.cli.hao.main")
+    monkeypatch.setattr(hao_main_module.subprocess, "Popen", FakePopen)
+    config = load_config()
+    hao_main_module._save_bridge_state(
+        config,
+        {
+            "api_url": "http://127.0.0.1:8000",
+            "connection_id": "connection-recover-1",
+            "device_token": "device-token-secret",
+            "adapter_kind": "hao",
+            "cwd": str(tmp_path / "workspace"),
+        },
+    )
+
+    exit_code = hao_main_module.main(
+        [
+            "bridge",
+            "run",
+            "--api",
+            "http://localhost:8000",
+            "--connection-id",
+            "connection-recover-1",
+            "--adapter",
+            "hao",
+            "--daemon",
+        ]
+    )
+
+    assert exit_code == 0
+    command = popen_commands[0]
+    kwargs = popen_kwargs[0]
+    project_root = str(Path(hao_main_module.__file__).resolve().parents[3])
+    assert command[:3] == [sys.executable, "-m", "app.cli.hao.main"]
+    assert "bridge" in command
+    assert "run" in command
+    assert "--connection-id" in command
+    assert "connection-recover-1" in command
+    assert "--device-token" not in command
+    assert "device-token-secret" not in command
+    assert kwargs["cwd"] == project_root
+    assert kwargs["env"]["HAO_HOME"] == str(tmp_path)
+    assert kwargs["stderr"] is subprocess.STDOUT
+    assert kwargs["stdout"].name == str(tmp_path / "bridge-daemon.log")
+    assert (tmp_path / "bridge-daemon.log").exists()
 
 
 def test_hao_bridge_pair_without_adapter_auto_registers_detected_local_agents(

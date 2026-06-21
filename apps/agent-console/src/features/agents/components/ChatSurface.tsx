@@ -94,6 +94,8 @@ export type LocalAgentSubmitContext = {
   mode: AgentChatStreamPayload["mode"];
   model_provider?: string | null;
   model_name?: string | null;
+  resume_of_client_message_id?: string | null;
+  resume_of_user_message_id?: string | null;
   messages: AgentChatStreamMessage[];
   active_leaf_id?: string | null;
   active_branch_id?: string | null;
@@ -152,7 +154,15 @@ export type ChatSurfaceProps = {
   onLocalAgentTargetChange?: (connectionId: string) => void;
   localAgentControl?: ReactNode;
   localAgentPending?: boolean;
+  localAgentActiveNode?: ConversationNode | null;
+  localAgentControlPending?: boolean;
   onLocalAgentSubmit?: (
+    goal: string,
+    context: LocalAgentSubmitContext,
+  ) => Promise<boolean | void> | boolean | void;
+  onLocalAgentPause?: (nodeId: string) => Promise<void> | void;
+  onLocalAgentResume?: (
+    nodeId: string,
     goal: string,
     context: LocalAgentSubmitContext,
   ) => Promise<boolean | void> | boolean | void;
@@ -191,7 +201,11 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     onLocalAgentTargetChange,
     localAgentControl = null,
     localAgentPending = false,
+    localAgentActiveNode = null,
+    localAgentControlPending = false,
     onLocalAgentSubmit,
+    onLocalAgentPause,
+    onLocalAgentResume,
   } = props;
 
   const { text } = useI18n();
@@ -222,6 +236,15 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     () => findActiveGoalNode(activePath),
     [activePath],
   );
+  const activeLocalAgentUserNode = useMemo(() => {
+    if (localAgentActiveNode === null) return null;
+    const parent =
+      localAgentActiveNode.parent_id !== null
+        ? nodesById[localAgentActiveNode.parent_id]
+        : undefined;
+    if (parent?.role === "user") return parent;
+    return findPrevUserNode(activePath, localAgentActiveNode.id);
+  }, [activePath, localAgentActiveNode, nodesById]);
 
   // Raw context usage is the full visible history. Effective usage mirrors the
   // next prompt after semantic compression: summary + pinned/uncovered raw
@@ -409,6 +432,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     (
       branchKey: string,
       response: WorkspaceContextCompressionResponse,
+      requested: { providerId: string | null; modelId: string | null },
     ): ContextCompressionSummary => {
       const summary: ContextCompressionSummary = {
         branchKey,
@@ -418,8 +442,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         lastCoveredNodeId: response.last_covered_node_id,
         summarySchemaVersion: response.summary_schema_version,
         compressionPromptVersion: response.compression_prompt_version,
-        compressorProvider: response.compressor_provider,
-        compressorModel: response.compressor_model,
+        compressorProvider: normalizeModelId(requested.providerId),
+        compressorModel: normalizeModelId(requested.modelId),
         estimatedOriginalTokens: response.estimated_original_tokens,
         estimatedSummaryTokens: response.estimated_summary_tokens,
         estimatedUncoveredTokens: response.estimated_uncovered_tokens,
@@ -515,7 +539,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           compressor_provider: existing?.compressorProvider ?? selectedProviderId,
           compressor_model: existing?.compressorModel ?? selectedModelId,
         });
-        const summary = commitCompressionResponse(branchKey, response);
+        const summary = commitCompressionResponse(branchKey, response, {
+          providerId: selectedProviderId,
+          modelId: selectedModelId,
+        });
         if (reason === "manual") {
           notifyFeedback({
             tone: "success",
@@ -686,6 +713,45 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const handlePause = useCallback((): void => {
     stream.pause();
   }, [stream]);
+
+  const handleLocalAgentPause = useCallback((): void => {
+    if (localAgentActiveNode === null || onLocalAgentPause === undefined) return;
+    void onLocalAgentPause(localAgentActiveNode.id);
+  }, [localAgentActiveNode, onLocalAgentPause]);
+
+  const handleLocalAgentResume = useCallback((): void => {
+    if (
+      localAgentActiveNode === null ||
+      activeLocalAgentUserNode === null ||
+      onLocalAgentResume === undefined
+    ) {
+      return;
+    }
+    const goal = activeLocalAgentUserNode.content.trim();
+    if (!goal) return;
+    const context = buildLocalAgentSubmitContext(goal);
+    const sourceClientMessageId =
+      activeLocalAgentUserNode.metadata.orchestration?.client_message_id;
+    const resumedContext: LocalAgentSubmitContext = {
+      ...context,
+      messages: context.messages.filter((message) => message.id !== localAgentActiveNode.id),
+      active_leaf_id: activeLocalAgentUserNode.id,
+      active_branch_id: activeLocalAgentUserNode.id,
+      compressed_context:
+        context.compressed_context?.branch_id === activeLocalAgentUserNode.id
+          ? context.compressed_context
+          : null,
+      resume_of_client_message_id:
+        typeof sourceClientMessageId === "string" ? sourceClientMessageId : null,
+      resume_of_user_message_id: activeLocalAgentUserNode.id,
+    };
+    void onLocalAgentResume(localAgentActiveNode.id, goal, resumedContext);
+  }, [
+    activeLocalAgentUserNode,
+    buildLocalAgentSubmitContext,
+    localAgentActiveNode,
+    onLocalAgentResume,
+  ]);
 
   const handleResumeGoal = useCallback((): void => {
     if (!activeGoalNode) return;
@@ -1240,6 +1306,16 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               onResume={handleResumeGoal}
               onEdit={handleEditGoal}
               onClear={handleClearGoal}
+              text={text}
+            />
+          )}
+          {localAgentActiveNode && activeLocalAgentUserNode && (
+            <LocalAgentProgressRow
+              node={localAgentActiveNode}
+              userNode={activeLocalAgentUserNode}
+              pending={localAgentControlPending}
+              onPause={handleLocalAgentPause}
+              onResume={handleLocalAgentResume}
               text={text}
             />
           )}
@@ -1824,6 +1900,88 @@ function ComposerMetadataRow({
   );
 }
 
+function LocalAgentProgressRow({
+  node,
+  userNode,
+  pending,
+  onPause,
+  onResume,
+  text,
+}: {
+  node: ConversationNode;
+  userNode: ConversationNode;
+  pending: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const orchestrationStatus = String(node.metadata.orchestration?.status ?? "");
+  const paused = node.state === "paused" || orchestrationStatus === "paused";
+  const waitingApproval = orchestrationStatus === "waiting_approval";
+  const titleLabel = paused
+    ? text("本地 Agent 已暂停", "Local Agent paused")
+    : waitingApproval
+      ? text("本地 Agent 等待审批", "Local Agent waiting for approval")
+      : text("本地 Agent 正在发送", "Local Agent sending");
+  const phaseLabel = paused
+    ? text("继续会重新发送这一轮消息", "Continue will resend this turn")
+    : waitingApproval
+      ? text("处理审批后会继续", "Approve the request to continue")
+      : text("bridge task 运行中", "Bridge task running");
+  const goal = userNode.content || text("本地消息", "Local message");
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mx-auto w-[calc(100%-56px)] max-w-[760px] min-w-0 rounded-[18px] border border-emerald-200/90 bg-white/95 px-3 py-1.5 text-[11px] leading-4 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className={cn(
+            "mt-0.5 h-2 w-2 shrink-0 rounded-full",
+            paused
+              ? "bg-amber-500"
+              : waitingApproval
+                ? "bg-amber-500"
+                : "animate-pulse bg-emerald-500",
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-medium text-slate-900">{titleLabel}</span>
+            <span className="truncate text-slate-700" title={goal}>
+              {goal}
+            </span>
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-slate-500">
+            <span>{phaseLabel}</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {paused ? (
+            <IconButton
+              label={text("继续发送", "Continue sending")}
+              onClick={onResume}
+              disabled={pending}
+            >
+              <PlayCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          ) : (
+            <IconButton
+              label={text("暂停发送", "Pause sending")}
+              onClick={onPause}
+              disabled={pending}
+            >
+              <PauseCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GoalProgressRow({
   node,
   isActiveStream,
@@ -2254,8 +2412,11 @@ function buildActivePath(
   rootNodeId: string,
 ): ConversationNode[] {
   const path: ConversationNode[] = [];
+  const seenNodeIds = new Set<string>();
   let current: string | null = activeLeafId;
   while (current) {
+    if (seenNodeIds.has(current)) break;
+    seenNodeIds.add(current);
     const node: ConversationNode | undefined = nodesById[current];
     if (!node) break;
     if (node.id !== rootNodeId) path.push(node);

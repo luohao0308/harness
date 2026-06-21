@@ -26,8 +26,11 @@ export function buildActivePath(
   rootNodeId: string,
 ): ConversationNode[] {
   const path: ConversationNode[] = [];
+  const seenNodeIds = new Set<string>();
   let current: string | null = activeLeafId;
   while (current) {
+    if (seenNodeIds.has(current)) break;
+    seenNodeIds.add(current);
     const node: ConversationNode | undefined = nodesById[current];
     if (!node) break;
     if (node.id !== rootNodeId) path.push(node);

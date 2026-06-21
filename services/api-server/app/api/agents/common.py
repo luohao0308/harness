@@ -73,6 +73,7 @@ from app.api.schemas import (
     LocalAgentHeartbeatResponse,
     LocalAgentPairingCreateRequest,
     LocalAgentPairingResponse,
+    LocalAgentRecoveryCommandResponse,
     LocalAgentPendingChangeRefreshRequest,
     LocalAgentPendingToolRequestPage,
     LocalAgentSendMessageRequest,

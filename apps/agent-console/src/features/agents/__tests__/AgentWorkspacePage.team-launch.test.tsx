@@ -373,7 +373,8 @@ describe("AgentWorkspacePage Team launcher", () => {
     await screen.findByText("Session session-1");
     expect(await screen.findByRole("button", { name: /claude-sonnet-4/ })).toBeInTheDocument();
 
-    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "继续检查本地项目");
+    const composer = screen.getByPlaceholderText("直接与智能体对话");
+    await user.type(composer, "继续检查本地项目");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() => {
@@ -388,6 +389,7 @@ describe("AgentWorkspacePage Team launcher", () => {
         model_name: "claude-sonnet-4",
       });
     });
+    await waitFor(() => expect(composer).toHaveValue(""));
     expect(await screen.findByText("等待本地 Agent 响应...")).toBeInTheDocument();
     await waitFor(() => expect(eventSources.length).toBe(1));
     expect(new URL(eventSources[0].url, apiBaseUrl).pathname).toBe(
@@ -523,8 +525,247 @@ describe("AgentWorkspacePage Team launcher", () => {
 
     expect(await screen.findByText("最终本地回答")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("流式输出片段")).not.toBeInTheDocument());
-    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "下一条");
+    expect(composer).toHaveValue("");
+    await user.type(composer, "下一条");
     expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
+  });
+
+  it("pauses and continues a sent local Agent turn without duplicating the user bubble", async () => {
+    const user = userEvent.setup();
+    const eventSources: Array<{
+      url: string;
+      onmessage: ((event: MessageEvent<string>) => void) | null;
+      close: ReturnType<typeof vi.fn>;
+    }> = [];
+    class FakeEventSource {
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      url: string;
+      close = vi.fn();
+
+      constructor(url: string | URL) {
+        this.url = String(url);
+        eventSources.push(this);
+      }
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+
+    let bindingCreated = false;
+    let localSessionMessages: Array<Record<string, unknown>> = [];
+    let localBindingTasks: Array<Record<string, unknown>> = [];
+    const sendBodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection()] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: bindingCreated ? [localBinding()] : [] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "POST"
+      ) {
+        bindingCreated = true;
+        return jsonResponse(localBinding(), 201);
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({ items: localSessionMessages, next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/tasks" && method === "GET") {
+        return jsonResponse({ items: localBindingTasks });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/messages" && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        sendBodies.push(body);
+        const index = sendBodies.length;
+        localBindingTasks = [
+          {
+            id: `bridge-task-${index}`,
+            binding_id: "binding-1",
+            connection_id: "conn-local-1",
+            agent_session_id: "session-1",
+            user_message_id: `message-user-${index}`,
+            client_message_id: body.client_message_id,
+            run_id: `run-local-${index}`,
+            status: "running",
+            error_message: null,
+            created_at: now,
+            updated_at: now,
+          },
+        ];
+        return jsonResponse(
+          {
+            bridge_task_id: `bridge-task-${index}`,
+            run_id: `run-local-${index}`,
+            agent_session_id: "session-1",
+            user_message_id: `message-user-${index}`,
+            status: "pending",
+          },
+          202,
+        );
+      }
+      if (path === "/api/tasks/run-local-1/cancel" && method === "POST") {
+        localBindingTasks = [
+          {
+            id: "bridge-task-1",
+            binding_id: "binding-1",
+            connection_id: "conn-local-1",
+            agent_session_id: "session-1",
+            user_message_id: "message-user-1",
+            client_message_id: sendBodies[0]?.client_message_id,
+            run_id: "run-local-1",
+            status: "cancelled",
+            error_message: null,
+            created_at: now,
+            updated_at: now,
+          },
+        ];
+        return jsonResponse({ id: "run-local-1", status: "cancelled" }, 202);
+      }
+      if (
+        (path === "/api/agents/runs/run-local-1/workspace" ||
+          path === "/api/agents/runs/run-local-2/workspace") &&
+        method === "GET"
+      ) {
+        const runId = path.includes("run-local-2") ? "run-local-2" : "run-local-1";
+        return jsonResponse({
+          run: { id: runId, status: "RUNNING", created_at: now },
+          events: [],
+          model_calls: [],
+          tool_calls: [],
+          approvals: [],
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    const { queryClient } = renderPage(fetchMock);
+
+    await chooseWorkspaceTarget(user, /hao Local/);
+    await screen.findByText("Session session-1");
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentConversationId).toBe("local-agent:binding-1");
+    });
+
+    const composer = screen.getByPlaceholderText("直接与智能体对话");
+    await user.type(composer, "暂停继续验证");
+    await waitFor(() => expect(screen.getByRole("button", { name: "发送" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(sendBodies).toHaveLength(1));
+    expect(await screen.findByRole("button", { name: "暂停发送" })).toBeInTheDocument();
+    const firstClientMessageId = sendBodies[0].client_message_id;
+    expect(firstClientMessageId).toEqual(expect.any(String));
+
+    await user.click(screen.getByRole("button", { name: "暂停发送" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestPath(input) === "/api/tasks/run-local-1/cancel" &&
+            init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("button", { name: "继续发送" })).toBeInTheDocument();
+    expect(screen.getByText("本地 Agent 已暂停。点击“继续发送”会重新发送这一轮消息。")).toBeInTheDocument();
+    expect(eventSources[0].close).toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "继续发送" }));
+    await waitFor(() => expect(sendBodies).toHaveLength(2));
+    expect(sendBodies[1]).toMatchObject({
+      content: "暂停继续验证",
+      resume_of_client_message_id: firstClientMessageId,
+      resume_of_user_message_id: expect.any(String),
+    });
+    expect(sendBodies[1].client_message_id).not.toBe(firstClientMessageId);
+    expect(await screen.findByRole("button", { name: "暂停发送" })).toBeInTheDocument();
+
+    localSessionMessages = [
+      {
+        id: "message-user-1",
+        session_id: "session-1",
+        agent_id: "default",
+        role: "user",
+        content: "暂停继续验证",
+        metadata_json: {
+          source: "local_agent",
+          connection_id: "conn-local-1",
+          binding_id: "binding-1",
+          agent_session_id: "session-1",
+          client_message_id: firstClientMessageId,
+        },
+        created_at: now,
+      },
+      {
+        id: "message-user-2",
+        session_id: "session-1",
+        agent_id: "default",
+        role: "user",
+        content: "暂停继续验证",
+        metadata_json: {
+          source: "local_agent",
+          connection_id: "conn-local-1",
+          binding_id: "binding-1",
+          agent_session_id: "session-1",
+          client_message_id: sendBodies[1].client_message_id,
+          resume_of_client_message_id: firstClientMessageId,
+        },
+        created_at: now,
+      },
+      {
+        id: "message-assistant-2",
+        session_id: "session-1",
+        agent_id: "default",
+        role: "assistant",
+        content: "继续后回答",
+        metadata_json: {
+          source: "local_agent",
+          connection_id: "conn-local-1",
+          binding_id: "binding-1",
+          agent_session_id: "session-1",
+          bridge_task_id: "bridge-task-2",
+        },
+        created_at: now,
+      },
+    ];
+    localBindingTasks = [];
+    await act(async () => {
+      await queryClient.refetchQueries({
+        queryKey: ["agent-session-messages", "session-1"],
+      });
+    });
+
+    expect(await screen.findByText("继续后回答")).toBeInTheDocument();
+    const localUserTurns = useWorkspaceStore
+      .getState()
+      .activePath()
+      .filter((node) => node.role === "user" && node.content === "暂停继续验证");
+    expect(localUserTurns).toHaveLength(1);
   });
 
   it("does not freeze a local Agent pending placeholder when completion arrives before hydration", async () => {
@@ -955,6 +1196,165 @@ describe("AgentWorkspacePage Team launcher", () => {
           init?.method === "POST",
       ),
     ).toBe(false);
+  });
+
+  it("lets users restore an offline local Agent in place", async () => {
+    const user = userEvent.setup();
+    let localStatus = "offline";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection({ status: localStatus })] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: [localBinding()] });
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/tasks" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await chooseWorkspaceTarget(user, /hao Local/);
+    await screen.findByText("Session session-1");
+    expect(screen.getAllByText("离线").length).toBeGreaterThan(0);
+    const restoreButton = screen.getByRole("button", { name: "恢复本地 Agent" });
+
+    localStatus = "online";
+    await user.click(restoreButton);
+
+    await waitFor(() => expect(screen.getAllByText("在线").length).toBeGreaterThan(0));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/local-agent/connections" &&
+          (init?.method ?? "GET") === "GET",
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/local-agent/bindings/binding-1/tasks" &&
+          (init?.method ?? "GET") === "GET",
+      ),
+    ).toBe(true);
+  });
+
+  it("generates a bridge run command when an offline local Agent is still down", async () => {
+    const user = userEvent.setup();
+    let localStatus = "offline";
+    const recoveryCommand = [
+      'HAO_HOME="${HAO_HOME:-$HOME/.hao/bridges/hao}"',
+      "npx -y /repo/services/api-server bridge run",
+      "--api http://127.0.0.1:8000",
+      "--connection-id conn-local-1",
+      "--adapter hao",
+      "--daemon",
+    ].join(" ");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection({ status: localStatus })] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/recovery-command" &&
+        method === "GET"
+      ) {
+        return jsonResponse({
+          connection_id: "conn-local-1",
+          adapter_kind: "hao",
+          command: recoveryCommand,
+          state_home: "$HOME/.hao/bridges/hao",
+          status: localStatus,
+        });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: [localBinding()] });
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/tasks" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await chooseWorkspaceTarget(user, /hao Local/);
+    await screen.findByText("Session session-1");
+
+    await user.click(screen.getByRole("button", { name: "恢复本地 Agent" }));
+
+    expect(await screen.findByText("恢复命令已生成 · hao")).toBeInTheDocument();
+    expect(screen.getByText(recoveryCommand)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制恢复命令" })).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          requestPath(input) ===
+            "/api/agents/local-agent/connections/conn-local-1/recovery-command" &&
+          (init?.method ?? "GET") === "GET",
+      ),
+    ).toBe(true);
+
+    localStatus = "online";
+    await user.click(
+      screen.getByRole("button", { name: "我已执行恢复命令，刷新本地 Agent" }),
+    );
+
+    await waitFor(() => expect(screen.getAllByText("在线").length).toBeGreaterThan(0));
+    expect(screen.queryByText("恢复命令已生成 · hao")).not.toBeInTheDocument();
   });
 
   it("keeps an in-progress local Agent draft when message polling hydrates the conversation", async () => {
@@ -2196,9 +2596,129 @@ describe("AgentWorkspacePage Team launcher", () => {
     ).toBe(false);
   });
 
+  it("does not reactivate an old failed local Agent task after newer replies exist", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection()] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: [localBinding()] });
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "message-old-user",
+              session_id: "session-1",
+              agent_id: "default",
+              role: "user",
+              content: "桌面上有什么文件",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-1",
+                agent_session_id: "session-1",
+                client_message_id: "client-old",
+              },
+              created_at: "2026-05-24T00:00:01Z",
+            },
+            {
+              id: "message-new-user",
+              session_id: "session-1",
+              agent_id: "default",
+              role: "user",
+              content: "再试一次",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-1",
+                agent_session_id: "session-1",
+                client_message_id: "client-new",
+              },
+              created_at: "2026-05-24T00:05:01Z",
+            },
+            {
+              id: "message-new-assistant",
+              session_id: "session-1",
+              agent_id: "default",
+              role: "assistant",
+              content: "最新本地 Agent 回复",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-1",
+                agent_session_id: "session-1",
+                bridge_task_id: "bridge-task-new-success",
+              },
+              created_at: "2026-05-24T00:05:04Z",
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/tasks" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "bridge-task-old-failed",
+              connection_id: "conn-local-1",
+              binding_id: "binding-1",
+              agent_session_id: "session-1",
+              run_id: "run-old-failed",
+              user_message_id: "message-old-user",
+              client_message_id: "client-old",
+              status: "failed",
+              error_message: "本地 Agent 超过 180 秒没有返回",
+              created_at: "2026-05-24T00:00:02Z",
+              updated_at: "2026-05-24T00:03:02Z",
+            },
+          ],
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await chooseWorkspaceTarget(user, /hao Local/);
+    expect(await screen.findByText("最新本地 Agent 回复")).toBeInTheDocument();
+    expect(screen.queryByText("本地 Agent 超过 180 秒没有返回")).not.toBeInTheDocument();
+    await waitFor(() => {
+      const localConversation = useWorkspaceStore
+        .getState()
+        .conversations.find((conversation) => conversation.id === "local-agent:binding-1");
+      expect(localConversation?.activeLeafId).toBe("local-msg:message-new-assistant");
+    });
+  });
+
   it("turns the current optimistic local Agent bubble into an error when polling sees the same failed bridge task without SSE", async () => {
     const user = userEvent.setup();
     let localMessageSent = false;
+    let sentClientMessageId = "client-message-failed-after-send";
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
       const method = init?.method ?? "GET";
@@ -2240,6 +2760,10 @@ describe("AgentWorkspacePage Team launcher", () => {
       }
       if (path === "/api/agents/local-agent/bindings/binding-1/messages" && method === "POST") {
         localMessageSent = true;
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        if (typeof body.client_message_id === "string") {
+          sentClientMessageId = body.client_message_id;
+        }
         return jsonResponse(
           {
             bridge_task_id: "bridge-task-failed-after-send",
@@ -2262,7 +2786,7 @@ describe("AgentWorkspacePage Team launcher", () => {
               agent_session_id: "session-1",
               run_id: "run-local-failed-after-send",
               user_message_id: "message-user-failed-after-send",
-              client_message_id: "client-message-failed-after-send",
+              client_message_id: sentClientMessageId,
               status: "failed",
               error_message: "Adapter process exited before replying",
               created_at: "2026-05-24T00:00:03Z",
@@ -2287,6 +2811,9 @@ describe("AgentWorkspacePage Team launcher", () => {
 
     await chooseWorkspaceTarget(user, /hao Local/);
     await screen.findByText("Session session-1");
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentConversationId).toBe("local-agent:binding-1");
+    });
     await user.type(screen.getByPlaceholderText("直接与智能体对话"), "会失败");
     await user.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => {
@@ -2533,6 +3060,149 @@ describe("AgentWorkspacePage Team launcher", () => {
     expect(approvalUrl.searchParams.get("return_to")).toMatch(
       /^\/agents\/default\/workspace\?conversation_id=local-agent%3A/,
     );
+  });
+
+  it("surfaces non-Claude local tool approvals after polling restores a running task", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection()] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: [localBinding()] });
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "message-user-approval",
+              session_id: "session-1",
+              agent_id: "default",
+              role: "user",
+              content: "桌面上有什么文件",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-1",
+                agent_session_id: "session-1",
+                client_message_id: "client-approval",
+              },
+              created_at: now,
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/tasks" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "bridge-task-approval",
+              connection_id: "conn-local-1",
+              binding_id: "binding-1",
+              agent_session_id: "session-1",
+              run_id: "run-approval",
+              user_message_id: "message-user-approval",
+              client_message_id: "client-approval",
+              status: "running",
+              error_message: null,
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        });
+      }
+      if (path === "/api/agents/runs/run-approval/workspace" && method === "GET") {
+        return jsonResponse({
+          run: { id: "run-approval", status: "WAITING_APPROVAL", created_at: now },
+          events: [],
+          model_calls: [],
+          tool_calls: [
+            {
+              id: "tool-approval",
+              task_id: "run-approval",
+              agent_run_id: null,
+              trace_id: "trace-approval",
+              tool_name: "run_shell",
+              status: "PENDING_APPROVAL",
+              risk_level: "high",
+              capability_id: null,
+              capability_version_id: null,
+              capability_type: null,
+              capability_content_sha256: null,
+              capability_config_sha256: null,
+              capability_schema_version: null,
+              capability_snapshot_json: {},
+              requires_sandbox: false,
+              sandbox_id: null,
+              duration_ms: 0,
+              input_json: { command: "ls -la .../Desktop" },
+              output_json: {},
+              output_kind: "empty",
+              output_summary: "无输出",
+              timeout_category: null,
+              error_message: null,
+              created_at: now,
+            },
+          ],
+          approvals: [
+            {
+              id: "approval-hao",
+              task_id: "run-approval",
+              tool_call_id: "tool-approval",
+              organization_id: "dev-org",
+              requested_by: "dev-user",
+              decided_by: null,
+              status: "PENDING",
+              risk_level: "high",
+              reason: "local host side-effect tools require Harness approval",
+              request_json: { input_json: { command: "ls -la .../Desktop" } },
+              decision_json: {},
+              created_at: now,
+              decided_at: null,
+            },
+          ],
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    await chooseWorkspaceTarget(user, /hao Local/);
+
+    expect(await screen.findByText("等待本地工具审批。可在运行详情处理审批。")).toBeInTheDocument();
+    expect(screen.queryByText("本地 Agent 正在处理，完成后会同步到这里。")).not.toBeInTheDocument();
+    const approvalLink = screen
+      .getAllByRole("link", { name: "运行详情" })
+      .find((link) => {
+        const href = link.getAttribute("href") ?? "";
+        return href.startsWith("/runs/run-approval?") && href.endsWith("#approvals");
+      });
+    expect(approvalLink).toBeDefined();
   });
 
   it("does not let stale local Agent pending state block cloud Agent submit after switching back", async () => {
@@ -3981,6 +4651,236 @@ describe("AgentWorkspacePage Team launcher", () => {
     expect(
       screen.queryByRole("button", { name: "Local leaked question" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("preserves local Agent context compression summaries after message hydration", async () => {
+    const user = userEvent.setup();
+    const branchKey = "local-agent:binding-1:local-msg:assistant-1";
+    const preservedCompression = {
+      branchKey,
+      summary: "PRESERVED_LOCAL_AGENT_SUMMARY",
+      coverageNodeIds: ["local-msg:user-1", "local-msg:assistant-1"],
+      coveragePathHash: "hash-preserved",
+      lastCoveredNodeId: "local-msg:assistant-1",
+      summarySchemaVersion: "workspace-context-summary-v1",
+      compressionPromptVersion: "workspace-context-compression-v1",
+      compressorProvider: "default",
+      compressorModel: "default",
+      estimatedOriginalTokens: 18_000,
+      estimatedSummaryTokens: 120,
+      estimatedUncoveredTokens: 0,
+      status: "ready",
+      cacheStatus: "recomputed",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    window.localStorage.setItem(
+      "harness.workspace.v3.default.conversations",
+      JSON.stringify({
+        version: 2,
+        currentConversationId: "local-agent:binding-1",
+        conversations: [
+          {
+            id: "local-agent:binding-1",
+            title: "Compressed local thread",
+            created_at: now,
+            updated_at: now,
+            rootNodeId: "root",
+            activeLeafId: "local-msg:assistant-1",
+            pinnedNodeIds: [],
+            dismissedPlanNodeIds: [],
+            draft: "",
+            contextWindowTurns: 8,
+            contextCompressions: {
+              [branchKey]: preservedCompression,
+            },
+            nodesById: {
+              root: {
+                id: "root",
+                parent_id: null,
+                children_ids: ["local-msg:user-1"],
+                role: "system",
+                content: "Agent Workspace Pro root",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-1",
+                    agent_session_id: "session-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: now,
+              },
+              "local-msg:user-1": {
+                id: "local-msg:user-1",
+                parent_id: "root",
+                children_ids: ["local-msg:assistant-1"],
+                role: "user",
+                content: "LOCAL_COMPRESSED_USER",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-1",
+                    agent_session_id: "session-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: now,
+              },
+              "local-msg:assistant-1": {
+                id: "local-msg:assistant-1",
+                parent_id: "local-msg:user-1",
+                children_ids: [],
+                role: "assistant",
+                content: "LOCAL_COMPRESSED_ASSISTANT",
+                state: "done",
+                metadata: {
+                  orchestration: {
+                    source: "local_agent",
+                    connection_id: "conn-local-1",
+                    binding_id: "binding-1",
+                    agent_session_id: "session-1",
+                  },
+                },
+                tool_calls: [],
+                artifacts: [],
+                created_at: now,
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/agents" && method === "GET") return jsonResponse(agentsPage());
+      if (path === "/api/agents/default" && method === "GET") return jsonResponse(agent());
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "default",
+          default_model: "default",
+          providers: [{ name: "default", label: "Default", model: "default" }],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/tools/registry" && method === "GET") {
+        return jsonResponse({ items: [], categories: [], sources: [] });
+      }
+      if (path === "/api/teams" && method === "GET") {
+        return jsonResponse({ items: [], next_cursor: null });
+      }
+      if (path === "/api/agents/local-agent/connections" && method === "GET") {
+        return jsonResponse({ items: [localConnection()] });
+      }
+      if (
+        path === "/api/agents/local-agent/connections/conn-local-1/bindings" &&
+        method === "GET"
+      ) {
+        return jsonResponse({ items: [localBinding()] });
+      }
+      if (path === "/api/agents/sessions/session-1/messages" && method === "GET") {
+        return jsonResponse({
+          items: [
+            {
+              id: "user-1",
+              session_id: "session-1",
+              agent_id: "default",
+              role: "user",
+              content: "LOCAL_COMPRESSED_USER",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-1",
+                agent_session_id: "session-1",
+              },
+              created_at: "2026-05-24T00:00:01Z",
+            },
+            {
+              id: "assistant-1",
+              session_id: "session-1",
+              agent_id: "default",
+              role: "assistant",
+              content: "LOCAL_COMPRESSED_ASSISTANT",
+              metadata_json: {
+                source: "local_agent",
+                connection_id: "conn-local-1",
+                binding_id: "binding-1",
+                agent_session_id: "session-1",
+              },
+              created_at: "2026-05-24T00:00:02Z",
+            },
+          ],
+          next_cursor: null,
+        });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/tasks" && method === "GET") {
+        return jsonResponse({ items: [] });
+      }
+      if (path === "/api/agents/local-agent/bindings/binding-1/messages" && method === "POST") {
+        return jsonResponse(
+          {
+            bridge_task_id: "bridge-task-preserved",
+            run_id: "run-preserved",
+            agent_session_id: "session-1",
+            user_message_id: "user-2",
+            status: "pending",
+          },
+          202,
+        );
+      }
+      if (path === "/api/agents/runs/run-preserved/workspace" && method === "GET") {
+        return jsonResponse({
+          run: { id: "run-preserved", status: "RUNNING", created_at: now },
+          events: [],
+          model_calls: [],
+          tool_calls: [],
+          approvals: [],
+        });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderPage(fetchMock, "/agents/default/workspace?conversation_id=local-agent%3Abinding-1");
+
+    await screen.findByText("LOCAL_COMPRESSED_ASSISTANT");
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().currentConversationId).toBe("local-agent:binding-1");
+      expect(useWorkspaceStore.getState().contextCompressions[branchKey]).toMatchObject({
+        summary: "PRESERVED_LOCAL_AGENT_SUMMARY",
+        status: "ready",
+      });
+    });
+
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "follow up after summary");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input) === "/api/agents/local-agent/bindings/binding-1/messages" &&
+          init?.method === "POST",
+      );
+      const body = JSON.parse(String(sendCall?.[1]?.body));
+      expect(body.compressed_context).toMatchObject({
+        summary: "PRESERVED_LOCAL_AGENT_SUMMARY",
+        branch_id: "local-msg:assistant-1",
+        coverage_node_ids: ["local-msg:user-1", "local-msg:assistant-1"],
+        compressor_provider: "default",
+        compressor_model: "default",
+      });
+      expect(JSON.stringify(body.messages)).toContain("LOCAL_COMPRESSED_USER");
+      expect(JSON.stringify(body.messages)).toContain("LOCAL_COMPRESSED_ASSISTANT");
+    });
   });
 
   it("restores the requested local conversation when returning from Run Detail", async () => {

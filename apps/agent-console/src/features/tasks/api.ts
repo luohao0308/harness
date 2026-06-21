@@ -418,6 +418,14 @@ export type LocalAgentPairing = {
   created_at: string;
 };
 
+export type LocalAgentRecoveryCommand = {
+  connection_id: string;
+  adapter_kind: string;
+  command: string;
+  state_home: string;
+  status: string;
+};
+
 export type LocalAgentConnection = {
   id: string;
   agent_id: string;
@@ -461,6 +469,8 @@ export type LocalAgentConversationBindingPage = {
 export type LocalAgentSendMessagePayload = {
   content: string;
   client_message_id: string;
+  resume_of_client_message_id?: string | null;
+  resume_of_user_message_id?: string | null;
   workspace_context_provided?: boolean;
   workspace_mode?: AgentChatStreamPayload["mode"];
   model_provider?: string | null;
@@ -3334,6 +3344,12 @@ export async function revokeLocalAgentPairingToken(tokenId: string) {
 
 export async function listLocalAgentConnections() {
   return request<LocalAgentConnectionPage>("/api/agents/local-agent/connections");
+}
+
+export async function getLocalAgentRecoveryCommand(connectionId: string) {
+  return request<LocalAgentRecoveryCommand>(
+    `/api/agents/local-agent/connections/${connectionId}/recovery-command`,
+  );
 }
 
 export async function updateLocalAgentConnection(connectionId: string, payload: { display_name: string }) {
