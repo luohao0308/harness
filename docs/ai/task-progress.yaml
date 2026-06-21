@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-21T04:26:00+08:00
+last_updated_at: 2026-06-21T03:40:44+08:00
 last_updated_by: harness-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
@@ -117,25 +117,22 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
-  - id: demo-artifacts-warm-pool-benchmark-and-first-run-gif
+  - id: doc-status-correction
     date: 2026-06-21
     status: completed
-    demo: WarmPool benchmark report now contains real local API endpoint data, and the first Agent Run demo GIF/screenshot artifacts are captured for the docs portfolio.
-    verification_result: targeted_passed
+    demo: Historical implemented P1/P2/P3/P4/P5/P6/P7 status entries are normalized to `completed`, while the tool approval Modify UI gap is explicitly pending before the UI branch lands.
+    verification_result: docs_updated_with_existing_repo_blockers
     verification_commands:
-      - cd services/api-server && APP_ENV=test AUTH_JWT_SECRET=test-harness-jwt-secret-32-characters-min DATABASE_URL=sqlite+pysqlite:////tmp/harness-demo-artifacts-benchmark.sqlite DEEPSEEK_API_KEY= uv run uvicorn app.main:app --host 127.0.0.1 --port 18080
-      - curl -fsS -X POST http://127.0.0.1:18080/api/sandboxes/warm-pool/benchmark -H "Authorization: Bearer dev-engineer-token" -H "Content-Type: application/json" -d '{"iterations":30}' -> PASS, warm_p95_ms=1, warm_avg_ms=0, cold_avg_ms=275, hit_rate=100
-      - cd apps/agent-console && npm ci
-      - cd apps/agent-console && npm run dev -- --port 5177
-      - Playwright Chromium browser video capture for /agents -> /agents/default/workspace -> stream -> /runs/demo-first-agent-run... -> captured docs/gifs/first-agent-run.gif and docs/gifs/first-agent-run-screenshot.png
-      - ffmpeg -i /tmp/harness-first-agent-run.webm ... docs/gifs/first-agent-run.gif -> 2.1 MB GIF
+      - python3 scripts/validate-docs.py with temporary AGENTS.md and full .omx runtime links from the main workspace -> passed
+      - cd apps/agent-console && npx vite build -> passed
+      - cd apps/agent-console && npm run build -> blocked by existing stale a11y/test TypeScript debt (`jest-axe` declarations, stale imports, old ChatMessageBubble/SAML fixture shapes)
+      - cd services/api-server && uv run pytest tests/ -q -> blocked by existing collection error in tests/integration/test_okta_logout.py importing missing `Session` from app.db.models
     acceptance_notes:
-      - Benchmark used the public HTTP endpoint `POST /api/sandboxes/warm-pool/benchmark` with `iterations=30` against a short-lived local FastAPI server.
-      - The benchmark database was an isolated local SQLite file seeded with one `IDLE` `WarmPoolContainer` so the warm path hit rate was deterministic without mutating the developer database.
-      - `docs/reports/benchmark-report.md` records `sample_size=30`, `environment=local-dev`, `warm_p95_ms=1`, `warm_avg_ms=0`, `cold_avg_ms=275`, `hit_rate=100`, and PASS because `warm_p95_ms < 50`.
-      - The cold-start comparison is explicitly labeled as the benchmark runner's synthetic baseline, not a live Docker cold allocation.
-      - `ffmpeg` and Docker Compose were available locally, but macOS `screencapture` returned `capture error` during the session; the GIF was captured with Playwright Chromium `recordVideo` and converted with `ffmpeg`.
-      - The first-run GIF uses local mocked API/SSE responses to exercise the real Agent Console UI without external model-provider or Docker worker dependencies; `docs/gifs/README.md` records this boundary.
+      - p4-p8-docs-help-performance-scale is marked completed for Help Center and frontend polish evidence already recorded in the entry.
+      - p3-p6-p7-auth-retention-cicd is marked completed for AuthN/RBAC, data lifecycle, and CI/CD evidence already recorded in the entry.
+      - p1-p2-p5-production-onboarding-frontend-polish is marked completed for private deployment, onboarding, and frontend polish evidence already recorded in the entry.
+      - private-deployment-experience was already completed and remains unchanged.
+      - docs/workspace-pro-gap-register.md marks "Approve, Reject, Modify tool approvals" as pending implementation on this documentation-status branch.
 
   - id: run-detail-expert-subagent-plan-repair
     date: 2026-06-19
@@ -2176,7 +2173,7 @@ post_stage_hardening:
 
   - id: p4-p8-docs-help-performance-scale
     date: 2026-05-29
-    status: verified
+    status: completed
     demo: Documentation Help Center and performance/scale foundations are implemented with review fixes for signed cursors, cache invalidation, and cache-safe semantics.
     verification_result: passed_with_environment_gaps
     verification_commands:
@@ -2203,7 +2200,7 @@ post_stage_hardening:
 
   - id: p3-p6-p7-auth-retention-cicd
     date: 2026-05-29
-    status: verified
+    status: completed
     demo: Auth/RBAC, data lifecycle retention/export/delete, and CI/CD release engineering are implemented with review fixes for stale-token authorization, export redaction, and CI health gates.
     verification_result: passed_with_environment_gaps
     verification_commands:
@@ -2231,7 +2228,7 @@ post_stage_hardening:
 
   - id: p1-p2-p5-production-onboarding-frontend-polish
     date: 2026-05-29
-    status: verified
+    status: completed
     demo: Production deployment hardening, first-run onboarding, Dashboard, Demo loading, and frontend resilience/polish are implemented for private deployable Harness demos.
     verification_result: passed_with_environment_gaps
     verification_commands:
