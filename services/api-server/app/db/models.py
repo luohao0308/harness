@@ -421,17 +421,27 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+<<<<<<< HEAD
 class Trigger(Base):
     __tablename__ = "triggers"
     __table_args__ = (
         UniqueConstraint("endpoint_path", name="triggers_endpoint_path_uidx"),
         Index("ix_triggers_org_agent_enabled", "organization_id", "agent_id", "enabled"),
         Index("ix_triggers_org_created", "organization_id", "created_at"),
+=======
+class ApiGatewayRoute(Base):
+    __tablename__ = "api_gateway_routes"
+    __table_args__ = (
+        UniqueConstraint("slug", name="api_gateway_routes_slug_uidx"),
+        Index("ix_api_gateway_routes_org_agent_enabled", "organization_id", "agent_id", "enabled"),
+        Index("ix_api_gateway_routes_org_created", "organization_id", "created_at"),
+>>>>>>> feat/api-gateway-external-publish
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+<<<<<<< HEAD
     type: Mapped[str] = mapped_column(String(32), nullable=False, default="webhook")
     endpoint_path: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -440,6 +450,17 @@ class Trigger(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_triggered_at: Mapped[datetime | None] = mapped_column(
+=======
+    slug: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    api_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    rate_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_invoked_at: Mapped[datetime | None] = mapped_column(
+>>>>>>> feat/api-gateway-external-publish
         DateTime(timezone=True),
         nullable=True,
     )

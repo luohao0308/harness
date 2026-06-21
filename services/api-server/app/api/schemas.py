@@ -82,6 +82,56 @@ class AgentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgentGatewayRouteResponse(BaseModel):
+    id: str = Field(description="Gateway route ID")
+    agent_id: str = Field(description="Agent ID")
+    slug: str = Field(description="Public route slug")
+    rate_limit: int = Field(description="Requests per minute")
+    enabled: bool = Field(description="Whether invocation is enabled")
+    description: str = Field(description="Operator-visible route purpose")
+    created_at: datetime = Field(description="Creation time")
+    updated_at: datetime = Field(description="Update time")
+    last_invoked_at: datetime | None = Field(default=None, description="Last invoke time")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentGatewayRoutePage(BaseModel):
+    items: list[AgentGatewayRouteResponse] = Field(description="Gateway routes")
+
+
+class AgentGatewayRouteCreateRequest(BaseModel):
+    slug: str | None = Field(default=None, description="Public route slug")
+    description: str = Field(default="", max_length=500, description="Route purpose")
+    rate_limit: int = Field(default=60, ge=1, le=600, description="Requests per minute")
+    enabled: bool = Field(default=True, description="Whether invocation is enabled")
+
+
+class AgentGatewayRouteCreateResponse(BaseModel):
+    route: AgentGatewayRouteResponse = Field(description="Created route")
+    api_key: str = Field(description="Plaintext key shown once")
+
+
+class AgentGatewayRouteUpdateRequest(BaseModel):
+    description: str | None = Field(default=None, max_length=500, description="Route purpose")
+    rate_limit: int | None = Field(default=None, ge=1, le=600, description="Requests per minute")
+    enabled: bool | None = Field(default=None, description="Whether invocation is enabled")
+
+
+class GatewayInvokeRequest(BaseModel):
+    goal: str | None = Field(default=None, max_length=4000, description="Invocation goal")
+    title: str | None = Field(default=None, max_length=200, description="Run title")
+    input: dict = Field(default_factory=dict, description="External caller input payload")
+
+
+class GatewayInvokeResponse(BaseModel):
+    run_id: str = Field(description="Created Run ID")
+    agent_id: str = Field(description="Agent ID")
+    status: str = Field(description="Run status")
+    route_id: str = Field(description="Gateway route ID")
+    slug: str = Field(description="Gateway route slug")
+
+
 class AgentPage(BaseModel):
     items: list[AgentResponse] = Field(description="Agent 列表")
     next_cursor: str | None = Field(default=None, description="下一页游标")
