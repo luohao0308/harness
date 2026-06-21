@@ -488,6 +488,46 @@ python3 scripts/validate-docs.py
 docs validation passed
 ```
 
+## 2026-06-21 Eval Human Review MVP
+
+Branch `feat/human-review-workflow-mvp` implements the Eval Harness Human Review MVP:
+
+- `EvalResult` now has `human_verdict`, `reviewer_id`, and `reviewed_at` via Alembic revision `20260621_0042`.
+- Owner/admin now have `eval:manage`; member/viewer do not.
+- `GET /api/evals/results/pending-review` returns current-org EvalResult rows with existing manual-review signals (`human_escalation` / `requires_manual_review`) and no human verdict.
+- `PATCH /api/evals/results/{result_id}/review` records `approved` / `rejected`, reviewer timing, and optional notes under `grader_trace_json.human_review`.
+- Eval Harness no longer renders Human Review as disabled; it shows a compact queue with Approve / Reject actions.
+
+Validation evidence:
+
+```text
+cd services/api-server && uv run --extra dev python -m pytest tests/test_evals.py::test_pending_human_review_results_returns_unreviewed_manual_items tests/test_evals.py::test_review_eval_result_approves_manual_review_result tests/test_evals.py::test_review_eval_result_rejects_and_records_notes -q
+3 passed
+
+cd apps/agent-console && npm test -- src/features/evals/pages/__tests__/EvalHarnessPage.langgraph.test.tsx --reporter=dot
+4 passed
+
+cd apps/agent-console && npx tsc --noEmit --pretty false --types vite/client --skipLibCheck --jsx react-jsx --lib DOM,DOM.Iterable,ES2022 --module ESNext --moduleResolution Bundler --target ES2020 --esModuleInterop --allowSyntheticDefaultImports src/features/evals/pages/EvalHarnessPage.tsx src/features/tasks/api.ts
+passed
+
+cd services/api-server && uv run alembic heads
+20260621_0042 (head)
+
+cd services/api-server && DATABASE_URL=sqlite:///$tmpdb uv run alembic upgrade head
+passed
+
+python3 scripts/validate-docs.py
+docs validation passed
+
+git diff --check
+passed
+```
+
+Known repo-level validation blockers observed on this worktree:
+
+- `cd apps/agent-console && npm run build` is still blocked by existing a11y/SAML/ChatMessageBubble/onboarding TypeScript test debt.
+- `cd services/api-server && uv run pytest tests/ -q` is still blocked during collection by `tests/integration/test_okta_logout.py` importing missing `Session` from `app.db.models`.
+
 ## Next Known Work
 
 The latest completed post-stage lane is **Production Critical Hardening v2**, with review fixes and validation recorded in [[session-2026-05-30-production-critical-hardening-v2]].

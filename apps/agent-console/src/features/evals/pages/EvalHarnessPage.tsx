@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { ChevronRight, Database, FlaskConical, GitCompare, Plus, Save, ShieldCheck, UserCheck } from "lucide-react";
+import { Check, ChevronRight, Database, FlaskConical, GitCompare, Plus, Save, ShieldCheck, UserCheck, X } from "lucide-react";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone, type BadgeTone } from "../../../components/ui/badge";
@@ -27,8 +27,11 @@ import {
   listEvalDatasets,
   listEvalExperiments,
   listEvalRuns,
+  listPendingHumanReviewResults,
+  reviewEvalResult,
   setEvalBaseline,
   type EvalExperiment,
+  type EvalResult,
   type RegressionDelta,
 } from "../../tasks/api";
 import { EvalCaseList } from "../components/EvalCaseList";
@@ -90,6 +93,10 @@ export function EvalHarnessPage() {
     enabled: Boolean(activeDatasetId),
   });
   const runsQuery = useQuery({ queryKey: ["eval-runs"], queryFn: listEvalRuns });
+  const pendingReviewQuery = useQuery({
+    queryKey: ["eval-human-review-pending"],
+    queryFn: listPendingHumanReviewResults,
+  });
   const latestRun = runsQuery.data?.items[0] ?? null;
   const experimentsQuery = useQuery({
     queryKey: ["eval-experiments", activeDatasetId],
@@ -261,6 +268,26 @@ export function EvalHarnessPage() {
       });
     },
   });
+  const reviewResultMutation = useMutation({
+    mutationFn: ({ resultId, verdict }: { resultId: string; verdict: "approved" | "rejected" }) =>
+      reviewEvalResult(resultId, { verdict }),
+    onSuccess: (_, variables) => {
+      notifyFeedback({
+        tone: "success",
+        title: variables.verdict === "approved" ? text("审核已批准", "Review approved") : text("审核已拒绝", "Review rejected"),
+        description: text("人工复核队列已更新。", "The human review queue has been updated."),
+      });
+      queryClient.invalidateQueries({ queryKey: ["eval-human-review-pending"] });
+      queryClient.invalidateQueries({ queryKey: ["eval-runs"] });
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("审核提交失败", "Review submission failed"),
+        description: feedbackErrorMessage(error, text("请检查权限或稍后重试。", "Check permissions and retry.")),
+      });
+    },
+  });
 
   const canSaveCase = Boolean(activeDatasetId && sourceRunId.trim());
   const canRunEval = Boolean(activeDatasetId && (casesQuery.data?.items.length ?? 0) > 0);
@@ -410,6 +437,13 @@ export function EvalHarnessPage() {
               onConfigure={() => setExperimentDialogOpen(true)}
             />
 
+            <HumanReviewQueue
+              results={pendingReviewQuery.data ?? []}
+              isLoading={pendingReviewQuery.isLoading}
+              pendingResultId={reviewResultMutation.isPending ? reviewResultMutation.variables?.resultId : null}
+              onReview={(resultId, verdict) => reviewResultMutation.mutate({ resultId, verdict })}
+            />
+
             <Card>
               <CardHeader>
                 <div className="text-sm font-semibold text-slate-900">
@@ -471,8 +505,7 @@ export function EvalHarnessPage() {
               <EvalReadiness
                 icon={<UserCheck className="h-3.5 w-3.5" />}
                 label={text("人工复核", "Human Review")}
-                status={text("未启用", "Disabled")}
-                disabled
+                status={text("已接入", "API-backed")}
               />
             </div>
           </Card>
@@ -757,6 +790,86 @@ function LangGraphExperimentPanel({
             <div className="py-4 text-center text-slate-500">暂无 LangGraph 对照实验。</div>
           ) : null}
         </div>
+      </div>
+    </Card>
+  );
+}
+
+function HumanReviewQueue({
+  results,
+  isLoading,
+  pendingResultId,
+  onReview,
+}: {
+  results: EvalResult[];
+  isLoading: boolean;
+  pendingResultId: string | null;
+  onReview: (resultId: string, verdict: "approved" | "rejected") => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <UserCheck className="h-4 w-4" />
+          人工复核
+        </div>
+        <Badge tone={results.length > 0 ? "warning" : "success"}>
+          {isLoading ? "加载中" : `${results.length} 待处理`}
+        </Badge>
+      </CardHeader>
+      <div className="space-y-2 p-3 text-xs">
+        {results.map((result) => {
+          const isPending = pendingResultId === result.id;
+          return (
+            <div key={result.id} className="rounded-md border border-slate-200 bg-white p-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate font-mono text-[11px] font-semibold text-slate-900" title={result.id}>
+                    {result.id}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+                    <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
+                    <span>耗时 {result.latency_ms}ms</span>
+                    <span>成本 ${result.cost_usd}</span>
+                    {result.task_id ? <span className="font-mono">Run {result.task_id.slice(0, 8)}</span> : null}
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    type="button"
+                    className="h-7 px-2"
+                    variant="primary"
+                    disabled={isPending}
+                    onClick={() => onReview(result.id, "approved")}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Approve
+                  </Button>
+                  <Button
+                    type="button"
+                    className="h-7 px-2"
+                    variant="danger"
+                    disabled={isPending}
+                    onClick={() => onReview(result.id, "rejected")}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Reject
+                  </Button>
+                </div>
+              </div>
+              {result.error_message ? (
+                <div className="mt-2 line-clamp-2 rounded border border-red-100 bg-red-50 px-2 py-1 text-[11px] text-red-700">
+                  {result.error_message}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+        {!isLoading && results.length === 0 ? (
+          <div className="rounded-md border border-slate-100 bg-slate-50 px-3 py-6 text-center text-slate-500">
+            暂无待人工复核结果。
+          </div>
+        ) : null}
       </div>
     </Card>
   );

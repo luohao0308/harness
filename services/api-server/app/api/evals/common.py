@@ -23,6 +23,7 @@ from app.api.schemas import (
     EvalExperimentPage,
     EvalExperimentResponse,
     EvalExperimentArmResponse,
+    EvalHumanReviewRequest,
     EvalResultResponse,
     EvalRunCreateRequest,
     EvalRunPage,
@@ -51,6 +52,7 @@ from app.db.models import (
     SubagentSpecialist,
     Task,
     ToolCall,
+    User,
     WebResearchSource,
     utc_now,
 )
