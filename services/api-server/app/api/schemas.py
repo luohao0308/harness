@@ -82,6 +82,7 @@ class AgentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+<<<<<<< HEAD
 class AgentGatewayRouteResponse(BaseModel):
     id: str = Field(description="Gateway route ID")
     agent_id: str = Field(description="Agent ID")
@@ -92,10 +93,21 @@ class AgentGatewayRouteResponse(BaseModel):
     created_at: datetime = Field(description="Creation time")
     updated_at: datetime = Field(description="Update time")
     last_invoked_at: datetime | None = Field(default=None, description="Last invoke time")
+=======
+class AgentVersionResponse(BaseModel):
+    id: str = Field(description="Agent version ID")
+    agent_id: str = Field(description="Agent ID")
+    version_number: int = Field(description="Monotonic version number")
+    config_snapshot: dict = Field(description="Immutable Agent config snapshot")
+    created_by: str | None = Field(default=None, description="Creator user ID")
+    created_at: datetime = Field(description="Creation time")
+    is_active: bool = Field(description="Whether this version is active")
+>>>>>>> feat/version-rollout-management
 
     model_config = ConfigDict(from_attributes=True)
 
 
+<<<<<<< HEAD
 class AgentGatewayRoutePage(BaseModel):
     items: list[AgentGatewayRouteResponse] = Field(description="Gateway routes")
 
@@ -130,6 +142,14 @@ class GatewayInvokeResponse(BaseModel):
     status: str = Field(description="Run status")
     route_id: str = Field(description="Gateway route ID")
     slug: str = Field(description="Gateway route slug")
+=======
+class AgentVersionPage(BaseModel):
+    items: list[AgentVersionResponse] = Field(description="Agent versions")
+
+
+class AgentVersionCreateRequest(BaseModel):
+    activate: bool = Field(default=False, description="Activate created snapshot")
+>>>>>>> feat/version-rollout-management
 
 
 class AgentPage(BaseModel):
