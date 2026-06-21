@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-06-21
+
+- Refreshed [[project-handoff-current-state]] and `docs/ai/task-progress.yaml` for Workspace chart artifact rendering on `feat/chart-artifact-echarts-rendering`. Captured ECharts Inspector rendering for `artifact_type=chart`, parser support for Harness chart payloads and direct ECharts options, backend `mcp_artifact_put` chart artifact preservation, top-level ToolRunner artifact promotion, parser Vitest (`2 passed`), touched-file TypeScript, and focused ToolRunner regression (`1 passed`).
+
 ## 2026-06-19
 
 - Added [[session-2026-06-19-agent-workspace-subagent-specialist-binding]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the Workspace subagent expert-binding repair. Captured the root cause that the `subagent` shortcut called `SubagentManager.spawn(...)` without `specialist=...`, the fix using existing `SubagentSpecialistRegistry` plus optional `specialist_slug`, keyword matching, and deterministic Workspace fallback, SSE projection of `specialist_id` / `specialist_slug` / `specialist_role`, backend regressions (`5 passed`), backend Ruff/py_compile, frontend request-type TypeScript, local API restart, live SSE proof with `specialist_slug=safety-checker`, workspace/subagent projection proof, and the live Postgres FK fix leaving Workspace shortcut `parent_agent_id=null` instead of platform Agent id `default`.

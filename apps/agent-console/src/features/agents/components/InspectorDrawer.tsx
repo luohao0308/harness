@@ -20,6 +20,7 @@
 
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
+import * as echarts from "echarts";
 import { Link } from "react-router-dom";
 import { ExternalLink, FileCode2, Shield, X } from "lucide-react";
 
@@ -28,6 +29,7 @@ import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
 import type { ConversationArtifact } from "../../../stores/workspaceStore";
+import { chartOptionFromArtifactData } from "../lib/chartArtifacts";
 import { runDetailPath } from "../lib/runLinks";
 import type { InspectorSection } from "../lib/types";
 
@@ -210,16 +212,49 @@ function ArtifactPreview({ artifact }: { artifact: ConversationArtifact }): JSX.
     typeof artifact.content === "string"
       ? artifact.content
       : JSON.stringify(artifact.content, null, 2);
+  const chartOption =
+    artifact.artifact_type === "chart" ? chartOptionFromArtifactData(artifact.content) : null;
   return (
     <div>
       <div className="mb-2 flex items-center justify-between text-xs">
         <span className="truncate font-mono text-slate-800">{artifact.name}</span>
         <Badge tone="info">{artifact.artifact_type}</Badge>
       </div>
-      <pre className="max-h-60 overflow-auto rounded-md border border-slate-100 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100">
-        {content}
-      </pre>
+      {chartOption ? (
+        <ChartArtifact option={chartOption} />
+      ) : (
+        <pre className="max-h-60 overflow-auto rounded-md border border-slate-100 bg-slate-950 p-3 font-mono text-[11px] leading-5 text-slate-100">
+          {content}
+        </pre>
+      )}
     </div>
+  );
+}
+
+function ChartArtifact({ option }: { option: echarts.EChartsOption }): JSX.Element {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const chart = echarts.init(container, undefined, { renderer: "canvas" });
+    chart.setOption(option, true);
+
+    const resize = () => chart.resize();
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      chart.dispose();
+    };
+  }, [option]);
+
+  return (
+    <div
+      ref={containerRef}
+      role="img"
+      aria-label="Chart artifact preview"
+      className="h-64 w-full rounded-md border border-slate-100 bg-white"
+    />
   );
 }
 
