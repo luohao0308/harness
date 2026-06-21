@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-06-21
+
+- Added [[session-2026-06-21-doc-status-correction]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the documentation status correction. Captured completed status normalization for the already implemented P1/P2/P3/P4/P5/P6/P7 entries, gap-register pending status for the tool approval Modify UI, production Vite build, and the existing docs-validation/full-build/full-pytest blockers in the independent worktree.
+
 ## 2026-06-19
 
 - Added [[session-2026-06-19-agent-workspace-subagent-specialist-binding]] and refreshed `docs/ai/task-progress.yaml` plus [[index]] for the Workspace subagent expert-binding repair. Captured the root cause that the `subagent` shortcut called `SubagentManager.spawn(...)` without `specialist=...`, the fix using existing `SubagentSpecialistRegistry` plus optional `specialist_slug`, keyword matching, and deterministic Workspace fallback, SSE projection of `specialist_id` / `specialist_slug` / `specialist_role`, backend regressions (`5 passed`), backend Ruff/py_compile, frontend request-type TypeScript, local API restart, live SSE proof with `specialist_slug=safety-checker`, workspace/subagent projection proof, and the live Postgres FK fix leaving Workspace shortcut `parent_agent_id=null` instead of platform Agent id `default`.
