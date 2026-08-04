@@ -8,5 +8,10 @@ data:
   API_BASE_URL: {{ .Values.env.apiBaseUrl | quote }}
   CONSOLE_BASE_URL: {{ .Values.env.consoleBaseUrl | quote }}
   APP_BASE_URL: {{ .Values.env.websiteBaseUrl | quote }}
+  AI_PROVIDER_PROTOCOL: {{ .Values.env.aiProviderProtocol | quote }}
+  AI_PROVIDER_BASE_URL: {{ .Values.env.aiProviderBaseUrl | quote }}
+  AI_PROVIDER_MODEL: {{ .Values.env.aiProviderModel | quote }}
+  AI_PROVIDER_MODELS: {{ .Values.env.aiProviderModels | quote }}
+  AI_PROVIDER_NAME: {{ .Values.env.aiProviderName | quote }}
   MODEL_GATEWAY_BASE_URL: {{ .Values.env.modelGatewayBaseUrl | quote }}
   OBSERVABILITY_EXPORT_DIR: /var/lib/agent-harness/exports
