@@ -58,3 +58,23 @@ if (typeof globalThis.IntersectionObserver === "undefined") {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).IntersectionObserver = MockIntersectionObserver;
 }
+
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class MockResizeObserver {
+    constructor() {
+      // no-op
+    }
+
+    observe(): void {
+      /* no-op */
+    }
+    unobserve(): void {
+      /* no-op */
+    }
+    disconnect(): void {
+      /* no-op */
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).ResizeObserver = MockResizeObserver;
+}
