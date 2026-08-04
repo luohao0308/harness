@@ -77,7 +77,14 @@ export function TeamTaskBoard({
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-medium text-slate-900">{task.subject}</div>
+                            <div className="flex items-center gap-1.5">
+                              <div className="truncate text-xs font-medium text-slate-900">
+                                {task.subject}
+                              </div>
+                              {task.metadata_json?.needs_correction ? (
+                                <Badge tone="warning">{text("需纠偏", "Needs fix")}</Badge>
+                              ) : null}
+                            </div>
                             <div className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-slate-500">
                               {task.description || text("无描述", "No description")}
                             </div>

@@ -7,7 +7,33 @@ import { statusLabel } from "../../../../lib/labels";
 import type { Team, TeamAgent, TeamTask } from "../../../tasks/api";
 
 import { TeamTaskBoard } from "./TeamTaskBoard";
+import { DesktopTeamViewSwitch, type TeamWorkspaceView } from "./DesktopTeamViewSwitch";
 import type { TextFn } from "./types";
+
+function goalTone(status: string) {
+  switch (status) {
+    case "active":
+      return "running" as const;
+    case "paused":
+      return "warning" as const;
+    case "completed":
+      return "success" as const;
+    case "blocked":
+    case "failed":
+      return "failed" as const;
+    default:
+      return "neutral" as const;
+  }
+}
+
+function goalStatusLabel(status: string, text: TextFn) {
+  if (status === "active") return text("执行中", "Active");
+  if (status === "paused") return text("已暂停", "Paused");
+  if (status === "completed") return text("已完成", "Completed");
+  if (status === "blocked") return text("受阻", "Blocked");
+  if (status === "failed") return text("失败", "Failed");
+  return status;
+}
 
 export function TeamHeader({
   activeTeam,
@@ -20,6 +46,11 @@ export function TeamHeader({
   onAddMember,
   onToggleTaskBoard,
   onCloseTaskBoard,
+  onPauseGoal,
+  onResumeGoal,
+  onEditGoal,
+  workspaceView,
+  onWorkspaceViewChange,
 }: {
   activeTeam: Team;
   agents: TeamAgent[];
@@ -31,7 +62,16 @@ export function TeamHeader({
   onAddMember: () => void;
   onToggleTaskBoard: () => void;
   onCloseTaskBoard: () => void;
+  onPauseGoal: () => void;
+  onResumeGoal: () => void;
+  onEditGoal: () => void;
+  workspaceView?: TeamWorkspaceView;
+  onWorkspaceViewChange?: (view: TeamWorkspaceView) => void;
 }) {
+  const compactGoal = Boolean(workspaceView && workspaceView !== "columns");
+  const goalOpenTaskCount = Number(activeTeam.active_goal?.progress_json.open_task_count ?? 0);
+  const goalCompletedTaskCount = Number(activeTeam.active_goal?.progress_json.completed_task_count ?? 0);
+
   return (
     <header className="relative z-30 shrink-0 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -63,6 +103,53 @@ export function TeamHeader({
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          {workspaceView && onWorkspaceViewChange ? (
+            <DesktopTeamViewSwitch value={workspaceView} text={text} onChange={onWorkspaceViewChange} />
+          ) : null}
+          {activeTeam.active_goal ? (
+            <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700">
+              <Badge tone={goalTone(activeTeam.active_goal.status)}>
+                {goalStatusLabel(activeTeam.active_goal.status, text)}
+              </Badge>
+              <span className="max-w-[14rem] truncate font-medium">
+                {activeTeam.active_goal.objective}
+              </span>
+              <Badge tone="info">
+                {goalCompletedTaskCount}/{goalCompletedTaskCount + goalOpenTaskCount}
+              </Badge>
+              {!compactGoal ? (
+                <>
+                  <Badge tone="warning">
+                    drift {Number(activeTeam.active_goal.progress_json.drift_count ?? 0)}
+                  </Badge>
+                  <Badge tone="info">
+                    fix {Number(activeTeam.active_goal.progress_json.intervention_count ?? 0)}
+                  </Badge>
+                  <Badge tone="neutral">
+                    budget {Number(activeTeam.active_goal.progress_json.budget_remaining ?? 0)}
+                  </Badge>
+                </>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={activeTeam.active_goal.status === "paused" ? onResumeGoal : onPauseGoal}
+                className="h-6 px-1.5 text-[11px]"
+              >
+                {activeTeam.active_goal.status === "paused"
+                  ? text("继续", "Resume")
+                  : text("暂停", "Pause")}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onEditGoal}
+                className="h-6 px-1.5 text-[11px]"
+              >
+                {text("编辑", "Edit")}
+              </Button>
+            </div>
+          ) : null}
           <span
             className="inline-flex h-8 max-w-[12rem] items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700"
             aria-label={text(
