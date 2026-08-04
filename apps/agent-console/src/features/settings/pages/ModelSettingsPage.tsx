@@ -104,19 +104,47 @@ export function ModelSettingsPage() {
     () => ((settings.data?.providers ?? []) as ProviderConfig[]),
     [settings.data?.providers],
   );
-  const displayProviders = useMemo(() => mergePresetAndConfiguredProviders(providers), [providers]);
+  const availableModelCatalog = useMemo(() => {
+    if (!settings.data) {
+      return modelCatalog.map((catalogProvider) =>
+        catalogProvider.managedByPlatform
+          ? { ...catalogProvider, models: [] }
+          : catalogProvider,
+      );
+    }
+    const allowedPlatformModels = new Set(
+      providers
+        .filter(isPlatformManagedProvider)
+        .map((provider) => String(provider.model ?? ""))
+        .filter(Boolean),
+    );
+    return modelCatalog.map((catalogProvider) =>
+      catalogProvider.managedByPlatform
+        ? {
+            ...catalogProvider,
+            models: catalogProvider.models.filter((model) =>
+              allowedPlatformModels.has(model.model),
+            ),
+          }
+        : catalogProvider,
+    );
+  }, [providers, settings.data]);
+  const displayProviders = useMemo(
+    () => mergePresetAndConfiguredProviders(providers, availableModelCatalog),
+    [availableModelCatalog, providers],
+  );
   const providerGroups = useMemo(() => groupProvidersByVendor(displayProviders), [displayProviders]);
   const switchboardRows = useMemo(
     () =>
       buildSwitchboardRows(providers, {
         provider: settings.data?.default_provider,
         model: settings.data?.default_model,
-      }),
-    [providers, settings.data?.default_provider, settings.data?.default_model],
+      }, availableModelCatalog),
+    [availableModelCatalog, providers, settings.data?.default_provider, settings.data?.default_model],
   );
   const visibleCatalogProviders = useMemo(
-    () => filterCatalogProviders(modelCatalog, switchboardRows, modelSearchQuery),
-    [modelSearchQuery, switchboardRows],
+    () => filterCatalogProviders(availableModelCatalog, switchboardRows, modelSearchQuery),
+    [availableModelCatalog, modelSearchQuery, switchboardRows],
   );
   const defaultCatalogProviderId = switchboardRows.find((row) => row.isDefault)?.catalogProvider.providerId ?? "";
   const activeCatalogProviderId =
@@ -198,8 +226,8 @@ export function ModelSettingsPage() {
   function currentSettings(): ModelSettings {
     return (
       settings.data ?? {
-        default_provider: "openai-compatible",
-        default_model: "default",
+        default_provider: "chybenzun-openai-compatible",
+        default_model: "deepseek-v4-flash",
         providers: [],
         rate_limits: { rpm: 600, tpm: 120000 },
         health: {
@@ -246,7 +274,14 @@ export function ModelSettingsPage() {
   }
 
   function setDefaultProvider(provider: ProviderConfig) {
+    if (isLocalModelProvider(provider)) {
+      addOrUpdateProvider(provider, true);
+      return;
+    }
     const configuredProvider = findConfiguredProviderForModel(provider, providers);
+    if (isPlatformManagedProvider(provider) && !configuredProvider) {
+      return;
+    }
     if (!configuredProvider) {
       openProviderKeyDialog(provider);
       return;
@@ -296,7 +331,7 @@ export function ModelSettingsPage() {
       addOrUpdateProvider(providerToSave, false, { closeDialog: true });
       return;
     }
-    if (!providerHasUsableApiKey(normalized)) {
+    if (!isLocalModelProvider(normalized) && !providerHasUsableApiKey(normalized)) {
       setSaveMessage(text("请先填写 API Key，再启用模型。", "Enter an API key before enabling this model."));
       return;
     }
@@ -403,10 +438,10 @@ export function ModelSettingsPage() {
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold text-slate-900">
-                    {modelCatalog.find((provider) => provider.providerId === activeCatalogProviderId)?.label ?? text("模型", "Models")}
+                    {availableModelCatalog.find((provider) => provider.providerId === activeCatalogProviderId)?.label ?? text("模型", "Models")}
                   </div>
                   <div className="mt-0.5 truncate text-[11px] text-slate-500">
-                    {text("选择模型、配置密钥或把模型加入已配置列表。", "Switch, configure keys, or add models to the configured list.")}
+                    {text("选择平台托管模型；服务端未配置时不可切换。", "Choose a platform-managed model; switching is unavailable until the server is configured.")}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1">
@@ -428,6 +463,17 @@ export function ModelSettingsPage() {
                 </div>
               </div>
               <div className="grid gap-1.5 p-2">
+                {settings.isError && activeCatalogProviderId === "chybenzun-openai-compatible" ? (
+                  <div
+                    role="status"
+                    className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                  >
+                    {text(
+                      "平台模型列表暂不可用，恢复服务端连接后会自动同步。",
+                      "The platform model list is unavailable and will sync when the server connection recovers.",
+                    )}
+                  </div>
+                ) : null}
                 {selectedSwitchboardRows.map((row) => (
                   <SwitchboardModelRowItem
                     key={`${row.provider.name}:${String(row.provider.model ?? "default")}`}
@@ -812,12 +858,15 @@ export function ModelSettingsPage() {
                         <div className="flex flex-wrap items-center justify-end gap-1">
                           {group.providers.map((provider) => {
                             const model = String(provider.model ?? "default");
+                            const platformManaged = isPlatformManagedProvider(provider);
                             const modelActive =
                               settings.data?.default_provider === provider.name &&
                               settings.data?.default_model === model;
                             const canSwitch = Boolean(findConfiguredProviderForModel(provider, providers));
                             const actionTitle =
-                              !canSwitch
+                              platformManaged && !canSwitch
+                                ? text(`服务端未配置：${model}`, `Server not configured: ${model}`)
+                                : !canSwitch
                                 ? text(`配置：${model}`, `Configure: ${model}`)
                                 : modelActive
                                   ? text(`当前：${model}`, `Current: ${model}`)
@@ -830,14 +879,18 @@ export function ModelSettingsPage() {
                                   className="h-7 px-2"
                                   aria-label={actionTitle}
                                   title={actionTitle}
-                                  disabled={(modelActive && canSwitch) || saveMutation.isPending}
+                                  disabled={(platformManaged && !canSwitch) || (modelActive && canSwitch) || saveMutation.isPending}
                                   onClick={() =>
                                     canSwitch
                                       ? setDefaultProvider(provider)
-                                      : openProviderKeyDialog(provider)
+                                      : platformManaged
+                                        ? undefined
+                                        : openProviderKeyDialog(provider)
                                   }
                                 >
-                                  {!canSwitch
+                                  {platformManaged && !canSwitch
+                                    ? text("服务端未配置", "Server unavailable")
+                                    : !canSwitch
                                     ? text("配置", "Configure")
                                     : modelActive
                                       ? text("当前", "Current")
@@ -1041,6 +1094,14 @@ function normalizeProvider(provider: ProviderConfig): ProviderConfig {
   };
 }
 
+function isLocalModelProvider(provider: ProviderConfig) {
+  return provider.isLocal === true || providerVendorKey(provider) === "ollama";
+}
+
+function isPlatformManagedProvider(provider: ProviderConfig) {
+  return provider.managed_by_platform === true || providerVendorKey(provider) === "chybenzun-openai-compatible";
+}
+
 function toEditableProvider(provider: ProviderConfig): ProviderConfig {
   const apiKey = String(provider.api_key ?? "").trim();
   return {
@@ -1121,6 +1182,18 @@ function providerDialogDescription(
   state: ProviderDialogState,
   text: (zh: string, en: string) => string,
 ) {
+  if (state?.provider && isLocalModelProvider(state.provider)) {
+    return text(
+      "本地模型不需要 API Key；保存后即可作为默认模型使用。",
+      "Local models do not need an API key; save to use this provider as the default model.",
+    );
+  }
+  if (state?.provider && isPlatformManagedProvider(state.provider)) {
+    return text(
+      "此模型由服务端统一托管；浏览器不会接收或更新 API Key。",
+      "This model is managed by the server; the browser never receives or updates the API key.",
+    );
+  }
   if (state?.type === "add-model") {
     return text(
       "把模型加入已配置列表；如果供应商密钥已经配置，可不再填写 API Key。",
@@ -1143,6 +1216,15 @@ function providerDialogFooterText(
   state: ProviderDialogState,
   text: (zh: string, en: string) => string,
 ) {
+  if (state?.provider && isLocalModelProvider(state.provider)) {
+    return text(
+      "保存后会立即设为默认模型；本地端点不需要密钥库。",
+      "Saving makes this the default model immediately; local endpoints do not use the secret vault.",
+    );
+  }
+  if (state?.provider && isPlatformManagedProvider(state.provider)) {
+    return text("服务端托管，无需用户或组织密钥。", "Managed by the server; no user or organization key is required.");
+  }
   if (state?.type === "add-model") {
     return text(
       "保存后只把该模型加入已配置列表，不会自动切换默认模型。",
@@ -1165,6 +1247,9 @@ function providerDialogSubmitLabel(
   state: ProviderDialogState,
   text: (zh: string, en: string) => string,
 ) {
+  if (state?.provider && isLocalModelProvider(state.provider)) {
+    return text("保存并启用", "Save & Enable");
+  }
   if (state?.type === "add-model") return text("保存模型", "Save Model");
   if (state?.type === "custom-provider") return text("保存并启用", "Save & Enable");
   return text("保存并启用", "Save & Enable");
@@ -1189,14 +1274,17 @@ function SwitchboardModelRowItem({
 }) {
   const provider = row.provider;
   const model = String(provider.model ?? "default");
+  const platformManaged = isPlatformManagedProvider(provider);
   const modelKind = modelKindLabel(provider);
   const actionLabel = pending
     ? text("切换中", "Switching")
     : row.isDefault && row.canSwitch
       ? text("已启用", "Active")
       : row.canSwitch
-        ? text("切换", "Switch")
-        : text("配置并启用", "Configure & Enable");
+        ? text(row.catalogProvider.isLocal ? "启用" : "切换", row.catalogProvider.isLocal ? "Enable" : "Switch")
+        : platformManaged
+          ? text("服务端未配置", "Server unavailable")
+          : text("配置并启用", "Configure & Enable");
   const added =
     row.isCatalogModel &&
     row.configuredProvider !== null &&
@@ -1210,7 +1298,11 @@ function SwitchboardModelRowItem({
           </span>
           <Badge tone={modelKindTone(modelKind)}>{modelKind}</Badge>
           <Badge tone={row.canSwitch ? "success" : "warning"}>
-            {row.canSwitch ? text("可切换", "Switchable") : text("需密钥", "Needs key")}
+            {row.canSwitch
+              ? text("可切换", "Switchable")
+              : platformManaged
+                ? text("服务端未配置", "Server unavailable")
+                : text("需密钥", "Needs key")}
           </Badge>
           {row.isDefault && row.canSwitch ? (
             <Badge tone="info">{text("当前默认", "Current")}</Badge>
@@ -1219,11 +1311,15 @@ function SwitchboardModelRowItem({
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
           <span>{providerDisplayName(provider)}</span>
           <span className="font-mono">{String(provider.api_format ?? row.catalogProvider.apiFormat)}</span>
-          <span className="font-mono">{String((provider.api_key_env ?? row.catalogProvider.apiKeyEnv) || "local")}</span>
+          <span className="font-mono">
+            {platformManaged
+              ? text("服务端托管", "Server managed")
+              : String((provider.api_key_env ?? row.catalogProvider.apiKeyEnv) || "local")}
+          </span>
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-1.5">
-        {added && !row.isDefault ? (
+        {!platformManaged && added && !row.isDefault ? (
           <Button
             type="button"
             variant="ghost"
@@ -1235,7 +1331,7 @@ function SwitchboardModelRowItem({
             <Plus className="h-3.5 w-3.5" />
             {text("更新", "Update")}
           </Button>
-        ) : !added && row.canSwitch ? (
+        ) : !platformManaged && !added && row.canSwitch ? (
           <Button
             type="button"
             variant="ghost"
@@ -1253,11 +1349,11 @@ function SwitchboardModelRowItem({
             type="button"
             variant="secondary"
             className="h-7 px-2"
-            disabled={saving}
-            onClick={onConfigure}
+            disabled={platformManaged || saving}
+            onClick={platformManaged ? undefined : onConfigure}
             aria-label={`${model} ${actionLabel}`}
           >
-            <KeyRound className="h-3.5 w-3.5" />
+            {platformManaged ? <AlertTriangle className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />}
             {actionLabel}
           </Button>
         ) : (
@@ -1343,7 +1439,9 @@ function secretSourceLabel(source: string) {
     db_user: "用户密钥",
     db_org: "组织密钥",
     env_legacy: "Env 兼容",
+    env_platform: "服务端托管",
     legacy_setting: "旧配置",
+    platform_managed: "服务端托管",
   };
   return labels[normalized] ?? normalized;
 }

@@ -67,6 +67,86 @@ afterEach(() => {
 });
 
 describe("OnboardingWizardPage completion", () => {
+  it("uses the selected platform model without collecting an API key", async () => {
+    const user = userEvent.setup();
+    let savedProviderSummary: Record<string, unknown> | undefined;
+    let createdAgent: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = requestPath(input);
+      const method = init?.method ?? "GET";
+      if (path === "/api/onboarding/state" && method === "GET") {
+        return jsonResponse(onboardingState({ current_step: 1 }));
+      }
+      if (path === "/api/settings/models" && method === "GET") {
+        return jsonResponse({
+          default_provider: "chybenzun-openai-compatible",
+          default_model: "deepseek-v4-flash",
+          providers: [
+            {
+              name: "chybenzun-openai-compatible",
+              label: "DeepSeek V4 Flash",
+              model: "deepseek-v4-flash",
+              allowed_models: ["deepseek-v4-flash", "qwen3.7-max"],
+              base_url: "https://chybenzun.top/v1",
+              status: "healthy",
+              managed_by_platform: true,
+            },
+            {
+              name: "chybenzun-openai-compatible",
+              label: "Qwen 3.7 Max",
+              model: "qwen3.7-max",
+              allowed_models: ["deepseek-v4-flash", "qwen3.7-max"],
+              base_url: "https://chybenzun.top/v1",
+              status: "healthy",
+              managed_by_platform: true,
+            },
+            {
+              name: "custom-provider",
+              label: "Custom Model",
+              model: "custom-model",
+              base_url: "https://custom.example.test/v1",
+              status: "healthy",
+            },
+          ],
+          rate_limits: {},
+          health: {},
+          circuit_breaker: {},
+        });
+      }
+      if (path === "/api/onboarding/state" && method === "PATCH") {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        if (payload.provider_json) savedProviderSummary = payload.provider_json;
+        return jsonResponse(onboardingState({ current_step: payload.current_step }));
+      }
+      if (path === "/api/agents" && method === "POST") {
+        createdAgent = JSON.parse(String(init?.body ?? "{}"));
+        return jsonResponse({ ...createdAgent, created_at: "2026-06-15T00:00:00Z", updated_at: "2026-06-15T00:00:00Z" });
+      }
+      return jsonResponse({ detail: `unexpected ${method} ${path}` }, 404);
+    });
+
+    renderOnboarding(fetchMock, "/onboarding?step=1");
+
+    expect(await screen.findByText("Qwen 3.7 Max")).toBeInTheDocument();
+    expect(screen.queryByTestId("model-custom-model")).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId("model-qwen3.7-max"));
+    await user.click(screen.getByTestId("next-button"));
+    await user.click(await screen.findByTestId("save-and-continue-button"));
+    await user.click(await screen.findByTestId("create-agent-button"));
+
+    expect(screen.queryByTestId("api-key-input")).not.toBeInTheDocument();
+    expect(savedProviderSummary).toMatchObject({
+      provider: "chybenzun-openai-compatible",
+      model: "qwen3.7-max",
+      endpoint: "https://chybenzun.top/v1",
+      managed_by_platform: true,
+    });
+    expect(createdAgent).toMatchObject({
+      model_provider: "chybenzun-openai-compatible",
+      model_name: "qwen3.7-max",
+    });
+  });
+
   it("closes onboarding after completing setup", async () => {
     const user = userEvent.setup();
     const completed = onboardingState({

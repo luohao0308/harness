@@ -2033,34 +2033,37 @@ class RunContextRouter:
         default_model: str,
     ) -> dict[str, dict[str, str]]:
         configured = settings.get("model_router")
+        default_provider = str(
+            settings.get("default_provider") or DEFAULT_MODEL_SETTINGS["default_provider"]
+        )
         base = {
             "planning": {
-                "provider": settings.get("default_provider", "openai-compatible"),
+                "provider": default_provider,
                 "model": default_model,
                 "model_class": "strong-planning",
             },
             "coding": {
-                "provider": settings.get("default_provider", "openai-compatible"),
+                "provider": default_provider,
                 "model": default_model,
                 "model_class": "strong-coding",
             },
             "grading": {
-                "provider": settings.get("default_provider", "openai-compatible"),
+                "provider": default_provider,
                 "model": default_model,
                 "model_class": "stable-grading",
             },
             "guardrail": {
-                "provider": settings.get("default_provider", "openai-compatible"),
+                "provider": default_provider,
                 "model": default_model,
                 "model_class": "fast-guardrail",
             },
             "summarization": {
-                "provider": settings.get("default_provider", "openai-compatible"),
+                "provider": default_provider,
                 "model": default_model,
                 "model_class": "long-context-summarization",
             },
             "general": {
-                "provider": settings.get("default_provider", "openai-compatible"),
+                "provider": default_provider,
                 "model": default_model,
                 "model_class": "general",
             },

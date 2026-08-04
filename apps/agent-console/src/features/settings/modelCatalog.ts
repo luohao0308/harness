@@ -16,6 +16,7 @@ export type ProviderConfig = {
   api_key_configured?: boolean;
   api_key_source?: string;
   api_key_secret_id?: string | null;
+  managed_by_platform?: boolean;
   model_kind?: string;
   model_context_window_tokens?: number;
   max_output_tokens?: number;
@@ -51,6 +52,7 @@ export type ModelCatalogProvider = {
   apiKeyEnv: string;
   secretProvider: string;
   isLocal?: boolean;
+  managedByPlatform?: boolean;
   models: ModelCatalogModel[];
 };
 
@@ -70,287 +72,77 @@ export type SwitchboardModelRow = {
   isCatalogModel: boolean;
 };
 
-const deepSeekProviderBase = {
+const ollamaCatalogProvider: ModelCatalogProvider = {
+  providerId: "ollama",
+  label: "Ollama / Local",
+  vendorKey: "ollama",
   apiFormat: "openai",
-  baseUrl: "https://api.deepseek.com",
-  apiKeyEnv: "DEEPSEEK_API_KEY",
-  secretProvider: "deepseek",
-  model_context_window_tokens: 1000000,
-  max_output_tokens: 384000,
-  rate_limit_rpm: 300,
-  rate_limit_tpm: 1000000,
-  timeout_seconds: 60,
-  health_timeout_seconds: 5,
+  baseUrl: "http://127.0.0.1:11434/v1",
+  apiKeyEnv: "",
+  secretProvider: "ollama",
+  isLocal: true,
+  models: [
+    {
+      model: "llama3.1",
+      label: "Llama 3.1",
+      model_kind: "文本模型",
+      model_context_window_tokens: 128000,
+      rate_limit_rpm: 0,
+      rate_limit_tpm: 0,
+      timeout_seconds: 60,
+      health_timeout_seconds: 5,
+    },
+  ],
 };
+
+const customCatalogProvider: ModelCatalogProvider = {
+  providerId: "custom",
+  label: "自定义",
+  vendorKey: "custom",
+  apiFormat: "openai",
+  baseUrl: "",
+  apiKeyEnv: "",
+  secretProvider: "custom",
+  models: [],
+};
+
+const platformManagedModel = (model: string, label: string, model_kind: string): ModelCatalogModel => ({
+  model,
+  label,
+  model_kind,
+  rate_limit_rpm: 300,
+  rate_limit_tpm: 120000,
+  timeout_seconds: 30,
+  health_timeout_seconds: 5,
+});
 
 export const modelCatalog: ModelCatalogProvider[] = [
   {
-    providerId: "deepseek",
-    label: "DeepSeek",
-    vendorKey: "deepseek",
-    ...deepSeekProviderBase,
-    models: [
-      {
-        model: "deepseek-v4-flash",
-        label: "DeepSeek Flash",
-        model_kind: "文本模型",
-        model_context_window_tokens: deepSeekProviderBase.model_context_window_tokens,
-        max_output_tokens: deepSeekProviderBase.max_output_tokens,
-        rate_limit_rpm: deepSeekProviderBase.rate_limit_rpm,
-        rate_limit_tpm: deepSeekProviderBase.rate_limit_tpm,
-        timeout_seconds: deepSeekProviderBase.timeout_seconds,
-        health_timeout_seconds: deepSeekProviderBase.health_timeout_seconds,
-      },
-      {
-        model: "deepseek-v4-pro",
-        label: "DeepSeek Pro",
-        model_kind: "推理模型",
-        model_context_window_tokens: deepSeekProviderBase.model_context_window_tokens,
-        max_output_tokens: deepSeekProviderBase.max_output_tokens,
-        rate_limit_rpm: deepSeekProviderBase.rate_limit_rpm,
-        rate_limit_tpm: deepSeekProviderBase.rate_limit_tpm,
-        timeout_seconds: deepSeekProviderBase.timeout_seconds,
-        health_timeout_seconds: deepSeekProviderBase.health_timeout_seconds,
-      },
-    ],
-  },
-  {
-    providerId: "openai",
-    label: "OpenAI",
-    vendorKey: "openai",
+    providerId: "chybenzun-openai-compatible",
+    label: "平台托管模型",
+    vendorKey: "chybenzun-openai-compatible",
     apiFormat: "openai",
-    baseUrl: "https://api.openai.com/v1",
-    apiKeyEnv: "OPENAI_API_KEY",
-    secretProvider: "openai",
+    baseUrl: "https://chybenzun.top/v1",
+    apiKeyEnv: "AI_PROVIDER_API_KEY",
+    secretProvider: "chybenzun-openai-compatible",
+    managedByPlatform: true,
     models: [
-      {
-        model: "gpt-5.5",
-        label: "OpenAI GPT-5.5",
-        model_kind: "推理模型",
-        model_context_window_tokens: 272000,
-        max_output_tokens: 128000,
-        rate_limit_rpm: 600,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 30,
-        health_timeout_seconds: 5,
-      },
-      {
-        model: "gpt-5.3-codex-spark",
-        label: "OpenAI GPT-5.3 Codex Spark",
-        model_kind: "文本模型",
-        model_context_window_tokens: 272000,
-        max_output_tokens: 128000,
-        rate_limit_rpm: 600,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 30,
-        health_timeout_seconds: 5,
-      },
+      platformManagedModel("deepseek-v4-flash", "DeepSeek V4 Flash", "文本模型"),
+      platformManagedModel("deepseek-v4-pro", "DeepSeek V4 Pro", "推理模型"),
+      platformManagedModel("glm-5.2", "GLM 5.2", "推理模型"),
+      platformManagedModel("kimi-k2.7-code", "Kimi K2.7 Code", "推理模型"),
+      platformManagedModel("kimi-k2.6", "Kimi K2.6", "推理模型"),
+      platformManagedModel("doubao-seed-2-1-turbo", "Doubao Seed 2.1 Turbo", "文本模型"),
+      platformManagedModel("doubao-seed-2-1-pro", "Doubao Seed 2.1 Pro", "推理模型"),
+      platformManagedModel("qwen3.7-max", "Qwen 3.7 Max", "推理模型"),
+      platformManagedModel("qwen3.7-plus", "Qwen 3.7 Plus", "文本模型"),
+      platformManagedModel("minimax-m3", "MiniMax M3", "文本模型"),
+      platformManagedModel("step-3.7-flash", "Step 3.7 Flash", "文本模型"),
+      platformManagedModel("mimo-v2.5", "MiMo V2.5", "文本模型"),
     ],
   },
-  {
-    providerId: "anthropic",
-    label: "Anthropic",
-    vendorKey: "anthropic",
-    apiFormat: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    apiKeyEnv: "ANTHROPIC_API_KEY",
-    secretProvider: "anthropic",
-    models: [
-      {
-        model: "claude-opus-4.5",
-        label: "Claude Opus 4.5",
-        model_kind: "推理模型",
-        model_context_window_tokens: 200000,
-        max_output_tokens: 32000,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 45,
-        health_timeout_seconds: 5,
-      },
-      {
-        model: "claude-sonnet-4.5",
-        label: "Claude Sonnet 4.5",
-        model_kind: "文本模型",
-        model_context_window_tokens: 200000,
-        max_output_tokens: 32000,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 45,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "gemini",
-    label: "Gemini",
-    vendorKey: "gemini",
-    apiFormat: "openai",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    apiKeyEnv: "GEMINI_API_KEY",
-    secretProvider: "gemini",
-    models: [
-      {
-        model: "gemini-2.5-pro",
-        label: "Gemini 2.5 Pro",
-        model_kind: "推理模型",
-        model_context_window_tokens: 1000000,
-        max_output_tokens: 65536,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 45,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "kimi",
-    label: "Kimi",
-    vendorKey: "kimi",
-    apiFormat: "openai",
-    baseUrl: "https://api.moonshot.cn/v1",
-    apiKeyEnv: "MOONSHOT_API_KEY",
-    secretProvider: "moonshot",
-    models: [
-      {
-        model: "kimi-k2.6",
-        label: "Kimi K2.6",
-        model_kind: "推理模型",
-        model_context_window_tokens: 262144,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 30,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "z-ai",
-    label: "Z.AI",
-    vendorKey: "z-ai",
-    apiFormat: "openai",
-    baseUrl: "https://api.z.ai/api/paas/v4",
-    apiKeyEnv: "ZAI_API_KEY",
-    secretProvider: "z-ai",
-    models: [
-      {
-        model: "glm-5.1",
-        label: "Z.AI GLM-5.1",
-        model_kind: "推理模型",
-        model_context_window_tokens: 200000,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 30,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "qwen",
-    label: "Qwen",
-    vendorKey: "qwen",
-    apiFormat: "openai",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    apiKeyEnv: "DASHSCOPE_API_KEY",
-    secretProvider: "qwen",
-    models: [
-      {
-        model: "qwen-max-latest",
-        label: "Qwen Max Latest",
-        model_kind: "文本模型",
-        model_context_window_tokens: 131072,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 30,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "doubao",
-    label: "Doubao",
-    vendorKey: "doubao",
-    apiFormat: "openai",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-    apiKeyEnv: "ARK_API_KEY",
-    secretProvider: "doubao",
-    models: [
-      {
-        model: "doubao-seed-1-6",
-        label: "Doubao Seed 1.6",
-        model_kind: "文本模型",
-        model_context_window_tokens: 256000,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 30,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "openrouter",
-    label: "OpenRouter",
-    vendorKey: "openrouter",
-    apiFormat: "openai",
-    baseUrl: "https://openrouter.ai/api/v1",
-    apiKeyEnv: "OPENROUTER_API_KEY",
-    secretProvider: "openrouter",
-    models: [
-      {
-        model: "openai/gpt-5.5",
-        label: "OpenRouter GPT-5.5",
-        model_kind: "推理模型",
-        model_context_window_tokens: 272000,
-        max_output_tokens: 128000,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 45,
-        health_timeout_seconds: 5,
-      },
-      {
-        model: "anthropic/claude-sonnet-4.5",
-        label: "OpenRouter Claude Sonnet 4.5",
-        model_kind: "文本模型",
-        model_context_window_tokens: 200000,
-        max_output_tokens: 32000,
-        rate_limit_rpm: 300,
-        rate_limit_tpm: 120000,
-        timeout_seconds: 45,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "ollama",
-    label: "Ollama / Local",
-    vendorKey: "ollama",
-    apiFormat: "openai",
-    baseUrl: "http://127.0.0.1:11434/v1",
-    apiKeyEnv: "",
-    secretProvider: "ollama",
-    isLocal: true,
-    models: [
-      {
-        model: "llama3.1",
-        label: "Llama 3.1",
-        model_kind: "文本模型",
-        model_context_window_tokens: 128000,
-        rate_limit_rpm: 0,
-        rate_limit_tpm: 0,
-        timeout_seconds: 60,
-        health_timeout_seconds: 5,
-      },
-    ],
-  },
-  {
-    providerId: "custom",
-    label: "自定义",
-    vendorKey: "custom",
-    apiFormat: "openai",
-    baseUrl: "",
-    apiKeyEnv: "",
-    secretProvider: "custom",
-    models: [],
-  },
+  ollamaCatalogProvider,
+  customCatalogProvider,
 ];
 
 export const emptyProvider: ProviderConfig = {
@@ -388,12 +180,11 @@ export function catalogProviderModelToProvider(
   model: ModelCatalogModel,
 ): ProviderConfig {
   const fallbackName =
-    catalogProvider.models.length === 1
+    catalogProvider.managedByPlatform || catalogProvider.models.length === 1
       ? catalogProvider.providerId
       : `${catalogProvider.providerId}-${slugModelId(model.model)}`;
-  const legacyName = legacyProviderName(catalogProvider.providerId, model.model);
   return {
-    name: legacyName ?? fallbackName,
+    name: fallbackName,
     label: model.label,
     provider_id: catalogProvider.providerId,
     catalog_provider: catalogProvider.providerId,
@@ -405,6 +196,7 @@ export function catalogProviderModelToProvider(
     base_url: catalogProvider.baseUrl,
     api_key: "",
     api_key_env: catalogProvider.apiKeyEnv,
+    managed_by_platform: catalogProvider.managedByPlatform === true,
     model_context_window_tokens: model.model_context_window_tokens,
     max_output_tokens: model.max_output_tokens,
     rate_limit_rpm: model.rate_limit_rpm,
@@ -418,9 +210,12 @@ export function catalogProviderModelToProvider(
   };
 }
 
-export function mergePresetAndConfiguredProviders(configuredProviders: ProviderConfig[]) {
+export function mergePresetAndConfiguredProviders(
+  configuredProviders: ProviderConfig[],
+  catalog = modelCatalog,
+) {
   const merged = new Map<string, ProviderConfig>();
-  for (const preset of flattenModelCatalog()) {
+  for (const preset of flattenModelCatalog(catalog)) {
     const configured = configuredProviders.find((provider) => providerKey(provider) === providerKey(preset));
     merged.set(providerKey(preset), configured ? { ...preset, ...configured } : preset);
   }
@@ -435,8 +230,9 @@ export function mergePresetAndConfiguredProviders(configuredProviders: ProviderC
 export function buildSwitchboardRows(
   configuredProviders: ProviderConfig[],
   currentDefault: { provider?: string; model?: string },
+  catalog = modelCatalog,
 ) {
-  return modelCatalog.flatMap((catalogProvider) => {
+  return catalog.flatMap((catalogProvider) => {
     const catalogRows = catalogProvider.models.map((model) => {
       const provider = catalogProviderModelToProvider(catalogProvider, model);
       const configuredProvider = configuredProviders.find((item) => providerKey(item) === providerKey(provider)) ?? null;
@@ -484,6 +280,12 @@ export function buildSwitchboardRows(
 }
 
 export function providerHasUsableApiKey(provider: ProviderConfig) {
+  if (provider.managed_by_platform === true) {
+    return provider.api_key_configured === true;
+  }
+  if (provider.isLocal === true || providerVendorKey(provider) === "ollama") {
+    return true;
+  }
   if (provider.api_key_configured === true) {
     return true;
   }
@@ -591,15 +393,6 @@ function slugModelId(model: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
-}
-
-function legacyProviderName(providerId: string, model: string) {
-  if (providerId === "deepseek" && model === "deepseek-v4-flash") return "deepseek-flash";
-  if (providerId === "deepseek" && model === "deepseek-v4-pro") return "deepseek-pro";
-  if (providerId === "openai" && model === "gpt-5.5") return "openai-compatible";
-  if (providerId === "kimi" && model === "kimi-k2.6") return "kimi";
-  if (providerId === "z-ai" && model === "glm-5.1") return "z-ai";
-  return null;
 }
 
 function isCustomProvider(provider: ProviderConfig) {
