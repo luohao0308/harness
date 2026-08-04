@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   type ChangeEvent,
+  type ReactNode,
 } from "react";
 import { Bot, Brain, Maximize2, UsersRound, X } from "lucide-react";
 
@@ -103,13 +104,15 @@ export type AgentColumnProps = {
   onTogglePin: (nodeId: string) => void;
   onOpenMessageInspector: (section: InspectorSection, node: ConversationNode) => void;
   onStopWake: () => void;
-  onFullscreen: () => void;
+  onFullscreen?: () => void;
   onRemove: () => void;
   onFocus: () => void;
   isFlashing?: boolean;
   setScrollRef: (node: HTMLDivElement | null) => void;
   visibleColumnCount?: number;
   fullscreen?: boolean;
+  conversationSupplement?: ReactNode;
+  hideTaskSteps?: boolean;
 };
 
 export function AgentColumn({
@@ -161,6 +164,8 @@ export function AgentColumn({
   setScrollRef,
   visibleColumnCount,
   fullscreen = false,
+  conversationSupplement,
+  hideTaskSteps = false,
 }: AgentColumnProps) {
   const isLeader = agent.role === "leader";
   const roleLabel = isLeader ? text("队长", "Leader") : text("成员", "Teammate");
@@ -459,15 +464,17 @@ export function AgentColumn({
               <X className="h-3.5 w-3.5" />
             </button>
           ) : null}
-          <button
-            type="button"
-            aria-label={text("切换全屏列", "Toggle full-screen column")}
-            title={text("切换全屏列", "Toggle full-screen column")}
-            onClick={onFullscreen}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
-          >
-            <Maximize2 className="h-3.5 w-3.5" />
-          </button>
+          {onFullscreen ? (
+            <button
+              type="button"
+              aria-label={text("切换全屏列", "Toggle full-screen column")}
+              title={text("切换全屏列", "Toggle full-screen column")}
+              onClick={onFullscreen}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -522,29 +529,33 @@ export function AgentColumn({
           )}
         </div>
 
-        <details className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
-          <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-            {text("查看步骤", "View steps")} ·{" "}
-            {text(`${taskScope.length} 项任务`, `${taskScope.length} tasks`)}
-          </summary>
-          <div className="mt-3 space-y-2">
-            {taskScope.length > 0 ? (
-              taskScope.map((task) => (
-                <div key={task.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-xs font-medium text-slate-900">{task.subject}</div>
-                      <div className="mt-0.5 text-[11px] text-slate-500">{task.description || "-"}</div>
+        {conversationSupplement}
+
+        {!hideTaskSteps ? (
+          <details className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+              {text("查看步骤", "View steps")} ·{" "}
+              {text(`${taskScope.length} 项任务`, `${taskScope.length} tasks`)}
+            </summary>
+            <div className="mt-3 space-y-2">
+              {taskScope.length > 0 ? (
+                taskScope.map((task) => (
+                  <div key={task.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-medium text-slate-900">{task.subject}</div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">{task.description || "-"}</div>
+                      </div>
+                      <Badge tone={teamTaskStatusTone(task.status)}>{teamTaskStatusLabel(task.status)}</Badge>
                     </div>
-                    <Badge tone={teamTaskStatusTone(task.status)}>{teamTaskStatusLabel(task.status)}</Badge>
                   </div>
-                </div>
-              ))
-            ) : (
-              <div className="text-[11px] text-slate-400">{text("暂无步骤", "No steps yet")}</div>
-            )}
-          </div>
-        </details>
+                ))
+              ) : (
+                <div className="text-[11px] text-slate-400">{text("暂无步骤", "No steps yet")}</div>
+              )}
+            </div>
+          </details>
+        ) : null}
 
       </div>
 
