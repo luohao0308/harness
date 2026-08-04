@@ -1,7 +1,7 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-06-22T01:47:59+08:00
-last_updated_by: harness-agent
+last_updated_at: 2026-08-04T17:30:00+08:00
+last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/ai/task-progress.yaml
 product: AI Harness Platform
@@ -117,6 +117,28 @@ stages:
       - Updated deploy compose so api-server mounts docker.sock and can allocate sandbox in Stage 07 smoke path.
 
 post_stage_hardening:
+  - id: desktop-team-mode-and-platform-ai-provider
+    date: 2026-08-04
+    status: completed
+    demo: Electron Team Mode adds Collaboration and Task Graph views while preserving web columns, and Harness uses the interview-web OpenAI-compatible provider through a server-owned gateway.
+    verification_result: backend_frontend_browser_deployment_docs_and_live_provider_gates_passed
+    verification_commands:
+      - "Backend full regression -> 1418 passed"
+      - "Model gateway regression -> 52 passed"
+      - "Agent regression -> 75 passed"
+      - "Team Vitest -> 25 passed"
+      - "Team Playwright -> 3 passed"
+      - "Frontend lint and production build -> passed"
+      - "Ruff, environment checks, docs validation, and git diff checks -> passed"
+      - "Live upstream model listing, complete, and stream probes -> passed"
+    acceptance_notes:
+      - Electron exposes Collaboration, Task Graph, and the existing multi-column view; browser Team Mode keeps the original multi-column default.
+      - Team goals, dependency graph state, mailbox activity, wake behavior, and the selected Agent composer continue to use shared Team APIs.
+      - The platform provider is chybenzun-openai-compatible at https://chybenzun.top/v1 with deepseek-v4-flash as the default and a server-owned 12-model allowlist.
+      - AI_PROVIDER_API_KEY remains backend-only, is required in production, and is never exposed through browser environment templates.
+      - The gateway validates optional output and temperature inputs and strictly accepts only complete single-response concatenated chunk payloads.
+      - No real provider key or response body was written to tracked files.
+
   - id: local-agent-pause-continue-after-send
     date: 2026-06-22
     status: completed

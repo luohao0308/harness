@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-08-04
+
+- Added [[session-2026-07-28-desktop-team-mode-workspace]] and refreshed [[project-handoff-current-state]], [[index]], and `docs/ai/task-progress.yaml`. Recorded Electron Collaboration/Task Graph/Multi-column behavior, the unchanged browser Team workflow, autonomous Team goals, the interview-web platform AI provider boundary, backend and frontend regression evidence, live upstream probes, and server-only credential handling.
+
 ## 2026-06-21
 
 - Refreshed [[session-2026-06-21-local-agent-offline-bridge-run-recovery]], [[project-handoff-current-state]], and `docs/ai/task-progress.yaml` for the HAO local Agent messy-context/mock-response closeout. Captured the combined-prompt root cause, clean user-goal/system-context split, local mock model fail-closed guard before assistant deltas, targeted context/mock regressions (`3 passed`), full HAO CLI regression (`67 passed`), Ruff, py_compile, and live HAO Run `03a8b04e-5aff-4a52-8007-ba17e83be885` returning real DeepSeek Flash content without local mock text or bridge prompt leakage.

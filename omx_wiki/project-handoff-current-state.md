@@ -20,6 +20,25 @@ The public website remains a public information shell. The implementation center
 
 The current final task target is **Agent Knowledge Harness**. Based on the repository HTML report `docs/reports/release-gate-handoff-diff-2026-05-14.html`, the target is not merely "add memory" or "add RAG"; it is to make Harness a configurable, auditable, and evaluable capability layer across memory, knowledge retrieval, MCP, skills, context/token routing, hallucination control, Eval, Observability, Policy/Sandbox, and Agent orchestration.
 
+## Desktop Team And Platform AI Closeout
+
+As of 2026-08-04, Electron Team Mode supports `协作 / 任务图 / 多列`.
+Collaboration is chat-first, Task Graph derives deterministic dependency state
+from Team tasks, and Multi-column reuses the existing browser workflow. Browser
+Team Mode remains unchanged.
+
+Harness model traffic now defaults to the server-managed
+`chybenzun-openai-compatible` provider at `https://chybenzun.top/v1`, using
+`deepseek-v4-flash` and a server-owned 12-model allowlist. The provider key
+stays in backend configuration, Agent and Team model selection enforce the
+allowlist, and the gateway handles the upstream concatenated chunk response
+without accepting mixed or incomplete payloads.
+
+Read `docs/desktop/team-mode-workspace.md`,
+`docs/architecture/platform-managed-ai-provider.md`, and
+[[session-2026-07-28-desktop-team-mode-workspace]] before changing these
+surfaces.
+
 ## Authoritative Reading Order
 
 Read these first:
