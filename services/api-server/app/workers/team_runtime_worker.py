@@ -15,7 +15,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.config import get_settings
+from app.core.config import get_settings, validate_startup_settings
 from app.db.models import Team, TeamAgent, TeamGoal, TeamMailboxMessage, TeamTask, utc_now
 from app.db.session import SessionLocal
 from app.teams.goal_supervisor import AUTO_SUPERVISED_GOAL_STATUSES, normalize_goal_json
@@ -529,6 +529,8 @@ def run_team_runtime_service(
     max_wakes_per_tick: int = DEFAULT_TEAM_RUNTIME_MAX_WAKES_PER_TICK,
     execution_backend: TeamWakeExecutionBackend | None = None,
 ) -> None:
+    startup_settings = get_settings()
+    validate_startup_settings(startup_settings)
     running = True
 
     def stop(_signum, _frame) -> None:
