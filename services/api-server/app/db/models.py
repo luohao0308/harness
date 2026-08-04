@@ -529,6 +529,43 @@ class Team(Base):
     )
 
 
+class TeamGoal(Base):
+    """Team goal with supervision policy."""
+
+    __tablename__ = "team_goals"
+    __table_args__ = (
+        Index("ix_team_goals_team_status", "team_id", "status"),
+        Index("ix_team_goals_org_team_created", "organization_id", "team_id", "created_at"),
+        Index(
+            "ix_team_goals_one_current_per_team_uidx",
+            "team_id",
+            unique=True,
+            sqlite_where=text("status IN ('active', 'paused')"),
+            postgresql_where=text("status IN ('active', 'paused')"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    non_goals_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    acceptance_criteria_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    supervision_policy_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    correction_budget_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    progress_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    supervisor_state_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class TeamAgent(Base):
     __tablename__ = "team_agents"
     __table_args__ = (

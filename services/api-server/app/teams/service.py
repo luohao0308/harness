@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 
@@ -35,12 +35,21 @@ from app.db.models import (
     Team,
     TeamAgent,
     TeamEvent,
+    TeamGoal,
     TeamMailboxMessage,
     TeamTask,
     utc_now,
 )
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
+from app.teams.goal_supervisor import (
+    AUTO_SUPERVISED_GOAL_STATUSES,
+    CURRENT_GOAL_STATUSES,
+    TeamGoalSupervisor,
+    default_progress,
+    default_supervisor_state,
+    normalize_goal_json,
+)
 from app.teams.model_runtime import GatewayTeamModelRuntime, TeamModelRuntime
 
 TEAM_TOOL_NAMES = {
@@ -60,6 +69,7 @@ VALID_AGENT_STATUSES = {"pending", "idle", "active", "completed", "failed"}
 VALID_TASK_STATUSES = {"pending", "in_progress", "completed", "deleted"}
 VALID_WORKSPACE_MODES = {"shared", "isolated"}
 VALID_MESSAGE_MODES = {"chat", "markdown_plan", "plan", "goal"}
+TERMINAL_GOAL_STATUSES = {"completed", "failed", "blocked"}
 SHUTDOWN_APPROVED = "shutdown_approved"
 SHUTDOWN_REJECTED_PREFIX = "shutdown_rejected"
 WAKE_TIMEOUT_SECONDS = 60
@@ -100,6 +110,7 @@ class TeamSessionService:
         self.organization_id = organization_id
         self.actor_id = actor_id
         self.model_runtime = model_runtime or GatewayTeamModelRuntime(session)
+        self.goal_supervisor = TeamGoalSupervisor(self)
 
     @staticmethod
     def _event_sequence_lock(team_id: str) -> Lock:
@@ -243,6 +254,210 @@ class TeamSessionService:
             actor_type="user",
         )
         return team
+
+    def list_goals(self, team_id: str) -> list[TeamGoal]:
+        team = self.get_team(team_id)
+        return list(
+            self.session.execute(
+                select(TeamGoal)
+                .where(TeamGoal.team_id == team.id)
+                .order_by(TeamGoal.created_at.desc(), TeamGoal.id.desc())
+            ).scalars()
+        )
+
+    def active_goal(self, team_id: str) -> TeamGoal | None:
+        return self.current_goal(team_id)
+
+    def current_goal(self, team_id: str) -> TeamGoal | None:
+        team = self.get_team(team_id)
+        goal = self.session.execute(
+            select(TeamGoal)
+            .where(TeamGoal.team_id == team.id, TeamGoal.status.in_(tuple(CURRENT_GOAL_STATUSES)))
+            .order_by(TeamGoal.updated_at.desc(), TeamGoal.id.desc())
+            .limit(1)
+        ).scalars().first()
+        if goal is not None:
+            normalize_goal_json(goal)
+            goal.progress_json = self.goal_supervisor.reconcile_progress(goal=goal)
+        return goal
+
+    def auto_supervised_goal(self, team_id: str) -> TeamGoal | None:
+        team = self.get_team(team_id)
+        goal = self.session.execute(
+            select(TeamGoal)
+            .where(
+                TeamGoal.team_id == team.id,
+                TeamGoal.status.in_(tuple(AUTO_SUPERVISED_GOAL_STATUSES)),
+            )
+            .order_by(TeamGoal.updated_at.desc(), TeamGoal.id.desc())
+            .limit(1)
+        ).scalars().first()
+        if goal is not None:
+            normalize_goal_json(goal)
+            goal.progress_json = self.goal_supervisor.reconcile_progress(goal=goal)
+        return goal
+
+    def get_goal(self, team_id: str, goal_id: str) -> TeamGoal:
+        goal = self.session.get(TeamGoal, goal_id)
+        if goal is None or goal.team_id != team_id or goal.organization_id != self.organization_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team goal not found")
+        normalize_goal_json(goal)
+        return goal
+
+    def create_goal(
+        self,
+        *,
+        team_id: str,
+        objective: str,
+        non_goals: list[str],
+        acceptance_criteria: list[str],
+        supervision_policy: dict,
+        correction_budget: dict,
+        start_immediately: bool = True,
+    ) -> TeamGoal:
+        team = self.get_team(team_id)
+        objective_value = self._normalize_goal_objective(objective)
+        correction_budget_value = self._normalize_goal_correction_budget(correction_budget)
+        if start_immediately and self.current_goal(team.id) is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="团队已有进行中的目标")
+        now = utc_now()
+        goal = TeamGoal(
+            team_id=team.id,
+            organization_id=self.organization_id,
+            status="active" if start_immediately else "draft",
+            objective=objective_value,
+            non_goals_json=list(non_goals or []),
+            acceptance_criteria_json=list(acceptance_criteria or []),
+            supervision_policy_json=dict(supervision_policy or {}),
+            correction_budget_json=correction_budget_value,
+            progress_json=default_progress(),
+            supervisor_state_json=default_supervisor_state(),
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        self.goal_supervisor.create_goal(goal=goal)
+        self.session.add(goal)
+        try:
+            self.session.flush()
+        except IntegrityError as exc:
+            self.session.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="团队已有进行中的目标") from exc
+        team.updated_at = now
+        self.append_event(
+            team_id=team.id,
+            event_type="TEAM_GOAL_CREATED",
+            payload={"team_goal_id": goal.id, "goal": self.goal_summary(goal)},
+            actor_type="user",
+        )
+        if goal.status == "active":
+            self.append_event(
+                team_id=team.id,
+                event_type="TEAM_GOAL_STARTED",
+                payload={"team_goal_id": goal.id, "goal": self.goal_summary(goal)},
+                actor_type="user",
+            )
+        return goal
+
+    def update_goal(
+        self,
+        *,
+        team_id: str,
+        goal_id: str,
+        status_value: str | None = None,
+        objective: str | None = None,
+        non_goals: list[str] | None = None,
+        acceptance_criteria: list[str] | None = None,
+        supervision_policy: dict | None = None,
+        correction_budget: dict | None = None,
+    ) -> TeamGoal:
+        goal = self.get_goal(team_id, goal_id)
+        if status_value in CURRENT_GOAL_STATUSES:
+            current = self.current_goal(team_id)
+            if current is not None and current.id != goal.id:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="团队已有进行中的目标")
+        if status_value is not None:
+            goal.status = status_value
+            if status_value in TERMINAL_GOAL_STATUSES:
+                goal.completed_at = utc_now()
+            elif status_value in CURRENT_GOAL_STATUSES:
+                goal.completed_at = None
+        if objective is not None:
+            goal.objective = self._normalize_goal_objective(objective)
+        if non_goals is not None:
+            goal.non_goals_json = list(non_goals)
+        if acceptance_criteria is not None:
+            goal.acceptance_criteria_json = list(acceptance_criteria)
+        if supervision_policy is not None:
+            goal.supervision_policy_json = dict(supervision_policy)
+        if correction_budget is not None:
+            goal.correction_budget_json = self._normalize_goal_correction_budget(
+                {
+                    **dict(goal.correction_budget_json or {}),
+                    **dict(correction_budget),
+                }
+            )
+        goal.version += 1
+        goal.updated_at = utc_now()
+        if goal.status in TERMINAL_GOAL_STATUSES and goal.completed_at is None:
+            goal.completed_at = goal.updated_at
+        normalize_goal_json(goal)
+        goal.progress_json = self.goal_supervisor.reconcile_progress(goal=goal)
+        event_type = self._goal_event_type(goal)
+        try:
+            self.session.flush()
+        except IntegrityError as exc:
+            self.session.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="团队已有进行中的目标") from exc
+        self.append_event(
+            team_id=team_id,
+            event_type=event_type,
+            payload={"team_goal_id": goal.id, "goal": self.goal_summary(goal)},
+            actor_type="user",
+        )
+        return goal
+
+    def supervise_goal(
+        self,
+        *,
+        team_id: str,
+        goal_id: str,
+        source_key: str,
+        tick_id: str | None = None,
+        slot_id: str | None = None,
+        message_id: str | None = None,
+        task_id: str | None = None,
+        force: bool = False,
+    ) -> TeamGoal:
+        goal = self.get_goal(team_id, goal_id)
+        if goal.status not in AUTO_SUPERVISED_GOAL_STATUSES:
+            goal.progress_json = self.goal_supervisor.reconcile_progress(goal=goal)
+            return goal
+        message = self.session.get(TeamMailboxMessage, message_id) if message_id else None
+        task = self.get_task(team_id, task_id) if task_id else None
+        next_tick_id = tick_id or f"goal-tick-{goal.id[:8]}-{goal.version + 1}"
+        previous_version = goal.version
+        goal = self.goal_supervisor.evaluate(
+            goal=goal,
+            source_key=source_key,
+            tick_id=next_tick_id,
+            slot_id=slot_id,
+            message=message,
+            task=task,
+            force=force,
+        )
+        goal.version = previous_version + 1
+        if goal.status in TERMINAL_GOAL_STATUSES and goal.completed_at is None:
+            goal.completed_at = utc_now()
+        event_type = self._goal_event_type(goal)
+        self.append_event(
+            team_id=team_id,
+            event_type=event_type,
+            payload={"team_goal_id": goal.id, "goal": self.goal_summary(goal)},
+            actor_type="system",
+            actor_id="team_goal_supervisor",
+        )
+        return goal
 
     def add_agent(
         self,
@@ -976,6 +1191,11 @@ class TeamSessionService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="没有可投递的团队成员"
             )
+        self._auto_supervise_message(
+            team=team,
+            message=first_message,
+            from_agent_slot_id=from_agent_slot_id,
+        )
         return first_message
 
     def _wake_after_accepted_delivery(self, *, team: Team, slot_id: str) -> None:
@@ -1722,7 +1942,42 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
             payload={"task": self.task_summary(task)},
             actor_type="user",
         )
+        self._auto_supervise_task(team=team, task=task)
         return task
+
+    def _auto_supervise_message(
+        self,
+        *,
+        team: Team,
+        message: TeamMailboxMessage,
+        from_agent_slot_id: str,
+    ) -> None:
+        active_goal = self.auto_supervised_goal(team.id)
+        if active_goal is None:
+            return
+        if from_agent_slot_id in {"leader", "user"}:
+            return
+        if (message.metadata_json or {}).get("team_goal_tick_id") is not None:
+            return
+        self.supervise_goal(
+            team_id=team.id,
+            goal_id=active_goal.id,
+            source_key=f"message:{message.id}",
+            slot_id=from_agent_slot_id,
+            message_id=message.id,
+        )
+
+    def _auto_supervise_task(self, *, team: Team, task: TeamTask) -> None:
+        active_goal = self.auto_supervised_goal(team.id)
+        if active_goal is None:
+            return
+        self.supervise_goal(
+            team_id=team.id,
+            goal_id=active_goal.id,
+            source_key=f"task:{task.id}:{task.updated_at.isoformat() if task.updated_at else task.id}",
+            slot_id=task.owner_slot_id,
+            task_id=task.id,
+        )
 
     def _ensure_enterprise_task_projection(
         self,
@@ -3155,6 +3410,51 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
             )
         return normalized
 
+    @staticmethod
+    def _normalize_goal_objective(objective: str) -> str:
+        normalized = objective.strip()
+        if not normalized:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="目标不能为空")
+        return normalized
+
+    @staticmethod
+    def _normalize_goal_correction_budget(correction_budget: dict | None) -> dict:
+        if correction_budget is None:
+            budget = {}
+        elif isinstance(correction_budget, Mapping):
+            budget = dict(correction_budget)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="correction_budget_json 必须是对象",
+            )
+        raw_max_interventions = budget.get("max_interventions", 3)
+        if raw_max_interventions in {None, ""}:
+            raw_max_interventions = 3
+        try:
+            max_interventions = int(raw_max_interventions)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="max_interventions 必须是非负整数",
+            ) from exc
+        if max_interventions < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="max_interventions 必须是非负整数",
+            )
+        return {**budget, "max_interventions": max_interventions}
+
+    @staticmethod
+    def _goal_event_type(goal: TeamGoal) -> str:
+        if goal.status == "blocked":
+            return "TEAM_GOAL_BLOCKED"
+        if goal.status == "failed":
+            return "TEAM_GOAL_FAILED"
+        if goal.status == "completed":
+            return "TEAM_GOAL_COMPLETED"
+        return "TEAM_GOAL_PROGRESS"
+
     def _ensure_team_name_available(self, name: str, *, exclude_team_id: str | None = None) -> None:
         statement = select(Team.id).where(
             Team.organization_id == self.organization_id,
@@ -3234,6 +3534,27 @@ If you receive a message with type `shutdown_request`, the leader is asking you 
             "files_json": message.files_json,
             "metadata_json": message.metadata_json,
             "created_at": message.created_at.isoformat() if message.created_at else None,
+        }
+
+    @staticmethod
+    def goal_summary(goal: TeamGoal) -> dict:
+        normalize_goal_json(goal)
+        return {
+            "id": goal.id,
+            "team_id": goal.team_id,
+            "organization_id": goal.organization_id,
+            "status": goal.status,
+            "objective": goal.objective,
+            "non_goals_json": list(goal.non_goals_json or []),
+            "acceptance_criteria_json": list(goal.acceptance_criteria_json or []),
+            "supervision_policy_json": dict(goal.supervision_policy_json or {}),
+            "correction_budget_json": dict(goal.correction_budget_json or {}),
+            "progress_json": dict(goal.progress_json or {}),
+            "supervisor_state_json": dict(goal.supervisor_state_json or {}),
+            "version": goal.version,
+            "created_at": goal.created_at.isoformat() if goal.created_at else None,
+            "updated_at": goal.updated_at.isoformat() if goal.updated_at else None,
+            "completed_at": goal.completed_at.isoformat() if goal.completed_at else None,
         }
 
     @staticmethod

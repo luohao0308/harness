@@ -12,7 +12,15 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.schemas import normalize_workspace_mode
-from app.db.models import AgentMessage, Team, TeamAgent, TeamEvent, TeamMailboxMessage, TeamTask
+from app.db.models import (
+    AgentMessage,
+    Team,
+    TeamAgent,
+    TeamEvent,
+    TeamGoal,
+    TeamMailboxMessage,
+    TeamTask,
+)
 from app.db.session import get_db_session
 from app.security.auth import Principal, require_role
 from app.teams.service import TEAM_TOOL_NAMES, TeamSessionService
@@ -94,6 +102,24 @@ class TeamEventResponse(BaseModel):
     created_at: str | None = None
 
 
+class TeamGoalResponse(BaseModel):
+    id: str
+    team_id: str
+    organization_id: str | None = None
+    status: str
+    objective: str
+    non_goals_json: list = Field(default_factory=list)
+    acceptance_criteria_json: list = Field(default_factory=list)
+    supervision_policy_json: dict = Field(default_factory=dict)
+    correction_budget_json: dict = Field(default_factory=dict)
+    progress_json: dict = Field(default_factory=dict)
+    supervisor_state_json: dict = Field(default_factory=dict)
+    version: int
+    created_at: str | None = None
+    updated_at: str | None = None
+    completed_at: str | None = None
+
+
 class TeamResponse(BaseModel):
     id: str
     organization_id: str | None = None
@@ -106,6 +132,7 @@ class TeamResponse(BaseModel):
     agents: list[TeamAgentResponse] = Field(default_factory=list)
     messages: list[TeamMailboxMessageResponse] = Field(default_factory=list)
     tasks: list[TeamTaskResponse] = Field(default_factory=list)
+    active_goal: TeamGoalResponse | None = None
     unread_counts: dict[str, int] = Field(default_factory=dict)
     team_tools: list[str] = Field(default_factory=lambda: sorted(TEAM_TOOL_NAMES))
     created_at: str | None = None
@@ -198,6 +225,75 @@ class TeamTaskUpdateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+def _validate_goal_correction_budget(value: dict) -> dict:
+    budget = dict(value or {})
+    raw_max_interventions = budget.get("max_interventions", 3)
+    if raw_max_interventions in {None, ""}:
+        raw_max_interventions = 3
+    try:
+        max_interventions = int(raw_max_interventions)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_interventions 必须是非负整数") from exc
+    if max_interventions < 0:
+        raise ValueError("max_interventions 必须是非负整数")
+    return {**budget, "max_interventions": max_interventions}
+
+
+class TeamGoalCreateRequest(BaseModel):
+    objective: str = Field(min_length=1)
+    non_goals_json: list[str] = Field(default_factory=list)
+    acceptance_criteria_json: list[str] = Field(default_factory=list)
+    supervision_policy_json: dict = Field(default_factory=dict)
+    correction_budget_json: dict = Field(default_factory=dict)
+    start_immediately: bool = True
+
+    @field_validator("objective")
+    @classmethod
+    def objective_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("目标不能为空")
+        return value.strip()
+
+    @field_validator("correction_budget_json")
+    @classmethod
+    def correction_budget_must_be_valid(cls, value: dict) -> dict:
+        return _validate_goal_correction_budget(value)
+
+
+class TeamGoalUpdateRequest(BaseModel):
+    status: Literal["draft", "active", "paused", "completed", "failed", "blocked"] | None = None
+    objective: str | None = Field(default=None, min_length=1)
+    non_goals_json: list[str] | None = None
+    acceptance_criteria_json: list[str] | None = None
+    supervision_policy_json: dict | None = None
+    correction_budget_json: dict | None = None
+
+    @field_validator("objective")
+    @classmethod
+    def objective_update_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not value.strip():
+            raise ValueError("目标不能为空")
+        return value.strip()
+
+    @field_validator("correction_budget_json")
+    @classmethod
+    def correction_budget_update_must_be_valid(cls, value: dict | None) -> dict | None:
+        if value is None:
+            return value
+        return _validate_goal_correction_budget(value)
+
+
+class TeamGoalSuperviseRequest(BaseModel):
+    source_key: str = Field(min_length=1)
+    tick_id: str | None = None
+    slot_id: str | None = None
+    message_id: str | None = None
+    task_id: str | None = None
+    force: bool = False
+
+
 class TeamToolCallRequest(BaseModel):
     from_agent_slot_id: str | None = None
     args: dict = Field(default_factory=dict)
@@ -236,6 +332,7 @@ def _team_response(team: Team, service: TeamSessionService) -> TeamResponse:
         agents=[_agent_response(agent, service.session_messages(agent)) for agent in agents],
         messages=[_message_response(message) for message in messages],
         tasks=[_task_response(task) for task in tasks if task.status != "deleted"],
+        active_goal=_goal_response(service.active_goal(team.id)),
         unread_counts=service.unread_counts(messages),
         team_tools=sorted(TEAM_TOOL_NAMES),
         created_at=team.created_at.isoformat() if team.created_at else None,
@@ -362,6 +459,28 @@ def _event_response(event: TeamEvent) -> TeamEventResponse:
         actor_type=event.actor_type,
         actor_id=event.actor_id,
         created_at=event.created_at.isoformat() if event.created_at else None,
+    )
+
+
+def _goal_response(goal: TeamGoal | None) -> TeamGoalResponse | None:
+    if goal is None:
+        return None
+    return TeamGoalResponse(
+        id=goal.id,
+        team_id=goal.team_id,
+        organization_id=goal.organization_id,
+        status=goal.status,
+        objective=goal.objective,
+        non_goals_json=list(goal.non_goals_json or []),
+        acceptance_criteria_json=list(goal.acceptance_criteria_json or []),
+        supervision_policy_json=dict(goal.supervision_policy_json or {}),
+        correction_budget_json=dict(goal.correction_budget_json or {}),
+        progress_json=dict(goal.progress_json or {}),
+        supervisor_state_json=dict(goal.supervisor_state_json or {}),
+        version=goal.version,
+        created_at=goal.created_at.isoformat() if goal.created_at else None,
+        updated_at=goal.updated_at.isoformat() if goal.updated_at else None,
+        completed_at=goal.completed_at.isoformat() if goal.completed_at else None,
     )
 
 
@@ -686,6 +805,94 @@ def update_team_task(
     session.commit()
     session.refresh(task)
     return _task_response(task)
+
+
+@router.post(
+    "/{team_id}/goals",
+    response_model=TeamGoalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_team_goal(
+    team_id: str,
+    request: TeamGoalCreateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> TeamGoalResponse:
+    require_role(principal, {"admin", "engineer"})
+    service = _service(session, principal)
+    goal = service.create_goal(
+        team_id=team_id,
+        objective=request.objective,
+        non_goals=request.non_goals_json,
+        acceptance_criteria=request.acceptance_criteria_json,
+        supervision_policy=request.supervision_policy_json,
+        correction_budget=request.correction_budget_json,
+        start_immediately=request.start_immediately,
+    )
+    session.commit()
+    session.refresh(goal)
+    return _goal_response(goal)
+
+
+@router.get("/{team_id}/goals/active", response_model=TeamGoalResponse | None)
+def get_active_team_goal(
+    team_id: str,
+    session: DbSession,
+    principal: Principal,
+) -> TeamGoalResponse | None:
+    require_role(principal, {"admin", "engineer", "operator"})
+    service = _service(session, principal)
+    return _goal_response(service.active_goal(team_id))
+
+
+@router.patch("/{team_id}/goals/{goal_id}", response_model=TeamGoalResponse)
+def update_team_goal(
+    team_id: str,
+    goal_id: str,
+    request: TeamGoalUpdateRequest,
+    session: DbSession,
+    principal: Principal,
+) -> TeamGoalResponse:
+    require_role(principal, {"admin", "engineer"})
+    service = _service(session, principal)
+    goal = service.update_goal(
+        team_id=team_id,
+        goal_id=goal_id,
+        status_value=request.status,
+        objective=request.objective,
+        non_goals=request.non_goals_json,
+        acceptance_criteria=request.acceptance_criteria_json,
+        supervision_policy=request.supervision_policy_json,
+        correction_budget=request.correction_budget_json,
+    )
+    session.commit()
+    session.refresh(goal)
+    return _goal_response(goal)
+
+
+@router.post("/{team_id}/goals/{goal_id}/supervise", response_model=TeamGoalResponse)
+def supervise_team_goal(
+    team_id: str,
+    goal_id: str,
+    request: TeamGoalSuperviseRequest,
+    session: DbSession,
+    principal: Principal,
+) -> TeamGoalResponse:
+    require_role(principal, {"admin", "engineer"})
+    service = _service(session, principal)
+    goal = service.supervise_goal(
+        team_id=team_id,
+        goal_id=goal_id,
+        source_key=request.source_key,
+        tick_id=request.tick_id,
+        slot_id=request.slot_id,
+        message_id=request.message_id,
+        task_id=request.task_id,
+        force=request.force,
+    )
+    session.commit()
+    session.refresh(goal)
+    return _goal_response(goal)
 
 
 @router.get("/{team_id}/events", response_model=list[TeamEventResponse])

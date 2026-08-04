@@ -595,6 +595,24 @@ export type TeamTask = {
   updated_at: string | null;
 };
 
+export type TeamGoal = {
+  id: string;
+  team_id: string;
+  organization_id: string | null;
+  status: string;
+  objective: string;
+  non_goals_json: string[];
+  acceptance_criteria_json: string[];
+  supervision_policy_json: Record<string, unknown>;
+  correction_budget_json: Record<string, unknown>;
+  progress_json: Record<string, unknown>;
+  supervisor_state_json: Record<string, unknown>;
+  version: number;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+};
+
 export type Team = {
   id: string;
   organization_id: string | null;
@@ -607,6 +625,7 @@ export type Team = {
   agents: TeamAgent[];
   messages: TeamMailboxMessage[];
   tasks: TeamTask[];
+  active_goal: TeamGoal | null;
   unread_counts: Record<string, number>;
   team_tools: string[];
   created_at: string | null;
@@ -699,6 +718,24 @@ export type TeamTaskUpdatePayload = {
   description?: string | null;
   blockedBy?: string[];
   blocked_by?: string[];
+};
+
+export type TeamGoalCreatePayload = {
+  objective: string;
+  non_goals_json?: string[];
+  acceptance_criteria_json?: string[];
+  supervision_policy_json?: Record<string, unknown>;
+  correction_budget_json?: Record<string, unknown>;
+  start_immediately?: boolean;
+};
+
+export type TeamGoalUpdatePayload = {
+  status?: "draft" | "active" | "paused" | "completed" | "failed" | "blocked";
+  objective?: string | null;
+  non_goals_json?: string[] | null;
+  acceptance_criteria_json?: string[] | null;
+  supervision_policy_json?: Record<string, unknown> | null;
+  correction_budget_json?: Record<string, unknown> | null;
 };
 
 export type NotificationChannelKind = "slack" | "email" | "webhook";
@@ -3527,6 +3564,31 @@ export async function createTeamTask(teamId: string, payload: TeamTaskCreatePayl
 
 export async function updateTeamTask(teamId: string, taskId: string, payload: TeamTaskUpdatePayload) {
   return request<TeamTask>(`/api/teams/${teamId}/tasks/${taskId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createTeamGoal(
+  teamId: string,
+  payload: TeamGoalCreatePayload,
+): Promise<TeamGoal> {
+  return request<TeamGoal>(`/api/teams/${teamId}/goals`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getActiveTeamGoal(teamId: string): Promise<TeamGoal | null> {
+  return request<TeamGoal | null>(`/api/teams/${teamId}/goals/active`);
+}
+
+export async function updateTeamGoal(
+  teamId: string,
+  goalId: string,
+  payload: TeamGoalUpdatePayload,
+): Promise<TeamGoal> {
+  return request<TeamGoal>(`/api/teams/${teamId}/goals/${goalId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
