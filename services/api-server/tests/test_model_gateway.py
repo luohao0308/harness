@@ -562,7 +562,13 @@ def test_openai_compatible_gateway_rejects_invalid_concatenated_documents(
             b'{"object":"chat.completion.chunk","choices":[{"index":1,'
             b'"delta":{"content":"ignored"},"finish_reason":"stop"}]}'
             b'{"object":"chat.completion.chunk","choices":[]}',
-            "without a terminal finish reason",
+            "choice index must be 0",
+        ),
+        (
+            b'{"object":"chat.completion.chunk","choices":null}'
+            b'{"object":"chat.completion.chunk","choices":[{"index":0,'
+            b'"delta":{"content":"partial"},"finish_reason":"stop"}]}',
+            "choices must be a list",
         ),
         (
             b'{"object":"chat.completion.chunk","choices":[{"index":0,'
@@ -618,7 +624,7 @@ def test_openai_compatible_gateway_rejects_incomplete_concatenated_chunks(
             b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
             b'"model":"model-a","choices":[{"index":0,'
             b'"delta":{"content":"late"},"finish_reason":null}]}',
-            "content after termination",
+            "usage-only final document",
         ),
     ],
 )
@@ -632,6 +638,64 @@ def test_openai_compatible_gateway_rejects_mixed_or_post_terminal_chunks(
         b'"model":"model-a","choices":[{"index":0,'
         b'"delta":{"content":"done"},"finish_reason":"stop"}]}'
         + second_chunk
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.request.urlopen",
+        lambda http_request, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ModelGatewayError, match=error_match):
+        OpenAICompatibleModelGateway(
+            base_url="https://models.example.test/v1",
+            api_key="secret-key",
+        ).complete(model_request())
+
+
+@pytest.mark.parametrize(
+    ("post_terminal_chunk", "error_match"),
+    [
+        (
+            b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            b'"model":"model-a","choices":[]}',
+            "usage-only final document",
+        ),
+        (
+            b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            b'"model":"model-a","choices":[{"index":1,"delta":{},'
+            b'"finish_reason":null}]}',
+            "usage-only final document",
+        ),
+        (
+            b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            b'"model":"model-a","choices":[],"usage":'
+            b'{"prompt_tokens":1,"completion_tokens":1}}'
+            b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            b'"model":"model-a","choices":[]}',
+            "document after usage",
+        ),
+    ],
+)
+def test_openai_compatible_gateway_rejects_invalid_terminal_chunk_sequence(
+    monkeypatch,
+    post_terminal_chunk: bytes,
+    error_match: str,
+) -> None:
+    body = (
+        b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+        b'"model":"model-a","choices":[{"index":0,'
+        b'"delta":{"content":"done"},"finish_reason":"stop"}]}'
+        + post_terminal_chunk
     )
 
     class FakeResponse:

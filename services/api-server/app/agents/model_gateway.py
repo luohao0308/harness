@@ -685,6 +685,7 @@ class OpenAICompatibleModelGateway:
         response_metadata: dict = {}
         response_identity: dict[str, object] = {}
         terminal_seen = False
+        usage_seen = False
 
         while position < len(body):
             while position < len(body) and body[position].isspace():
@@ -701,6 +702,10 @@ class OpenAICompatibleModelGateway:
                 raise ModelGatewayError(
                     "model response contains unsupported concatenated JSON documents"
                 )
+            if usage_seen:
+                raise ModelGatewayError(
+                    "model completion chunks contain a document after usage"
+                )
 
             chunk_count += 1
             for key in ("id", "created", "model", "system_fingerprint"):
@@ -715,17 +720,35 @@ class OpenAICompatibleModelGateway:
                         )
                 response_metadata[key] = value
 
-            choices = chunk.get("choices") or []
+            choices = chunk.get("choices", [])
             if not isinstance(choices, list):
                 raise ModelGatewayError("model completion chunk choices must be a list")
-            choice = next(
-                (
-                    item
-                    for item in choices
-                    if isinstance(item, dict) and item.get("index", 0) == 0
-                ),
-                None,
-            )
+            chunk_usage = chunk.get("usage")
+            if terminal_seen:
+                if choices or chunk_usage is None:
+                    raise ModelGatewayError(
+                        "model completion chunks only allow a usage-only final document "
+                        "after the terminal choice"
+                    )
+                if not isinstance(chunk_usage, dict):
+                    raise ModelGatewayError("model completion chunk usage must be an object")
+                usage = chunk_usage
+                usage_seen = True
+                continue
+
+            choice = None
+            for item in choices:
+                if not isinstance(item, dict):
+                    raise ModelGatewayError("model completion chunk choice must be an object")
+                if item.get("index", 0) != 0:
+                    raise ModelGatewayError(
+                        "model completion chunk choice index must be 0"
+                    )
+                if choice is not None:
+                    raise ModelGatewayError(
+                        "model completion chunk must contain at most one choice"
+                    )
+                choice = item
             if choice is not None:
                 delta = choice.get("delta") or {}
                 if not isinstance(delta, dict):
@@ -750,11 +773,11 @@ class OpenAICompatibleModelGateway:
                     finish_reason = chunk_finish_reason
                     terminal_seen = True
 
-            chunk_usage = chunk.get("usage")
             if chunk_usage is not None:
                 if not isinstance(chunk_usage, dict):
                     raise ModelGatewayError("model completion chunk usage must be an object")
                 usage = chunk_usage
+                usage_seen = True
 
         if chunk_count < 2:
             raise ModelGatewayError(
