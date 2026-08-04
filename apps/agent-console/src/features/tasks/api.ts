@@ -2477,6 +2477,36 @@ export type ToolExecuteResult = {
   output: Record<string, unknown>;
 };
 
+export type AgentTrigger = {
+  id: string;
+  agent_id: string;
+  type: "webhook";
+  endpoint_path: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_triggered_at: string | null;
+};
+
+export type AgentTriggerPage = {
+  items: AgentTrigger[];
+};
+
+export type AgentTriggerCreateRequest = {
+  type?: "webhook";
+  endpoint_path?: string | null;
+  enabled?: boolean;
+};
+
+export type AgentTriggerCreateResponse = {
+  trigger: AgentTrigger;
+  secret: string;
+};
+
+export type AgentTriggerUpdateRequest = {
+  enabled?: boolean | null;
+};
+
 export type ToolCallFilters = {
   tool_name?: string;
   status?: string;
@@ -4434,6 +4464,38 @@ export async function getToolRegistry(
   return request<ToolRegistry>(`/api/tools/registry${suffix ? `?${suffix}` : ""}`);
 }
 
+export async function listAgentTriggers(agentId: string) {
+  return request<AgentTriggerPage>(`/api/agents/${encodeURIComponent(agentId)}/triggers`);
+}
+
+export async function createAgentTrigger(agentId: string, payload: AgentTriggerCreateRequest) {
+  return request<AgentTriggerCreateResponse>(`/api/agents/${encodeURIComponent(agentId)}/triggers`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: payload.type ?? "webhook",
+      endpoint_path: payload.endpoint_path ?? null,
+      enabled: payload.enabled ?? true,
+    }),
+  });
+}
+
+export async function updateAgentTrigger(
+  agentId: string,
+  triggerId: string,
+  payload: AgentTriggerUpdateRequest,
+) {
+  return request<AgentTrigger>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAgentTrigger(agentId: string, triggerId: string) {
+  return request<void>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function listAdapters() {
   return request<{ items: AdapterMetadata[] }>("/api/tools/adapters");
 }
@@ -4716,6 +4778,23 @@ export async function listEvalRuns() {
 
 export async function getEvalRun(evalRunId: string) {
   return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
+}
+
+export async function listPendingHumanReviewResults() {
+  return request<EvalResult[]>("/api/evals/results/pending-review", {
+    headers: adminAuthHeaders(),
+  });
+}
+
+export async function reviewEvalResult(
+  resultId: string,
+  payload: { verdict: "approved" | "rejected"; notes?: string | null },
+) {
+  return request<EvalResult>(`/api/evals/results/${encodeURIComponent(resultId)}/review`, {
+    method: "POST",
+    headers: adminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createEvalExperiment(datasetId: string, payload: EvalExperimentCreatePayload) {
