@@ -1,9 +1,10 @@
 # Wiki Index
 
-> 35 pages | Last updated: 2026-06-22T01:47:59+08:00
+> 36 pages | Last updated: 2026-08-04T17:30:00+08:00
 
 ## session-log
 
+- [Desktop Team Mode Workspace](session-2026-07-28-desktop-team-mode-workspace.md) — Electron Team Mode adds Collaboration and Task Graph views beside the unchanged browser multi-column workflow, with final frontend and Chromium evidence.
 - [Local Agent Pause Continue After Send](session-2026-06-22-local-agent-pause-continue-after-send.md) — Agent Workspace local Agent turns can be paused after the message has been sent and continued later without duplicating the visible user bubble.
 - [Local Agent Composer Clear After Send](session-2026-06-22-local-agent-composer-clear-after-send.md) — Agent Workspace local Agent sends clear the composer after the backend accepts the message, and later local polling hydration does not restore the sent draft.
 - [Local Agent Context Compression Hydration](session-2026-06-21-local-agent-context-compression-hydration.md) — Agent Workspace local Agent context compression summaries survive message/task polling hydration, so compressed HAO conversations stay reduced instead of returning to 100.
