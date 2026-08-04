@@ -24,6 +24,14 @@ env:
   apiBaseUrl: https://harness.local
   consoleBaseUrl: https://harness.local
   websiteBaseUrl: https://harness.local
+  aiProviderProtocol: chat_completions
+  aiProviderBaseUrl: https://chybenzun.top/v1
+  aiProviderModel: deepseek-v4-flash
+  aiProviderModels: deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5
+  aiProviderName: chybenzun-openai-compatible
+  # Server-only secret. Supply with a private values file or external secret manager.
+  aiProviderApiKey: ""
+  # Legacy local mock compatibility only.
   modelGatewayBaseUrl: http://harness-api:8000/mock-model
   modelGatewayApiKey: replace-me
   deepseekApiKey: ""

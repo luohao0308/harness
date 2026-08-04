@@ -64,6 +64,12 @@ services:
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
       HARNESS_INITIAL_ADMIN_EMAIL: ${HARNESS_INITIAL_ADMIN_EMAIL:-}
       HARNESS_INITIAL_ADMIN_PASSWORD: ${HARNESS_INITIAL_ADMIN_PASSWORD:-}
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
+      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -99,6 +105,11 @@ services:
       AUTH_PUBLIC_REGISTRATION_ENABLED: ${AUTH_PUBLIC_REGISTRATION_ENABLED:-false}
       HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   agent-runtime-image:
@@ -126,6 +137,12 @@ services:
       HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
+      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -149,6 +166,12 @@ services:
       HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
+      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -173,11 +196,48 @@ services:
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       SUBAGENT_RECOVERY_METRICS_PORT: 9102
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     expose:
       - "9102"
+
+  team-runtime:
+    image: agent-harness-api-server:latest
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    command: python -m app.workers.team_runtime_worker
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+psycopg://agent:agent@postgres:5432/agent_harness
+      REDIS_URL: redis://redis:6379/0
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?AUTH_JWT_SECRET required}
+      AUTH_PUBLIC_REGISTRATION_ENABLED: ${AUTH_PUBLIC_REGISTRATION_ENABLED:-false}
+      HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
+      HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      TEAM_RUNTIME_INTERVAL_SECONDS: ${TEAM_RUNTIME_INTERVAL_SECONDS:-5}
+      TEAM_RUNTIME_MAX_GOALS: ${TEAM_RUNTIME_MAX_GOALS:-20}
+      TEAM_RUNTIME_MAX_WAKES_PER_TICK: ${TEAM_RUNTIME_MAX_WAKES_PER_TICK:-4}
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
+      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
+      MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
+      MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
 
   warm-pool:
     image: agent-harness-api-server:latest
@@ -198,6 +258,11 @@ services:
       HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
       DOCKER_HOST: unix:///var/run/docker.sock
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -224,6 +289,12 @@ services:
       HARNESS_SECRET_ENCRYPTION_KEY: ${HARNESS_SECRET_ENCRYPTION_KEY:?HARNESS_SECRET_ENCRYPTION_KEY required}
       HARNESS_SECRET_ENCRYPTION_KEY_ID: ${HARNESS_SECRET_ENCRYPTION_KEY_ID:-primary-v1}
       DOCKER_HOST: unix:///var/run/docker.sock
+      AI_PROVIDER_PROTOCOL: ${AI_PROVIDER_PROTOCOL:-chat_completions}
+      AI_PROVIDER_BASE_URL: ${AI_PROVIDER_BASE_URL:-https://chybenzun.top/v1}
+      AI_PROVIDER_MODEL: ${AI_PROVIDER_MODEL:-deepseek-v4-flash}
+      AI_PROVIDER_MODELS: ${AI_PROVIDER_MODELS:-deepseek-v4-flash,deepseek-v4-pro,glm-5.2,kimi-k2.7-code,kimi-k2.6,doubao-seed-2-1-turbo,doubao-seed-2-1-pro,qwen3.7-max,qwen3.7-plus,minimax-m3,step-3.7-flash,mimo-v2.5}
+      AI_PROVIDER_NAME: ${AI_PROVIDER_NAME:-chybenzun-openai-compatible}
+      AI_PROVIDER_API_KEY: ${AI_PROVIDER_API_KEY:-}
       MODEL_GATEWAY_BASE_URL: ${MODEL_GATEWAY_BASE_URL:-http://api-server:8000/mock-model}
       MODEL_GATEWAY_API_KEY: ${MODEL_GATEWAY_API_KEY:-replace-me}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
