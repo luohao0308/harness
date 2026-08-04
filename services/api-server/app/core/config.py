@@ -1,11 +1,40 @@
+import re
 from functools import lru_cache
+from ipaddress import ip_address
+from typing import Annotated
+from urllib.parse import urlsplit
 
-from pydantic import AnyHttpUrl, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AnyHttpUrl, Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 AUTH_JWT_SECRET_PLACEHOLDER = "replace-with-openssl-rand-hex-32"
 HARNESS_SECRET_ENCRYPTION_KEY_PLACEHOLDER = "replace-with-generated-fernet-key"
 AUTH_SECRET_DOCS_URL = "docs/runbooks/first-run-admin.md"
+AI_PROVIDER_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
+
+
+def _validate_ai_provider_base_url(value: str) -> str:
+    normalized = value.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+        raise ValueError("AI_PROVIDER_BASE_URL must be an HTTPS URL or HTTP loopback URL")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("AI_PROVIDER_BASE_URL must not include credentials, query, or fragment")
+    if parsed.scheme == "http":
+        try:
+            is_loopback = ip_address(parsed.hostname).is_loopback
+        except ValueError:
+            is_loopback = parsed.hostname.lower() == "localhost"
+        if not is_loopback:
+            raise ValueError("AI_PROVIDER_BASE_URL only permits HTTP for loopback hosts")
+    return normalized
+
+
+def _validate_ai_provider_model(value: str) -> str:
+    normalized = value.strip()
+    if not AI_PROVIDER_MODEL_PATTERN.fullmatch(normalized):
+        raise ValueError("AI provider model IDs must be 1-160 safe identifier characters")
+    return normalized
 
 
 class Settings(BaseSettings):
@@ -24,6 +53,25 @@ class Settings(BaseSettings):
     )
     model_gateway_api_key: str = Field(default="replace-me", alias="MODEL_GATEWAY_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    ai_provider_protocol: str = Field(default="chat_completions", alias="AI_PROVIDER_PROTOCOL")
+    ai_provider_base_url: str = Field(
+        default="https://chybenzun.top/v1",
+        alias="AI_PROVIDER_BASE_URL",
+    )
+    ai_provider_model: str = Field(default="deepseek-v4-flash", alias="AI_PROVIDER_MODEL")
+    ai_provider_models: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=(
+            "deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "kimi-k2.7-code",
+            "kimi-k2.6", "doubao-seed-2-1-turbo", "doubao-seed-2-1-pro", "qwen3.7-max",
+            "qwen3.7-plus", "minimax-m3", "step-3.7-flash", "mimo-v2.5",
+        ),
+        alias="AI_PROVIDER_MODELS",
+    )
+    ai_provider_name: str = Field(
+        default="chybenzun-openai-compatible",
+        alias="AI_PROVIDER_NAME",
+    )
+    ai_provider_api_key: str = Field(default="", alias="AI_PROVIDER_API_KEY", repr=False)
     tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
     dify_api_key: str = Field(default="", alias="DIFY_API_KEY")
     harness_secret_encryption_key: str = Field(default="", alias="HARNESS_SECRET_ENCRYPTION_KEY")
@@ -98,6 +146,54 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator("ai_provider_protocol")
+    @classmethod
+    def validate_ai_provider_protocol(cls, value: str) -> str:
+        if value.strip() != "chat_completions":
+            raise ValueError("AI_PROVIDER_PROTOCOL must be chat_completions")
+        return "chat_completions"
+
+    @field_validator("ai_provider_base_url")
+    @classmethod
+    def validate_ai_provider_base_url(cls, value: str) -> str:
+        return _validate_ai_provider_base_url(value)
+
+    @field_validator("ai_provider_model")
+    @classmethod
+    def validate_ai_provider_model(cls, value: str) -> str:
+        return _validate_ai_provider_model(value)
+
+    @field_validator("ai_provider_models", mode="before")
+    @classmethod
+    def parse_ai_provider_models(cls, value: str | tuple[str, ...] | list[str]) -> tuple[str, ...]:
+        entries = value.split(",") if isinstance(value, str) else value
+        if not isinstance(entries, (tuple, list)):
+            raise ValueError("AI_PROVIDER_MODELS must be a comma-separated model list")
+        models: list[str] = []
+        for entry in entries:
+            model = _validate_ai_provider_model(str(entry))
+            if model not in models:
+                models.append(model)
+        if not models:
+            raise ValueError("AI_PROVIDER_MODELS must include at least one model")
+        return tuple(models)
+
+    @field_validator("ai_provider_name")
+    @classmethod
+    def validate_ai_provider_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or len(normalized) > 80 or any(
+            ord(char) < 32 or ord(char) == 127 for char in normalized
+        ):
+            raise ValueError("AI_PROVIDER_NAME must be 1-80 printable characters")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_ai_provider_default_model(self) -> "Settings":
+        if self.ai_provider_model not in self.ai_provider_models:
+            raise ValueError("AI_PROVIDER_MODEL must be included in AI_PROVIDER_MODELS")
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -171,7 +267,20 @@ def validate_secret_encryption_key(settings: Settings) -> None:
         )
 
 
+def validate_ai_provider_api_key(settings: Settings) -> None:
+    if settings.app_env.strip().lower() != "production":
+        return
+    secret = settings.ai_provider_api_key.strip()
+    if not secret:
+        raise RuntimeError(
+            "AI_PROVIDER_API_KEY is required in production for the platform-managed model provider"
+        )
+    if secret == "replace-me":
+        raise RuntimeError("AI_PROVIDER_API_KEY must not use the example placeholder in production")
+
+
 def validate_startup_settings(settings: Settings | None = None) -> None:
     current = settings or get_settings()
     validate_auth_jwt_secret(current)
     validate_secret_encryption_key(current)
+    validate_ai_provider_api_key(current)

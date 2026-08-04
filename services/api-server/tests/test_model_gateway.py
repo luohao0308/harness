@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import (
+    DEFAULT_MODEL_SETTINGS,
     AnthropicCompatibleModelGateway,
     AuditedModelGateway,
     MockModelGateway,
@@ -20,8 +21,11 @@ from app.agents.model_gateway import (
     ModelRateLimiter,
     ModelRequest,
     ModelResponse,
+    ModelSettingsResolver,
     ModelStreamChunk,
     OpenAICompatibleModelGateway,
+    model_gateway_for_provider,
+    normalize_model_settings,
     provider_api_key,
 )
 from app.db.models import ContextAssemblyManifest, ModelCall, SystemSetting, Task, utc_now
@@ -430,6 +434,9 @@ def test_openai_compatible_gateway_normalizes_chat_completion(monkeypatch) -> No
     def fake_urlopen(http_request, timeout):
         captured["url"] = http_request.full_url
         captured["authorization"] = http_request.headers["Authorization"]
+        captured["user_agent"] = dict(
+            (key.lower(), value) for key, value in http_request.header_items()
+        )["user-agent"]
         captured["body"] = http_request.data
         captured["timeout"] = timeout
         return FakeResponse()
@@ -445,11 +452,246 @@ def test_openai_compatible_gateway_normalizes_chat_completion(monkeypatch) -> No
 
     assert captured["url"] == "https://models.example.test/v1/chat/completions"
     assert captured["authorization"] == "Bearer secret-key"
+    assert captured["user_agent"] == "Harness-AI-Gateway/1.0"
     assert captured["timeout"] == 7
     assert b'"model": "default"' in captured["body"]
+    assert b'"temperature": 0.2' in captured["body"]
     assert b'"response_format": {"type": "json_object"}' in captured["body"]
+    assert b'"max_tokens"' not in captured["body"]
     assert response.content == '{"summary":"ok"}'
     assert response.usage == {"prompt_tokens": 2, "completion_tokens": 4}
+
+
+def test_openai_compatible_gateway_collapses_concatenated_completion_chunks(
+    monkeypatch,
+) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return (
+                b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                b'"model":"deepseek-v4-flash","choices":[{"index":0,'
+                b'"delta":{"content":[{"text":"hel"},"lo"]},'
+                b'"finish_reason":null}]}\n'
+                b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                b'"model":"deepseek-v4-flash","choices":[{"index":0,'
+                b'"delta":{"content":" world"},"finish_reason":"stop"}]}\n'
+                b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+                b'"model":"deepseek-v4-flash","choices":[],"usage":'
+                b'{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}'
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.request.urlopen",
+        lambda http_request, timeout: FakeResponse(),
+    )
+
+    response = OpenAICompatibleModelGateway(
+        base_url="https://models.example.test/v1",
+        api_key="secret-key",
+    ).complete(model_request("deepseek-v4-flash"))
+
+    assert response.content == "hello world"
+    assert response.usage == {
+        "prompt_tokens": 3,
+        "completion_tokens": 2,
+        "total_tokens": 5,
+    }
+    assert response.raw_response["object"] == "chat.completion"
+    assert response.raw_response["compatibility_mode"] == (
+        "concatenated_chat_completion_chunks"
+    )
+    assert response.raw_response["chunk_count"] == 3
+    assert response.raw_response["choices"][0]["finish_reason"] == "stop"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        (
+            b'{"object":"chat.completion.chunk","choices":[]}'
+            b'{"object":"chat.completion.chunk","choices":[]}trailing'
+        ),
+        (
+            b'{"object":"chat.completion.chunk","choices":[]}'
+            b'{"object":"chat.completion","choices":[]}'
+        ),
+    ],
+)
+def test_openai_compatible_gateway_rejects_invalid_concatenated_documents(
+    monkeypatch,
+    body: bytes,
+) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.request.urlopen",
+        lambda http_request, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ModelGatewayError, match="concatenated"):
+        OpenAICompatibleModelGateway(
+            base_url="https://models.example.test/v1",
+            api_key="secret-key",
+        ).complete(model_request())
+
+
+@pytest.mark.parametrize(
+    ("body", "error_match"),
+    [
+        (
+            b'{"object":"chat.completion.chunk","choices":[]}'
+            b'{"object":"chat.completion.chunk","choices":[{"index":0,'
+            b'"delta":{},"finish_reason":"stop"}]}',
+            "did not produce content",
+        ),
+        (
+            b'{"object":"chat.completion.chunk","choices":[{"index":1,'
+            b'"delta":{"content":"ignored"},"finish_reason":"stop"}]}'
+            b'{"object":"chat.completion.chunk","choices":[]}',
+            "without a terminal finish reason",
+        ),
+        (
+            b'{"object":"chat.completion.chunk","choices":[{"index":0,'
+            b'"delta":{"content":"partial"},"finish_reason":null}]}'
+            b'{"object":"chat.completion.chunk","choices":[]}',
+            "without a terminal finish reason",
+        ),
+    ],
+)
+def test_openai_compatible_gateway_rejects_incomplete_concatenated_chunks(
+    monkeypatch,
+    body: bytes,
+    error_match: str,
+) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.request.urlopen",
+        lambda http_request, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ModelGatewayError, match=error_match):
+        OpenAICompatibleModelGateway(
+            base_url="https://models.example.test/v1",
+            api_key="secret-key",
+        ).complete(model_request())
+
+
+@pytest.mark.parametrize(
+    ("second_chunk", "error_match"),
+    [
+        (
+            b'{"id":"chatcmpl-2","object":"chat.completion.chunk",'
+            b'"model":"model-a","choices":[{"index":0,"delta":{},'
+            b'"finish_reason":"stop"}]}',
+            "inconsistent id",
+        ),
+        (
+            b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            b'"model":"model-b","choices":[{"index":0,"delta":{},'
+            b'"finish_reason":"stop"}]}',
+            "inconsistent model",
+        ),
+        (
+            b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+            b'"model":"model-a","choices":[{"index":0,'
+            b'"delta":{"content":"late"},"finish_reason":null}]}',
+            "content after termination",
+        ),
+    ],
+)
+def test_openai_compatible_gateway_rejects_mixed_or_post_terminal_chunks(
+    monkeypatch,
+    second_chunk: bytes,
+    error_match: str,
+) -> None:
+    body = (
+        b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+        b'"model":"model-a","choices":[{"index":0,'
+        b'"delta":{"content":"done"},"finish_reason":"stop"}]}'
+        + second_chunk
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.request.urlopen",
+        lambda http_request, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ModelGatewayError, match=error_match):
+        OpenAICompatibleModelGateway(
+            base_url="https://models.example.test/v1",
+            api_key="secret-key",
+        ).complete(model_request())
+
+
+@pytest.mark.parametrize("prompt_tokens", [b'"not-an-int"', b"1.5"])
+def test_openai_compatible_gateway_rejects_invalid_chunk_usage(
+    monkeypatch,
+    prompt_tokens: bytes,
+) -> None:
+    body = (
+        b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+        b'"model":"model-a","choices":[{"index":0,'
+        b'"delta":{"content":"done"},"finish_reason":"stop"}]}'
+        b'{"id":"chatcmpl-1","object":"chat.completion.chunk",'
+        b'"model":"model-a","choices":[],"usage":'
+        b'{"prompt_tokens":'
+        + prompt_tokens
+        + b',"completion_tokens":1}}'
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.request.urlopen",
+        lambda http_request, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(ModelGatewayError, match="prompt_tokens"):
+        OpenAICompatibleModelGateway(
+            base_url="https://models.example.test/v1",
+            api_key="secret-key",
+        ).complete(model_request())
 
 
 def test_openai_compatible_gateway_reports_upstream_http_body(monkeypatch) -> None:
@@ -521,7 +763,6 @@ def test_provider_api_key_reads_deepseek_key_from_settings_when_env_is_not_expor
         "app.agents.model_gateway.get_settings",
         lambda: SimpleNamespace(deepseek_api_key="settings-deepseek-key"),
     )
-
     assert (
         provider_api_key(
             {
@@ -531,6 +772,243 @@ def test_provider_api_key_reads_deepseek_key_from_settings_when_env_is_not_expor
         )
         == "settings-deepseek-key"
     )
+
+
+def test_provider_api_key_reads_platform_key_from_server_settings(monkeypatch) -> None:
+    monkeypatch.delenv("AI_PROVIDER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "app.agents.model_gateway.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider_api_key="platform-server-key",
+            ai_provider_name="chybenzun-openai-compatible",
+            ai_provider_models=("deepseek-v4-flash",),
+            ai_provider_base_url="https://chybenzun.top/v1",
+            ai_provider_protocol="chat_completions",
+        ),
+    )
+
+    assert (
+        provider_api_key(
+            {
+                "name": "chybenzun-openai-compatible",
+                "model": "deepseek-v4-flash",
+                "base_url": "https://chybenzun.top/v1",
+                "protocol": "chat_completions",
+                "api_format": "openai",
+                "api_key_env": "AI_PROVIDER_API_KEY",
+                "managed_by_platform": True,
+                "platform_managed": True,
+            }
+        )
+        == "platform-server-key"
+    )
+
+
+def test_provider_api_key_does_not_expose_platform_key_to_unmanaged_provider(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("AI_PROVIDER_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "app.agents.model_gateway.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider_api_key="platform-server-key",
+            ai_provider_name="chybenzun-openai-compatible",
+            ai_provider_models=("deepseek-v4-flash",),
+            ai_provider_base_url="https://chybenzun.top/v1",
+            ai_provider_protocol="chat_completions",
+        ),
+    )
+
+    assert (
+        provider_api_key(
+            {
+                "name": "forged-provider",
+                "model": "deepseek-v4-flash",
+                "base_url": "https://attacker.example.test/v1",
+                "api_format": "openai",
+                "protocol": "chat_completions",
+                "api_key_env": "AI_PROVIDER_API_KEY",
+                "managed_by_platform": True,
+                "platform_managed": True,
+            }
+        )
+        is None
+    )
+
+
+def test_openai_compatible_payload_includes_temperature_for_complete_and_stream() -> None:
+    gateway = OpenAICompatibleModelGateway(
+        base_url="https://models.example.test/v1",
+        api_key="test-key",
+    )
+
+    assert gateway._payload(model_request())["temperature"] == 0.2
+    assert "max_tokens" not in gateway._payload(model_request())
+    streamed = gateway._payload(model_request(), stream=True)
+    assert streamed["temperature"] == 0.2
+    assert streamed["stream"] is True
+    assert streamed["stream_options"] == {"include_usage": True}
+
+    platform_streamed = OpenAICompatibleModelGateway(
+        base_url="https://models.example.test/v1",
+        api_key="test-key",
+        include_stream_usage=False,
+    )._payload(model_request(), stream=True)
+    assert "stream_options" not in platform_streamed
+
+    bounded = OpenAICompatibleModelGateway(
+        base_url="https://models.example.test/v1",
+        api_key="test-key",
+        max_tokens=2048,
+    )
+    assert bounded._payload(model_request())["max_tokens"] == 2048
+    assert bounded._payload(model_request(), stream=True)["max_tokens"] == 2048
+
+
+def test_openai_compatible_factory_forwards_configured_output_limit() -> None:
+    gateway = model_gateway_for_provider(
+        {
+            "name": "custom-compatible",
+            "api_format": "openai",
+            "base_url": "https://models.example.test/v1",
+            "api_key": "test-key",
+            "max_output_tokens": 1536,
+            "temperature": 0,
+        }
+    )
+
+    assert isinstance(gateway, OpenAICompatibleModelGateway)
+    assert gateway.max_tokens == 1536
+    assert gateway.temperature == 0
+
+
+@pytest.mark.parametrize("max_output_tokens", [True, 0, -1, 1.5, "invalid"])
+def test_openai_compatible_factory_rejects_invalid_output_limit(
+    max_output_tokens: object,
+) -> None:
+    with pytest.raises(ModelGatewayError, match="max_output_tokens"):
+        model_gateway_for_provider(
+            {
+                "name": "custom-compatible",
+                "api_format": "openai",
+                "base_url": "https://models.example.test/v1",
+                "api_key": "test-key",
+                "max_output_tokens": max_output_tokens,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "temperature",
+    [True, "invalid", "nan", "inf", -0.1, 2.1],
+)
+def test_openai_compatible_factory_rejects_invalid_temperature(
+    temperature: object,
+) -> None:
+    with pytest.raises(ModelGatewayError, match="temperature"):
+        model_gateway_for_provider(
+            {
+                "name": "custom-compatible",
+                "api_format": "openai",
+                "base_url": "https://models.example.test/v1",
+                "api_key": "test-key",
+                "temperature": temperature,
+            }
+        )
+
+
+def test_openai_compatible_stream_handles_content_parts_and_stops_at_done(monkeypatch) -> None:
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":[{"text":"hel"},"lo"]}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+            yield b"data: not-json\n\n"
+
+    def fake_urlopen(http_request, timeout):
+        captured["user_agent"] = dict(
+            (key.lower(), value) for key, value in http_request.header_items()
+        )["user-agent"]
+        return FakeResponse()
+
+    monkeypatch.setattr("app.agents.model_gateway.request.urlopen", fake_urlopen)
+
+    chunks = list(
+        OpenAICompatibleModelGateway(
+            base_url="https://models.example.test/v1",
+            api_key="test-key",
+            include_stream_usage=False,
+        ).stream(model_request())
+    )
+
+    assert [chunk.text for chunk in chunks if chunk.text] == ["hello"]
+    assert chunks[-1].done is True
+    assert captured["user_agent"] == "Harness-AI-Gateway/1.0"
+
+
+def test_model_settings_resolver_rejects_unlisted_platform_model(db_session: Session) -> None:
+    task = create_task(db_session)
+
+    with pytest.raises(ModelGatewayError, match="not allowed"):
+        ModelSettingsResolver(db_session).resolve(
+            task_id=task.id,
+            request_payload=ModelRequest(
+                model_provider="default",
+                model_name="not-in-platform-catalog",
+                messages=[ModelMessage(role="user", content="test")],
+            ),
+        )
+
+
+def test_normalize_model_settings_uses_current_platform_config(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agents.model_gateway.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider_name="configured-platform",
+            ai_provider_protocol="chat_completions",
+            ai_provider_base_url="https://configured.example.test/v1",
+            ai_provider_model="configured-model",
+            ai_provider_models=("configured-model", "configured-pro"),
+        ),
+    )
+
+    normalized = normalize_model_settings(None)
+
+    assert normalized["default_provider"] == "configured-platform"
+    assert normalized["default_model"] == "configured-model"
+    assert [provider["model"] for provider in normalized["providers"]] == [
+        "configured-model",
+        "configured-pro",
+    ]
+    assert normalized["providers"][0]["base_url"] == "https://configured.example.test/v1"
+
+
+def test_normalize_model_settings_does_not_retain_import_time_platform_defaults(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.agents.model_gateway.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider_name="configured-platform",
+            ai_provider_protocol="chat_completions",
+            ai_provider_base_url="https://configured.example.test/v1",
+            ai_provider_model="configured-model",
+            ai_provider_models=("configured-model",),
+        ),
+    )
+
+    normalized = normalize_model_settings(DEFAULT_MODEL_SETTINGS)
+
+    assert normalized["default_provider"] == "configured-platform"
+    assert normalized["default_model"] == "configured-model"
+    assert [provider["model"] for provider in normalized["providers"]] == ["configured-model"]
 
 
 def test_provider_api_key_reuses_deepseek_secret_across_model_providers(
@@ -695,11 +1173,11 @@ def test_audited_model_gateway_uses_organization_model_settings(db_session: Sess
             organization_id=task.organization_id,
             key="settings.models",
             value_json={
-                "default_provider": "openai-compatible",
+                "default_provider": "custom-compatible",
                 "default_model": "configured-model",
                 "providers": [
                     {
-                        "name": "openai-compatible",
+                        "name": "custom-compatible",
                         "status": "healthy",
                         "rate_limit_rpm": 10,
                     }
@@ -716,7 +1194,7 @@ def test_audited_model_gateway_uses_organization_model_settings(db_session: Sess
         [
             ModelResponse(
                 content="{}",
-                model_provider="openai-compatible",
+                model_provider="custom-compatible",
                 model_name="configured-model",
             )
         ]

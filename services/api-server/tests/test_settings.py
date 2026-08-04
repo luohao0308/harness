@@ -1,9 +1,11 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import ModelResponse, OpenAICompatibleModelGateway
 from app.api.settings import _model_settings_response_value, _store_model_provider_secrets
+from app.core.config import Settings
 from app.db.models import AdminAuditEvent, StoredSecret, SystemSetting
 from app.main import app
 from app.security.auth import AuthenticatedPrincipal
@@ -26,11 +28,11 @@ def test_settings_read_allowed_for_engineer_and_write_requires_admin() -> None:
     assert engineer.status_code == 200
     assert admin.status_code == 200
     assert blocked_update.status_code == 403
-    assert admin.json()["default_provider"] == "deepseek-flash"
+    assert admin.json()["default_provider"] == "chybenzun-openai-compatible"
     assert admin.json()["default_model"] == "deepseek-v4-flash"
 
 
-def test_default_model_settings_include_deepseek_presets() -> None:
+def test_default_model_settings_include_platform_managed_models() -> None:
     client = TestClient(app)
 
     response = client.get("/api/settings/models", headers=ADMIN_HEADERS)
@@ -38,20 +40,65 @@ def test_default_model_settings_include_deepseek_presets() -> None:
     assert response.status_code == 200
     payload = response.json()
     flash = next(
-        provider for provider in payload["providers"] if provider["name"] == "deepseek-flash"
+        provider for provider in payload["providers"] if provider["model"] == "deepseek-v4-flash"
     )
-    pro = next(provider for provider in payload["providers"] if provider["name"] == "deepseek-pro")
+    pro = next(
+        provider for provider in payload["providers"] if provider["model"] == "deepseek-v4-pro"
+    )
     assert flash["api_format"] == "openai"
     assert flash["model"] == "deepseek-v4-flash"
-    assert flash["base_url"] == "https://api.deepseek.com"
-    assert flash["api_key_env"] == "DEEPSEEK_API_KEY"
-    assert flash["model_context_window_tokens"] == 1000000
-    assert flash["max_output_tokens"] == 384000
+    assert flash["name"] == "chybenzun-openai-compatible"
+    assert flash["base_url"] == "https://chybenzun.top/v1"
+    assert flash["api_key_env"] == "AI_PROVIDER_API_KEY"
+    assert flash["managed_by_platform"] is True
+    assert flash["temperature"] == 0.2
+    assert flash["include_stream_usage"] is False
+    assert flash["timeout_seconds"] == 30
+    assert "mimo-v2.5" in flash["allowed_models"]
     assert pro["model"] == "deepseek-v4-pro"
-    assert pro["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert pro["api_key_env"] == "AI_PROVIDER_API_KEY"
 
 
-def test_model_settings_normalizes_legacy_minimax_to_deepseek(
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("AI_PROVIDER_PROTOCOL", "responses"),
+        ("AI_PROVIDER_BASE_URL", "http://models.example.test/v1"),
+        ("AI_PROVIDER_BASE_URL", "https://user:pass@models.example.test/v1"),
+        ("AI_PROVIDER_BASE_URL", "https://models.example.test/v1?token=bad"),
+        ("AI_PROVIDER_MODELS", "deepseek-v4-flash,bad model"),
+        ("AI_PROVIDER_NAME", "bad\nname"),
+        ("AI_PROVIDER_NAME", "bad\x7fname"),
+    ],
+)
+def test_platform_provider_config_rejects_invalid_values(key: str, value: str) -> None:
+    with pytest.raises(ValueError):
+        Settings(**{key: value})
+
+
+def test_platform_provider_config_parses_deduplicated_models_and_loopback() -> None:
+    settings = Settings(
+        AI_PROVIDER_BASE_URL="http://127.0.0.1:9000/v1",
+        AI_PROVIDER_MODELS="deepseek-v4-flash,deepseek-v4-flash,glm-5.2",
+        AI_PROVIDER_MODEL="glm-5.2",
+    )
+
+    assert settings.ai_provider_base_url == "http://127.0.0.1:9000/v1"
+    assert settings.ai_provider_models == ("deepseek-v4-flash", "glm-5.2")
+
+
+def test_platform_provider_config_allows_reference_model_identifier_and_redacts_key() -> None:
+    settings = Settings(
+        AI_PROVIDER_MODELS="vendor/model:preview",
+        AI_PROVIDER_MODEL="vendor/model:preview",
+        AI_PROVIDER_API_KEY="test-only-key",
+    )
+
+    assert settings.ai_provider_model == "vendor/model:preview"
+    assert "test-only-key" not in repr(settings)
+
+
+def test_model_settings_normalizes_legacy_defaults_to_platform_provider(
     db_session: Session,
 ) -> None:
     db_session.add(
@@ -94,16 +141,122 @@ def test_model_settings_normalizes_legacy_minimax_to_deepseek(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["default_provider"] == "deepseek-flash"
+    assert payload["default_provider"] == "chybenzun-openai-compatible"
     assert payload["default_model"] == "deepseek-v4-flash"
     assert all(provider["name"] != "minimax" for provider in payload["providers"])
     assert all(provider["name"] != "deepseek" for provider in payload["providers"])
     flash = next(
-        provider for provider in payload["providers"] if provider["name"] == "deepseek-flash"
+        provider for provider in payload["providers"] if provider["model"] == "deepseek-v4-flash"
     )
-    assert flash["model_context_window_tokens"] == 1000000
-    assert flash["rate_limit_tpm"] == 1000000
-    assert flash["api_key_env"] == "DEEPSEEK_API_KEY"
+    assert flash["managed_by_platform"] is True
+    assert flash["api_key_env"] == "AI_PROVIDER_API_KEY"
+
+
+def test_model_settings_preserves_custom_provider_with_legacy_name(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.models",
+            value_json={
+                "default_provider": "openai-compatible",
+                "default_model": "company-model",
+                "providers": [
+                    {
+                        "name": "openai-compatible",
+                        "label": "Company Gateway",
+                        "api_format": "openai",
+                        "model": "company-model",
+                        "base_url": "https://models.example.test/v1",
+                        "api_key_env": "COMPANY_MODEL_API_KEY",
+                    }
+                ],
+                "rate_limits": {"rpm": 60, "tpm": 120000},
+                "health": {"status": "healthy", "updated_at": None},
+            },
+            updated_by="dev-admin",
+        )
+    )
+    db_session.flush()
+
+    response = TestClient(app).get("/api/settings/models", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["default_provider"] == "openai-compatible"
+    assert payload["default_model"] == "company-model"
+    assert any(
+        provider.get("name") == "openai-compatible"
+        and provider.get("model") == "company-model"
+        for provider in payload["providers"]
+    )
+
+
+def test_model_settings_drops_models_that_reuse_the_reserved_platform_name(
+    db_session: Session,
+) -> None:
+    db_session.add(
+        SystemSetting(
+            organization_id="dev-org",
+            key="settings.models",
+            value_json={
+                "default_provider": "chybenzun-openai-compatible",
+                "default_model": "unlisted-model",
+                "providers": [
+                    {
+                        "name": "chybenzun-openai-compatible",
+                        "model": "unlisted-model",
+                        "api_format": "openai",
+                        "base_url": "https://attacker.example.test/v1",
+                        "api_key_env": "AI_PROVIDER_API_KEY",
+                    }
+                ],
+                "rate_limits": {"rpm": 60, "tpm": 120000},
+                "health": {"status": "healthy", "updated_at": None},
+            },
+            updated_by="dev-admin",
+        )
+    )
+    db_session.flush()
+
+    response = TestClient(app).get("/api/settings/models", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["default_model"] == "deepseek-v4-flash"
+    assert all(provider["model"] != "unlisted-model" for provider in payload["providers"])
+
+
+def test_model_settings_strips_forged_platform_markers_from_custom_provider() -> None:
+    client = TestClient(app)
+    current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
+    current["providers"].append(
+        {
+            "name": "forged-provider",
+            "label": "Forged Provider",
+            "model": "deepseek-v4-flash",
+            "api_format": "openai",
+            "protocol": "chat_completions",
+            "base_url": "https://attacker.example.test/v1",
+            "api_key_env": "AI_PROVIDER_API_KEY",
+            "managed_by_platform": True,
+            "platform_managed": True,
+            "allowed_models": ["deepseek-v4-flash"],
+        }
+    )
+
+    response = client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
+
+    assert response.status_code == 200
+    provider = next(
+        item for item in response.json()["providers"] if item["name"] == "forged-provider"
+    )
+    assert "managed_by_platform" not in provider
+    assert "platform_managed" not in provider
+    assert "allowed_models" not in provider
+    assert provider["api_key_env"] == ""
+    assert provider["api_key_configured"] is False
 
 
 def test_policy_settings_round_trip_for_admin(db_session: Session) -> None:
@@ -134,7 +287,11 @@ def test_model_settings_persist_per_organization(db_session: Session) -> None:
     client = TestClient(app)
 
     current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
+    current["default_provider"] = "external-compatible"
     current["default_model"] = "external-model-compatible"
+    current["providers"].append(
+        {"name": "external-compatible", "model": "external-model-compatible"}
+    )
 
     updated = client.put("/api/settings/models", headers=ADMIN_HEADERS, json=current)
     reloaded = client.get("/api/settings/models", headers=ADMIN_HEADERS)
@@ -152,7 +309,7 @@ def test_model_settings_health_endpoint_uses_current_settings() -> None:
     current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
     current["providers"] = [
         {
-            "name": "openai-compatible",
+            "name": "custom-compatible",
             "status": "degraded",
             "rate_limit_rpm": 60,
             "model": "configured-model",
@@ -165,9 +322,9 @@ def test_model_settings_health_endpoint_uses_current_settings() -> None:
 
     assert health.status_code == 200
     payload = next(
-        item for item in health.json()["items"] if item["provider"] == "openai-compatible"
+        item for item in health.json()["items"] if item["provider"] == "custom-compatible"
     )
-    assert payload["provider"] == "openai-compatible"
+    assert payload["provider"] == "custom-compatible"
     assert payload["model"] == "configured-model"
     assert payload["status"] == "healthy"
     assert payload["mode"] == "mock"
@@ -199,17 +356,17 @@ def test_model_settings_health_endpoint_probes_real_provider(
     monkeypatch.setattr(OpenAICompatibleModelGateway, "complete", fake_complete)
 
     current = client.get("/api/settings/models", headers=ADMIN_HEADERS).json()
-    current["default_provider"] = "deepseek-pro"
-    current["default_model"] = "deepseek-v4-pro"
+    current["default_provider"] = "custom-compatible"
+    current["default_model"] = "custom-model"
     current["providers"] = [
         {
-            "name": "deepseek-pro",
+            "name": "custom-compatible",
             "status": "degraded",
             "api_format": "openai",
-            "model": "deepseek-v4-pro",
+            "model": "custom-model",
             "rate_limit_rpm": 60,
             "rate_limit_tpm": 120000,
-            "base_url": "https://api.deepseek.com",
+            "base_url": "https://models.example.test/v1",
             "api_key": "secret-key",
         }
     ]
@@ -224,12 +381,14 @@ def test_model_settings_health_endpoint_probes_real_provider(
     health = client.get("/api/settings/models/health", headers=ADMIN_HEADERS)
 
     assert health.status_code == 200
-    payload = next(item for item in health.json()["items"] if item["provider"] == "deepseek-pro")
+    payload = next(
+        item for item in health.json()["items"] if item["provider"] == "custom-compatible"
+    )
     assert payload["status"] == "healthy"
     assert payload["mode"] == "probe"
     assert {
-        "provider": "deepseek-pro",
-        "model": "deepseek-v4-pro",
+        "provider": "custom-compatible",
+        "model": "custom-model",
         "response_format": "text",
     } in captured
     setting = db_session.execute(select(SystemSetting)).scalar_one()
@@ -237,7 +396,7 @@ def test_model_settings_health_endpoint_probes_real_provider(
     assert setting.value_json["providers"][0]["last_health"]["mode"] == "probe"
     assert setting.value_json["providers"][0]["api_key"] == ""
     secret = db_session.execute(select(StoredSecret)).scalar_one()
-    assert secret.provider == "deepseek"
+    assert secret.provider == "custom-compatible"
     assert secret.purpose == "model_provider"
     assert secret.scope == "org"
     assert secret.owner_user_id is None

@@ -144,6 +144,17 @@ def test_production_secret_encryption_key_validation_rejects_missing_and_placeho
         )
 
 
+def test_production_ai_provider_key_validation_rejects_missing_and_placeholder() -> None:
+    base = {
+        "APP_ENV": "production",
+        "HARNESS_SECRET_ENCRYPTION_KEY": "production-secret-encryption-key-32-min",
+    }
+    with pytest.raises(RuntimeError, match="AI_PROVIDER_API_KEY is required"):
+        validate_startup_settings(_settings(**base, AI_PROVIDER_API_KEY=""))
+    with pytest.raises(RuntimeError, match="example placeholder"):
+        validate_startup_settings(_settings(**base, AI_PROVIDER_API_KEY="replace-me"))
+
+
 def test_lifespan_rejects_placeholder_auth_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("AUTH_JWT_SECRET", "replace-with-openssl-rand-hex-32")

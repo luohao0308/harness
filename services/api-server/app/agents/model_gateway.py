@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from collections.abc import Iterator
@@ -96,146 +97,169 @@ class ModelAuthError(ModelGatewayError):
 
 
 MODEL_SETTINGS_KEY = "settings.models"
-LEGACY_BUILTIN_PROVIDER_NAMES = {"minimax", "deepseek"}
-LEGACY_BUILTIN_MODEL_NAMES = {
-    "deepseek-chat",
-    "deepseek-reasoner",
-    "MiniMax-M2.7-highspeed",
+PLATFORM_API_KEY_ENV = "AI_PROVIDER_API_KEY"
+MODEL_GATEWAY_USER_AGENT = "Harness-AI-Gateway/1.0"
+LEGACY_BUILTIN_PROVIDER_MODELS = {
+    "minimax": {"MiniMax-M2.7-highspeed"},
+    "deepseek": {"deepseek-chat", "deepseek-reasoner"},
+    "deepseek-flash": {"deepseek-v4-flash"},
+    "deepseek-pro": {"deepseek-v4-pro"},
+    "openai-compatible": {"gpt-5.5"},
 }
-DEEPSEEK_CONTEXT_WINDOW_TOKENS = 1_000_000
-DEEPSEEK_MAX_OUTPUT_TOKENS = 384_000
-DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_SECRET_PROVIDER = "deepseek"
 DEEPSEEK_SECRET_ALIASES = ("deepseek", "deepseek-flash", "deepseek-pro")
-
-DEEPSEEK_FLASH_PROVIDER = {
-    "name": "deepseek-flash",
-    "label": "DeepSeek Flash",
-    "status": "healthy",
-    "api_format": "openai",
-    "model": "deepseek-v4-flash",
-    "secret_provider": DEEPSEEK_SECRET_PROVIDER,
-    "base_url": DEEPSEEK_BASE_URL,
-    "api_key": "replace-me",
-    "api_key_env": DEEPSEEK_API_KEY_ENV,
-    "model_context_window_tokens": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
-    "max_output_tokens": DEEPSEEK_MAX_OUTPUT_TOKENS,
-    "rate_limit_rpm": 300,
-    "rate_limit_tpm": DEEPSEEK_CONTEXT_WINDOW_TOKENS,
-    "timeout_seconds": 60,
-    "health_timeout_seconds": 20,
-    "circuit_breaker": {
-        "failure_threshold": 3,
-        "cooldown_seconds": 60,
-    },
-}
-
-DEEPSEEK_PRO_PROVIDER = {
-    **deepcopy(DEEPSEEK_FLASH_PROVIDER),
-    "name": "deepseek-pro",
-    "label": "DeepSeek Pro",
-    "model": "deepseek-v4-pro",
+KNOWN_MODEL_LABELS = {
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "doubao-seed-2-1-pro": "Doubao Seed 2.1 Pro",
+    "doubao-seed-2-1-turbo": "Doubao Seed 2.1 Turbo",
+    "gemini-3.5-flash": "Gemini 3.5 Flash",
+    "gemini-3.1-pro": "Gemini 3.1 Pro",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "glm-5.2-fast-preview": "GLM 5.2 Fast Preview",
+    "glm-5.2": "GLM 5.2",
+    "kimi-k2.6": "Kimi K2.6",
+    "kimi-k2.7-code": "Kimi K2.7 Code",
+    "minimax-m3": "MiniMax M3",
+    "mimo-v2.5": "MiMo V2.5",
+    "qwen3.7-plus": "Qwen 3.7 Plus",
+    "qwen3.7-max": "Qwen 3.7 Max",
+    "step-3.7-flash": "Step 3.7 Flash",
 }
 
 
-DEFAULT_MODEL_SETTINGS = {
-    "default_provider": "deepseek-flash",
-    "default_model": "deepseek-v4-flash",
-    "providers": [
-        DEEPSEEK_FLASH_PROVIDER,
-        DEEPSEEK_PRO_PROVIDER,
-        {
-            "name": "openai-compatible",
-            "label": "OpenAI GPT-5.5",
-            "model": "gpt-5.5",
-            "secret_provider": "openai",
-            "api_format": "openai",
-            "base_url": "https://api.openai.com/v1",
-            "api_key": "",
-            "api_key_env": "OPENAI_API_KEY",
-            "model_context_window_tokens": 272000,
-            "max_output_tokens": 128000,
-            "status": "healthy",
-            "rate_limit_rpm": 600,
-            "rate_limit_tpm": 120000,
-            "timeout_seconds": 30,
-            "health_timeout_seconds": 5,
-            "circuit_breaker": {
-                "failure_threshold": 3,
-                "cooldown_seconds": 60,
-            },
-        },
-    ],
-    "rate_limits": {"rpm": 600, "tpm": 120000},
-    "health": {
+def _is_legacy_builtin_provider(provider: object) -> bool:
+    if not isinstance(provider, dict):
+        return False
+    name = str(provider.get("name") or "")
+    model = str(provider.get("model") or "")
+    return model in LEGACY_BUILTIN_PROVIDER_MODELS.get(name, set())
+
+
+def _is_legacy_builtin_selection(provider_name: object, model_name: object) -> bool:
+    return str(model_name or "") in LEGACY_BUILTIN_PROVIDER_MODELS.get(
+        str(provider_name or ""),
+        set(),
+    )
+
+
+def _platform_provider(model: str) -> dict:
+    settings = get_settings()
+    return {
+        "name": settings.ai_provider_name,
+        "label": KNOWN_MODEL_LABELS.get(model, model),
         "status": "healthy",
-        "updated_at": None,
-        "mode": "mock",
-        "latency_ms": 0,
-        "error_message": None,
-    },
-    "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
-}
+        "api_format": "openai",
+        "protocol": settings.ai_provider_protocol,
+        "model": model,
+        "allowed_models": list(settings.ai_provider_models),
+        "secret_provider": settings.ai_provider_name,
+        "base_url": settings.ai_provider_base_url,
+        "api_key": "",
+        "api_key_env": PLATFORM_API_KEY_ENV,
+        "managed_by_platform": True,
+        "platform_managed": True,
+        "temperature": 0.2,
+        "include_stream_usage": False,
+        "timeout_seconds": 30,
+        "health_timeout_seconds": 5,
+        "rate_limit_rpm": 300,
+        "rate_limit_tpm": 120000,
+        "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+    }
+
+
+def is_platform_model_provider(provider: object) -> bool:
+    if not isinstance(provider, dict):
+        return False
+    settings = get_settings()
+    return (
+        provider.get("managed_by_platform") is True
+        and provider.get("platform_managed") is True
+        and str(provider.get("name") or "") == settings.ai_provider_name
+        and str(provider.get("model") or "") in settings.ai_provider_models
+        and str(provider.get("base_url") or "").rstrip("/")
+        == settings.ai_provider_base_url.rstrip("/")
+        and str(provider.get("api_key_env") or "") == PLATFORM_API_KEY_ENV
+        and str(provider.get("protocol") or "") == settings.ai_provider_protocol
+        and str(provider.get("api_format") or "").lower() == "openai"
+    )
+
+
+def validate_platform_model_selection(provider_name: str, model_name: str) -> None:
+    settings = get_settings()
+    if provider_name == settings.ai_provider_name and model_name not in settings.ai_provider_models:
+        raise ModelGatewayError("requested model is not allowed by the platform provider")
+
+
+def _platform_default_model_settings() -> dict:
+    settings = get_settings()
+    return {
+        "default_provider": settings.ai_provider_name,
+        "default_model": settings.ai_provider_model,
+        "providers": [_platform_provider(model) for model in settings.ai_provider_models],
+        "rate_limits": {"rpm": 600, "tpm": 120000},
+        "health": {
+            "status": "healthy",
+            "updated_at": None,
+            "mode": "mock",
+            "latency_ms": 0,
+            "error_message": None,
+        },
+        "circuit_breaker": {"failure_threshold": 3, "cooldown_seconds": 60},
+    }
+
+
+DEFAULT_MODEL_SETTINGS = _platform_default_model_settings()
 
 
 def normalize_model_settings(settings: dict | None) -> dict:
     """Merge persisted settings with current built-in provider invariants."""
-    if not isinstance(settings, dict):
-        normalized = deepcopy(DEFAULT_MODEL_SETTINGS)
+    defaults = _platform_default_model_settings()
+    if settings is DEFAULT_MODEL_SETTINGS or not isinstance(settings, dict):
+        normalized = deepcopy(defaults)
     else:
         normalized = deepcopy(settings)
-    defaults = deepcopy(DEFAULT_MODEL_SETTINGS)
     normalized.setdefault("default_provider", defaults["default_provider"])
+    original_default_provider = normalized.get("default_provider")
+    original_default_model = normalized.get("default_model")
     if not normalized.get("default_model") or normalized.get("default_model") == "default":
         normalized["default_model"] = defaults["default_model"]
     normalized.setdefault("providers", [])
     normalized.setdefault("rate_limits", defaults["rate_limits"])
     normalized.setdefault("health", defaults["health"])
     normalized.setdefault("circuit_breaker", defaults["circuit_breaker"])
-    if normalized.get("default_provider") in LEGACY_BUILTIN_PROVIDER_NAMES:
+    if _is_legacy_builtin_selection(original_default_provider, original_default_model):
         normalized["default_provider"] = defaults["default_provider"]
-    if normalized.get("default_model") in LEGACY_BUILTIN_MODEL_NAMES:
+        normalized["default_model"] = defaults["default_model"]
+    if (
+        normalized.get("default_provider") == defaults["default_provider"]
+        and normalized.get("default_model")
+        not in get_settings().ai_provider_models
+    ):
         normalized["default_model"] = defaults["default_model"]
 
     providers = normalized["providers"]
     if not isinstance(providers, list):
         providers = []
         normalized["providers"] = providers
-    providers[:] = [
-        provider
-        for provider in providers
-        if not (
-            isinstance(provider, dict) and provider.get("name") in LEGACY_BUILTIN_PROVIDER_NAMES
-        )
-    ]
-    for provider in defaults["providers"]:
-        if provider.get("name") in {"deepseek-flash", "deepseek-pro"}:
-            _upsert_builtin_deepseek_provider(providers=providers, default_provider=provider)
+    platform_name = get_settings().ai_provider_name
+    preserved_providers = []
+    for provider in providers:
+        if _is_legacy_builtin_provider(provider):
+            continue
+        if isinstance(provider, dict) and provider.get("name") == platform_name:
+            continue
+        if isinstance(provider, dict):
+            provider.pop("managed_by_platform", None)
+            provider.pop("platform_managed", None)
+            provider.pop("allowed_models", None)
+            if provider.get("api_key_env") == PLATFORM_API_KEY_ENV:
+                provider["api_key_env"] = ""
+        preserved_providers.append(provider)
+    providers[:] = preserved_providers
+    providers.extend(deepcopy(defaults["providers"]))
     return normalized
-
-
-def _upsert_builtin_deepseek_provider(*, providers: list, default_provider: dict) -> None:
-    forced_keys = {
-        "label",
-        "api_format",
-        "model",
-        "secret_provider",
-        "base_url",
-        "api_key_env",
-        "model_context_window_tokens",
-        "max_output_tokens",
-        "rate_limit_tpm",
-        "health_timeout_seconds",
-    }
-    for index, provider in enumerate(providers):
-        if isinstance(provider, dict) and provider.get("name") == default_provider["name"]:
-            merged = {**deepcopy(default_provider), **deepcopy(provider)}
-            for key in forced_keys:
-                merged[key] = deepcopy(default_provider[key])
-            providers[index] = merged
-            return
-    providers.append(deepcopy(default_provider))
 
 
 def model_provider_secret_provider(
@@ -330,7 +354,15 @@ def resolve_model_provider_secret(
     provider_name: str,
     secret_provider: str | None = None,
     api_key_env: str | None = None,
+    platform_managed: bool = False,
 ) -> SecretResolution:
+    if platform_managed:
+        platform_key = _settings_api_key_for_env(PLATFORM_API_KEY_ENV)
+        if platform_key:
+            return SecretResolution(value=platform_key, source="env_platform")
+        return SecretResolution(value="", source="missing")
+    if api_key_env == PLATFORM_API_KEY_ENV:
+        api_key_env = None
     secret_names = model_provider_secret_names(
         provider_name,
         secret_provider=secret_provider,
@@ -347,17 +379,21 @@ def resolve_model_provider_secret(
         if resolved.found:
             return resolved
     env_provider_name = secret_names[0] if secret_names else provider_name
+    env_candidates = _model_provider_env_candidates(
+        provider_name=provider_name,
+        secret_provider=secret_provider,
+        api_key_env=api_key_env,
+    )
+    env_candidates = [
+        candidate for candidate in env_candidates if candidate != PLATFORM_API_KEY_ENV
+    ]
     return resolve_secret(
         session,
         organization_id=organization_id,
         user_id=user_id,
         provider=env_provider_name,
         purpose=SECRET_PURPOSE_MODEL_PROVIDER,
-        env_candidates=_model_provider_env_candidates(
-            provider_name=provider_name,
-            secret_provider=secret_provider,
-            api_key_env=api_key_env,
-        ),
+        env_candidates=env_candidates,
     )
 
 
@@ -552,11 +588,17 @@ class OpenAICompatibleModelGateway:
         base_url: str | None = None,
         api_key: str | None = None,
         timeout_seconds: int = 30,
+        temperature: float = 0.2,
+        include_stream_usage: bool = True,
+        max_tokens: int | None = None,
     ) -> None:
         settings = get_settings()
         self.base_url = str(base_url or settings.model_gateway_base_url)
         self.api_key = api_key if api_key is not None else settings.model_gateway_api_key
         self.timeout_seconds = timeout_seconds
+        self.temperature = temperature
+        self.include_stream_usage = include_stream_usage
+        self.max_tokens = max_tokens
 
     def complete(self, request_payload: ModelRequest) -> ModelResponse:
         started_at = time.monotonic()
@@ -569,6 +611,7 @@ class OpenAICompatibleModelGateway:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": MODEL_GATEWAY_USER_AGENT,
         }
         http_request = request.Request(
             urljoin(self.base_url.rstrip("/") + "/", "chat/completions"),
@@ -578,19 +621,22 @@ class OpenAICompatibleModelGateway:
         )
         try:
             with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
-                raw = json.loads(response.read().decode("utf-8"))
+                raw = self._decode_completion_response(response.read().decode("utf-8"))
+            usage = self._normalize_usage(raw.get("usage"))
+            content = self._extract_content(raw)
         except error.HTTPError as exc:
             model_call_errors_total.inc()
             formatted = self._format_http_error(exc)
             if exc.code in {401, 403}:
                 raise ModelAuthError(formatted) from exc
             raise ModelGatewayError(formatted) from exc
+        except ModelGatewayError:
+            model_call_errors_total.inc()
+            raise
         except (OSError, json.JSONDecodeError) as exc:
             model_call_errors_total.inc()
             raise ModelGatewayError(str(exc)) from exc
 
-        usage = raw.get("usage", {})
-        content = self._extract_content(raw)
         model_calls_total.inc()
         model_tokens_input_total.inc(int(usage.get("prompt_tokens", 0) or 0))
         model_tokens_output_total.inc(int(usage.get("completion_tokens", 0) or 0))
@@ -602,6 +648,143 @@ class OpenAICompatibleModelGateway:
             usage=usage,
             raw_response=raw,
         )
+
+    @staticmethod
+    def _normalize_usage(raw_usage: object) -> dict:
+        if raw_usage is None:
+            return {}
+        if not isinstance(raw_usage, dict):
+            raise ModelGatewayError("model response usage must be an object")
+        usage = dict(raw_usage)
+        for key in ("prompt_tokens", "completion_tokens"):
+            value = usage.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ModelGatewayError(f"model response {key} must be a non-negative integer")
+        return usage
+
+    def _decode_completion_response(self, body: str) -> dict:
+        try:
+            raw = json.loads(body)
+        except json.JSONDecodeError as exc:
+            if exc.msg != "Extra data":
+                raise
+            return self._collapse_concatenated_completion_chunks(body)
+        if not isinstance(raw, dict):
+            raise ModelGatewayError("model response must be a JSON object")
+        return raw
+
+    def _collapse_concatenated_completion_chunks(self, body: str) -> dict:
+        decoder = json.JSONDecoder()
+        position = 0
+        chunk_count = 0
+        content_parts: list[str] = []
+        usage: dict = {}
+        finish_reason: object = None
+        response_metadata: dict = {}
+        response_identity: dict[str, object] = {}
+        terminal_seen = False
+
+        while position < len(body):
+            while position < len(body) and body[position].isspace():
+                position += 1
+            if position >= len(body):
+                break
+            try:
+                chunk, position = decoder.raw_decode(body, position)
+            except json.JSONDecodeError as exc:
+                raise ModelGatewayError(
+                    "model response contains malformed concatenated completion chunks"
+                ) from exc
+            if not isinstance(chunk, dict) or chunk.get("object") != "chat.completion.chunk":
+                raise ModelGatewayError(
+                    "model response contains unsupported concatenated JSON documents"
+                )
+
+            chunk_count += 1
+            for key in ("id", "created", "model", "system_fingerprint"):
+                value = chunk.get(key)
+                if value is None:
+                    continue
+                if key in {"id", "model"}:
+                    expected = response_identity.setdefault(key, value)
+                    if value != expected:
+                        raise ModelGatewayError(
+                            f"model completion chunks have inconsistent {key} values"
+                        )
+                response_metadata[key] = value
+
+            choices = chunk.get("choices") or []
+            if not isinstance(choices, list):
+                raise ModelGatewayError("model completion chunk choices must be a list")
+            choice = next(
+                (
+                    item
+                    for item in choices
+                    if isinstance(item, dict) and item.get("index", 0) == 0
+                ),
+                None,
+            )
+            if choice is not None:
+                delta = choice.get("delta") or {}
+                if not isinstance(delta, dict):
+                    raise ModelGatewayError("model completion chunk delta must be an object")
+                piece = self._stream_delta_text(delta.get("content"))
+                if piece:
+                    if terminal_seen:
+                        raise ModelGatewayError(
+                            "model completion chunks contain content after termination"
+                        )
+                    content_parts.append(piece)
+                chunk_finish_reason = choice.get("finish_reason")
+                if chunk_finish_reason is not None:
+                    if not isinstance(chunk_finish_reason, str) or not chunk_finish_reason:
+                        raise ModelGatewayError(
+                            "model completion chunk finish reason must be a non-empty string"
+                        )
+                    if terminal_seen:
+                        raise ModelGatewayError(
+                            "model completion chunks contain multiple terminal choices"
+                        )
+                    finish_reason = chunk_finish_reason
+                    terminal_seen = True
+
+            chunk_usage = chunk.get("usage")
+            if chunk_usage is not None:
+                if not isinstance(chunk_usage, dict):
+                    raise ModelGatewayError("model completion chunk usage must be an object")
+                usage = chunk_usage
+
+        if chunk_count < 2:
+            raise ModelGatewayError(
+                "model response did not contain multiple completion chunks"
+            )
+        if not terminal_seen:
+            raise ModelGatewayError(
+                "model completion chunks ended without a terminal finish reason"
+            )
+        content = "".join(content_parts)
+        if not content:
+            raise ModelGatewayError("model completion chunks did not produce content")
+
+        return {
+            **response_metadata,
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "finish_reason": finish_reason,
+                }
+            ],
+            "usage": usage,
+            "compatibility_mode": "concatenated_chat_completion_chunks",
+            "chunk_count": chunk_count,
+        }
 
     def _uses_local_mock(self) -> bool:
         return self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
@@ -635,6 +818,7 @@ class OpenAICompatibleModelGateway:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
             "Accept": "text/event-stream",
+            "User-Agent": MODEL_GATEWAY_USER_AGENT,
         }
         http_request = request.Request(
             urljoin(self.base_url.rstrip("/") + "/", "chat/completions"),
@@ -658,8 +842,10 @@ class OpenAICompatibleModelGateway:
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
-                    if data == "" or data == "[DONE]":
+                    if data == "":
                         continue
+                    if data == "[DONE]":
+                        break
                     try:
                         frame = json.loads(data)
                     except json.JSONDecodeError:
@@ -668,8 +854,8 @@ class OpenAICompatibleModelGateway:
                     choices = frame.get("choices") or []
                     if choices:
                         delta = choices[0].get("delta") or {}
-                        piece = delta.get("content")
-                        if isinstance(piece, str) and piece:
+                        piece = self._stream_delta_text(delta.get("content"))
+                        if piece:
                             text_total += piece
                             yield ModelStreamChunk(text=piece)
                     frame_usage = frame.get("usage")
@@ -709,14 +895,32 @@ class OpenAICompatibleModelGateway:
         payload: dict = {
             "model": request_payload.model_name,
             "messages": [message.model_dump() for message in request_payload.messages],
+            "temperature": self.temperature,
         }
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
         response_format = self._response_format_payload(request_payload.response_format)
         if response_format is not None:
             payload["response_format"] = response_format
         if stream:
             payload["stream"] = True
-            payload["stream_options"] = {"include_usage": True}
+            if self.include_stream_usage:
+                payload["stream_options"] = {"include_usage": True}
         return payload
+
+    @staticmethod
+    def _stream_delta_text(content: object) -> str:
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return ""
+        pieces = []
+        for item in content:
+            if isinstance(item, str):
+                pieces.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                pieces.append(item["text"])
+        return "".join(pieces)
 
     def _response_format_payload(self, response_format: str) -> dict | None:
         normalized = response_format.strip().lower()
@@ -978,7 +1182,12 @@ class ModelSettingsResolver:
         model_name = request_payload.model_name
         if not model_name or model_name == "default":
             model_name = default_model
-        provider = self._provider(settings=settings, provider_name=provider_name)
+        provider = self._provider(
+            settings=settings,
+            provider_name=provider_name,
+            model_name=model_name,
+        )
+        validate_platform_model_selection(provider_name, model_name)
         rpm = int(
             provider.get("rate_limit_rpm") or settings.get("rate_limits", {}).get("rpm") or 600
         )
@@ -1021,10 +1230,16 @@ class ModelSettingsResolver:
             return normalize_model_settings(DEFAULT_MODEL_SETTINGS)
         return normalize_model_settings(setting.value_json)
 
-    def _provider(self, *, settings: dict, provider_name: str) -> dict:
+    def _provider(self, *, settings: dict, provider_name: str, model_name: str) -> dict:
+        matching_provider: dict | None = None
         for provider in settings.get("providers", []):
             if provider.get("name") == provider_name:
-                return provider
+                if provider.get("model") == model_name:
+                    return provider
+                if matching_provider is None:
+                    matching_provider = provider
+        if matching_provider is not None:
+            return matching_provider
         return {"name": provider_name, "status": "healthy"}
 
 
@@ -1871,6 +2086,8 @@ def provider_api_key(
     provider_name = str(provider.get("name") or provider.get("model_provider") or "").strip()
     secret_provider = str(provider.get("secret_provider") or "").strip()
     api_key_env = provider.get("api_key_env")
+    if is_platform_model_provider(provider):
+        return _settings_api_key_for_env(PLATFORM_API_KEY_ENV)
     if provider_name and session is not None and organization_id:
         resolved = resolve_model_provider_secret(
             session=session,
@@ -1886,6 +2103,8 @@ def provider_api_key(
     if isinstance(api_key, str) and api_key not in {"", "replace-me"}:
         return api_key
     if isinstance(api_key_env, str) and api_key_env:
+        if api_key_env == PLATFORM_API_KEY_ENV:
+            return api_key if isinstance(api_key, str) else None
         env_value = os.environ.get(api_key_env)
         if env_value:
             return env_value
@@ -1936,7 +2155,9 @@ def _store_provider_api_keys_for_gateway(
 
 def _settings_api_key_for_env(api_key_env: str) -> str | None:
     settings = get_settings()
-    if api_key_env == DEEPSEEK_API_KEY_ENV:
+    if api_key_env == PLATFORM_API_KEY_ENV:
+        return settings.ai_provider_api_key or None
+    if api_key_env == "DEEPSEEK_API_KEY":
         return settings.deepseek_api_key or None
     return None
 
@@ -1972,6 +2193,13 @@ def model_gateway_for_provider(
     user_id: str | None = None,
 ) -> ModelGateway:
     timeout = int(timeout_seconds or provider.get("timeout_seconds") or 30)
+    configured_max_tokens = provider.get("max_output_tokens")
+    if configured_max_tokens is not None and (
+        not isinstance(configured_max_tokens, int)
+        or isinstance(configured_max_tokens, bool)
+        or configured_max_tokens <= 0
+    ):
+        raise ModelGatewayError("provider max_output_tokens must be a positive integer")
     api_key = provider_api_key(
         provider,
         session=session,
@@ -1983,10 +2211,27 @@ def model_gateway_for_provider(
             base_url=provider.get("base_url"),
             api_key=api_key,
             timeout_seconds=timeout,
-            max_tokens=int(provider.get("max_output_tokens") or 4096),
+            max_tokens=configured_max_tokens or 4096,
         )
+    configured_temperature = provider.get("temperature")
+    if configured_temperature is None:
+        temperature = 0.2
+    else:
+        if isinstance(configured_temperature, bool):
+            raise ModelGatewayError("provider temperature must be a finite number from 0 to 2")
+        try:
+            temperature = float(configured_temperature)
+        except (TypeError, ValueError) as exc:
+            raise ModelGatewayError(
+                "provider temperature must be a finite number from 0 to 2"
+            ) from exc
+        if not math.isfinite(temperature) or not 0 <= temperature <= 2:
+            raise ModelGatewayError("provider temperature must be a finite number from 0 to 2")
     return OpenAICompatibleModelGateway(
         base_url=provider.get("base_url"),
         api_key=api_key,
         timeout_seconds=timeout,
+        temperature=temperature,
+        include_stream_usage=bool(provider.get("include_stream_usage", True)),
+        max_tokens=configured_max_tokens,
     )

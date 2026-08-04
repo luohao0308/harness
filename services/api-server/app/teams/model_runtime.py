@@ -16,6 +16,7 @@ from app.agents.model_gateway import (
     ModelStreamChunk,
     model_gateway_for_provider,
     normalize_model_settings,
+    validate_platform_model_selection,
 )
 from app.db.models import SystemSetting
 
@@ -110,10 +111,17 @@ class GatewayTeamModelRuntime:
         return normalize_model_settings(setting.value_json)
 
     @staticmethod
-    def _provider(*, settings: dict, provider_name: str) -> dict:
+    def _provider(*, settings: dict, provider_name: str, model_name: str) -> dict:
+        matching_provider: dict | None = None
         for provider in settings.get("providers", []):
-            if isinstance(provider, dict) and provider.get("name") == provider_name:
+            if not isinstance(provider, dict) or provider.get("name") != provider_name:
+                continue
+            if provider.get("model") == model_name:
                 return provider
+            if matching_provider is None:
+                matching_provider = provider
+        if matching_provider is not None:
+            return matching_provider
         return {"name": provider_name, "status": "healthy"}
 
     def _resolved_provider(
@@ -124,16 +132,25 @@ class GatewayTeamModelRuntime:
         model_name: str,
     ) -> tuple[str, str, dict]:
         settings = self._settings_for_org(organization_id)
-        default_provider = str(settings.get("default_provider") or "openai-compatible")
-        default_model = str(settings.get("default_model") or "default")
+        default_provider = str(
+            settings.get("default_provider") or DEFAULT_MODEL_SETTINGS["default_provider"]
+        )
+        default_model = str(
+            settings.get("default_model") or DEFAULT_MODEL_SETTINGS["default_model"]
+        )
         provider_name = model_provider or default_provider
         if provider_name == "default":
             provider_name = default_provider
         resolved_model_name = model_name
         if not resolved_model_name or resolved_model_name == "default":
             resolved_model_name = default_model
+        validate_platform_model_selection(provider_name, resolved_model_name)
         return (
             provider_name,
             resolved_model_name,
-            self._provider(settings=settings, provider_name=provider_name),
+            self._provider(
+                settings=settings,
+                provider_name=provider_name,
+                model_name=resolved_model_name,
+            ),
         )

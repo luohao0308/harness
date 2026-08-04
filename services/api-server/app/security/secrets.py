@@ -263,6 +263,7 @@ def env_candidates_for_provider(provider: str, configured_env: str | None = None
     if slug:
         candidates.extend([f"{slug}_API_KEY", f"{slug}_KEY"])
     aliases = {
+        "chybenzun-openai-compatible": ["AI_PROVIDER_API_KEY"],
         "deepseek-flash": ["DEEPSEEK_API_KEY"],
         "deepseek-pro": ["DEEPSEEK_API_KEY"],
         "deepseek": ["DEEPSEEK_API_KEY"],

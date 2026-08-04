@@ -10,6 +10,7 @@ from app.agents.model_gateway import (
 )
 from app.agents.model_gateway import (
     ModelHealthChecker,
+    is_platform_model_provider,
     model_provider_secret_provider,
     normalize_model_settings,
     resolve_model_provider_secret,
@@ -48,22 +49,8 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 MODEL_SETTINGS_KEY = "settings.models"
 POLICY_SETTINGS_KEY = "settings.policies"
 
-MODEL_OFFICIAL_STATUS_SOURCES = [
-    {
-        "provider": "openai",
-        "label": "OpenAI",
-        "page_url": "https://status.openai.com/",
-        "api_url": "https://status.openai.com/api/v2/status.json",
-        "fetch_mode": "statuspage_json",
-    },
-    {
-        "provider": "deepseek",
-        "label": "DeepSeek",
-        "page_url": "https://status.deepseek.com/",
-        "api_url": "https://status.deepseek.com/",
-        "fetch_mode": "status_page",
-    },
-]
+# The platform gateway does not publish a verified upstream status page.
+MODEL_OFFICIAL_STATUS_SOURCES: list[dict] = []
 
 DEFAULT_MODEL_SETTINGS = ModelSettingsResponse(**GATEWAY_DEFAULT_MODEL_SETTINGS)
 
@@ -188,6 +175,11 @@ def _store_model_provider_secrets(
         original = original_providers[index] if index < len(original_providers) else provider
         if not isinstance(original, dict):
             continue
+        if is_platform_model_provider(provider):
+            provider.pop("api_key_configured", None)
+            provider.pop("api_key_source", None)
+            provider.pop("api_key_secret_id", None)
+            continue
         raw_key = str(original.get("api_key") or "").strip()
         if raw_key and raw_key != "replace-me":
             provider_name = str(provider.get("name") or "").strip()
@@ -242,6 +234,7 @@ def _model_settings_response_value(
             provider_name=provider_name,
             secret_provider=str(provider.get("secret_provider") or ""),
             api_key_env=str(provider.get("api_key_env") or ""),
+            platform_managed=is_platform_model_provider(provider),
         )
         raw_legacy = str(original.get("api_key") or "").strip()
         provider["api_key_configured"] = resolved.found or bool(
