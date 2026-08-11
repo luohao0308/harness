@@ -12,7 +12,7 @@
  * escapes (React logs error #310 at `console.error` before throwing).
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
@@ -20,6 +20,11 @@ import { MemoryRouter } from "react-router-dom";
 import { ChatMessageList } from "../components/ChatMessageList";
 import type { ConversationNode } from "../../../stores/workspaceStore";
 import type { ChatMessageListProps } from "../components/ChatMessageList";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  delete window.desktopApi;
+});
 
 function makeNode(partial: Partial<ConversationNode> & Pick<ConversationNode, "id" | "role">): ConversationNode {
   return {
@@ -405,6 +410,60 @@ describe("ChatMessageList render regression (React error #310)", () => {
     await act(async () => {
       root.unmount();
     });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("routes typed local setup errors to the desktop model category", async () => {
+    vi.stubEnv("VITE_RUNTIME_PROFILE", "local");
+    window.desktopApi = {};
+    const assistantNode = makeNode({
+      id: "a-local-setup",
+      role: "assistant",
+      state: "error",
+      metadata: {
+        error: {
+          kind: "server",
+          detail: "MODEL_SETUP_REQUIRED: configure a model API key",
+          happened_at: "2026-08-07T00:00:00.000Z",
+        },
+      },
+    });
+
+    await act(async () => {
+      renderList(root, [assistantNode]);
+    });
+
+    expect(
+      container.querySelector<HTMLAnchorElement>('a[href="/desktop?section=models"]'),
+    ).not.toBeNull();
+
+    await act(async () => root.unmount());
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("keeps the local Web Extension model action on the read-only model page", async () => {
+    vi.stubEnv("VITE_RUNTIME_PROFILE", "local");
+    const assistantNode = makeNode({
+      id: "a-web-setup",
+      role: "assistant",
+      state: "error",
+      metadata: {
+        error: {
+          kind: "server",
+          detail: "MODEL_SETUP_REQUIRED",
+          happened_at: "2026-08-07T00:00:00.000Z",
+        },
+      },
+    });
+
+    await act(async () => renderList(root, [assistantNode]));
+
+    expect(container.querySelector<HTMLAnchorElement>('a[href="/settings/models"]')).not.toBeNull();
+    expect(container.querySelector<HTMLAnchorElement>('a[href="/desktop?section=models"]')).toBeNull();
+
+    await act(async () => root.unmount());
     container.remove();
     errorSpy.mockRestore();
   });

@@ -1,0 +1,95 @@
+appId: com.harness.desktop
+productName: Harness Desktop
+copyright: Copyright © 2026 Harness Team
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+asar: true
+compression: maximum
+icon: icon.png
+detectUpdateChannel: true
+generateUpdatesFilesForAllChannels: true
+afterSign: scripts/notarize.mjs
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: resources/runtime
+    to: runtime
+    filter:
+      - "**/*"
+  - from: dist/renderer
+    to: renderer
+    filter:
+      - "**/*"
+
+extraMetadata:
+  main: dist/main.js
+
+publish:
+  provider: github
+  owner: luohao0308
+  repo: harness
+  vPrefixedTagName: true
+  releaseType: release
+
+protocols:
+  - name: Harness Agent Links
+    schemes:
+      - agentharness
+
+mac:
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+
+dmg:
+  sign: false
+
+win:
+  publisherName: Harness Team
+  verifyUpdateCodeSignature: true
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Harness Desktop
+  deleteAppDataOnUninstall: false
+
+linux:
+  category: Development
+  maintainer: Harness Team <release@harness.local>
+  executableName: harness-desktop
+  synopsis: Harness Desktop agent workspace
+  description: Desktop shell for Harness Agent Workspace with native integrations and auto-update support.
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+    - target: rpm
+      arch:
+        - x64

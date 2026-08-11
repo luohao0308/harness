@@ -27,9 +27,9 @@ describe("enterprise route inventory", () => {
   it("locks all left-sidebar links to routable static paths", () => {
     const routerPaths = routePathsFromRouter();
 
-    expect(consoleNavEntries).toHaveLength(12);
-    expect(sidebarRouteInventory).toHaveLength(22);
-    expect(new Set(sidebarRouteInventory.map((item) => item.href)).size).toBe(22);
+    expect(consoleNavEntries).toHaveLength(13);
+    expect(sidebarRouteInventory).toHaveLength(24);
+    expect(new Set(sidebarRouteInventory.map((item) => item.href)).size).toBe(24);
     for (const item of sidebarRouteInventory) {
       expect(staticConsoleRoutePaths).toContain(item.href);
       expect(routerPaths).toContain(item.href);

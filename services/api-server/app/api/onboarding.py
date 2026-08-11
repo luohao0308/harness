@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -140,7 +140,7 @@ def _get_or_create_state(*, session: Session, principal) -> UserOnboardingState:
     response_model=WizardStateResponse,
     summary="Get wizard state for user (Story 1.2)",
 )
-def get_wizard_state(user_id: str, session: DbSession) -> dict:
+def get_wizard_state(user_id: str, session: DbSession, principal: Principal) -> dict:
     """
     Get current wizard state for a user.
 
@@ -150,6 +150,9 @@ def get_wizard_state(user_id: str, session: DbSession) -> dict:
     - is_completed: Whether wizard is fully completed
     - Supports browser refresh - state persists across sessions
     """
+    require_role(principal, {"admin", "engineer", "operator"})
+    if user_id != principal.user_id and "admin" not in principal.roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
     service = OnboardingService(session)
     return service.get_wizard_state(user_id)
 
@@ -194,4 +197,3 @@ def complete_wizard_step(
     require_role(principal, {"admin", "engineer", "operator"})
     service = OnboardingService(session)
     return service.complete_step(principal.user_id, payload.step)
-

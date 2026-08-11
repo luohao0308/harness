@@ -18,26 +18,7 @@ Model + Harness = Agent
 
 The public website remains a public information shell. The implementation center is the Agent Console plus FastAPI backend.
 
-The current final task target is **Agent Knowledge Harness**. Based on the repository HTML report `docs/reports/release-gate-handoff-diff-2026-05-14.html`, the target is not merely "add memory" or "add RAG"; it is to make Harness a configurable, auditable, and evaluable capability layer across memory, knowledge retrieval, MCP, skills, context/token routing, hallucination control, Eval, Observability, Policy/Sandbox, and Agent orchestration.
-
-## Desktop Team And Platform AI Closeout
-
-As of 2026-08-04, Electron Team Mode supports `协作 / 任务图 / 多列`.
-Collaboration is chat-first, Task Graph derives deterministic dependency state
-from Team tasks, and Multi-column reuses the existing browser workflow. Browser
-Team Mode remains unchanged.
-
-Harness model traffic now defaults to the server-managed
-`chybenzun-openai-compatible` provider at `https://chybenzun.top/v1`, using
-`deepseek-v4-flash` and a server-owned 12-model allowlist. The provider key
-stays in backend configuration, Agent and Team model selection enforce the
-allowlist, and the gateway handles the upstream concatenated chunk response
-without accepting mixed or incomplete payloads.
-
-Read `docs/desktop/team-mode-workspace.md`,
-`docs/architecture/platform-managed-ai-provider.md`, and
-[[session-2026-07-28-desktop-team-mode-workspace]] before changing these
-surfaces.
+The current final task target is **Agent Knowledge Harness**. Based on the repository HTML report `docs/工作日志/reports/release-gate-handoff-diff-2026-05-14.html`, the target is not merely "add memory" or "add RAG"; it is to make Harness a configurable, auditable, and evaluable capability layer across memory, knowledge retrieval, MCP, skills, context/token routing, hallucination control, Eval, Observability, Policy/Sandbox, and Agent orchestration.
 
 ## Authoritative Reading Order
 
@@ -49,8 +30,8 @@ Read these first:
 4. `.omx/specs/deep-interview-project-positioning-orchestration.md`
 5. `.omx/plans/prd-private-deployable-harness-chain.md`
 6. `.omx/plans/test-spec-private-deployable-harness-chain.md`
-7. `docs/ai/task-progress.yaml`
-8. `docs/task-progress.md`
+7. `docs/development/ai/task-progress.yaml`
+8. `docs/工作日志/archive/task-progress-legacy.md`
 9. Latest relevant `.omx/context/*.md`
 10. [[workspace-demo-ready-constraints]] if the next work touches Agent Workspace
 11. [[local-dev-backend-port-cors]] if the frontend cannot reach the backend
@@ -63,16 +44,54 @@ Read these first:
 18. [[session-2026-05-18-agent-knowledge-p7-release-demo-hardening]] if the next work touches deterministic demo seeds, Knowledge/RAG migration/restore smoke, release browser smoke, local fixture versus live provider evidence boundaries, Chinese-first console wording, or shared selector UI.
 19. [[session-2026-05-29-auth-retention-cicd]] if the next work touches AuthN/AuthZ/RBAC, API keys, org membership, audit logs, data retention/export/delete, CI/CD workflows, production Dockerfiles, or release engineering.
 20. [[session-2026-05-29-docs-help-performance-scale]] if the next work touches Help Center docs, troubleshooting, generated API docs, query caching, cursor pagination, lazy frontend routes, CDN/static assets, load tests, or performance runbooks.
+21. [[session-2026-06-26-desktop-phase-4-packaging-distribution]] if the next work touches Electron Desktop packaging, signing/notarization, GitHub Releases desktop artifacts, desktop auto-updates, Sentry, or beta/stable release channels.
+22. [[session-2026-06-27-desktop-phase-6-advanced-features]] if the next work touches Electron Desktop multi-window behavior, workspace profile isolation, plugin marketplace, Prompt templates, offline/local-model execution, high-contrast accessibility, or long-chat virtualization.
+23. [[session-2026-07-03-desktop-workbench-document-polish]] if the next work touches the Desktop workbench route, `/desktop` navigation, desktop bridge status UI, workspace/window controls, offline execution, plugin/template desktop page layout, or document-style desktop UX polish.
+24. [[session-2026-07-04-desktop-full-function-startup-smoke-rerun]] if the next work touches the latest full Desktop startup/testing evidence, Electron launch environment, isolated userData smoke, native-module ABI rebuilds, browser/Electron smoke evidence, or desktop verification closeout.
+25. [[session-2026-07-04-desktop-full-function-startup-smoke]] if historical full Desktop startup/testing evidence is needed.
+26. [[session-2026-08-07-desktop-functional-screenshot-audit]] if the next work touches the latest native Electron relaunch, deterministic offline execution, current desktop/web screenshots, confirmed web route defects, historical screenshot archive, or the screenshot catalog DOCX.
+27. [[session-2026-08-07-desktop-codex-task-workspace]] if the next work touches the Electron startup route, desktop-versus-browser shell split, task history sidebar, compact Workspace header, or native Run-window action.
+28. `.omx/plans/desktop-local-runtime-sqlite-install-ready.md` if the next work implements install-ready Desktop startup, the packaged local API sidecar, canonical SQLite storage, Redis removal, secure model-key setup, or the loopback Web extension.
+29. [[session-2026-08-10-dev-workflow-install-and-docs]] if the next work changes documentation taxonomy, task-board authority, generated documentation paths, startup context routing, or docs validation.
 
 ## Current State
 
-Evidence from `docs/ai/task-progress.yaml`:
+Evidence from `docs/development/ai/task-progress.yaml`:
 
+- 2026-08-11 dev-workflow CI and Git delivery closeout is complete. Docs CI now invokes `bash scripts/check-docs.sh`, so structural validation and the repository-wide local Markdown link checker share one local/CI entrypoint; `validate-docs.py` rejects removal of that CI call or the generated API drift check. Manifest onboarding remains `ready`, and `DW-003` is closed. The user-confirmed business and workflow changes pass backend `1537`, Desktop `324`, Console lint/build, Ruff, docs, strict audit, staged-diff, and secret-pattern gates. Reproducible Electron `release*` and generated platform runtime directories are ignored without deleting local packages. The newly evidenced mixed-environment Desktop type-check debt is tracked as `DESK-001` in `docs/TASKS.md`. See [[session-2026-08-10-dev-workflow-install-and-docs]].
+- 2026-08-11 packaged Desktop real-runtime UltraQA is complete. The running package at `apps/desktop-app/release-ultraqa-complete-v2/mac/Harness Desktop.app` uses a supervised `harnessd`, one SQLite database, persistent secure model configuration, and no PostgreSQL/Redis/Docker/Python prerequisite. Real model Run `3198eaa9-9d0b-4960-97c6-e0969a865f8f` completed with ModelCall `SUCCESS/success`; Team `656b18a3-dbc6-4c37-a609-49fe4ecd8eb9`, Terminal PTY, Files IPC save/watch, Approvals, settings health/status, a 296-model provider discovery, and the `/desktop/` Web-extension shell all passed. A same-profile restart changed the loopback origin from port `60652` to `61850` while restoring conversations, model state, Team messages, workspace root, watch state, and saved file content. Mid-stream cancellation Run `78a305f4-a55d-4110-90c4-49e8be8feb67` remains Task `CANCELLED` and ModelCall `FAILED/stream_aborted` after the delayed provider window and replay; cancellation finalization is atomic and late provider results cannot overwrite it. Prompt-injection Run `d60812ce-f05c-44f6-8db9-d1cb47f1609a` exposed no secret shape, repeated stop did not duplicate events, and malformed requests failed closed. Validation passes backend `158`, Desktop `320`, focused Agent Console `90 + 23`, TypeScript lint, and the `2414`-module build. The only residual limitation is that synchronous urllib transport may keep the upstream socket alive after local cancellation, but it can no longer corrupt local terminal state. The app is intentionally left running on CDP port `9335` for review.
+- 2026-08-10 documentation reorganization is complete. Current sources are classified under the dev-workflow responsibility directories, redundant product/architecture/progress authorities are merged or archived, legacy documentation directories are rejected by validation, active entrypoints no longer point to archived human progress, and `docs/TASKS.md` contains only the four evidence-backed unfinished items `APP-001`, `APP-002`, `REL-001`, and `OPS-001`. API reference and the 14-module index regenerate on their new paths; docs validation, repository-wide Markdown link checks (`620` files / `473` local links), context brief fixtures, Python compilation, strict dev-workflow audit, and whitespace checks pass. See [[session-2026-08-10-dev-workflow-install-and-docs]].
+- 2026-08-10 Desktop model discovery error recovery is complete. Trusted local-runtime IPC now returns structured envelopes so expected provider failures are reconstructed in the renderer instead of reaching Electron's `replyWithError -> console.warn`; main-process stdout/stderr also absorb detached-terminal `EIO`/`EPIPE` without hiding unrelated stream failures. Discovery sends `Harness-Desktop-Model-Discovery/1.0`, and sandbox preload stays self-contained under a new regression contract. Desktop passes `37 files / 315 tests`, the final focused rerun passes `4 files / 26 tests`, backend local-runtime tests pass `40`, Ruff and `build:main` pass, renderer build remains `2413` modules, runtime/package rebuilds pass, and live packaged smoke restores the encrypted profile, discovers `300` real models, keeps a controlled upstream failure renderer-local, records zero renderer errors, and confirms LaunchServices-attached `/dev/null` streams. The fixed app is running from `apps/desktop-app/release-model-settings/mac/Harness Desktop.app`.
+- 2026-08-08 Desktop model connection settings are complete: the independent Codex-style `模型与密钥` page now exposes editable Base URL, current-input connection testing, remote OpenAI-compatible model discovery, editable default-model selection, and one Save action for Base URL/model/optional replacement key. Discovery is Electron-only, does not persist probes, disables redirects and environment proxies, limits responses to 1 MiB, and returns stable error categories without exposing credentials. Base URL/model survive application restart; the key remains safeStorage-encrypted or session-only and was absent from renderer storage, URLs, responses, and logs. Backend full regression passes `1526`, Desktop passes `35 files / 309 tests`, the settings page passes `12`, Agent Console builds `2413` modules, the native 331-file manifest and unsigned package rebuild pass, and packaged smoke proves auth failure, two-model discovery, save, and restart restoration. The local package is `apps/desktop-app/release-model-settings/mac/Harness Desktop.app`.
+- 2026-08-07 install-ready local runtime implementation is complete: packaged Electron supervises one loopback `harnessd` and one canonical profile-scoped SQLite database. The normal Codex-style Desktop workspace and independent two-column settings center open without a model key; `模型与密钥` is the only clean-install secret input, and missing credentials block only model execution. The packaged route inventory contains Agent, Task, Team, Run/events, Terminal, Tools, Subagent, Eval, Observability, model settings, and authenticated Web-extension surfaces. Native archive audit finds all 17 required modules and zero Redis, Dramatiq, or external PostgreSQL drivers. Backend full regression passes `1503`, Desktop passes `35 files / 303 tests`, Agent Console production build passes with `2413` modules, native ready P95 is `2688 ms`, packaged startup total P95 is `3677 ms` with every phase budget passing, and the final 331-file manifest includes the pricing data verified by a 200 response. Local macOS output is unsigned because Developer ID credentials are unavailable; CI remains the signing/notarization authority. See `.omx/plans/desktop-local-runtime-sqlite-install-ready.md`.
+- 2026-08-07 install-ready local runtime plan: the accepted direction is Desktop as the primary operating surface plus an authenticated loopback Web extension, both backed by one packaged `harnessd` process and one canonical SQLite database. New users configure only the model API key; PostgreSQL, Redis, Docker, Python, external API startup, ports, and database credentials are not installation prerequisites. The independently approved plan explicitly covers full Alembic-on-SQLite compatibility, same-origin local identity/auth/secret bootstrap, at-least-once persistent jobs with fencing/idempotency, candidate-database migration/rollback, native sidecar packaging, mock-model rejection, exactly-one principal legacy import, optional Docker sandbox capability, 21 testable acceptance criteria, and nine phase gates. The implementation is now complete; the preceding entry is the current evidence summary. See `.omx/plans/desktop-local-runtime-sqlite-install-ready.md`.
+- 2026-08-07 latest Desktop Codex task workspace: Electron now starts at `/agents/default/workspace`; desktop runtime bypasses the browser Console Shell and uses a `280px` task-first sidebar plus a narrow operation rail for tasks, teams, runs, terminal, files, approvals, and settings. The browser remains the full data, audit, evaluation, and observability console. Team was restored by migrating local PostgreSQL to `20260628_0049`; authenticated list, detail, and event-stream requests return 200. Desktop Terminal starts one shell session while the browser retains four panes, and embedded shells skip host startup scripts so unrelated integrations cannot inject startup errors. Files and Approvals deep-link into the workspace without panel overlap, and `/desktop` is a scrollable operational settings surface rather than a metrics dashboard. The focused desktop regression passes `6 files / 82 tests`, backend Terminal regression passes `12`, Agent Console lint/build pass, Desktop Vitest remains `32 files / 287 tests`, Desktop main build passes, and live Electron smoke covers every operation entry. See [[session-2026-08-07-desktop-codex-task-workspace]].
+- 2026-08-07 latest Desktop functional screenshot audit: native Electron was relaunched with isolated user data after rebuilding `better-sqlite3`; the desktop bridge connected and a deterministic offline task completed with `modelSource=deterministic-local`. Unauthenticated sync returns 401 and remains an authentication gate. The current evidence set contains nine desktop screenshots, 25 current web route captures, and 25 historical web assets copied into a non-destructive archive. Twenty-three web captures show functional or intentional redirect states; `/settings/data` preserves a 404 error boundary and `/subagents/specialists` preserves a terminal ID-or-permission load failure. Backend desktop tests pass `43`, Desktop Vitest passes `32 files / 287 tests`, startup contracts pass `5`, Desktop main and Agent Console builds pass, and the 32-page DOCX contains 38 inline images with clean image/a11y/style audits and full-page visual review. Release browser smoke is `12 passed / 38 failed`, predominantly from stale auth/new-request fixtures rather than 38 product defects. See [[session-2026-08-07-desktop-functional-screenshot-audit]].
+- 2026-08-04 platform-managed AI provider live closeout: Harness matches the interview-web runtime configuration for `chybenzun-openai-compatible`, `https://chybenzun.top/v1`, fixed `chat_completions`, default `deepseek-v4-flash`, and the server-owned 12-model allowlist. Real `/v1/models`, `complete()`, and `stream()` calls now pass with non-empty output, terminal state, and usage evidence. The gateway sends a stable Harness User-Agent for Cloudflare compatibility and strictly collapses the provider's intermittent concatenated chunk response while rejecting mixed, incomplete, post-terminal, and malformed-usage data. Provider-configured positive integer output limits and finite `0..2` temperatures are validated without changing the interview-web default payload. Gateway regression passes `52` tests, Agent gateway consumers pass `75` tests, the final full backend passes `1418` tests, Ruff and the independent final review pass, and no key or response body was persisted or printed.
+- 2026-07-31 latest backend production-hardening closeout: enterprise SAML/Auth/Onboarding, platform model routing, secure HAO approval resume, Team Runtime provider selection, Knowledge/Executor/task contracts, service-layer lint debt, and Alembic topology are closed into one backend baseline. Platform model credentials require a fully canonical server-managed provider identity; custom providers with historical names remain valid without receiving the platform secret. HAO stream tokens are referenced from `bridge.json` and stored in request-scoped `0600` files that are deleted with the pending request. Alembic now exposes one head, `20260628_0049`. Full backend regression passes `1395` tests with zero warnings, full Ruff passes, and targeted warning-as-error regression passes `43` tests. See [[session-2026-07-31-backend-production-hardening-closeout]].
+- 2026-07-31 latest Desktop startup performance gate: packaged Electron startup now records monotonic app-ready, services-ready, and renderer-loaded milestones; preserves the compatible `startup_time_ms` telemetry metric with a structured report; and runs five isolated host-architecture samples on each macOS/Windows/Linux release runner. The gate validates packaged/platform/architecture/report consistency, aggregates phase and total P50/P95, uploads platform-specific JSON evidence, and blocks GitHub Release on any P95 violation. Contract tests (`5 passed`), focused Desktop regression (`7 files / 40 tests`), main build, YAML parsing, script syntax, and whitespace validation pass. A real local packaged sample remains unavailable because native GUI execution and the required post-package Node ABI rebuild both hit the external approval service's 503; release CI is now the authoritative native measurement gate. See [[session-2026-07-31-desktop-startup-performance-budget]].
+- 2026-08-04 latest Desktop Team Mode workspace closeout: Electron `/teams/:teamId` defaults to a chat-first Collaboration view with a compact member roster and `80/20` activity inspector, can switch to a `56/44` dependency Task graph, and retains the existing multi-column view. Browser Team Mode remains unchanged. Graph edges merge `blocked_by_json` and `blocks_json`; strongly connected components are condensed before layout so cycles stay in one deterministic row with external prerequisites/downstream tasks; route changes do not cross-write per-Team view preferences; and the conversation full-screen action controls the visible desktop side pane. Visual Ralph remains Collaboration `92` and Task graph `91`; Team Vitest passes `25` tests, TypeScript and production build pass, and the fresh full Chromium run passes all 3 desktop/create-send/mobile scenarios. See [[session-2026-07-28-desktop-team-mode-workspace]].
 - `current_stage`: `07-private-deployable-harness-chain`
 - `current_status`: `completed`
 - `product`: `AI Harness Platform`
 - `formula`: `Model + Harness = Agent`
 - Stage 01-07 are recorded as completed.
+- 2026-07-12 latest Terminal capability shared-state closure: production terminal tokens and active-session limits now use Redis Lua transactions across API replicas. One-time consumption, terminal binding, concurrent per-principal caps, lease pruning, and reservations are atomic; active WebSockets renew a 90-second lease every 30 seconds; production Redis failure closes token/WebSocket access instead of degrading to local state. Real temporary Redis tests proved cross-instance consumption, concurrent cap enforcement, and lease recovery. Backend regression passed `22` tests, Agent Console Terminal regression passed `32` tests, and Desktop passed `31 files / 278 tests`. See [[session-2026-07-12-terminal-capability-shared-state]].
+- 2026-07-12 latest Desktop production-hardening closeout: repository-controlled desktop security, profile credential isolation, file containment, update gating, offline sync, privacy redaction, local-model trust boundaries, and Electron navigation controls are implemented. The missing deterministic enterprise coverage report was restored from current nav/routes/Playwright/pricing evidence, Agent Console production build passes, and the browser enterprise suite passes all 52 tests. Full validation also passed desktop Vitest (`30 files / 276 tests`), desktop main build, backend desktop pytest (`37 passed`) plus Ruff, Agent Console bridge/terminal/API Vitest, desktop workbench Vitest, docs validation, and diff checks. External signing/notarization remains credential-gated, and packaged Electron native smoke was not repeated in this closeout. See [[session-2026-07-12-desktop-production-hardening-closeout]].
+- 2026-07-12 latest authenticated terminal sessions: backend terminal access now requires `POST /api/terminal/tokens` to issue a short-lived one-time token for the current authenticated Principal before `/ws/terminal` accepts a shell session. Tokens are bound to terminal id plus user/org, reject missing/expired/reused/mismatched attempts, preserve the local-origin/client WebSocket boundary, and enforce a per-user active-session cap with cleanup release. Terminal processes now launch with an explicit Harness workspace/home cwd and a scrubbed allowlisted environment instead of inheriting API server secrets. Agent Console requests a fresh token through the existing authenticated API helper before every connect/reconnect, preserving browser/dev auth fallback through the normal API auth path. Validation passed backend terminal pytest (`9 passed`), backend Ruff, frontend terminal/API Vitest, the full Agent Console production build, and the enterprise browser suite (`52 passed`). See [[session-2026-07-12-authenticated-terminal-sessions]].
+- 2026-07-12 latest Desktop offline sync runtime closure: `apps/desktop-app/src/main.ts` now starts a profile-scoped offline sync runtime after Phase 6 profile handlers register the existing API-client resolver. The runtime owns `offline-sync.sqlite` through `SQLiteTaskStore`, `SQLiteOfflineQueue`, and `SQLiteSyncMetadata`, uses the active profile auth token for sync requests, auto-syncs on reconnect with bounded exponential backoff, exposes status/conflict/manual-sync/promotion IPC, and closes SQLite/network resources on quit. Validation passed focused sync coverage, `npm run build:main`, and the full desktop Vitest suite (`30 files / 276 tests passed`). See [[session-2026-07-12-desktop-offline-sync-runtime-closure]].
+- 2026-07-12 latest Desktop secure profile credential storage: profile state schema v2 migrates plaintext tokens, persists encrypted `safeStorage` payloads or session-only credentials, writes state atomically, and exposes renderer metadata only. Focused credential/preload/window tests, the full desktop suite (`276 passed`), and the desktop main build pass.
+- 2026-07-12 latest Desktop file bridge hardening: read/list/write operations enforce lexical and realpath containment, reject symlink traversal, cap UTF-8 writes at 1 MiB, commit via `0o600` same-directory temp files plus rename, and sanitize relative errors. Focused file regressions, the full desktop suite (`276 passed`), and the desktop main build pass.
+- 2026-07-04 latest Desktop full-function startup smoke rerun: desktop was started and tested again across backend desktop APIs, Agent Console `/desktop` and `/terminal`, full Electron unit coverage, local packaging, browser smoke, and real Electron native bridge runtime. Validation passed backend desktop API pytest (`30 passed`) plus Ruff, Agent Console desktop/terminal/file-bridge/VirtualList Vitest (`8 files / 58 tests passed`) plus production build, full Electron desktop tests (`28 files / 259 tests passed`) before packaging, desktop main/renderer builds, `electron-builder --dir --publish never`, browser `/desktop` and `/terminal` smokes, real Electron bridge smoke with isolated userData covering profile/window/offline/local-model/file/system/updates/feedback APIs plus Electron terminal shell I/O, API/Vite health, docs validation, release YAML/script validation, `better-sqlite3` rebuild back to Node ABI, full Electron tests after ABI restore (`28 files / 259 tests passed`), and `git diff --check`. See [[session-2026-07-04-desktop-full-function-startup-smoke-rerun]].
+- 2026-07-04 latest Desktop native operations TDD: `/desktop` now implements the production guide's native operations surface with system startup login-item state/toggle, explicit file-root display/selection/watch controls, update channel/status/check/download/install controls, feedback submission, and startup/crash/sync metric summaries. The slice started with a failing `AdvancedFeaturesPage` regression for missing `系统与发布`, then passed targeted Vitest (`3 passed`), touched-file TypeScript, desktop frontend aggregate Vitest (`8 files / 58 tests passed`), Agent Console build with the existing chunk-size warning, docs validation, and `git diff --check`. See [[session-2026-07-04-desktop-native-operations-tdd]].
+- 2026-07-04 latest Desktop production documentation: Desktop now has `docs/development/desktop/README.md` as a production guide, `docs/design/desktop/apple-style-guidelines.md` as the Apple-style experience contract, and `apps/desktop-app/README.md` as the package-local contributor entry. `DESIGN.md`, local-development/release/CI/CD/troubleshooting runbooks, `docs/contracts/SPEC-INDEX.md`, and wiki/task progress now point to this desktop documentation layer. Validation passed `python3 scripts/validate-docs.py` and `git diff --check`. See [[session-2026-07-04-desktop-production-docs-apple-style]].
+- 2026-07-04 latest Desktop full-function startup smoke: all desktop surfaces were started and tested across backend desktop APIs, Agent Console `/desktop` and `/terminal`, full Electron unit coverage, desktop packaging, browser smoke, and real Electron preload/native bridge smoke. Validation passed backend desktop API pytest (`30 passed`) plus Ruff, Agent Console desktop/terminal/file-bridge/VirtualList Vitest (`57 passed`) plus production build, full Electron desktop tests (`28 files / 259 tests passed`), desktop main/renderer builds, `electron-builder --dir --publish never`, browser `/desktop` and `/terminal` smokes, real Electron bridge smoke covering profile/window/offline/local-model/file/system APIs, Electron terminal shell I/O, API/Vite health, docs validation, release YAML/script validation, and `git diff --check`. The smoke also recorded two operational footnotes: clear inherited `ELECTRON_RUN_AS_NODE=1` for real Electron startup, and rebuild `better-sqlite3` back to Node ABI after `electron-builder` rebuilds it for packaged Electron. See [[session-2026-07-04-desktop-full-function-startup-smoke]].
+- 2026-07-03 latest Desktop workbench polish: Agent Console now exposes Desktop as a first-class `/desktop` route and sidebar item while preserving `/settings/advanced`; the desktop page reads like a concise operating document with bridge/offline badges, `现在可做` action steps, desktop metrics, sticky chapters, folded Profile/local-model/template configuration, plugin/template management, and recent window/offline results. Local-model settings now expose the existing `ollama` / `openai-compatible` provider choice. Validation passed AdvancedFeaturesPage Vitest (`2 passed`), touched-file TypeScript, full Agent Console production build, desktop Phase 6/window/preload/main/lifecycle tests (`28 passed`), desktop main build, browser desktop/mobile `/desktop` checks with horizontal overflow 0 and console errors/warnings 0, real Electron `/desktop` smoke after stale single-instance cleanup, API health, and `git diff --check`. See [[session-2026-07-03-desktop-workbench-document-polish]].
+- 2026-06-27 latest Desktop Phase 6 advanced features: Electron Desktop and Agent Console now support independent Agent Run windows with persisted bounds, workspace/account profiles with isolated API base/auth/data settings, org-scoped plugin marketplace and Prompt template APIs, `/settings/advanced`, offline deterministic simple tasks with optional local Ollama/OpenAI-compatible model inference, high-contrast mode, stable-key/ARIA virtual list semantics, and virtualized long-chat rendering over 120 nodes. Validation passed backend plugin tests/Ruff, desktop Phase 6/window/preload/main/lifecycle tests (`28 passed`), desktop main build, Agent Console VirtualList and Advanced Features tests (`3 passed`), touched-file TypeScript, docs validation, and `git diff --check`. See [[session-2026-06-27-desktop-phase-6-advanced-features]].
+- 2026-06-26 latest Desktop Phase 4 packaging/distribution: Electron Desktop now has electron-builder multi-platform packaging for macOS dmg/zip, Windows NSIS, and Linux AppImage/deb/rpm; CI release jobs build desktop artifacts on macOS/Windows/Linux and attach them to GitHub Releases; signing/notarization/AuthentiCode are wired through Apple and Windows certificate secrets; `electron-updater` checks a backend `/api/desktop/updates/check` policy gate before downloading GitHub Release metadata/blockmaps; beta tags containing `-beta.` publish as prereleases and use the beta channel while normal semver tags remain stable; Sentry crash reporting captures main-process exceptions plus renderer crash/unresponsive events. Validation passed focused desktop updater/crash tests (`7 passed`), backend desktop update tests (`4 passed`), backend Ruff, desktop main/renderer builds, release workflow YAML parse, and local electron-builder directory packaging with expected warnings because no local Developer ID certificate or Apple notarization credentials are installed. See [[session-2026-06-26-desktop-phase-4-packaging-distribution]].
+- 2026-06-26 latest Desktop Phase 3 system integration: Electron Desktop now owns a native integration layer for tray/background operation, close-to-tray lifecycle, native app/tray menus, login startup toggles, global `CommandOrControl+Shift+A` wake shortcut, `agentharness://` deep-link protocol handling, and native notifications for completed/error/conflict Agent events with click-through Run routing. Main process early protocol/single-instance handlers, preload `desktopApi.system`, SSE notification handoff, and Agent Console route bridge are wired with regression coverage. Validation passed desktop full CI test run (`21 files / 223 tests`) and Agent Console desktop bridge test (`3 passed`). Wider `apps/desktop-app` type-check and `apps/agent-console` lint remain blocked by existing unrelated TypeScript/a11y debt outside the Phase 3 files.
+- 2026-06-25 latest Team Runtime worker: active Team Goals can now advance without a browser-triggered wake stream. `app.workers.team_runtime_worker` provides a testable `tick_active_team_goals(...)` one-shot and a deployable `python -m app.workers.team_runtime_worker` loop. It scans only active auto-supervised goals under a Postgres advisory lock or SQLite process lock, recovers stale wake state, wakes unread mailbox recipients, wakes owners of open assigned tasks, and idempotently bootstraps a goal with no user message by sending one system goal message to the leader. It reuses `TeamSessionService.wake_agent(...)` rather than inventing a separate execution path, records `TEAM_RUNTIME_TICK` / `TEAM_RUNTIME_DECISION` / wake-failure evidence, and is wired into Docker Compose, systemd, local/deployment runbooks, and Promtail log discovery. Validation passed backend Team regression (`46 passed`), worker/tests Ruff, worker py_compile, Docker Compose config, docs validation, and `git diff --check`. This is the first autonomous scheduler layer, not yet a full independent OS worker-process pool for teammates.
+- 2026-06-24 latest Team Mode autonomous goal supervision: Team sessions now own durable `TeamGoal` state with create/active/update/supervise APIs, deterministic Leader drift detection for scope/collaboration/task/evidence failures, bounded correction/reassignment/block interventions, compact Team header goal projection, and task-board `needs_correction` markers. Code-review fixes now enforce one current active/paused goal per team through a DB partial unique index, keep paused goals visible but excluded from automatic supervision, clear terminal goals from frontend `active_goal` even for terminal progress events, and reject blank objectives or bad correction budgets with 422. Validation passed backend Team regression (`42 passed`), backend Ruff, Team frontend regression (`21 passed`), targeted TypeScript, Alembic SQLite `upgrade heads`, docs validation, and `git diff --check`. Wider verification remains blocked by existing repo-wide SAML/system-validation failures and stale frontend TypeScript/a11y debt outside the touched Team files. This closeout also restored `app.db.models.Session = UserSession` so the wider backend suite now advances past the old collection-time import blocker and exposes those unrelated failures directly.
 - 2026-06-22 latest Agent Workspace local Agent pause/resume hardening: after a local Agent message has been sent, the pending assistant control row now survives local session-message/task polling and exposes `暂停发送`; paused sent turns expose `继续发送` and resume with a fresh `client_message_id` plus `resume_of_client_message_id` / `resume_of_user_message_id` metadata. Root cause was local Agent hydration dropping the optimistic pending assistant when a matching active bridge task existed but no server assistant had arrived; resume testing also exposed a hydrated user-node self-cycle that crashed `buildActivePath(...)` with `Invalid array length`. The frontend now keeps active bridge-task pending assistants, preserves existing hydrated user nodes instead of reparenting them to themselves, and guards active-path traversal in Workspace, ChatSurface, and the workspace store. Validation passed `AgentWorkspacePage.team-launch.test.tsx` (`31 passed`), `ChatSurface.shell.test.tsx` (`26 passed`), targeted TypeScript, backend py_compile, and browser proof on the target URL with `hao Local Agent`: existing `继续发送` sent `POST /api/agents/local-agent/bindings/.../messages => 202` with resume metadata and showed `暂停发送`; unique message `暂停继续浏览器验证-1782063996356` sent with POST 202, showed `暂停发送`, paused through `POST /api/tasks/9179794a-0832-4e61-ad76-aee5e29c1460/cancel => 202`, ended with enabled `继续发送`, `userBubbleCount=1`, empty composer, no error page, console errors/warnings 0, and screenshot `local-agent-pause-continue-after-send.png`. The proof uses real HAO local Agent network/UI state, not backend local mock assistant content.
 - 2026-06-22 latest Agent Workspace local Agent composer hardening: after a local Agent send is accepted by the backend, the composer now clears immediately and stays clear after local session-message/task polling hydration. Root cause was the frontend local submit path returning `false` after a successful `POST /api/agents/local-agent/bindings/.../messages => 202` when `responseStillTargetsCurrentLocalConversation` failed during live local hydration; `ChatComposer` treated that `false` as a failed send and preserved the draft. `onLocalAgentSubmit(...)` now clears the submitted draft after `mutateAsync(...)` succeeds, guarded by the selected connection id and `currentDraft.trim() === goal` so newer typing is not wiped. Validation passed targeted AgentWorkspace local-send/stale-response Vitest (`2 passed`), full `AgentWorkspacePage.team-launch.test.tsx` (`30 passed`), targeted TypeScript, browser proof on the target Workspace URL with `hao Local Agent` selected where `清空输入框验证 003` appeared in the thread but `composerValue=""` immediately and after polling, network showed local Agent POST 202 plus local polling 200, and screenshot `local-agent-composer-cleared-after-send.png`. This proof uses composer/network state, not backend local mock assistant replies.
 - 2026-06-21 latest HAO local Agent model-routing hardening: HAO sends now resolve an effective model before creating the workspace Run and bridge task. If the selected provider would use the backend local mock model and a configured real provider exists, the backend falls back to the configured real provider, preferring the default, while preserving the original request in `model_fallback` metadata. This fixed Run `31d88315-589e-4b43-a9e2-e0a8e05e279c`, where `openai-compatible` / `gpt-5.5` had no API key and the HAO CLI correctly rejected backend mock output. Validation passed the targeted fallback/mock tests (`2 passed`), full local-agent/HAO regression (`145 passed`), Ruff, py_compile, live HAO Run `16496264-1f69-4e34-a6bc-a8e830d9b4c4` on binding `aee0f1fb-ce2d-4f8c-a987-41b36bbba47b` intentionally requesting `openai-compatible` / `gpt-5.5` but executing through `deepseek-flash` / `deepseek-v4-flash`, ModelCall `335db88e-0cb9-43b8-a68b-2e5c712428b9` `SUCCESS`, assistant reply `HAO_REAL_MODEL_OK`, no `LOCAL_AGENT_MESSAGE_FAILED`, and both HAO/Codex connections online after 35 seconds.
@@ -93,7 +112,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - 2026-06-16 Run Detail failure and multi-agent execution UX were hardened around live Run `9ef51bd6-9129-4c93-9baf-d4e46463848b`. Read-only Postgres inspection showed the run goal was `500字的小说`, status `FAILED`, model `deepseek-pro/deepseek-v4-pro`, and `max_subagents=5`; the generated plan had five `sync` steps with `can_spawn_subagent=false`, so normal executor subagent delegation was never eligible. The first step `generate_outline` failed because the executor selected `read_file` and policy denied it for Agent `客服`, whose tool list is empty (`agent 客服 is not attached to capability read_file`); downstream steps skipped on dependency failure. Existing multi-agent assignments for the run are `default`, `coder`, and `reviewer`, all `PENDING`, confirming the old Run Detail `编排多智能体` button only created assignments/handoffs through `/orchestrate` and did not execute them. Backend executor fallback now treats creative/generative sync steps as `write_file`, derives safe artifact paths from artifact expectations, carries stable idempotency keys, and forces sandbox when the selected tool requires it. Run Detail now renders subagents as actual/max (`0/5` for this run), shows a `失败原因` card from `STEP_FAILED`, separates `创建多智能体编排` / `刷新编排` from `执行多智能体` (`/orchestrate/execute`), and displays assignment/handoff/event evidence so pending versus executed branches are explicit. Validation passed backend Ruff for touched executor/test files, the creative-step fallback regression (`1 passed`), Run Detail Vitest (`3 passed`), and a targeted Vite-typed TypeScript check for `RunDetailPage.tsx` plus `tasks/api.ts`. Broader backend orchestration TestClient tests remain blocked by the existing SQLite in-memory table-scope issue (`no such table: agents`), and repo-wide frontend `npm run lint -- --pretty false` remains blocked by unrelated stale test/a11y typing debt.
 - 2026-06-16 New local proof Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` now demonstrates the full chain end to end. The deterministic plan created one async subagent step plus one sync parent step, the initial execution spawned subagent `1224e7d9-7947-4f07-95c8-16a36ba7b510`, and the missing Redis/Dramatiq queue surfaced as `queue_deferred` rather than a silent no-op. The same subagent was then executed directly through `app.workers.subagent_worker.execute_subagent(...)` with a deterministic model gateway, producing `SUBAGENT_STARTED`, `MODEL_CALLED`, `MODEL_RESPONSE_RECEIVED`, `SUBAGENT_COMPLETED`, and a `SUCCESS` subagent state. The proof Run's multi-agent orchestration selected `default` and `reviewer`, executed both assignments through `/orchestrate/execute`, and completed the reduce handoff. Workspace now shows Run `COMPLETED`, subagent `SUCCESS`, assignments `SUCCESS`, and `AGENT_REDUCE_COMPLETED` plus `SUBAGENT_COMPLETED` evidence at `http://127.0.0.1:5173/runs/48a1cdb8-390d-41fb-affd-a5c7d86bb16e`.
 - 2026-06-16 Run Detail workspace Plan DAG projection was corrected so the Run Detail page no longer hard-codes every plan step as `PENDING`. A shared backend `build_plan_response(..., session=...)` helper now merges `TaskStep` rows and step events into `/api/agents/runs/{run_id}/workspace`, `/api/tasks/{task_id}/plan`, and executed `/api/agents/{agent_id}/runs/auto` responses. `sync_subagent_plan_step` now reconciles the originating plan step when a subagent reaches a terminal state, including structured-output finalization paths. Targeted backend pytest (`2 passed`, then `4 passed` with the plan-state regression), Ruff, `git diff --check`, and a direct Postgres/API proof against Run `48a1cdb8-390d-41fb-affd-a5c7d86bb16e` all passed. One important caveat: the proof Run belongs to org `56173d66-0eb1-4982-bec8-6e8e3cf5d673`, so `dev-engineer-token` / `dev-admin-token` return 404 by design; the browser must use the matching org identity to see the completed DAG and subagent evidence.
-- 2026-06-16 `/settings/models` now has a cc-switch-style provider rail and searchable model switchboard backed by a provider-first `modelCatalog`. Built-ins cover DeepSeek, OpenAI, Anthropic, Gemini, Kimi, Z.AI, Qwen, Doubao, OpenRouter, Ollama/local, and Custom while preserving legacy provider names such as `deepseek-flash`, `deepseek-pro`, and `openai-compatible`. The top switchboard shows compact model rows without long endpoint URLs, supports configured/unconfigured filters, and separates provider-key, add-model, and custom-provider dialogs; add-model can reuse an existing provider key without changing the default model. Custom providers expose `共享密钥标识`, defaulting to the provider id. Backend model-provider secret storage and runtime resolution now honor generic `secret_provider` metadata before provider-name fallback, while still canonicalizing DeepSeek storage to `secret://models/deepseek/api-key` and resolving legacy DeepSeek aliases. Validation passed Model Settings Vitest (`16 passed`), targeted backend shared-secret regressions (`5 passed`), backend Ruff for touched settings/gateway files, docs validation, and diff check. Repo-wide frontend `npm run lint -- --pretty false` remains blocked by existing unrelated stale test/a11y typing debt (`jest-axe`, stale imports, old ChatMessageBubble/SAML/SAML-like fixture shapes, onboarding mock typing), so this slice used focused UI plus backend coverage for the changed behavior.
+- 2026-06-27 follow-up: Model Settings now lets the Ollama/local provider switch through the normal save path without API-key gating, and Tool Registry compiles against the existing Agent trigger API exports for webhook create/list/update/delete flows. Validation passed the targeted Model Settings and Tool Registry Vitest slice (`22 passed`) plus touched-file TypeScript, while repo-wide frontend `npm run build` still trips unrelated stale a11y/test typing debt outside the touched files (`jest-axe`, stale imports, old fixtures, missing legacy exports).
 - 2026-06-16 Workspace model-provider authentication failures are now classified as configuration errors instead of generic server errors. OpenAI-compatible upstream HTTP 401/403 responses raise `ModelAuthError`, SSE emits `kind: model_auth` with the run id, full provider API keys echoed by upstream bodies are redacted to a masked suffix such as `****9b48`, and Agent Console renders `模型密钥无效` with guidance to update the DeepSeek API Key or switch provider plus an `打开模型设置` link to `/settings/models`. The frontend also recognizes legacy server-wrapped upstream 401/403 API-key details so previously generic-looking `Kind: server` events for invalid model keys show the same model-settings action. Targeted validation passed backend model-gateway regression (`1 passed`), backend Ruff for the touched API/gateway files, and Agent Workspace error UI Vitest (`53 passed`). `python3 scripts/validate-docs.py` and `git diff --check` passed. Broader frontend build and broader backend settings/model-gateway grouping remain blocked by existing unrelated test/a11y typing debt and SQLite in-memory TestClient table-scope issues.
 - 2026-06-15 onboarding completion, Dashboard follow-up entries, and Agent Studio configuration target persistence are verified: Step 4 `完成设置` now writes the returned completed onboarding state into the frontend query cache, navigates to `/` with `replace`, and direct visits to `/onboarding` auto-close when the API already reports completed/skipped. Dashboard `Active Alerts` links to `/observability/alerts`, and the demo quick action no longer routes back to closed onboarding: it loads demo data when missing and opens the demo run when loaded. Agent Studio `设为配置` persists the selected configuration target in localStorage and validates the saved target against the loaded Agent list before using it, so page switches/refreshes no longer reset to default. Targeted Agent Studio Vitest (`13 passed`) and Dashboard + onboarding Vitest (`5 passed`) passed. Repo-wide frontend `npm run lint -- --pretty false` is currently blocked by existing unrelated test typing debt, including missing `jest-axe` declarations, stale a11y imports, and old test prop shapes.
 - Post-stage hardening `workspace-browser-e2e-smoke` is recorded as completed.
@@ -128,7 +147,7 @@ Evidence from `docs/ai/task-progress.yaml`:
 - hao Agent CLI v2 Step 5 is verified locally on 2026-06-01: the backend protocol and local audit path now preserve workflow metadata across stream requests, local audit payloads, `ToolCall` snapshots, `AgentEvent` payloads, and local `tool` messages, while `markdown_plan` remains plan-only from the CLI side and host audit failure fails closed. See [[session-2026-06-01-hao-agent-cli-v2-step-5]].
 - hao Agent CLI v3 local safety Step 4 is verified locally on 2026-06-01: `.omx/plans/hao-cli-v3-local-agent-safety.md` is marked completed; TUI/headless full-auto and explicit approval commits now apply already-audited pending changes without a second backend audit after workspace mutation; TUI stops the current stream on pending approvals or audit failure; write preview audit failure fails pending changes closed without model-visible tool messages. Validation passed Ruff, v3 subset (`30 passed`), full hao CLI suite (`107 passed`), and two independent subagent approvals.
 - hao Agent CLI v4 本地 Agent CLI surface is verified locally on 2026-06-02: the TUI input now has a live slash-command hint menu, `/help` and `/commands` share a filtered command catalog, `/permissions` aliases `/mode`, direct view commands open the workbench, `/model` changes the model recorded on stream payloads, `/context` shows the local context card, `/usage` shows local run counts, `/resume <session_id>` reloads an existing session in-place, and transcript labels now use compact `>` / `hao` markers while preserving raw model-visible tool messages and existing audit/approval safety semantics. Validation passed py_compile, Ruff, full hao CLI regression (`120 passed`), `hao --help`, docs validation, and whitespace checks.
-- hao Agent CLI v4.1 本地 Agent CLI follow-up follow-up is verified locally on 2026-06-02: the TUI command catalog now includes `/compact`, `/config` / `/settings`, `/cost` / `/stats`, `/allowed-tools`, `/output-style`, `/tasks` / `/bashes`, and `/todos`; `/compact [instructions]` replaces older active-path messages in the next stream payload with a deterministic local system summary while keeping the latest six messages; `/output-style` writes response-style hints into the local context card; status/config/usage expose compact and style state; output summaries render as terminal-like cards; `docs/cli/hao.md` and Help Center page `安装并使用 hao CLI` document the new command surface. Validation passed py_compile, Ruff, full hao CLI regression (`121 passed` with `.venv/bin` on PATH), `hao --help`, help content check, docs validation, whitespace checks, Agent Console Vite restart at `http://127.0.0.1:5173/` with root and Help markdown returning HTTP 200, and API server startup at `http://127.0.0.1:8000` with temporary local `AUTH_JWT_SECRET` and `/health` returning ok.
+- hao Agent CLI v4.1 本地 Agent CLI follow-up follow-up is verified locally on 2026-06-02: the TUI command catalog now includes `/compact`, `/config` / `/settings`, `/cost` / `/stats`, `/allowed-tools`, `/output-style`, `/tasks` / `/bashes`, and `/todos`; `/compact [instructions]` replaces older active-path messages in the next stream payload with a deterministic local system summary while keeping the latest six messages; `/output-style` writes response-style hints into the local context card; status/config/usage expose compact and style state; output summaries render as terminal-like cards; `docs/development/cli/hao.md` and Help Center page `安装并使用 hao CLI` document the new command surface. Validation passed py_compile, Ruff, full hao CLI regression (`121 passed` with `.venv/bin` on PATH), `hao --help`, help content check, docs validation, whitespace checks, Agent Console Vite restart at `http://127.0.0.1:5173/` with root and Help markdown returning HTTP 200, and API server startup at `http://127.0.0.1:8000` with temporary local `AUTH_JWT_SECRET` and `/health` returning ok.
 - hao Agent CLI v4.2 本地 Agent CLI page is verified locally on 2026-06-02: the default TUI now runs through a Rich terminal loop instead of a full-screen alternate-screen editor shape, no longer renders a default Textual Header/Footer or right-side split pane, and startup copies local Agent CLI's two-column welcome card structure with left `Welcome back!` plus icon/model/cwd and right Tips / What's new. `/tools`, `/diff`, `/files`, `/approvals`, `/outputs`, `/tasks`, `/bashes`, and `/view ...` open a bottom workbench drawer on demand, while tool/approval events remain visible inline when the drawer is closed. `HarnessApiClient` now uses `trust_env=False` so localhost Harness API calls ignore global proxy variables and avoid the missing-SOCKS failure path. Validation passed py_compile, Ruff, full hao CLI regression (`123 passed`), Textual headless smoke, direct `/quit` startup smoke, Help content check, docs validation, whitespace checks, Agent Console Vite restart at `http://127.0.0.1:5173/` with root and Help markdown returning expected content, and API server restart at `http://127.0.0.1:8000` with `/health` ok.
 - hao Agent CLI v4.3 本地 Agent CLI footer and compact-ring follow-up is verified locally on 2026-06-02: the startup card and shell footer now show `provider/model · strength ...`, compact ring/percentage/message state, output style, approvals, and command counts; `/compress [instructions]` aliases the existing `/compact [instructions]` active-path summary flow. Model strength is a local display label derived from provider/model text and does not change routing or invent pricing. Validation passed py_compile, focused footer/compact/terminal tests (`12 passed`), full hao CLI regression (`129 passed`), combined hao/tracing regression (`135 passed`), Ruff, direct `/quit` startup smoke showing the footer, `/help compress` smoke, Help content check, docs validation, whitespace checks, and local API/frontend restart with `/health`, root, and Help markdown checks passing.
 - hao Agent CLI v4.2 terminal-input follow-up is verified locally on 2026-06-02: the Rich terminal loop now reads stdin bytes directly, decodes UTF-8 with replacement for invalid boundaries, and no longer prints a second user transcript line after the terminal's own echo. The startup-card tips are now real commands: `/init` creates `HAO.md` without overwriting an existing file, and `/release-notes` / `/whats-new` shows hao v4 release notes. Synthetic local context and compact context messages now include backend-compatible `ConversationNode` fields, preventing `/runs/chat/stream` 422 validation failures. Observability tracing now avoids current-context span attach/detach in `traced_operation`, preventing streamed model responses from ending with a contextvars `stream error`. Stream 401/403 failures render concise hao login/permission hints instead of raw httpx/MDN text. Validation passed py_compile, v4.2 focused tests (`6 passed`), focused tracing regression (`2 passed`), full hao CLI regression (`127 passed`), Ruff, Chinese-input startup smoke, Help content check, docs validation, whitespace checks, local API/frontend restart, global `@harness/hao` reinstall, and a bare `hao` smoke from `/Users/luohao/Desktop/unimportant_files` returning assistant text.
@@ -191,15 +210,15 @@ Evidence from `docs/ai/task-progress.yaml`:
 - Team Mode task-update alias/current-task hardening is verified locally on 2026-05-25: `team_task_update` now accepts `task_id` / `taskId` / `id` / `task`, can update the caller's unique open assigned task when no task id is provided, rejects ambiguous multi-task updates, and target team `6c03c9e9-7fd2-4316-a9e1-dd6958c0c2b5` recovered task `dfd23488-f9ef-41a3-983f-4421a9179f12` from `in_progress` to `completed`.
 - Team/Agent stop-empty-placeholder hardening is verified locally on 2026-05-25: stopping before any assistant content removes the empty assistant placeholder instead of leaving a blank bubble, stopping after partial content preserves the paused partial answer, and the bottom-right shared composer no longer renders or accepts a continue-generation action after pause.
 - Team/Agent composer stop-control and describe-assistant tool hardening is verified locally on 2026-05-25: Agent Workspace and Team Mode now keep stop generation only on the bottom-right composer primary action, Team column headers no longer render a separate stop button, and `team_describe_assistant` accepts omitted args plus `agent_id` / `agent_type` / `assistant` / `name` aliases instead of failing with `custom_agent_id is required`. Target team `04561550-0965-4b31-bf02-2deb2a8fc020` returned HTTP 200 for empty, `agent_id=default`, and `name="Default Agent"` describe-assistant calls after backend restart.
-- Frontend acceptance HTML is saved in the tracked report path `docs/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
-- P3 HTML explanation report is saved in the tracked report path `docs/reports/p3-web-research-implementation-2026-05-17.html`.
+- Frontend acceptance HTML is saved in the tracked report path `docs/工作日志/reports/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`; the runtime copy remains at `.omx/reports/html-archive/agent-knowledge-p2-code-review-frontend-acceptance-2026-05-17.html`.
+- P3 HTML explanation report is saved in the tracked report path `docs/工作日志/reports/p3-web-research-implementation-2026-05-17.html`.
 
-Evidence from `docs/task-progress.md`:
+Evidence from `docs/工作日志/archive/task-progress-legacy.md`:
 
 - Stage 07 canonical Agent Run smoke is part of the regular release gate.
 - Workspace browser smoke and compact chrome hardening were added after Stage 07.
 - Broader browser smoke now has an explicit release-gate entrypoint through `cd apps/agent-console && npm run e2e:smoke:release`.
-- Private deployment handoff now has a canonical Docker Compose path in `docs/runbooks/deployment.md`; static checks, compose config, compose startup, Docker smoke, Agent Run smoke, and compose cleanup have passed using intentional host-port overrides.
+- Private deployment handoff now has a canonical Docker Compose path in `docs/project-memory/runbooks/deployment.md`; static checks, compose config, compose startup, Docker smoke, Agent Run smoke, and compose cleanup have passed using intentional host-port overrides.
 - P3 real policy-gated web research is recorded as completed with `96 passed` backend target tests, ruff, Alembic clean upgrade, frontend lint/build/targeted tests, and a live Tavily smoke.
 - P4 memory/context router V2 is recorded as completed with backend context assembly tests, model-call binding tests, ruff, frontend build/lint/test evidence, docs validation, and final pushed commits through `6c4a95d`.
 - P5 MCP/Skills productization is recorded as completed with capability registry storage, attachment-only runtime authority, approval resume fixes, console feedback, targeted backend/frontend tests, ruff, lint, and final pushed commits through `f05816e`.
@@ -222,8 +241,8 @@ The project already has a partial handoff solution:
 - `.omx/specs/` preserves deep-interview outcomes.
 - `.omx/plans/` preserves PRD and test-spec artifacts.
 - `.omx/context/` preserves task-level context snapshots.
-- `docs/ai/task-progress.yaml` is the machine-readable progress source.
-- `docs/task-progress.md` is the human-readable progress source.
+- `docs/development/ai/task-progress.yaml` is the machine-readable progress source.
+- `docs/工作日志/archive/task-progress-legacy.md` is the human-readable progress source.
 
 The gap this wiki closes is discoverability. A new session can now start from this page and follow the links instead of guessing which `.omx` artifact is authoritative.
 
@@ -232,6 +251,124 @@ The gap this wiki closes is discoverability. A new session can now start from th
 The accepted next-phase goal was a privately deployable enterprise internal-test platform that proves a complete Harness chain end to end. The target is not Kubernetes, full multi-tenant RBAC, polished marketing, or SaaS commercialization. See [[deep-interview-private-harness-chain]] for the binding chain.
 
 ## Most Recent Completed Work
+
+Desktop Codex task workspace:
+
+```text
+omx_wiki/session-2026-08-07-desktop-codex-task-workspace.md
+.omx/artifacts/desktop-codex-shell/desktop-workspace.png
+apps/desktop-app/src/main.ts
+apps/agent-console/src/app/ConsoleShell.tsx
+apps/agent-console/src/features/agents/components/ConversationHistoryPanel.tsx
+apps/agent-console/src/features/agents/components/WorkspaceShellBar.tsx
+apps/agent-console/src/components/desktop/DesktopOperationRail.tsx
+apps/agent-console/src/features/terminal/components/TerminalWorkspace.tsx
+apps/agent-console/src/features/settings/pages/AdvancedFeaturesPage.tsx
+```
+
+Desktop Codex task workspace validation:
+
+```text
+Focused Agent Console shell regression -> 3 files / 21 tests passed
+Desktop operation regression -> 6 files / 82 tests passed
+Backend Terminal regression -> 12 passed; Ruff and py_compile passed
+Agent Console TypeScript lint -> passed
+Agent Console production build -> passed
+Desktop Vitest -> 32 files / 287 tests passed
+Desktop build:main -> passed
+PostgreSQL migration -> 20260628_0049 (head)
+Real Electron smoke -> Team list/detail/stream 200, Terminal WebSocket accepted with clean prompt, Files and Approvals direct panels clean, operational settings connected
+```
+
+Desktop functional screenshot audit:
+
+```text
+omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md
+docs/工作日志/reports/harness-desktop-web-functional-screenshot-catalog-2026-08-07.docx
+docs/design/media/screenshots/2026-08-05/
+docs/design/media/screenshots/archive/web-legacy/
+docs/design/media/screenshots/README.md
+```
+
+Desktop functional screenshot audit validation:
+
+```text
+Desktop-related backend pytest -> 43 passed
+Desktop Vitest -> 32 files / 287 tests passed
+Desktop startup contracts -> 5 passed
+Desktop build:main -> passed
+Agent Console production build -> passed, 2408 modules
+Release browser smoke -> 12 passed / 38 failed, primarily stale fixture drift
+DOCX image audit -> 38 inline images
+DOCX accessibility audit -> high 0, medium 0, low 0
+DOCX canonical render -> 32 pages, all pages visually inspected
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+```
+
+Backend production-hardening closeout:
+
+```text
+omx_wiki/session-2026-07-31-backend-production-hardening-closeout.md
+docs/development/ai/task-progress.yaml
+omx_wiki/project-handoff-current-state.md
+omx_wiki/index.md
+omx_wiki/log.md
+```
+
+Backend production-hardening validation:
+
+```text
+cd services/api-server && .venv/bin/python -m pytest tests -q -> 1395 passed, zero warnings
+cd services/api-server && .venv/bin/python -m ruff check app tests -> passed
+cd services/api-server && .venv/bin/alembic heads -> 20260628_0049 (head)
+cd services/api-server && .venv/bin/python -m pytest <warning targets> -q -W error -> 43 passed
+python3 scripts/validate-docs.py -> passed
+git diff --check -> passed
+```
+
+Desktop full-function startup smoke rerun:
+
+```text
+omx_wiki/session-2026-07-04-desktop-full-function-startup-smoke-rerun.md
+docs/development/ai/task-progress.yaml
+omx_wiki/project-handoff-current-state.md
+omx_wiki/index.md
+omx_wiki/log.md
+```
+
+Desktop full-function startup smoke rerun validation:
+
+```text
+services/api-server/.venv/bin/python -m pytest <desktop api/plugin/terminal targets> -q -> 30 passed
+services/api-server/.venv/bin/python -m ruff check <desktop api/plugin/terminal targets> -> passed
+cd apps/agent-console && npx vitest run <desktop/terminal/file-bridge targets> -> 8 files / 58 tests passed
+cd apps/agent-console && npm run build -> passed with existing chunk-size warning
+cd apps/desktop-app && npm test -> 28 files / 259 tests passed before and after packaging ABI restore
+cd apps/desktop-app && npm run build:main -> passed
+cd apps/desktop-app && npm run build:renderer -> passed
+cd apps/desktop-app && npx electron-builder --dir --publish never -> passed with expected unsigned/notarization warnings
+Browser /desktop and /terminal smokes -> passed
+Real Electron native bridge and terminal smoke -> passed with runId 1783101754057
+NO_PROXY=127.0.0.1,localhost curl --max-time 3 http://127.0.0.1:8000/health -> 200
+NO_PROXY=127.0.0.1,localhost curl --max-time 3 -I http://127.0.0.1:5173/desktop -> 200
+python3 scripts/validate-docs.py -> passed
+release.yml YAML parse and bash -n scripts/release.sh -> passed
+npm rebuild better-sqlite3 -> restored Node ABI after electron-builder
+git diff --check -> passed
+```
+
+Current interpretation:
+
+- Desktop Phase 4 already covered packaging/distribution, stable/beta update checks, and crash reporting.
+- Desktop Phase 5 closed the feedback and monitoring loop with app-submitted feedback, startup timing, crash-event samples, sync success/failure samples, and backend summary reporting.
+- Phase 6 adds advanced desktop/productivity surfaces while keeping the implementation targeted: multi-window Run routing, profile/workspace isolation, curated plugin and Prompt template management, offline/local-model fallback, long-chat virtualization, and high-contrast accessibility.
+- The 2026-07-03 polish makes the existing Phase 6 capability easier to use by promoting it to `/desktop`, making state/actions scannable, and keeping lower-frequency configuration folded.
+- The 2026-07-04 full smoke proves the desktop stack starts and runs in both browser fallback and real Electron bridge modes. For local automation, clear `ELECTRON_RUN_AS_NODE=1` before launching Electron and rebuild native modules to the desired ABI after switching between `electron-builder` and Node/Vitest.
+- Measured packaged startup-budget automation is now implemented in the release
+  matrix; remaining future hardening here is external executable plugin package
+  signing and remote marketplace trust policy.
+
 
 Team Mode product surface and capability product spine:
 
@@ -248,7 +385,7 @@ services/api-server/app/tools/capabilities.py
 apps/agent-console/src/features/agents/pages/AgentListPage.tsx
 apps/agent-console/src/features/tasks/api.ts
 docs/architecture/team-mode-product-surface.md
-docs/ai/task-progress.yaml
+docs/development/ai/task-progress.yaml
 omx_wiki/project-handoff-current-state.md
 omx_wiki/log.md
 ```
@@ -289,7 +426,7 @@ apps/agent-console/src/features/teams/pages/TeamPage.tsx
 apps/agent-console/src/features/agents/__tests__/slashCommands.property.test.ts
 apps/agent-console/src/features/agents/__tests__/ChatSurface.shell.test.tsx
 apps/agent-console/src/features/teams/__tests__/TeamPages.test.tsx
-docs/ai/task-progress.yaml
+docs/development/ai/task-progress.yaml
 omx_wiki/project-handoff-current-state.md
 omx_wiki/log.md
 ```
@@ -327,7 +464,7 @@ apps/agent-console/src/components/ui/menu-select.tsx
 apps/agent-console/src/features/agents/components/ModelPicker.tsx
 apps/agent-console/src/features/agents/components/ChatSurface.tsx
 apps/agent-console/src/features/teams/pages/TeamPage.tsx
-docs/ai/task-progress.yaml
+docs/development/ai/task-progress.yaml
 omx_wiki/project-handoff-current-state.md
 omx_wiki/log.md
 ```
@@ -349,15 +486,15 @@ The selected row is indicated by row highlighting, not a trailing "当前" badge
 Agent Workspace, shared MenuSelect, and Team Mode use the same compact 28px icon cell and reduced horizontal padding.
 ```
 
-Previous Team Mode task-update alias/current-task hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+Previous Team Mode task-update alias/current-task hardening remains recorded in `docs/development/ai/task-progress.yaml` and the session log.
 
-Previous Team/Agent stop-empty-placeholder and no-composer-resume hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+Previous Team/Agent stop-empty-placeholder and no-composer-resume hardening remains recorded in `docs/development/ai/task-progress.yaml` and the session log.
 
-Previous Team/Agent composer stop-control and describe-assistant tool hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+Previous Team/Agent composer stop-control and describe-assistant tool hardening remains recorded in `docs/development/ai/task-progress.yaml` and the session log.
 
-Previous Team Mode assigned-task auto-wake hardening remains recorded in `docs/ai/task-progress.yaml` and the session log.
+Previous Team Mode assigned-task auto-wake hardening remains recorded in `docs/development/ai/task-progress.yaml` and the session log.
 
-Previous Team Mode message dedupe and latest-scroll polish remains recorded in `docs/ai/task-progress.yaml` and the session log.
+Previous Team Mode message dedupe and latest-scroll polish remains recorded in `docs/development/ai/task-progress.yaml` and the session log.
 
 Previous console Chinese-first selector/terminology follow-up remains recorded below as pushed through `a5d046b`.
 
@@ -369,11 +506,11 @@ scripts/smoke-test-knowledge-migration-restore.py
 apps/agent-console/e2e/eval-page.smoke.spec.ts
 apps/agent-console/e2e/knowledge-demo.smoke.spec.ts
 apps/agent-console/package.json
-docs/runbooks/deployment.md
-docs/runbooks/troubleshooting.md
-docs/runbooks/web-research.md
-docs/ai/task-progress.yaml
-docs/task-progress.md
+docs/project-memory/runbooks/deployment.md
+docs/project-memory/runbooks/troubleshooting.md
+docs/project-memory/runbooks/web-research.md
+docs/development/ai/task-progress.yaml
+docs/工作日志/archive/task-progress-legacy.md
 omx_wiki/agent-knowledge-harness-roadmap.md
 omx_wiki/index.md
 omx_wiki/project-handoff-current-state.md
@@ -521,7 +658,7 @@ Branch `feat/version-rollout-management` implements the previously disabled Sand
 
 Delivered scope:
 
-- `docs/ai/stages/10-version-rollout.md` created and marked implemented.
+- `docs/development/ai/stages/10-version-rollout.md` created and marked implemented.
 - Backend `AgentVersion` model, Alembic migration `20260621_0044_create_agent_versions.py`, schemas, `GET/POST /api/agents/{agent_id}/versions`, and `PATCH /api/agents/{agent_id}/versions/{version_id}/activate`.
 - Version snapshots store immutable Agent config JSON with monotonic per-Agent numbering.
 - Activating a version restores snapshot fields onto the Agent row and marks exactly one version active.
@@ -559,6 +696,8 @@ Follow the replanned progress in [[agent-knowledge-harness-roadmap]]:
 - keep organization exports redacting credential verifier fields such as `password_hash` and `key_hash`.
 - keep cursor tokens signed, query-cache keys organization-scoped and entity-versioned, and Help Center/API docs regenerated when public API surfaces change.
 - keep production auth smoke tests on real JWTs and avoid reintroducing production build defaults for dev bearer tokens.
+- keep Electron Agent Workspace on the task-first shell and preserve the full Console Shell for browser runtime; add desktop management capabilities through Team, Terminal, or Desktop Settings instead of rebuilding the web console in the desktop header.
+- for the install-ready local product direction, treat `.omx/plans/desktop-local-runtime-sqlite-install-ready.md` as the implementation source of truth: one local runtime owns one SQLite database, Web remains loopback-only, and PostgreSQL/Redis/Docker cannot be implicit core prerequisites.
 
 Useful follow-up rules:
 
@@ -570,7 +709,7 @@ Useful follow-up rules:
 
 ## Stop Rules For Future Agents
 
-Do not claim product completion from UI polish alone. Stage claims must map to evidence in `docs/ai/task-progress.yaml`, `docs/task-progress.md`, test output, and the relevant `.omx/plans/test-spec-*.md`.
+Do not claim product completion from UI polish alone. Stage claims must map to evidence in `docs/development/ai/task-progress.yaml`, `docs/工作日志/archive/task-progress-legacy.md`, test output, and the relevant `.omx/plans/test-spec-*.md`.
 
 Do not change the product target away from `Model + Harness = Agent` without a new explicit user decision.
 

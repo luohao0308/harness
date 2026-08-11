@@ -35,4 +35,4 @@ Dependabot opens weekly npm, pip, and GitHub Actions PRs. Security PRs should ru
 
 ## Release Branches
 
-Release tags must be reachable from `main`. Use `scripts/release.sh patch|minor|major` for version bumps and follow `docs/runbooks/release.md` for tag, release, and canary steps.
+Release tags must be reachable from `main`. Use `scripts/release.sh patch|minor|major` for version bumps and follow `docs/project-memory/runbooks/release.md` for tag, release, and canary steps.

@@ -1,0 +1,33 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/main.ts",
+    "src/preload.ts",
+    "src/preload-api.ts",
+    "src/config/**/*.ts",
+    "src/services/agent-service.ts",
+    "src/services/app-instance.ts",
+    "src/services/crash-reporting.ts",
+    "src/services/desktop-telemetry.ts",
+    "src/services/desktop-updates.ts",
+    "src/services/file-service.ts",
+    "src/services/local-runtime.ts",
+    "src/services/local-runtime-secrets.ts",
+    "src/services/phase6-service.ts",
+    "src/services/renderer-protocol.ts",
+    "src/services/startup-performance.ts",
+    "src/services/system-integration.ts",
+    "src/services/task-service.ts",
+    "src/services/window-manager.ts",
+    "src/shared/**/*.ts",
+    "src/stores/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "release",
+    "coverage",
+    "src/**/*.test.ts",
+    "src/**/__tests__/**/*.ts"
+  ]
+}

@@ -27,7 +27,7 @@ apps/agent-console/src/features/agents/pages/AgentListPage.tsx
 apps/agent-console/src/features/agents/__tests__/AgentListPage.studio.test.tsx
 apps/agent-console/src/features/evals/pages/EvalHarnessPage.tsx
 apps/agent-console/src/features/evals/pages/__tests__/EvalHarnessPage.langgraph.test.tsx
-docs/ai/task-progress.yaml
+docs/development/ai/task-progress.yaml
 omx_wiki/index.md
 omx_wiki/log.md
 omx_wiki/session-2026-06-05-frontend-config-entry-dialog-polish.md

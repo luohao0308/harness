@@ -36,6 +36,7 @@ from .session_store import SessionStore
 GIT_STATUS_CONTEXT_LIMIT = 8
 PACKAGE_DISTRIBUTION_NAME = "agent-harness-api-server"
 BRIDGE_DEVICE_TOKEN_REF = "bridge.device-token"
+BRIDGE_STREAM_TOKEN_REF_PREFIX = "bridge.stream-token."
 BRIDGE_WORKSPACE_ROOT_REF = "bridge.workspace-root"
 BRIDGE_AUTO_PAIR_ADAPTERS = ("hao", "codex", "claude_code")
 BRIDGE_FULL_RISK_CAPABILITIES = ["host_read", "host_write", "shell", "git", "network"]
@@ -711,6 +712,13 @@ def _bridge_state_path(config: Any) -> Path:
 
 def _bridge_device_token_path(config: Any, token_ref: str | None = None) -> Path:
     ref = Path(str(token_ref or BRIDGE_DEVICE_TOKEN_REF)).name
+    return config.home / ref
+
+
+def _bridge_stream_token_path(config: Any, token_ref: str) -> Path:
+    ref = Path(str(token_ref or "")).name
+    if not ref.startswith(BRIDGE_STREAM_TOKEN_REF_PREFIX):
+        raise ValueError("invalid bridge stream token reference")
     return config.home / ref
 
 
@@ -2757,6 +2765,34 @@ def _load_bridge_device_token(config: Any, state: dict[str, Any]) -> str:
         return ""
 
 
+def _save_bridge_stream_token(config: Any, tool_request_id: str, token: str) -> str:
+    config.home.mkdir(parents=True, exist_ok=True)
+    digest = sha256(tool_request_id.encode("utf-8")).hexdigest()[:32]
+    token_ref = f"{BRIDGE_STREAM_TOKEN_REF_PREFIX}{digest}"
+    path = _bridge_stream_token_path(config, token_ref)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    os.chmod(path, 0o600)
+    return token_ref
+
+
+def _load_bridge_stream_token(config: Any, token_ref: Any) -> str:
+    try:
+        return _bridge_stream_token_path(config, str(token_ref or "")).read_text(
+            encoding="utf-8"
+        ).strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def _delete_bridge_stream_token(config: Any, token_ref: Any) -> None:
+    try:
+        _bridge_stream_token_path(config, str(token_ref or "")).unlink(missing_ok=True)
+    except (OSError, ValueError):
+        return
+
+
 def _workspace_identity_hash(cwd: Path, *, adapter_kind: str = "codex") -> str:
     canonical = str(cwd.expanduser().resolve())
     prefix = (
@@ -2852,6 +2888,13 @@ def _load_bridge_state(config: Any) -> dict[str, Any]:
         token = _load_bridge_device_token(config, loaded)
         if token:
             loaded["device_token"] = token
+    for pending in _bridge_pending_tools(loaded):
+        stream_token = _load_bridge_stream_token(
+            config,
+            pending.get("harness_stream_token_ref"),
+        )
+        if stream_token:
+            pending["harness_stream_token"] = stream_token
     return loaded
 
 
@@ -2887,8 +2930,7 @@ def _safe_bridge_pending_tool_state(pending: dict[str, Any]) -> dict[str, Any]:
         "agent_id",
         "model_provider",
         "model_name",
-        "harness_stream_token",
-        "bridge_delta_count",
+        "harness_stream_token_ref",
         "risk_level",
         "permission_mode",
         "change_id",
@@ -2897,6 +2939,9 @@ def _safe_bridge_pending_tool_state(pending: dict[str, Any]) -> dict[str, Any]:
         value = pending.get(key)
         if value not in (None, ""):
             safe[key] = str(value)
+    bridge_delta_count = _safe_bridge_delta_count(pending.get("bridge_delta_count"))
+    if bridge_delta_count > 0:
+        safe["bridge_delta_count"] = str(bridge_delta_count)
     return safe
 
 
@@ -2910,6 +2955,18 @@ def _upsert_bridge_pending_tool(
     tool_request_id = str(pending_state.get("tool_request_id") or "")
     if not tool_request_id:
         return
+    stream_token = str(pending.get("harness_stream_token") or "").strip()
+    if stream_token:
+        token_ref = _save_bridge_stream_token(config, tool_request_id, stream_token)
+        pending_state["harness_stream_token_ref"] = token_ref
+        pending_state["harness_stream_token"] = stream_token
+    elif pending_state.get("harness_stream_token_ref"):
+        loaded_token = _load_bridge_stream_token(
+            config,
+            pending_state["harness_stream_token_ref"],
+        )
+        if loaded_token:
+            pending_state["harness_stream_token"] = loaded_token
     items = [
         item
         for item in _bridge_pending_tools(state)
@@ -2926,12 +2983,19 @@ def _remove_bridge_pending_tool(
     state: dict[str, Any],
     tool_request_id: str,
 ) -> None:
+    removed = [
+        item
+        for item in _bridge_pending_tools(state)
+        if str(item.get("tool_request_id") or "") == tool_request_id
+    ]
     state["pending_tool_requests"] = [
         item
         for item in _bridge_pending_tools(state)
         if str(item.get("tool_request_id") or "") != tool_request_id
     ]
     _save_bridge_state(config, state)
+    for item in removed:
+        _delete_bridge_stream_token(config, item.get("harness_stream_token_ref"))
 
 
 def _bridge_tool_request_id(
@@ -4831,34 +4895,32 @@ def _handle_bridge_host_tool_request(
         return BridgeToolHandlingResult(
             status="pending_approval",
             backend_tool_call_id=str(decision.get("tool_call_id") or ""),
-            pending_tool=_safe_bridge_pending_tool_state(
-                {
-                    "tool_request_id": tool_request_id,
-                    "bridge_task_id": bridge_context.bridge_task_id,
-                    "tool_call_id": tool_call_id,
-                    "backend_tool_call_id": decision.get("tool_call_id"),
-                    "approval_id": decision.get("approval_id"),
-                    "tool_name": tool_name,
-                    "local_session_id": session_id,
-                    "run_id": run_id,
-                    "agent_id": agent_id,
-                    "model_provider": model_provider,
-                    "model_name": model_name,
-                    "harness_stream_token": decision_metadata.get("harness_stream_token")
-                    or bridge_context.harness_stream_token,
-                    "bridge_delta_count": decision_metadata.get("bridge_delta_count")
-                    or bridge_delta_count,
-                    "command": command,
-                    "risk_level": risk_level,
-                    "permission_mode": permission_mode,
-                    "change_id": pending_change_preview.get("change_id")
-                    if pending_change_preview
-                    else None,
-                    "diff_sha256": pending_change_preview.get("diff_sha256")
-                    if pending_change_preview
-                    else None,
-                }
-            ),
+            pending_tool={
+                "tool_request_id": tool_request_id,
+                "bridge_task_id": bridge_context.bridge_task_id,
+                "tool_call_id": tool_call_id,
+                "backend_tool_call_id": decision.get("tool_call_id"),
+                "approval_id": decision.get("approval_id"),
+                "tool_name": tool_name,
+                "local_session_id": session_id,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "harness_stream_token": decision_metadata.get("harness_stream_token")
+                or bridge_context.harness_stream_token,
+                "bridge_delta_count": decision_metadata.get("bridge_delta_count")
+                or bridge_delta_count,
+                "command": command,
+                "risk_level": risk_level,
+                "permission_mode": permission_mode,
+                "change_id": pending_change_preview.get("change_id")
+                if pending_change_preview
+                else None,
+                "diff_sha256": pending_change_preview.get("diff_sha256")
+                if pending_change_preview
+                else None,
+            },
         )
     if not decision.get("executable"):
         result = ToolExecutionResult(

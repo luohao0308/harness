@@ -2,21 +2,23 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-06-02
+- Last refreshed: 2026-08-07
 - Primary product surfaces:
   - `hao` 本地 Agent CLI / TUI 的单输入、slash command、工具输出和权限提示
   - 全局 Console Shell 侧边栏与页面标题中文术语
   - `/tools` MCP / Skill 商店与能力安装流程
   - `/agents` Agent Studio 内的知识管理与能力配置弹窗
   - `/agents/:agentId/workspace` 会话级确认操作
-  - `/teams/:teamId` 团队成员移除确认操作
+  - `/teams/:teamId` 网页多列团队会话，以及桌面协作、任务图和多列工作区
   - `/runs/:runId` 运行详情中的依据审计、上下文组装与标记节省说明
   - `/observability` 依据质量与标记节省指标总览
   - `/token-savings` 标记节省总览与近期运行节省证据
   - `/settings/models` 模型网关、内置成本来源、模型切换与自定义供应商配置
+  - Electron 默认打开 `/agents/:agentId/workspace` 的任务工作台；`/desktop` 是独立的 Codex 风格桌面设置中心，承载常规、模型与密钥、权限、工作区、终端、网页扩展和更新；`/settings/advanced` 保留兼容入口
+  - `apps/mobile-app` React Native + Expo 移动端任务列表、下拉刷新、离线同步、推送注册与平台小组件入口
 - Evidence reviewed:
   - `README.md`
-  - `docs/ai/agent-startup-context.md`
+  - `docs/development/ai/agent-startup-context.md`
   - `omx_wiki/session-2026-05-17-agent-knowledge-p5-capability-registry.md`
   - `apps/agent-console/src/app/ConsoleShell.tsx`
   - `apps/agent-console/src/styles.css`
@@ -34,36 +36,78 @@
   - `apps/agent-console/src/features/observability/pages/TokenSavingsPage.tsx`
   - `apps/agent-console/src/features/settings/pages/ModelSettingsPage.tsx`
   - `apps/agent-console/src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx`
-  - `docs/cli/hao.md`
+  - `apps/agent-console/src/features/settings/pages/AdvancedFeaturesPage.tsx`
+  - `apps/agent-console/src/features/settings/pages/__tests__/AdvancedFeaturesPage.test.tsx`
+  - `apps/desktop-app/src/main.ts`
+  - `apps/desktop-app/src/preload.ts`
+  - `apps/desktop-app/src/preload-api.ts`
+  - `apps/desktop-app/src/services/phase6-service.ts`
+  - `apps/desktop-app/src/services/window-manager.ts`
+  - `apps/desktop-app/src/services/system-integration.ts`
+  - `apps/desktop-app/src/services/desktop-updates.ts`
+  - `docs/development/desktop/README.md`
+  - `docs/design/desktop/apple-style-guidelines.md`
+  - `docs/design/desktop/team-mode-workspace.md`
+  - `docs/architecture/team-mode-product-surface.md`
+  - `.omx/artifacts/visual-ralph/desktop-team-mode/reference-task-graph.png`
+  - `.omx/artifacts/visual-ralph/desktop-team-mode/reference-team-inspector.png`
+  - `omx_wiki/session-2026-07-04-desktop-full-function-startup-smoke.md`
+  - `docs/development/cli/hao.md`
   - `services/api-server/app/cli/hao/tui.py`
   - `services/api-server/tests/test_hao_cli_v2.py`
+  - `apps/mobile-app/App.tsx`
+  - `apps/mobile-app/src/components/TaskCard.tsx`
+  - `apps/mobile-app/src/components/SyncBanner.tsx`
+  - `apps/mobile-app/src/sync/mobile-sync-service.ts`
+  - `docs/operations/mobile/phase7-mobile-release.md`
 
 ## Brand
 - Personality:
   - 专业、克制、可信，优先展示运行状态和下一步动作。
+  - 桌面版要有 Apple 式克制感：层级清晰、动作明确、空间留白服务判断，而不是装饰。
 - Trust signals:
   - 中文优先术语
   - 明确的安装状态、审批阶段和测试结果
   - 不依赖浏览器原生弹窗
   - 所有状态来自后端或明确的本地交互结果
+  - 桌面桥接、文件根、Profile token、更新渠道、签名/公证边界必须显式说明。
 - Avoid:
   - 中英混排的按钮与状态
   - “点了没反应”的静默操作
   - 新手需要自行推断安装顺序
   - 浏览器 `alert/confirm/prompt`
+  - 把本地未签名包说成生产可分发版本
+  - 用营销型 hero、装饰渐变或卡片堆叠替代桌面工作台
 
 ## Product goals
 - Goals:
   - 让新手能在 `/tools` 完成 MCP / Skill 的发现、安装、审批、挂载和验证。
+  - 让桌面版默认进入类似 Codex 的任务工作台：左侧任务历史、中央会话与底部输入、右侧按需上下文；桥接和系统能力退到设置页。
+  - 让新安装用户先进入可浏览、可操作的任务工作台，再从独立设置中心配置唯一必需项“模型 API Key”；未配置密钥只阻止模型执行，不阻止打开应用、设置、文件或终端。
+  - 明确桌面与网页分工：Electron 用于创建任务、团队协作、终端操作、工作区文件和运行审批；网页用于配置、统计、审计、评测和观测。
+  - 让桌面版文档达到生产可用：开发、测试、打包、签名、公证、更新、反馈、遥测、排障都有明确入口和验收口径。
+  - 让桌面 Team Mode 默认以单会话协作为中心，并能切换任务依赖图和现有多列视图。
   - 将所有关键交互改成中文、可解释、可回溯的反馈。
   - 统一确认弹窗与操作成功/失败提示，降低误操作焦虑。
+  - 在移动端提供离线优先的任务查看、新建、完成和同步恢复路径。
 - Non-goals:
   - 不重做整套视觉系统。
   - 不把现有页面改成营销型设计。
+  - 不复制 Team API、实时事件状态或网页版多列实现。
+  - 不在 Electron 主导航中放置 Dashboard、成本、Trace、日志、Eval、审计或其他只读观测入口。
   - 不在前端伪造后端尚未提供的安装事实。
 - Success signals:
   - 用户能看懂“当前在哪一步、下一步做什么、是否成功”。
   - 安装成功、失败、待审批、待安装、已安装一眼可辨。
+  - Electron 启动后直接进入可输入的新任务或最近任务，不先展示网页控制台、仪表盘或桌面能力总览。
+  - 点击设置后进入独立双栏设置空间：左侧分类和搜索，右侧为紧凑设置行；模型 API Key 可在“模型与密钥”中完成保存、替换和删除。
+  - “模型与密钥”同时提供可编辑 Base URL、连接检测、远端模型列表刷新和默认模型选择；使用内置供应商时只填 API Key 仍可直接使用默认值。
+  - 清洁安装未配置模型时仍能打开主工作区；首次执行模型任务时显示单一错误原因和“打开模型设置”动作。
+  - 桌面任务工作区不出现网页版控制台导航、面包屑、环境切换、全局搜索和账号工具条。
+  - 桌面发布文档能区分本地可验证项和 Apple/Windows 凭证门槛，不把凭证门槛包装成已完成。
+  - 桌面 Team 页能在同一会话状态下切换“协作 / 任务图 / 多列”，网页端仍默认现有多列模式。
+  - 点击桌面“团队”后，有现有团队时直接进入最近可用团队；没有团队时直接显示创建入口，不经过网页版管理壳层。
+  - 桌面任一操作页都能一键返回任务、团队、终端、文件和审批，不出现网页控制台的双重侧栏。
   - 所有 destructive / branching 操作都通过自定义弹窗确认。
   - 模型页能先判断当前默认模型、健康状态和成本来源可用性，再执行切换或自定义配置。
   - 未配置真实 API Key 的模型不能直接切换，必须先进入配置弹窗。
@@ -73,11 +117,13 @@
   - 新手运维或内部测试人员
   - 负责接入 MCP / Skill 的 Agent 管理员
   - 需要验证安装链路是否可用的产品/研发同学
+  - 用 Electron 桌面版执行本地 Agent、离线任务和多窗口 Run 审查的内部测试人员
 - User jobs:
   - 找到合适的能力并安装到指定 Agent
   - 判断能力是否已安装、是否还要审批
   - 用具体案例快速验证 MCP 或 Skill 已生效
   - 在知识库、会话、团队页执行风险操作时获得清晰确认
+  - 在桌面版中切换工作区、打开独立 Run 窗口、离线整理任务、启用本地模型并回看结果
 - Key contexts of use:
   - 本地开发环境
   - 演示环境
@@ -85,18 +131,36 @@
 
 ## Information architecture
 - Primary navigation:
-  - 左侧导航保持控制台结构稳定，核心操作在页面主区完成。
+  - 网页端左侧导航保持控制台结构稳定，核心操作在页面主区完成。
+  - Electron 工作区使用任务优先侧栏：顶部新建任务，中部最近任务，底部提供团队、终端、文件、审批和设置。
+  - Electron 的 Team、终端、Run 和设置页面使用窄操作轨道维持同一组高频入口；不渲染网页版 Console Shell。
+  - Electron 设置是临时离开任务工作区的独立空间：顶部提供“返回应用”，左侧固定显示设置搜索与分类，右侧只显示当前分类，不叠加任务侧栏或网页 Console Shell。
 - Core routes/screens:
   - `/tools`: 商店发现 + 安装工作台 + 高级生命周期
   - `/agents`: Agent Studio 中的知识和能力配置
   - `/agents/:agentId/workspace`: 会话与执行入口
   - `/teams/:teamId`: 团队编排与成员管理
+    - 网页：现有 Agent 横向多列为默认视图。
+    - Electron：默认“协作”单会话 + 团队检查器，可切换“任务图”和“多列”。
   - `/runs`: 运行列表与入口摘要
   - `/token-savings`: 标记节省总览与近期运行证据
   - `/settings/models`: 当前默认模型摘要、内置成本来源、模型切换、自定义供应商弹窗、Fallback 和供应商观测
+  - `/agents/:agentId/workspace`: Electron 默认入口，桌面壳层不渲染网页版 Console Shell；浏览器仍保留原控制台壳层。
+  - `/desktop`: 桌面设置中心，使用 `?section=` 切换“常规 / 模型与密钥 / 权限 / 工作区 / 终端 / 网页扩展 / 更新”；只组合已接入的实用功能，不放 Dashboard、Trace、成本、日志等观测内容。
+    - “模型与密钥”按 Base URL、默认模型、API Key 排列。Base URL 检测和模型列表刷新使用当前输入值，不要求先保存；“保存”才持久化 Base URL、默认模型和可选的新 API Key。
+  - `/setup/model`: 仅作为旧链接兼容入口，跳转到 `/desktop?section=models`；不再作为全局首启门禁页面。
+  - `/teams`、`/teams/:teamId`: Electron 操作路由；`/teams` 自动进入第一个活跃团队，无团队时保留创建面板。
+  - `/terminal`: Electron 本地终端工作区；网页仍可访问，但通过正常 Console Shell 承载。
+  - `/agents/:agentId/workspace?desktop_panel=files`: 打开当前工作区的本地文件面板。
+  - `/agents/:agentId/workspace?desktop_panel=approvals`: 打开当前 Run 的审批面板。
+  - `/runs/:runId`: Electron 可从任务或审批进入的执行详情；网页保留完整证据与观测上下文。
+  - `apps/mobile-app`: 任务列表、同步状态、离线待同步队列、冲突提示、新建任务、推送注册提示
 - Content hierarchy:
   - 先显示状态与结果，再显示配置输入
   - 先给“下一步”，再给底层包信息
+  - 桌面主体验采用任务式工作台：任务列表、消息流和输入框常驻；运行证据、工具、模型、文件与设置按需展开。
+  - `/desktop` 保留文档式设置页，但不再承担 Electron 启动首页或主工作流。
+  - 桌面发布/运维文档采用“生产运行手册”层级：状态、能力图、启动、验证、发布、隐私安全、排障、外部凭证边界。
   - 先给推荐测试案例，再给原始 JSON / ID
   - 模型页先显示当前默认和运行状态，再展示成本来源和配置操作；自定义模型配置只在弹窗出现，不常驻占用页面；价格源不可用时降级为中文告警而不是阻塞配置。
 
@@ -107,6 +171,18 @@
   - 每个高风险动作都要先确认，每个关键动作都要有结果反馈。
 - Principle 3:
   - 新手路径优先于专家路径，专家能力保留在“高级生命周期”。
+- Principle 4:
+  - 桌面版页面要像写好的运行手册：标题明确、章节短、状态可扫、动作靠近证据，配置留在折叠区。
+- Principle 5:
+  - 桌面版的 Apple 风格不是复制 Apple 品牌，而是遵守 macOS 预期：安静、稳定、键盘友好、通知克制、设置集中、隐私边界清楚。
+- Principle 6:
+  - Team 的数据与运行语义只有一套；网页和桌面只在信息编排上分层，任何视图切换都不能复制或重置会话、任务、目标和 wake 状态。
+- Principle 7:
+  - 桌面与网页共享能力，不共享壳层。桌面默认只暴露完成当前任务所需的控件，管理型功能从任务侧栏底部进入。
+- Principle 8:
+  - 桌面导航按动作组织，网页导航按系统与数据域组织；同一路由可共享数据和业务组件，但 Electron 不继承网页的信息架构。
+- Principle 9:
+  - 设置按用户意图分组，不按后端模块分组。每一行只表达一个设置，标题、简短说明和控件横向对齐；密钥值永不回显。
 - Tradeoffs:
   - 保留 MCP 等必要缩写，但配合中文说明。
   - 原始 ID 和包元数据仍然展示，但降到结果卡片与摘要层。
@@ -119,10 +195,14 @@
 - Spacing/layout rhythm:
   - 以 8px 节奏为主，商店页强调卡片分区和步骤流。
   - `hao` TUI 采用 本地 Agent CLI 的 inline 终端节奏：不切换全屏 alternate screen，不呈现编辑器式大画布；欢迎卡、主会话、底部 `›` 输入行和轻量状态留在当前 shell 输出流里。底部状态必须包含当前模型、模型强度、compact 圆环、输出风格、审批数和命令数。工具工作台只按需作为底部 drawer 出现，不默认右侧分屏。
+  - Electron 任务侧栏固定约 `280px`，中央会话使用稳定的最大阅读宽度，输入框固定在底部；桌面工作区顶栏保持单行，主要操作使用图标和 tooltip。
+  - Electron 设置左栏约 `248px`，内容列最大宽度约 `920px`；分组由标题、细分隔线和设置行构成，避免大面积彩色摘要、数据卡片和营销式说明。
 - Shape/radius/elevation:
   - 使用现有圆角卡片与轻阴影，不引入新材质语言。
+  - 桌面版避免把页面大区块做成套娃卡片；使用留白、分隔、短章节和状态行建立层级。
 - Motion:
   - 点击与加载反馈以轻量状态切换、toast、按钮忙碌文案为主。
+  - 桌面版不使用夸张动效；更新、反馈、离线任务和终端状态以稳定文字反馈为主。
 - Imagery/iconography:
   - 继续使用 Lucide 图标，图标服务于状态理解，不单独承担含义。
 
@@ -143,11 +223,24 @@
   - 全局操作反馈 toast/状态提示
   - 商店安装状态徽标与步骤提示
   - 模型设置摘要区、内置成本来源错误态与响应式宽表容器
+  - 桌面工作台文档式章节、首屏待办步骤、桌面桥接状态摘要、最近结果清单
+  - Electron 任务壳层：`Harness` 任务侧栏、新建任务、最近任务、团队/终端/桌面设置快捷入口，以及单行工作区操作栏
+  - Electron 操作轨道：任务、团队、终端、文件、审批、设置六个图标入口，在非任务页面保持固定且不与 Team 内部团队列表重复职责。
+  - Electron 设置壳层：返回应用、设置搜索、分类导航、设置分组、设置行，以及模型密钥的掩码输入、保存/替换/删除状态。
+  - 模型连接设置：Base URL 输入与检测按钮、模型下拉/可编辑选择、刷新模型列表图标按钮、连接耗时和模型数量反馈。
+  - 桌面 Team 视图分段控件、成员进度列表、团队检查器、任务依赖图和可调整分栏
+  - 桌面生产文档能力图、发布验收矩阵、Apple 风格检查表和排障表
   - 模型配置弹窗和模型页右下角快捷添加入口
+  - 移动端任务卡片、同步横幅、底部新建任务表单、状态徽标
 - Variants and states:
   - 按钮必须体现默认、悬停、按下、忙碌、成功后反馈
   - 弹窗必须体现说明、确认、取消、关闭
   - 安装状态至少区分“未安装 / 待审批 / 待安装 / 已安装”
+  - 桌面桥接至少区分“桌面桥接已连接 / 网页回退模式 / 桥接读取失败”，并给出可执行下一步。
+  - 桌面更新至少区分“稳定 / Beta / 检查中 / 有新版本 / 无更新 / 下载中 / 已下载 / 错误”。
+  - 桌面 Team 至少区分“协作 / 任务图 / 多列”，并显示 Agent 与任务的进行中、等待、完成、失败状态。
+  - 模型与密钥至少区分“未配置 / 已配置 / 保存中 / 检测中 / 检测成功 / 验证失败 / 安全存储不可用”；Web 扩展显示只读状态和“在桌面应用中配置”。
+  - 模型检测失败要区分无密钥、鉴权失败、超时、地址不可达和模型列表格式不兼容；成功后显示连接耗时与获取到的模型数量。
 - Token/component ownership:
   - 继续复用 `Button`/`Badge`/`ConfigDialog` 体系，不新增第二套弹窗体系。
 
@@ -156,18 +249,24 @@
   - 保持当前控制台的键盘可达与语义弹窗基线。
 - Keyboard/focus behavior:
   - 自定义弹窗支持 Esc 关闭、可见关闭按钮、明确焦点边界。
+  - 桌面核心工作流必须可用键盘完成：切换终端、打开/聚焦 Run 窗口、关闭弹窗、执行主要按钮。
 - Contrast/readability:
   - 维持当前高对比文本与状态底色。
 - Screen-reader semantics:
   - 弹窗提供 `role="dialog"`、`aria-modal`、标题与说明关联。
+  - 桌面状态摘要、终端列表、最近结果和错误区保留可读标签，不能只靠颜色或图标表达状态。
 - Reduced motion and sensory considerations:
   - 避免强动画，反馈以文字与颜色为主。
 
 ## Responsive behavior
 - Supported breakpoints/devices:
   - 桌面优先，同时保证移动宽度下弹窗、商店列表与安装工作台可滚动使用。
+  - 移动端任务列表优先支持单手触控、44px 以上触摸目标、下拉刷新和离线状态常驻反馈。
 - Layout adaptations:
   - 宽屏采用商店列表 + 安装工作台双栏；窄屏允许堆叠。
+  - 桌面任务工作台和终端必须在桌面与窄屏宽度都保持 0 文档级水平溢出。
+  - Electron 宽屏使用任务侧栏 + 会话 + 按需检查器；窄屏继续复用现有历史侧栏覆盖与检查器抽屉，不引入网页版全局导航。
+  - 桌面 Team 的协作视图默认 `80/20` 分栏，任务图默认 `56/44` 分栏；低于桌面宽度时任务图切为临时全幅面板，网页保持现有多列/移动单列响应式规则。
 - Touch/hover differences:
   - 不能依赖 hover 才能理解状态，点击后必须有显式反馈。
 
@@ -179,6 +278,9 @@
 - Error:
   - 错误信息直接显示并进入统一反馈层。
   - 模型成本来源 404 / 未启用时显示“成本来源暂不可用”和中文原因，避免裸露 `404: Not Found`。
+  - 桌面桥接错误显示为中文状态条，不阻塞插件/模板等 API-backed 信息读取。
+  - 桌面发布错误必须区分本地构建问题、Electron ABI 问题、Apple/Windows 凭证缺失、更新元数据不匹配。
+  - `MODEL_SETUP_REQUIRED` 在任务执行位置显示，不把整个应用重定向到阻断页；错误旁提供“打开模型设置”。
 - Success:
   - 成功提示要告诉用户“做成了什么”和“接下来还能做什么”。
 - Disabled:
@@ -186,6 +288,7 @@
   - 未配置密钥的模型切换按钮不执行直接切换，使用“配置并启用”进入弹窗。
 - Offline/slow network, if applicable:
   - 网络或源降级时保留本地推荐，并明确说明部分源不可用。
+  - 移动端离线时任务保存在本机，显示“待同步”并在网络恢复后复用桌面同步协议上传。
 
 ## Content voice
 - Tone:
@@ -194,12 +297,17 @@
   - 固定使用“运行平台、标记节省、商店、安装、审批、挂载、测试、确认、知识源、团队成员”等中文。
 - Microcopy rules:
   - 优先告诉用户结果和下一步。
+  - 桌面页避免“高级功能”这类泛称；导航、标题和按钮都直接说“桌面”“工作区”“运行窗口”“离线执行”。
+  - 桌面文档避免空泛说“像苹果”；必须落成窗口、菜单、设置、通知、隐私、签名/公证、可访问性检查项。
   - 避免“Install / Approve / Enable / verified”裸英文。
+  - 设置项说明只解释该值影响什么，不展示教程、功能宣传或实现细节。
+  - Base URL 文案明确要求填写 OpenAI 兼容 API 根地址（通常包含 `/v1`）；检测时不得把 API Key 写入 URL、日志或渲染器存储。
   - 缩写首次出现时补中文解释，后续可直接使用。
 
 ## Implementation constraints
 - Framework/styling system:
   - React 18 + TypeScript + Tailwind CSS
+  - 移动端使用 React Native + Expo，业务同步核心复用桌面 `/api/desktop/sync*` 协议，不复制完整桌面 Workspace。
   - `hao` CLI 默认使用 Rich terminal loop 保持在当前 shell 输出流；Textual 组件只作为内部/后备实现面，不应作为默认全屏编辑器式界面。
   - `hao` CLI 的 `/compact` 与 `/compress` 是同一压缩入口；状态区用 `○/◔/◑/◕/◉/●` 表示本地 active-path compact 比例，不伪造真实 token 成本。
   - `hao` CLI 的真实终端输入依赖终端 echo，不额外重复打印用户消息；UTF-8 输入按字节安全解码，stream 401/403 失败显示 hao 自己的认证/权限提示。
@@ -213,6 +321,12 @@
 - Test/screenshot expectations:
   - 至少覆盖商店安装链路、确认弹窗链路、MCP 快速测试链路和核心中文文案。
   - 模型页布局调整需覆盖成功成本来源、价格源 404 降级、桌面和窄屏截图、无文档级水平溢出。
+  - 桌面改动至少覆盖对应的 backend desktop API、Agent Console desktop/terminal Vitest、desktop-app Vitest、`build:main`；发布相关改动还需覆盖 `build:renderer`、`electron-builder --dir --publish never`、release YAML/script 校验、浏览器和真实 Electron smoke。
+  - 桌面壳层改动必须分别证明 Electron 工作区不渲染 Console Shell、浏览器工作区仍保留 Console Shell、Electron 主窗口默认进入 `/agents/default/workspace`。
+  - 设置中心必须覆盖分类切换、搜索过滤、旧 setup 链接兼容、Base URL 校验、连接检测、远端模型列表刷新、默认模型保存、API Key 保存/替换/删除、Web 只读状态、未配置时主工作区可打开，以及任务执行时的配置入口。
+  - 桌面操作路由必须证明 Team、终端、Run 和桌面设置不渲染网页版 Console Shell，操作轨道可返回任务，文件和审批深链会打开对应工作区面板。
+  - Team 桌面入口必须覆盖“有团队自动进入 / 无团队可创建 / 浏览器仍停留列表”三种状态。
+  - 桌面 Team 改动需额外覆盖桌面三视图、网页多列不回归、390px 移动单列无溢出，以及参考图方向性视觉评分 `>= 90`。
 
 ## Open questions
 - [ ] 是否要把整个控制台从“中文优先”升级为“纯中文唯一文案”规范；当前先落在 MCP / Skill 商店和本次修改触达页面。

@@ -1,0 +1,51 @@
+{
+  "name": "@harness/desktop-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness Desktop Application - Electron wrapper for agent-console",
+  "author": "Harness Team",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder",
+    "build:main": "tsc -p tsconfig.build.json",
+    "build:renderer": "node scripts/copy-renderer.mjs",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "dist:mac": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder --mac",
+    "dist:win": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder --win",
+    "dist:linux": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder --linux",
+    "build:mac": "npm run dist:mac",
+    "build:win": "npm run dist:win",
+    "build:linux": "npm run dist:linux",
+    "check:startup-budget": "node scripts/check-startup-budget.mjs",
+    "test": "vitest run",
+    "test:startup-budget": "node --test scripts/startup-budget-lib.test.mjs",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit",
+    "package": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder --dir",
+    "start": "NO_PROXY=localhost,127.0.0.1 ELECTRON_RUN_AS_NODE= electron ."
+  },
+  "dependencies": {
+    "@sentry/electron": "^7.14.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.11.1",
+    "electron-log": "^5.2.4",
+    "electron-store": "^10.0.0",
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^2.5.0",
+    "@types/node": "^22.10.6",
+    "@vitest/coverage-v8": "^3.2.6",
+    "electron": "^32.2.7",
+    "electron-builder": "^25.1.8",
+    "happy-dom": "^20.10.6",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

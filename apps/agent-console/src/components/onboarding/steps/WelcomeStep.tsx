@@ -73,7 +73,7 @@ export function WelcomeStep({ onGetStarted }: WelcomeStepProps) {
                   aria-hidden="true"
                 />
               </div>
-              <h3 className="mb-2 text-lg font-semibold text-slate-900">{feature.title}</h3>
+              <h2 className="mb-2 text-lg font-semibold text-slate-900">{feature.title}</h2>
               <p className="text-sm text-slate-600">{feature.description}</p>
             </div>
           );

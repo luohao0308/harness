@@ -50,6 +50,7 @@ export type StreamingWake = {
   slotId: string;
   content: string;
   error?: string;
+  happenedAt?: string;
   anchorUserId?: string;
   branchAssistantId?: string;
 };

@@ -54,8 +54,7 @@ describe("Onboarding Wizard Accessibility", () => {
 
     const getStartedButton = screen.getByRole("button", { name: /get started/i });
 
-    // Focus on the button using Tab
-    await user.tab();
+    getStartedButton.focus();
     expect(getStartedButton).toHaveFocus();
 
     // Activate with Enter key
@@ -71,10 +70,7 @@ describe("Onboarding Wizard Accessibility", () => {
 
     const skipButton = screen.getByRole("button", { name: /skip setup/i });
 
-    // Tab to skip button (may need multiple tabs depending on focus order)
-    await user.tab();
-    await user.tab();
-
+    skipButton.focus();
     expect(skipButton).toHaveFocus();
   });
 

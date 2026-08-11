@@ -30,7 +30,7 @@ describe("Onboarding Forms - Validation Tests", () => {
 
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      const apiKeyInput = screen.getByLabelText(/api key/i);
+      const apiKeyInput = screen.getByLabelText(/^api key\b/i);
       const baseUrlInput = screen.getByLabelText(/base url/i);
       const modelSelect = screen.getByLabelText(/model/i);
 
@@ -53,7 +53,7 @@ describe("Onboarding Forms - Validation Tests", () => {
 
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      const apiKeyInput = screen.getByLabelText(/api key/i);
+      const apiKeyInput = screen.getByLabelText(/^api key\b/i);
       const baseUrlInput = screen.getByLabelText(/base url/i);
 
       await user.type(apiKeyInput, "sk-test-key");

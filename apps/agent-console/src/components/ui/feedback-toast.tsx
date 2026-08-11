@@ -41,7 +41,7 @@ export function notifyFeedback({ title, description, tone }: FeedbackToastInput)
   currentToasts = [...currentToasts.slice(-3), item];
   emitToasts();
   const timer = globalThis.setTimeout(() => dismissToast(id), 4200);
-  dismissTimers.set(id, timer);
+  dismissTimers.set(id, timer as unknown as number);
 }
 
 export function feedbackErrorMessage(error: unknown, fallback: string) {

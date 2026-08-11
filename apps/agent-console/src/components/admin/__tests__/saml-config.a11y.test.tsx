@@ -37,12 +37,16 @@ describe("Admin SAML Configuration Accessibility", () => {
   test("has no axe violations with existing provider (edit mode)", async () => {
     const mockProvider = {
       id: "okta-1",
+      organization_id: "org-1",
       name: "Okta",
       entity_id: "https://app.example.com/saml",
       sso_url: "https://idp.example.com/sso",
       idp_metadata_url: "https://idp.example.com/metadata.xml",
       idp_metadata_xml: null,
-      enabled: true,
+      certificate: null,
+      status: "active" as const,
+      test_connection_status: null,
+      test_connection_error: null,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     };

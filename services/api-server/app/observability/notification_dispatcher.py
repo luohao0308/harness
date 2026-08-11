@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -12,10 +13,11 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AlertEvent, NotificationChannel
+from app.db.models import AlertEvent, MobileDevice, NotificationChannel
 from app.security.secrets import SECRET_PURPOSE_NOTIFICATION, resolve_secret
 
 SECRET_KEYS = {"password", "token", "secret", "webhook_url", "smtp_password"}
+EXPO_PUSH_ENDPOINT = os.getenv("EXPO_PUSH_ENDPOINT", "https://exp.host/--/api/v2/push/send")
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,11 @@ def dispatch_alert_event(
     event: AlertEvent,
     channel_selectors: list[str],
 ) -> list[NotificationDispatchResult]:
+    mobile_selectors = [
+        selector
+        for selector in channel_selectors
+        if selector == "mobile" or selector.startswith("mobile:")
+    ]
     channels = _resolve_channels(
         session=session,
         organization_id=event.organization_id,
@@ -69,6 +76,15 @@ def dispatch_alert_event(
         _dispatch_one(session=session, channel=channel, payload=_alert_payload(event, channel))
         for channel in channels
     ]
+    if mobile_selectors:
+        results.extend(
+            _dispatch_mobile(
+                session=session,
+                organization_id=event.organization_id,
+                selectors=mobile_selectors,
+                payload=_mobile_alert_payload(event),
+            )
+        )
     event.context_json = {
         **(event.context_json or {}),
         "notification_dispatch": [
@@ -90,7 +106,11 @@ def _resolve_channels(
     organization_id: str | None,
     selectors: list[str],
 ) -> list[NotificationChannel]:
-    external_selectors = [selector for selector in selectors if selector != "in_app"]
+    external_selectors = [
+        selector
+        for selector in selectors
+        if selector != "in_app" and selector != "mobile" and not selector.startswith("mobile:")
+    ]
     if not external_selectors or organization_id is None:
         return []
     kinds = {selector.split(":", 1)[0] for selector in external_selectors if ":" in selector}
@@ -137,6 +157,87 @@ def _alert_payload(event: AlertEvent, channel: NotificationChannel) -> dict[str,
         "threshold": event.threshold,
         "triggered_at": event.triggered_at.isoformat(),
     }
+
+
+def _mobile_alert_payload(event: AlertEvent) -> dict[str, Any]:
+    return {
+        "title": f"Harness {event.severity}",
+        "body": event.message,
+        "data": {
+            "type": "harness.alert",
+            "alert_event_id": event.id,
+            "rule_id": event.rule_id,
+            "rule_name": event.rule_name,
+            "severity": event.severity,
+            "status": event.status,
+            "organization_id": event.organization_id,
+        },
+    }
+
+
+def _dispatch_mobile(
+    *,
+    session: Session,
+    organization_id: str | None,
+    selectors: list[str],
+    payload: dict[str, Any],
+) -> list[NotificationDispatchResult]:
+    if organization_id is None:
+        return []
+    devices = _resolve_mobile_devices(
+        session=session,
+        organization_id=organization_id,
+        selectors=selectors,
+    )
+    results: list[NotificationDispatchResult] = []
+    for device in devices:
+        try:
+            _post_json(
+                EXPO_PUSH_ENDPOINT,
+                {
+                    "to": device.push_token,
+                    "title": payload["title"],
+                    "body": payload["body"],
+                    "data": payload["data"],
+                    "sound": "default",
+                    "channelId": "harness-runs",
+                },
+            )
+            status = "sent"
+            error_message = None
+        except Exception as exc:
+            status = "failed"
+            error_message = str(exc)
+        results.append(
+            NotificationDispatchResult(
+                channel_id=f"mobile:{device.id}",
+                kind="mobile",
+                status=status,
+                error_message=error_message,
+            )
+        )
+    return results
+
+
+def _resolve_mobile_devices(
+    *,
+    session: Session,
+    organization_id: str,
+    selectors: list[str],
+) -> list[MobileDevice]:
+    targets = {
+        selector.split(":", 1)[1]
+        for selector in selectors
+        if selector.startswith("mobile:") and selector.split(":", 1)[1]
+    }
+    statement = select(MobileDevice).where(
+        MobileDevice.organization_id == organization_id,
+        MobileDevice.notifications_enabled.is_(True),
+    )
+    devices = list(session.execute(statement).scalars())
+    if not targets or "*" in targets:
+        return devices
+    return [device for device in devices if device.user_id in targets or device.id in targets]
 
 
 def _dispatch_one(

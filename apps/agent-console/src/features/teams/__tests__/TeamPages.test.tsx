@@ -906,6 +906,24 @@ describe("Team pages", () => {
     expect(await screen.findByText("打开团队详情")).toBeInTheDocument();
   });
 
+  it("opens the first active Team directly in desktop runtime", async () => {
+    (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+    const state = stateFixture();
+    const fetchMock = routeTeamApis(state);
+
+    renderWithClient(
+      <Routes>
+        <Route path="/teams" element={<TeamListPage />} />
+        <Route path="/teams/:teamId" element={<div>桌面团队详情</div>} />
+      </Routes>,
+      fetchMock,
+      ["/teams"],
+    );
+
+    expect(await screen.findByText("桌面团队详情")).toBeInTheDocument();
+    expect(screen.queryByText("团队模式")).not.toBeInTheDocument();
+  });
+
   it("renders columns, creates members, and supports direct mailbox messages", async () => {
     const user = userEvent.setup();
     const state = stateFixture();
@@ -1719,6 +1737,60 @@ describe("Team pages", () => {
 
     const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     expect(await within(productColumn).findByText("正在生成...")).toBeInTheDocument();
+  });
+
+  it("restores a persisted wake error after reload and lets the user retry", async () => {
+    const user = userEvent.setup();
+    const state = stateFixture();
+    const team = state.teams[0];
+    const product = team.agents.find((agent) => agent.slot_id === "product")!;
+    product.status = "failed";
+    product.updated_at = "2026-05-23T08:02:01Z";
+    product.metadata_json = {
+      wake: {
+        in_progress: false,
+        failed_at: "2026-05-23T08:02:01Z",
+        last_error: "The read operation timed out",
+      },
+    };
+    product.session_messages = [
+      agentMessage({
+        id: "failed-wake-user-turn",
+        session_id: product.session_id ?? "product-session",
+        role: "user",
+        content: "请重试团队模型调用",
+      }),
+    ];
+    const fetchMock = routeTeamApis(state);
+
+    renderWithClient(
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamPage />} />
+      </Routes>,
+      fetchMock,
+      ["/teams/team-1"],
+    );
+
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
+    expect(await within(productColumn).findByText("The read operation timed out")).toBeInTheDocument();
+
+    await user.click(within(productColumn).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestPath(input) === "/api/teams/team-1/messages" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          requestPath(input) === "/api/teams/team-1/agents/product/wake/stream" &&
+          init?.method === "POST",
+      ),
+    ).toBe(true);
   });
 
   it("replaces the wake stream placeholder with the final assistant message", async () => {

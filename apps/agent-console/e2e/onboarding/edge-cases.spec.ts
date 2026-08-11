@@ -32,13 +32,12 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should preserve wizard state when navigating to step 3 and refreshing", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 3);
+    const state = await setupOnboardingMocks(page, { initialStep: 3 });
     state.onboarding.provider_json = {
       provider: "deepseek",
       endpoint: "https://api.deepseek.com",
       key_configured: true,
     };
-    });
 
     await page.goto("/onboarding?step=3");
 
@@ -55,8 +54,7 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should allow skipping the entire onboarding wizard", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 1);
-    });
+    const state = await setupOnboardingMocks(page, { initialStep: 1 });
 
     await page.goto("/onboarding");
 
@@ -77,14 +75,13 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should handle direct URL navigation to specific step", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 4);
+    const state = await setupOnboardingMocks(page, { initialStep: 4 });
     state.onboarding.agent_id = "first-run-agent";
     state.onboarding.provider_json = {
       provider: "deepseek",
       endpoint: "https://api.deepseek.com",
       key_configured: true,
     };
-    });
 
     // Navigate directly to step 4 via URL
     await page.goto("/onboarding?step=4");
@@ -95,8 +92,7 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should respect step progression and not allow skipping ahead", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 1);
-    });
+    await setupOnboardingMocks(page, { initialStep: 1 });
 
     // Try to navigate directly to step 3 when current_step is 1
     await page.goto("/onboarding?step=3");
@@ -113,8 +109,7 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should handle multiple rapid clicks on navigation buttons", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 1);
-    });
+    await setupOnboardingMocks(page, { initialStep: 1 });
 
     await page.goto("/onboarding");
 
@@ -138,8 +133,7 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should maintain provider selection after going back to step 1", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 1);
-    });
+    await setupOnboardingMocks(page, { initialStep: 1 });
 
     await page.goto("/onboarding");
 
@@ -161,10 +155,9 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should handle completed onboarding state", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 4);
+    const state = await setupOnboardingMocks(page, { initialStep: 4 });
     state.onboarding.completed = true;
     state.onboarding.completed_at = "2026-06-14T10:00:00.000Z";
-    });
 
     await page.goto("/onboarding");
 
@@ -174,8 +167,7 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should handle empty agent ID edge case", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 3);
-    });
+    await setupOnboardingMocks(page, { initialStep: 3 });
 
     await page.goto("/onboarding?step=3");
 
@@ -203,9 +195,8 @@ test.describe("Onboarding Wizard - Edge Cases", () => {
   });
 
   test("should handle navigation after demo is loaded", async ({ page }) => {
-    const state = setupOnboardingMocks(page, { initialStep: 4);
+    const state = await setupOnboardingMocks(page, { initialStep: 4 });
     state.onboarding.agent_id = "first-run-agent";
-    });
 
     await page.goto("/onboarding?step=4");
 

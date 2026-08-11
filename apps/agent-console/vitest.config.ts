@@ -10,11 +10,13 @@ export default defineConfig({
      *                    Run in node for zero-DOM speed (~5s / 72 tests).
      *   - `*.test.tsx` — component-level render tests via
      *                    @testing-library/react; require jsdom.
+     *   - Real-time tests — require jsdom for EventSource and React hooks.
      *                    See environmentMatchGlobs below.
      */
     environment: "node",
     environmentMatchGlobs: [
       ["src/**/__tests__/**/*.test.tsx", "jsdom"],
+      ["src/lib/realtime/__tests__/**/*.test.ts", "jsdom"],
     ],
     globals: false,
     include: [

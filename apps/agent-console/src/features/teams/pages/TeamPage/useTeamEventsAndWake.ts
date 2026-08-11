@@ -187,8 +187,11 @@ export function useTeamEventsAndWake({
         setPendingWakeSlotIds((current) => current.filter((candidate) => candidate !== slotId));
         setStreamingWakes((current) => {
           const existing = current.find((wake) => wake.slotId === slotId);
-          if (!existing) return [...current, { slotId, content: "", error: event.message }];
-          return current.map((wake) => wake.slotId === slotId ? { ...wake, error: event.message } : wake);
+          const happenedAt = event.agent?.updated_at ?? undefined;
+          if (!existing) return [...current, { slotId, content: "", error: event.message, happenedAt }];
+          return current.map((wake) =>
+            wake.slotId === slotId ? { ...wake, error: event.message, happenedAt } : wake,
+          );
         });
         if (event.agent) {
           queryClient.setQueryData<Team>(["teams", teamId], (current) => {

@@ -183,6 +183,7 @@ def test_okta_admin_role_from_group(
 
     # Decode JWT to verify admin role
     import jwt
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -243,6 +244,7 @@ def test_okta_user_role_from_group(
 
     # Decode JWT to verify user role
     import jwt
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -587,6 +589,7 @@ def test_okta_complete_provisioning_flow(
 
     # Verify admin role in second session
     import jwt
+
     from app.core.config import get_settings
 
     settings = get_settings()

@@ -286,10 +286,11 @@ export function useTeamComposerActions({
         let nextSlotGroups = slotGroups;
         for (const [anchorUserId, group] of Object.entries(slotGroups)) {
           const visibleBranchNodeIds = group.branchNodeIds.filter((nodeId) => byId.has(nodeId));
+          const activeBranchWasReplaced = !visibleBranchNodeIds.includes(group.activeNodeId);
           let workingGroup = group;
           if (
             visibleBranchNodeIds.length !== group.branchNodeIds.length ||
-            !visibleBranchNodeIds.includes(group.activeNodeId)
+            activeBranchWasReplaced
           ) {
             workingGroup = {
               ...group,
@@ -323,7 +324,9 @@ export function useTeamComposerActions({
               ...workingGroup,
               branchNodeIds: nextBranchNodeIds,
               hiddenUserNodeIds: [...hiddenUserNodeIds].filter((nodeId) => byId.has(nodeId)),
-              activeNodeId: lastAssistant.node.id,
+              activeNodeId: activeBranchWasReplaced
+                ? lastAssistant.node.id
+                : workingGroup.activeNodeId,
             },
           };
           changed = true;

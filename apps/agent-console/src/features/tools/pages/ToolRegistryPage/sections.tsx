@@ -153,6 +153,14 @@ export function ToolRegistryOverview({
                 <span>4. 成功或失败都会在页面右上角给出明确反馈。</span>
               </div>
             </div>
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-3 text-slate-700">
+              <div className="text-sm font-semibold text-slate-900">自定义 MCP 加载方式</div>
+              <div className="mt-1 leading-5">
+                自定义 MCP 工具通过 capability package 的
+                <span className="font-mono">mcp_server</span>
+                清单进入注册表；它们先登记、再审批、再挂载到智能体，不走单独的插件引擎。
+              </div>
+            </div>
             <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
               <div className="leading-5">
                 {text(

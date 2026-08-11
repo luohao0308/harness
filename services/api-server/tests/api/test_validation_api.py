@@ -6,9 +6,9 @@ Tests the validation endpoints:
 - POST /api/onboarding/validate/config
 - POST /api/onboarding/validate/deployment
 """
+
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -185,9 +185,10 @@ def test_validate_deployment_all_pass(
     mock_migration_ctx.get_current_revision.return_value = "20260610_0037"
     mock_migration_ctx_cls.configure.return_value = mock_migration_ctx
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.listdir", return_value=["20260610_0037_test.py"]):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.listdir", return_value=["20260610_0037_test.py"]),
+    ):
         response = client.post("/api/onboarding/validate/deployment")
 
         assert response.status_code == 200
@@ -241,9 +242,10 @@ def test_validate_deployment_with_pending_migrations(
     mock_migration_ctx.get_current_revision.return_value = "20260608_0035"
     mock_migration_ctx_cls.configure.return_value = mock_migration_ctx
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.listdir", return_value=["20260610_0037_test.py"]):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.listdir", return_value=["20260610_0037_test.py"]),
+    ):
         response = client.post("/api/onboarding/validate/deployment")
 
         assert response.status_code == 200
@@ -286,9 +288,10 @@ def test_validate_deployment_database_not_initialized(
     mock_migration_ctx.get_current_revision.return_value = None
     mock_migration_ctx_cls.configure.return_value = mock_migration_ctx
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.listdir", return_value=["20260610_0037_test.py"]):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.listdir", return_value=["20260610_0037_test.py"]),
+    ):
         response = client.post("/api/onboarding/validate/deployment")
 
         assert response.status_code == 200

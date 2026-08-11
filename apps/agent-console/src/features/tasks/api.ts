@@ -1,5 +1,15 @@
 const DEFAULT_API_BASE_URL = "/";
 
+export class ApiHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, detail = "") {
+    super(`请求失败 ${status}${detail ? `：${detail}` : ""}`);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
+}
+
 function stripTrailingSlash(value: string) {
   return value.replace(/\/$/, "");
 }
@@ -16,6 +26,8 @@ function hostForUrl(hostname: string) {
 export function resolveApiBaseUrl(
   configured = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
   pageHostname = typeof window === "undefined" ? null : window.location.hostname,
+  pageProtocol =
+    typeof window === "undefined" ? (pageHostname ? "http:" : null) : window.location.protocol,
 ) {
   const baseUrl = configured.trim() || DEFAULT_API_BASE_URL;
   if (baseUrl.startsWith("/")) {
@@ -29,7 +41,8 @@ export function resolveApiBaseUrl(
   try {
     const url = new URL(baseUrl);
     const pageHost = pageHostname;
-    if (isLoopbackHost(url.hostname) && !isLoopbackHost(pageHost)) {
+    const isHttpPage = pageProtocol === "http:" || pageProtocol === "https:";
+    if (isHttpPage && isLoopbackHost(url.hostname) && !isLoopbackHost(pageHost)) {
       url.hostname = hostForUrl(pageHost);
     }
     return stripTrailingSlash(url.toString());
@@ -50,37 +63,48 @@ export const AUTH_SESSION_EXPIRED_EVENT = "harness.auth.session_expired";
 export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
 const KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS = 12_000;
 
+function isLocalRuntimeProfile() {
+  return import.meta.env.VITE_RUNTIME_PROFILE === "local";
+}
+
 function browserStorage() {
   return typeof window === "undefined" ? null : window.localStorage;
 }
 
 export function getStoredAccessToken() {
+  if (isLocalRuntimeProfile()) return "";
   return browserStorage()?.getItem(AUTH_ACCESS_TOKEN_KEY) ?? "";
 }
 
 export function getStoredRefreshToken() {
+  if (isLocalRuntimeProfile()) return "";
   return browserStorage()?.getItem(AUTH_REFRESH_TOKEN_KEY) ?? "";
 }
 
 export function getAuthBearerToken() {
+  if (isLocalRuntimeProfile()) return "";
   return getStoredAccessToken().trim() || DEV_BEARER_TOKEN.trim();
 }
 
 export function isDevAuthFallbackEnabled() {
+  if (isLocalRuntimeProfile()) return false;
   return !getStoredAccessToken().trim() && DEV_BEARER_TOKEN.trim().length > 0;
 }
 
 function getAdminBearerToken() {
+  if (isLocalRuntimeProfile()) return "";
   return getStoredAccessToken().trim() || DEV_ADMIN_BEARER_TOKEN.trim();
 }
 
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
+  if (isLocalRuntimeProfile()) return;
   const storage = browserStorage();
   storage?.setItem(AUTH_ACCESS_TOKEN_KEY, tokens.access_token);
   storage?.setItem(AUTH_REFRESH_TOKEN_KEY, tokens.refresh_token);
 }
 
 export function clearAuthTokens() {
+  if (isLocalRuntimeProfile()) return;
   const storage = browserStorage();
   storage?.removeItem(AUTH_ACCESS_TOKEN_KEY);
   storage?.removeItem(AUTH_REFRESH_TOKEN_KEY);
@@ -118,6 +142,14 @@ async function refreshAuthForRetry() {
   }
 }
 
+async function renewLocalRuntimeSessionForRetry() {
+  if (!isLocalRuntimeProfile() || typeof window === "undefined") return false;
+  const renewSession = window.desktopApi?.localRuntime?.renewSession;
+  if (typeof renewSession !== "function") return false;
+  await renewSession();
+  return true;
+}
+
 async function fetchWithAuthRetry(
   path: string,
   init: RequestInit,
@@ -127,6 +159,12 @@ async function fetchWithAuthRetry(
   const response = await fetchApi(path, init);
   if (response.status !== 401 || options.skipRefresh) {
     return response;
+  }
+  if (await renewLocalRuntimeSessionForRetry()) {
+    return fetchApi(path, {
+      ...init,
+      headers: headersWithoutAuthorization(init.headers),
+    });
   }
   const refreshed = await refreshAuthForRetry();
   if (!refreshed) {
@@ -171,7 +209,7 @@ async function fetchApi(path: string, init?: RequestInit) {
   let lastError: unknown = null;
   for (const url of urls) {
     try {
-      return await fetch(url, init);
+      return await fetch(url, { credentials: "same-origin", ...init });
     } catch (error) {
       lastError = error;
     }
@@ -219,6 +257,21 @@ export type AuthTokenResponse = {
   expires_in: number;
 };
 
+export type LocalRuntimeModelStatus = {
+  state: "setup_required" | "configured" | "healthy" | "error";
+  provider: string;
+  model: string;
+  base_url: string;
+  secret_storage: "persistent" | "session" | "unavailable";
+  message?: string | null;
+};
+
+export type TerminalTokenResponse = {
+  token: string;
+  terminal_id: string;
+  expires_at: string;
+};
+
 export type SamlProvider = {
   id: string;
   name: string;
@@ -264,6 +317,43 @@ export type ApiKeyResponse = {
 
 export type ApiKeyCreateResponse = ApiKeyResponse & {
   key: string;
+};
+
+export type PluginMarketplaceItem = {
+  id: string;
+  name: string;
+  description: string;
+  category: "tool" | "prompt" | "workflow" | "local-model";
+  publisher: string;
+  version: string;
+  permissions: string[];
+  install_state: "available" | "installed";
+  installed_at: string | null;
+  config_json: Record<string, unknown>;
+};
+
+export type PluginMarketplaceResponse = {
+  items: PluginMarketplaceItem[];
+  installed_count: number;
+};
+
+export type PromptTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  tags: string[];
+  source: "built-in" | "custom" | "plugin";
+  plugin_id: string | null;
+  updated_at: string | null;
+};
+
+export type PromptTemplatePayload = {
+  id?: string | null;
+  name: string;
+  description?: string;
+  body: string;
+  tags?: string[];
 };
 
 export type UserMember = {
@@ -897,6 +987,7 @@ export type AgentChatStreamPayload = {
   messages: AgentChatStreamMessage[];
   active_leaf_id?: string | null;
   run_id?: string | null;
+  client_run_id?: string | null;
   active_branch_id?: string | null;
   pinned_node_ids: string[];
   context_window_turns: number;
@@ -2996,7 +3087,7 @@ async function request<T>(
     } catch {
       detail = "";
     }
-    throw new Error(`请求失败 ${response.status}${detail}`);
+    throw new ApiHttpError(response.status, detail.replace(/^：/, ""));
   }
   if (response.status === 204) {
     return undefined as T;
@@ -3027,7 +3118,7 @@ async function requestMultipart<T>(
     } catch {
       detail = "";
     }
-    throw new Error(`请求失败 ${response.status}${detail}`);
+    throw new ApiHttpError(response.status, detail.replace(/^：/, ""));
   }
   return response.json() as Promise<T>;
 }
@@ -3106,6 +3197,13 @@ export async function getAuthConfig() {
   return request<AuthConfigResponse>("/api/auth/config", { skipRefresh: true });
 }
 
+export async function createTerminalToken(terminalId: string) {
+  return request<TerminalTokenResponse>("/api/terminal/tokens", {
+    method: "POST",
+    body: JSON.stringify({ terminal_id: terminalId }),
+  });
+}
+
 export async function startOAuth(provider: "github" | "google") {
   return request<{ provider: string; authorization_url: string; state: string }>(
     `/api/auth/oauth/${provider}/start`,
@@ -3144,6 +3242,12 @@ export async function revokeApiKey(keyId: string) {
 
 export async function listStoredSecrets() {
   return request<StoredSecretPage>("/api/secrets");
+}
+
+export async function getLocalRuntimeModelStatus() {
+  return request<LocalRuntimeModelStatus>("/api/local-runtime/model", {
+    skipRefresh: true,
+  });
 }
 
 export async function saveStoredSecret(payload: StoredSecretUpsertPayload) {
@@ -3220,7 +3324,7 @@ export async function downloadAuditCsv() {
     headers: authHeaders(),
   });
   if (!response.ok) {
-    throw new Error(`请求失败 ${response.status}`);
+    throw new ApiHttpError(response.status);
   }
   return {
     blob: await response.blob(),
@@ -4874,16 +4978,22 @@ export async function getEvalRunRegression(evalRunId: string) {
 }
 
 export function taskEventStreamUrl(taskId: string) {
-  const params = new URLSearchParams({ access_token: authToken() });
-  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+  const params = new URLSearchParams();
+  const token = authToken();
+  if (token) params.set("access_token", token);
+  const query = params.toString();
+  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream${query ? `?${query}` : ""}`;
 }
 
 export function taskEventReconnectStreamUrl(taskId: string, lastEventId: string | null) {
-  const params = new URLSearchParams({ access_token: authToken() });
+  const params = new URLSearchParams();
+  const token = authToken();
+  if (token) params.set("access_token", token);
   if (lastEventId) {
     params.set("after_sequence", lastEventId);
   }
-  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+  const query = params.toString();
+  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream${query ? `?${query}` : ""}`;
 }
 
 function parseSseFrame(frame: string): AgentPlanStreamEvent | null {
@@ -5185,6 +5295,50 @@ export async function getModelPricingSources() {
 
 export async function getPolicySettings() {
   return request<PolicySettings>("/api/settings/policies");
+}
+
+export async function listPluginMarketplace() {
+  return request<PluginMarketplaceResponse>("/api/plugins/marketplace");
+}
+
+export async function installPlugin(pluginId: string, payload: { enabled?: boolean; config_json?: Record<string, unknown> } = {}) {
+  return request<PluginMarketplaceItem>(`/api/plugins/marketplace/${encodeURIComponent(pluginId)}/install`, {
+    method: "POST",
+    body: JSON.stringify({
+      enabled: payload.enabled ?? true,
+      config_json: payload.config_json ?? {},
+    }),
+  });
+}
+
+export async function uninstallPlugin(pluginId: string) {
+  return request<PluginMarketplaceItem>(`/api/plugins/marketplace/${encodeURIComponent(pluginId)}/install`, {
+    method: "DELETE",
+  });
+}
+
+export async function listPromptTemplates() {
+  return request<{ items: PromptTemplate[] }>("/api/plugins/prompt-templates");
+}
+
+export async function createPromptTemplate(payload: PromptTemplatePayload) {
+  return request<PromptTemplate>("/api/plugins/prompt-templates", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePromptTemplate(templateId: string, payload: PromptTemplatePayload) {
+  return request<PromptTemplate>(`/api/plugins/prompt-templates/${encodeURIComponent(templateId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePromptTemplate(templateId: string) {
+  return request<{ items: PromptTemplate[] }>(`/api/plugins/prompt-templates/${encodeURIComponent(templateId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getWarmPool() {

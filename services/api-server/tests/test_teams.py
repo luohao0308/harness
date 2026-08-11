@@ -1801,6 +1801,16 @@ def test_team_wake_stream_finishes_idle_and_returns_final_message(db_session: Se
         actor_id="test",
         model_runtime=runtime,
     )
+    failed_agent = service.get_agent(team_id, product["slot_id"])
+    failed_agent.status = "failed"
+    failed_agent.metadata_json = {
+        **failed_agent.metadata_json,
+        "wake": {
+            "in_progress": False,
+            "failed_at": "2026-05-23T08:01:00+00:00",
+            "last_error": "The read operation timed out",
+        },
+    }
     service.write_message(
         team_id=team_id,
         target=product["slot_id"],
@@ -1830,6 +1840,8 @@ def test_team_wake_stream_finishes_idle_and_returns_final_message(db_session: Se
     )
     assert product_after_wake["status"] == "idle"
     assert product_after_wake["metadata_json"]["wake"]["in_progress"] is False
+    assert "failed_at" not in product_after_wake["metadata_json"]["wake"]
+    assert "last_error" not in product_after_wake["metadata_json"]["wake"]
     assert product_after_wake["session_messages"][-1]["content"] == "我已完成本轮处理。"
     assert leader_after_wake["metadata_json"]["wake"].get("last_prompt_kind") is None
 
@@ -2035,10 +2047,15 @@ def test_team_wake_runs_assigned_task_without_new_message(db_session: Session) -
         model_runtime=runtime,
     )
     product_agent = service.get_agent(team_id, product["slot_id"])
-    product_agent.status = "idle"
+    product_agent.status = "failed"
     product_agent.metadata_json = {
         **product_agent.metadata_json,
-        "wake": {"has_prompted": True, "in_progress": False},
+        "wake": {
+            "has_prompted": True,
+            "in_progress": False,
+            "crashed_at": "2026-05-23T08:01:00+00:00",
+            "last_error": "process exited",
+        },
     }
     service.create_task(
         team_id=team_id,
@@ -2053,6 +2070,8 @@ def test_team_wake_runs_assigned_task_without_new_message(db_session: Session) -
 
     assert recovered.status == "idle"
     assert recovered.metadata_json["wake"]["last_prompt_kind"] == "full"
+    assert "crashed_at" not in recovered.metadata_json["wake"]
+    assert "last_error" not in recovered.metadata_json["wake"]
     assert "## Your Assigned Tasks" in recovered.metadata_json["wake"]["last_prompt"]
     assert "整理需求" in recovered.metadata_json["wake"]["last_prompt"]
 

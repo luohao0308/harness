@@ -36,8 +36,8 @@ The core UX constraint remains: chat space is primary, and Harness evidence shou
 - `apps/agent-console/README.md`
 - `apps/agent-console/src/app/ConsoleShell.tsx`
 - `apps/agent-console/src/app/__tests__/ConsoleShell.render.test.tsx`
-- `docs/task-progress.md`
-- `docs/ai/task-progress.yaml`
+- `docs/工作日志/archive/task-progress-legacy.md`
+- `docs/development/ai/task-progress.yaml`
 - `.gitignore`
 
 ## Browser Smoke Coverage

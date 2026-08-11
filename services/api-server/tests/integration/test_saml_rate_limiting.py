@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import base64
 import time
-from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -120,7 +119,7 @@ def test_login_endpoint_within_rate_limit(
     successful_requests = 0
 
     # Make 10 login requests (well under the 20/min limit)
-    for i in range(10):
+    for _ in range(10):
         response = client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
@@ -163,7 +162,7 @@ def test_login_endpoint_excessive_attempts_blocked(
     rate_limited_requests = 0
 
     # Simulate brute force attack with 100 rapid requests
-    for i in range(100):
+    for _ in range(100):
         response = client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
@@ -218,7 +217,7 @@ def test_login_rate_limit_reset_after_cooldown(
     to avoid long-running tests.
     """
     # Phase 1: Exceed rate limit
-    for i in range(RATE_LIMIT_MAX_REQUESTS + 5):
+    for _ in range(RATE_LIMIT_MAX_REQUESTS + 5):
         response = client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
@@ -298,7 +297,7 @@ def test_acs_endpoint_within_rate_limit(
         mock_extract.return_value = test_provider.entity_id
 
         # Make 10 ACS requests (under limit)
-        for i in range(10):
+        for _ in range(10):
             response = client.post(
                 "/api/auth/saml/acs",
                 data={"SAMLResponse": mock_saml_response},
@@ -336,7 +335,7 @@ def test_acs_endpoint_excessive_posts_blocked(
     rate_limited_requests = 0
 
     # Simulate DoS attack on ACS endpoint
-    for i in range(50):
+    for _ in range(50):
         response = client.post(
             "/api/auth/saml/acs",
             data={"SAMLResponse": mock_saml_response},
@@ -373,8 +372,8 @@ def test_different_ips_independent_rate_limits(
     - IP B requests succeed even when IP A is blocked
     """
     # Simulate IP A exceeding rate limit
-    for i in range(RATE_LIMIT_MAX_REQUESTS + 5):
-        response = client.post(
+    for _ in range(RATE_LIMIT_MAX_REQUESTS + 5):
+        client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
             headers={"X-Forwarded-For": "192.168.1.100"},
@@ -425,8 +424,8 @@ def test_same_ip_blocked_across_all_sso_endpoints(
     test_ip = "192.168.1.150"
 
     # Exceed rate limit on /login endpoint
-    for i in range(RATE_LIMIT_MAX_REQUESTS + 5):
-        response = client.post(
+    for _ in range(RATE_LIMIT_MAX_REQUESTS + 5):
+        client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
             headers={"X-Forwarded-For": test_ip},
@@ -476,8 +475,8 @@ def test_rate_limit_response_format(
     - Violation logged
     """
     # Exceed rate limit
-    for i in range(RATE_LIMIT_MAX_REQUESTS + 1):
-        response = client.post(
+    for _ in range(RATE_LIMIT_MAX_REQUESTS + 1):
+        client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
         )
@@ -548,7 +547,7 @@ def test_rate_limit_bypass_attempts_blocked(
     - Rate limit remains enforced
     """
     # Attempt 1: Exceed rate limit with base IP
-    for i in range(RATE_LIMIT_MAX_REQUESTS + 5):
+    for _ in range(RATE_LIMIT_MAX_REQUESTS + 5):
         response = client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
@@ -563,12 +562,6 @@ def test_rate_limit_bypass_attempts_blocked(
 
     # Attempt 2: Try to bypass with X-Forwarded-For spoofing
     # (This should still be rate limited if implementation is secure)
-    bypass_attempts = [
-        {"X-Forwarded-For": "1.1.1.1"},
-        {"X-Real-IP": "2.2.2.2"},
-        {"User-Agent": "Different-Agent-12345"},
-    ]
-
     # Note: If the implementation correctly uses the true client IP
     # (not easily spoofed headers), these should still be rate limited
     # This test documents the expected secure behavior
@@ -595,7 +588,7 @@ def test_concurrent_requests_near_rate_limit(
     - No more than RATE_LIMIT_MAX_REQUESTS total succeed
     """
     # Get close to rate limit
-    for i in range(RATE_LIMIT_MAX_REQUESTS - 2):
+    for _ in range(RATE_LIMIT_MAX_REQUESTS - 2):
         response = client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},
@@ -604,7 +597,7 @@ def test_concurrent_requests_near_rate_limit(
 
     # Make several requests that could race
     concurrent_responses = []
-    for i in range(5):
+    for _ in range(5):
         response = client.post(
             "/api/auth/saml/login",
             json={"provider_id": test_provider.id},

@@ -6,6 +6,7 @@ import { useI18n } from "../../../../lib/i18n";
 import { statusLabel } from "../../../../lib/labels";
 import { formatShortDate } from "../../../../lib/utils";
 import { BranchSwitcher } from "../../../agents/components/BranchSwitcher";
+import { ChatErrorBubble } from "../../../agents/components/ChatErrorBubble";
 import { ChatMessageBubble } from "../../../agents/components/ChatMessageBubble";
 import type { InspectorSection } from "../../../agents/lib/types";
 import type { ConversationNode } from "../../../../stores/workspaceStore";
@@ -52,21 +53,29 @@ export function TeamChatMessage({
     branchGroup?.branchNodeIds.findIndex((nodeId) => nodeId === entry.node.id) ?? -1;
   return (
     <div data-conversation-node-id={entry.node.id} className="space-y-1">
-      <ChatMessageBubble
-        node={entry.node}
-        onOpenInspector={(section) => onOpenInspector(section, entry.node)}
-        editingNodeId={editingMessageId}
-        onStartEdit={onStartEdit}
-        onCancelEdit={onCancelEdit}
-        onSaveEdit={onSaveEdit}
-        canRegenerate={canRegenerate}
-        isStreaming={false}
-        onCopy={onCopy}
-        onRegenerate={onRegenerate}
-        isPinned={pinnedMessageIds.includes(entry.node.id)}
-        onTogglePin={onTogglePin}
-        onBranch={entry.node.role === "assistant" ? () => onBranch(entry.node.id, entries) : undefined}
-      />
+      {entry.node.state === "error" && entry.node.metadata.error ? (
+        <ChatErrorBubble
+          node={entry.node}
+          error={entry.node.metadata.error}
+          onRetry={canRegenerate ? () => onRegenerate(entry.node.id) : undefined}
+        />
+      ) : (
+        <ChatMessageBubble
+          node={entry.node}
+          onOpenInspector={(section) => onOpenInspector(section, entry.node)}
+          editingNodeId={editingMessageId}
+          onStartEdit={onStartEdit}
+          onCancelEdit={onCancelEdit}
+          onSaveEdit={onSaveEdit}
+          canRegenerate={canRegenerate}
+          isStreaming={false}
+          onCopy={onCopy}
+          onRegenerate={onRegenerate}
+          isPinned={pinnedMessageIds.includes(entry.node.id)}
+          onTogglePin={onTogglePin}
+          onBranch={entry.node.role === "assistant" ? () => onBranch(entry.node.id, entries) : undefined}
+        />
+      )}
       {branchGroup && branchIndex >= 0 ? (
         <div className="ml-11 flex justify-start">
           <BranchSwitcher

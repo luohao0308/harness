@@ -241,6 +241,7 @@ describe("ToolRegistryPage marketplace controls", () => {
     await user.type(screen.getByLabelText("触发器路径"), "release-check");
     await user.click(screen.getByRole("button", { name: /创建触发器/ }));
 
+    expect(await screen.findByText("只显示一次的 Secret")).toBeInTheDocument();
     expect(await screen.findByText("htrg_test_secret")).toBeInTheDocument();
     expect((await screen.findAllByText(/\/api\/webhook\/trigger\/release-check/)).length).toBeGreaterThan(0);
     await waitFor(() => {

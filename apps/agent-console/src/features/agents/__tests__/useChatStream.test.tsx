@@ -432,6 +432,78 @@ describe("useChatStream run lifecycle callbacks", () => {
     });
   });
 
+  it("requests server cancellation after the stream has created a Run", async () => {
+    const onRunCancel = vi.fn(async (_runId: string) => undefined);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      hangingStreamResponse(
+        sseFrame("run_created", {
+          run_id: "run-cancel-request",
+          status: "RUNNING",
+          step_count: 0,
+          message: "started",
+        }),
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatStream({
+        agentId: "default",
+        workspaceMode: "chat",
+        onRunCancel,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    );
+
+    await act(async () => {
+      void result.current.start({ goal: "hello", mode: "chat" });
+    });
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().activeStream).not.toBeNull();
+    });
+
+    act(() => {
+      result.current.pause();
+    });
+
+    await waitFor(() => {
+      expect(onRunCancel).toHaveBeenCalledWith("run-cancel-request");
+    });
+  });
+
+  it("requests cancellation with the client Run ID before run_created arrives", async () => {
+    const onRunCancel = vi.fn(async (_runId: string) => undefined);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      hangingStreamResponse(""),
+    );
+
+    const { result } = renderHook(() =>
+      useChatStream({
+        agentId: "default",
+        workspaceMode: "chat",
+        onRunCancel,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
+    );
+
+    await act(async () => {
+      void result.current.start({ goal: "hello before first frame", mode: "chat" });
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const payload = JSON.parse(String(init?.body)) as { client_run_id?: string };
+    expect(payload.client_run_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    act(() => {
+      result.current.pause();
+    });
+
+    await waitFor(() => {
+      expect(onRunCancel).toHaveBeenCalledWith(payload.client_run_id);
+    });
+  });
+
   it("sends the full active path and leaves token trimming to the backend", async () => {
     useWorkspaceStore.getState().setContextMaxTokens(1);
     const oldNodeId = useWorkspaceStore.getState().appendNode({

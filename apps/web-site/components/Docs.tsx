@@ -22,12 +22,12 @@ const docs: Doc[] = [
   { k: "openapi-json", cat: "API", t: "OpenAPI JSON", s: "完整接口定义。可直接导入 Swagger UI / Apifox / Postman。", meta: "openapi.json", href: siteLinks.openapiJson, highlight: true },
   { k: "openapi-yaml", cat: "API", t: "OpenAPI YAML", s: "与 JSON 等价的 YAML 版本，便于 Git 审查与 diff。", meta: "openapi.yaml", href: siteLinks.openapiYaml, highlight: true },
   { k: "deploy", cat: "运维", t: "部署 Runbook", s: "Docker Compose 拓扑、systemd 单元、Nginx 配置与回归步骤。", meta: "markdown · 14 min", href: siteLinks.deployment },
-  { k: "migrate", cat: "运维", t: "数据库迁移", s: "Alembic 命令、生成迁移脚本与版本约定。", meta: "markdown · 4 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/runbooks/migrations.md" },
-  { k: "rollback", cat: "运维", t: "回滚", s: "API、Worker、Schema 三层回滚策略与验证清单。", meta: "markdown · 5 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/runbooks/rollback.md" },
+  { k: "migrate", cat: "运维", t: "数据库迁移", s: "Alembic 命令、生成迁移脚本与版本约定。", meta: "markdown · 4 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/project-memory/runbooks/migrations.md" },
+  { k: "rollback", cat: "运维", t: "回滚", s: "API、Worker、Schema 三层回滚策略与验证清单。", meta: "markdown · 5 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/project-memory/runbooks/rollback.md" },
   { k: "trouble", cat: "运维", t: "故障排查", s: "常见错误码、Sandbox 资源耗尽、Event 写入异常的定位方式。", meta: "markdown · 12 min", href: siteLinks.troubleshooting },
-  { k: "threat", cat: "安全", t: "安全威胁模型", s: "Bearer 鉴权、Sandbox 隔离与审计的设计取舍。", meta: "markdown · 10 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/security/threat-model.md" },
-  { k: "test", cat: "工程", t: "测试策略", s: "单测、集成、Replay 回放测试的分层与覆盖目标。", meta: "markdown · 6 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/qa/test-strategy.md" },
-  { k: "feat", cat: "工程", t: "功能说明文档", s: "已实现能力一览，与 OpenAPI、控制台页面的对应关系。", meta: "markdown · 9 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/human/features/README.md" },
+  { k: "threat", cat: "安全", t: "安全威胁模型", s: "Bearer 鉴权、Sandbox 隔离与审计的设计取舍。", meta: "markdown · 10 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/architecture/security/threat-model.md" },
+  { k: "test", cat: "工程", t: "测试策略", s: "单测、集成、Replay 回放测试的分层与覆盖目标。", meta: "markdown · 6 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/testing/qa/test-strategy.md" },
+  { k: "feat", cat: "工程", t: "功能说明文档", s: "已实现能力一览，与 OpenAPI、控制台页面的对应关系。", meta: "markdown · 9 min", href: "https://github.com/luohao0308/harness/blob/develop/docs/design/features/README.md" },
 ];
 
 const cats = ["全部", "入门", "API", "运维", "安全", "工程"];

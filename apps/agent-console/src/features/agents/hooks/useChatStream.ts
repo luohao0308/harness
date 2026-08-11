@@ -58,6 +58,24 @@ import { useStreamFlush } from "./useStreamFlush";
 const CONNECTION_TIMEOUT_MS = 10_000;
 /** Maximum body preview kept when the Content-Type rejects the stream. */
 const NON_SSE_PREVIEW_BYTES = 256;
+
+function createClientRunId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 type ServerStreamErrorKind = NonNullable<
   Extract<AgentChatStreamEvent, { type: "error" }>["kind"]
 >;
@@ -69,6 +87,8 @@ export type UseChatStreamArgs = {
   selectedModelId?: string | null;
   /** Invoked exactly once per run, with the `run_id` from `run_created`. */
   onRunCreated?: (runId: string) => void;
+  /** Cancels the server-side Run when a streamed generation is stopped. */
+  onRunCancel?: (runId: string) => Promise<void>;
   /** Current registry entries used to serialize `@tool` mentions. */
   tools?: readonly ToolMetadata[];
   /** Test hook; defaults to `globalThis.fetch`. */
@@ -129,6 +149,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
     selectedProviderId = null,
     selectedModelId = null,
     onRunCreated,
+    onRunCancel,
     tools = [],
     fetchImpl,
   } = args;
@@ -146,6 +167,9 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
   // Mutable refs live outside the render cycle. React never reads these
   // during render, so there is no tearing risk.
   const controllerRef = useRef<AbortController | null>(null);
+  // The backend persists this ID before emitting run_created, so Stop can
+  // cancel a run even while context assembly is still in progress.
+  const pendingRunIdRef = useRef<string | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchdogTimedOutRef = useRef(false);
 
@@ -386,9 +410,11 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
           watchdogTimedOut: watchdogTimedOutRef.current,
         });
       } finally {
-        if (controllerRef.current === abort) {
+        const ownsController = controllerRef.current === abort;
+        if (ownsController) {
           controllerRef.current = null;
           useWorkspaceStore.getState().setActiveStream(null);
+          pendingRunIdRef.current = null;
         }
         if (watchdogRef.current !== null) {
           clearTimeout(watchdogRef.current);
@@ -441,6 +467,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         messages: serializeMessages(activePath),
         active_leaf_id: store.activeLeafId,
         run_id: input.runId,
+        client_run_id: input.runId ? null : pendingRunIdRef.current,
         active_branch_id: store.activeLeafId,
         pinned_node_ids: store.pinnedNodeIds,
         context_window_turns: store.contextWindowTurns,
@@ -495,6 +522,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       });
 
       const abort = new AbortController();
+      pendingRunIdRef.current = createClientRunId();
       controllerRef.current = abort;
       store.setActiveStream({
         node_id: assistantNodeId,
@@ -519,6 +547,14 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
   const pause = useCallback((): void => {
     const current = controllerRef.current;
     if (current === null) return;
+    const preCancelStream = useWorkspaceStore.getState().activeStream;
+    const preCancelNode = preCancelStream
+      ? useWorkspaceStore.getState().nodesById[preCancelStream.node_id]
+      : null;
+    const cancelRunId = preCancelNode?.run_id ?? pendingRunIdRef.current;
+    if (cancelRunId && onRunCancel) {
+      void onRunCancel(cancelRunId).catch(() => undefined);
+    }
     // The terminal state is decided inside driveStream's catch block — this
     // keeps the error-over-abort precedence (Req 4.8) in one place.
     current.abort();
@@ -537,7 +573,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
         goal_message: "目标追踪已暂停。",
       },
     });
-  }, []);
+  }, [onRunCancel]);
 
   const resume = useCallback(
     async (pausedNodeId: string): Promise<void> => {
@@ -566,6 +602,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       if (!prevUser) return;
 
       const abort = new AbortController();
+      pendingRunIdRef.current = null;
       controllerRef.current = abort;
       store.setActiveStream({
         node_id: pausedNodeId,
@@ -647,6 +684,7 @@ export function useChatStream(args: UseChatStreamArgs): ChatStreamController {
       if (controllerRef.current !== null) return;
 
       const abort = new AbortController();
+      pendingRunIdRef.current = createClientRunId();
       controllerRef.current = abort;
 
       const store = useWorkspaceStore.getState();
@@ -777,6 +815,7 @@ async function runStream(opts: {
     `${API_BASE_URL}/api/agents/${opts.agentId}/runs/chat/stream`,
     {
       method: "POST",
+      credentials: "same-origin",
       headers: requestHeaders,
       body: JSON.stringify(opts.payload),
       signal: opts.signal,
@@ -882,13 +921,10 @@ async function tryParseDetail(res: Response): Promise<string | undefined> {
   try {
     const clone = res.clone();
     const json = (await clone.json()) as unknown;
-    if (
-      json !== null &&
-      typeof json === "object" &&
-      "detail" in json &&
-      typeof (json as { detail?: unknown }).detail === "string"
-    ) {
-      return (json as { detail: string }).detail;
+    if (json !== null && typeof json === "object" && "detail" in json) {
+      const detail = (json as { detail?: unknown }).detail;
+      if (typeof detail === "string") return detail;
+      if (detail !== undefined) return JSON.stringify(detail);
     }
     return undefined;
   } catch {
@@ -902,6 +938,7 @@ function classifyServerStreamErrorKind(
 ): ServerStreamErrorKind {
   if (explicitKind === "model_auth") return explicitKind;
   if (explicitKind === "rate_limited") return explicitKind;
+  if (/\bMODEL_SETUP_REQUIRED\b/i.test(detail)) return "model_auth";
   if (
     /HTTP\s+(401|403)\b/i.test(detail) &&
     (/api\s*key/i.test(detail) ||

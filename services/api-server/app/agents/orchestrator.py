@@ -611,6 +611,18 @@ class MultiAgentOrchestrator:
         agent_reduce_duration_seconds.observe(_duration_seconds(reduce_started_at, utc_now()))
 
     def _enqueue_assignment(self, *, run: Task, assignment: AgentAssignment) -> None:
+        from app.runtime_jobs.profile import is_local_runtime_profile
+
+        if is_local_runtime_profile():
+            from app.runtime_jobs.repository import RuntimeJobRepository
+
+            RuntimeJobRepository(self.session).enqueue(
+                kind="agent_assignment",
+                payload={"assignment_id": assignment.id},
+                dedupe_key=f"agent-assignment:{assignment.id}",
+            )
+            return
+
         from app.workers.agent_assignment_worker import run_agent_assignment
 
         try:

@@ -14,7 +14,7 @@ from urllib import error, request
 from urllib.parse import urljoin
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -96,6 +96,14 @@ class ModelAuthError(ModelGatewayError):
     pass
 
 
+class ModelSetupRequiredError(ModelGatewayError):
+    code = "MODEL_SETUP_REQUIRED"
+
+
+class ModelCallCancelledError(ModelGatewayError):
+    code = "MODEL_CALL_CANCELLED"
+
+
 MODEL_SETTINGS_KEY = "settings.models"
 PLATFORM_API_KEY_ENV = "AI_PROVIDER_API_KEY"
 MODEL_GATEWAY_USER_AGENT = "Harness-AI-Gateway/1.0"
@@ -161,7 +169,7 @@ def _platform_provider(model: str) -> dict:
         "platform_managed": True,
         "temperature": 0.2,
         "include_stream_usage": False,
-        "timeout_seconds": 30,
+        "timeout_seconds": 90,
         "health_timeout_seconds": 5,
         "rate_limit_rpm": 300,
         "rate_limit_tpm": 120000,
@@ -810,7 +818,10 @@ class OpenAICompatibleModelGateway:
         }
 
     def _uses_local_mock(self) -> bool:
-        return self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
+        uses_mock = self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
+        if uses_mock and get_settings().runtime_profile == "local":
+            raise ModelSetupRequiredError("Model provider setup is required")
+        return uses_mock
 
     def _extract_content(self, raw: dict) -> str:
         choices = raw.get("choices", [])
@@ -1053,7 +1064,10 @@ class AnthropicCompatibleModelGateway:
         return payload
 
     def _uses_local_mock(self) -> bool:
-        return self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
+        uses_mock = self.api_key in {"", "replace-me"} or self.base_url.endswith("/mock-model")
+        if uses_mock and get_settings().runtime_profile == "local":
+            raise ModelSetupRequiredError("Model provider setup is required")
+        return uses_mock
 
     def _normalize_usage(self, usage: dict) -> dict:
         prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
@@ -1490,6 +1504,28 @@ class AuditedModelGateway:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    def _transition_running_model_call(
+        self,
+        model_call: ModelCall,
+        **values,
+    ) -> bool:
+        # traced_operation persists its span in this session. Commit that span
+        # first, then use a conditional update so a cancellation committed by
+        # another request cannot be overwritten by a late provider result.
+        self.session.commit()
+        result = self.session.execute(
+            update(ModelCall)
+            .where(ModelCall.id == model_call.id, ModelCall.status == "RUNNING")
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            self.session.rollback()
+            self.session.refresh(model_call)
+            return False
+        self.session.refresh(model_call)
+        return True
+
     def complete(
         self,
         request_payload: ModelRequest,
@@ -1500,6 +1536,8 @@ class AuditedModelGateway:
         primary_error: str | None = None
         try:
             return self._attempt(request_payload, attempt_index=1)
+        except ModelCallCancelledError:
+            raise
         except ModelGatewayError as exc:
             primary_error = str(exc)
             if not fallbacks:
@@ -1527,6 +1565,8 @@ class AuditedModelGateway:
             )
             try:
                 return self._attempt(fallback, attempt_index=fallback_index + 1)
+            except ModelCallCancelledError:
+                raise
             except ModelGatewayError as exc:
                 last_error = exc
         if last_error is not None:
@@ -1629,16 +1669,23 @@ class AuditedModelGateway:
                 )
                 response_payload = gateway.complete(request_payload)
         except Exception as exc:
+            transitioned = self._transition_running_model_call(
+                model_call,
+                status="FAILED",
+                terminal_status="failed",
+                duration_ms=int((time.monotonic() - started_at) * 1000),
+                error_message=str(exc),
+            )
+            if not transitioned:
+                raise ModelCallCancelledError(
+                    model_call.error_message or "model call cancelled"
+                ) from exc
             if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
                 ModelCircuitBreaker.record_failure(
                     key=circuit_key,
                     failure_threshold=int(settings.circuit_breaker.get("failure_threshold") or 3),
                     cooldown_seconds=int(settings.circuit_breaker.get("cooldown_seconds") or 60),
                 )
-            model_call.status = "FAILED"
-            model_call.terminal_status = "failed"
-            model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
-            model_call.error_message = str(exc)
             self.event_store.append(
                 task_id=self.task_id,
                 agent_run_id=self.agent_run_id,
@@ -1661,17 +1708,23 @@ class AuditedModelGateway:
             raise ModelGatewayError(str(exc)) from exc
 
         usage = response_payload.usage
+        transitioned = self._transition_running_model_call(
+            model_call,
+            status="SUCCESS",
+            terminal_status="success",
+            prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+            completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+            response_json={
+                "content_preview": response_payload.content[:2000],
+                "usage": usage,
+                "raw_response": response_payload.raw_response,
+            },
+            error_message=None,
+        )
+        if not transitioned:
+            raise ModelCallCancelledError(model_call.error_message or "model call cancelled")
         ModelCircuitBreaker.record_success(key=circuit_key)
-        model_call.status = "SUCCESS"
-        model_call.terminal_status = "success"
-        model_call.prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-        model_call.completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-        model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
-        model_call.response_json = {
-            "content_preview": response_payload.content[:2000],
-            "usage": usage,
-            "raw_response": response_payload.raw_response,
-        }
         self.event_store.append(
             task_id=self.task_id,
             agent_run_id=self.agent_run_id,
@@ -1833,6 +1886,8 @@ class AuditedModelGateway:
         try:
             yield from self._attempt_stream(request_payload, attempt_index=1)
             return
+        except ModelCallCancelledError:
+            raise
         except ModelGatewayError as exc:
             primary_error = str(exc)
             if not fallbacks:
@@ -1861,6 +1916,8 @@ class AuditedModelGateway:
             try:
                 yield from self._attempt_stream(fallback, attempt_index=fallback_index + 1)
                 return
+            except ModelCallCancelledError:
+                raise
             except ModelGatewayError as exc:
                 last_error = exc
         if last_error is not None:
@@ -1984,10 +2041,15 @@ class AuditedModelGateway:
                         terminal_chunk = chunk
                         break
         except GeneratorExit:
-            model_call.status = "FAILED"
-            model_call.terminal_status = "stream_aborted"
-            model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
-            model_call.error_message = "stream closed before completion"
+            transitioned = self._transition_running_model_call(
+                model_call,
+                status="FAILED",
+                terminal_status="stream_aborted",
+                duration_ms=int((time.monotonic() - started_at) * 1000),
+                error_message="stream closed before completion",
+            )
+            if not transitioned:
+                raise
             self.event_store.append(
                 task_id=self.task_id,
                 agent_run_id=self.agent_run_id,
@@ -2006,19 +2068,26 @@ class AuditedModelGateway:
                     "terminal_status": model_call.terminal_status,
                 },
             )
-            self.session.flush()
+            self.session.commit()
             raise
         except Exception as exc:
+            transitioned = self._transition_running_model_call(
+                model_call,
+                status="FAILED",
+                terminal_status="failed",
+                duration_ms=int((time.monotonic() - started_at) * 1000),
+                error_message=str(exc),
+            )
+            if not transitioned:
+                raise ModelCallCancelledError(
+                    model_call.error_message or "model call cancelled"
+                ) from exc
             if not isinstance(exc, (ModelRateLimitError, ModelCircuitOpenError)):
                 ModelCircuitBreaker.record_failure(
                     key=circuit_key,
                     failure_threshold=int(settings.circuit_breaker.get("failure_threshold") or 3),
                     cooldown_seconds=int(settings.circuit_breaker.get("cooldown_seconds") or 60),
                 )
-            model_call.status = "FAILED"
-            model_call.terminal_status = "failed"
-            model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
-            model_call.error_message = str(exc)
             self.event_store.append(
                 task_id=self.task_id,
                 agent_run_id=self.agent_run_id,
@@ -2040,26 +2109,32 @@ class AuditedModelGateway:
                 raise
             raise ModelGatewayError(str(exc)) from exc
 
-        ModelCircuitBreaker.record_success(key=circuit_key)
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(
             usage.get("completion_tokens", 0) or max(1, len(text_accumulator) // 4)
         )
-        model_call.status = "SUCCESS"
-        model_call.terminal_status = "success"
-        model_call.prompt_tokens = prompt_tokens
-        model_call.completion_tokens = completion_tokens
-        model_call.duration_ms = int((time.monotonic() - started_at) * 1000)
-        model_call.response_json = {
-            "content_preview": text_accumulator[:2000],
-            "usage": {
-                **usage,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
+        transitioned = self._transition_running_model_call(
+            model_call,
+            status="SUCCESS",
+            terminal_status="success",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+            response_json={
+                "content_preview": text_accumulator[:2000],
+                "usage": {
+                    **usage,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+                "raw_response": raw_response,
+                "stream": True,
             },
-            "raw_response": raw_response,
-            "stream": True,
-        }
+            error_message=None,
+        )
+        if not transitioned:
+            raise ModelCallCancelledError(model_call.error_message or "model call cancelled")
+        ModelCircuitBreaker.record_success(key=circuit_key)
         self.event_store.append(
             task_id=self.task_id,
             agent_run_id=self.agent_run_id,

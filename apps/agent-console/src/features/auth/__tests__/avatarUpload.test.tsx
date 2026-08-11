@@ -9,8 +9,16 @@ const originalRevokeObjectUrl = URL.revokeObjectURL;
 afterEach(() => {
   vi.restoreAllMocks();
   globalThis.Image = originalImage;
-  URL.createObjectURL = originalCreateObjectUrl;
-  URL.revokeObjectURL = originalRevokeObjectUrl;
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    writable: true,
+    value: originalCreateObjectUrl,
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    writable: true,
+    value: originalRevokeObjectUrl,
+  });
 });
 
 describe("prepareAvatarUpload", () => {
@@ -21,8 +29,16 @@ describe("prepareAvatarUpload", () => {
   });
 
   it("resizes image files to a JPEG upload payload", async () => {
-    URL.createObjectURL = vi.fn(() => "blob:avatar");
-    URL.revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(() => "blob:avatar"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
     const drawImage = vi.fn();
     const jpegBlob = new Blob(["compressed-avatar"], { type: "image/jpeg" });
     const createElement = document.createElement.bind(document);

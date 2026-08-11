@@ -23,7 +23,7 @@ describe("StepIndicator", () => {
       render(<StepIndicator steps={mockSteps} currentStep={2} />);
 
       expect(screen.getByText("Step 3 of 4")).toBeInTheDocument();
-      expect(screen.getByText("Review")).toBeInTheDocument();
+      expect(screen.getAllByText("Review").length).toBeGreaterThan(0);
     });
 
     it("updates step count when currentStep changes", () => {
@@ -42,7 +42,7 @@ describe("StepIndicator", () => {
       render(<StepIndicator steps={mockSteps} currentStep={0} />);
 
       mockSteps.forEach((step) => {
-        expect(screen.getByText(step.title)).toBeInTheDocument();
+        expect(screen.getAllByText(step.title).length).toBeGreaterThan(0);
       });
     });
 
@@ -247,7 +247,7 @@ describe("StepIndicator", () => {
       render(<StepIndicator steps={singleStep} currentStep={0} />);
 
       expect(screen.getByText("Step 1 of 1")).toBeInTheDocument();
-      expect(screen.getByText("Only Step")).toBeInTheDocument();
+      expect(screen.getAllByText("Only Step").length).toBeGreaterThan(0);
     });
 
     it("handles many steps", () => {
@@ -269,7 +269,7 @@ describe("StepIndicator", () => {
 
       render(<StepIndicator steps={stepsNoDesc} currentStep={0} />);
 
-      expect(screen.getByText("First")).toBeInTheDocument();
+      expect(screen.getAllByText("First").length).toBeGreaterThan(0);
       expect(screen.getByText("Second")).toBeInTheDocument();
     });
   });

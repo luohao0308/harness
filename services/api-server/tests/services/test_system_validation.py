@@ -7,6 +7,7 @@ Tests cover:
 3. Disk space check (≥ 10 GB free)
 4. Memory check (≥ 4 GB available)
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -306,10 +307,11 @@ def test_check_migrations_status_pass(
     validation_service: ValidationService,
 ) -> None:
     """Test migration check passes when all migrations are applied."""
-    with patch("app.services.validation_service.Config") as mock_config_cls, \
-         patch("app.services.validation_service.ScriptDirectory") as mock_script_cls, \
-         patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls:
-
+    with (
+        patch("app.services.validation_service.Config") as mock_config_cls,
+        patch("app.services.validation_service.ScriptDirectory") as mock_script_cls,
+        patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls,
+    ):
         # Mock Alembic configuration
         mock_config = MagicMock()
         mock_config_cls.return_value = mock_config
@@ -340,10 +342,11 @@ def test_check_migrations_status_pending(
     validation_service: ValidationService,
 ) -> None:
     """Test migration check warns when there are pending migrations."""
-    with patch("app.services.validation_service.Config") as mock_config_cls, \
-         patch("app.services.validation_service.ScriptDirectory") as mock_script_cls, \
-         patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls:
-
+    with (
+        patch("app.services.validation_service.Config") as mock_config_cls,
+        patch("app.services.validation_service.ScriptDirectory") as mock_script_cls,
+        patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls,
+    ):
         # Mock Alembic configuration
         mock_config = MagicMock()
         mock_config_cls.return_value = mock_config
@@ -384,10 +387,11 @@ def test_check_migrations_status_no_revision(
     validation_service: ValidationService,
 ) -> None:
     """Test migration check fails when database has no migration applied."""
-    with patch("app.services.validation_service.Config") as mock_config_cls, \
-         patch("app.services.validation_service.ScriptDirectory") as mock_script_cls, \
-         patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls:
-
+    with (
+        patch("app.services.validation_service.Config") as mock_config_cls,
+        patch("app.services.validation_service.ScriptDirectory") as mock_script_cls,
+        patch("app.services.validation_service.MigrationContext") as mock_migration_ctx_cls,
+    ):
         # Mock Alembic configuration
         mock_config = MagicMock()
         mock_config_cls.return_value = mock_config
@@ -406,7 +410,10 @@ def test_check_migrations_status_no_revision(
 
         assert result["check"] == "database_migrations"
         assert result["status"] == "fail"
-        assert "not initialized" in result["message"].lower() or "no migration" in result["message"].lower()
+        assert (
+            "not initialized" in result["message"].lower()
+            or "no migration" in result["message"].lower()
+        )
         assert result["details"] is not None
         assert result["details"]["current_revision"] is None
 

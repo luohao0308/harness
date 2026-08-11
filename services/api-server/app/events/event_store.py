@@ -150,6 +150,8 @@ def replay_events_to_state(
             state["failure_point"] = None
         elif event.event_type == EventType.TASK_CANCELLED.value:
             state["status"] = "CANCELLED"
+        elif event.event_type == EventType.TASK_PAUSED.value:
+            state["status"] = "PAUSED"
         elif event.event_type == EventType.TASK_COMPLETED.value:
             state["status"] = "COMPLETED"
         elif event.event_type in {
@@ -161,7 +163,10 @@ def replay_events_to_state(
             EventType.LANGGRAPH_WORKFLOW_FAILED.value,
             EventType.LANGGRAPH_NODE_FAILED.value,
             EventType.LANGGRAPH_TOOL_NODE_DENIED.value,
-        }:
+        } and not (
+            event.event_type == EventType.MODEL_CALL_FAILED.value
+            and payload.get("cancelled") is True
+        ):
             state["status"] = "FAILED"
             state["failure_point"] = {
                 "sequence": event.sequence,

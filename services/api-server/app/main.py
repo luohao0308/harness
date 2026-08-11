@@ -13,14 +13,17 @@ from app.api.auth import router as auth_router
 from app.api.autofix import router as autofix_router
 from app.api.data_management import router as data_management_router
 from app.api.demo import router as demo_router
+from app.api.desktop_sync import router as desktop_sync_router
 from app.api.evals import router as evals_router
 from app.api.events import router as events_router
 from app.api.frontend_errors import router as frontend_errors_router
 from app.api.gateway import router as gateway_router
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
+from app.api.mobile import router as mobile_router
 from app.api.observability import router as observability_router
 from app.api.onboarding import router as onboarding_router
+from app.api.plugins import router as plugins_router
 from app.api.retention import router as retention_router
 from app.api.saml import router as saml_router
 from app.api.sandboxes import router as sandboxes_router
@@ -32,16 +35,23 @@ from app.api.subagent_specialists import router as subagent_specialists_router
 from app.api.subagents import router as subagents_router
 from app.api.tasks import router as tasks_router
 from app.api.teams import router as teams_router
+from app.api.terminal import router as terminal_router
 from app.api.tools import router as tools_router
 from app.api.triggers import router as triggers_router
 from app.api.users import router as users_router
 from app.api.validation import router as validation_router
 from app.bootstrap.first_admin import bootstrap_first_admin
+from app.bootstrap.local_owner import bootstrap_local_owner
 from app.core.config import get_settings, validate_startup_settings
 from app.core.logging import configure_json_logging
 from app.core.tracing import OpenTelemetryTraceMiddleware
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
+from app.local_runtime.api import router as local_runtime_router
+from app.local_runtime.security import LocalRuntimeRequestBoundaryMiddleware
+from app.runtime_jobs.profile import is_local_runtime_profile
+from app.runtime_jobs.scheduler import RuntimeJobCoordinator
 from app.security.auth import log_dev_token_status
+from app.security.secrets import SecretStorageUnavailableError
 from app.tools.adapter_registry import REGISTRY
 from app.tools.adapters import ensure_builtin_adapters_registered
 
@@ -50,6 +60,7 @@ settings = get_settings()
 
 DEV_CONSOLE_PORTS = tuple(range(5173, 5180)) + (15174,)
 DEV_CORS_ENVIRONMENTS = {"development", "test"}
+DESKTOP_RENDERER_ORIGIN = "harness-app://renderer"
 
 
 def build_cors_origins() -> list[str]:
@@ -58,7 +69,7 @@ def build_cors_origins() -> list[str]:
         str(settings.app_base_url).rstrip("/"),
         str(settings.api_base_url).rstrip("/"),
     }
-    origins = set(configured_origins)
+    origins = {*configured_origins, DESKTOP_RENDERER_ORIGIN}
     local_aliases = {"localhost": "127.0.0.1", "127.0.0.1": "localhost"}
     for origin in configured_origins:
         parsed = urlsplit(origin)
@@ -97,11 +108,21 @@ async def lifespan(_app: FastAPI):
     log_dev_token_status(startup_settings)
     ensure_builtin_adapters_registered(REGISTRY)
     with SessionLocal() as session:
-        bootstrap_first_admin(session, settings=startup_settings)
+        if startup_settings.runtime_profile == "local":
+            bootstrap_local_owner(session)
+        else:
+            bootstrap_first_admin(session, settings=startup_settings)
+    runtime_job_coordinator = None
+    if is_local_runtime_profile(startup_settings):
+        runtime_job_coordinator = RuntimeJobCoordinator(engine=engine)
+        await runtime_job_coordinator.start()
+        _app.state.runtime_job_coordinator = runtime_job_coordinator
     try:
         yield
     finally:
         _app.state.accepting_sse = False
+        if runtime_job_coordinator is not None:
+            await runtime_job_coordinator.stop()
 
 
 app = FastAPI(
@@ -126,6 +147,10 @@ app = FastAPI(
         {
             "name": "tools",
             "description": "Tool Registry, MCP, adapters, capabilities, and approvals.",
+        },
+        {
+            "name": "plugins",
+            "description": "Plugin marketplace, custom prompt templates, and desktop integrations.",
         },
         {
             "name": "evals",
@@ -158,6 +183,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(SecretStorageUnavailableError)
+async def secret_storage_unavailable_handler(_request, exc: SecretStorageUnavailableError):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": {"code": exc.code, "message": str(exc)}},
+    )
+
+
+@app.middleware("http")
+async def disable_server_login_surfaces_in_local_runtime(request, call_next):
+    if get_settings().runtime_profile == "local" and (
+        request.url.path.startswith("/api/saml")
+        or request.url.path in {"/api/auth/login", "/api/auth/register"}
+        or request.url.path.startswith("/api/auth/oauth")
+    ):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=build_cors_origins(),
@@ -166,6 +214,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(LocalRuntimeRequestBoundaryMiddleware)
 # NOTE (v4 agent-workspace-chat-v4-refine, Req 6.3):
 # Do NOT enable GZipMiddleware (or any Content-Encoding middleware) on routes
 # matching "*/runs/chat/stream" or "*/runs/plan/stream". Compressing SSE
@@ -183,6 +232,9 @@ except ImportError:
 
 app.include_router(health_router)
 app.include_router(metrics_router)
+app.include_router(local_runtime_router, prefix="/api")
+app.include_router(terminal_router)
+app.include_router(mobile_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(saml_router, prefix="/api")
 app.include_router(sessions_router, prefix="/api")
@@ -193,6 +245,7 @@ app.include_router(data_management_router, prefix="/api")
 app.include_router(retention_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(agents_router, prefix="/api")
+app.include_router(desktop_sync_router, prefix="/api")
 app.include_router(evals_router, prefix="/api")
 app.include_router(demo_router, prefix="/api")
 app.include_router(frontend_errors_router, prefix="/api")
@@ -204,6 +257,7 @@ app.include_router(validation_router, prefix="/api")
 app.include_router(tasks_router, prefix="/api")
 app.include_router(teams_router, prefix="/api")
 app.include_router(tools_router, prefix="/api")
+app.include_router(plugins_router, prefix="/api")
 app.include_router(triggers_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(events_router, prefix="/api")

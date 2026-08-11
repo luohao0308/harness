@@ -18,6 +18,9 @@
 
 import type { ConversationNode } from "../../../stores/workspaceStore";
 
+import { getWorkspaceScopeId, legacyWorkspaceStorageKey, workspaceScopedStorageKey } from "./workspaceScope";
+import { getWorkspacePersistenceStorage } from "../../../lib/workspace-persistence-storage";
+
 export const PERSISTED_SCHEMA_VERSION = 1;
 
 export type PersistedSnapshot = {
@@ -39,11 +42,11 @@ export type PersistedSnapshot = {
 let skipWrites = false;
 
 function storageKey(agentId: string): string {
-  return `harness.workspace.v2.${agentId}`;
+  return workspaceScopedStorageKey(getWorkspaceScopeId(), "v2", agentId);
 }
 
-function hasLocalStorage(): boolean {
-  return typeof localStorage !== "undefined";
+function legacyStorageKey(agentId: string): string {
+  return legacyWorkspaceStorageKey("v2", agentId);
 }
 
 export function saveSnapshot(
@@ -51,9 +54,10 @@ export function saveSnapshot(
   snapshot: PersistedSnapshot,
 ): boolean {
   if (skipWrites) return false;
-  if (!hasLocalStorage()) return false;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return false;
   try {
-    localStorage.setItem(storageKey(agentId), JSON.stringify(snapshot));
+    storage.setItem(storageKey(agentId), JSON.stringify(snapshot));
     return true;
   } catch (err) {
     skipWrites = true;
@@ -94,10 +98,16 @@ function isNodesRecord(
 }
 
 export function loadSnapshot(agentId: string): PersistedSnapshot | null {
-  if (!hasLocalStorage()) return null;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return null;
   let raw: string | null;
+  let usedLegacyKey = false;
   try {
-    raw = localStorage.getItem(storageKey(agentId));
+    raw = storage.getItem(storageKey(agentId));
+    if (raw === null) {
+      raw = storage.getItem(legacyStorageKey(agentId));
+      usedLegacyKey = raw !== null;
+    }
   } catch {
     return null;
   }
@@ -127,6 +137,15 @@ export function loadSnapshot(agentId: string): PersistedSnapshot | null {
     if (typeof candidate.draft !== "string") return null;
     if (!isStringArray(candidate.dismissedPlanNodeIds)) return null;
 
+    if (usedLegacyKey) {
+      try {
+        storage.setItem(storageKey(agentId), raw);
+        storage.removeItem(legacyStorageKey(agentId));
+      } catch {
+        /* ignore migration failures */
+      }
+    }
+
     return {
       version: PERSISTED_SCHEMA_VERSION,
       nodesById: rewriteStreamingNodes(candidate.nodesById),
@@ -143,9 +162,11 @@ export function loadSnapshot(agentId: string): PersistedSnapshot | null {
 }
 
 export function clearSnapshot(agentId: string): void {
-  if (!hasLocalStorage()) return;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return;
   try {
-    localStorage.removeItem(storageKey(agentId));
+    storage.removeItem(storageKey(agentId));
+    storage.removeItem(legacyStorageKey(agentId));
   } catch {
     /* ignore — persistence already disabled or storage missing */
   }

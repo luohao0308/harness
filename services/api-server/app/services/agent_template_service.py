@@ -6,9 +6,9 @@ Templates provide pre-configured agent setups with system prompts, tools, and se
 
 Story 5.2: Adds template instantiation with parameter substitution.
 """
+
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, TypedDict
 from uuid import uuid4
 
@@ -77,9 +77,13 @@ class AgentTemplateService:
         Returns:
             List of template dictionaries with all fields including config
         """
-        templates = self.session.execute(
-            select(AgentTemplate).where(AgentTemplate.is_active == True).order_by(AgentTemplate.name)
-        ).scalars().all()
+        templates = (
+            self.session.execute(
+                select(AgentTemplate).where(AgentTemplate.is_active).order_by(AgentTemplate.name)
+            )
+            .scalars()
+            .all()
+        )
 
         return [self._template_to_dict(template) for template in templates]
 
@@ -98,7 +102,7 @@ class AgentTemplateService:
         template = self.session.execute(
             select(AgentTemplate).where(
                 AgentTemplate.id == template_id,
-                AgentTemplate.is_active == True,
+                AgentTemplate.is_active,
             )
         ).scalar_one_or_none()
 
@@ -156,7 +160,7 @@ class AgentTemplateService:
         template_model = self.session.execute(
             select(AgentTemplate).where(
                 AgentTemplate.id == template_id,
-                AgentTemplate.is_active == True,
+                AgentTemplate.is_active,
             )
         ).scalar_one_or_none()
 
@@ -223,9 +227,7 @@ class AgentTemplateService:
         missing_params = [param for param in required_params if param not in parameters]
 
         if missing_params:
-            raise ValueError(
-                f"Missing required parameter(s): {', '.join(missing_params)}"
-            )
+            raise ValueError(f"Missing required parameter(s): {', '.join(missing_params)}")
 
     def apply_template_config(
         self,

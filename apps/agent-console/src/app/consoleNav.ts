@@ -1,5 +1,6 @@
 export type ConsoleNavIconKey =
   | "activity"
+  | "appWindow"
   | "audit"
   | "bot"
   | "box"
@@ -17,6 +18,7 @@ export type ConsoleNavIconKey =
   | "settings"
   | "shield"
   | "store"
+  | "terminal"
   | "tools"
   | "users";
 
@@ -40,6 +42,7 @@ export const consoleNavEntries = [
   { to: "/agents", label: "智能体", iconKey: "bot" },
   { to: "/teams", label: "团队", iconKey: "network" },
   { to: "/runs", label: "运行历史", iconKey: "runs" },
+  { to: "/desktop", label: "桌面", iconKey: "appWindow" },
   {
     id: "agent-marketplace",
     label: "专家与子代理",
@@ -59,6 +62,7 @@ export const consoleNavEntries = [
       { to: "/tools", label: "工具市场", iconKey: "tools" },
       { to: "/tools/config", label: "工具配置", iconKey: "settings" },
       { to: "/sandboxes", label: "沙箱", iconKey: "box" },
+      { to: "/terminal", label: "终端", iconKey: "terminal" },
     ],
   },
   { to: "/observability", label: "观测", iconKey: "activity" },

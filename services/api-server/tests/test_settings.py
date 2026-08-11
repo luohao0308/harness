@@ -53,7 +53,7 @@ def test_default_model_settings_include_platform_managed_models() -> None:
     assert flash["managed_by_platform"] is True
     assert flash["temperature"] == 0.2
     assert flash["include_stream_usage"] is False
-    assert flash["timeout_seconds"] == 30
+    assert flash["timeout_seconds"] == 90
     assert "mimo-v2.5" in flash["allowed_models"]
     assert pro["model"] == "deepseek-v4-pro"
     assert pro["api_key_env"] == "AI_PROVIDER_API_KEY"

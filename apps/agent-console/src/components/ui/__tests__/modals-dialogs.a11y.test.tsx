@@ -94,7 +94,7 @@ describe("Modals and Dialogs Accessibility", () => {
         </ConfigDialog>,
       );
 
-      const closeButton = screen.getByRole("button", { name: /close/i });
+      const closeButton = screen.getByRole("button", { name: /close|关闭/i });
       expect(closeButton).toBeInTheDocument();
     });
 
@@ -139,7 +139,7 @@ describe("Modals and Dialogs Accessibility", () => {
         </ConfigDialog>,
       );
 
-      const closeButton = screen.getByRole("button", { name: /close/i });
+      const closeButton = screen.getByRole("button", { name: /close|关闭/i });
       closeButton.focus();
       expect(closeButton).toHaveFocus();
 

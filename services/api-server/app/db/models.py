@@ -36,6 +36,21 @@ class Base(DeclarativeBase):
     pass
 
 
+class DeletedEntity(Base):
+    """Track deleted entities for sync purposes."""
+
+    __tablename__ = "deleted_entities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    entity_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    deleted_by: Mapped[str] = mapped_column(String(36), nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    data_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
@@ -259,6 +274,10 @@ class UserSession(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# Preserve the historical import name used by SSO integrations and tests.
+Session = UserSession
 
 
 class ApiKey(Base):
@@ -2424,6 +2443,28 @@ class NotificationChannel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class MobileDevice(Base):
+    __tablename__ = "mobile_devices"
+    __table_args__ = (
+        UniqueConstraint("push_token", name="mobile_devices_push_token_uidx"),
+        Index("ix_mobile_devices_user_platform", "user_id", "platform"),
+        Index("ix_mobile_devices_org_enabled", "organization_id", "notifications_enabled"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    push_token: Mapped[str] = mapped_column(Text, nullable=False)
+    device_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    app_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preferences_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class OnboardingState(Base):
     """
     Global onboarding state per user (Story 1.1).
@@ -2589,3 +2630,52 @@ class StoredSecret(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeJob(Base):
+    __tablename__ = "runtime_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="runtime_jobs_status_chk",
+        ),
+        CheckConstraint("attempt >= 0", name="runtime_jobs_attempt_chk"),
+        CheckConstraint("max_attempts >= 1", name="runtime_jobs_max_attempts_chk"),
+        CheckConstraint("lease_generation >= 0", name="runtime_jobs_lease_generation_chk"),
+        Index("ix_runtime_jobs_claim", "status", "available_at", "created_at"),
+        Index("ix_runtime_jobs_lease", "status", "lease_until"),
+        Index(
+            "ix_runtime_jobs_active_dedupe_uidx",
+            "dedupe_key",
+            unique=True,
+            sqlite_where=text(
+                "dedupe_key IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+            postgresql_where=text(
+                "dedupe_key IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    kind: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued", index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

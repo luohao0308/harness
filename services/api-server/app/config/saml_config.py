@@ -6,12 +6,16 @@ Loads X.509 certificates and configures SAML endpoints.
 
 Story 1.1 - SAML Service Provider Setup
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TypedDict
 
 from app.core.config import get_settings
+
+_API_SERVER_ROOT = Path(__file__).resolve().parents[2]
+_CERTIFICATE_DIR = _API_SERVER_ROOT / "certs"
 
 
 class SAMLConfig(TypedDict):
@@ -38,8 +42,8 @@ def get_saml_config() -> SAMLConfig:
     settings = get_settings()
     api_base = str(settings.api_base_url).rstrip("/")
 
-    cert_path = Path("services/api-server/certs/saml_sp.crt")
-    key_path = Path("services/api-server/certs/saml_sp.key")
+    cert_path = _CERTIFICATE_DIR / "saml_sp.crt"
+    key_path = _CERTIFICATE_DIR / "saml_sp.key"
 
     if not cert_path.exists():
         raise FileNotFoundError(f"SAML SP certificate not found: {cert_path}")

@@ -63,7 +63,7 @@ cd services/api-server && DATABASE_URL=sqlite:////tmp/harness-p5-alembic.sqlite 
 Tracked report:
 
 ```text
-docs/reports/p5-mcp-skills-code-review-and-manual-test-2026-05-17.html
+docs/工作日志/reports/p5-mcp-skills-code-review-and-manual-test-2026-05-17.html
 ```
 
 The report explains the new capability boundary and lists only user-facing frontend manual test operations.

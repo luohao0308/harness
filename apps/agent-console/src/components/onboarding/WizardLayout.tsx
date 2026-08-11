@@ -72,7 +72,7 @@ export function WizardLayout({
               onClick={onSkip}
               className="rounded-md text-sm text-slate-600 transition-colors hover:text-slate-900 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               type="button"
-              aria-label="Skip setup wizard"
+              aria-label={skipLabel}
             >
               {skipLabel}
             </button>

@@ -664,7 +664,7 @@ def write_subagent_output(
     except SpecialistValidationError as exc:
         session.commit()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     except ValueError as exc:

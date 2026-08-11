@@ -12,8 +12,10 @@ test.describe("enterprise cross-feature harness chains", () => {
 
     await page.goto("/settings/models");
     await expectNoRouteError(page);
-    await expect(page.locator("body")).toContainText("deepseek-flash/deepseek-v4-flash");
-    await expect(page.locator("body")).toContainText("kimi/kimi-k2.6");
+    await expect(page.locator("body")).toContainText("DeepSeek Flash");
+    await expect(page.locator("body")).toContainText("deepseek-v4-flash");
+    await expect(page.locator("body")).toContainText("Kimi K2.6");
+    await expect(page.locator("body")).toContainText("kimi-k2.6");
     await expect(page.locator("body")).not.toContainText("USD rollup blocked");
 
     await page.goto(`/runs/${enterpriseIds.runId}`);

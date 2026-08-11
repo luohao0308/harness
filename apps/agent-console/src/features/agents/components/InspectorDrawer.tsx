@@ -21,7 +21,15 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import * as echarts from "echarts";
+import type { EChartsOption } from "echarts";
+import { use as useECharts, init as initECharts } from "echarts/core";
+import { BarChart, LineChart, PieChart } from "echarts/charts";
+import {
+  GridComponent,
+  TitleComponent,
+  TooltipComponent,
+} from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
 import { Link } from "react-router-dom";
 import { Check, ExternalLink, FileCode2, Pencil, Shield, X } from "lucide-react";
 
@@ -43,6 +51,16 @@ import {
 import { chartOptionFromArtifactData } from "../lib/chartArtifacts";
 import { runDetailPath } from "../lib/runLinks";
 import type { InspectorSection } from "../lib/types";
+
+useECharts([
+  BarChart,
+  LineChart,
+  PieChart,
+  GridComponent,
+  TitleComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
 
 export type UsageSummary = {
   inputTokens: number;
@@ -350,13 +368,13 @@ function ArtifactPreview({ artifact }: { artifact: ConversationArtifact }): JSX.
   );
 }
 
-function ChartArtifact({ option }: { option: echarts.EChartsOption }): JSX.Element {
+function ChartArtifact({ option }: { option: EChartsOption }): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const chart = echarts.init(container, undefined, { renderer: "canvas" });
+    const chart = initECharts(container, undefined, { renderer: "canvas" });
     chart.setOption(option, true);
 
     const resize = () => chart.resize();

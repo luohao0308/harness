@@ -27,6 +27,7 @@ def test_auth_config_reports_registration_and_hides_placeholder_oauth() -> None:
 
 def test_public_registration_defaults_to_closed_in_production() -> None:
     settings = Settings(
+        _env_file=None,
         APP_ENV="production",
         AUTH_JWT_SECRET="production-test-secret-32-characters-min",
         HARNESS_SECRET_ENCRYPTION_KEY="production-secret-encryption-key-32-min",

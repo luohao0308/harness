@@ -498,7 +498,7 @@ describe("EvalHarnessPage LangGraph contrast experiments", () => {
       if (path === "/api/evals/results/pending-review" && !init?.method) {
         return jsonResponse(approved ? [] : [pendingReviewResult()]);
       }
-      if (path === "/api/evals/results/eval-result-review-1/review" && init?.method === "PATCH") {
+      if (path === "/api/evals/results/eval-result-review-1/review" && init?.method === "POST") {
         expect(JSON.parse(String(init.body))).toEqual({ verdict: "approved" });
         approved = true;
         return jsonResponse({
@@ -520,7 +520,7 @@ describe("EvalHarnessPage LangGraph contrast experiments", () => {
       const approveCall = fetchMock.mock.calls.find(
         ([input, init]) =>
           requestPath(input) === "/api/evals/results/eval-result-review-1/review" &&
-          init?.method === "PATCH",
+          init?.method === "POST",
       );
       expect(approveCall).toBeDefined();
     });

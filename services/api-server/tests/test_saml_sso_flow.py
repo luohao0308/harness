@@ -4,18 +4,17 @@ Test SAML SP-Initiated SSO Flow
 Story 2.1 - SP-Initiated SSO Flow
 Tests SSO login flow, SAML AuthnRequest generation, and ACS handling.
 """
+
 from __future__ import annotations
 
 import base64
-import re
+import zlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
-from onelogin.saml2.auth import OneLogin_Saml2_Auth
-from onelogin.saml2.response import OneLogin_Saml2_Response
 from sqlalchemy.orm import Session
 
 from app.db.models import SAMLProvider, User
@@ -90,7 +89,7 @@ def test_saml_login_initiate_success(
 
     # Should be decodable
     try:
-        decoded = base64.b64decode(saml_request)
+        decoded = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
         assert b"AuthnRequest" in decoded or b"samlp:AuthnRequest" in decoded
     except Exception as e:
         pytest.fail(f"SAMLRequest not properly base64 encoded: {e}")
@@ -141,7 +140,7 @@ def test_saml_service_generate_authn_request(saml_provider: SAMLProvider) -> Non
 
     # SAMLRequest should be base64 encoded
     saml_request = authn_request_data["saml_request"]
-    decoded = base64.b64decode(saml_request)
+    decoded = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
     assert b"AuthnRequest" in decoded or b"samlp:AuthnRequest" in decoded
 
 
@@ -330,6 +329,7 @@ def test_saml_service_update_existing_user(db_session: Session) -> None:
 
 
 # Story 2.2 - SAML Assertion Validation Tests
+
 
 # Test 11: Validate SAML signature with valid certificate
 @patch("app.services.saml_service.OneLogin_Saml2_Auth")
@@ -543,7 +543,6 @@ def test_process_saml_response_with_full_validation(
     mock_auth_instance.get_errors.return_value = []
 
     # Mock assertion attributes
-    now = datetime.now(UTC)
     mock_auth_instance.get_attributes.return_value = {
         "email": ["validated-user@example.com"],
         "firstName": ["Validated"],
@@ -596,7 +595,7 @@ def test_saml_service_initiate_logout(saml_provider: SAMLProvider) -> None:
 
     # Should be decodable and contain LogoutRequest
     try:
-        decoded = base64.b64decode(saml_request)
+        decoded = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
         assert b"LogoutRequest" in decoded or b"samlp:LogoutRequest" in decoded
     except Exception as e:
         pytest.fail(f"SAMLRequest not properly base64 encoded: {e}")
@@ -672,6 +671,7 @@ def test_saml_logout_initiate_success(
 
     # Extract session ID from access token
     import jwt
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -763,26 +763,11 @@ def test_saml_acs_idp_initiated_no_relay_state(
     # Simulate SAML Response without RelayState (IdP-initiated)
     saml_response = base64.b64encode(b"<fake-saml-response>").decode("utf-8")
 
-    # For IdP-initiated, we need to identify the provider by entity_id from SAML response
-    # Mock the issuer extraction
-    with patch("app.services.saml_service.OneLogin_Saml2_Auth") as mock_auth_class:
-        mock_auth = MagicMock()
-        mock_auth.is_authenticated.return_value = True
-        mock_auth.get_attributes.return_value = {
-            "email": ["idp-user@example.com"],
-            "firstName": ["IdP"],
-            "lastName": ["User"],
-        }
-        mock_auth.get_nameid.return_value = "idp-user@example.com"
-        mock_auth.get_errors.return_value = []
-
-        # Mock get_last_response_xml to extract issuer
-        mock_response_obj = MagicMock()
-        mock_response_obj.get_issuer.return_value = saml_provider.entity_id
-        mock_auth.get_last_response_xml.return_value = mock_response_obj
-
-        mock_auth_class.return_value = mock_auth
-
+    # Issuer extraction is performed before provider-specific signature validation.
+    with patch(
+        "app.services.saml_service.SAMLService.extract_issuer_from_response",
+        return_value=saml_provider.entity_id,
+    ):
         response = client.post(
             "/api/auth/saml/acs",
             data={
@@ -850,22 +835,21 @@ def test_saml_acs_idp_initiated_provider_lookup(
     mock_auth_instance.get_nameid.return_value = "lookup-user@example.com"
     mock_auth_instance.get_errors.return_value = []
 
-    # Mock getting issuer from response
-    mock_response = MagicMock()
-    mock_response.get_issuer.return_value = saml_provider.entity_id
-    mock_auth_instance.get_last_response_xml.return_value = mock_response
-
     mock_saml_auth.return_value = mock_auth_instance
 
     saml_response = base64.b64encode(b"<saml-response>").decode("utf-8")
 
-    response = client.post(
-        "/api/auth/saml/acs",
-        data={
-            "SAMLResponse": saml_response,
-            # No RelayState
-        },
-    )
+    with patch(
+        "app.services.saml_service.SAMLService.extract_issuer_from_response",
+        return_value=saml_provider.entity_id,
+    ):
+        response = client.post(
+            "/api/auth/saml/acs",
+            data={
+                "SAMLResponse": saml_response,
+                # No RelayState
+            },
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -879,23 +863,19 @@ def test_saml_acs_idp_initiated_unknown_issuer(
     db_session: Session,
 ) -> None:
     """Test IdP-initiated SSO with unknown SAML issuer (no matching provider)."""
-    # Mock OneLogin SAML Auth with unknown issuer
-    mock_auth_instance = MagicMock()
-    mock_response = MagicMock()
-    mock_response.get_issuer.return_value = "https://unknown-idp.example.com/metadata"
-    mock_auth_instance.get_last_response_xml.return_value = mock_response
-
-    mock_saml_auth.return_value = mock_auth_instance
-
     saml_response = base64.b64encode(b"<saml-response>").decode("utf-8")
 
-    response = client.post(
-        "/api/auth/saml/acs",
-        data={
-            "SAMLResponse": saml_response,
-            # No RelayState
-        },
-    )
+    with patch(
+        "app.services.saml_service.SAMLService.extract_issuer_from_response",
+        return_value="https://unknown-idp.example.com/metadata",
+    ):
+        response = client.post(
+            "/api/auth/saml/acs",
+            data={
+                "SAMLResponse": saml_response,
+                # No RelayState
+            },
+        )
 
     assert response.status_code == 404
     assert "provider" in response.json()["detail"].lower()
@@ -907,7 +887,7 @@ def test_saml_idp_initiated_security_validation(
     mock_saml_auth: MagicMock,
     saml_provider: SAMLProvider,
 ) -> None:
-    """Test that security validation (signature, audience, timing) still enforced for IdP-initiated."""
+    """Test that IdP-initiated responses retain full security validation."""
     service = SAMLService()
 
     # Mock validation failure (invalid signature)
@@ -944,22 +924,21 @@ def test_saml_acs_idp_initiated_default_redirect(
     mock_auth_instance.get_nameid.return_value = "redirect-user@example.com"
     mock_auth_instance.get_errors.return_value = []
 
-    # Mock issuer lookup
-    mock_response = MagicMock()
-    mock_response.get_issuer.return_value = saml_provider.entity_id
-    mock_auth_instance.get_last_response_xml.return_value = mock_response
-
     mock_saml_auth.return_value = mock_auth_instance
 
     saml_response = base64.b64encode(b"<saml-response>").decode("utf-8")
 
-    response = client.post(
-        "/api/auth/saml/acs",
-        data={
-            "SAMLResponse": saml_response,
-            # No RelayState - should use default redirect
-        },
-    )
+    with patch(
+        "app.services.saml_service.SAMLService.extract_issuer_from_response",
+        return_value=saml_provider.entity_id,
+    ):
+        response = client.post(
+            "/api/auth/saml/acs",
+            data={
+                "SAMLResponse": saml_response,
+                # No RelayState - should use default redirect
+            },
+        )
 
     assert response.status_code == 200
     data = response.json()

@@ -3,10 +3,11 @@ Tests for SessionService (Story 4.1 - SSO Session Lifecycle Management)
 
 Tests JWT token generation, session CRUD, token validation, refresh, and expiration.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import jwt
 import pytest
@@ -214,7 +215,7 @@ class TestValidateToken:
         }
         invalid_token = jwt.encode(
             token_data,
-            "wrong-secret",
+            "wrong-secret-used-only-for-signature-tests",
             algorithm="HS256",
         )
 
@@ -321,6 +322,68 @@ class TestRevokeSession:
         result = session_service.revoke_session("nonexistent-session")
 
         assert result is False
+
+    def test_revoke_already_revoked_session(
+        self,
+        session_service: SessionService,
+        db_session: MagicMock,
+    ) -> None:
+        """Should reject repeated revocation without rewriting the session."""
+        mock_session = MagicMock()
+        mock_session.revoked_at = datetime.now(UTC)
+        db_session.query.return_value.filter.return_value.first.return_value = mock_session
+
+        result = session_service.revoke_session("session-123")
+
+        assert result is False
+        db_session.commit.assert_not_called()
+
+
+class TestValidateSession:
+    """Test persisted session state validation by session ID."""
+
+    def test_active_session_is_valid(
+        self,
+        session_service: SessionService,
+        db_session: MagicMock,
+    ) -> None:
+        mock_session = MagicMock()
+        mock_session.revoked_at = None
+        mock_session.expires_at = datetime.now(UTC) + timedelta(minutes=5)
+        db_session.query.return_value.filter.return_value.first.return_value = mock_session
+
+        assert session_service.validate_session("session-123") is True
+
+    @pytest.mark.parametrize(
+        ("session", "expected"),
+        [
+            (None, False),
+            (
+                MagicMock(
+                    revoked_at=datetime.now(UTC),
+                    expires_at=datetime.now(UTC) + timedelta(minutes=5),
+                ),
+                False,
+            ),
+            (
+                MagicMock(
+                    revoked_at=None,
+                    expires_at=datetime.now(UTC) - timedelta(minutes=5),
+                ),
+                False,
+            ),
+        ],
+    )
+    def test_inactive_session_is_invalid(
+        self,
+        session_service: SessionService,
+        db_session: MagicMock,
+        session: MagicMock | None,
+        expected: bool,
+    ) -> None:
+        db_session.query.return_value.filter.return_value.first.return_value = session
+
+        assert session_service.validate_session("session-123") is expected
 
 
 class TestGetSession:
@@ -533,7 +596,7 @@ class TestRefreshTokenSecurity:
                 "iat": datetime.now(UTC).timestamp(),
                 "jti": "session-123",
             },
-            "wrong-secret-attacker-generated",
+            "wrong-secret-attacker-generated-for-tests",
             algorithm="HS256",
         )
 

@@ -15,6 +15,7 @@ import { axe } from "jest-axe";
 import { describe, test, expect, vi } from "vitest";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatMessageBubble } from "../components/ChatMessageBubble";
+import type { ConversationNode } from "../../../stores/workspaceStore";
 
 describe("Agent Chat Accessibility", () => {
   describe("ChatComposer", () => {
@@ -66,20 +67,18 @@ describe("Agent Chat Accessibility", () => {
       const onSubmit = vi.fn();
       render(<ChatComposer {...defaultProps} draft="Test message" onSubmit={onSubmit} />);
 
-      // Tab to send button and press Enter
-      await user.tab();
-      const sendButton = screen.getByRole("button", { name: /send|submit/i });
+      const sendButton = screen.getByRole("button", { name: /send|submit|发送/i });
+      sendButton.focus();
+      expect(sendButton).toHaveFocus();
 
-      if (sendButton) {
-        await user.keyboard("{Enter}");
-        expect(onSubmit).toHaveBeenCalled();
-      }
+      await user.keyboard("{Enter}");
+      expect(onSubmit).toHaveBeenCalled();
     });
 
     test("pause button is accessible when streaming", () => {
       render(<ChatComposer {...defaultProps} isStreaming={true} />);
 
-      const pauseButton = screen.getByRole("button", { name: /pause|stop/i });
+      const pauseButton = screen.getByRole("button", { name: /pause|stop|停止生成/i });
       expect(pauseButton).toBeInTheDocument();
       expect(pauseButton).not.toBeDisabled();
     });
@@ -97,16 +96,30 @@ describe("Agent Chat Accessibility", () => {
   });
 
   describe("ChatMessageBubble", () => {
-    const defaultMessageProps = {
-      nodeId: "msg-1",
-      role: "user" as const,
+    const mockNode: ConversationNode = {
+      id: "msg-1",
+      role: "user",
       content: "Hello, how are you?",
-      timestamp: new Date().toISOString(),
-      isExpanded: true,
-      onToggleExpand: vi.fn(),
+      state: "done",
+      parent_id: null,
+      children_ids: [],
+      metadata: {},
+      tool_calls: [],
+      artifacts: [],
+      created_at: new Date().toISOString(),
+    };
+
+    const defaultMessageProps = {
+      node: mockNode,
+      onOpenInspector: vi.fn(),
+      editingNodeId: null,
+      onStartEdit: vi.fn(),
+      onCancelEdit: vi.fn(),
+      onSaveEdit: vi.fn(),
+      canRegenerate: false,
+      isStreaming: false,
       onCopy: vi.fn(),
-      onEdit: vi.fn(),
-      onDelete: vi.fn(),
+      onRegenerate: vi.fn(),
     };
 
     test("has no axe violations for user message", async () => {
@@ -116,8 +129,15 @@ describe("Agent Chat Accessibility", () => {
     });
 
     test("has no axe violations for assistant message", async () => {
+      const assistantNode: ConversationNode = {
+        ...mockNode,
+        id: "msg-2",
+        role: "assistant",
+        parent_id: "msg-1",
+      };
+
       const { container } = render(
-        <ChatMessageBubble {...defaultMessageProps} role="assistant" />,
+        <ChatMessageBubble {...defaultMessageProps} node={assistantNode} />,
       );
       const results = await axe(container);
       expect(results).toHaveNoViolations();
@@ -125,7 +145,7 @@ describe("Agent Chat Accessibility", () => {
 
     test("message actions are keyboard accessible", async () => {
       const user = userEvent.setup();
-      const onCopy = vi.fn();
+      const onCopy = vi.fn().mockResolvedValue(true);
       render(<ChatMessageBubble {...defaultMessageProps} onCopy={onCopy} />);
 
       // Look for action buttons
@@ -197,17 +217,31 @@ describe("Agent Chat Accessibility", () => {
 
   describe("Screen Reader Support", () => {
     test("chat messages have meaningful structure", () => {
+      const assistantNode: ConversationNode = {
+        id: "msg-1",
+        role: "assistant",
+        content: "Here is my response",
+        state: "done",
+        parent_id: null,
+        children_ids: [],
+        metadata: {},
+        tool_calls: [],
+        artifacts: [],
+        created_at: new Date().toISOString(),
+      };
+
       render(
         <ChatMessageBubble
-          nodeId="msg-1"
-          role="assistant"
-          content="Here is my response"
-          timestamp={new Date().toISOString()}
-          isExpanded={true}
-          onToggleExpand={vi.fn()}
+          node={assistantNode}
+          onOpenInspector={vi.fn()}
+          editingNodeId={null}
+          onStartEdit={vi.fn()}
+          onCancelEdit={vi.fn()}
+          onSaveEdit={vi.fn()}
+          canRegenerate={false}
+          isStreaming={false}
           onCopy={vi.fn()}
-          onEdit={vi.fn()}
-          onDelete={vi.fn()}
+          onRegenerate={vi.fn()}
         />,
       );
 

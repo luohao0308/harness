@@ -9,7 +9,7 @@ Acceptance Criteria:
 3. Configure entity ID, ACS URL, SLS URL
 4. Load X.509 certificate from config
 """
-import os
+
 from pathlib import Path
 
 import pytest
@@ -69,6 +69,21 @@ class TestSAMLConfiguration:
         assert saml_config["sp_x509_cert_path"].endswith(".crt")
         assert saml_config["sp_private_key_path"].endswith(".key")
 
+    def test_runtime_config_loads_certificates_independent_of_cwd(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Certificate loading must not depend on the process working directory."""
+        from app.config.saml_config import get_saml_config
+
+        monkeypatch.chdir(tmp_path)
+
+        runtime_config = get_saml_config()
+
+        assert "BEGIN CERTIFICATE" in runtime_config["sp_x509_cert"]
+        assert "BEGIN PRIVATE KEY" in runtime_config["sp_private_key"]
+
 
 class TestSAMLMetadataGeneration:
     """Test SAML SP metadata XML generation."""
@@ -92,7 +107,7 @@ class TestSAMLMetadataGeneration:
         metadata_xml = service.generate_sp_metadata()
 
         # Parse XML - will raise exception if invalid
-        root = etree.fromstring(metadata_xml.encode('utf-8'))
+        root = etree.fromstring(metadata_xml.encode("utf-8"))
         assert root is not None
 
     def test_metadata_contains_entity_descriptor(self):
@@ -102,10 +117,10 @@ class TestSAMLMetadataGeneration:
         service = SAMLService()
         metadata_xml = service.generate_sp_metadata()
 
-        root = etree.fromstring(metadata_xml.encode('utf-8'))
+        root = etree.fromstring(metadata_xml.encode("utf-8"))
 
         # Check for EntityDescriptor (may have namespace)
-        assert 'EntityDescriptor' in root.tag
+        assert "EntityDescriptor" in root.tag
 
     def test_metadata_contains_entity_id(self):
         """Test that metadata contains entityID attribute."""
@@ -114,8 +129,8 @@ class TestSAMLMetadataGeneration:
         service = SAMLService()
         metadata_xml = service.generate_sp_metadata()
 
-        root = etree.fromstring(metadata_xml.encode('utf-8'))
-        entity_id = root.get('entityID')
+        root = etree.fromstring(metadata_xml.encode("utf-8"))
+        entity_id = root.get("entityID")
 
         assert entity_id is not None
         assert entity_id == "http://localhost:8000/api/auth/saml/metadata"
@@ -127,14 +142,14 @@ class TestSAMLMetadataGeneration:
         service = SAMLService()
         metadata_xml = service.generate_sp_metadata()
 
-        root = etree.fromstring(metadata_xml.encode('utf-8'))
+        root = etree.fromstring(metadata_xml.encode("utf-8"))
 
         # Find AssertionConsumerService element
-        namespaces = {'md': 'urn:oasis:names:tc:SAML:2.0:metadata'}
-        acs_elements = root.xpath('//md:AssertionConsumerService', namespaces=namespaces)
+        namespaces = {"md": "urn:oasis:names:tc:SAML:2.0:metadata"}
+        acs_elements = root.xpath("//md:AssertionConsumerService", namespaces=namespaces)
 
         assert len(acs_elements) > 0
-        acs_url = acs_elements[0].get('Location')
+        acs_url = acs_elements[0].get("Location")
         assert acs_url == "http://localhost:8000/api/auth/saml/acs"
 
     def test_metadata_contains_sls_url(self):
@@ -144,14 +159,14 @@ class TestSAMLMetadataGeneration:
         service = SAMLService()
         metadata_xml = service.generate_sp_metadata()
 
-        root = etree.fromstring(metadata_xml.encode('utf-8'))
+        root = etree.fromstring(metadata_xml.encode("utf-8"))
 
         # Find SingleLogoutService element
-        namespaces = {'md': 'urn:oasis:names:tc:SAML:2.0:metadata'}
-        sls_elements = root.xpath('//md:SingleLogoutService', namespaces=namespaces)
+        namespaces = {"md": "urn:oasis:names:tc:SAML:2.0:metadata"}
+        sls_elements = root.xpath("//md:SingleLogoutService", namespaces=namespaces)
 
         assert len(sls_elements) > 0
-        sls_url = sls_elements[0].get('Location')
+        sls_url = sls_elements[0].get("Location")
         assert sls_url == "http://localhost:8000/api/auth/saml/sls"
 
     def test_metadata_contains_x509_certificate(self, cert_files_exist):
@@ -164,14 +179,14 @@ class TestSAMLMetadataGeneration:
         service = SAMLService()
         metadata_xml = service.generate_sp_metadata()
 
-        root = etree.fromstring(metadata_xml.encode('utf-8'))
+        root = etree.fromstring(metadata_xml.encode("utf-8"))
 
         # Find X509Certificate element
         namespaces = {
-            'md': 'urn:oasis:names:tc:SAML:2.0:metadata',
-            'ds': 'http://www.w3.org/2000/09/xmldsig#'
+            "md": "urn:oasis:names:tc:SAML:2.0:metadata",
+            "ds": "http://www.w3.org/2000/09/xmldsig#",
         }
-        cert_elements = root.xpath('//ds:X509Certificate', namespaces=namespaces)
+        cert_elements = root.xpath("//ds:X509Certificate", namespaces=namespaces)
 
         assert len(cert_elements) > 0
         cert_text = cert_elements[0].text

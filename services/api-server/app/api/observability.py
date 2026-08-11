@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.planner import PLANNER_PROMPT_VERSION
 from app.agents.subagent_manager import SUBAGENT_CONCURRENCY_LIMIT
+from app.agents.subagent_timing import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 from app.api.schemas import (
     AlertEventPage,
     AlertEventResponse,
@@ -99,7 +100,6 @@ from app.observability.notification_dispatcher import (
 from app.sandbox.warm_pool import WarmPoolManager
 from app.security.auth import Principal, require_role
 from app.security.secrets import SECRET_PURPOSE_NOTIFICATION, SECRET_SCOPE_ORG, upsert_secret
-from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 
 router = APIRouter(prefix="/observability", tags=["observability"])
 DEFAULT_CONTEXT_CACHE_SOURCES = ("compression_summary", "rag_retrieval", "long_term_memory")
@@ -2630,7 +2630,7 @@ def _probe_service(*, name: str, url: str) -> ObservabilityServiceHealthResponse
             error_message=str(exc),
             alert_status=alert_status,
             alert_severity=alert_severity,
-            runbook_url="/docs/runbooks/troubleshooting#observability",
+            runbook_url="/docs/project-memory/runbooks/troubleshooting#observability",
         )
     alert_status, alert_severity = _service_alert(status=status)
     return ObservabilityServiceHealthResponse(
@@ -2641,7 +2641,7 @@ def _probe_service(*, name: str, url: str) -> ObservabilityServiceHealthResponse
         error_message=None,
         alert_status=alert_status,
         alert_severity=alert_severity,
-        runbook_url="/docs/runbooks/troubleshooting#observability",
+        runbook_url="/docs/project-memory/runbooks/troubleshooting#observability",
     )
 
 

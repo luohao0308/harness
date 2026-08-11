@@ -9,16 +9,18 @@ Story 1.2 - IdP Configuration Management
 Story 2.1 - SP-Initiated SSO Flow
 Story 4.2 - Single Logout (SLO)
 """
+
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
+from app.security.saml_rate_limit import enforce_saml_rate_limit
 from app.services.saml_provider_service import SAMLProviderService
 from app.services.saml_service import SAMLService
 from app.services.session_service import SessionService
@@ -88,7 +90,10 @@ class SAMLACSResponse(BaseModel):
     session_token: str = Field(..., description="JWT access token")
     refresh_token: str = Field(..., description="JWT refresh token")
     expires_at: str = Field(..., description="Token expiration timestamp")
-    redirect_url: str | None = Field(None, description="Default landing page URL for IdP-initiated SSO")
+    redirect_url: str | None = Field(
+        None,
+        description="Default landing page URL for IdP-initiated SSO",
+    )
 
 
 class SAMLLogoutRequest(BaseModel):
@@ -113,7 +118,6 @@ class SAMLSLSResponse(BaseModel):
     message: str = Field(..., description="Status message")
 
 
-
 # SAML SSO Endpoints (Story 2.1)
 
 
@@ -129,6 +133,7 @@ class SAMLSLSResponse(BaseModel):
 )
 async def saml_login(
     login_request: SAMLLoginRequest,
+    request: Request,
     db: DbSession,
 ) -> SAMLLoginResponse:
     """
@@ -147,6 +152,7 @@ async def saml_login(
     Raises:
         HTTPException: 404 if provider not found, 400 if provider inactive.
     """
+    enforce_saml_rate_limit(request)
     try:
         # Get provider
         provider_service = SAMLProviderService(db)
@@ -193,6 +199,7 @@ async def saml_login(
 )
 async def saml_acs(
     saml_response: Annotated[str, Form(alias="SAMLResponse")],
+    request: Request,
     db: DbSession,
     relay_state: Annotated[str | None, Form(alias="RelayState")] = None,
 ) -> SAMLACSResponse:
@@ -218,6 +225,7 @@ async def saml_acs(
     Raises:
         HTTPException: 400/401 if validation fails or authentication unsuccessful.
     """
+    enforce_saml_rate_limit(request)
     try:
         saml_service = SAMLService()
         provider_service = SAMLProviderService(db)
@@ -663,6 +671,7 @@ async def delete_saml_provider(
 )
 async def saml_logout(
     logout_request: SAMLLogoutRequest,
+    request: Request,
     db: DbSession,
 ) -> SAMLLogoutResponse:
     """
@@ -681,6 +690,7 @@ async def saml_logout(
     Raises:
         HTTPException: 404 if provider not found, 400 if provider has no SLO URL.
     """
+    enforce_saml_rate_limit(request)
     try:
         # Get provider
         provider_service = SAMLProviderService(db)
@@ -738,6 +748,7 @@ async def saml_logout(
 )
 async def saml_sls(
     saml_response: Annotated[str, Form(alias="SAMLResponse")],
+    request: Request,
     db: DbSession,
     relay_state: Annotated[str | None, Form(alias="RelayState")] = None,
 ) -> SAMLSLSResponse:
@@ -759,6 +770,7 @@ async def saml_sls(
     Raises:
         HTTPException: 400/500 if validation fails.
     """
+    enforce_saml_rate_limit(request)
     try:
         # Get provider from relay state
         if not relay_state:

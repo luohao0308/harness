@@ -1,10 +1,34 @@
 # Wiki Index
 
-> 36 pages | Last updated: 2026-08-04T17:30:00+08:00
+> 58 pages | Last updated: 2026-08-10T17:28:00+08:00
 
 ## session-log
 
-- [Desktop Team Mode Workspace](session-2026-07-28-desktop-team-mode-workspace.md) — Electron Team Mode adds Collaboration and Task Graph views beside the unchanged browser multi-column workflow, with final frontend and Chromium evidence.
+- [dev-workflow v0.2.0 接入与文档整理](session-2026-08-10-dev-workflow-install-and-docs.md) — 安装 Core 与全部五个流程包，验证 Bash 3.2 兼容修复，并完成全仓文档分类、权威源去重、历史归档、任务审计与全量链接门禁。
+
+- [Desktop Codex Task Workspace](session-2026-08-07-desktop-codex-task-workspace.md) — Electron now opens into a compact task-first workspace with working Team, Run, Terminal, Files, Approvals, and Settings operations while the browser keeps the full data and observability console.
+- [Desktop Functional Screenshot Audit](session-2026-08-07-desktop-functional-screenshot-audit.md) — Native Electron relaunch/offline execution, 25 current web routes, 25 archived web assets, two confirmed web error states, and a visually verified 32-page DOCX screenshot catalog.
+- [Desktop Startup Performance Budget](session-2026-07-31-desktop-startup-performance-budget.md) — Packaged Electron startup now has validated phase/total budgets, five-sample P50/P95 release gates on macOS/Windows/Linux, and platform-specific evidence artifacts.
+- [Backend Production Hardening Closeout](session-2026-07-31-backend-production-hardening-closeout.md) — Enterprise auth/onboarding, platform model routing, secure HAO approval resume, Team/Knowledge contracts, service lint, and Alembic topology now share a warning-free `1395 passed` backend baseline.
+- [Desktop Team Mode Workspace](session-2026-07-28-desktop-team-mode-workspace.md) — Electron Team Mode adds chat-first Collaboration and deterministic Task graph workspaces, preserves browser columns, and now closes Team-key persistence, condensed-cycle layout, and visible side-pane control regressions.
+- [Terminal Capability Shared State](session-2026-07-12-terminal-capability-shared-state.md) — Terminal tokens, one-time consumption, per-principal caps, and renewable session leases now use Redis atomic state across API replicas and fail closed in production.
+- [Desktop Packaged Runtime And Bundle Closure](session-2026-07-12-desktop-packaged-runtime-and-bundle-closure.md) — Agent Console now stays below the 512 KB JavaScript gate, while packaged Electron uses a trusted internal origin, hash routing, loopback API defaults, correct 401 login bootstrap, and verified native IPC navigation.
+- [Desktop Production Hardening Closeout](session-2026-07-12-desktop-production-hardening-closeout.md) — Desktop security, offline sync, updates, privacy, local-model boundaries, enterprise coverage reporting, production build, and 52-test browser gates are closed for the repository-controlled surface.
+- [Desktop Offline Sync Runtime Closure](session-2026-07-12-desktop-offline-sync-runtime-closure.md) — Desktop startup now wires the active profile SQLite sync runtime, authenticated operation push, reconnect backoff, sync status/conflict IPC, explicit offline-result promotion, and quit cleanup.
+- [Authenticated Terminal Sessions](session-2026-07-12-authenticated-terminal-sessions.md) — Terminal WebSocket sessions now require authenticated one-time tokens issued to the current Principal, with token binding, reuse/expiry rejection, per-user session caps, scrubbed shell environment, explicit cwd, and frontend token refresh before connect/reconnect.
+- [Desktop Full Function Startup Smoke Rerun](session-2026-07-04-desktop-full-function-startup-smoke-rerun.md) — Desktop was started and tested again across backend desktop APIs, Agent Console `/desktop` and `/terminal`, Electron unit coverage, local packaging, browser smoke, and real Electron native bridge runtime.
+- [Desktop Native Operations TDD](session-2026-07-04-desktop-native-operations-tdd.md) — `/desktop` now exposes the production guide's native operations surface for startup login items, file-root/watch controls, update checks, feedback submission, and desktop metrics, delivered through a TDD regression.
+- [Desktop Production Docs Apple Style](session-2026-07-04-desktop-production-docs-apple-style.md) — Desktop now has production-grade docs for capability ownership, local startup, verification gates, release/signing/update operations, privacy/security, support triage, and an Apple-style experience contract.
+- [Desktop Full Function Startup Smoke](session-2026-07-04-desktop-full-function-startup-smoke.md) — All desktop surfaces were started and tested across backend APIs, Agent Console `/desktop` and `/terminal`, full Electron tests, packaging, browser smoke, and real Electron preload/native bridge smoke.
+- [Desktop Workbench Document Polish](session-2026-07-03-desktop-workbench-document-polish.md) — Desktop now has a first-class `/desktop` workbench with document-style sections, immediate state/actions, desktop bridge status, workspace/window controls, offline execution, plugins/templates, recent results, and real Electron smoke evidence.
+- [Frontend Terminal Workspace Fix](session-2026-06-30-frontend-terminal-workspace-fix.md) — Terminal workspace now renders four stable xterm panes with local shell WebSocket I/O, Cmd+1/2/3/4 switching, smooth panel resizing, and refresh-safe horizontal plus vertical layout persistence.
+- [Mobile Phase 7 React Native Expo](session-2026-06-27-mobile-phase-7-react-native-expo.md) — React Native + Expo mobile app now has an offline-first task list, desktop sync protocol reuse, push-token registration, iOS/Android platform feature source contracts, and App Store / Google Play review materials.
+- [Desktop Phase 6 Advanced Features](session-2026-06-27-desktop-phase-6-advanced-features.md) — Electron Desktop and Agent Console now support independent Run windows, workspace profile isolation, plugin marketplace and Prompt templates, offline simple tasks, optional local-model inference, virtualized long chats, and high-contrast mode.
+- [Agent Console Model Settings And Tool Triggers](session-2026-06-27-agent-console-model-settings-and-tool-triggers.md) — Ollama/local provider switching now uses the normal save path without API-key gating, and Tool Registry compiles against the existing Agent trigger API surface for webhook flows.
+- [Desktop Phase 4 Packaging Distribution](session-2026-06-26-desktop-phase-4-packaging-distribution.md) — Electron Desktop now has multi-platform packaging, signing/notarization CI wiring, backend-gated stable/beta auto-updates, Sentry crash reporting, and GitHub Release artifact publishing.
+- [Desktop Phase 3 System Integration](session-2026-06-26-desktop-phase-3-system-integration.md) — Electron Desktop now supports tray/background operation, native notifications with click-through routing, login-startup toggles, global wake shortcut, `agentharness://` deep links, and native application menus.
+- [Team Runtime Worker Autonomous Goals](session-2026-06-25-team-runtime-worker-autonomous-goals.md) — Active Team Goals can advance without a browser-triggered wake stream through a deployable background runtime worker that scans active goals, wakes runnable agents, and records runtime decisions.
+- [Team Goal Autonomous Supervision](session-2026-06-24-team-goal-autonomous-supervision.md) — Team Mode can own an active goal, automatically detect teammate drift, and project compact correction/progress state without turning the page into a dashboard.
 - [Local Agent Pause Continue After Send](session-2026-06-22-local-agent-pause-continue-after-send.md) — Agent Workspace local Agent turns can be paused after the message has been sent and continued later without duplicating the visible user bubble.
 - [Local Agent Composer Clear After Send](session-2026-06-22-local-agent-composer-clear-after-send.md) — Agent Workspace local Agent sends clear the composer after the backend accepts the message, and later local polling hydration does not restore the sent draft.
 - [Local Agent Context Compression Hydration](session-2026-06-21-local-agent-context-compression-hydration.md) — Agent Workspace local Agent context compression summaries survive message/task polling hydration, so compressed HAO conversations stay reduced instead of returning to 100.
@@ -41,5 +65,5 @@
 ## reference
 
 - [project-handoff-current-state](project-handoff-current-state.md) — [[project-handoff-current-state]]
-- [agent-startup-context](../docs/ai/agent-startup-context.md) — docs/ai/agent-startup-context.md
-- [context-index](../docs/ai/context-index.json) — docs/ai/context-index.json
+- [agent-startup-context](../docs/development/ai/agent-startup-context.md) — docs/development/ai/agent-startup-context.md
+- [context-index](../docs/development/ai/context-index.json) — docs/development/ai/context-index.json

@@ -7,7 +7,7 @@ from urllib import error
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.agents.model_gateway import (
     DEFAULT_MODEL_SETTINGS,
@@ -15,6 +15,7 @@ from app.agents.model_gateway import (
     AuditedModelGateway,
     MockModelGateway,
     ModelAuthError,
+    ModelCallCancelledError,
     ModelCircuitBreaker,
     ModelGatewayError,
     ModelMessage,
@@ -68,6 +69,40 @@ class StreamingSequenceGateway:
             yield from self.chunks
         finally:
             self.closed = True
+
+
+class LateFailureAfterCancellationGateway:
+    def __init__(self, bind, task_id: str) -> None:
+        self.bind = bind
+        self.task_id = task_id
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
+        raise AssertionError("streaming test must not call complete")
+
+    def stream(self, request: ModelRequest):
+        with sessionmaker(bind=self.bind)() as cancellation_session:
+            model_call = cancellation_session.scalar(
+                select(ModelCall)
+                .where(ModelCall.task_id == self.task_id, ModelCall.status == "RUNNING")
+                .order_by(ModelCall.created_at.desc())
+            )
+            assert model_call is not None
+            model_call.status = "FAILED"
+            model_call.terminal_status = "stream_aborted"
+            model_call.error_message = "stream closed before completion"
+            EventStore(cancellation_session).append(
+                task_id=self.task_id,
+                event_type=EventType.MODEL_CALL_FAILED,
+                payload_json={
+                    "model_call_id": model_call.id,
+                    "error": model_call.error_message,
+                    "streaming": True,
+                    "cancelled": True,
+                    "terminal_status": model_call.terminal_status,
+                },
+            )
+            cancellation_session.commit()
+        raise ModelGatewayError("late upstream failure")
 
 
 def create_task(db_session: Session) -> Task:
@@ -323,9 +358,12 @@ def test_audited_model_gateway_records_failed_event_when_stream_closes(
 
     assert next(stream).text == "partial"
     stream.close()
+    db_session.rollback()
+    db_session.expire_all()
 
     model_call = db_session.execute(select(ModelCall)).scalar_one()
     assert model_call.status == "FAILED"
+    assert model_call.terminal_status == "stream_aborted"
     assert model_call.error_message == "stream closed before completion"
     events = EventStore(db_session).list_by_task(task_id=task.id)
     assert [event.event_type for event in events] == [
@@ -334,6 +372,34 @@ def test_audited_model_gateway_records_failed_event_when_stream_closes(
     ]
     assert events[-1].payload_json["cancelled"] is True
     assert gateway.closed is True
+
+
+def test_audited_model_gateway_does_not_overwrite_external_stream_cancellation(
+    db_session: Session,
+) -> None:
+    ModelRateLimiter.clear()
+    ModelCircuitBreaker.clear()
+    task = create_task(db_session)
+    stream = AuditedModelGateway(
+        session=db_session,
+        task_id=task.id,
+        gateway=LateFailureAfterCancellationGateway(db_session.get_bind(), task.id),
+    ).stream(model_request())
+
+    with pytest.raises(ModelCallCancelledError):
+        list(stream)
+    db_session.rollback()
+    db_session.expire_all()
+
+    model_call = db_session.execute(select(ModelCall)).scalar_one()
+    assert model_call.status == "FAILED"
+    assert model_call.terminal_status == "stream_aborted"
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+    assert [event.event_type for event in events] == [
+        "MODEL_CALLED",
+        "MODEL_CALL_FAILED",
+    ]
+    assert events[-1].payload_json["cancelled"] is True
 
 
 def test_audited_model_gateway_validates_context_manifest_before_streaming(

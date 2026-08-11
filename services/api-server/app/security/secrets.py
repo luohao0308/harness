@@ -47,6 +47,10 @@ class SecretEncryptionError(SecretStoreError):
     pass
 
 
+class SecretStorageUnavailableError(SecretStoreError):
+    code = "SECRET_STORAGE_UNAVAILABLE"
+
+
 @dataclass(frozen=True)
 class SecretResolution:
     value: str
@@ -105,6 +109,11 @@ def upsert_secret(
     owner_user_id: str | None = None,
     secret_ref: str | None = None,
 ) -> StoredSecret:
+    settings = get_settings()
+    if settings.runtime_profile == "local" and not settings.persistent_secret_storage_available:
+        raise SecretStorageUnavailableError(
+            "Persistent secret storage is unavailable for this local runtime session"
+        )
     normalized_scope = _validate_scope(scope)
     normalized_provider = normalize_secret_key(provider)
     normalized_purpose = _validate_purpose(purpose)

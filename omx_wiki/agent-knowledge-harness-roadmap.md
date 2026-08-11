@@ -12,7 +12,7 @@ The final task target is **Agent Knowledge Harness**: make the Harness layer a c
 Model + Harness = Agent
 ```
 
-This target comes from the repository HTML report `docs/reports/release-gate-handoff-diff-2026-05-14.html`, which reframes the next work from "add memory/RAG" into a full Harness capability layer. Each capability must answer:
+This target comes from the repository HTML report `docs/工作日志/reports/release-gate-handoff-diff-2026-05-14.html`, which reframes the next work from "add memory/RAG" into a full Harness capability layer. Each capability must answer:
 
 - what problem it solves;
 - what mechanism implements it;
@@ -39,7 +39,7 @@ The final product target is not a single RAG feature. It is the combined Harness
 
 The repository already contains more than the original roadmap described:
 
-- Stage 01-07 and private deployment handoff are completed in `docs/ai/task-progress.yaml`.
+- Stage 01-07 and private deployment handoff are completed in `docs/development/ai/task-progress.yaml`.
 - Release validation is split into quick browser smoke, mocked browser release gate, and live backend validation.
 - Workspace already has chat-first execution, Plan-Act approval, branch navigation, pinned messages, context compression, token budget controls, Run Detail links, and Eval Case capture.
 - Agent Studio already exposes Model, Tools/MCP, Prompt, RAG, Templates, Orchestration, and a knowledge source management surface.

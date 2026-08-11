@@ -27,6 +27,8 @@
 import type { ConversationNode } from "../../../stores/workspaceStore";
 import type { ContextCompressionSummary } from "./contextCompression";
 import type { PersistedSnapshot } from "./localPersistence";
+import { getWorkspaceScopeId, legacyWorkspaceStorageKey, workspaceScopedStorageKey } from "./workspaceScope";
+import { getWorkspacePersistenceStorage } from "../../../lib/workspace-persistence-storage";
 
 export const CONVERSATIONS_SCHEMA_VERSION = 2 as const;
 
@@ -215,11 +217,11 @@ function rewriteStreamingNodes(
 let skipWrites = false;
 
 function storageKey(agentId: string): string {
-  return `harness.workspace.v3.${agentId}.conversations`;
+  return workspaceScopedStorageKey(getWorkspaceScopeId(), "v3", agentId, "conversations");
 }
 
-function hasLocalStorage(): boolean {
-  return typeof localStorage !== "undefined";
+function legacyStorageKey(agentId: string): string {
+  return legacyWorkspaceStorageKey("v3", agentId, "conversations");
 }
 
 export function saveConversationsSnapshot(
@@ -227,9 +229,10 @@ export function saveConversationsSnapshot(
   snapshot: ConversationsSnapshot,
 ): boolean {
   if (skipWrites) return false;
-  if (!hasLocalStorage()) return false;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return false;
   try {
-    localStorage.setItem(storageKey(agentId), JSON.stringify(snapshot));
+    storage.setItem(storageKey(agentId), JSON.stringify(snapshot));
     return true;
   } catch (err) {
     skipWrites = true;
@@ -241,10 +244,16 @@ export function saveConversationsSnapshot(
 export function readConversationsSnapshot(
   agentId: string,
 ): ConversationsSnapshot | null {
-  if (!hasLocalStorage()) return null;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return null;
   let raw: string | null;
+  let usedLegacyKey = false;
   try {
-    raw = localStorage.getItem(storageKey(agentId));
+    raw = storage.getItem(storageKey(agentId));
+    if (raw === null) {
+      raw = storage.getItem(legacyStorageKey(agentId));
+      usedLegacyKey = raw !== null;
+    }
   } catch {
     return null;
   }
@@ -282,6 +291,15 @@ export function readConversationsSnapshot(
       ? (candidate.currentConversationId as string)
       : sortConversationsByUpdatedAt(conversations)[0].id;
 
+    if (usedLegacyKey) {
+      try {
+        storage.setItem(storageKey(agentId), raw);
+        storage.removeItem(legacyStorageKey(agentId));
+      } catch {
+        /* ignore migration failures */
+      }
+    }
+
     return {
       version: CONVERSATIONS_SCHEMA_VERSION,
       conversations,
@@ -293,9 +311,11 @@ export function readConversationsSnapshot(
 }
 
 export function clearConversationsSnapshot(agentId: string): void {
-  if (!hasLocalStorage()) return;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return;
   try {
-    localStorage.removeItem(storageKey(agentId));
+    storage.removeItem(storageKey(agentId));
+    storage.removeItem(legacyStorageKey(agentId));
   } catch {
     /* ignore */
   }
@@ -363,24 +383,34 @@ function isCompressionRecord(
 // ---------------------------------------------------------------------------
 
 function historyCollapsedKey(agentId: string): string {
-  return `harness.workspace.v3.${agentId}.historyPanelCollapsed`;
+  return workspaceScopedStorageKey(getWorkspaceScopeId(), "v3", agentId, "historyPanelCollapsed");
+}
+
+function legacyHistoryCollapsedKey(agentId: string): string {
+  return legacyWorkspaceStorageKey("v3", agentId, "historyPanelCollapsed");
 }
 
 export function saveHistoryPanelCollapsed(agentId: string, collapsed: boolean): void {
-  if (!hasLocalStorage()) return;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return;
   try {
-    localStorage.setItem(historyCollapsedKey(agentId), collapsed ? "1" : "0");
+    storage.setItem(historyCollapsedKey(agentId), collapsed ? "1" : "0");
   } catch {
     /* ignore */
   }
 }
 
 export function readHistoryPanelCollapsed(agentId: string): boolean | null {
-  if (!hasLocalStorage()) return null;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return null;
   try {
-    const raw = localStorage.getItem(historyCollapsedKey(agentId));
-    if (raw === null) return null;
-    return raw === "1";
+    const raw = storage.getItem(historyCollapsedKey(agentId));
+    if (raw !== null) return raw === "1";
+    const legacy = storage.getItem(legacyHistoryCollapsedKey(agentId));
+    if (legacy === null) return null;
+    storage.setItem(historyCollapsedKey(agentId), legacy);
+    storage.removeItem(legacyHistoryCollapsedKey(agentId));
+    return legacy === "1";
   } catch {
     return null;
   }

@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -58,6 +59,10 @@ class AgentPlanRequest(BaseModel):
     max_subagents: int = Field(default=5, ge=0, description="最大子 Agent 数")
     enable_sandbox: bool = Field(default=True, description="是否启用容器沙箱")
     enable_network: bool = Field(default=False, description="是否启用网络访问")
+    client_run_id: UUID | None = Field(
+        default=None,
+        description="客户端在首个流式事件前预分配的 Run ID",
+    )
 
 
 class AgentResponse(BaseModel):
@@ -445,6 +450,10 @@ class AgentChatStreamRequest(BaseModel):
     messages: list[ConversationNode] = Field(default_factory=list, description="当前分支消息")
     active_leaf_id: str | None = Field(default=None, description="当前活动叶子节点")
     run_id: str | None = Field(default=None, description="继续生成时绑定的原始 Agent Run ID")
+    client_run_id: UUID | None = Field(
+        default=None,
+        description="客户端在首个流式事件前预分配的 Run ID",
+    )
     local_bridge_task_id: str | None = Field(
         default=None,
         description="本地 Agent bridge 任务 ID；仅用于 scoped stream token 授权校验",
@@ -2399,7 +2408,10 @@ class ObservabilityServiceHealthResponse(BaseModel):
     error_message: str | None = Field(default=None, description="错误信息")
     alert_status: str = Field(default="ok", description="告警状态")
     alert_severity: str = Field(default="none", description="告警级别")
-    runbook_url: str = Field(default="/docs/runbooks/troubleshooting", description="排障手册地址")
+    runbook_url: str = Field(
+        default="/docs/project-memory/runbooks/troubleshooting",
+        description="排障手册地址",
+    )
 
 
 class ObservabilityServicesHealthResponse(BaseModel):

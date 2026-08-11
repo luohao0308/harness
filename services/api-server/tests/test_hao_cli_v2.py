@@ -3419,6 +3419,8 @@ def test_hao_bridge_v3_pending_state_file_does_not_persist_raw_sensitive_input(
             "local_session_id": session.id,
             "run_id": "run-sensitive",
             "agent_id": "default",
+            "model_provider": "default",
+            "model_name": "default",
             "risk_level": "high",
             "permission_mode": "full-auto",
         }

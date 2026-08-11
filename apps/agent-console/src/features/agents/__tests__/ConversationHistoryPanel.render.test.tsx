@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useConsoleStore } from "../../../stores/consoleStore";
 import { ConversationHistoryPanel } from "../components/ConversationHistoryPanel";
@@ -24,6 +25,10 @@ function conversation(id: string, title: string, updatedAt: string): Conversatio
 }
 
 describe("ConversationHistoryPanel", () => {
+  afterEach(() => {
+    delete window.desktopApi;
+  });
+
   it("keeps history controls reachable by accessible name", async () => {
     useConsoleStore.getState().setLocale("en-US");
     const user = userEvent.setup();
@@ -33,18 +38,20 @@ describe("ConversationHistoryPanel", () => {
     const onToggleCollapsed = vi.fn();
 
     render(
-      <ConversationHistoryPanel
-        collapsed={false}
-        conversations={[
-          conversation("one", "First workspace pass", "2026-05-11T20:00:00Z"),
-          conversation("two", "Second workspace pass", "2026-05-11T20:10:00Z"),
-        ]}
-        currentConversationId="two"
-        onNewConversation={onNewConversation}
-        onSelectConversation={onSelectConversation}
-        onDeleteConversation={onDeleteConversation}
-        onToggleCollapsed={onToggleCollapsed}
-      />,
+      <MemoryRouter initialEntries={["/agents/default/workspace"]}>
+        <ConversationHistoryPanel
+          collapsed={false}
+          conversations={[
+            conversation("one", "First workspace pass", "2026-05-11T20:00:00Z"),
+            conversation("two", "Second workspace pass", "2026-05-11T20:10:00Z"),
+          ]}
+          currentConversationId="two"
+          onNewConversation={onNewConversation}
+          onSelectConversation={onSelectConversation}
+          onDeleteConversation={onDeleteConversation}
+          onToggleCollapsed={onToggleCollapsed}
+        />
+      </MemoryRouter>,
     );
 
     await user.click(screen.getByRole("button", { name: "新建对话" }));
@@ -61,5 +68,38 @@ describe("ConversationHistoryPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "收起历史对话" }));
     expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds only the essential task and utility navigation in desktop runtime", () => {
+    window.desktopApi = {};
+
+    render(
+      <MemoryRouter initialEntries={["/agents/default/workspace"]}>
+        <ConversationHistoryPanel
+          collapsed={false}
+          conversations={[conversation("one", "Inspect repository", "2026-05-11T20:00:00Z")]}
+          currentConversationId="one"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onToggleCollapsed={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Harness")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建任务" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "团队" })).toHaveAttribute("href", "/teams");
+    expect(screen.getByRole("link", { name: "终端" })).toHaveAttribute("href", "/terminal");
+    expect(screen.getByRole("link", { name: "文件" })).toHaveAttribute(
+      "href",
+      "/agents/default/workspace?desktop_panel=files",
+    );
+    expect(screen.getByRole("link", { name: "审批" })).toHaveAttribute(
+      "href",
+      "/agents/default/workspace?desktop_panel=approvals",
+    );
+    expect(screen.getByRole("link", { name: "设置" })).toHaveAttribute("href", "/desktop");
+    expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
   });
 });
