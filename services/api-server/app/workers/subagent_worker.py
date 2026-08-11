@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import timedelta
 from pathlib import Path
 
-import dramatiq
 from sqlalchemy.orm import Session
 
 from app.agents.model_gateway import (
@@ -20,18 +18,19 @@ from app.agents.specialists import (
     budget_state_for_run,
     make_default_output,
 )
+from app.agents.subagent_timing import DEFAULT_SUBAGENT_TIMEOUT_SECONDS
 from app.db.models import AgentRun, Task, utc_now
 from app.db.session import SessionLocal
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.observability.metrics import agent_subagents_failed_total, agent_subagents_running
+from app.runtime_jobs.profile import is_local_runtime_profile
 from app.sandbox.docker_manager import DockerManager
 from app.tools.capabilities import CapabilityRegistry
 from app.tools.registry import ToolRegistry
 from app.tools.runner import ToolExecution, ToolRunner
-from app.workers.broker import broker
+from app.workers.actor_registration import register_server_actor
 
-DEFAULT_SUBAGENT_TIMEOUT_SECONDS = 900
 DEFAULT_REACT_CONTEXT_RECENT_RESULTS = 3
 DEFAULT_REACT_CONTEXT_OUTPUT_PREVIEW_CHARS = 1200
 
@@ -215,18 +214,17 @@ def _execute_subagent_with_session(
         raise
 
 
-@dramatiq.actor(
-    broker=broker,
-    max_retries=0,
-    time_limit=DEFAULT_SUBAGENT_TIMEOUT_SECONDS * 1000,
-    queue_name="subagents",
-)
 def run_subagent(agent_run_id: str) -> None:
     execute_subagent(agent_run_id)
 
 
-def timeout_at_from_now(timeout_seconds: int = DEFAULT_SUBAGENT_TIMEOUT_SECONDS):
-    return utc_now() + timedelta(seconds=timeout_seconds)
+if not is_local_runtime_profile():
+    run_subagent = register_server_actor(
+        run_subagent,
+        max_retries=0,
+        time_limit=DEFAULT_SUBAGENT_TIMEOUT_SECONDS * 1000,
+        queue_name="subagents",
+    )
 
 
 def _assignment_summary(assignment: dict) -> str:

@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from threading import Lock
 from uuid import uuid4
 
-import dramatiq
 from prometheus_client import start_http_server
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -22,7 +21,9 @@ from app.observability.metrics import (
     agent_subagent_recovery_last_recovered,
     agent_subagent_recovery_sweeps_total,
 )
-from app.workers.broker import broker
+from app.runtime_jobs.profile import is_local_runtime_profile
+from app.runtime_jobs.repository import RuntimeJobRepository
+from app.workers.actor_registration import register_server_actor
 
 DEFAULT_RECOVERY_STALE_AFTER_SECONDS = 900
 DEFAULT_RECOVERY_INTERVAL_SECONDS = 30
@@ -206,19 +207,56 @@ def _recovery_lease(session: Session) -> Iterator[bool]:
             _sqlite_recovery_lock.release()
 
 
-@dramatiq.actor(
-    broker=broker,
-    max_retries=0,
-    queue_name="subagents",
-)
 def recover_stalled_subagents_actor(
     stale_after_seconds: int = DEFAULT_RECOVERY_STALE_AFTER_SECONDS,
     enqueue: bool = DEFAULT_RECOVERY_ENQUEUE,
 ) -> None:
+    if is_local_runtime_profile():
+        enqueue_local_subagent_recovery(
+            stale_after_seconds=stale_after_seconds,
+            enqueue=enqueue,
+        )
+        return
     recover_stalled_subagents(
         stale_after_seconds=stale_after_seconds,
         enqueue=enqueue,
     )
+
+
+if not is_local_runtime_profile():
+    recover_stalled_subagents_actor = register_server_actor(
+        recover_stalled_subagents_actor,
+        max_retries=0,
+        queue_name="subagents",
+    )
+
+
+def enqueue_local_subagent_recovery(
+    *,
+    stale_after_seconds: int = DEFAULT_RECOVERY_STALE_AFTER_SECONDS,
+    enqueue: bool = DEFAULT_RECOVERY_ENQUEUE,
+    session: Session | None = None,
+) -> str:
+    if not is_local_runtime_profile():
+        raise RuntimeError("local subagent recovery jobs require runtime_profile=local")
+    payload = {
+        "stale_after_seconds": stale_after_seconds,
+        "enqueue": enqueue,
+    }
+    if session is not None:
+        job = RuntimeJobRepository(session).enqueue(
+            kind="subagent_recovery",
+            payload=payload,
+            dedupe_key="subagent-recovery",
+        )
+        return job.id
+    with SessionLocal.begin() as local_session:
+        job = RuntimeJobRepository(local_session).enqueue(
+            kind="subagent_recovery",
+            payload=payload,
+            dedupe_key="subagent-recovery",
+        )
+        return job.id
 
 
 def run_subagent_recovery_service(
@@ -241,10 +279,16 @@ def run_subagent_recovery_service(
         start_http_server(metrics_port)
 
     while running:
-        recover_stalled_subagents(
-            stale_after_seconds=stale_after_seconds,
-            enqueue=enqueue,
-        )
+        if is_local_runtime_profile():
+            enqueue_local_subagent_recovery(
+                stale_after_seconds=stale_after_seconds,
+                enqueue=enqueue,
+            )
+        else:
+            recover_stalled_subagents(
+                stale_after_seconds=stale_after_seconds,
+                enqueue=enqueue,
+            )
         time.sleep(interval_seconds)
 
 

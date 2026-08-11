@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useConsoleStore } from "../../../stores/consoleStore";
 import { WorkspaceShellBar } from "../components/WorkspaceShellBar";
@@ -102,6 +102,12 @@ function agentDefinition(overrides: Partial<AgentDefinition> = {}): AgentDefinit
 
 function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]> = {}) {
   const props: Parameters<typeof WorkspaceShellBar>[0] = {
+    workspaceId: "default",
+    workspaceOptions: [
+      { value: "default", label: "Default Agent", description: "Workspace · ACTIVE" },
+      { value: "researcher", label: "Research Agent", description: "Workspace · ACTIVE" },
+    ],
+    onWorkspaceChange: vi.fn(),
     agentId: "default",
     agentName: "Default Agent",
     activeRunId: null,
@@ -127,6 +133,14 @@ function renderShell(overrides: Partial<Parameters<typeof WorkspaceShellBar>[0]>
 }
 
 describe("WorkspaceShellBar", () => {
+  beforeEach(() => {
+    delete window.desktopApi;
+  });
+
+  afterEach(() => {
+    delete window.desktopApi;
+  });
+
   it("keeps the Workspace title controls visible without the old metric row", () => {
     useConsoleStore.getState().setLocale("en-US");
     renderShell();
@@ -135,7 +149,11 @@ describe("WorkspaceShellBar", () => {
       "href",
       "/agents",
     );
-    expect(screen.getByText("Default Agent")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "切换工作区：Default Agent",
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/模型加运行平台组成智能体/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
@@ -153,6 +171,41 @@ describe("WorkspaceShellBar", () => {
     expect(screen.getByLabelText("运行未创建")).toBeInTheDocument();
   });
 
+  it("renders the workspace switcher in the shell header", () => {
+    useConsoleStore.getState().setLocale("en-US");
+    renderShell();
+
+    expect(
+      screen.getByRole("button", {
+        name: "切换工作区：Default Agent",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a compact Codex-style action bar in desktop runtime", () => {
+    window.desktopApi = {};
+    renderShell();
+
+    expect(screen.getByTestId("desktop-workspace-header")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "返回智能体列表" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "切换工作区：Default Agent" })).not.toBeInTheDocument();
+    expect(screen.queryByText("模型加运行平台组成智能体")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("运行未创建")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "工具/MCP（模型上下文协议）: 2 个可用" }),
+    ).toHaveClass("w-8");
+  });
+
+  it("opens an active run in a separate window only in desktop runtime", () => {
+    const openRun = vi.fn(async () => ({} as never));
+    window.desktopApi = { window: { openRun } };
+    renderShell({ activeRunId: "run-123" });
+
+    fireEvent.click(screen.getByRole("button", { name: "在独立窗口打开运行" }));
+
+    expect(openRun).toHaveBeenCalledWith("run-123");
+  });
+
   it("links to Run Detail after a run exists", () => {
     useConsoleStore.getState().setLocale("en-US");
 
@@ -166,6 +219,9 @@ describe("WorkspaceShellBar", () => {
       "/runs/run-123",
     );
     expect(screen.getByText("待审批")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "在独立窗口打开运行" }),
+    ).not.toBeInTheDocument();
   });
 
   it("includes the active conversation return target in Run Detail links", () => {

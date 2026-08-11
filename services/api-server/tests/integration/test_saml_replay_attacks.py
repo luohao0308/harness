@@ -21,7 +21,6 @@ Attack Vectors Covered:
 from __future__ import annotations
 
 import base64
-import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -33,7 +32,6 @@ from sqlalchemy.orm import Session
 from app.db.models import SAMLProvider
 from app.main import app
 from app.services.saml_provider_service import SAMLProviderService
-from app.services.saml_service import SAMLService
 
 client = TestClient(app)
 
@@ -400,9 +398,6 @@ def test_expired_assertion_id_cleanup(
     """
     # This test would verify the cleanup mechanism
     # For now, we document the requirement
-
-    # Create assertion ID record with timestamp 2 hours ago
-    old_timestamp = datetime.now(UTC) - timedelta(hours=2)
 
     # Run cleanup process (would be implemented in SAMLService)
     # cleanup_result = SAMLService().cleanup_expired_assertion_ids()

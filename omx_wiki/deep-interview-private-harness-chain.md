@@ -20,8 +20,8 @@ The next-phase outcome selected in `$deep-interview` was a real privately deploy
 - `.omx/specs/deep-interview-project-positioning-orchestration.md`
 - `.omx/plans/prd-private-deployable-harness-chain.md`
 - `.omx/plans/test-spec-private-deployable-harness-chain.md`
-- `docs/ai/stages/07-private-deployable-harness-chain.md`
-- `docs/ai/task-progress.yaml`
+- `docs/development/ai/stages/07-private-deployable-harness-chain.md`
+- `docs/development/ai/task-progress.yaml`
 
 ## User Decisions Captured In Deep Interview
 
@@ -58,7 +58,7 @@ Private deployment
 
 ## Completion Evidence
 
-Stage 07 is recorded complete in `docs/ai/task-progress.yaml` and `docs/ai/stages/07-private-deployable-harness-chain.md`.
+Stage 07 is recorded complete in `docs/development/ai/task-progress.yaml` and `docs/development/ai/stages/07-private-deployable-harness-chain.md`.
 
 Recorded Stage 07 evidence includes:
 

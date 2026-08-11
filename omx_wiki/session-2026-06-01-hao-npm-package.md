@@ -31,7 +31,7 @@ services/api-server/app/cli/hao/main.py
 services/api-server/tests/test_hao_cli.py
 services/api-server/tests/test_hao_cli_v2.py
 services/api-server/README.md
-docs/cli/hao.md
+docs/development/cli/hao.md
 ```
 
 ## Behavior

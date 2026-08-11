@@ -6,11 +6,8 @@ Tests Azure AD specific attribute mapping with namespace URIs and claims transfo
 
 Acceptance Criteria 2: Azure AD specific attribute mapping
 """
+
 from __future__ import annotations
-
-from typing import Any
-
-import pytest
 
 from app.services.saml_service import SAMLService
 
@@ -27,7 +24,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["azure.user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "azure.user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Azure User"],
         }
 
@@ -51,7 +50,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname": ["John"],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname": ["Doe"],
         }
@@ -74,7 +75,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["John Doe"],
         }
 
@@ -96,7 +99,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Test User"],
             "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": [
                 "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d",
@@ -122,9 +127,14 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["admin@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "admin@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Admin User"],
-            "http://schemas.microsoft.com/ws/2008/06/identity/claims/role": ["Administrator", "User"],
+            "http://schemas.microsoft.com/ws/2008/06/identity/claims/role": [
+                "Administrator",
+                "User",
+            ],
         }
 
         claims = service.extract_user_claims(
@@ -145,7 +155,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": ["user@tenant.onmicrosoft.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": [
+                "user@tenant.onmicrosoft.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["UPN User"],
         }
 
@@ -167,9 +179,13 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Tenant User"],
-            "http://schemas.microsoft.com/identity/claims/tenantid": ["12345678-1234-1234-1234-123456789abc"],
+            "http://schemas.microsoft.com/identity/claims/tenantid": [
+                "12345678-1234-1234-1234-123456789abc"
+            ],
         }
 
         claims = service.extract_user_claims(
@@ -190,9 +206,13 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Object User"],
-            "http://schemas.microsoft.com/identity/claims/objectidentifier": ["a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"],
+            "http://schemas.microsoft.com/identity/claims/objectidentifier": [
+                "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"
+            ],
         }
 
         claims = service.extract_user_claims(
@@ -213,7 +233,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["minimal@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "minimal@example.com"
+            ],
         }
 
         claims = service.extract_user_claims(
@@ -233,11 +255,15 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["full.user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "full.user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname": ["Full"],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname": ["User"],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Full User"],
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": ["full.user@tenant.onmicrosoft.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": [
+                "full.user@tenant.onmicrosoft.com"
+            ],
             "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": [
                 "group-guid-1",
                 "group-guid-2",
@@ -263,7 +289,9 @@ class TestAzureADAttributeMapping:
 
         # Azure AD uses specific case for claim URIs
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["case.user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "case.user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Case User"],
         }
 
@@ -281,7 +309,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["empty.claims@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "empty.claims@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname": [],  # Empty
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname": [],  # Empty
         }
@@ -302,7 +332,9 @@ class TestAzureADAttributeMapping:
         service = SAMLService()
 
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": ["upn.user@tenant.onmicrosoft.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn": [
+                "upn.user@tenant.onmicrosoft.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["UPN Fallback User"],
         }
 
@@ -326,7 +358,9 @@ class TestAzureADAttributeMapping:
 
         # Correct Azure AD namespaces
         azure_attributes = {
-            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["ns.user@example.com"],
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+                "ns.user@example.com"
+            ],
             "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Namespace User"],
         }
 

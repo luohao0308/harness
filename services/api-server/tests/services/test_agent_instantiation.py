@@ -11,6 +11,7 @@ Tests cover:
 7. Parameter substitution in system_prompt
 8. Return full agent configuration
 """
+
 from __future__ import annotations
 
 import pytest
@@ -35,7 +36,10 @@ def sample_template(db_session):
         icon="💻",
         tags=["coding", "development"],
         config={
-            "system_prompt": "You are a coding assistant for {{user_name}}. Your expertise is in {{expertise_area}}.",
+            "system_prompt": (
+                "You are a coding assistant for {{user_name}}. "
+                "Your expertise is in {{expertise_area}}."
+            ),
             "suggested_tools": ["code_execution", "web_search"],
             "default_model": "claude-sonnet-4",
             "parameters": {
@@ -79,7 +83,9 @@ def test_instantiate_from_template_creates_agent(template_service, db_session, s
     assert db_agent.name == "My Code Assistant"
 
 
-def test_instantiate_from_template_substitutes_parameters(template_service, db_session, sample_template):
+def test_instantiate_from_template_substitutes_parameters(
+    template_service, db_session, sample_template
+):
     """Test that parameters are substituted in system_prompt."""
     # Arrange
     params = {
@@ -123,7 +129,9 @@ def test_instantiate_from_template_applies_config(template_service, db_session, 
     assert agent["status"] == "ACTIVE"
 
 
-def test_instantiate_from_template_validates_required_params(template_service, db_session, sample_template):
+def test_instantiate_from_template_validates_required_params(
+    template_service, db_session, sample_template
+):
     """Test that missing required parameters raise an error."""
     # Arrange
     params = {
@@ -236,7 +244,9 @@ def test_apply_template_config_substitutes_placeholders(template_service, sample
     assert "TypeScript" in config["system_prompt"]
 
 
-def test_instantiate_from_template_handles_multiple_placeholders_in_prompt(template_service, db_session):
+def test_instantiate_from_template_handles_multiple_placeholders_in_prompt(
+    template_service, db_session
+):
     """Test parameter substitution with multiple occurrences of the same placeholder."""
     # Arrange
     template = AgentTemplate(
@@ -246,7 +256,10 @@ def test_instantiate_from_template_handles_multiple_placeholders_in_prompt(templ
         icon="🔄",
         tags=["test"],
         config={
-            "system_prompt": "Hello {{name}}! Your name is {{name}} and you work on {{project}}. Remember, {{name}} is important.",
+            "system_prompt": (
+                "Hello {{name}}! Your name is {{name}} and you work on {{project}}. "
+                "Remember, {{name}} is important."
+            ),
             "suggested_tools": [],
             "default_model": "claude-sonnet-4",
             "required_params": ["name", "project"],
@@ -270,7 +283,10 @@ def test_instantiate_from_template_handles_multiple_placeholders_in_prompt(templ
     )
 
     # Assert
-    expected_prompt = "Hello Grace! Your name is Grace and you work on CloudPlatform. Remember, Grace is important."
+    expected_prompt = (
+        "Hello Grace! Your name is Grace and you work on CloudPlatform. "
+        "Remember, Grace is important."
+    )
     assert agent["system_prompt"] == expected_prompt
     assert "{{name}}" not in agent["system_prompt"]
     assert "{{project}}" not in agent["system_prompt"]
@@ -314,7 +330,9 @@ def test_instantiate_from_template_handles_optional_params(template_service, db_
     assert "Welcome!" in agent["system_prompt"]
 
 
-def test_instantiate_from_template_preserves_template_reference(template_service, db_session, sample_template):
+def test_instantiate_from_template_preserves_template_reference(
+    template_service, db_session, sample_template
+):
     """Test that created agent maintains reference to source template."""
     # Arrange
     params = {
@@ -337,4 +355,7 @@ def test_instantiate_from_template_preserves_template_reference(template_service
     db_agent = db_session.query(Agent).filter_by(id=agent["id"]).first()
     assert db_agent is not None
     # Template ID would be stored in description or metadata field
-    assert "code-assistant-template" in db_agent.description or agent["template_id"] == "code-assistant-template"
+    assert (
+        "code-assistant-template" in db_agent.description
+        or agent["template_id"] == "code-assistant-template"
+    )

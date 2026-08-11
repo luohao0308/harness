@@ -304,9 +304,11 @@ def _create_workspace_chat_run(
     model_provider: str | None = None,
     model_name: str | None = None,
     max_subagents: int = 0,
+    task_id: str | None = None,
     commit: bool = True,
 ) -> Task:
     task = Task(
+        id=task_id,
         organization_id=principal.organization_id,
         agent_id=agent_id,
         created_by=principal.user_id,

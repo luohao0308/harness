@@ -3,6 +3,7 @@ Agent Instantiation API Endpoints - Story 5.2: Template Instantiation
 
 Provides endpoints for creating agents from templates with parameter substitution.
 """
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -25,7 +26,10 @@ class AgentInstantiationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255, description="Agent name")
     parameters: dict[str, str] = Field(
         default_factory=dict,
-        description="Parameters for template substitution (e.g., {'user_name': 'John', 'expertise_area': 'Python'})",
+        description=(
+            "Parameters for template substitution "
+            "(e.g., {'user_name': 'John', 'expertise_area': 'Python'})"
+        ),
     )
 
 
@@ -118,8 +122,8 @@ def create_agent_from_template(
     except ValueError as e:
         error_message = str(e)
         if "Template not found" in error_message:
-            raise HTTPException(status_code=404, detail=error_message)
+            raise HTTPException(status_code=404, detail=error_message) from e
         elif "Missing required parameter" in error_message:
-            raise HTTPException(status_code=400, detail=error_message)
+            raise HTTPException(status_code=400, detail=error_message) from e
         else:
-            raise HTTPException(status_code=400, detail=error_message)
+            raise HTTPException(status_code=400, detail=error_message) from e

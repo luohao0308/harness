@@ -12,7 +12,7 @@ describe("ModelProviderStep", () => {
     const onSubmit = vi.fn();
     render(<ModelProviderStep onSubmit={onSubmit} />);
 
-    expect(screen.getByLabelText(/api key/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^api key\b/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/base url/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/model/i)).toBeInTheDocument();
   });
@@ -38,7 +38,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn();
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      const apiKeyInput = screen.getByLabelText(/api key/i);
+      const apiKeyInput = screen.getByLabelText(/^api key\b/i);
       await user.click(apiKeyInput);
       await user.tab();
 
@@ -52,7 +52,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn();
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      const apiKeyInput = screen.getByLabelText(/api key/i);
+      const apiKeyInput = screen.getByLabelText(/^api key\b/i);
       await user.type(apiKeyInput, "sk-test123456");
       await user.tab();
 
@@ -66,7 +66,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn();
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      const apiKeyInput = screen.getByLabelText(/api key/i) as HTMLInputElement;
+      const apiKeyInput = screen.getByLabelText(/^api key\b/i) as HTMLInputElement;
       expect(apiKeyInput.type).toBe("password");
 
       const toggleButton = screen.getByLabelText(/show api key/i);
@@ -155,7 +155,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn().mockResolvedValue(undefined);
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      await user.type(screen.getByLabelText(/api key/i), "sk-test123456");
+      await user.type(screen.getByLabelText(/^api key\b/i), "sk-test123456");
       await user.type(screen.getByLabelText(/base url/i), "https://api.openai.com/v1");
       await user.selectOptions(screen.getByLabelText(/model/i), "gpt-4");
 
@@ -173,10 +173,12 @@ describe("ModelProviderStep", () => {
 
     it("shows loading state during submission", async () => {
       const user = userEvent.setup();
-      const onSubmit = vi.fn(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      const onSubmit = vi.fn<(data: { apiKey: string; baseUrl: string; model: string }) => Promise<void>>(
+        () => new Promise((resolve) => setTimeout(resolve, 100))
+      );
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      await user.type(screen.getByLabelText(/api key/i), "sk-test123456");
+      await user.type(screen.getByLabelText(/^api key\b/i), "sk-test123456");
       await user.type(screen.getByLabelText(/base url/i), "https://api.openai.com/v1");
       await user.selectOptions(screen.getByLabelText(/model/i), "gpt-4");
 
@@ -192,7 +194,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn().mockRejectedValue(new Error("Network error"));
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      await user.type(screen.getByLabelText(/api key/i), "sk-test123456");
+      await user.type(screen.getByLabelText(/^api key\b/i), "sk-test123456");
       await user.type(screen.getByLabelText(/base url/i), "https://api.openai.com/v1");
       await user.selectOptions(screen.getByLabelText(/model/i), "gpt-4");
 
@@ -210,7 +212,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn().mockRejectedValue("Unknown error");
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      await user.type(screen.getByLabelText(/api key/i), "sk-test123456");
+      await user.type(screen.getByLabelText(/^api key\b/i), "sk-test123456");
       await user.type(screen.getByLabelText(/base url/i), "https://api.openai.com/v1");
       await user.selectOptions(screen.getByLabelText(/model/i), "gpt-4");
 
@@ -228,7 +230,7 @@ describe("ModelProviderStep", () => {
       const onSubmit = vi.fn();
       render(<ModelProviderStep onSubmit={onSubmit} />);
 
-      const apiKeyInput = screen.getByLabelText(/api key/i);
+      const apiKeyInput = screen.getByLabelText(/^api key\b/i);
       expect(apiKeyInput).toHaveAttribute("aria-invalid", "false");
 
       const baseUrlInput = screen.getByLabelText(/base url/i);
@@ -244,7 +246,7 @@ describe("ModelProviderStep", () => {
       await user.click(submitButton);
 
       await waitFor(() => {
-        const apiKeyInput = screen.getByLabelText(/api key/i);
+        const apiKeyInput = screen.getByLabelText(/^api key\b/i);
         expect(apiKeyInput).toHaveAttribute("aria-invalid", "true");
       });
     });
@@ -258,7 +260,7 @@ describe("ModelProviderStep", () => {
       await user.click(submitButton);
 
       await waitFor(() => {
-        const apiKeyInput = screen.getByLabelText(/api key/i);
+        const apiKeyInput = screen.getByLabelText(/^api key\b/i);
         expect(apiKeyInput).toHaveAttribute("aria-describedby", "apiKey-error");
       });
     });

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-API_DIR = ROOT / "docs/api-reference"
+API_DIR = ROOT / "docs/contracts/api-reference"
 OPENAPI_PATH = API_DIR / "openapi.json"
 INDEX_PATH = API_DIR / "README.md"
 

@@ -5,10 +5,12 @@ import time
 from collections.abc import Callable
 from functools import wraps
 from threading import Lock
-from typing import Any, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
-from redis import Redis
+
+if TYPE_CHECKING:
+    from redis import Redis
 
 from app.core.config import get_settings
 from app.observability.metrics import query_cache_hit_total, query_cache_miss_total
@@ -97,10 +99,14 @@ class QueryCache:
             return payload
 
     def _client(self) -> Redis | None:
+        if get_settings().runtime_profile == "local":
+            return None
         if self._redis_failed:
             return None
         if self._redis is None:
             try:
+                from redis import Redis
+
                 self._redis = Redis.from_url(get_settings().redis_url, socket_connect_timeout=0.05)
             except Exception:
                 self._redis_failed = True

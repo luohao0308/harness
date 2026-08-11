@@ -159,6 +159,13 @@ describe("v4 rate_limited error copy", () => {
 });
 
 describe("model auth error copy", () => {
+  it("classifies typed local runtime setup errors without an HTTP auth status", async () => {
+    const { isModelAuthError } = await import("../lib/sseErrors");
+    expect(
+      isModelAuthError({ kind: "server", detail: '{"code":"MODEL_SETUP_REQUIRED"}' }),
+    ).toBe(true);
+  });
+
   it("points users at model settings instead of generic backend errors", async () => {
     const { formatErrorMessage } = await import("../lib/sseErrors");
     const { title, description } = formatErrorMessage(

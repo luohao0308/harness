@@ -2,16 +2,14 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const apiProxyTarget = process.env.HARNESS_API_PROXY_TARGET ?? "http://127.0.0.1:8000";
+const isDesktopBuild = process.env.HARNESS_DESKTOP_BUILD === "1";
 const featureChunkByPath: Array<[string, string]> = [
-  ["feature-workspace", "/src/features/agents/"],
-  ["feature-workspace", "/src/features/teams/"],
-  ["feature-workspace", "/src/features/observability/"],
-  ["feature-workspace", "/src/features/evals/"],
   ["feature-subagents", "/src/features/subagents/"],
   ["feature-tools", "/src/features/tools/"],
 ];
 
 export default defineConfig({
+  base: isDesktopBuild ? "./" : "/",
   plugins: [react()],
   build: {
     chunkSizeWarningLimit: 600,

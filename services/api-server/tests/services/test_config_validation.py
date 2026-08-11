@@ -9,11 +9,11 @@ Tests cover:
 5. CORS configuration validation
 6. Model provider API keys validation
 """
+
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 

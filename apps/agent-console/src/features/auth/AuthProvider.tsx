@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import {
   AUTH_SESSION_EXPIRED_EVENT,
+  ApiHttpError,
   clearAuthTokens,
   getMe,
   getStoredAccessToken,
@@ -26,6 +27,26 @@ import {
   type AuthTokenResponse,
   type OrganizationSummary,
 } from "../tasks/api";
+import { getDesktopLocalRuntimeApi } from "../../lib/local-runtime";
+
+const DESKTOP_AUTH_BOOTSTRAP_RETRY_DELAYS_MS = [250, 750] as const;
+
+async function loadCurrentUserWithRetry(retryTransientFailure: boolean): Promise<AuthMeResponse> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await getMe();
+    } catch (error) {
+      const retryDelay = DESKTOP_AUTH_BOOTSTRAP_RETRY_DELAYS_MS[attempt];
+      const canRetry =
+        retryTransientFailure &&
+        getDesktopLocalRuntimeApi() !== undefined &&
+        !(error instanceof ApiHttpError) &&
+        retryDelay !== undefined;
+      if (!canRetry) throw error;
+      await new Promise((resolve) => globalThis.setTimeout(resolve, retryDelay));
+    }
+  }
+}
 
 export type AuthContextValue = {
   user: AuthMeResponse | null;
@@ -55,15 +76,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [isUsingDevToken, setIsUsingDevToken] = useState(isDevAuthFallbackEnabled);
 
-  const loadMe = useCallback(async () => {
+  const loadMe = useCallback(async (options: { retryTransientFailure?: boolean } = {}) => {
     setLoading(true);
     setError(null);
     try {
-      const next = await getMe();
+      const next = await loadCurrentUserWithRetry(options.retryTransientFailure === true);
       setUser(next);
       setIsUsingDevToken(isDevAuthFallbackEnabled());
       return next;
     } catch (loadError) {
+      if (loadError instanceof ApiHttpError && loadError.status === 401) {
+        setUser(null);
+        setIsUsingDevToken(false);
+        return null;
+      }
       const message = loadError instanceof Error ? loadError.message : "无法加载当前用户";
       if (getStoredAccessToken()) {
         clearAuthTokens();
@@ -78,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void loadMe();
+    void loadMe({ retryTransientFailure: true });
   }, [loadMe]);
 
   useEffect(() => {

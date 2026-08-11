@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "TS=$(date -u +%Y-%m-%dT%H:%M:%SZ) && mkdir -p \"${CLAUDE_PROJECT_DIR}/.omc/state/sessions/$TS\" && printf -- '- %s \\xe2\\x86\\x92 .omc/state/sessions/%s/notes.md\\n' \"$TS\" \"$TS\" >> \"${CLAUDE_PROJECT_DIR}/docs/ai/session-log-pointers.md\""
+            "command": "TS=$(date -u +%Y-%m-%dT%H:%M:%SZ) && mkdir -p \"${CLAUDE_PROJECT_DIR}/.omc/state/sessions/$TS\" && printf -- '- %s \\xe2\\x86\\x92 .omc/state/sessions/%s/notes.md\\n' \"$TS\" \"$TS\" >> \"${CLAUDE_PROJECT_DIR}/docs/development/ai/session-log-pointers.md\""
           }
         ]
       }

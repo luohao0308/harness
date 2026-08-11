@@ -29,6 +29,8 @@ import { AlertTriangle, Check, Copy, KeyRound, RotateCw } from "lucide-react";
 
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
+import { isDesktopRuntime } from "../../../lib/desktop-bridge";
+import { isLocalRuntimeProfile } from "../../../lib/local-runtime";
 import { API_BASE_URL } from "../../tasks/api";
 import { copyText } from "../lib/clipboard";
 import { renderMarkdown } from "../lib/markdown";
@@ -97,6 +99,9 @@ export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps):
   const canRetry = onRetry !== undefined && node.metadata.retry_disabled !== true;
   const showModelSettingsAction = isModelAuthError(error);
   const modelSettingsLabel = text("打开模型设置", "Open Model Settings");
+  const modelSettingsHref = isLocalRuntimeProfile() && isDesktopRuntime()
+    ? "/desktop?section=models"
+    : "/settings/models";
 
   // `justCopied` mirrors the `MessageActions` UI pattern: flip to true on a
   // successful clipboard write and auto-reset after 1500ms. A ref holds the
@@ -166,7 +171,7 @@ export function ChatErrorBubble({ node, error, onRetry }: ChatErrorBubbleProps):
         <div className="mt-3 flex items-center justify-end gap-2">
           {showModelSettingsAction && (
             <Link
-              to="/settings/models"
+              to={modelSettingsHref}
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 transition-[background-color,color,border-color,transform,box-shadow] hover:bg-slate-50 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
               aria-label={modelSettingsLabel}
             >

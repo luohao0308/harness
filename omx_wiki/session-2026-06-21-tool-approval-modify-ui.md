@@ -13,7 +13,7 @@ Run Detail and Workspace Inspector pending tool approval cards now expose Modify
 - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx` now renders the third Modify action on pending approval cards and refreshes the Run workspace query after modification.
 - `apps/agent-console/src/features/agents/components/InspectorDrawer.tsx` now renders compact pending approval controls in the runtime section and supports the same Modify JSON editor.
 - `apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx` passes active Run approvals and a refetch callback into the inspector.
-- `docs/workspace-pro-gap-register.md` marks "Approve, Reject, Modify tool approvals" as implemented.
+- `docs/plans/workspace-pro-gap-register.md` marks "Approve, Reject, Modify tool approvals" as implemented.
 
 ## Validation
 

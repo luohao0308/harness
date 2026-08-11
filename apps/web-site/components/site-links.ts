@@ -4,13 +4,13 @@ export const siteLinks = {
   openapiJson: "/openapi.json",
   openapiYaml: "/openapi.yaml",
   usageFlow:
-    "https://github.com/luohao0308/harness/blob/develop/docs/human/11-website-usage-flow.md",
+    "https://github.com/luohao0308/harness/blob/develop/docs/design/website-usage-flow.md",
   deployment:
-    "https://github.com/luohao0308/harness/blob/develop/docs/runbooks/deployment.md",
+    "https://github.com/luohao0308/harness/blob/develop/docs/project-memory/runbooks/deployment.md",
   localDevelopment:
-    "https://github.com/luohao0308/harness/blob/develop/docs/runbooks/local-development.md",
+    "https://github.com/luohao0308/harness/blob/develop/docs/project-memory/runbooks/local-development.md",
   troubleshooting:
-    "https://github.com/luohao0308/harness/blob/develop/docs/runbooks/troubleshooting.md",
+    "https://github.com/luohao0308/harness/blob/develop/docs/project-memory/runbooks/troubleshooting.md",
 };
 
 export function consolePath(path: string) {

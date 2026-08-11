@@ -15,8 +15,10 @@
 
 import type { JSX } from "react";
 import { useMemo } from "react";
-import { ChevronLeft, ChevronRight, MessageSquarePlus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FolderOpen, MessageSquarePlus, Settings2, ShieldCheck, Terminal, Trash2, Users } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 
+import { isDesktopRuntime } from "../../../lib/desktop-bridge";
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
 import type { ConversationSummary } from "../lib/conversationHistory";
@@ -45,6 +47,7 @@ export function ConversationHistoryPanel({
   onToggleCollapsed,
 }: ConversationHistoryPanelProps): JSX.Element {
   const { text, isChinese } = useI18n();
+  const location = useLocation();
   const grouped = useMemo(
     () => groupConversations(
       sortConversationsByUpdatedAt(conversations),
@@ -54,6 +57,9 @@ export function ConversationHistoryPanel({
   );
   const locale = isChinese ? "zh-CN" : "en";
   const nowMs = Date.now();
+  const desktop = isDesktopRuntime();
+  const desktopFilesPath = desktopPanelPath(location.pathname, location.search, "files");
+  const desktopApprovalsPath = desktopPanelPath(location.pathname, location.search, "approvals");
 
   const toggleLabel = collapsed
     ? text("展开历史对话", "Expand history")
@@ -83,6 +89,15 @@ export function ConversationHistoryPanel({
         >
           <MessageSquarePlus aria-hidden="true" className="h-4 w-4" />
         </button>
+        {desktop ? (
+          <div className="mt-auto flex flex-col gap-1">
+            <DesktopUtilityLink to="/teams" label={text("团队", "Teams")} icon={<Users className="h-4 w-4" />} />
+            <DesktopUtilityLink to="/terminal" label={text("终端", "Terminal")} icon={<Terminal className="h-4 w-4" />} />
+            <DesktopUtilityLink to={desktopFilesPath} label={text("文件", "Files")} icon={<FolderOpen className="h-4 w-4" />} />
+            <DesktopUtilityLink to={desktopApprovalsPath} label={text("审批", "Approvals")} icon={<ShieldCheck className="h-4 w-4" />} />
+            <DesktopUtilityLink to="/desktop" label={text("设置", "Settings")} icon={<Settings2 className="h-4 w-4" />} />
+          </div>
+        ) : null}
       </aside>
     );
   }
@@ -92,32 +107,64 @@ export function ConversationHistoryPanel({
       aria-label={text("历史对话", "Conversation history")}
       className="flex w-[280px] shrink-0 flex-col border-r border-slate-200 bg-[#f7f7f8] max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:shadow-none"
     >
-      <header className="flex items-center justify-between gap-2 px-2 py-3">
-        <span className="px-2 text-sm font-semibold text-slate-900">
-          {text("历史对话", "History")}
-        </span>
-        <div className="flex items-center gap-1">
+      {desktop ? (
+        <header className="px-3 pb-2 pt-3">
+          <div className="flex h-8 items-center gap-2 px-1">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-slate-900 font-mono text-xs font-semibold text-white">
+              H
+            </span>
+            <span className="text-sm font-semibold text-slate-900">Harness</span>
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-label={toggleLabel}
+              title={toggleLabel}
+              className="ml-auto rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            >
+              <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </div>
           <button
             type="button"
             onClick={onNewConversation}
-            aria-label={text("新建对话", "New conversation")}
-            title={text("新建对话", "New conversation")}
-            className="inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-slate-800 transition-colors hover:bg-slate-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            aria-label={text("新建任务", "New task")}
+            className="mt-3 flex h-9 w-full items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
           >
             <MessageSquarePlus aria-hidden="true" className="h-4 w-4" />
-            <span>{text("新聊天", "New chat")}</span>
+            <span>{text("新建任务", "New task")}</span>
           </button>
-          <button
-            type="button"
-            onClick={onToggleCollapsed}
-            aria-label={toggleLabel}
-            title={toggleLabel}
-            className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-          >
-            <ChevronLeft aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </div>
-      </header>
+          <div className="px-1 pb-1 pt-5 text-xs font-medium text-slate-500">
+            {text("任务", "Tasks")}
+          </div>
+        </header>
+      ) : (
+        <header className="flex items-center justify-between gap-2 px-2 py-3">
+          <span className="px-2 text-sm font-semibold text-slate-900">
+            {text("历史对话", "History")}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onNewConversation}
+              aria-label={text("新建对话", "New conversation")}
+              title={text("新建对话", "New conversation")}
+              className="inline-flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-slate-800 transition-colors hover:bg-slate-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            >
+              <MessageSquarePlus aria-hidden="true" className="h-4 w-4" />
+              <span>{text("新聊天", "New chat")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-label={toggleLabel}
+              title={toggleLabel}
+              className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+            >
+              <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+      )}
 
       {conversations.length === 0 ? (
         <p className="px-3 py-6 text-center text-xs text-slate-500">
@@ -178,7 +225,47 @@ export function ConversationHistoryPanel({
           ))}
         </div>
       )}
+      {desktop ? (
+        <nav aria-label={text("桌面快捷入口", "Desktop shortcuts")} className="border-t border-slate-200 p-2">
+          <DesktopUtilityLink to="/teams" label={text("团队", "Teams")} icon={<Users className="h-4 w-4" />} />
+          <DesktopUtilityLink to="/terminal" label={text("终端", "Terminal")} icon={<Terminal className="h-4 w-4" />} />
+          <DesktopUtilityLink to={desktopFilesPath} label={text("文件", "Files")} icon={<FolderOpen className="h-4 w-4" />} />
+          <DesktopUtilityLink to={desktopApprovalsPath} label={text("审批", "Approvals")} icon={<ShieldCheck className="h-4 w-4" />} />
+          <DesktopUtilityLink to="/desktop" label={text("设置", "Settings")} icon={<Settings2 className="h-4 w-4" />} />
+        </nav>
+      ) : null}
     </aside>
+  );
+}
+
+function desktopPanelPath(pathname: string, search: string, panel: "files" | "approvals"): string {
+  const workspacePath = /^\/agents\/[^/]+\/workspace$/.test(pathname)
+    ? pathname
+    : "/agents/default/workspace";
+  const params = new URLSearchParams(search);
+  params.set("desktop_panel", panel);
+  return `${workspacePath}?${params.toString()}`;
+}
+
+function DesktopUtilityLink({
+  to,
+  label,
+  icon,
+}: {
+  to: string;
+  label: string;
+  icon: JSX.Element;
+}): JSX.Element {
+  return (
+    <Link
+      to={to}
+      aria-label={label}
+      title={label}
+      className="flex h-9 items-center gap-2 rounded-md px-2 text-sm text-slate-600 transition-colors hover:bg-slate-200/70 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+    >
+      <span aria-hidden="true" className="shrink-0">{icon}</span>
+      <span className="truncate">{label}</span>
+    </Link>
   );
 }
 

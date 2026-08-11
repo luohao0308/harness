@@ -8,6 +8,7 @@ Handles first-run detection, wizard state management, step transitions, and onbo
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict
 
 from sqlalchemy import select
@@ -15,8 +16,6 @@ from sqlalchemy import select
 from app.db.models import OnboardingState, User, utc_now
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from sqlalchemy.orm import Session
 
 
@@ -208,7 +207,7 @@ class OnboardingService:
         Mark a specific step as completed.
 
         Adds step to completed_steps array if not already present.
-        Does not change current_step.
+        Advances current_step when completing a later step.
 
         Args:
             user_id: User ID
@@ -229,6 +228,7 @@ class OnboardingService:
         if step not in state.completed_steps:
             state.completed_steps = sorted([*state.completed_steps, step])
 
+        state.current_step = max(state.current_step, step)
         state.updated_at = utc_now()
 
         # If all 7 steps completed, mark wizard as complete
@@ -266,9 +266,9 @@ class OnboardingService:
             "current_step": state.current_step,
             "completed_steps": state.completed_steps,
             "is_completed": state.completed_at is not None,
-            "completed_at": state.completed_at,
-            "created_at": state.created_at,
-            "updated_at": state.updated_at,
+            "completed_at": self._as_utc(state.completed_at),
+            "created_at": self._as_utc(state.created_at),
+            "updated_at": self._as_utc(state.updated_at),
         }
 
     def _get_user_state(self, user_id: str) -> OnboardingState | None:
@@ -295,3 +295,10 @@ class OnboardingService:
         self.session.flush()
         return state
 
+    @staticmethod
+    def _as_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

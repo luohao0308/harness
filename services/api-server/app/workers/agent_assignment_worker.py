@@ -1,11 +1,11 @@
-import dramatiq
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.orchestrator import MultiAgentOrchestrator
 from app.db.models import AgentAssignment, Task
 from app.db.session import SessionLocal
-from app.workers.broker import broker
+from app.runtime_jobs.profile import is_local_runtime_profile
+from app.workers.actor_registration import register_server_actor
 
 
 def execute_agent_assignment(
@@ -51,10 +51,13 @@ def _execute_agent_assignment_with_session(
     return assignment.status
 
 
-@dramatiq.actor(
-    broker=broker,
-    max_retries=0,
-    queue_name="agent_assignments",
-)
 def run_agent_assignment(assignment_id: str) -> None:
     execute_agent_assignment(assignment_id)
+
+
+if not is_local_runtime_profile():
+    run_agent_assignment = register_server_actor(
+        run_agent_assignment,
+        max_retries=0,
+        queue_name="agent_assignments",
+    )

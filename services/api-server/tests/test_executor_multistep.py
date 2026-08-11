@@ -377,8 +377,13 @@ class TestModelCallEvent:
 class TestSubagentDelegation:
     """Tests for subagent delegation trigger conditions."""
 
-    def test_subagent_only_for_async_with_can_spawn(self, db_session: Session) -> None:
+    def test_subagent_only_for_async_with_can_spawn(
+        self,
+        db_session: Session,
+        monkeypatch,
+    ) -> None:
         """Subagent delegation only when execution_mode=async AND can_spawn_subagent=true."""
+        monkeypatch.setattr("app.workers.subagent_worker.run_subagent.send", lambda _id: None)
         client = TestClient(app)
         created = client.post(
             "/api/tasks",

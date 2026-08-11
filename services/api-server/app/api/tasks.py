@@ -1,10 +1,12 @@
 import re
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.agents.context_router import RunContextRouter
@@ -106,6 +108,10 @@ def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务未找到")
     return task
+
+
+def _is_sqlite_lock_error(exc: OperationalError) -> bool:
+    return "database is locked" in str(exc).lower() or "database is busy" in str(exc).lower()
 
 
 @router.post(
@@ -225,38 +231,99 @@ def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     ),
 )
 def cancel_task(task_id: str, session: DbSession, principal: Principal) -> Task:
-    task = get_owned_task(task_id, session, principal.organization_id)
-    if task.status not in {
-        "CREATED",
-        "PLANNING",
-        "RUNNING",
-        "WAITING_APPROVAL",
-        "WAITING_SUBAGENTS",
-        "FAILED",
-    }:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法取消")
+    # A stream can briefly hold a SQLite write transaction while its first
+    # frame is being assembled. Retry only that bounded, transient condition;
+    # all other database errors still surface as server failures.
+    for attempt in range(4):
+        try:
+            task = get_owned_task(task_id, session, principal.organization_id)
+            if task.status not in {
+                "CREATED",
+                "PLANNING",
+                "RUNNING",
+                "WAITING_APPROVAL",
+                "WAITING_SUBAGENTS",
+                "FAILED",
+            }:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法取消")
 
-    now = utc_now()
-    _cancel_local_agent_state_for_task(
-        task=task,
-        session=session,
-        reason="task cancelled",
-        actor_id=principal.user_id,
-        now=now,
+            now = utc_now()
+            _cancel_local_agent_state_for_task(
+                task=task,
+                session=session,
+                reason="task cancelled",
+                actor_id=principal.user_id,
+                now=now,
+            )
+            _cancel_active_model_calls_for_task(
+                task=task,
+                session=session,
+                now=now,
+            )
+            task.status = "CANCELLED"
+            task.updated_at = now
+            task.completed_at = now
+            EventStore(session).append(
+                task_id=task.id,
+                event_type=EventType.TASK_CANCELLED,
+                payload_json={"task_id": task.id, "cancelled_by": principal.user_id},
+                actor_type="user",
+                actor_id=principal.user_id,
+            )
+            session.commit()
+            session.refresh(task)
+            return task
+        except OperationalError as exc:
+            session.rollback()
+            if not _is_sqlite_lock_error(exc) or attempt == 3:
+                raise
+            time.sleep(0.05 * (2**attempt))
+
+    raise RuntimeError("unreachable cancellation retry state")
+
+
+def _cancel_active_model_calls_for_task(
+    *,
+    task: Task,
+    session: Session,
+    now: datetime,
+) -> None:
+    active_calls = list(
+        session.execute(
+            select(ModelCall)
+            .where(ModelCall.task_id == task.id, ModelCall.status == "RUNNING")
+            .order_by(ModelCall.created_at.asc(), ModelCall.id.asc())
+        ).scalars()
     )
-    task.status = "CANCELLED"
-    task.updated_at = now
-    task.completed_at = now
-    EventStore(session).append(
-        task_id=task.id,
-        event_type=EventType.TASK_CANCELLED,
-        payload_json={"task_id": task.id, "cancelled_by": principal.user_id},
-        actor_type="user",
-        actor_id=principal.user_id,
-    )
-    session.commit()
-    session.refresh(task)
-    return task
+    for model_call in active_calls:
+        created_at = model_call.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        model_call.status = "FAILED"
+        model_call.terminal_status = "stream_aborted"
+        model_call.duration_ms = max(
+            int(model_call.duration_ms or 0),
+            max(0, int((now - created_at).total_seconds() * 1000)),
+        )
+        model_call.error_message = "stream closed before completion"
+        EventStore(session).append(
+            task_id=task.id,
+            agent_run_id=model_call.agent_run_id,
+            event_type=EventType.MODEL_CALL_FAILED,
+            payload_json={
+                "model_call_id": model_call.id,
+                "model_provider": model_call.model_provider,
+                "model_name": model_call.model_name,
+                "error": model_call.error_message,
+                "streaming": True,
+                "cancelled": True,
+                "grounding_correlation_id": model_call.grounding_correlation_id,
+                "prompt_manifest_id": model_call.prompt_manifest_id,
+                "context_manifest_id": model_call.context_manifest_id,
+                "attempt_index": model_call.attempt_index,
+                "terminal_status": model_call.terminal_status,
+            },
+        )
 
 
 def _cancel_local_agent_state_for_task(
@@ -729,7 +796,7 @@ def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> 
         session.execute(
             select(ModelCall)
             .where(ModelCall.task_id == task_id)
-            .order_by(ModelCall.created_at.desc())
+            .order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
         ).scalars()
     )
     trace_ids = _model_call_trace_ids(
@@ -776,7 +843,9 @@ def list_tool_calls(
             return ToolCallPage(items=[])
         statement = statement.where(ToolCall.id.in_(tool_call_ids))
     calls = list(
-        session.execute(statement.order_by(ToolCall.created_at.desc()).limit(limit)).scalars()
+        session.execute(
+            statement.order_by(ToolCall.created_at.desc(), ToolCall.id.desc()).limit(limit)
+        ).scalars()
     )
     trace_ids = _tool_call_trace_ids(
         task_id=task_id,

@@ -56,6 +56,9 @@ export async function registerEnterpriseApiRoutes(
       });
     }
   });
+  await page.routeWebSocket(/ws:\/\/(?:127\.0\.0\.1|localhost):8000\/ws\/terminal(?:\?.*)?$/, (socket) => {
+    socket.onMessage(() => undefined);
+  });
   await page.route(API_RE, (route) => routeEnterpriseApi(route, options));
   return {
     unhandledApiRequests,
@@ -94,6 +97,16 @@ async function routeEnterpriseApi(
     await fulfillJson(route, authUser);
     return;
   }
+  if (path === "/api/terminal/tokens" && method === "POST") {
+    const payload = request.postDataJSON() as { terminal_id?: string } | null;
+    const terminalId = payload?.terminal_id ?? "terminal";
+    await fulfillJson(route, {
+      token: `terminal-token-${terminalId}`,
+      terminal_id: terminalId,
+      expires_at: "2026-07-12T00:00:30Z",
+    });
+    return;
+  }
   if (path === "/api/onboarding/state") {
     await fulfillJson(route, onboardingState);
     return;
@@ -104,6 +117,18 @@ async function routeEnterpriseApi(
   }
   if (path === "/api/agents" && method === "POST") {
     await fulfillJson(route, agent);
+    return;
+  }
+  if (path === "/api/agents/local-agent/connections") {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+  if (path === `/api/agents/${enterpriseIds.agentId}/triggers`) {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+  if (path === `/api/agents/${enterpriseIds.agentId}/versions`) {
+    await fulfillJson(route, { items: [] });
     return;
   }
   if (path === `/api/agents/${enterpriseIds.agentId}/clone` && method === "POST") {
@@ -571,6 +596,18 @@ async function routeEnterpriseApi(
     await fulfillJson(route, policySettings);
     return;
   }
+  if (path === "/api/secrets") {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+  if (path === "/api/plugins/marketplace") {
+    await fulfillJson(route, { installed_count: 0, items: [] });
+    return;
+  }
+  if (path === "/api/plugins/prompt-templates") {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
   if (path === "/api/users" && method === "POST") {
     await fulfillJson(route, { ...userMember, user_id: "invited-enterprise", email: "invited@dev.local", status: "invited", accepted_at: null });
     return;
@@ -680,6 +717,35 @@ async function routeEnterpriseApi(
 
   if (path === "/api/observability/summary") {
     await fulfillJson(route, observabilitySummary);
+    return;
+  }
+  if (path === "/api/observability/architecture") {
+    await fulfillJson(route, {
+      planner_executor: {
+        enabled: true,
+        planner: "planner",
+        executor: "dag",
+        react_engine: "harness",
+        planner_prompt_version: "planner-v1",
+        plan_total: 7,
+        sync_step_total: 11,
+        async_step_total: 13,
+        langgraph_step_total: 42,
+        status: "active",
+      },
+      event_sourcing: {
+        enabled: true,
+        event_total: 100,
+        snapshot_total: 1,
+        snapshot_frequency_events: 25,
+        replay_enabled: true,
+        resume_enabled: true,
+        audit_log_enabled: true,
+        time_travel_debugging_enabled: true,
+        last_sequence: 99,
+      },
+      notes: ["langgraph_workflow is not a ToolRunner tool"],
+    });
     return;
   }
   if (path === "/api/observability/token-savings") {
@@ -797,6 +863,14 @@ async function routeEnterpriseApi(
   }
   if (path === "/api/evals/runs") {
     await fulfillJson(route, { items: [evalRun], next_cursor: null });
+    return;
+  }
+  if (path === "/api/evals/results/pending-review") {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (path === "/api/evals/experiments") {
+    await fulfillJson(route, { items: [], next_cursor: null });
     return;
   }
   if (path === `/api/evals/runs/${enterpriseIds.evalRunId}/regression`) {

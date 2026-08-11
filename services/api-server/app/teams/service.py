@@ -803,6 +803,7 @@ class TeamSessionService:
             agent.status = "idle"
             agent.updated_at = woke_at
             team.updated_at = woke_at
+            wake_state = self._clear_wake_failure(wake_state)
             self._set_wake_state(
                 agent,
                 {
@@ -1035,6 +1036,7 @@ class TeamSessionService:
             agent.status = "idle"
             agent.updated_at = woke_at
             team.updated_at = woke_at
+            wake_state = self._clear_wake_failure(wake_state)
             self._set_wake_state(
                 agent,
                 {
@@ -1470,6 +1472,13 @@ class TeamSessionService:
         metadata = dict(agent.metadata_json or {})
         metadata["wake"] = wake_state
         agent.metadata_json = metadata
+
+    @staticmethod
+    def _clear_wake_failure(wake_state: dict) -> dict:
+        recovered = dict(wake_state)
+        for key in ("failed_at", "last_error", "timed_out_at", "timeout_seconds", "crashed_at"):
+            recovered.pop(key, None)
+        return recovered
 
     def _settle_interrupted_wake(self, *, team: Team, agent: TeamAgent, reason: str) -> TeamAgent:
         wake_state = dict((agent.metadata_json or {}).get("wake") or {})

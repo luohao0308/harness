@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 from types import SimpleNamespace
+from uuid import uuid4
 
 import anyio
 import pytest
@@ -598,6 +599,7 @@ def test_agent_workspace_pro_chat_stream_emits_incremental_deltas_with_grounding
     )
     ensure_default_agents(db_session, "dev-org")
     db_session.commit()
+    client_run_id = str(uuid4())
 
     response = stream_agent_chat_run(
         "default",
@@ -618,6 +620,7 @@ def test_agent_workspace_pro_chat_stream_emits_incremental_deltas_with_grounding
             ],
             active_leaf_id="user-streaming-chat",
             active_branch_id="branch-streaming-chat",
+            client_run_id=client_run_id,
             pinned_node_ids=[],
             context_window_turns=8,
         ),
@@ -631,6 +634,264 @@ def test_agent_workspace_pro_chat_stream_emits_incremental_deltas_with_grounding
     assert deltas == ["第一段", "第二段"]
     done = next(payload for event, payload in events if event == "done")
     assert done["status"] == "COMPLETED"
+    run_created = next(payload for event, payload in events if event == "run_created")
+    assert run_created["run_id"] == client_run_id
+    persisted = db_session.get(Task, client_run_id)
+    assert persisted is not None
+    assert persisted.status == "COMPLETED"
+
+
+def test_agent_workspace_chat_stream_honors_run_cancellation_before_completion(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        yield ModelStreamChunk(text="第一段")
+        fresh_session = sessionmaker(bind=db_session.get_bind())()
+        try:
+            run = fresh_session.scalar(
+                select(Task)
+                .where(Task.goal == "验证取消")
+                .order_by(Task.created_at.desc())
+            )
+            assert run is not None
+            run.status = "CANCELLED"
+            run.updated_at = utc_now()
+            run.completed_at = utc_now()
+            fresh_session.commit()
+        finally:
+            fresh_session.close()
+        yield ModelStreamChunk(text="不应继续发送")
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证取消",
+            messages=[
+                {
+                    "id": "user-cancel-stream",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "验证取消",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            active_leaf_id="user-cancel-stream",
+            active_branch_id="branch-cancel-stream",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    events = parse_sse_events(collect_streaming_response_text(response))
+    deltas = [payload["content"] for event, payload in events if event == "delta"]
+    done = next(payload for event, payload in events if event == "done")
+    run = db_session.scalar(
+        select(Task).where(Task.goal == "验证取消").order_by(Task.created_at.desc())
+    )
+
+    assert deltas == ["第一段"]
+    assert done["status"] == "CANCELLED"
+    assert run is not None
+    assert run.status == "CANCELLED"
+
+
+def test_agent_workspace_late_model_error_does_not_overwrite_external_cancellation(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        fresh_session = sessionmaker(bind=self.session.get_bind())()
+        try:
+            run = fresh_session.get(Task, self.task_id)
+            assert run is not None
+            run.status = "CANCELLED"
+            run.updated_at = utc_now()
+            run.completed_at = utc_now()
+            EventStore(fresh_session).append(
+                task_id=run.id,
+                event_type=EventType.TASK_CANCELLED,
+                payload_json={"task_id": run.id, "cancelled_by": "dev-engineer"},
+                actor_type="user",
+                actor_id="dev-engineer",
+            )
+            fresh_session.commit()
+        finally:
+            fresh_session.close()
+        raise ModelGatewayError("late upstream failure")
+        yield
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证零输出取消竞态",
+            messages=[],
+            active_leaf_id="root",
+            active_branch_id="branch-late-model-error",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+    events = parse_sse_events(collect_streaming_response_text(response))
+    run_created = next(payload for event, payload in events if event == "run_created")
+    done = next(payload for event, payload in events if event == "done")
+    db_session.expire_all()
+    persisted = db_session.get(Task, run_created["run_id"])
+
+    assert done["status"] == "CANCELLED"
+    assert all(event != "error" for event, _payload in events)
+    assert persisted is not None
+    assert persisted.status == "CANCELLED"
+
+
+def test_agent_workspace_cancelled_disconnect_does_not_append_paused_event(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        yield ModelStreamChunk(text="第一段")
+        yield ModelStreamChunk(text="第二段")
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证取消断开",
+            messages=[],
+            active_leaf_id="root",
+            active_branch_id="branch-cancel-disconnect",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+    iterator = response.body_iterator
+    run_id = ""
+    for _ in range(16):
+        chunk = next(iterator)
+        events = parse_sse_events(chunk)
+        run_created = next(
+            (payload for event, payload in events if event == "run_created"),
+            None,
+        )
+        if run_created is not None:
+            run_id = run_created["run_id"]
+        if any(event == "delta" for event, _payload in events):
+            break
+    assert run_id
+
+    fresh_session = sessionmaker(bind=db_session.get_bind())()
+    try:
+        run = fresh_session.get(Task, run_id)
+        assert run is not None
+        run.status = "CANCELLED"
+        run.updated_at = utc_now()
+        run.completed_at = utc_now()
+        EventStore(fresh_session).append(
+            task_id=run_id,
+            event_type=EventType.TASK_CANCELLED,
+            payload_json={"task_id": run_id, "cancelled_by": "dev-engineer"},
+            actor_type="user",
+            actor_id="dev-engineer",
+        )
+        fresh_session.commit()
+    finally:
+        fresh_session.close()
+
+    iterator.close()
+    db_session.expire_all()
+    persisted = db_session.get(Task, run_id)
+    event_types = list(
+        db_session.scalars(
+            select(AgentEvent.event_type)
+            .where(AgentEvent.task_id == run_id)
+            .order_by(AgentEvent.sequence)
+        )
+    )
+
+    assert persisted is not None
+    assert persisted.status == "CANCELLED"
+    assert EventType.TASK_CANCELLED.value in event_types
+    assert EventType.TASK_PAUSED.value not in event_types
+
+
+def test_agent_workspace_pre_frame_disconnect_does_not_leave_run_running(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+    client_run_id = str(uuid4())
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证首帧前断开",
+            client_run_id=client_run_id,
+            messages=[],
+            active_leaf_id="root",
+            active_branch_id="branch-pre-frame-disconnect",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+    iterator = response.body_iterator
+    first_chunk = next(iterator)
+    first_events = parse_sse_events(first_chunk)
+    assert any(event == "run_created" for event, _payload in first_events)
+
+    iterator.close()
+    db_session.expire_all()
+    persisted = db_session.get(Task, client_run_id)
+    event_types = list(
+        db_session.scalars(
+            select(AgentEvent.event_type)
+            .where(AgentEvent.task_id == client_run_id)
+            .order_by(AgentEvent.sequence)
+        )
+    )
+
+    assert persisted is not None
+    assert persisted.status == "PAUSED"
+    assert EventType.TASK_PAUSED.value in event_types
 
 
 def test_agent_workspace_goal_mode_executes_without_plan_artifact(

@@ -2807,21 +2807,22 @@ def test_hao_local_agent_send_falls_back_from_mock_provider_to_real_default(
         )
     ).scalar_one_or_none()
     settings_value = {
-        "default_provider": "deepseek-flash",
-        "default_model": "deepseek-v4-flash",
+        "default_provider": "custom-real",
+        "default_model": "real-model",
         "providers": [
             {
-                "name": "openai-compatible",
-                "label": "OpenAI GPT-5.5",
+                "name": "custom-mock",
+                "label": "Unconfigured compatible provider",
                 "api_format": "openai",
-                "base_url": "https://api.openai.com/v1",
+                "base_url": "https://mock.example.test/v1",
                 "api_key": "",
-                "api_key_env": "OPENAI_API_KEY",
-                "model": "gpt-5.5",
+                "model": "mock-model",
             },
             {
-                "name": "deepseek-flash",
-                "api_key": "test-deepseek-key",
+                "name": "custom-real",
+                "base_url": "https://models.example.test/v1",
+                "model": "real-model",
+                "api_key": "test-real-key",
             },
         ],
     }
@@ -2852,8 +2853,8 @@ def test_hao_local_agent_send_falls_back_from_mock_provider_to_real_default(
         json={
             "content": "你好",
             "client_message_id": "msg-mock-provider-fallback",
-            "model_provider": "openai-compatible",
-            "model_name": "gpt-5.5",
+            "model_provider": "custom-mock",
+            "model_name": "mock-model",
         },
     )
     assert sent.status_code == 202, sent.text
@@ -2861,21 +2862,21 @@ def test_hao_local_agent_send_falls_back_from_mock_provider_to_real_default(
 
     run = db_session.get(Task, sent_payload["run_id"])
     assert run is not None
-    assert run.model_provider == "deepseek-flash"
-    assert run.model_name == "deepseek-v4-flash"
+    assert run.model_provider == "custom-real"
+    assert run.model_name == "real-model"
 
     pull = client.get("/api/agents/local-agent/bridge/tasks", headers=bridge_headers)
     assert pull.status_code == 200, pull.text
     [task] = pull.json()["items"]
-    assert task["payload"]["model_provider"] == "deepseek-flash"
-    assert task["payload"]["model_name"] == "deepseek-v4-flash"
-    assert task["payload"]["workspace_request"]["model_provider"] == "deepseek-flash"
-    assert task["payload"]["workspace_request"]["model_name"] == "deepseek-v4-flash"
+    assert task["payload"]["model_provider"] == "custom-real"
+    assert task["payload"]["model_name"] == "real-model"
+    assert task["payload"]["workspace_request"]["model_provider"] == "custom-real"
+    assert task["payload"]["workspace_request"]["model_name"] == "real-model"
     assert task["payload"]["model_fallback"] == {
-        "requested_model_provider": "openai-compatible",
-        "requested_model_name": "gpt-5.5",
-        "fallback_model_provider": "deepseek-flash",
-        "fallback_model_name": "deepseek-v4-flash",
+        "requested_model_provider": "custom-mock",
+        "requested_model_name": "mock-model",
+        "fallback_model_provider": "custom-real",
+        "fallback_model_name": "real-model",
         "fallback_reason": "selected_provider_would_use_local_mock",
     }
     assert task["payload"]["workspace_request"]["model_fallback"] == task["payload"][
@@ -2891,10 +2892,10 @@ def test_hao_local_agent_send_falls_back_from_mock_provider_to_real_default(
         ).scalars()
     )
     local_io = message.metadata_json["local_agent_io"]
-    assert local_io["input"]["model_provider"] == "deepseek-flash"
-    assert local_io["input"]["model_name"] == "deepseek-v4-flash"
+    assert local_io["input"]["model_provider"] == "custom-real"
+    assert local_io["input"]["model_name"] == "real-model"
     assert local_io["input"]["model_fallback"]["requested_model_provider"] == (
-        "openai-compatible"
+        "custom-mock"
     )
 
 

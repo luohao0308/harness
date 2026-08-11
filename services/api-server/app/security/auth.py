@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.db.models import ApiKey, LocalAgentBridgeTask, OrganizationMember, User, utc_now
 from app.db.session import get_db_session
+from app.local_runtime.api import LOCAL_SESSION_COOKIE
 from app.security.jwt_utils import InvalidTokenError, decode_jwt, hash_api_key, token_error
 from app.security.rbac import (
     Permission,
@@ -127,6 +128,8 @@ def get_current_principal(
         if credentials is not None
         else request.query_params.get("access_token")
     )
+    if token is None and get_settings().runtime_profile == "local":
+        token = request.cookies.get(LOCAL_SESSION_COOKIE)
     if token is None:
         raise token_error("缺少 Bearer token")
     principal = DEV_TOKEN_PRINCIPALS.get(token)

@@ -8,6 +8,7 @@ Tests cover:
 4. Template config JSON schema validation
 5. Default template seeding
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,7 +33,11 @@ def test_get_all_templates_returns_list(service, db_session):
         description="First test template",
         icon="🤖",
         tags=["test", "example"],
-        config={"system_prompt": "You are helpful", "suggested_tools": [], "default_model": "claude-sonnet-4"},
+        config={
+            "system_prompt": "You are helpful",
+            "suggested_tools": [],
+            "default_model": "claude-sonnet-4",
+        },
         is_active=True,
     )
     template2 = AgentTemplate(
@@ -41,7 +46,11 @@ def test_get_all_templates_returns_list(service, db_session):
         description="Second test template",
         icon="🔧",
         tags=["test"],
-        config={"system_prompt": "You are a tool", "suggested_tools": ["web_search"], "default_model": "claude-sonnet-4"},
+        config={
+            "system_prompt": "You are a tool",
+            "suggested_tools": ["web_search"],
+            "default_model": "claude-sonnet-4",
+        },
         is_active=True,
     )
     template3 = AgentTemplate(
@@ -173,9 +182,9 @@ def test_default_templates_exist_after_seed(db_session):
     # In a real environment, the migration should have already run
 
     # Query all active templates
-    templates = db_session.execute(
-        select(AgentTemplate).where(AgentTemplate.is_active == True)
-    ).scalars().all()
+    templates = (
+        db_session.execute(select(AgentTemplate).where(AgentTemplate.is_active)).scalars().all()
+    )
 
     # Assert: We expect 5 default templates from seed
     # Note: This test assumes seed data is present
@@ -365,8 +374,7 @@ def test_apply_template_config_handles_special_characters(service, db_session):
 
     # Act
     result = service.apply_template_config(
-        template,
-        {"user_name": "Alice O'Brien", "email": "alice+test@example.com"}
+        template, {"user_name": "Alice O'Brien", "email": "alice+test@example.com"}
     )
 
     # Assert
@@ -491,6 +499,7 @@ def test_instantiate_from_template_saves_to_database(service, db_session):
 
     # Assert - Agent should exist in database
     from app.db.models import Agent
+
     db_agent = db_session.query(Agent).filter_by(id=agent["id"]).first()
     assert db_agent is not None
     assert db_agent.name == "Test Agent"

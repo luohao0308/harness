@@ -35,17 +35,25 @@ fi
 python3 - "$next_version" <<'PY'
 import json, pathlib, re, sys
 version = sys.argv[1]
-package_path = pathlib.Path("apps/agent-console/package.json")
-package_lock_path = pathlib.Path("apps/agent-console/package-lock.json")
-package = json.loads(package_path.read_text())
-package["version"] = version
-package_path.write_text(json.dumps(package, indent=2) + "\n")
-if package_lock_path.exists():
-    lock = json.loads(package_lock_path.read_text())
-    lock["version"] = version
-    if "packages" in lock and "" in lock["packages"]:
-        lock["packages"][""]["version"] = version
-    package_lock_path.write_text(json.dumps(lock, indent=2) + "\n")
+
+def update_node_package(package_path: pathlib.Path) -> None:
+    package_lock_path = package_path.with_name("package-lock.json")
+    package = json.loads(package_path.read_text())
+    package["version"] = version
+    package_path.write_text(json.dumps(package, indent=2) + "\n")
+    if package_lock_path.exists():
+        lock = json.loads(package_lock_path.read_text())
+        lock["version"] = version
+        if "packages" in lock and "" in lock["packages"]:
+            lock["packages"][""]["version"] = version
+        package_lock_path.write_text(json.dumps(lock, indent=2) + "\n")
+
+for package_path in (
+    pathlib.Path("apps/agent-console/package.json"),
+    pathlib.Path("apps/desktop-app/package.json"),
+):
+    update_node_package(package_path)
+
 pyproject_path = pathlib.Path("services/api-server/pyproject.toml")
 pyproject = pyproject_path.read_text()
 pyproject = re.sub(r'^version = "[^"]+"', f'version = "{version}"', pyproject, count=1, flags=re.M)

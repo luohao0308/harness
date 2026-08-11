@@ -9,8 +9,6 @@ Acceptance Criteria 4: Role assignment from Azure AD groups
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 from sqlalchemy.orm import Session
 
@@ -118,7 +116,7 @@ class TestAzureADProvisioning:
             "groups": ["admin", "users"],
         }
 
-        user = provisioning_service.provision_user_from_saml(
+        provisioning_service.provision_user_from_saml(
             saml_claims=azure_claims,
             idp_entity_id="https://sts.windows.net/tenant-id/",
             subject_id="admin-object-id",
@@ -143,7 +141,7 @@ class TestAzureADProvisioning:
             "groups": ["developers", "engineering"],
         }
 
-        user = provisioning_service.provision_user_from_saml(
+        provisioning_service.provision_user_from_saml(
             saml_claims=azure_claims,
             idp_entity_id="https://sts.windows.net/tenant-id/",
             subject_id="user-object-id",
@@ -169,7 +167,7 @@ class TestAzureADProvisioning:
             "groups": ["Global Administrator", "Company Administrator"],
         }
 
-        user = provisioning_service.provision_user_from_saml(
+        provisioning_service.provision_user_from_saml(
             saml_claims=azure_claims,
             idp_entity_id="https://sts.windows.net/tenant-id/",
             subject_id="global-admin-object-id",
@@ -192,7 +190,7 @@ class TestAzureADProvisioning:
             "groups": [],
         }
 
-        user = provisioning_service.provision_user_from_saml(
+        provisioning_service.provision_user_from_saml(
             saml_claims=azure_claims,
             idp_entity_id="https://sts.windows.net/tenant-id/",
             subject_id="no-groups-object-id",
@@ -255,7 +253,7 @@ class TestAzureADProvisioning:
         azure_object_id_1 = "old-object-id"
 
         # First login
-        user = provisioning_service.provision_user_from_saml(
+        provisioning_service.provision_user_from_saml(
             saml_claims=azure_claims,
             idp_entity_id=azure_entity_id,
             subject_id=azure_object_id_1,

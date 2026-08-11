@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  AppWindow,
   ClipboardList,
   Bot,
   Box,
@@ -28,6 +29,7 @@ import {
   Settings2,
   ShieldCheck,
   Store,
+  Terminal,
   UserCircle,
   UserRound,
   Users,
@@ -35,6 +37,7 @@ import {
 
 import { Button } from "../components/ui/button";
 import { FeedbackToastViewport } from "../components/ui/feedback-toast";
+import { DesktopOperationRail } from "../components/desktop/DesktopOperationRail";
 import { QuickActionFAB } from "../components/ui/QuickActionFAB";
 import { WorkspaceSwitcher } from "../components/WorkspaceSwitcher";
 import { prepareAvatarUpload } from "../features/auth/avatarUpload";
@@ -42,6 +45,7 @@ import { useOptionalAuth } from "../features/auth/AuthProvider";
 import { AlertBell } from "../features/observability/components/AlertBell";
 import { useConsoleStore } from "../stores/consoleStore";
 import { environmentLabel } from "../lib/labels";
+import { isDesktopRuntime } from "../lib/desktop-bridge";
 import { cn } from "../lib/utils";
 import {
   consoleNavEntries,
@@ -54,6 +58,7 @@ import {
 
 const navIconByKey = {
   activity: Activity,
+  appWindow: AppWindow,
   audit: ClipboardList,
   bot: Bot,
   box: Box,
@@ -71,6 +76,7 @@ const navIconByKey = {
   settings: Settings2,
   shield: ShieldCheck,
   store: Store,
+  terminal: Terminal,
   tools: PlugZap,
   users: Users,
 } as const;
@@ -224,6 +230,10 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const currentOrganization = auth?.currentOrganization ?? null;
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const isTeamRoute = /^\/teams(?:\/|$)/.test(location.pathname);
+  const isRunRoute = /^\/runs(?:\/|$)/.test(location.pathname);
+  const isTerminalRoute = location.pathname === "/terminal";
+  const isDesktopSettingsRoute = location.pathname === "/desktop" || location.pathname === "/settings/advanced";
+  const desktop = isDesktopRuntime();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
   const [isNarrowShell, setIsNarrowShell] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -328,6 +338,35 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
         avatarFileInputRef.current.value = "";
       }
     }
+  }
+
+  if (desktop && isWorkspaceRoute) {
+    return (
+      <div
+        data-testid="desktop-workspace-shell"
+        className="flex h-screen min-h-0 min-w-0 overflow-hidden bg-white text-slate-800"
+        lang="zh-CN"
+        translate="no"
+      >
+        <FeedbackToastViewport />
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
+      </div>
+    );
+  }
+
+  if (desktop && (isTeamRoute || isRunRoute || isTerminalRoute || isDesktopSettingsRoute)) {
+    return (
+      <div
+        data-testid="desktop-operation-shell"
+        className="flex h-screen min-h-0 min-w-0 overflow-hidden bg-white text-slate-800"
+        lang="zh-CN"
+        translate="no"
+      >
+        <FeedbackToastViewport />
+        <DesktopOperationRail />
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+      </div>
+    );
   }
 
   return (

@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type JSX } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -167,6 +168,7 @@ function renderSurface(
 describe("ChatSurface Workspace shell integration", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    delete window.desktopApi;
     useConsoleStore.getState().setLocale("en-US");
     useWorkspaceStore.getState().reset();
     Object.defineProperty(URL, "createObjectURL", {
@@ -200,6 +202,140 @@ describe("ChatSurface Workspace shell integration", () => {
     expect(screen.queryByRole("button", { name: "追求目标模式" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "插件 / MCP（模型上下文协议）" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /@read_file/ })).not.toBeInTheDocument();
+  });
+
+  it("exposes the file bridge controls and saves edited workspace files", async () => {
+    const user = userEvent.setup();
+    const listFiles = vi.fn(async () => ({
+      rootPath: "/workspace/default",
+      entries: [
+        {
+          path: "/workspace/default/notes.md",
+          name: "notes.md",
+          kind: "file" as const,
+          sizeBytes: 18,
+          modifiedAt: "2026-06-26T00:00:00.000Z",
+          depth: 0,
+          mimeType: "text/markdown",
+        },
+      ],
+      truncated: false,
+    }));
+    const readFile = vi.fn(async () => ({
+      path: "/workspace/default/notes.md",
+      content: "# hello",
+      sizeBytes: 7,
+      totalSizeBytes: 7,
+      mimeType: "text/markdown",
+      truncated: false,
+      editable: true,
+    }));
+    const writeFile = vi.fn(async () => ({
+      path: "/workspace/default/notes.md",
+      bytesWritten: 10,
+      updatedAt: "2026-06-26T00:01:00.000Z",
+    }));
+    const startWatch = vi.fn(async () => ({ rootPath: "/workspace/default", watching: true }));
+    const selectWorkspaceRoot = vi.fn(async () => ({ rootPath: "/workspace/default", watching: false }));
+    window.desktopApi = {
+      file: {
+        getWorkspaceRoot: vi.fn(async () => ({ rootPath: null, watching: false })),
+        selectWorkspaceRoot,
+        listFiles,
+        readFile,
+        writeFile,
+        startWatch,
+        stopWatch: vi.fn(async () => ({ rootPath: "/workspace/default", watching: false })),
+        onChange: vi.fn(() => vi.fn()),
+      },
+    };
+
+    renderSurface();
+
+    await user.click(screen.getByRole("button", { name: "打开输入设置" }));
+    await user.click(screen.getByRole("button", { name: "选择目录" }));
+    await waitFor(() => expect(selectWorkspaceRoot).toHaveBeenCalled());
+    expect(useWorkspaceStore.getState().workspaceRegistry.default.config.localFileRootPath).toBe(
+      "/workspace/default",
+    );
+    expect(screen.getByText("/workspace/default")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "刷新文件" }));
+    await waitFor(() => expect(listFiles).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "notes.md file · text/markdown" }));
+    await waitFor(() => expect(readFile).toHaveBeenCalledWith("/workspace/default/notes.md"));
+    expect(screen.getByLabelText("文件内容")).toHaveValue("# hello");
+    await user.clear(screen.getByLabelText("文件内容"));
+    await user.type(screen.getByLabelText("文件内容"), "# updated");
+    await user.click(screen.getByRole("button", { name: "保存文件" }));
+    await waitFor(() =>
+      expect(writeFile).toHaveBeenCalledWith("/workspace/default/notes.md", "# updated"),
+    );
+    await user.click(screen.getByRole("button", { name: "开始监视" }));
+    await waitFor(() => expect(startWatch).toHaveBeenCalledTimes(1));
+  });
+
+  it("opens workspace files directly from a desktop panel request", async () => {
+    const listFiles = vi.fn(async () => ({
+      rootPath: "/workspace/default",
+      entries: [],
+      truncated: false,
+    }));
+    window.desktopApi = {
+      file: {
+        getWorkspaceRoot: vi.fn(async () => ({
+          rootPath: "/workspace/default",
+          watching: false,
+        })),
+        listFiles,
+        onChange: vi.fn(() => vi.fn()),
+      },
+    };
+
+    renderSurface({ desktopPanel: "files", desktopPanelRequestKey: "request-1" });
+
+    expect(await screen.findByRole("dialog", { name: "工作区文件" })).toBeInTheDocument();
+    await waitFor(() => expect(listFiles).toHaveBeenCalled());
+    expect(screen.queryByRole("dialog", { name: "输入设置" })).not.toBeInTheDocument();
+  });
+
+  it("restores the persisted workspace root before refreshing after main-process state loss", async () => {
+    useWorkspaceStore.getState().updateWorkspaceConfig("default", {
+      localFileRootPath: "/workspace/default",
+    });
+    const getWorkspaceRoot = vi.fn(async () => ({ rootPath: null, watching: false }));
+    const setWorkspaceRoot = vi.fn(async () => ({
+      rootPath: "/workspace/default",
+      watching: true,
+    }));
+    const listFiles = vi.fn(async () => ({
+      rootPath: "/workspace/default",
+      entries: [],
+      truncated: false,
+    }));
+    window.desktopApi = {
+      file: {
+        getWorkspaceRoot,
+        setWorkspaceRoot,
+        listFiles,
+        onChange: vi.fn(() => vi.fn()),
+      },
+    };
+
+    renderSurface({ desktopPanel: "files", desktopPanelRequestKey: "restored-window" });
+
+    await waitFor(() => expect(setWorkspaceRoot).toHaveBeenCalledWith("/workspace/default"));
+    await waitFor(() => expect(listFiles).toHaveBeenCalledTimes(1));
+    expect(setWorkspaceRoot.mock.invocationCallOrder[0]).toBeLessThan(
+      listFiles.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(await screen.findByText("/workspace/default")).toBeInTheDocument();
+  });
+
+  it("does not leave the workspace files popover open for an approvals request", () => {
+    renderSurface({ desktopPanel: "approvals", desktopPanelRequestKey: "request-2" });
+
+    expect(screen.queryByRole("dialog", { name: "工作区文件" })).not.toBeInTheDocument();
   });
 
   it("keeps the composer primary action as Send instead of Resume after a paused answer", () => {
@@ -575,6 +711,35 @@ describe("ChatSurface Workspace shell integration", () => {
     );
 
     expect(URL.revokeObjectURL).toHaveBeenCalled();
+  });
+
+  it("accepts drag-and-drop files into the composer attachments", async () => {
+    const stream = streamController();
+    renderSurface({ stream });
+
+    const dropzone = screen.getByTestId("chat-surface-dropzone");
+    const file = new File(["dropped content"], "dropped.txt", { type: "text/plain" });
+
+    await act(async () => {
+      fireEvent.drop(dropzone, {
+        dataTransfer: {
+          files: [file],
+        },
+      });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("dropped.txt")).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText("直接与智能体对话"), "send it");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(stream.start).toHaveBeenCalled());
+    expect(stream.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentNames: ["dropped.txt"],
+      }),
+    );
   });
 
   it("renders usage metadata above the composer and keeps metadata out of Inspector", async () => {

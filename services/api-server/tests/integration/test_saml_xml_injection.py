@@ -25,8 +25,8 @@ Security Requirements:
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -86,7 +86,8 @@ XXE_EXTERNAL_ENTITY_PAYLOAD = """<?xml version="1.0" encoding="UTF-8"?>
   <samlp:Status>
     <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
   </samlp:Status>
-  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_assertion_xxe" Version="2.0" IssueInstant="{issue_instant}">
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                  ID="_assertion_xxe" Version="2.0" IssueInstant="{issue_instant}">
     <saml:Issuer>http://test.example.com/saml/metadata</saml:Issuer>
     <saml:Subject>
       <saml:NameID>test@example.com</saml:NameID>
@@ -401,8 +402,13 @@ def test_cdata_injection_sanitized(
     with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.process_response"):
         with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.is_authenticated", return_value=True):
             with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.get_errors", return_value=[]):
-                with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.get_nameid", return_value="test@example.com"):
-                    with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.get_attributes") as mock_attrs:
+                with patch(
+                    "onelogin.saml2.auth.OneLogin_Saml2_Auth.get_nameid",
+                    return_value="test@example.com",
+                ):
+                    with patch(
+                        "onelogin.saml2.auth.OneLogin_Saml2_Auth.get_attributes"
+                    ) as mock_attrs:
                         # Simulate that CDATA content was extracted but script is present
                         mock_attrs.return_value = {
                             "email": ["<script>alert('XSS')</script>admin@example.com"],
@@ -421,7 +427,8 @@ def test_cdata_injection_sanitized(
                         )
 
                         # Verify script tags are present in raw data (to be sanitized at UI layer)
-                        # The SAML parser extracts the content, but sanitization must happen before display
+                        # The SAML parser extracts the content, but sanitization must happen
+                        # before display
                         email = claims["email"]
 
                         # Document the security requirement: any display of this data MUST sanitize
@@ -451,8 +458,13 @@ def test_script_injection_in_attributes_sanitized(
     with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.process_response"):
         with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.is_authenticated", return_value=True):
             with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.get_errors", return_value=[]):
-                with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.get_nameid", return_value="test@example.com"):
-                    with patch("onelogin.saml2.auth.OneLogin_Saml2_Auth.get_attributes") as mock_attrs:
+                with patch(
+                    "onelogin.saml2.auth.OneLogin_Saml2_Auth.get_nameid",
+                    return_value="test@example.com",
+                ):
+                    with patch(
+                        "onelogin.saml2.auth.OneLogin_Saml2_Auth.get_attributes"
+                    ) as mock_attrs:
                         mock_attrs.return_value = {
                             "email": ["test@example.com"],
                             "displayName": ["<script>alert('XSS')</script>"],
@@ -534,4 +546,3 @@ def test_xml_parser_security_configuration() -> None:
     assert security_requirements["external_entities"] == "DISABLED"
     assert security_requirements["dtd_processing"] == "DISABLED"
     assert security_requirements["entity_expansion_limit"] == "ENFORCED"
-

@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type DragEvent as ReactDragEvent,
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -88,6 +89,22 @@ import { editFormShouldSubmit } from "./MessageEditForm";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
 const MAX_ATTACHMENT_TEXT_BYTES = 120_000;
+const MAX_FILE_LIST_ENTRIES = 32;
+
+type DesktopFileEntry = {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  sizeBytes: number;
+  modifiedAt: string;
+  depth: number;
+  mimeType: string | null;
+};
+
+type DesktopFileWatchState = {
+  rootPath: string | null;
+  watching: boolean;
+};
 
 export type LocalAgentSubmitContext = {
   workspace_mode: WorkspaceMode;
@@ -111,6 +128,12 @@ export type LocalAgentSubmitContext = {
 export type ChatSurfaceProps = {
   agentId: string;
   agentName: string;
+  workspaceId?: string;
+  workspaceOptions?: Array<{
+    value: string;
+    label: string;
+    description?: string;
+  }>;
   modelLabel: string;
   modelLabelIsFallback: boolean;
   workspaceMode: WorkspaceMode;
@@ -125,6 +148,7 @@ export type ChatSurfaceProps = {
   pendingApprovalCount: number;
   metadataUsage: UsageSummary;
   onOpenInspector: (section: InspectorSection) => void;
+  onWorkspaceChange?: (workspaceId: string) => void;
   stream: ChatStreamController;
 
   tools: ToolMetadata[];
@@ -166,12 +190,16 @@ export type ChatSurfaceProps = {
     goal: string,
     context: LocalAgentSubmitContext,
   ) => Promise<boolean | void> | boolean | void;
+  desktopPanel?: "files" | "approvals" | null;
+  desktopPanelRequestKey?: string;
 };
 
 export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const {
     agentId,
     agentName,
+    workspaceId,
+    workspaceOptions = [],
     modelLabel,
     workspaceMode,
     onWorkspaceModeChange,
@@ -181,6 +209,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     runReturnTarget,
     metadataUsage,
     onOpenInspector,
+    onWorkspaceChange,
     stream,
     tools,
     providers,
@@ -206,6 +235,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     onLocalAgentSubmit,
     onLocalAgentPause,
     onLocalAgentResume,
+    desktopPanel = null,
+    desktopPanelRequestKey = "",
   } = props;
 
   const { text } = useI18n();
@@ -224,6 +255,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const setContextCompression = useWorkspaceStore((state) => state.setContextCompression);
   const clearContextCompression = useWorkspaceStore((state) => state.clearContextCompression);
   const currentConversationId = useWorkspaceStore((state) => state.currentConversationId);
+  const workspaceConfig = useWorkspaceStore((state) => {
+    const workspaceKey = workspaceId ?? state.activeWorkspaceId;
+    return state.workspaceRegistry[workspaceKey]?.config ?? null;
+  });
   const dismissedPlanNodeIds = useWorkspaceStore((state) => state.dismissedPlanNodeIds);
   const dismissPlanNode = useWorkspaceStore((state) => state.dismissPlanNode);
   const activeStream = useWorkspaceStore((state) => state.activeStream);
@@ -337,11 +372,26 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [goalEditOpen, setGoalEditOpen] = useState(false);
   const [planSubmitting, setPlanSubmitting] = useState(false);
-  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | "mcp" | null>(null);
+  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | "mcp" | "files" | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [desktopFileState, setDesktopFileState] = useState<DesktopFileWatchState>({
+    rootPath: workspaceConfig?.localFileRootPath ?? null,
+    watching: false,
+  });
+  const [desktopFileBridgeReady, setDesktopFileBridgeReady] = useState(
+    !window.desktopApi?.file?.getWorkspaceRoot,
+  );
+  const [desktopFiles, setDesktopFiles] = useState<DesktopFileEntry[]>([]);
+  const [selectedDesktopFilePath, setSelectedDesktopFilePath] = useState<string | null>(null);
+  const [selectedDesktopFileContent, setSelectedDesktopFileContent] = useState("");
+  const [desktopFileSaving, setDesktopFileSaving] = useState(false);
+  const [desktopFileLoading, setDesktopFileLoading] = useState(false);
+  const [desktopFileNotice, setDesktopFileNotice] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const desktopFileInputRef = useRef<HTMLInputElement | null>(null);
+  const handledDesktopPanelRequestRef = useRef<string | null>(null);
   const chatListRef = useRef<ChatMessageListHandle | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const compressionInFlightRef = useRef<string | null>(null);
@@ -363,6 +413,71 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   useEffect(() => {
     if (!activeGoalNode) setGoalEditOpen(false);
   }, [activeGoalNode]);
+
+  useEffect(() => {
+    if (workspaceConfig?.localFileRootPath === undefined) return;
+    setDesktopFileState((current) =>
+      current.rootPath === workspaceConfig.localFileRootPath
+        ? current
+        : {
+            ...current,
+            rootPath: workspaceConfig.localFileRootPath,
+          },
+    );
+  }, [workspaceConfig?.localFileRootPath]);
+
+  useEffect(() => {
+    const api = window.desktopApi?.file;
+    if (!api?.getWorkspaceRoot) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let next = await api.getWorkspaceRoot?.();
+        if (!next || cancelled) return;
+        if (
+          next.rootPath === null &&
+          workspaceConfig?.localFileRootPath != null
+        ) {
+          next = api.setWorkspaceRoot
+            ? await api.setWorkspaceRoot(workspaceConfig.localFileRootPath)
+            : { rootPath: workspaceConfig.localFileRootPath, watching: false };
+        }
+        if (cancelled) return;
+        setDesktopFileState(next);
+        if (next.rootPath !== null && next.rootPath !== workspaceConfig?.localFileRootPath) {
+          useWorkspaceStore
+            .getState()
+            .updateWorkspaceConfig(workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId, {
+              localFileRootPath: next.rootPath,
+            });
+        }
+      } catch {
+        // The file panel remains usable for a manual directory selection.
+      } finally {
+        if (!cancelled) setDesktopFileBridgeReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceConfig?.localFileRootPath, workspaceId]);
+
+  useEffect(() => {
+    const api = window.desktopApi?.file;
+    if (!api?.onChange) return;
+    return api.onChange((event) => {
+      setDesktopFileState((current) => ({
+        ...current,
+        rootPath: event.rootPath,
+      }));
+      if (event.kind === "file") {
+        void refreshDesktopFiles(event.rootPath);
+      }
+      if (selectedDesktopFilePath === event.path) {
+        void loadDesktopFile(event.path);
+      }
+    });
+  }, [selectedDesktopFilePath]);
 
   const attachmentNames = useMemo(
     () => attachments.map((attachment) => attachment.name),
@@ -863,6 +978,159 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     fileInputRef.current?.click();
   }, []);
 
+  const refreshDesktopFiles = useCallback(async (path?: string | null): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.listFiles) return;
+    const rootPath = path ?? desktopFileState.rootPath;
+    if (rootPath === null) return;
+    setDesktopFileLoading(true);
+    try {
+      const result = await api.listFiles({
+        path: rootPath,
+        maxDepth: 2,
+        maxEntries: MAX_FILE_LIST_ENTRIES,
+      });
+      setDesktopFiles(result.entries);
+      setDesktopFileState((current) => ({
+        ...current,
+        rootPath: result.rootPath ?? current.rootPath,
+      }));
+      setDesktopFileNotice(
+        result.truncated
+          ? text("文件列表已截断", "File list truncated")
+          : text("文件列表已刷新", "File list refreshed"),
+      );
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件列表刷新失败", "Failed to refresh files"));
+    } finally {
+      setDesktopFileLoading(false);
+    }
+  }, [desktopFileState.rootPath, text]);
+
+  const loadDesktopFile = useCallback(async (path: string): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.readFile) return;
+    setDesktopFileLoading(true);
+    try {
+      const result = await api.readFile(path);
+      setSelectedDesktopFilePath(result.path);
+      setSelectedDesktopFileContent(result.content);
+      setDesktopFileNotice(
+        result.truncated
+          ? text("文件内容已截断", "File content truncated")
+          : text("文件已打开", "File opened"),
+      );
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件打开失败", "Failed to open file"));
+    } finally {
+      setDesktopFileLoading(false);
+    }
+  }, [text]);
+
+  const handleSelectWorkspaceRoot = useCallback(async (): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.selectWorkspaceRoot) return;
+    try {
+      const next = await api.selectWorkspaceRoot();
+      if (next === null) return;
+      setDesktopFileState(next);
+      useWorkspaceStore.getState().updateWorkspaceConfig(workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId, {
+        localFileRootPath: next.rootPath,
+      });
+      setDesktopFileNotice(
+        next.rootPath === null
+          ? text("工作区目录已清除", "Workspace root cleared")
+          : text("工作区目录已选择", "Workspace root selected"),
+      );
+      await refreshDesktopFiles(next.rootPath);
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("选择工作区目录失败", "Failed to select workspace root"));
+    }
+  }, [refreshDesktopFiles, text, workspaceId]);
+
+  const handleToggleDesktopWatch = useCallback(async (): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api) return;
+    try {
+      const next = desktopFileState.watching
+        ? await api.stopWatch?.()
+        : await api.startWatch?.();
+      if (next) {
+        setDesktopFileState(next);
+        setDesktopFileNotice(
+          next.watching
+            ? text("文件监视已开启", "File watch enabled")
+            : text("文件监视已关闭", "File watch disabled"),
+        );
+      }
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件监视切换失败", "Failed to toggle file watch"));
+    }
+  }, [desktopFileState.watching, text]);
+
+  const handleSaveDesktopFile = useCallback(async (): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.writeFile || !selectedDesktopFilePath) return;
+    setDesktopFileSaving(true);
+    try {
+      await api.writeFile(selectedDesktopFilePath, selectedDesktopFileContent);
+      setDesktopFileNotice(text("文件已保存", "File saved"));
+      await refreshDesktopFiles(desktopFileState.rootPath);
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件保存失败", "Failed to save file"));
+    } finally {
+      setDesktopFileSaving(false);
+    }
+  }, [desktopFileState.rootPath, refreshDesktopFiles, selectedDesktopFileContent, selectedDesktopFilePath, text]);
+
+  useEffect(() => {
+    if (desktopPanel === "approvals") {
+      setBottomPanel((current) => (current === "files" ? null : current));
+      return;
+    }
+    if (desktopPanel !== "files") return;
+    const requestId = `${desktopPanel}:${desktopPanelRequestKey}`;
+    setBottomPanel("files");
+    if (
+      !desktopFileBridgeReady ||
+      desktopFileState.rootPath === null ||
+      handledDesktopPanelRequestRef.current === requestId
+    ) {
+      return;
+    }
+    handledDesktopPanelRequestRef.current = requestId;
+    void refreshDesktopFiles(desktopFileState.rootPath);
+  }, [desktopFileBridgeReady, desktopFileState.rootPath, desktopPanel, desktopPanelRequestKey, refreshDesktopFiles]);
+
+  const handleFileDrop = useCallback((event: ReactDragEvent<HTMLDivElement>): void => {
+    const dropped = Array.from(event.dataTransfer.files ?? []);
+    if (dropped.length === 0) return;
+    event.preventDefault();
+    void (async () => {
+      const prepared = await Promise.all(dropped.map(toComposerAttachment));
+      setAttachments((current) => {
+        const next = [...current];
+        const existingKeys = new Set(current.map(attachmentKey));
+        for (const attachment of prepared) {
+          const key = attachmentKey(attachment);
+          if (existingKeys.has(key) || next.length >= 12) {
+            revokeAttachmentPreview(attachment);
+            continue;
+          }
+          next.push(attachment);
+          existingKeys.add(key);
+        }
+        return next;
+      });
+    })();
+  }, []);
+
+  useEffect(() => {
+    const api = window.desktopApi?.file;
+    if (!api?.setWorkspaceRoot || desktopFileState.rootPath === workspaceConfig?.localFileRootPath) return;
+    void api.setWorkspaceRoot(desktopFileState.rootPath).catch(() => undefined);
+  }, [desktopFileState.rootPath, workspaceConfig?.localFileRootPath]);
+
   const handleFilesSelected = useCallback(
     (event: ChangeEvent<HTMLInputElement>): void => {
       const selected = Array.from(event.currentTarget.files ?? []);
@@ -1214,6 +1482,9 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   return (
     <div className="flex h-full w-full min-w-0 flex-col bg-white">
       <WorkspaceShellBar
+        workspaceId={workspaceId}
+        workspaceOptions={workspaceOptions}
+        onWorkspaceChange={onWorkspaceChange}
         agentId={agentId}
         agentName={agentName}
         tools={tools}
@@ -1275,7 +1546,12 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       />
 
       <footer className="sticky bottom-0 z-10 bg-gradient-to-t from-white via-white/95 to-white/0 px-3 pb-5 pt-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+        <div
+          data-testid="chat-surface-dropzone"
+          className="mx-auto flex w-full max-w-3xl flex-col gap-2"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleFileDrop}
+        >
           {planGate.visible && planGate.planNode && (
             <PlanApprovalPanel
               planNode={planGate.planNode}
@@ -1327,6 +1603,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               title={
                 bottomPanel === "model"
                   ? text("切换模型", "Switch model")
+                  : bottomPanel === "files"
+                    ? text("工作区文件", "Workspace files")
                   : bottomPanel === "mcp"
                     ? text("可用 MCP", "Available MCP")
                   : text("输入设置", "Composer settings")
@@ -1344,21 +1622,70 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                   modelLabelFallback={modelLabel}
                   text={text}
                 />
-              ) : (
-                <ComposerSettingsPanel
-                  workspaceMode={workspaceMode}
-                  onWorkspaceModeChange={onWorkspaceModeChange}
-                  attachmentNames={attachmentNames}
-                  onAddFiles={handleAddFiles}
-                  tools={tools}
-                  onInsertMention={handleShellToolMention}
+              ) : bottomPanel === "files" ? (
+                <WorkspaceFileBridgePanel
+                  available={Boolean(window.desktopApi?.file)}
+                  rootPath={desktopFileState.rootPath}
+                  watching={desktopFileState.watching}
+                  loading={desktopFileLoading}
+                  saving={desktopFileSaving}
+                  files={desktopFiles}
+                  notice={desktopFileNotice}
+                  selectedPath={selectedDesktopFilePath}
+                  selectedContent={selectedDesktopFileContent}
+                  onSelectRoot={handleSelectWorkspaceRoot}
+                  onToggleWatch={handleToggleDesktopWatch}
+                  onRefresh={() => {
+                    void refreshDesktopFiles();
+                  }}
+                  onSelectFile={(path) => {
+                    void loadDesktopFile(path);
+                  }}
+                  onOpenFilePicker={() => desktopFileInputRef.current?.click()}
+                  onSelectedContentChange={setSelectedDesktopFileContent}
+                  onSave={handleSaveDesktopFile}
                   text={text}
-                  contextMaxTokens={contextMaxTokens}
-                  onContextMaxTokensChange={setContextMaxTokens}
-                  autoCompressionRatio={autoCompressionRatio}
-                  onAutoCompressionRatioChange={setAutoCompressionRatio}
-                  pluginsInitiallyOpen={bottomPanel === "mcp"}
                 />
+              ) : (
+                <>
+                  <ComposerSettingsPanel
+                    workspaceMode={workspaceMode}
+                    onWorkspaceModeChange={onWorkspaceModeChange}
+                    attachmentNames={attachmentNames}
+                    onAddFiles={handleAddFiles}
+                    tools={tools}
+                    onInsertMention={handleShellToolMention}
+                    text={text}
+                    contextMaxTokens={contextMaxTokens}
+                    onContextMaxTokensChange={setContextMaxTokens}
+                    autoCompressionRatio={autoCompressionRatio}
+                    onAutoCompressionRatioChange={setAutoCompressionRatio}
+                    pluginsInitiallyOpen={bottomPanel === "mcp"}
+                  />
+                  <WorkspaceFileBridgePanel
+                    available={Boolean(window.desktopApi?.file)}
+                    rootPath={desktopFileState.rootPath}
+                    watching={desktopFileState.watching}
+                    loading={desktopFileLoading}
+                    saving={desktopFileSaving}
+                    files={desktopFiles}
+                    notice={desktopFileNotice}
+                    selectedPath={selectedDesktopFilePath}
+                    selectedContent={selectedDesktopFileContent}
+                    onSelectRoot={handleSelectWorkspaceRoot}
+                    onToggleWatch={handleToggleDesktopWatch}
+                    onRefresh={() => {
+                      void refreshDesktopFiles();
+                    }}
+                    onSelectFile={(path) => {
+                      void loadDesktopFile(path);
+                    }}
+                    onOpenFilePicker={() => desktopFileInputRef.current?.click()}
+                    onSelectedContentChange={setSelectedDesktopFileContent}
+                    onSave={handleSaveDesktopFile}
+                    text={text}
+                  />
+                </>
               )}
             </BottomToolsPopover>
             <ChatComposer
@@ -1419,6 +1746,35 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             aria-label={text("添加照片和文件", "Add photos and files")}
             className="hidden"
             onChange={handleFilesSelected}
+          />
+          <input
+            ref={desktopFileInputRef}
+            type="file"
+            multiple
+            aria-label={text("选择本地文件", "Select local files")}
+            className="hidden"
+            onChange={(event) => {
+              const selected = Array.from(event.currentTarget.files ?? []);
+              if (selected.length === 0) return;
+              void (async () => {
+                const prepared = await Promise.all(selected.map(toComposerAttachment));
+                setAttachments((current) => {
+                  const next = [...current];
+                  const existingKeys = new Set(current.map(attachmentKey));
+                  for (const attachment of prepared) {
+                    const key = attachmentKey(attachment);
+                    if (existingKeys.has(key) || next.length >= 12) {
+                      revokeAttachmentPreview(attachment);
+                      continue;
+                    }
+                    next.push(attachment);
+                    existingKeys.add(key);
+                  }
+                  return next;
+                });
+              })();
+              event.currentTarget.value = "";
+            }}
           />
         </div>
         <p className="sr-only" aria-live="polite">
@@ -1897,6 +2253,152 @@ function ComposerMetadataRow({
         </span>
       ))}
     </div>
+  );
+}
+
+function WorkspaceFileBridgePanel({
+  available,
+  rootPath,
+  watching,
+  loading,
+  saving,
+  files,
+  notice,
+  selectedPath,
+  selectedContent,
+  onSelectRoot,
+  onToggleWatch,
+  onRefresh,
+  onSelectFile,
+  onOpenFilePicker,
+  onSelectedContentChange,
+  onSave,
+  text,
+}: {
+  available: boolean;
+  rootPath: string | null;
+  watching: boolean;
+  loading: boolean;
+  saving: boolean;
+  files: DesktopFileEntry[];
+  notice: string | null;
+  selectedPath: string | null;
+  selectedContent: string;
+  onSelectRoot: () => void;
+  onToggleWatch: () => void;
+  onRefresh: () => void;
+  onSelectFile: (path: string) => void;
+  onOpenFilePicker: () => void;
+  onSelectedContentChange: (value: string) => void;
+  onSave: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const hasRoot = rootPath !== null;
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-3 text-xs text-slate-800">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-slate-900">
+            {text("文件桥接", "File bridge")}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-slate-500">
+            {hasRoot ? rootPath : text("未选择工作区目录", "No workspace root selected")}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onSelectRoot}
+            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+          >
+            {text("选择目录", "Choose root")}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleWatch}
+            disabled={!available || !hasRoot}
+            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {watching ? text("停止监视", "Stop watch") : text("开始监视", "Start watch")}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={!available || !hasRoot || loading}
+          className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {loading ? text("刷新中", "Refreshing") : text("刷新文件", "Refresh files")}
+        </button>
+        <button
+          type="button"
+          onClick={onOpenFilePicker}
+          className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+        >
+          {text("添加到输入框", "Add to composer")}
+        </button>
+        {notice ? <span className="text-[11px] text-slate-500">{notice}</span> : null}
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        <div className="max-h-36 overflow-y-auto rounded-xl border border-slate-100">
+          {files.length === 0 ? (
+            <div className="px-2 py-2 text-[11px] text-slate-500">
+              {text("暂无文件列表", "No files listed")}
+            </div>
+          ) : (
+            files.map((entry) => (
+              <button
+                key={entry.path}
+                type="button"
+                onClick={() => onSelectFile(entry.path)}
+                className={[
+                  "block w-full border-b border-slate-100 px-2 py-1.5 text-left text-[11px] last:border-b-0",
+                  selectedPath === entry.path ? "bg-slate-50" : "hover:bg-slate-50",
+                ].join(" ")}
+              >
+                <span className="block truncate font-mono text-slate-800">{entry.name}</span>
+                <span className="block truncate text-slate-500">
+                  {entry.kind} · {entry.mimeType ?? text("未知类型", "Unknown type")}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        {selectedPath ? (
+          <div className="grid gap-2">
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium text-slate-700">
+                {text("文件内容", "File content")}
+              </span>
+              <Textarea
+                value={selectedContent}
+                onChange={(event) => onSelectedContentChange(event.target.value)}
+                rows={6}
+                className="min-h-28 text-xs"
+                aria-label={text("文件内容", "File content")}
+              />
+            </label>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onSave}
+                disabled={saving}
+                className="h-8 px-2"
+              >
+                {saving ? text("保存中", "Saving") : text("保存文件", "Save file")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

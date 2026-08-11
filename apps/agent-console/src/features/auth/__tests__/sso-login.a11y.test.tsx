@@ -19,7 +19,10 @@ import { LoginPage } from "../pages/LoginPage";
 import { AuthProvider } from "../AuthProvider";
 
 // Mock auth API
-vi.mock("../../tasks/api", () => ({
+vi.mock("../../tasks/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../tasks/api")>()),
+  getMe: vi.fn(() => Promise.resolve(null)),
+  isDevAuthFallbackEnabled: vi.fn(() => false),
   getAuthConfig: vi.fn(() =>
     Promise.resolve({
       public_registration_enabled: true,
@@ -186,7 +189,7 @@ describe("SSO Login Accessibility", () => {
     });
 
     // Submit empty form to trigger validation
-    const submitButton = screen.getByRole("button", { name: /登录/i });
+    const submitButton = screen.getByRole("button", { name: /^登录$/i });
     await user.click(submitButton);
 
     // Browser native validation will prevent submission

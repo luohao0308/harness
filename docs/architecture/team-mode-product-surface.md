@@ -109,4 +109,4 @@ Required entities:
 5. Verify with backend tests, frontend tests, Playwright desktop/mobile smoke, and screenshots.
 
 Desktop presentation details and visual acceptance are defined in
-`docs/desktop/team-mode-workspace.md`.
+`docs/design/desktop/team-mode-workspace.md`.

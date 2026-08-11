@@ -14,8 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import OnboardingState, Organization, OrganizationMember, User, utc_now
+from app.db.models import Organization, OrganizationMember, User, utc_now
 from app.main import app
+from app.security.jwt_utils import issue_access_token
 
 
 @pytest.fixture
@@ -60,8 +61,11 @@ def test_user_with_org(db_session: Session) -> tuple[User, Organization, str]:
 
     db_session.commit()
 
-    # Generate mock auth token (in real app this would be JWT)
-    token = f"Bearer mock-token-{user.id}"
+    token = "Bearer " + issue_access_token(
+        user_id=user.id,
+        organization_id=org.id,
+        role="owner",
+    )
 
     return user, org, token
 
@@ -309,8 +313,16 @@ def test_state_isolated_per_user(
     db_session.add_all([member1, member2])
     db_session.commit()
 
-    token1 = f"Bearer mock-token-{user1.id}"
-    token2 = f"Bearer mock-token-{user2.id}"
+    token1 = "Bearer " + issue_access_token(
+        user_id=user1.id,
+        organization_id=org.id,
+        role="owner",
+    )
+    token2 = "Bearer " + issue_access_token(
+        user_id=user2.id,
+        organization_id=org.id,
+        role="member",
+    )
 
     # User 1 goes to step 3
     client.post(

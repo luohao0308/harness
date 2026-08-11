@@ -4,9 +4,11 @@ User Provisioning Service for SAML SSO
 Story 2.3 - User Provisioning from SAML
 Handles Just-In-Time (JIT) user provisioning, attribute mapping, and role assignment.
 """
+
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -92,9 +94,13 @@ class UserProvisioningService:
         Returns:
             Dictionary with mapped user attributes.
         """
+        email = str(saml_claims.get("email", "")).strip()
+        if not email:
+            raise ValueError("Email is required for user provisioning")
+        name = str(saml_claims.get("name", "")).strip() or email.split("@", 1)[0]
         return {
-            "email": saml_claims["email"],
-            "name": saml_claims["name"],
+            "email": email,
+            "name": name,
             "email_verified": True,  # SAML users are pre-verified
             "status": "active",
         }
@@ -114,10 +120,15 @@ class UserProvisioningService:
             Role name ('admin' or 'user').
         """
         # Normalize groups to lowercase for case-insensitive matching
-        normalized_groups = [g.lower() for g in groups]
+        normalized_groups = [str(group).strip().lower() for group in groups]
 
-        # Check for admin group
-        if "admin" in normalized_groups:
+        # Match explicit role words without treating arbitrary group names as roles.
+        if any(
+            token in {"admin", "administrator"}
+            for group in normalized_groups
+            for token in re.split(r"[^a-z0-9]+", group)
+            if token
+        ):
             return "admin"
 
         # Default role
@@ -167,10 +178,6 @@ class UserProvisioningService:
         """
         # Map SAML attributes
         mapped_attrs = self.map_saml_attributes(saml_claims)
-
-        # Determine role from groups
-        groups = saml_claims.get("groups", [])
-        role = self.assign_roles_from_groups(groups)
 
         # Create user
         user = User(

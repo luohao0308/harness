@@ -22,7 +22,7 @@ The product wording for docs uses "参考现代 Agentic Coding 产品" and keeps
 - Added backend `cli_agent` stream mode so model tool calls emit `tool_call_requested` with `pending_local` instead of running through backend host ToolRunner.
 - Added `POST /api/agents/runs/{run_id}/local-tool-events` to write local host tool evidence into existing `ToolCall` and `AgentEvent` shapes.
 - Preserved no-credential model smoke behavior by treating empty and `replace-me` OpenAI-compatible API keys as local mock credentials.
-- Added `docs/cli/hao.md` covering install, auth, modes, targets, session recovery, and audit boundaries.
+- Added `docs/development/cli/hao.md` covering install, auth, modes, targets, session recovery, and audit boundaries.
 
 ## Validation
 

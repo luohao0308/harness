@@ -6,10 +6,10 @@ refresh logic, and session expiration for authenticated users.
 
 Story 4.1 - SSO Session Lifecycle Management
 """
+
 from __future__ import annotations
 
 import hashlib
-import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -155,7 +155,7 @@ class SessionService:
                 raise ValueError("Session has been revoked")
 
             # Check if session has expired (DB expiration)
-            if session.expires_at < datetime.now(UTC):
+            if self._as_utc(session.expires_at) < datetime.now(UTC):
                 raise ValueError("Session has expired")
 
             # Update last used timestamp
@@ -264,13 +264,20 @@ class SessionService:
             True if session was revoked, False if not found.
         """
         session = self.get_session(session_id)
-        if not session:
+        if not session or session.revoked_at is not None:
             return False
 
         session.revoked_at = datetime.now(UTC)
         self.db.commit()
 
         return True
+
+    def validate_session(self, session_id: str) -> bool:
+        """Return whether a persisted session is active and unexpired."""
+        session = self.get_session(session_id)
+        if not session or session.revoked_at is not None:
+            return False
+        return self._as_utc(session.expires_at) > datetime.now(UTC)
 
     def get_session(self, session_id: str) -> UserSession | None:
         """
@@ -282,11 +289,14 @@ class SessionService:
         Returns:
             UserSession model or None if not found.
         """
-        return (
-            self.db.query(UserSession)
-            .filter(UserSession.id == session_id)
-            .first()
-        )
+        return self.db.query(UserSession).filter(UserSession.id == session_id).first()
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        """Normalize database datetimes because SQLite drops timezone metadata."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     def _generate_access_token(
         self,
@@ -378,4 +388,5 @@ class SessionService:
             UUID string.
         """
         import uuid
+
         return str(uuid.uuid4())

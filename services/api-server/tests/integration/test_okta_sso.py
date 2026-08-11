@@ -11,10 +11,11 @@ Test Scenarios:
 4. Invalid signature rejected
 5. Expired assertion rejected
 """
+
 from __future__ import annotations
 
 import base64
-import xml.etree.ElementTree as ET
+import zlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
@@ -123,7 +124,7 @@ def test_okta_sp_initiated_login_flow(
     assert len(saml_request) > 0
 
     # Decode and verify AuthnRequest structure
-    decoded_request = base64.b64decode(saml_request)
+    decoded_request = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
     assert b"AuthnRequest" in decoded_request or b"samlp:AuthnRequest" in decoded_request
 
     # Verify SP entity ID is in the request
@@ -354,7 +355,7 @@ def test_okta_assertion_timing_validation() -> None:
     # Valid assertion (within time window)
     now = datetime.now(UTC)
     not_before = now - timedelta(seconds=10)  # Issued 10 seconds ago
-    not_after = now + timedelta(minutes=5)    # Valid for 5 more minutes
+    not_after = now + timedelta(minutes=5)  # Valid for 5 more minutes
 
     # Should not raise any exception
     result = service.check_assertion_validity(

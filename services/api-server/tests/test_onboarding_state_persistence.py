@@ -12,7 +12,7 @@ Requirements:
 import pytest
 from sqlalchemy.orm import Session
 
-from app.db.models import OnboardingState, User, utc_now
+from app.db.models import User, utc_now
 from app.services.onboarding_service import OnboardingService
 
 

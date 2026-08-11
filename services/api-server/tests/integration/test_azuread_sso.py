@@ -5,9 +5,11 @@ Story 6.2 - Azure AD Integration Testing
 Tests Azure AD specific SSO flows including SP-initiated login,
 conditional access, multi-tenant support, and error handling.
 """
+
 from __future__ import annotations
 
 import base64
+import zlib
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -86,7 +88,7 @@ def test_azure_ad_sp_initiated_login_success(
     assert len(saml_request) > 0
 
     # Verify it's a valid AuthnRequest
-    decoded = base64.b64decode(saml_request)
+    decoded = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
     assert b"AuthnRequest" in decoded or b"samlp:AuthnRequest" in decoded
 
 
@@ -108,10 +110,15 @@ def test_azure_ad_acs_valid_response(
 
     # Azure AD uses specific claim URIs
     mock_auth_instance.get_attributes.return_value = {
-        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["azure.user@example.com"],
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+            "azure.user@example.com"
+        ],
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname": ["Azure"],
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname": ["User"],
-        "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": ["group-guid-1", "group-guid-2"],
+        "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": [
+            "group-guid-1",
+            "group-guid-2",
+        ],
     }
     mock_auth_instance.get_nameid.return_value = "azure.user@example.com"
     mock_auth_instance.get_errors.return_value = []
@@ -153,7 +160,9 @@ def test_azure_ad_conditional_access_allowed(
     mock_auth_instance = MagicMock()
     mock_auth_instance.is_authenticated.return_value = True
     mock_auth_instance.get_attributes.return_value = {
-        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["allowed.user@example.com"],
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+            "allowed.user@example.com"
+        ],
         "http://schemas.microsoft.com/2012/01/devicecontext/claims/ismanaged": ["true"],
         "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": ["allowed-group"],
     }
@@ -231,7 +240,11 @@ def test_azure_ad_multi_tenant_a(
         entity_id="https://sts.windows.net/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/",
         sso_url="https://login.microsoftonline.com/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/saml2",
         slo_url="https://login.microsoftonline.com/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/saml2/logout",
-        x509_cert="-----BEGIN CERTIFICATE-----\nMIICXDCCAcWgAwIBAgIBADANBgkqhkiG9w0BAQ0FADBLMQswCQYDVQQGEwJ1czEL\n-----END CERTIFICATE-----",
+        x509_cert=(
+            "-----BEGIN CERTIFICATE-----\n"
+            "MIICXDCCAcWgAwIBAgIBADANBgkqhkiG9w0BAQ0FADBLMQswCQYDVQQGEwJ1czEL\n"
+            "-----END CERTIFICATE-----"
+        ),
         is_active=True,
     )
 
@@ -280,7 +293,11 @@ def test_azure_ad_multi_tenant_b(
         entity_id="https://sts.windows.net/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/",
         sso_url="https://login.microsoftonline.com/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/saml2",
         slo_url="https://login.microsoftonline.com/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/saml2/logout",
-        x509_cert="-----BEGIN CERTIFICATE-----\nMIICXDCCAcWgAwIBAgIBADANBgkqhkiG9w0BAQ0FADBLMQswCQYDVQQGEwJ1czEL\n-----END CERTIFICATE-----",
+        x509_cert=(
+            "-----BEGIN CERTIFICATE-----\n"
+            "MIICXDCCAcWgAwIBAgIBADANBgkqhkiG9w0BAQ0FADBLMQswCQYDVQQGEwJ1czEL\n"
+            "-----END CERTIFICATE-----"
+        ),
         is_active=True,
     )
 
@@ -327,7 +344,11 @@ def test_azure_ad_invalid_tenant_id(db_session: Session) -> None:
         entity_id="https://sts.windows.net/invalid-tenant-format/",
         sso_url="https://login.microsoftonline.com/invalid-tenant-format/saml2",
         slo_url=None,
-        x509_cert="-----BEGIN CERTIFICATE-----\nMIICXDCCAcWgAwIBAgIBADANBgkqhkiG9w0BAQ0FADBLMQswCQYDVQQGEwJ1czEL\n-----END CERTIFICATE-----",
+        x509_cert=(
+            "-----BEGIN CERTIFICATE-----\n"
+            "MIICXDCCAcWgAwIBAgIBADANBgkqhkiG9w0BAQ0FADBLMQswCQYDVQQGEwJ1czEL\n"
+            "-----END CERTIFICATE-----"
+        ),
         is_active=True,
     )
 
@@ -358,7 +379,9 @@ def test_azure_ad_token_refresh_flow(
     mock_auth_instance = MagicMock()
     mock_auth_instance.is_authenticated.return_value = True
     mock_auth_instance.get_attributes.return_value = {
-        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": ["refresh.user@example.com"],
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": [
+            "refresh.user@example.com"
+        ],
         "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": ["Refresh User"],
     }
     mock_auth_instance.get_nameid.return_value = "refresh.user@example.com"
@@ -456,5 +479,5 @@ def test_azure_ad_authn_request_generation(
 
     # Verify SAMLRequest is properly formatted
     saml_request = authn_request_data["saml_request"]
-    decoded = base64.b64decode(saml_request)
+    decoded = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
     assert b"AuthnRequest" in decoded or b"samlp:AuthnRequest" in decoded

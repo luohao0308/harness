@@ -10,11 +10,12 @@ Story 2.2 - SAML Assertion Validation
 Story 2.3 - User Provisioning from SAML
 Story 4.2 - Single Logout (SLO)
 """
+
 from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
@@ -73,7 +74,9 @@ class SAMLService:
                     "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
                 },
                 "singleLogoutService": {
-                    "url": provider.slo_url if provider and provider.slo_url else "https://idp.example.com/slo",
+                    "url": provider.slo_url
+                    if provider and provider.slo_url
+                    else "https://idp.example.com/slo",
                     "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
                 },
                 "x509cert": self._extract_cert_content(provider.x509_cert) if provider else "",
@@ -139,11 +142,11 @@ class SAMLService:
         settings = self._get_saml_settings()
         metadata = settings.get_sp_metadata()
 
-        # get_sp_metadata() returns XML string
+        # python3-saml versions differ on whether metadata is bytes or text.
         if not metadata:
             raise ValueError("Failed to generate SP metadata")
 
-        return metadata
+        return metadata.decode("utf-8") if isinstance(metadata, bytes) else metadata
 
     def generate_authn_request(self, provider: SAMLProvider) -> dict[str, str]:
         """
@@ -169,12 +172,11 @@ class SAMLService:
             "https": "on",
             "http_host": "localhost",
             "script_name": "/api/auth/saml/acs",
-            "server_port": "443",
             "get_data": {},
             "post_data": {},
         }
 
-        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+        auth = OneLogin_Saml2_Auth(request_data, settings)
 
         # Generate AuthnRequest and get redirect URL
         # The login() method returns the SSO URL with SAMLRequest parameter
@@ -214,16 +216,6 @@ class SAMLService:
         # Use a temporary settings object to parse the response
         settings = self._get_saml_settings()
 
-        # Create request data with SAML Response
-        request_data = {
-            "https": "on",
-            "http_host": "localhost",
-            "script_name": "/api/auth/saml/acs",
-            "server_port": "443",
-            "get_data": {},
-            "post_data": {"SAMLResponse": saml_response},
-        }
-
         try:
             # Use OneLogin_Saml2_Response directly to parse the SAML response
             from onelogin.saml2.response import OneLogin_Saml2_Response
@@ -238,8 +230,8 @@ class SAMLService:
                 raise ValueError("Could not extract issuer from SAML Response")
 
             return issuer
-        except Exception as e:
-            raise ValueError(f"Failed to extract issuer from SAML Response: {e}")
+        except Exception as exc:
+            raise ValueError("Failed to extract issuer from SAML Response") from exc
 
     def process_saml_response(
         self,
@@ -279,16 +271,18 @@ class SAMLService:
             "https": "on",
             "http_host": "localhost",
             "script_name": "/api/auth/saml/acs",
-            "server_port": "443",
             "get_data": {},
             "post_data": {"SAMLResponse": saml_response},
         }
 
-        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+        auth = OneLogin_Saml2_Auth(request_data, settings)
 
         # Process the SAML Response (includes signature validation)
         # For IdP-initiated flow, we don't have a request ID to validate against
-        auth.process_response(request_id=None if is_idp_initiated else None)
+        try:
+            auth.process_response(request_id=None if is_idp_initiated else None)
+        except Exception as exc:
+            raise ValueError("Invalid or malformed SAML response") from exc
 
         # Step 1: Check for signature validation errors
         errors = auth.get_errors()
@@ -406,7 +400,13 @@ class SAMLService:
 
         # Generate JWT session tokens using SessionService (Story 4.1)
         session_service = SessionService(db_session)
-        roles = saml_claims.get("groups", ["user"]) if saml_claims else ["user"]
+        roles = ["user"]
+        if saml_claims:
+            roles = [
+                UserProvisioningService(db_session).assign_roles_from_groups(
+                    saml_claims.get("groups", [])
+                )
+            ]
 
         session_data = session_service.create_session(
             user_id=user.id,
@@ -464,12 +464,11 @@ class SAMLService:
             "https": "on",
             "http_host": "localhost",
             "script_name": "/api/auth/saml/acs",
-            "server_port": "443",
             "get_data": {},
             "post_data": {"SAMLResponse": saml_response},
         }
 
-        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+        auth = OneLogin_Saml2_Auth(request_data, settings)
 
         # Process the SAML Response (includes signature validation)
         auth.process_response()
@@ -478,7 +477,8 @@ class SAMLService:
         errors = auth.get_errors()
         if errors:
             error_reason = auth.get_last_error_reason()
-            raise ValueError(f"SAML signature validation failed: {error_reason or ', '.join(errors)}")
+            detail = error_reason or ", ".join(errors)
+            raise ValueError(f"SAML signature validation failed: {detail}")
 
         # Check if authenticated (signature must be valid)
         if not auth.is_authenticated():
@@ -513,13 +513,14 @@ class SAMLService:
         try:
             not_before_dt = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
             not_after_dt = datetime.fromisoformat(not_after.replace("Z", "+00:00"))
-        except (ValueError, AttributeError) as e:
-            raise ValueError(f"Invalid timestamp format in assertion: {e}")
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(f"Invalid timestamp format in assertion: {exc}") from exc
 
         # Check if assertion is not yet valid
         if now < not_before_dt:
             raise ValueError(
-                f"Assertion not yet valid: current time {now.isoformat()} is before NotBefore {not_before}"
+                "Assertion not yet valid: current time "
+                f"{now.isoformat()} is before NotBefore {not_before}"
             )
 
         # Check if assertion is expired
@@ -552,9 +553,7 @@ class SAMLService:
         sp_entity_id = self._config["sp_entity_id"]
 
         if audience != sp_entity_id:
-            raise ValueError(
-                f"Audience mismatch: expected {sp_entity_id}, got {audience}"
-            )
+            raise ValueError(f"Audience mismatch: expected {sp_entity_id}, got {audience}")
 
         return True
 
@@ -578,38 +577,66 @@ class SAMLService:
         Raises:
             ValueError: If required attributes are missing.
         """
-        # Extract email - prefer email attribute, fall back to nameid
-        email = None
-        if "email" in saml_attributes and saml_attributes["email"]:
-            email = saml_attributes["email"][0]
-        elif nameid:
-            email = nameid
+
+        def first_value(*keys: str) -> str | None:
+            for key in keys:
+                values = saml_attributes.get(key)
+                if values:
+                    value = str(values[0]).strip()
+                    if value:
+                        return value
+            return None
+
+        # Support friendly names and common Azure AD claim URIs.
+        email = first_value(
+            "email",
+            "emailaddress",
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+            "upn",
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn",
+        ) or (nameid.strip() if nameid else None)
 
         if not email:
             raise ValueError("Email attribute is required but not provided in SAML assertion")
 
-        # Extract name - try different attribute combinations
-        name = None
-
-        # Option 1: displayName
-        if "displayName" in saml_attributes and saml_attributes["displayName"]:
-            name = saml_attributes["displayName"][0]
-        # Option 2: firstName + lastName
-        elif "firstName" in saml_attributes and "lastName" in saml_attributes:
-            first = saml_attributes.get("firstName", [""])[0]
-            last = saml_attributes.get("lastName", [""])[0]
-            name = f"{first} {last}".strip()
-        # Option 3: cn (common name)
-        elif "cn" in saml_attributes and saml_attributes["cn"]:
-            name = saml_attributes["cn"][0]
-        # Option 4: Use email as name
-        else:
-            name = email.split("@")[0]
+        name = first_value(
+            "displayName",
+            "display_name",
+            "name",
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+            "cn",
+        )
+        if not name:
+            first = (
+                first_value(
+                    "firstName",
+                    "givenName",
+                    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname",
+                )
+                or ""
+            )
+            last = (
+                first_value(
+                    "lastName",
+                    "surname",
+                    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname",
+                )
+                or ""
+            )
+            name = f"{first} {last}".strip() or email.split("@")[0]
 
         # Extract groups - optional attribute
-        groups = []
-        if "groups" in saml_attributes and saml_attributes["groups"]:
-            groups = saml_attributes["groups"]
+        groups: list[str] = []
+        for key in (
+            "groups",
+            "roles",
+            "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups",
+            "http://schemas.microsoft.com/ws/2008/06/identity/claims/role",
+        ):
+            for group in saml_attributes.get(key, []):
+                value = str(group).strip()
+                if value and value not in groups:
+                    groups.append(value)
 
         return {
             "email": email,
@@ -653,16 +680,19 @@ class SAMLService:
             "https": "on",
             "http_host": "localhost",
             "script_name": "/api/auth/saml/sls",
-            "server_port": "443",
             "get_data": {},
             "post_data": {},
         }
 
-        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+        auth = OneLogin_Saml2_Auth(request_data, settings)
 
         # Generate LogoutRequest and get redirect URL
         # The logout() method returns the SLO URL with SAMLRequest parameter
-        redirect_url = auth.logout(name_id=nameid, return_to=None)
+        redirect_url = auth.logout(
+            name_id=nameid,
+            session_index=session_id,
+            return_to=provider.id,
+        )
 
         # Extract SAMLRequest from URL for response
         from urllib.parse import parse_qs, urlparse
@@ -705,12 +735,11 @@ class SAMLService:
             "https": "on",
             "http_host": "localhost",
             "script_name": "/api/auth/saml/sls",
-            "server_port": "443",
             "get_data": {"SAMLResponse": saml_response},
             "post_data": {},
         }
 
-        auth = OneLogin_Saml2_Auth(request_data, settings.to_dict())
+        auth = OneLogin_Saml2_Auth(request_data, settings)
 
         # Process the SAML LogoutResponse
         auth.process_slo()
@@ -724,5 +753,3 @@ class SAMLService:
         return {
             "success": True,
         }
-
-

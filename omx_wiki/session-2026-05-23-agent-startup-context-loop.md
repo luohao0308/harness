@@ -15,24 +15,24 @@ points at the startup context and task brief.
 The default entry is now:
 
 ```text
-docs/ai/agent-startup-context.md
+docs/development/ai/agent-startup-context.md
 python3 scripts/agent-context-brief.py --task "<user task>"
 ```
 
-The required write-back path is `docs/ai/task-progress.yaml` plus a relevant
+The required write-back path is `docs/development/ai/task-progress.yaml` plus a relevant
 `omx_wiki/` session or handoff page.
 
 ## Delivered
 
-- Added `docs/ai/agent-startup-context.md` as the first low-token read for new
+- Added `docs/development/ai/agent-startup-context.md` as the first low-token read for new
   sessions.
 - Added repository root `AGENTS.md` as the actual automatic new-session entry
   point before the startup context.
-- Added `docs/ai/context-index.json` as the machine-readable route index for
+- Added `docs/development/ai/context-index.json` as the machine-readable route index for
   wiki, plan, and context files.
 - Added `scripts/agent-context-brief.py` using only the Python standard
   library.
-- Updated `docs/ai/00-execution-protocol.md` and `README.md` with the startup
+- Updated `docs/development/ai/00-execution-protocol.md` and `README.md` with the startup
   and write-back contract.
 - Extended `scripts/validate-docs.py` to check the startup context, context
   index, wiki index, and brief script.

@@ -19,6 +19,7 @@ The service ensures:
 4. Updates both .env and .env.example files
 5. Provides audit trail of actions taken
 """
+
 from __future__ import annotations
 
 import base64
@@ -28,16 +29,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from alembic import command
 from alembic.config import Config
 from cryptography.fernet import Fernet
 from sqlalchemy import text
 
+from alembic import command
 from app.security.jwt_utils import hash_password
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
     from typing import TypedDict
+
+    from sqlalchemy.orm import Session
 
     class AutofixResult(TypedDict):
         """Result of autofix operation."""
@@ -112,12 +114,7 @@ class AutofixService:
 
         return encryption_key
 
-    def update_env_file(
-        self,
-        env_path: str,
-        jwt_secret: str,
-        encryption_key: str
-    ) -> list[str]:
+    def update_env_file(self, env_path: str, jwt_secret: str, encryption_key: str) -> list[str]:
         """
         Update .env file with generated secrets.
 
@@ -200,9 +197,7 @@ class AutofixService:
 
         # Update .env file
         added_secrets = self.update_env_file(
-            env_path=env_path,
-            jwt_secret=jwt_secret,
-            encryption_key=encryption_key
+            env_path=env_path, jwt_secret=jwt_secret, encryption_key=encryption_key
         )
 
         # Build result with audit information
@@ -282,9 +277,7 @@ class AutofixService:
             from app.db.models import User
 
             # Check if any active users exist
-            result = session.execute(
-                text("SELECT COUNT(*) FROM users WHERE status = 'active'")
-            )
+            result = session.execute(text("SELECT COUNT(*) FROM users WHERE status = 'active'"))
             user_count = result.scalar()
 
             if user_count > 0:

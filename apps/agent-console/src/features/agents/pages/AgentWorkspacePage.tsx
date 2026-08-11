@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, RefreshCw } from "lucide-react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
@@ -31,6 +31,7 @@ import {
 } from "../../../stores/workspaceStore";
 import {
   bindLocalAgentConversation,
+  ApiHttpError,
   cancelTask,
   createTeam,
   getAgent,
@@ -83,6 +84,7 @@ import {
   type ConversationSummary,
 } from "../lib/conversationHistory";
 import { clearSnapshot, loadSnapshot } from "../lib/localPersistence";
+import { workspaceInstanceId } from "../lib/workspaceScope";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
 import { nextAvailableTeamName } from "../../teams/pages/TeamCreateModal";
 import {
@@ -94,20 +96,48 @@ import {
 } from "./agentWorkspaceDerive";
 import { runDetailPath } from "../lib/runLinks";
 
+const CANCEL_RETRY_DELAYS_MS = [80, 120, 180, 260, 360] as const;
+
+async function cancelWorkspaceRun(runId: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= CANCEL_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await cancelTask(runId);
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable =
+        (error instanceof ApiHttpError && error.status === 404) ||
+        /database is locked|database is busy/i.test(message);
+      if (!retryable || attempt === CANCEL_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, CANCEL_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastError;
+}
+
 export function AgentWorkspacePage() {
   const { text } = useI18n();
   const { confirm, confirmDialog } = useConfirmDialog();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { agentId = "default" } = useParams();
   const requestedConversationId = searchParams.get("conversation_id");
+  const requestedDesktopPanel = searchParams.get("desktop_panel");
   const requestedConversationAppliedRef = useRef<string | null>(null);
+  const currentWorkspaceId = workspaceInstanceId(agentId);
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
   const [inspectorSection, setInspectorSection] = useState<InspectorSection | null>(null);
   const activeRunId = useWorkspaceStore((s) => s.activeRunId);
   const setActiveRunId = useWorkspaceStore((s) => s.setActiveRunId);
+  const registerWorkspace = useWorkspaceStore((s) => s.registerWorkspace);
+  const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
+  const updateWorkspaceConfig = useWorkspaceStore((s) => s.updateWorkspaceConfig);
+  const workspaceRegistry = useWorkspaceStore((s) => s.workspaceRegistry);
   const updateNode = useWorkspaceStore((s) => s.updateNode);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
@@ -122,6 +152,12 @@ export function AgentWorkspacePage() {
   const [localAgentRestorePending, setLocalAgentRestorePending] = useState(false);
   const [localAgentRecoveryCommand, setLocalAgentRecoveryCommand] =
     useState<LocalAgentRecoveryCommand | null>(null);
+
+  useEffect(() => {
+    if (requestedDesktopPanel === "approvals") {
+      setInspectorSection("runtime");
+    }
+  }, [location.key, requestedDesktopPanel]);
   const [localAgentRecoveryCommandCopied, setLocalAgentRecoveryCommandCopied] = useState(false);
   const [activeLocalBinding, setActiveLocalBinding] =
     useState<LocalAgentConversationBinding | null>(null);
@@ -351,6 +387,15 @@ export function AgentWorkspacePage() {
     }
     return [agent.data, ...items];
   }, [agent.data, agentsQuery.data?.items]);
+  const workspaceOptions = useMemo(
+    () =>
+      workspaceAgents.map((item) => ({
+        value: workspaceInstanceId(item.id),
+        label: item.name,
+        description: `${text("工作区", "Workspace")} · ${item.status}`,
+      })),
+    [text, workspaceAgents],
+  );
   const conversationGroupLabel = useCallback(
     (conversation: ConversationSummary): string => {
       const localConnectionId = localAgentConnectionIdFromConversation(conversation);
@@ -371,6 +416,9 @@ export function AgentWorkspacePage() {
     selectedModelId,
     tools,
     onRunCreated: setActiveRunId,
+    onRunCancel: async (runId) => {
+      await cancelWorkspaceRun(runId);
+    },
   });
 
   const nodesById = useWorkspaceStore((s) => s.nodesById);
@@ -462,6 +510,33 @@ export function AgentWorkspacePage() {
       conversationId: currentConversationId,
     }),
     [agentId, currentConversationId],
+  );
+  const navigateToConversation = useCallback(
+    (conversationId: string) => {
+      const nextSearch = new URLSearchParams(location.search);
+      nextSearch.set("conversation_id", conversationId);
+      navigate(
+        {
+          pathname: location.pathname,
+          search: `?${nextSearch.toString()}`,
+        },
+        { replace: true },
+      );
+    },
+    [location.pathname, location.search, navigate],
+  );
+  const handleWorkspaceChange = useCallback(
+    (nextWorkspaceId: string) => {
+      switchWorkspace(nextWorkspaceId);
+      const nextAgentId =
+        workspaceRegistry[nextWorkspaceId]?.agentId ??
+        workspaceAgents.find((item) => workspaceInstanceId(item.id) === nextWorkspaceId)?.id ??
+        agentId;
+      if (nextAgentId !== agentId) {
+        navigate(`/agents/${nextAgentId}/workspace`);
+      }
+    },
+    [agentId, navigate, switchWorkspace, workspaceAgents, workspaceRegistry],
   );
 
   const inspectorArtifacts = useMemo<ConversationArtifact[]>(
@@ -763,6 +838,8 @@ export function AgentWorkspacePage() {
   // ─── Agent scope + rehydration (v3 Req 4.10, Legacy migration) ─────────
   useEffect(() => {
     const stateBeforeScope = useWorkspaceStore.getState();
+    registerWorkspace(currentWorkspaceId, agentId);
+    switchWorkspace(currentWorkspaceId);
     const hasCurrentAgentScope = stateBeforeScope._agentScope === agentId;
     stateBeforeScope.setAgentScope(agentId);
     const now = new Date().toISOString();
@@ -773,10 +850,12 @@ export function AgentWorkspacePage() {
       const saved = readContextMaxTokens(agentId);
       if (saved !== null) {
         useWorkspaceStore.getState().setContextMaxTokens(saved);
+        updateWorkspaceConfig(currentWorkspaceId, { contextMaxTokens: saved });
       }
       const savedRatio = readAutoCompressionRatio(agentId);
       if (savedRatio !== null) {
         useWorkspaceStore.getState().setAutoCompressionRatio(savedRatio);
+        updateWorkspaceConfig(currentWorkspaceId, { autoCompressionRatio: savedRatio });
       }
     };
 
@@ -849,6 +928,9 @@ export function AgentWorkspacePage() {
         currentConversationId: cloudSafeSnapshot.currentConversationId,
         historyPanelCollapsed: collapsed ?? false,
       });
+      updateWorkspaceConfig(currentWorkspaceId, {
+        historyPanelCollapsed: collapsed ?? false,
+      });
       applyContextMaxTokens();
       return () => {
         useWorkspaceStore.getState().setAgentScope(null);
@@ -861,6 +943,9 @@ export function AgentWorkspacePage() {
       hydrateFromConversations({
         conversations: [migrated],
         currentConversationId: migrated.id,
+        historyPanelCollapsed: collapsed ?? false,
+      });
+      updateWorkspaceConfig(currentWorkspaceId, {
         historyPanelCollapsed: collapsed ?? false,
       });
       saveConversationsSnapshot(agentId, {
@@ -881,13 +966,16 @@ export function AgentWorkspacePage() {
       currentConversationId: genesis.id,
       historyPanelCollapsed: collapsed ?? false,
     });
+    updateWorkspaceConfig(currentWorkspaceId, {
+      historyPanelCollapsed: collapsed ?? false,
+    });
     applyContextMaxTokens();
     return () => {
       useWorkspaceStore.getState().setAgentScope(null);
     };
     // Locale is fixed Chinese; changing old locale state must not rehydrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, hydrateFromConversations]);
+  }, [agentId, currentWorkspaceId, hydrateFromConversations]);
 
   useEffect(() => {
     if (localAgentEnabled) return;
@@ -1044,7 +1132,7 @@ export function AgentWorkspacePage() {
     // v3: clearing only resets the current conversation's runtime fields;
     // the conversations list itself is unchanged. Persistence subscribe
     // will write the empty state back to the active conversation.
-    useWorkspaceStore.getState().reset();
+    useWorkspaceStore.getState().resetConversationRuntime();
     notifyFeedback({
       tone: "warning",
       title: "当前会话已清空",
@@ -2140,6 +2228,7 @@ export function AgentWorkspacePage() {
             pendingApprovalCount,
             focus: true,
           });
+          navigateToConversation(localAgentConversationId(binding.id));
           await queryClient.invalidateQueries({
             queryKey: ["local-agent-bindings", connectionId],
           });
@@ -2167,7 +2256,7 @@ export function AgentWorkspacePage() {
       if (historyNarrow) setHistoryOverlayOpen(false);
       return;
     }
-    newConversation();
+    navigateToConversation(newConversation());
     notifyFeedback({
       tone: "info",
       title: "已新建会话",
@@ -2180,6 +2269,7 @@ export function AgentWorkspacePage() {
     historyNarrow,
     localAgentEnabled,
     localBindingMutation,
+    navigateToConversation,
     newConversation,
     pendingApprovalCount,
     queryClient,
@@ -2231,9 +2321,17 @@ export function AgentWorkspacePage() {
         setLocalAgentEnabled(false);
       }
       setCurrentConversation(id);
+      navigateToConversation(id);
       if (historyNarrow) setHistoryOverlayOpen(false);
     },
-    [agentId, historyNarrow, queryClient, setCurrentConversation, setLocalPendingAssistant],
+    [
+      agentId,
+      historyNarrow,
+      navigateToConversation,
+      queryClient,
+      setCurrentConversation,
+      setLocalPendingAssistant,
+    ],
   );
 
   const handleDeleteConversation = useCallback(
@@ -2248,13 +2346,14 @@ export function AgentWorkspacePage() {
       });
       if (!confirmed) return;
       deleteConversation(id);
+      navigateToConversation(useWorkspaceStore.getState().currentConversationId);
       notifyFeedback({
         tone: "warning",
         title: "对话已删除",
         description: title ? `已删除“${title}”。` : "已删除当前对话。",
       });
     },
-    [confirm, deleteConversation],
+    [confirm, deleteConversation, navigateToConversation],
   );
 
   const handleToggleHistoryCollapsed = useCallback(() => {
@@ -2285,10 +2384,13 @@ export function AgentWorkspacePage() {
         <ChatSurface
           agentId={agentId}
           agentName={agent.data?.name ?? agentId}
+          workspaceId={currentWorkspaceId}
+          workspaceOptions={workspaceOptions}
           modelLabel={selectedModelLabel}
           modelLabelIsFallback={modelLabelIsFallback}
           workspaceMode={workspaceMode}
           onWorkspaceModeChange={setWorkspaceMode}
+          onWorkspaceChange={handleWorkspaceChange}
           activeRunId={activeRunId}
           runStatus={workspace.data?.run.status}
           runCreatedAt={workspace.data?.run.created_at}
@@ -2354,6 +2456,12 @@ export function AgentWorkspacePage() {
           onLocalAgentSubmit={localAgentEnabled ? handleLocalAgentSubmit : undefined}
           onLocalAgentPause={localAgentEnabled ? handleLocalAgentPause : undefined}
           onLocalAgentResume={localAgentEnabled ? handleLocalAgentResume : undefined}
+          desktopPanel={
+            requestedDesktopPanel === "files" || requestedDesktopPanel === "approvals"
+              ? requestedDesktopPanel
+              : null
+          }
+          desktopPanelRequestKey={location.key}
         />
         <InspectorDrawer
           section={inspectorSection}

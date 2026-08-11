@@ -10,9 +10,9 @@ Historical implemented delivery entries for private deployment, onboarding, Auth
 
 ## Evidence
 
-- `docs/ai/task-progress.yaml` marks `p4-p8-docs-help-performance-scale`, `p3-p6-p7-auth-retention-cicd`, and `p1-p2-p5-production-onboarding-frontend-polish` as `completed`.
+- `docs/development/ai/task-progress.yaml` marks `p4-p8-docs-help-performance-scale`, `p3-p6-p7-auth-retention-cicd`, and `p1-p2-p5-production-onboarding-frontend-polish` as `completed`.
 - `private-deployment-experience` was already `completed` and remains unchanged.
-- `docs/workspace-pro-gap-register.md` records "Approve, Reject, Modify tool approvals" as `Pending implementation` on this branch.
+- `docs/plans/workspace-pro-gap-register.md` records "Approve, Reject, Modify tool approvals" as `Pending implementation` on this branch.
 
 ## Validation
 

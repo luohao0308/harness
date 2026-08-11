@@ -17,10 +17,10 @@ Story 3.2:
 4. Complete database autofix flow
 5. Audit trail logging
 """
+
 import base64
 import os
 import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -143,9 +143,7 @@ class TestAutofixService:
 
         # Update the env file
         added_secrets = service.update_env_file(
-            env_path=temp_env_file,
-            jwt_secret=jwt_secret,
-            encryption_key=encryption_key
+            env_path=temp_env_file, jwt_secret=jwt_secret, encryption_key=encryption_key
         )
 
         # Verify secrets were added
@@ -179,15 +177,9 @@ class TestAutofixService:
         jwt_secret = service.generate_jwt_secret()
         encryption_key = service.generate_encryption_key()
 
-        # Read original content
-        with open(temp_env_with_secrets) as f:
-            original_content = f.read()
-
         # Update the env file
         added_secrets = service.update_env_file(
-            env_path=temp_env_with_secrets,
-            jwt_secret=jwt_secret,
-            encryption_key=encryption_key
+            env_path=temp_env_with_secrets, jwt_secret=jwt_secret, encryption_key=encryption_key
         )
 
         # Verify no secrets were added (all existed)
@@ -242,8 +234,8 @@ class TestAutofixService:
 
         # Verify the secrets are valid
         lines = content.split("\n")
-        jwt_line = [l for l in lines if l.startswith("AUTH_JWT_SECRET=")][0]
-        enc_line = [l for l in lines if l.startswith("HARNESS_SECRET_ENCRYPTION_KEY=")][0]
+        jwt_line = [line for line in lines if line.startswith("AUTH_JWT_SECRET=")][0]
+        enc_line = [line for line in lines if line.startswith("HARNESS_SECRET_ENCRYPTION_KEY=")][0]
 
         jwt_value = jwt_line.split("=", 1)[1]
         enc_value = enc_line.split("=", 1)[1]

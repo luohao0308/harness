@@ -26,27 +26,26 @@ jobs:
 
       - name: Check required AI docs
         run: |
-          test -f docs/ai/README.md
-          test -f docs/ai/00-execution-protocol.md
-          test -f docs/ai/01-task-progress.md
-          test -f docs/ai/task-progress.yaml
-          test -f docs/human/10-task-progress.md
-          test -f docs/ai/stages/01-agent-workspace-console.md
-          test -f docs/ai/stages/02-agent-studio-config.md
-          test -f docs/ai/stages/03-harness-tool-mcp.md
-          test -f docs/ai/stages/04-event-sourcing-replay-ui.md
-          test -f docs/ai/stages/05-eval-regression.md
-          test -f docs/ai/stages/06-warmpool-infra.md
-          test -f docs/ai/stages/07-private-deployable-harness-chain.md
+          test -f docs/development/ai/README.md
+          test -f docs/development/ai/00-execution-protocol.md
+          test -f docs/development/ai/01-task-progress.md
+          test -f docs/development/ai/task-progress.yaml
+          test -f docs/development/ai/stages/01-agent-workspace-console.md
+          test -f docs/development/ai/stages/02-agent-studio-config.md
+          test -f docs/development/ai/stages/03-harness-tool-mcp.md
+          test -f docs/development/ai/stages/04-event-sourcing-replay-ui.md
+          test -f docs/development/ai/stages/05-eval-regression.md
+          test -f docs/development/ai/stages/06-warmpool-infra.md
+          test -f docs/development/ai/stages/07-private-deployable-harness-chain.md
 
       - name: Check docs avoid loose wording
         run: |
-          if grep -RInE "TODO|待定|稍后|可能|也许|大概|暂定|视情况|等等" docs/ai docs/api docs/evals docs/security docs/qa docs/demo docs/runbooks; then
+          if grep -RInE "TODO|待定|稍后|可能|也许|大概|暂定|视情况|等等" docs/development/ai docs/contracts docs/testing docs/architecture/security docs/design/media docs/project-memory/runbooks; then
             exit 1
           fi
 
-      - name: Run Spec Mode docs validation
-        run: python3 scripts/validate-docs.py
+      - name: Run docs and Markdown link checks
+        run: bash scripts/check-docs.sh
 
       - name: Check Help Center content
         run: python3 scripts/check-help-content.py
@@ -55,4 +54,4 @@ jobs:
         run: python3 scripts/generate-api-docs.py
 
       - name: Check generated API reference is current
-        run: git diff --exit-code docs/api-reference
+        run: git diff --exit-code docs/contracts/api-reference

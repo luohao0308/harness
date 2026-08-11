@@ -43,9 +43,9 @@ services/api-server/app/db/models.py
 services/api-server/alembic/versions/20260613_0040_local_agent_multi_adapter_pairing.py
 services/api-server/tests/test_local_agents.py
 services/api-server/tests/test_hao_cli.py
-docs/cli/hao.md
+docs/development/cli/hao.md
 docs/test-suite-v1-v6-local-agent.md
-docs/ai/task-progress.yaml
+docs/development/ai/task-progress.yaml
 ```
 
 ## Validation

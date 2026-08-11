@@ -782,6 +782,10 @@ def test_hao_bridge_pending_tool_preserves_selected_model_for_resume(
     assert pending_tool["model_name"] == "deepseek-v4"
     assert pending_tool["harness_stream_token"] == "fresh-scoped-stream-token"
     assert pending_tool["bridge_delta_count"] == "1"
+    raw_bridge_state = (config.home / "bridge.json").read_text(encoding="utf-8")
+    assert "fresh-scoped-stream-token" not in raw_bridge_state
+    assert "queued-scoped-stream-token" not in raw_bridge_state
+    assert "harness_stream_token_ref" in raw_bridge_state
     tool_request = next(payload for name, payload in calls if name == "tool_request")
     assert tool_request["metadata"]["model_provider"] == "deepseek"
     assert tool_request["metadata"]["model_name"] == "deepseek-v4"

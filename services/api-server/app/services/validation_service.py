@@ -7,6 +7,7 @@ Handles validation checks for:
 - Database migration checks (Alembic)
 - Service health checks
 """
+
 from __future__ import annotations
 
 import os
@@ -129,7 +130,9 @@ class ValidationService:
                 return {
                     "check": "python_version",
                     "status": "pass",
-                    "message": f"Python {version} meets requirement (≥ {required_major}.{required_minor})",
+                    "message": (
+                        f"Python {version} meets requirement (≥ {required_major}.{required_minor})"
+                    ),
                     "details": {
                         "version": version,
                         "required": f"{required_major}.{required_minor}",
@@ -139,7 +142,10 @@ class ValidationService:
                 return {
                     "check": "python_version",
                     "status": "fail",
-                    "message": f"Python {version} is below required version {required_major}.{required_minor}",
+                    "message": (
+                        f"Python {version} is below required version "
+                        f"{required_major}.{required_minor}"
+                    ),
                     "details": {
                         "version": version,
                         "required": f"{required_major}.{required_minor}",
@@ -267,7 +273,9 @@ class ValidationService:
                 return {
                     "check": "disk_space",
                     "status": "warn",
-                    "message": f"Disk space low: {free_gb:.1f} GB free (recommended: {required_gb} GB)",
+                    "message": (
+                        f"Disk space low: {free_gb:.1f} GB free (recommended: {required_gb} GB)"
+                    ),
                     "details": {
                         "free_gb": int(free_gb),
                         "required_gb": required_gb,
@@ -277,7 +285,10 @@ class ValidationService:
                 return {
                     "check": "disk_space",
                     "status": "fail",
-                    "message": f"Insufficient disk space: {free_gb:.1f} GB free (minimum: {warn_threshold_gb} GB)",
+                    "message": (
+                        f"Insufficient disk space: {free_gb:.1f} GB free "
+                        f"(minimum: {warn_threshold_gb} GB)"
+                    ),
                     "details": {
                         "free_gb": int(free_gb),
                         "required_gb": required_gb,
@@ -320,7 +331,10 @@ class ValidationService:
                 return {
                     "check": "memory",
                     "status": "warn",
-                    "message": f"Memory low: {available_gb:.1f} GB available (recommended: {required_gb} GB)",
+                    "message": (
+                        f"Memory low: {available_gb:.1f} GB available "
+                        f"(recommended: {required_gb} GB)"
+                    ),
                     "details": {
                         "available_gb": int(available_gb),
                         "required_gb": required_gb,
@@ -330,7 +344,10 @@ class ValidationService:
                 return {
                     "check": "memory",
                     "status": "fail",
-                    "message": f"Insufficient memory: {available_gb:.1f} GB available (minimum: {warn_threshold_gb} GB)",
+                    "message": (
+                        f"Insufficient memory: {available_gb:.1f} GB available "
+                        f"(minimum: {warn_threshold_gb} GB)"
+                    ),
                     "details": {
                         "available_gb": int(available_gb),
                         "required_gb": required_gb,
@@ -374,100 +391,124 @@ class ValidationService:
         # Check AUTH_JWT_SECRET
         jwt_secret = self.settings.auth_jwt_secret.strip()
         if not jwt_secret:
-            results.append({
-                "check": "jwt_secret",
-                "status": "fail",
-                "message": "AUTH_JWT_SECRET is not set",
-                "details": {
-                    "required": True,
-                    "current_value": "",
-                    "hint": "Generate with: openssl rand -hex 32",
-                },
-            })
+            results.append(
+                {
+                    "check": "jwt_secret",
+                    "status": "fail",
+                    "message": "AUTH_JWT_SECRET is not set",
+                    "details": {
+                        "required": True,
+                        "current_value": "",
+                        "hint": "Generate with: openssl rand -hex 32",
+                    },
+                }
+            )
         elif jwt_secret == AUTH_JWT_SECRET_PLACEHOLDER:
-            results.append({
-                "check": "jwt_secret",
-                "status": "fail",
-                "message": "AUTH_JWT_SECRET uses example placeholder",
-                "details": {
-                    "required": True,
-                    "current_value": "placeholder",
-                    "hint": "Generate with: openssl rand -hex 32",
-                },
-            })
+            results.append(
+                {
+                    "check": "jwt_secret",
+                    "status": "fail",
+                    "message": "AUTH_JWT_SECRET uses example placeholder",
+                    "details": {
+                        "required": True,
+                        "current_value": "placeholder",
+                        "hint": "Generate with: openssl rand -hex 32",
+                    },
+                }
+            )
         elif len(jwt_secret) < 32:
-            results.append({
-                "check": "jwt_secret",
-                "status": "fail",
-                "message": f"AUTH_JWT_SECRET too short (length: {len(jwt_secret)}, minimum: 32)",
-                "details": {
-                    "required": True,
-                    "current_length": len(jwt_secret),
-                    "minimum_length": 32,
-                    "hint": "Generate with: openssl rand -hex 32",
-                },
-            })
+            results.append(
+                {
+                    "check": "jwt_secret",
+                    "status": "fail",
+                    "message": (
+                        f"AUTH_JWT_SECRET too short (length: {len(jwt_secret)}, minimum: 32)"
+                    ),
+                    "details": {
+                        "required": True,
+                        "current_length": len(jwt_secret),
+                        "minimum_length": 32,
+                        "hint": "Generate with: openssl rand -hex 32",
+                    },
+                }
+            )
         else:
-            results.append({
-                "check": "jwt_secret",
-                "status": "pass",
-                "message": "AUTH_JWT_SECRET is properly configured",
-                "details": {"length": len(jwt_secret)},
-            })
+            results.append(
+                {
+                    "check": "jwt_secret",
+                    "status": "pass",
+                    "message": "AUTH_JWT_SECRET is properly configured",
+                    "details": {"length": len(jwt_secret)},
+                }
+            )
 
         # Check HARNESS_SECRET_ENCRYPTION_KEY
         encryption_key = self.settings.harness_secret_encryption_key.strip()
         is_production = self.settings.app_env.strip().lower() == "production"
 
         if not encryption_key:
-            results.append({
-                "check": "encryption_key",
-                "status": "fail" if is_production else "warn",
-                "message": (
-                    "HARNESS_SECRET_ENCRYPTION_KEY is not set"
-                    if is_production
-                    else "HARNESS_SECRET_ENCRYPTION_KEY is not set (required in production)"
-                ),
-                "details": {
-                    "required": is_production,
-                    "current_value": "",
-                    "hint": "Generate with: python3 scripts/generate-runtime-secrets.py",
-                },
-            })
+            results.append(
+                {
+                    "check": "encryption_key",
+                    "status": "fail" if is_production else "warn",
+                    "message": (
+                        "HARNESS_SECRET_ENCRYPTION_KEY is not set"
+                        if is_production
+                        else "HARNESS_SECRET_ENCRYPTION_KEY is not set (required in production)"
+                    ),
+                    "details": {
+                        "required": is_production,
+                        "current_value": "",
+                        "hint": "Generate with: python3 scripts/generate-runtime-secrets.py",
+                    },
+                }
+            )
         elif encryption_key == HARNESS_SECRET_ENCRYPTION_KEY_PLACEHOLDER:
-            results.append({
-                "check": "encryption_key",
-                "status": "fail" if is_production else "warn",
-                "message": (
-                    "HARNESS_SECRET_ENCRYPTION_KEY uses example placeholder"
-                    if is_production
-                    else "HARNESS_SECRET_ENCRYPTION_KEY uses example placeholder (replace before production)"
-                ),
-                "details": {
-                    "required": is_production,
-                    "current_value": "placeholder",
-                    "hint": "Generate with: python3 scripts/generate-runtime-secrets.py",
-                },
-            })
+            results.append(
+                {
+                    "check": "encryption_key",
+                    "status": "fail" if is_production else "warn",
+                    "message": (
+                        "HARNESS_SECRET_ENCRYPTION_KEY uses example placeholder"
+                        if is_production
+                        else (
+                            "HARNESS_SECRET_ENCRYPTION_KEY uses example placeholder "
+                            "(replace before production)"
+                        )
+                    ),
+                    "details": {
+                        "required": is_production,
+                        "current_value": "placeholder",
+                        "hint": "Generate with: python3 scripts/generate-runtime-secrets.py",
+                    },
+                }
+            )
         elif len(encryption_key) < 32:
-            results.append({
-                "check": "encryption_key",
-                "status": "fail" if is_production else "warn",
-                "message": f"HARNESS_SECRET_ENCRYPTION_KEY too short (length: {len(encryption_key)}, minimum: 32)",
-                "details": {
-                    "required": is_production,
-                    "current_length": len(encryption_key),
-                    "minimum_length": 32,
-                    "hint": "Generate with: python3 scripts/generate-runtime-secrets.py",
-                },
-            })
+            results.append(
+                {
+                    "check": "encryption_key",
+                    "status": "fail" if is_production else "warn",
+                    "message": (
+                        "HARNESS_SECRET_ENCRYPTION_KEY too short "
+                        f"(length: {len(encryption_key)}, minimum: 32)"
+                    ),
+                    "details": {
+                        "required": is_production,
+                        "current_length": len(encryption_key),
+                        "minimum_length": 32,
+                        "hint": "Generate with: python3 scripts/generate-runtime-secrets.py",
+                    },
+                }
+            )
         else:
-            results.append({
-                "check": "encryption_key",
-                "status": "pass",
-                "message": "HARNESS_SECRET_ENCRYPTION_KEY is properly configured",
-                "details": {"length": len(encryption_key)},
-            })
+            results.append(
+                {
+                    "check": "encryption_key",
+                    "status": "pass",
+                    "message": "HARNESS_SECRET_ENCRYPTION_KEY is properly configured",
+                    "details": {"length": len(encryption_key)},
+                }
+            )
 
         return results
 
@@ -538,7 +579,9 @@ class ValidationService:
             return {
                 "check": "api_base_url",
                 "status": "warn",
-                "message": f"Cannot connect to API_BASE_URL (may not be started yet): {api_base_url}",
+                "message": (
+                    f"Cannot connect to API_BASE_URL (may not be started yet): {api_base_url}"
+                ),
                 "details": {
                     "url": api_base_url,
                     "error": str(e),
@@ -628,64 +671,76 @@ class ValidationService:
         # Check DEEPSEEK_API_KEY (optional)
         deepseek_key = self.settings.deepseek_api_key.strip()
         if not deepseek_key:
-            results.append({
-                "check": "deepseek_api_key",
-                "status": "warn",
-                "message": "DEEPSEEK_API_KEY not configured (optional)",
-                "details": {
-                    "required": False,
-                    "provider": "DeepSeek",
-                },
-            })
+            results.append(
+                {
+                    "check": "deepseek_api_key",
+                    "status": "warn",
+                    "message": "DEEPSEEK_API_KEY not configured (optional)",
+                    "details": {
+                        "required": False,
+                        "provider": "DeepSeek",
+                    },
+                }
+            )
         else:
             # Basic validation: key should have reasonable length
             if len(deepseek_key) < 20:
-                results.append({
-                    "check": "deepseek_api_key",
-                    "status": "warn",
-                    "message": f"DEEPSEEK_API_KEY seems too short (length: {len(deepseek_key)})",
-                    "details": {
-                        "required": False,
-                        "provider": "DeepSeek",
-                        "key_length": len(deepseek_key),
-                    },
-                })
+                results.append(
+                    {
+                        "check": "deepseek_api_key",
+                        "status": "warn",
+                        "message": (
+                            f"DEEPSEEK_API_KEY seems too short (length: {len(deepseek_key)})"
+                        ),
+                        "details": {
+                            "required": False,
+                            "provider": "DeepSeek",
+                            "key_length": len(deepseek_key),
+                        },
+                    }
+                )
             else:
-                results.append({
-                    "check": "deepseek_api_key",
-                    "status": "pass",
-                    "message": "DEEPSEEK_API_KEY is configured",
-                    "details": {
-                        "required": False,
-                        "provider": "DeepSeek",
-                        "key_length": len(deepseek_key),
-                    },
-                })
+                results.append(
+                    {
+                        "check": "deepseek_api_key",
+                        "status": "pass",
+                        "message": "DEEPSEEK_API_KEY is configured",
+                        "details": {
+                            "required": False,
+                            "provider": "DeepSeek",
+                            "key_length": len(deepseek_key),
+                        },
+                    }
+                )
 
         # Check MODEL_GATEWAY_API_KEY
         gateway_key = self.settings.model_gateway_api_key.strip()
         if not gateway_key or gateway_key == "replace-me":
-            results.append({
-                "check": "model_gateway_api_key",
-                "status": "warn",
-                "message": "MODEL_GATEWAY_API_KEY not configured or uses placeholder",
-                "details": {
-                    "required": False,
-                    "provider": "Model Gateway",
-                    "hint": "Set MODEL_GATEWAY_API_KEY if using model gateway",
-                },
-            })
+            results.append(
+                {
+                    "check": "model_gateway_api_key",
+                    "status": "warn",
+                    "message": "MODEL_GATEWAY_API_KEY not configured or uses placeholder",
+                    "details": {
+                        "required": False,
+                        "provider": "Model Gateway",
+                        "hint": "Set MODEL_GATEWAY_API_KEY if using model gateway",
+                    },
+                }
+            )
         else:
-            results.append({
-                "check": "model_gateway_api_key",
-                "status": "pass",
-                "message": "MODEL_GATEWAY_API_KEY is configured",
-                "details": {
-                    "required": False,
-                    "provider": "Model Gateway",
-                    "key_length": len(gateway_key),
-                },
-            })
+            results.append(
+                {
+                    "check": "model_gateway_api_key",
+                    "status": "pass",
+                    "message": "MODEL_GATEWAY_API_KEY is configured",
+                    "details": {
+                        "required": False,
+                        "provider": "Model Gateway",
+                        "key_length": len(gateway_key),
+                    },
+                }
+            )
 
         return results
 
@@ -828,10 +883,12 @@ class ValidationService:
         try:
             # Iterate from latest to current to find pending migrations
             for revision in script.iterate_revisions(latest_revision, current_revision):
-                pending.append({
-                    "revision": revision.revision,
-                    "description": revision.doc or "No description",
-                })
+                pending.append(
+                    {
+                        "revision": revision.revision,
+                        "description": revision.doc or "No description",
+                    }
+                )
         except Exception:
             # If iteration fails, we can't determine pending migrations precisely
             pass
@@ -879,8 +936,7 @@ class ValidationService:
 
             # Count migration files
             migration_files = [
-                f for f in os.listdir(versions_dir)
-                if f.endswith(".py") and not f.startswith("__")
+                f for f in os.listdir(versions_dir) if f.endswith(".py") and not f.startswith("__")
             ]
 
             if len(migration_files) == 0:

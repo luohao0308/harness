@@ -47,6 +47,7 @@ export function isModelAuthError(error: {
 }): boolean {
   if (error.kind === "model_auth") return true;
   const detail = error.detail ?? "";
+  if (/\bMODEL_SETUP_REQUIRED\b/i.test(detail)) return true;
   const authStatus =
     error.status === 401 ||
     error.status === 403 ||

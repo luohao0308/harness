@@ -34,7 +34,7 @@ apps/agent-console/src/features/agents/components/ChatSurface.tsx
 apps/agent-console/src/features/agents/components/WorkspaceShellBar.tsx
 apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx
 apps/agent-console/src/features/agents/__tests__/AgentWorkspacePage.team-launch.test.tsx
-docs/ai/task-progress.yaml
+docs/development/ai/task-progress.yaml
 omx_wiki/index.md
 omx_wiki/log.md
 omx_wiki/session-2026-06-05-agent-workspace-local-agent-header-draft-fix.md

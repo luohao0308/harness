@@ -42,7 +42,7 @@ export function NavigationButtons({
               !canGoPrevious && !isFirstStep,
           },
         )}
-        aria-label="Go to previous step"
+        aria-label={previousLabel}
       >
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         {previousLabel}
@@ -60,7 +60,7 @@ export function NavigationButtons({
               !canGoNext || isLoading,
           },
         )}
-        aria-label={isLastStep ? "Complete setup" : "Go to next step"}
+        aria-label={finalNextLabel}
       >
         {finalNextLabel}
         <ArrowRight className="h-4 w-4" aria-hidden="true" />

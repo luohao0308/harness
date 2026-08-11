@@ -62,9 +62,15 @@ tmp/
 artifacts/
 data/
 
+/apps/desktop-app/release*/
+/apps/desktop-app/resources/runtime/*/*/
+!/apps/desktop-app/build/
+!/apps/desktop-app/build/entitlements.mac.plist
+!/apps/desktop-app/build/icon.png
+
 .docker/
 docker-data/
 *.pid
 *.sock
 .claude/settings.local.json
-docs/ai/session-log-pointers.md
+docs/development/ai/session-log-pointers.md

@@ -11,9 +11,11 @@ Test Scenarios:
 11. Session revocation
 12. Error handling during logout
 """
+
 from __future__ import annotations
 
 import base64
+import zlib
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -21,7 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import SAMLProvider, Session as DBSession, User
+from app.db.models import SAMLProvider, User
 from app.main import app
 from app.services.saml_provider_service import SAMLProviderService
 from app.services.saml_service import SAMLService
@@ -86,6 +88,7 @@ def authenticated_user(db_session: Session) -> tuple[User, str, str]:
 
     # Extract session ID from token
     import jwt
+
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -191,9 +194,11 @@ def test_okta_logout_request_generation(
     assert len(saml_request) > 0
 
     # Decode and verify LogoutRequest structure
-    decoded_request = base64.b64decode(saml_request)
+    decoded_request = zlib.decompress(base64.b64decode(saml_request), wbits=-15)
     assert b"LogoutRequest" in decoded_request or b"samlp:LogoutRequest" in decoded_request
-    assert nameid.encode() in decoded_request or b"NameID" in decoded_request
+    assert nameid.encode() in decoded_request
+    assert session_id.encode() in decoded_request
+    assert query_params["RelayState"] == [okta_provider.id]
 
 
 # Test 10: LogoutResponse validation from Okta
@@ -367,9 +372,7 @@ def test_okta_logout_invalid_provider(
 
 
 # Test 15: Complete SLO flow with Okta
-@patch("app.services.saml_service.OneLogin_Saml2_Auth")
 def test_okta_complete_slo_flow(
-    mock_saml_auth: MagicMock,
     db_session: Session,
     okta_provider: SAMLProvider,
     authenticated_user: tuple[User, str, str],
@@ -412,20 +415,19 @@ def test_okta_complete_slo_flow(
     assert session.revoked_at is not None
 
     # Step 4-6: Okta processes logout and sends response
-    mock_auth_instance = MagicMock()
-    mock_auth_instance.get_errors.return_value = []
-    mock_auth_instance.get_last_error_reason.return_value = None
-    mock_saml_auth.return_value = mock_auth_instance
-
     saml_response = base64.b64encode(b"<okta-logout-response-success>").decode("utf-8")
 
-    response = client.post(
-        "/api/auth/saml/sls",
-        data={
-            "SAMLResponse": saml_response,
-            "RelayState": okta_provider.id,
-        },
-    )
+    with patch(
+        "app.services.saml_service.SAMLService.handle_logout_response",
+        return_value={"success": True},
+    ):
+        response = client.post(
+            "/api/auth/saml/sls",
+            data={
+                "SAMLResponse": saml_response,
+                "RelayState": okta_provider.id,
+            },
+        )
 
     # Step 7: Verify logout completed
     assert response.status_code == 200
@@ -484,6 +486,7 @@ def test_okta_session_management_after_logout(
 
     # Extract new session ID
     import jwt
+
     from app.core.config import get_settings
 
     settings = get_settings()

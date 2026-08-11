@@ -33,7 +33,6 @@ import hashlib
 import hmac
 import time
 from unittest.mock import MagicMock, patch
-from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -206,7 +205,9 @@ def test_acs_without_relay_state_idp_initiated(
     mock_saml_auth.return_value = mock_auth_instance
 
     # Mock issuer extraction
-    with patch("app.services.saml_service.SAMLService.extract_issuer_from_response") as mock_extract:
+    with patch(
+        "app.services.saml_service.SAMLService.extract_issuer_from_response"
+    ) as mock_extract:
         mock_extract.return_value = test_provider.entity_id
 
         saml_response = base64.b64encode(b"<valid-saml-response>").decode("utf-8")
@@ -250,7 +251,6 @@ def test_acs_with_tampered_relay_state(
 
     # Tampered RelayState - non-existent provider ID
     tampered_relay_state = "attacker-provider-id-12345"
-
     saml_response = base64.b64encode(b"<valid-saml-response>").decode("utf-8")
 
     response = client.post(
@@ -296,8 +296,6 @@ def test_acs_with_expired_relay_state(
     is_valid, provider_id = verify_relay_state_token(expired_relay_state)
     assert not is_valid, "Expired RelayState should be invalid"
 
-    saml_response = base64.b64encode(b"<valid-saml-response>").decode("utf-8")
-
     # This demonstrates the REQUIRED behavior
     # Current implementation should be enhanced to validate RelayState expiration
     # Expected behavior: reject with 400 Bad Request
@@ -332,7 +330,7 @@ def test_acs_cross_origin_request_blocked(
     saml_response = base64.b64encode(b"<valid-saml-response>").decode("utf-8")
 
     # Simulate cross-origin request from malicious domain
-    response = client.post(
+    client.post(
         "/api/auth/saml/acs",
         data={
             "SAMLResponse": saml_response,
@@ -450,7 +448,7 @@ def test_sls_cross_origin_request_blocked(
     saml_response = base64.b64encode(b"<logout-response>").decode("utf-8")
 
     # Simulate cross-origin logout attempt
-    response = client.post(
+    client.post(
         "/api/auth/saml/sls",
         data={
             "SAMLResponse": saml_response,
@@ -510,8 +508,6 @@ def test_acs_with_samesite_cookie(
     # Check Set-Cookie headers for SameSite attribute
     # Note: Current implementation returns JWT tokens in response body
     # RECOMMENDED: Also set HttpOnly session cookie with SameSite=Lax
-    set_cookie_headers = response.headers.get_list("set-cookie")
-
     # Document security recommendation
     # Session cookies should have:
     # - HttpOnly (prevent XSS)

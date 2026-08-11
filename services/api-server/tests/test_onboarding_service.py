@@ -3,13 +3,10 @@ Tests for onboarding service - Story 1.1: First-Run Detection Logic
 
 Following TDD: Write tests first, then implementation.
 """
-from datetime import datetime, timezone
-
 import pytest
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Organization, OrganizationMember, User, utc_now
+from app.db.models import User, utc_now
 from app.services.onboarding_service import OnboardingService
 
 
@@ -161,4 +158,3 @@ def test_skip_wizard_when_already_completed(
 
     assert result["is_completed"] is True
     assert result["wizard_skipped"] is False  # Not skipped, it was completed
-

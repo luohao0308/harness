@@ -51,7 +51,7 @@ c25321c Expose grounding quality in the console
 - Added `GET /api/observability/grounding-quality` as a read-only projection over Eval-owned traces.
 - Added Observability UI for Grounding Quality metrics, table, `eval_run_id` / `dataset_id` prefix filters, failure reason dropdown, leak status, leak sources, and evidence indexes.
 - Added Eval Harness UI for grounding metrics, regression deltas, leak indicators, and failure reasons.
-- Saved Chinese HTML review report at `docs/reports/p6-groundedness-eval-observability-code-review-2026-05-18.html`.
+- Saved Chinese HTML review report at `docs/工作日志/reports/p6-groundedness-eval-observability-code-review-2026-05-18.html`.
 
 ## Validation
 

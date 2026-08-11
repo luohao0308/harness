@@ -5,12 +5,13 @@ Provides endpoints for session lifecycle operations: validation, refresh, and lo
 
 Story 4.1 - SSO Session Lifecycle Management
 """
+
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session

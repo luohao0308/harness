@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useConsoleStore } from "../../stores/consoleStore";
 import { ConsoleShell } from "../ConsoleShell";
@@ -103,7 +103,12 @@ function renderShell(path: string, title: string, content: string) {
   );
 }
 
+beforeEach(() => {
+  delete window.desktopApi;
+});
+
 afterEach(() => {
+  delete window.desktopApi;
   resetAuthMock();
   useConsoleStore.setState({
     environment: "production",
@@ -114,7 +119,7 @@ afterEach(() => {
 });
 
 describe("ConsoleShell", () => {
-  it("embeds the workspace route inside the normal console frame", () => {
+  it("keeps the browser workspace inside the normal console frame", () => {
     useConsoleStore.getState().setLocale("en-US");
 
     renderShell("/agents/default/workspace", "智能体工作台", "工作台内容");
@@ -128,6 +133,51 @@ describe("ConsoleShell", () => {
     expect(sidebarToggle).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByLabelText("搜索")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "打开快捷操作" })).not.toBeInTheDocument();
+  });
+
+  it("uses a chrome-free task shell for the desktop workspace", () => {
+    window.desktopApi = {};
+
+    renderShell("/agents/default/workspace", "智能体工作台", "工作台内容");
+
+    expect(screen.getByTestId("desktop-workspace-shell")).toBeInTheDocument();
+    expect(screen.getByText("工作台内容")).toBeInTheDocument();
+    expect(screen.queryByText("控制台")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "控制台导航" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("搜索")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "账号菜单" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["/teams/team-1", "团队"],
+    ["/runs/run-1", "审批"],
+    ["/terminal", "终端"],
+    ["/desktop", "设置"],
+  ])("uses the compact desktop operation shell for %s", (path, activeLabel) => {
+    window.desktopApi = {};
+
+    renderShell(path, "桌面操作", "操作内容");
+
+    expect(screen.getByTestId("desktop-operation-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("desktop-operation-rail")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: activeLabel })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "文件" })).toHaveAttribute(
+      "href",
+      "/agents/default/workspace?desktop_panel=files",
+    );
+    expect(screen.getByRole("link", { name: "审批" })).toHaveAttribute(
+      "href",
+      "/agents/default/workspace?desktop_panel=approvals",
+    );
+    expect(screen.queryByRole("navigation", { name: "控制台导航" })).not.toBeInTheDocument();
+    expect(screen.queryByText("控制台")).not.toBeInTheDocument();
+  });
+
+  it("keeps browser Team routes inside the normal console frame", () => {
+    renderShell("/teams/team-1", "团队", "团队内容");
+
+    expect(screen.getByRole("navigation", { name: "控制台导航" })).toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-operation-shell")).not.toBeInTheDocument();
   });
 
   it("shows the knowledge base navigation item", () => {

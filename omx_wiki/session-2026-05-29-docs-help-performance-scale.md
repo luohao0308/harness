@@ -12,7 +12,7 @@ Delivered P4:
 
 - Reworked `README.md` as the private-operator entry point with links to specs, runbooks, API docs, troubleshooting, screenshots, and demo assets.
 - Added in-app Help Center routes plus public help Markdown content, glossary/tooltips, Dashboard walkthrough affordances, and troubleshooting coverage.
-- Added OpenAPI metadata, generated `docs/api-reference/README.md` and `docs/api-reference/openapi.json`, and a docs workflow that gates help content plus generated API docs.
+- Added OpenAPI metadata, generated `docs/contracts/api-reference/README.md` and `docs/contracts/api-reference/openapi.json`, and a docs workflow that gates help content plus generated API docs.
 
 Delivered P8:
 

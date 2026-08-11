@@ -99,6 +99,7 @@ def plan_with_agent(
     ensure_default_agents(session, principal.organization_id)
     _get_agent(agent_id=request.agent_id, session=session, principal=principal)
     task = Task(
+        id=str(request.client_run_id) if request.client_run_id is not None else None,
         organization_id=principal.organization_id,
         agent_id=request.agent_id,
         created_by=principal.user_id,

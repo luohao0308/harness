@@ -30,6 +30,11 @@ import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
+import {
+  getDesktopLocalRuntimeApi,
+  isLocalRuntimeProfile,
+  isLocalWebExtension,
+} from "../../../lib/local-runtime";
 import { formatShortDate } from "../../../lib/utils";
 import {
   buildSwitchboardRows,
@@ -56,6 +61,7 @@ import {
   getModelOfficialStatus,
   getModelPricingSources,
   getModelSettings,
+  getLocalRuntimeModelStatus,
   updateModelSettings,
   type ModelHealth,
   type ModelOfficialStatus,
@@ -75,6 +81,12 @@ export function ModelSettingsPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
+  const localRuntimeModel = useQuery({
+    queryKey: ["local-runtime", "model-status"],
+    queryFn: getLocalRuntimeModelStatus,
+    enabled: isLocalRuntimeProfile(),
+    retry: false,
+  });
   const health = useQuery({
     queryKey: ["settings", "models", "health"],
     queryFn: getModelHealth,
@@ -233,7 +245,7 @@ export function ModelSettingsPage() {
         health: {
           status: "healthy",
           updated_at: null,
-          mode: "mock",
+          mode: "unavailable",
           latency_ms: 0,
           error_message: null,
         },
@@ -320,7 +332,7 @@ export function ModelSettingsPage() {
     setDraftProvider(emptyProvider);
   }
 
-  function submitProviderDialog(event: FormEvent) {
+  async function submitProviderDialog(event: FormEvent) {
     event.preventDefault();
     const normalized = normalizeProvider(draftProvider);
     if (providerDialogState?.type === "add-model") {
@@ -335,8 +347,35 @@ export function ModelSettingsPage() {
       setSaveMessage(text("请先填写 API Key，再启用模型。", "Enter an API key before enabling this model."));
       return;
     }
-    setDraftProvider(normalized);
-    addOrUpdateProvider(normalized, true, { closeDialog: true });
+    if (isLocalRuntimeProfile() && !isLocalModelProvider(normalized)) {
+      if (isLocalWebExtension()) {
+        setSaveMessage(text(
+          "Web Extension 只能查看模型状态；请在 Harness Desktop 中替换 API Key。",
+          "The Web Extension can only inspect model status. Replace the API key in Harness Desktop.",
+        ));
+        return;
+      }
+      const desktopApi = getDesktopLocalRuntimeApi();
+      if (!desktopApi?.setModelApiKey) {
+        setSaveMessage(text("桌面安全存储接口不可用。", "Desktop secure storage is unavailable."));
+        return;
+      }
+      setPendingAction(providerActionKey(normalized));
+      try {
+        const status = await desktopApi.setModelApiKey(String(normalized.api_key ?? "").trim());
+        queryClient.setQueryData(["local-runtime", "model-status"], status);
+        await queryClient.invalidateQueries({ queryKey: ["local-runtime", "model-status"] });
+      } catch (saveError) {
+        setPendingAction(null);
+        setSaveMessage(saveError instanceof Error ? saveError.message : text("API Key 保存失败。", "API key save failed."));
+        return;
+      }
+    }
+    const providerWithoutSecret = isLocalRuntimeProfile()
+      ? { ...normalized, api_key: "" }
+      : normalized;
+    setDraftProvider(providerWithoutSecret);
+    addOrUpdateProvider(providerWithoutSecret, true, { closeDialog: true });
   }
 
   function switchboardProviderStatus(catalogProvider: ModelCatalogProvider) {
@@ -365,6 +404,31 @@ export function ModelSettingsPage() {
   return (
     <ConsoleShell title={text("模型设置", "Model Settings")}>
       <div className="space-y-4 p-4 pb-24">
+        {isLocalRuntimeProfile() ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-slate-900">
+                {text("本地运行时模型", "Local runtime model")}
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-500">
+                {isLocalWebExtension()
+                  ? text("Web Extension 可查看状态，但不能接收或替换 API Key。", "The Web Extension can inspect status but cannot receive or replace the API key.")
+                  : text("API Key 只通过 Desktop 安全存储写入。", "API keys are written only through Desktop secure storage.")}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge tone={localRuntimeModel.data?.state === "healthy" ? "success" : localRuntimeModel.data?.state === "error" ? "failed" : "warning"}>
+                {localRuntimeModel.data?.state ?? text("正在读取", "Loading")}
+              </Badge>
+              {!isLocalWebExtension() ? (
+                <Button type="button" onClick={() => void getDesktopLocalRuntimeApi()?.openWebExtension?.()}>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  {text("打开 Web Extension", "Open Web Extension")}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         <p className="px-4 pt-3 text-xs text-slate-500">
           只需配置您计划使用的供应商；未配置的不影响已配置供应商的正常使用。
         </p>

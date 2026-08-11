@@ -314,7 +314,7 @@ def _validate_specialist_contract(*, output_schema: dict, budget: dict) -> None:
         normalize_budget(budget)
     except SpecialistValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 

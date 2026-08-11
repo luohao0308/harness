@@ -89,6 +89,31 @@ def stream_agent_chat_run(
     def sse(event: str, payload: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+    def finalize_workspace_disconnect(run: Task) -> None:
+        # Disconnection may interrupt a yield while audit/context writes are
+        # still pending. Roll back first so the next cancellation request is
+        # not blocked by this session's SQLite write transaction.
+        session.rollback()
+        session.refresh(run)
+        if run.status == "CANCELLED":
+            session.commit()
+            return
+        if run.status in {"COMPLETED", "FAILED", "WAITING_APPROVAL", "PAUSED"}:
+            session.commit()
+            return
+        run.status = "PAUSED"
+        run.updated_at = utc_now()
+        EventStore(session).append(
+            task_id=run.id,
+            event_type=EventType.TASK_PAUSED,
+            payload_json={
+                "task_id": run.id,
+                "reason": "client_disconnected",
+                "resume_hint": "resume the run to continue",
+            },
+        )
+        session.commit()
+
     sandbox_runtime_unavailable_message = (
         "Sandbox runtime unavailable: Docker daemon is not running or cannot be reached. "
         "Start Docker Desktop, or rerun this task with sandbox disabled when the step only "
@@ -262,34 +287,47 @@ def stream_agent_chat_run(
         run.status = "RUNNING"
         run.updated_at = utc_now()
         session.flush()
-        yield sse(
-            "run_created",
-            {
-                "run_id": run.id,
-                "status": run.status,
-                "step_count": 0,
-                "message": run_created_message,
-                "context_assembly": {
-                    "context_manifest_id": context_manifest.id if context_manifest else None,
-                    "mode": context_manifest.mode if context_manifest else None,
-                    "included_count": len(context_manifest.included_refs_json)
-                    if context_manifest
-                    else 0,
-                    "omitted_count": len(context_manifest.omitted_refs_json)
-                    if context_manifest
-                    else 0,
-                    "omission_reasons": sorted(
-                        {
-                            str(ref.get("omission_reason"))
-                            for ref in (
-                                context_manifest.omitted_refs_json if context_manifest else []
-                            )
-                            if isinstance(ref, dict) and ref.get("omission_reason")
-                        }
-                    ),
+        # Commit before the first SSE frame. Context assembly can write audit
+        # rows, and leaving that transaction open blocks the stop/cancel
+        # request that arrives before the client receives run_created.
+        session.commit()
+        session.refresh(run)
+        try:
+            yield sse(
+                "run_created",
+                {
+                    "run_id": run.id,
+                    "status": run.status,
+                    "step_count": 0,
+                    "message": run_created_message,
+                    "context_assembly": {
+                        "context_manifest_id": context_manifest.id
+                        if context_manifest
+                        else None,
+                        "mode": context_manifest.mode if context_manifest else None,
+                        "included_count": len(context_manifest.included_refs_json)
+                        if context_manifest
+                        else 0,
+                        "omitted_count": len(context_manifest.omitted_refs_json)
+                        if context_manifest
+                        else 0,
+                        "omission_reasons": sorted(
+                            {
+                                str(ref.get("omission_reason"))
+                                for ref in (
+                                    context_manifest.omitted_refs_json
+                                    if context_manifest
+                                    else []
+                                )
+                                if isinstance(ref, dict) and ref.get("omission_reason")
+                            }
+                        ),
+                    },
                 },
-            },
-        )
+            )
+        except GeneratorExit:
+            finalize_workspace_disconnect(run)
+            raise
         orchestration_payload = _apply_workspace_orchestration(
             run=run,
             agent_id=agent_id,
@@ -299,7 +337,11 @@ def stream_agent_chat_run(
             principal=principal,
         )
         if orchestration_payload is not None:
-            yield sse("orchestration", orchestration_payload)
+            try:
+                yield sse("orchestration", orchestration_payload)
+            except GeneratorExit:
+                finalize_workspace_disconnect(run)
+                raise
         content_accumulator = ""
         streamed_content = ""
         usage: dict = {}
@@ -363,6 +405,28 @@ def stream_agent_chat_run(
                 )
             )
             for chunk in stream_iter:
+                # The Workspace stop control cancels the persisted Run from
+                # another request. Refresh before handling each provider chunk
+                # so a disconnected client cannot later overwrite CANCELLED.
+                session.refresh(run)
+                if run.status == "CANCELLED":
+                    stream_iter.close()
+                    session.commit()
+                    yield sse(
+                        "done",
+                        {
+                            "run_id": run.id,
+                            "active_branch_id": request.active_branch_id,
+                            "continue_from_node_id": request.continue_from_node_id,
+                            "status": "CANCELLED",
+                            "step_count": 0,
+                            "message": "生成已取消。",
+                            "knowledge_grounding": grounding.evidence_message
+                            if grounding
+                            else None,
+                        },
+                    )
+                    return
                 if chunk.text:
                     content_accumulator += chunk.text
                     if first_delta_at is None:
@@ -485,6 +549,24 @@ def stream_agent_chat_run(
             if enable_knowledge_grounding:
                 if first_delta_at is None:
                     first_delta_at = time.monotonic()
+            session.refresh(run)
+            if run.status == "CANCELLED":
+                session.commit()
+                yield sse(
+                    "done",
+                    {
+                        "run_id": run.id,
+                        "active_branch_id": request.active_branch_id,
+                        "continue_from_node_id": request.continue_from_node_id,
+                        "status": "CANCELLED",
+                        "step_count": 0,
+                        "message": "生成已取消。",
+                        "knowledge_grounding": grounding.evidence_message
+                        if grounding
+                        else None,
+                    },
+                )
+                return
             run.status = "WAITING_APPROVAL" if local_tools_requested else "COMPLETED"
             if not local_tools_requested:
                 run.completed_at = utc_now()
@@ -522,6 +604,27 @@ def stream_agent_chat_run(
                 },
             )
         except ModelGatewayError as exc:
+            # The gateway audit may be pending in this session, while the
+            # stop endpoint has already committed CANCELLED elsewhere. Commit
+            # audit state first, then refresh before deciding the Run outcome.
+            session.commit()
+            session.refresh(run)
+            if run.status == "CANCELLED":
+                yield sse(
+                    "done",
+                    {
+                        "run_id": run.id,
+                        "active_branch_id": request.active_branch_id,
+                        "continue_from_node_id": request.continue_from_node_id,
+                        "status": "CANCELLED",
+                        "step_count": 0,
+                        "message": "生成已取消。",
+                        "knowledge_grounding": grounding.evidence_message
+                        if grounding
+                        else None,
+                    },
+                )
+                return
             run.status = "FAILED"
             run.updated_at = utc_now()
             session.commit()
@@ -538,18 +641,7 @@ def stream_agent_chat_run(
         except GeneratorExit:
             if stream_iter is not None:
                 stream_iter.close()
-            run.status = "PAUSED"
-            run.updated_at = utc_now()
-            EventStore(session).append(
-                task_id=run.id,
-                event_type=EventType.TASK_PAUSED,
-                payload_json={
-                    "task_id": run.id,
-                    "reason": "client_disconnected",
-                    "resume_hint": "resume the goal to continue pursuing it",
-                },
-            )
-            session.commit()
+            finalize_workspace_disconnect(run)
             raise
 
     def _workspace_goal_failure_detail(run: Task) -> tuple[str | None, str]:
@@ -904,6 +996,11 @@ def stream_agent_chat_run(
                 model_provider=request.model_provider,
                 model_name=request.model_name,
                 max_subagents=_workspace_max_subagents(request),
+                task_id=(
+                    str(request.client_run_id)
+                    if request.client_run_id is not None
+                    else None
+                ),
                 commit=False,
             )
             run.enable_sandbox = request.enable_sandbox
@@ -919,24 +1016,28 @@ def stream_agent_chat_run(
 
         plan = _latest_plan(run_id=run.id, session=session)
         step_count = latest_step_count()
-        yield sse(
-            "run_created",
-            {
-                "run_id": run.id,
-                "status": run.status,
-                "step_count": step_count,
-                "message": "Goal pursuit run started.",
-            },
-        )
-        yield _workspace_goal_progress_event(
-            run=run,
-            goal=goal,
-            phase="started",
-            turn=0,
-            step_count=step_count,
-            message="进行中的目标已启动。",
-            started_at=started_at,
-        )
+        try:
+            yield sse(
+                "run_created",
+                {
+                    "run_id": run.id,
+                    "status": run.status,
+                    "step_count": step_count,
+                    "message": "Goal pursuit run started.",
+                },
+            )
+            yield _workspace_goal_progress_event(
+                run=run,
+                goal=goal,
+                phase="started",
+                turn=0,
+                step_count=step_count,
+                message="进行中的目标已启动。",
+                started_at=started_at,
+            )
+        except GeneratorExit:
+            finalize_workspace_disconnect(run)
+            raise
         terminal_statuses = {"COMPLETED", "FAILED", "CANCELLED", "WAITING_APPROVAL"}
         active_statuses = {"CREATED", "PLANNING", "RUNNING", "WAITING_SUBAGENTS"}
         goal_output_text = ""
@@ -1143,67 +1244,66 @@ def stream_agent_chat_run(
                     started_at=started_at,
                 )
         except GeneratorExit:
-            if run.status not in terminal_statuses and run.status != "PAUSED":
-                run.status = "PAUSED"
-                run.updated_at = utc_now()
-                EventStore(session).append(
-                    task_id=run.id,
-                    event_type=EventType.TASK_PAUSED,
-                    payload_json={
-                        "reason": "client_disconnected",
-                        "trace_summary": "Goal pursuit paused after the client disconnected.",
-                    },
-                )
-                session.commit()
+            finalize_workspace_disconnect(run)
             raise
         except (ModelGatewayError, ValueError, ValidationError) as exc:
-                run.status = "FAILED"
-                run.updated_at = utc_now()
                 session.commit()
-                yield _workspace_goal_progress_event(
-                    run=run,
-                    goal=goal,
-                    phase="failed",
-                    turn=0,
-                    step_count=latest_step_count(),
-                    message=str(exc),
-                    started_at=started_at,
-                )
-                yield sse(
-                    "error",
-                    {
-                        "kind": "model_auth" if isinstance(exc, ModelAuthError) else "server",
-                        "message": str(exc),
-                        "recoverable": True,
-                        "run_id": run.id,
-                    },
-                )
-                return
+                session.refresh(run)
+                if run.status == "CANCELLED":
+                    step_count = latest_step_count()
+                else:
+                    run.status = "FAILED"
+                    run.updated_at = utc_now()
+                    session.commit()
+                    yield _workspace_goal_progress_event(
+                        run=run,
+                        goal=goal,
+                        phase="failed",
+                        turn=0,
+                        step_count=latest_step_count(),
+                        message=str(exc),
+                        started_at=started_at,
+                    )
+                    yield sse(
+                        "error",
+                        {
+                            "kind": "model_auth" if isinstance(exc, ModelAuthError) else "server",
+                            "message": str(exc),
+                            "recoverable": True,
+                            "run_id": run.id,
+                        },
+                    )
+                    return
         except Exception as exc:
                 if not is_sandbox_runtime_unavailable_error(exc):
                     raise
-                run.status = "FAILED"
-                run.updated_at = utc_now()
                 session.commit()
-                yield _workspace_goal_progress_event(
-                    run=run,
-                    goal=goal,
-                    phase="failed",
-                    turn=0,
-                    step_count=latest_step_count(),
-                    message=sandbox_runtime_unavailable_message,
-                    started_at=started_at,
-                )
-                yield sse(
-                    "error",
-                    {
-                        "kind": "server",
-                        "message": sandbox_runtime_unavailable_message,
-                        "recoverable": True,
-                        "run_id": run.id,
-                    },
-                )
-                return
+                session.refresh(run)
+                if run.status == "CANCELLED":
+                    step_count = latest_step_count()
+                else:
+                    run.status = "FAILED"
+                    run.updated_at = utc_now()
+                    session.commit()
+                    yield _workspace_goal_progress_event(
+                        run=run,
+                        goal=goal,
+                        phase="failed",
+                        turn=0,
+                        step_count=latest_step_count(),
+                        message=sandbox_runtime_unavailable_message,
+                        started_at=started_at,
+                    )
+                    yield sse(
+                        "error",
+                        {
+                            "kind": "server",
+                            "message": sandbox_runtime_unavailable_message,
+                            "recoverable": True,
+                            "run_id": run.id,
+                        },
+                    )
+                    return
         output_text = goal_output_text or _workspace_goal_status_delta(
             run=run,
             step_count=step_count,
@@ -1296,6 +1396,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                 )
                 if request.mode == "cli_agent":
@@ -1366,6 +1471,7 @@ def stream_agent_chat_run(
                         max_subagents=5,
                         enable_sandbox=request.enable_sandbox,
                         enable_network=request.enable_network,
+                        client_run_id=request.client_run_id,
                     )
                     yield sse(
                         "think_delta",
@@ -1397,6 +1503,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                     yield from workspace_text_events(
                         run=run,
@@ -1424,6 +1535,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                     if request.tool_mentions:
                         yield from tool_events.workspace_tool_only_events(
@@ -1458,6 +1574,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                     if request.tool_mentions:
                         yield from tool_events.workspace_tool_only_events(

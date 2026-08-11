@@ -21,8 +21,8 @@ The feature adds a real Tavily-backed web research fallback for cases where loca
 - Integrated web fallback into `services/api-server/app/knowledge.py` with policy snapshots, redacted query preview, source persistence, retrieval hits, citations, prompt manifests, events, and Eval behavior.
 - Hardened fake web research so fixture evidence remains non-verified and environment-limited.
 - Updated Run Detail wording from `Verified grounding` to `Source-bound`, added citation count and provider/request/raw badges.
-- Added runbook `docs/runbooks/web-research.md`.
-- Added user-facing HTML explanation report at `docs/reports/p3-web-research-implementation-2026-05-17.html`.
+- Added runbook `docs/project-memory/runbooks/web-research.md`.
+- Added user-facing HTML explanation report at `docs/工作日志/reports/p3-web-research-implementation-2026-05-17.html`.
 
 ## Semantics
 

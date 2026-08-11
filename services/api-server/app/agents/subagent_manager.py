@@ -13,13 +13,13 @@ from app.agents.specialists import (
     normalize_budget,
     output_schema_sha256,
 )
+from app.agents.subagent_timing import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, timeout_at_from_now
 from app.db.models import AgentRun, SubagentOutput, SubagentSpecialist, Task, utc_now
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
 from app.observability.metrics import agent_subagent_recovery_total, agent_subagents_queued
 from app.observability.tracing import traced_operation
-from app.workers.subagent_worker import DEFAULT_SUBAGENT_TIMEOUT_SECONDS, timeout_at_from_now
 
 SUBAGENT_CONCURRENCY_LIMIT = 5
 MAX_FANOUT_PER_STEP = 5
@@ -466,6 +466,28 @@ class SubagentManager:
         return int(replay_state.get("last_sequence") or 0), recovered, len(agent_runs)
 
     def _enqueue(self, *, agent_run: AgentRun, task_id: str, stage: str) -> None:
+        from app.runtime_jobs.profile import is_local_runtime_profile
+
+        if is_local_runtime_profile():
+            from app.runtime_jobs.repository import RuntimeJobRepository
+
+            RuntimeJobRepository(self.session).enqueue(
+                kind="subagent",
+                payload={"agent_run_id": agent_run.id},
+                dedupe_key=f"subagent:{agent_run.id}",
+            )
+            self.event_store.append(
+                task_id=task_id,
+                agent_run_id=agent_run.id,
+                event_type=EventType.SUBAGENT_PROGRESS,
+                payload_json={
+                    "agent_run_id": agent_run.id,
+                    "stage": stage,
+                    "summary": "Subagent queued in local runtime coordinator",
+                },
+            )
+            return
+
         from app.workers.subagent_worker import run_subagent
 
         try:

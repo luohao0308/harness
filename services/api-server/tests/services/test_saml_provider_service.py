@@ -235,7 +235,11 @@ class TestSAMLProviderServiceDelete:
 class TestSAMLProviderServiceGetByEntityId:
     """Test SAML provider retrieval by entity ID - critical for IdP-initiated SSO."""
 
-    def test_get_provider_by_entity_id_success(self, db_session: Session, sample_idp_metadata: dict):
+    def test_get_provider_by_entity_id_success(
+        self,
+        db_session: Session,
+        sample_idp_metadata: dict,
+    ):
         """Test retrieving provider by valid entity ID returns correct provider."""
         from app.services.saml_provider_service import SAMLProviderService
 
