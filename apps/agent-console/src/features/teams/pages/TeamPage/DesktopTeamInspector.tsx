@@ -1,4 +1,4 @@
-import { Activity, Bot, CheckCircle2, Crown, Inbox, ListTodo } from "lucide-react";
+import { Activity, CheckCircle2, Inbox, ListTodo } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { Badge } from "../../../../components/ui/badge";
@@ -101,12 +101,15 @@ export function DesktopTeamInspector({
       .slice(0, 12);
   }, [agentNames, messages, tasks, text]);
   const completedTaskCount = assignedTasks.filter((task) => task.status === "completed").length;
+  const selectedAgentName = selectedAgent?.role === "leader" && selectedAgent.agent_name.trim().toLowerCase() === "leader"
+    ? text("队长", "Leader")
+    : selectedAgent?.agent_name;
 
   return (
     <aside
       role="complementary"
       aria-label={text("团队检查器", "Team inspector")}
-      className="flex h-full min-h-0 flex-col bg-slate-50/50"
+      className="flex h-full min-h-0 flex-col bg-slate-50/40"
     >
       <div className="shrink-0 border-b border-slate-200 bg-white px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
@@ -114,45 +117,20 @@ export function DesktopTeamInspector({
             <Activity aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-500" />
             <span>{text("团队动态", "Team activity")}</span>
           </div>
-          <span className="truncate text-[10px] text-slate-400">{team.name}</span>
-        </div>
-
-        <div className="mt-2 flex items-center gap-1.5" aria-label={text("选择团队成员", "Select teammate")}>
-          {agents.map((agent) => {
-            const active = agent.slot_id === selectedAgent?.slot_id;
-            const AgentIcon = agent.role === "leader" ? Crown : Bot;
-            return (
-              <button
-                key={agent.slot_id}
-                type="button"
-                aria-pressed={active}
-                aria-label={agent.agent_name}
-                title={agent.agent_name}
-                onClick={() => onSelectAgent(agent.slot_id)}
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
-                  active
-                    ? "border-blue-400 bg-blue-50 text-blue-700"
-                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-800",
-                )}
-              >
-                <AgentIcon aria-hidden="true" className="h-3.5 w-3.5" />
-              </button>
-            );
-          })}
+          <span className="truncate text-[10px] text-slate-500" title={team.name}>{team.name}</span>
         </div>
 
         {selectedAgent ? (
           <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate text-[11px] font-semibold text-slate-800">{selectedAgent.agent_name}</span>
+              <span className="truncate text-[11px] font-semibold text-slate-800" title={selectedAgentName}>{selectedAgentName}</span>
               {status ? (
                 <Badge className="px-1.5 py-0 text-[10px]" tone={teamAgentStatusTone(status)}>
                   {teamAgentStatusLabel(status)}
                 </Badge>
               ) : null}
             </div>
-            <span className="shrink-0 text-[10px] tabular-nums text-slate-400">
+            <span className="shrink-0 text-[10px] tabular-nums text-slate-500">
               {text(
                 `${assignedTasks.length} 项 / ${completedTaskCount} 完成`,
                 `${assignedTasks.length} / ${completedTaskCount} done`,
@@ -165,7 +143,7 @@ export function DesktopTeamInspector({
       <div
         role="tablist"
         aria-label={text("检查器内容", "Inspector content")}
-        className="flex h-9 shrink-0 border-b border-slate-200 bg-white px-2.5"
+        className="flex h-9 shrink-0 border-b border-slate-100 bg-white px-2.5"
       >
         {([
           { id: "activity" as const, label: text("动态", "Activity"), icon: Inbox },
@@ -199,13 +177,13 @@ export function DesktopTeamInspector({
               {activityItems.map((item) => {
                 const ItemIcon = item.kind === "task" && item.status === "completed" ? CheckCircle2 : item.kind === "task" ? ListTodo : Inbox;
                 return (
-                  <article key={item.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+              <article key={item.id} className="border-b border-slate-100 px-1 py-2">
                     <div className="flex items-center gap-2">
                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
                         <ItemIcon aria-hidden="true" className="h-3.5 w-3.5" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-1.5 text-[10px] text-slate-400">
+                        <div className="flex items-center justify-between gap-1.5 text-[10px] text-slate-500">
                           <span className="truncate">
                             {item.actor}
                             {item.kind === "message" ? ` → ${item.target}` : ` · ${text("任务更新", "Task update")}`}
@@ -227,14 +205,14 @@ export function DesktopTeamInspector({
               })}
             </div>
           ) : (
-            <div className="border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-400">
+            <div className="bg-white px-3 py-6 text-center text-xs text-slate-500">
               {text("暂无成员动态", "No member activity")}
             </div>
           )
         ) : assignedTasks.length > 0 ? (
           <div className="space-y-1.5">
             {assignedTasks.map((task) => (
-              <article key={task.id} className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+              <article key={task.id} className="border-b border-slate-100 px-1 py-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate text-[11px] font-semibold text-slate-900">{task.subject}</div>
@@ -246,7 +224,7 @@ export function DesktopTeamInspector({
                     {teamTaskStatusLabel(task.status)}
                   </Badge>
                 </div>
-                <div className="mt-1.5 flex items-center gap-1 text-[10px] text-slate-400">
+                <div className="mt-1.5 flex items-center gap-1 text-[10px] text-slate-500">
                   {task.status === "completed" ? <CheckCircle2 aria-hidden="true" className="h-3 w-3 text-emerald-500" /> : null}
                   <span>{text("依赖", "Dependencies")} {task.blocked_by_json.length}</span>
                 </div>
@@ -254,7 +232,7 @@ export function DesktopTeamInspector({
             ))}
           </div>
         ) : (
-          <div className="border border-dashed border-slate-200 bg-white px-3 py-6 text-center text-xs text-slate-400">
+          <div className="bg-white px-3 py-6 text-center text-xs text-slate-500">
             {text("暂无负责的任务", "No assigned tasks")}
           </div>
         )}

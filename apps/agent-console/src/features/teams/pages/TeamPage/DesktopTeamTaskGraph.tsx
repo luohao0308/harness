@@ -362,13 +362,16 @@ export function DesktopTeamTaskGraph({
             {agents.map((agent) => {
               const Icon = agent.role === "leader" ? Crown : Bot;
               const selected = agent.slot_id === activeSlotId;
+              const agentDisplayName = agent.role === "leader" && agent.agent_name.trim().toLowerCase() === "leader"
+                ? text("队长", "Leader")
+                : agent.agent_name;
               return (
                 <button
                   key={agent.slot_id}
                   type="button"
                   aria-pressed={selected}
-                  aria-label={agent.agent_name}
-                  title={agent.agent_name}
+                  aria-label={agentDisplayName}
+                  title={agentDisplayName}
                   onClick={() => onSelectAgent(agent.slot_id)}
                   className={cn(
                     "flex h-6 w-6 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
@@ -457,7 +460,7 @@ export function DesktopTeamTaskGraph({
                     aria-pressed={selected}
                     onClick={() => setSelectedNodeId(node.id)}
                     className={cn(
-                      "absolute flex flex-col rounded-lg border bg-white p-2 text-left shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                      "absolute flex flex-col rounded-lg border bg-white p-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
                       selected ? "border-blue-400" : "border-slate-200",
                     )}
                     style={nodeStyle}
@@ -503,7 +506,7 @@ export function DesktopTeamTaskGraph({
                     if (task.owner_slot_id) onSelectAgent(task.owner_slot_id);
                   }}
                   className={cn(
-                    "absolute flex flex-col rounded-lg border bg-white p-2 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                    "absolute flex flex-col rounded-lg border bg-white p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
                     needsCorrection
                       ? "border-red-300 bg-red-50/80"
                       : inCycle
@@ -540,7 +543,9 @@ export function DesktopTeamTaskGraph({
                       <span className="min-w-0">
                         <span className="block truncate text-[11px] font-semibold text-slate-900">{task.subject}</span>
                         <span className="block truncate text-[9px] text-slate-400">
-                          {owner?.agent_name ?? text("队长", "Leader")}
+                          {owner?.role === "leader" && owner.agent_name.trim().toLowerCase() === "leader"
+                            ? text("队长", "Leader")
+                            : owner?.agent_name ?? text("队长", "Leader")}
                         </span>
                       </span>
                     </span>
@@ -561,7 +566,7 @@ export function DesktopTeamTaskGraph({
           </div>
         ) : (
           <div className="flex h-full min-h-64 items-center justify-center p-6">
-            <div className="border border-dashed border-slate-200 bg-white px-5 py-8 text-center text-xs text-slate-400">
+            <div className="bg-white px-5 py-8 text-center text-xs text-slate-500">
               {text("暂无团队任务", "No team tasks")}
             </div>
           </div>

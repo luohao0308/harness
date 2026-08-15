@@ -653,8 +653,8 @@ test.describe("Team Mode browser smoke", () => {
     await page.goto("/teams/team-1");
     const viewSwitch = page.getByRole("group", { name: "团队工作区视图" });
     await expect(viewSwitch.getByRole("button", { name: "协作" })).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("desktop-team-member-roster")).toBeVisible();
-    await expect(page.getByRole("complementary", { name: "团队检查器" })).toBeVisible();
+    await expect(page.getByTestId("desktop-team-overview")).toBeVisible();
+    await expect(page.getByRole("complementary", { name: "团队系统看板" })).toBeVisible();
     await expect(page.getByRole("group", { name: "代理会话列" })).toHaveCount(0);
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
@@ -676,7 +676,16 @@ test.describe("Team Mode browser smoke", () => {
     await expect(graph).toBeVisible();
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
     await viewSwitch.getByRole("button", { name: "协作" }).click();
+    await expect(page.getByTestId("desktop-team-overview")).toBeVisible();
+    await page.getByRole("button", { name: "进入 队长 专注对话" }).click();
     await expect(page.getByTestId("team-composer-leader")).toBeVisible();
+    expect(await hasNoHorizontalOverflow(page)).toBe(true);
+
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await expect(page.getByRole("complementary", { name: "团队检查器" })).toBeVisible();
+    const teamRail = page.getByRole("complementary", { name: "团队侧栏" });
+    await expect(teamRail).toHaveCSS("width", "56px");
+    await expect(teamRail.getByRole("link", { name: team.name })).toHaveAttribute("title", team.name);
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -730,7 +739,8 @@ test.describe("Team Mode browser smoke", () => {
     await expect(
       leaderColumn.getByText("同步队长状态"),
     ).toBeVisible();
-    await page.getByRole("button", { name: "添加成员" }).click();
+    await page.getByRole("button", { name: "更多团队操作" }).click();
+    await page.getByRole("menuitem", { name: "添加成员" }).click();
     const addMemberDialog = page.getByRole("dialog", { name: "添加成员" });
     await expect(addMemberDialog.getByText("已选择")).toBeVisible();
     await expect(addMemberDialog.getByRole("button", { name: /智能体定义/ })).toContainText("默认智能体");
@@ -832,6 +842,7 @@ test.describe("Team Mode browser smoke", () => {
     await page.setViewportSize({ width: 390, height: 844 });
 
     await page.goto("/teams/team-1");
+    await expect(page.getByRole("navigation", { name: "控制台导航" })).toHaveCount(0);
     await expect(page.getByText("协作团队").first()).toBeVisible();
     await expect(page.getByRole("tab", { name: /产品经理/ })).toBeVisible();
 
@@ -858,5 +869,10 @@ test.describe("Team Mode browser smoke", () => {
         path: path.join(process.env.HARNESS_TEAM_VISUAL_DIR, "web-mobile.png"),
       });
     }
+    const mobileMetrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(mobileMetrics.scrollWidth).toBeLessThanOrEqual(mobileMetrics.clientWidth + 1);
   });
 });

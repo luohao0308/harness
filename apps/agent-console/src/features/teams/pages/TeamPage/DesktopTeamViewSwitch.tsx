@@ -25,7 +25,7 @@ export function DesktopTeamViewSwitch({
     <div
       role="group"
       aria-label={text("团队工作区视图", "Team workspace view")}
-      className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 p-0.5"
+      className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-slate-100 p-0.5"
     >
       {options.map((option) => {
         const Icon = option.icon;
@@ -40,7 +40,7 @@ export function DesktopTeamViewSwitch({
             className={cn(
               "inline-flex h-6 items-center gap-1 rounded-[5px] px-2 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
               selected
-                ? "bg-white text-slate-950 shadow-sm"
+                ? "bg-white text-slate-950"
                 : "text-slate-500 hover:bg-white/70 hover:text-slate-900",
             )}
           >

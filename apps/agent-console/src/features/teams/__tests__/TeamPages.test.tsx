@@ -999,7 +999,8 @@ describe("Team pages", () => {
     expect(within(productColumn).getAllByText("请设计团队窗口")).toHaveLength(1);
     expect(screen.getByLabelText("代理会话列")).toBeInTheDocument();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
-    await user.click(screen.getByRole("button", { name: "添加成员" }));
+    await user.click(screen.getByRole("button", { name: "更多团队操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "添加成员" }));
     const addMemberDialog = await screen.findByRole("dialog", { name: "添加成员" });
     expect(await within(addMemberDialog).findByText("default · default/default")).toBeInTheDocument();
     await user.type(within(addMemberDialog).getByLabelText("成员名称"), "测试工程师");
@@ -1122,14 +1123,28 @@ describe("Team pages", () => {
 
     const viewSwitch = await screen.findByRole("group", { name: "团队工作区视图" });
     expect(within(viewSwitch).getByRole("button", { name: "协作" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByTestId("desktop-team-member-roster")).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "团队检查器" })).toBeInTheDocument();
+    expect(await screen.findByTestId("desktop-team-overview")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队系统看板" })).toBeInTheDocument();
     expect(screen.queryByLabelText("代理会话列")).not.toBeInTheDocument();
 
-    const collaborationColumn = screen.getByRole("region", { name: /队长 队长 列/ });
-    await user.click(within(collaborationColumn).getByRole("button", { name: "切换全屏列" }));
+    await user.click(screen.getByRole("button", { name: "进入 产品经理 专注对话" }));
+    expect(await screen.findByText("专注对话")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队检查器" })).toBeInTheDocument();
+    const collaborationColumn = screen.getByRole("region", { name: /产品经理 成员 列/ });
+    await user.click(screen.getByRole("button", { name: "返回团队概览" }));
+    expect(await screen.findByTestId("desktop-team-overview")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队系统看板" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "进入 队长 专注对话" }));
+    expect(await screen.findByRole("button", { name: "返回团队概览" })).toBeInTheDocument();
+    const leaderColumn = await screen.findByRole("region", { name: /队长 队长 列/ });
+    await user.click(screen.getByRole("button", { name: "查看任务图" }));
+    expect(await screen.findByRole("region", { name: "团队任务图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回检查器" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回检查器" }));
+    expect(await screen.findByRole("complementary", { name: "团队检查器" })).toBeInTheDocument();
+    await user.click(within(leaderColumn).getByRole("button", { name: "切换全屏列" }));
     expect(await screen.findByRole("button", { name: "展开团队检查器" })).toBeInTheDocument();
-    await user.click(within(collaborationColumn).getByRole("button", { name: "切换全屏列" }));
+    await user.click(within(leaderColumn).getByRole("button", { name: "切换全屏列" }));
     expect(await screen.findByRole("button", { name: "收起团队检查器" })).toBeInTheDocument();
 
     await user.click(within(viewSwitch).getByRole("button", { name: "任务图" }));
@@ -1166,7 +1181,8 @@ describe("Team pages", () => {
       ["/teams/team-1"],
     );
 
-    expect(await screen.findByTestId("desktop-team-member-roster")).toBeInTheDocument();
+    expect(await screen.findByTestId("desktop-team-overview")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队系统看板" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "团队任务图" })).not.toBeInTheDocument();
   });
 
@@ -1475,8 +1491,11 @@ describe("Team pages", () => {
     );
 
     expect(await screen.findByText("让团队自主推进目标")).toBeInTheDocument();
-    expect(screen.getByText(/drift 0/)).toBeInTheDocument();
-    expect(screen.getByText(/budget 3/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "更多团队操作" }));
+    expect(screen.getByRole("menuitem", { name: /暂停目标/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "编辑目标" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "目标详情" })).toHaveTextContent("0");
+    expect(screen.getByRole("group", { name: "目标详情" })).toHaveTextContent("3");
 
     await user.click(await screen.findByRole("button", { name: "任务板" }));
     expect(await screen.findByText("需纠偏")).toBeInTheDocument();

@@ -54,7 +54,7 @@ export function TeamAgentTabs({
   onDropAgentTab: (slotId: string) => void;
 }) {
   return (
-    <div className="flex h-10 min-h-10 items-center gap-2 border-b border-slate-200 bg-white px-0">
+    <div className="relative flex h-10 min-h-10 items-center gap-2 border-b border-slate-200 bg-white px-0 after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-5 after:bg-gradient-to-l after:from-white after:to-transparent md:after:hidden">
       <div
         role="tablist"
         data-testid="team-tab-bar"
@@ -70,12 +70,16 @@ export function TeamAgentTabs({
           const status = displayAgentStatus(agent, pendingWakeSlotIds, streamingWakes, settledWakeCutoffs);
           const isActive = activeSlotId === agent.slot_id;
           const isEditing = editingSlotId === agent.slot_id;
+          const agentDisplayName = agent.role === "leader" && agent.agent_name.trim().toLowerCase() === "leader"
+            ? text("队长", "Leader")
+            : agent.agent_name;
           return (
             <div
               key={agent.slot_id}
               role="tab"
               tabIndex={0}
               aria-selected={isActive}
+              title={agentDisplayName}
               draggable={agent.role !== "leader" && !isEditing}
               onClick={() => {
                 if (!isEditing) onActiveSlotChange(agent.slot_id);
@@ -108,11 +112,10 @@ export function TeamAgentTabs({
                 onDragOverChange(null);
               }}
               className={cn(
-                "group inline-flex h-full max-w-60 shrink-0 cursor-pointer items-center gap-1.5 border-r border-slate-200 px-3 text-xs transition-all",
+                "group inline-flex h-full max-w-60 shrink-0 cursor-pointer items-center gap-1.5 border-r border-slate-100 px-3 text-xs transition-colors",
                 isActive
                   ? "border-t-2 border-t-slate-900 bg-slate-100 text-slate-950"
                   : "border-t-2 border-t-transparent bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900",
-                status === "active" ? "animate-pulse" : "",
                 dragOverSlotId === agent.slot_id ? "border-l-4 border-l-slate-900" : "",
               )}
             >
@@ -142,7 +145,7 @@ export function TeamAgentTabs({
                   className="h-6 w-28 border-0 bg-transparent px-0 text-xs focus:ring-0"
                 />
               ) : (
-                <span className="max-w-28 truncate">{agent.agent_name}</span>
+                <span className="max-w-28 truncate">{agentDisplayName}</span>
               )}
               <Badge tone={teamAgentStatusTone(status)} className="px-1.5">
                 {teamAgentStatusLabel(status)}

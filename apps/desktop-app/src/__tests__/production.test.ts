@@ -55,6 +55,9 @@ vi.mock('electron', () => ({
   nativeImage: {
     createFromDataURL: vi.fn(() => ({ setTemplateImage: vi.fn() }))
   },
+  powerMonitor: {
+    on: vi.fn(),
+  },
   Notification: Object.assign(vi.fn(() => ({ on: vi.fn(), show: vi.fn() })), {
     isSupported: vi.fn(() => true)
   }),
@@ -129,6 +132,9 @@ describe('Production Mode', () => {
       },
       nativeImage: {
         createFromDataURL: vi.fn(() => ({ setTemplateImage: vi.fn() }))
+      },
+      powerMonitor: {
+        on: vi.fn(),
       },
       Notification: Object.assign(vi.fn(() => ({ on: vi.fn(), show: vi.fn() })), {
         isSupported: vi.fn(() => true)
@@ -209,6 +215,9 @@ describe('Production Mode', () => {
       },
       nativeImage: {
         createFromDataURL: vi.fn(() => ({ setTemplateImage: vi.fn() }))
+      },
+      powerMonitor: {
+        on: vi.fn(),
       },
       Notification: Object.assign(vi.fn(() => ({ on: vi.fn(), show: vi.fn() })), {
         isSupported: vi.fn(() => true)

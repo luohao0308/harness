@@ -46,6 +46,7 @@ export type ChatComposerProps = {
   /** Rendered in the bottom action row, immediately beside the Send button. */
   bottomCenter?: ReactNode;
   containerClassName?: string;
+  frameClassName?: string;
   goalModeToggleVisible?: boolean;
   attachments?: ComposerAttachment[];
   onRemoveAttachment?: (id: string) => void;
@@ -137,6 +138,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       metadata = null,
       bottomCenter = null,
       containerClassName,
+      frameClassName,
       goalModeToggleVisible = true,
       attachments = [],
       onRemoveAttachment,
@@ -324,7 +326,12 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     return (
       <div className="w-full">
         <div className={cn("mx-auto w-full max-w-3xl px-3 sm:px-4 lg:px-6", containerClassName)}>
-          <div className="relative rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-slate-300">
+          <div
+            className={cn(
+              "relative rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-slate-300",
+              frameClassName,
+            )}
+          >
             <SlashCommandMenu
               open={slashOpen}
               candidates={candidates}

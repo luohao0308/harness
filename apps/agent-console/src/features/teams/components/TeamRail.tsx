@@ -22,15 +22,15 @@ export function TeamRail({
   return (
     <aside
       className={cn(
-        "hidden w-[144px] shrink-0 flex-col border-r border-slate-200 bg-white md:flex xl:w-[152px]",
+        "hidden w-14 shrink-0 flex-col border-r border-slate-100 bg-white md:flex xl:w-[152px]",
         className,
       )}
       aria-label="团队侧栏"
     >
-      <div className="flex h-10 items-center justify-between border-b border-slate-200 px-2.5">
+      <div className="flex h-10 items-center justify-center border-b border-slate-100 px-1.5 xl:justify-between xl:px-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <Network className="h-4 w-4 shrink-0 text-slate-700" />
-          <span className="truncate text-[13px] font-semibold text-slate-950">团队</span>
+          <span className="hidden truncate text-[13px] font-semibold text-slate-950 xl:inline">团队</span>
         </div>
         <Button
           variant="ghost"
@@ -52,8 +52,10 @@ export function TeamRail({
               <Link
                 key={team.id}
                 to={`/teams/${team.id}`}
+                title={team.name}
+                aria-label={team.name}
                 className={cn(
-                  "group flex h-8 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-[12px] transition-colors",
+                  "group flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-[12px] transition-colors xl:justify-start",
                   isActive
                     ? "bg-slate-100 text-slate-950"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-950",
@@ -69,7 +71,7 @@ export function TeamRail({
                 >
                   <Users className="h-3.5 w-3.5" />
                 </span>
-                <span className="min-w-0 flex-1 truncate font-medium">{team.name}</span>
+                <span className="hidden min-w-0 flex-1 truncate font-medium xl:inline">{team.name}</span>
                 {unreadTotal > 0 ? (
                   <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-semibold leading-none text-white">
                     {unreadTotal > 99 ? "99+" : unreadTotal}
@@ -81,10 +83,10 @@ export function TeamRail({
         </div>
       </div>
 
-      <div className="border-t border-slate-200 px-2 py-2">
-        <Button className="h-8 w-full justify-center text-xs" onClick={onCreate} aria-label="新团队">
+      <div className="border-t border-slate-100 px-2 py-2">
+        <Button className="h-8 w-full justify-center px-0 text-xs xl:px-3" onClick={onCreate} aria-label="新团队" title="创建团队">
           <Plus className="h-3.5 w-3.5" />
-          创建团队
+          <span className="hidden xl:inline">创建团队</span>
         </Button>
       </div>
     </aside>

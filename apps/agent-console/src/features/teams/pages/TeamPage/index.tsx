@@ -104,9 +104,15 @@ export function TeamPage() {
     workspaceViewState.storageKey === workspaceViewStorageKey
       ? workspaceViewState.view
       : initialTeamWorkspaceView(teamId, desktopTeamEnabled);
+  const [focusSlotId, setFocusSlotId] = useState<string | null>(null);
+  const [focusPanel, setFocusPanel] = useState<"inspector" | "graph">("inspector");
   const setWorkspaceView = useCallback(
     (view: TeamWorkspaceView) => {
       setWorkspaceViewState({ storageKey: workspaceViewStorageKey, view });
+      if (view !== "collaboration") {
+        setFocusSlotId(null);
+        setFocusPanel("inspector");
+      }
     },
     [workspaceViewStorageKey],
   );
@@ -235,6 +241,13 @@ export function TeamPage() {
     if (!leaderSlotId) return;
     setActiveSlotId((current) => (agents.some((agent) => agent.slot_id === current) ? current : leaderSlotId));
   }, [agents, leaderSlotId]);
+
+  useEffect(() => {
+    if (focusSlotId && !agents.some((agent) => agent.slot_id === focusSlotId)) {
+      setFocusSlotId(null);
+      setFocusPanel("inspector");
+    }
+  }, [agents, focusSlotId]);
 
   useEffect(() => {
     setGoalDraft(activeTeam?.active_goal?.objective ?? "");
@@ -736,7 +749,7 @@ export function TeamPage() {
             onWorkspaceViewChange={desktopTeamEnabled ? setWorkspaceView : undefined}
           />
 
-          {!desktopTeamEnabled || workspaceView === "columns" ? (
+          {!desktopTeamEnabled || workspaceView === "columns" || focusSlotId !== null ? (
             <TeamAgentTabs
               activeTeam={activeTeam}
               orderedAgents={orderedAgents}
@@ -768,7 +781,15 @@ export function TeamPage() {
             desktopEnabled={desktopTeamEnabled}
             view={workspaceView}
             activeSlotId={activeSlotId}
+            focusSlotId={focusSlotId}
             onSelectAgent={setActiveSlotId}
+            onEnterFocus={setFocusSlotId}
+            onExitFocus={() => {
+              setFocusSlotId(null);
+              setFocusPanel("inspector");
+            }}
+            focusPanel={focusPanel}
+            onFocusPanelChange={setFocusPanel}
             columnListProps={{
               activeTeam,
               orderedAgents,

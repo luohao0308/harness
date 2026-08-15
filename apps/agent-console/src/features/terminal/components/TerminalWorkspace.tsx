@@ -53,8 +53,8 @@ export function TerminalWorkspace() {
   if (desktop) {
     return (
       <ConsoleShell title="终端">
-        <div aria-label="Terminal workspace" className="h-full min-h-0 w-full bg-slate-50 p-2" role="region">
-          <TerminalPane id="term-1" />
+        <div aria-label="Terminal workspace" className="h-full min-h-0 w-full bg-[#f7f7f8] p-3" role="region">
+          <TerminalPane id="term-1" appearance="integrated" />
         </div>
       </ConsoleShell>
     )

@@ -10,7 +10,9 @@ vi.mock('../../../../app/ConsoleShell', () => ({
   ConsoleShell: ({ children }: { children: ReactNode }) => children,
 }))
 vi.mock('../TerminalPane', () => ({
-  TerminalPane: ({ id }: { id: string }) => <div data-testid={`terminal-pane-${id}`}>{id}</div>,
+  TerminalPane: ({ id, appearance }: { id: string; appearance?: string }) => (
+    <div data-testid={`terminal-pane-${id}`} data-appearance={appearance}>{id}</div>
+  ),
 }))
 vi.mock('../hooks/useTerminalKeyboardNav', () => ({
   useTerminalKeyboardNav: () => {},
@@ -86,6 +88,7 @@ describe('TerminalWorkspace', () => {
     renderWorkspace()
 
     expect(screen.getByTestId('terminal-pane-term-1')).toBeInTheDocument()
+    expect(screen.getByTestId('terminal-pane-term-1')).toHaveAttribute('data-appearance', 'integrated')
     expect(screen.queryByTestId('terminal-pane-term-2')).not.toBeInTheDocument()
     expect(mockCreateTerminal).toHaveBeenCalledTimes(1)
     expect(mockCreateTerminal).toHaveBeenCalledWith('term-1')
