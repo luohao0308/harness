@@ -397,9 +397,64 @@ def build_local_runtime_app() -> FastAPI:
             module = importlib.reload(module)
         return module
 
+    def include_router(router: APIRouter, *, prefix: str) -> None:
+        """Register a router and recover from cross-version route-class mismatches."""
+        route_count = len(local_app.routes)
+        local_app.include_router(router, prefix=prefix)
+        if len(local_app.routes) != route_count:
+            return
+
+        for route in router.routes:
+            path = getattr(route, "path", None)
+            endpoint = getattr(route, "endpoint", None)
+            if not isinstance(path, str) or endpoint is None:
+                continue
+            route_dependencies = getattr(route, "dependencies", None)
+            if hasattr(route, "methods"):
+                local_app.add_api_route(
+                    prefix + path,
+                    endpoint,
+                    response_model=getattr(route, "response_model", None),
+                    status_code=getattr(route, "status_code", None),
+                    tags=getattr(route, "tags", None),
+                    dependencies=route_dependencies,
+                    summary=getattr(route, "summary", None),
+                    description=getattr(route, "description", None),
+                    response_description=getattr(
+                        route, "response_description", "Successful Response"
+                    ),
+                    responses=getattr(route, "responses", None),
+                    deprecated=getattr(route, "deprecated", None),
+                    methods=getattr(route, "methods", None),
+                    operation_id=getattr(route, "operation_id", None),
+                    response_model_include=getattr(route, "response_model_include", None),
+                    response_model_exclude=getattr(route, "response_model_exclude", None),
+                    response_model_by_alias=getattr(route, "response_model_by_alias", True),
+                    response_model_exclude_unset=getattr(
+                        route, "response_model_exclude_unset", False
+                    ),
+                    response_model_exclude_defaults=getattr(
+                        route, "response_model_exclude_defaults", False
+                    ),
+                    response_model_exclude_none=getattr(
+                        route, "response_model_exclude_none", False
+                    ),
+                    include_in_schema=getattr(route, "include_in_schema", True),
+                    response_class=getattr(route, "response_class", None),
+                    name=getattr(route, "name", None),
+                    openapi_extra=getattr(route, "openapi_extra", None),
+                )
+            else:
+                local_app.add_api_websocket_route(
+                    prefix + path,
+                    endpoint,
+                    dependencies=route_dependencies,
+                    name=getattr(route, "name", None),
+                )
+
     for module_name, prefix in EAGER_LOCAL_RUNTIME_ROUTER_MODULES:
         module = import_router_module(module_name)
-        local_app.include_router(module.router, prefix=prefix)
+        include_router(module.router, prefix=prefix)
 
     deferred_routes_loaded = False
     deferred_defaults_initialized = False
@@ -416,7 +471,7 @@ def build_local_runtime_app() -> FastAPI:
             for module_name, prefix in DEFERRED_LOCAL_RUNTIME_ROUTER_MODULES:
                 module = import_router_module(module_name)
                 deferred_router.include_router(module.router, prefix=prefix)
-            local_app.include_router(deferred_router)
+            include_router(deferred_router, prefix="")
             deferred_routes_loaded = True
             local_app.openapi_schema = None
 

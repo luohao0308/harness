@@ -184,6 +184,21 @@ def test_local_app_includes_core_desktop_route_inventory() -> None:
     assert len(app.routes) == route_count
 
 
+def test_local_app_recovers_when_fastapi_skips_router_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(FastAPI, "include_router", lambda *_args, **_kwargs: None)
+
+    app = harnessd.build_local_runtime_app()
+    startup_paths = _route_paths(app.routes)
+    paths = app.openapi()["paths"]
+
+    assert "/api/health/readiness" in startup_paths
+    assert "/api/local-runtime/desktop-session" in startup_paths
+    assert "/api/tasks" in paths
+    assert "/api/terminal/tokens" in paths
+
+
 def test_ready_server_emits_handshake_once_after_successful_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
