@@ -20,4 +20,6 @@ python3 scripts/validate-docs.py
 - Preserve backend-driven Console state; avoid static placeholder data.
 - Update `docs/development/ai/task-progress.yaml` and a relevant `omx_wiki/` session page
   when a delivery slice is complete or blocked.
-- Use the Lore commit protocol from `AGENTS.md` for commits.
+- Create short-lived branches from `origin/main` and open PRs back to `main`.
+- Use the Conventional Commit policy in the root `CONTRIBUTING.md` for commit and PR titles.
+- Install `.githooks` with `scripts/install-git-hooks.sh`; fold local `fixup!` commits before opening a PR.

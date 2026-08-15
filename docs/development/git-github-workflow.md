@@ -1,386 +1,185 @@
-# 00 GitHub 与 Git 工作流
+# GitHub 与 Git 交付工作流
 
-本文件定义代码仓库、分支、提交、PR、Review、Release 和 GitHub Actions 的固定流程。
+本文件是 Harness 分支、提交、PR、Review 和 Release 的详细权威入口。根目录 `CONTRIBUTING.md` 保留最短的人读规范；两处必须保持一致。
 
-## 1. 仓库初始化
+## 1. 设计目标
 
-本项目使用单仓库管理文档、前端、后端、部署和脚本。
+- `main` 始终可部署、可回滚、可打 Release tag。
+- 日常工作使用短生命周期分支，不维护单人项目不需要的长期集成层。
+- 每个交付通过 commit title、PR、CI、Release tag 和验证证据形成闭环。
+- 不伪造第二位 Reviewer，不用重量级工具替代现有 GitHub Actions。
 
-初始化命令：
+## 2. 分支模型
 
-```bash
-cd /Users/luohao/Desktop/agent_workspace/harness
-git init
-git branch -M main
-git add README.md docs
-git commit -m "docs: add agent harness platform specification"
-```
+| 分支 | 用途 | 合并目标 | 生命周期 |
+|---|---|---|---|
+| `main` | 稳定、可发布主线 | - | 长期 |
+| `feat/<scope>-<short-name>` | 产品或功能变化 | `main` | 一个 PR |
+| `fix/<scope>-<short-name>` | 缺陷修复 | `main` | 一个 PR |
+| `docs/<short-name>` | 文档变化 | `main` | 一个 PR |
+| `chore/<short-name>` | CI、工具或工程维护 | `main` | 一个 PR |
+| `release/<version>` | 多平台 Release candidate | `main` | 发布窗口 |
+| `hotfix/<short-name>` | 生产紧急修复 | `main` | 一个 PR |
 
-创建远程仓库后绑定 remote：
+`develop` 不再是日常必经分支。历史 `develop` ref 保留到连续两个 Release 完成后再决定是否归档；不得在普通功能交付中继续向它堆积新提交。
 
-```bash
-git remote add origin git@github.com:<org>/agent-harness.git
-git push -u origin main
-```
+Agent 临时 worktree 可以使用 `codex/` 前缀，但面向交付的 PR branch 使用上表中的产品范围命名。
 
-远程地址使用 SSH。组织名和仓库名固定为：
+## 3. 开始任务
 
-```text
-<org>/agent-harness
-```
-
-## 2. .gitignore
-
-根目录必须包含 `.gitignore`，覆盖 Python、Node、Docker、本地环境和密钥文件。
-
-内容范围：
-
-```text
-.venv/
-__pycache__/
-.pytest_cache/
-.mypy_cache/
-node_modules/
-dist/
-build/
-.next/
-.env
-.env.*
-!.env.example
-coverage/
-.DS_Store
-*.log
-```
-
-`.env.example` 必须提交。真实 `.env` 禁止提交。
-
-## 3. 分支模型
-
-固定分支：
-
-```text
-main：稳定分支，可部署
-develop：集成分支
-feat/*：功能分支
-fix/*：缺陷修复
-docs/*：文档修改
-chore/*：工程配置
-release/*：发布准备
-```
-
-创建功能分支：
+先确认仓库、远端和工作树：
 
 ```bash
-git fetch origin
-git checkout develop
-git pull --ff-only origin develop
-git checkout -b feat/task-event-store
+git rev-parse --show-toplevel
+git worktree list --porcelain
+git status --short --branch
+git fetch origin --prune
 ```
+
+从当前 `origin/main` 创建独立 worktree：
+
+```bash
+git worktree add ../harness-feat-team \
+  -b feat/team-overview-focus \
+  origin/main
+cd ../harness-feat-team
+scripts/install-git-hooks.sh
+```
+
+不复用归属不明的 worktree，不覆盖用户已有改动，不在产品仓库内部嵌套新 worktree。
 
 ## 4. 提交规范
 
-提交信息使用 Conventional Commits。
-
-格式：
+标题格式：
 
 ```text
-<type>(<scope>): <summary>
+<type>(<scope>): <imperative summary>
 ```
 
-类型：
+允许的 type：
 
 ```text
-feat：新功能
-fix：修复
-docs：文档
-refactor：重构
-test：测试
-chore：工程配置
-ci：CI/CD
-build：构建系统
-perf：性能优化
+feat fix refactor docs test chore ci build perf revert
 ```
+
+规则：
+
+- scope 使用小写 kebab-case，例如 `team`、`local-agent`、`desktop-team`。
+- 完整标题不超过 88 个字符，不以句号结束。
+- 一个提交只包含一个可解释、可验证的行为切片。
+- 非 trivial body 只写 Why、Impact、Validation；未运行的检查不能写成已通过。
+- 本地允许 `fixup!` / `squash!`，PR 前必须折叠。
 
 示例：
 
-```bash
-git commit -m "feat(events): add append-only event store"
-git commit -m "docs(architecture): split human and ai documents"
-git commit -m "ci(api): add backend test workflow"
+```text
+feat(team): add overview and focused conversation
+
+Why: give desktop Team users a scan-first entry without losing full dialogue.
+Impact: desktop Collaboration defaults to overview; browser columns stay unchanged.
+Validation: Team Vitest; Playwright Team smoke; Console build.
 ```
 
-## 5. 日常开发流程
-
-每次开发前：
+精确暂存：
 
 ```bash
 git status --short
-git fetch origin
-git checkout develop
-git pull --ff-only origin develop
-git checkout -b feat/<short-name>
+git diff -- <owned-files>
+git add -- <owned-files>
+git diff --cached --check
+git diff --cached
+git commit
 ```
 
-开发中：
+禁止使用 `git add .` 或 `git add -A` 暂存范围不明的文件。
+
+## 5. 三层验证
+
+### 每个 commit
+
+- `.githooks/pre-commit`：`git diff --cached --check`。
+- `.githooks/commit-msg`：调用 `scripts/validate-commit-message.py`。
+- 运行变更直接相关的最小测试。
+
+### 每个 PR
+
+`.github/workflows/pr-check.yml` 校验：
+
+- PR title 与所有非 merge commit subject；
+- backend Ruff 与 pytest；
+- frontend lint、test、build 与 bundle budget；
+- migration ID 与 upgrade preflight；
+- 文档和 Markdown 链接；
+- whitespace。
+
+跨模块、迁移、安全和 Release 变化应在 push 前本地运行完整适用门禁。纯文档或局部 UI 调整无需让每个 commit 重跑全仓测试。
+
+### 每个 Release
+
+Release tag 必须可达 `main`。`.github/workflows/release.yml` 负责镜像、Helm、Desktop、启动预算和 GitHub Release；实际签名、公证和生产发布仍需要相应凭据与授权。
+
+## 6. Pull Request
+
+PR 目标统一为 `main`。PR title 与最终 squash commit 使用同一个 Conventional Commit 标题。
 
 ```bash
-git status --short
-git diff
-git add <changed-files>
-git commit -m "feat(scope): summary"
+git push -u origin HEAD
+gh pr create \
+  --base main \
+  --title "feat(team): add overview and focused conversation" \
+  --body-file .github/pull_request_template.md
 ```
 
-推送：
+PR 描述只保留五项：Intent、Changes、Validation、Risk/Rollback、Evidence。UI 改动附截图；API、事件、Schema、迁移、Desktop IPC 或部署改动同步对应契约与 Runbook。
+
+## 7. Review 与合并
+
+单人 OPC 的 required gates：
+
+- 所有 required CI checks 通过；
+- PR 自审清单完成；
+- 没有未解释的 migration、secret、runtime 或 rollback 风险；
+- 当前任务文档和证据已按 `AGENTS.md` 回写。
+
+不要创建虚假的第二人 Review。出现长期协作者后再启用真实 approval requirement。
+
+默认使用 squash merge，让 `main` 每个 PR 只留下一个交付 commit；合并后删除短分支。Merge commit 仅用于必须保留拓扑的历史集成或 Release 场景，并在 PR 中写明原因。
+
+禁止直接推送 `main`。禁止 `git push --force`。远端历史改写只允许在已建立 archive ref、通过 old/new 验证并获得明确授权后使用 `--force-with-lease`，且不得用于 `main`。
+
+## 8. Release 与 Hotfix
+
+准备版本：
 
 ```bash
-git push -u origin feat/<short-name>
+scripts/release.sh patch
 ```
 
-## 5.1 阶段开发流程
-
-AI 执行阶段任务时必须使用阶段分支：
-
-```text
-stage/<stage-id>
-```
-
-阶段开始：
-
-```bash
-git fetch origin
-git checkout develop
-git pull --ff-only origin develop
-git checkout -b stage/stage-04-backend-foundation
-```
-
-阶段验证通过后：
-
-```bash
-git status --short
-git add <changed-files>
-git commit -m "feat(stage-04-backend-foundation): complete backend foundation"
-git push -u origin stage/stage-04-backend-foundation
-gh pr create --base develop --head stage/stage-04-backend-foundation --title "feat(stage-04-backend-foundation): complete backend foundation" --body-file .github/pull_request_template.md
-```
-
-PR 创建后，AI 必须更新：
-
-```text
-docs/development/ai/task-progress.yaml
-docs/TASKS.md
-omx_wiki/<relevant-session-or-handoff>.md
-```
-
-PR 合并前，AI 不进入下一阶段。
-
-## 6. Pull Request 流程
-
-PR 目标分支：
-
-```text
-feature/fix/docs/chore -> develop
-release/* -> main
-hotfix/* -> main
-```
-
-PR 标题格式：
-
-```text
-feat(events): add event store
-```
-
-PR 描述必须包含：
-
-```text
-## Summary
-## Changes
-## Tests
-## Risk
-## Screenshots
-## Rollback
-```
-
-创建 PR：
-
-```bash
-gh pr create --base develop --head feat/task-event-store --title "feat(events): add event store" --body-file .github/pull_request_template.md
-```
-
-没有 GitHub CLI 时，在 GitHub Web 页面创建 PR，字段保持一致。
-
-## 7. Review 规则
-
-合并前必须满足：
-
-- 至少 1 人 Review 通过。
-- CI 全部通过。
-- 没有未解决 conversation。
-- 数据库迁移包含回滚说明。
-- 涉及 UI 的 PR 包含截图。
-- 涉及 API 的 PR 更新 AI 读文档。
-- 涉及产品流程的 PR 更新人读文档。
-
-禁止直接向 `main` 推送。禁止 force push 到 `main` 和 `develop`。
-
-## 8. 合并策略
-
-功能分支合并到 develop 使用 squash merge。release 分支合并到 main 使用 merge commit。
-
-本地同步：
-
-```bash
-git checkout develop
-git pull --ff-only origin develop
-git branch -d feat/task-event-store
-```
-
-## 9. Release 流程
-
-创建 release 分支：
-
-```bash
-git checkout develop
-git pull --ff-only origin develop
-git checkout -b release/2026.05.04
-```
-
-发布前检查：
-
-```bash
-npm run build --workspaces
-pytest
-docker compose -f deploy/docker-compose/docker-compose.yml config
-```
-
-打标签：
+验证并把版本变更通过 PR 合入 `main` 后：
 
 ```bash
 git checkout main
 git pull --ff-only origin main
-git tag -a v2026.05.04 -m "release: v2026.05.04"
-git push origin v2026.05.04
+git tag -a v0.1.1 -m "Release v0.1.1"
+git push origin v0.1.1
 ```
 
-Release Notes 包含：
+Hotfix 从 `origin/main` 创建 `hotfix/*`，运行定向回归和完整适用门禁，通过 PR squash 回 `main`，再按需要补 patch tag。无需再手工同步到 `develop`。
 
-```text
-Added
-Changed
-Fixed
-Migration
-Deployment
-Rollback
-```
+完整发布、Canary、Desktop 签名/更新和回滚步骤见 `docs/project-memory/runbooks/release.md`。
 
-## 10. Hotfix 流程
+## 9. 本地策略安装与测试
 
 ```bash
-git checkout main
-git pull --ff-only origin main
-git checkout -b hotfix/<issue>
+scripts/install-git-hooks.sh
+python3 scripts/test-commit-message-policy.py
 ```
 
-修复后：
+hooks 只做标题和 staged whitespace 检查，不在每次 commit 跑全仓测试。CI 与 hook 调用同一个 stdlib validator，避免本地与远端规则漂移。
 
-```bash
-git add <files>
-git commit -m "fix(scope): summary"
-git push -u origin hotfix/<issue>
-```
+## 10. 文档与安全边界
 
-Hotfix PR 合并到 main 后，必须同步回 develop：
-
-```bash
-git checkout develop
-git pull --ff-only origin develop
-git merge origin/main
-git push origin develop
-```
-
-## 11. GitHub Actions
-
-固定工作流：
-
-```text
-.github/workflows/docs.yml
-.github/workflows/frontend.yml
-.github/workflows/backend.yml
-.github/workflows/docker.yml
-```
-
-docs.yml：
-
-- 检查 Markdown 链接。
-- 检查文档关键词。
-- 检查 AI 读文档是否包含权威技术栈。
-
-frontend.yml：
-
-- 安装 Node 依赖。
-- 运行 lint。
-- 运行 build。
-
-backend.yml：
-
-- 安装 Python 依赖。
-- 启动 PostgreSQL 和 Redis service。
-- 运行 Alembic migration。
-- 运行 pytest。
-
-docker.yml：
-
-- 构建 API 镜像。
-- 构建 worker 镜像。
-- 验证 docker-compose 配置。
-
-## 12. GitHub Secrets
-
-必须配置：
-
-```text
-DOCKER_REGISTRY
-DOCKER_USERNAME
-DOCKER_PASSWORD
-DEPLOY_HOST
-DEPLOY_USER
-DEPLOY_SSH_KEY
-```
-
-模型密钥不进入 GitHub Actions 默认环境。模型密钥只在部署环境的 secret manager 或服务器 `.env` 中配置。
-
-## 13. Issue 管理
-
-Issue 类型：
-
-```text
-Feature
-Bug
-Docs
-Security
-Ops
-Research
-```
-
-Issue 必须包含：
-
-```text
-Background
-Goal
-Scope
-Acceptance Criteria
-Risk
-Related Docs
-```
-
-## 14. 文档同步规则
-
-代码改动和文档同步关系：
-
-```text
-API 改动 -> 更新 docs/development/ai/reference/data-events-api.md
-事件类型改动 -> 更新 docs/development/ai/reference/data-events-api.md
-技术栈改动 -> 更新 docs/development/ai/reference/architecture-and-decisions.md
-页面结构改动 -> 更新 docs/design/frontend-product.md 和 docs/development/ai/reference/frontend-spec.md
-部署改动 -> 更新 docs/operations/deployment-operations.md 和 docs/development/ai/reference/runtime-deployment-spec.md
-Git 流程改动 -> 更新 docs/development/git-github-workflow.md 和 docs/development/ai/task-progress.yaml
-```
+- 业务代码、API、事件、Schema、迁移、部署或 UI 行为变化时，按 `docs/development/README.md` 的影响矩阵同步权威文档。
+- 当前任务状态写 `docs/TASKS.md`，机器进度写 `docs/development/ai/task-progress.yaml`，完整证据写相关 `omx_wiki/` session。
+- 模型密钥、Token、Cookie、私钥、签名 URL 和真实部署凭据不得进入 commit、PR、CI output 或历史重整 manifest。
+- Branch Protection 的最低建议是：禁止直接 push `main`、要求 PR、要求 commit-policy 和现有 CI checks、允许单人维护者在 checks 通过后 squash merge。

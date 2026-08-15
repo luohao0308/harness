@@ -38,8 +38,8 @@ _状态：active | 更新：2026-08-10_
 ## Git 与隔离策略
 
 - Worktree 模式：recommended；当前工作树已有大量用户改动，任务必须先记录并隔离所有权。
-- 分支命名：遵循仓库已有 `p7-*` / `plan-*` 等约定；新分支使用 `codex/` 前缀。
-- 提交格式：遵循 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的 Lore commit protocol。
+- 分支命名：日常使用短生命周期 `feat/*`、`fix/*`、`docs/*`、`chore/*`；Agent 临时 worktree 可以使用 `codex/` 前缀，但交付 PR 仍按产品范围命名。
+- 提交格式：遵循 [CONTRIBUTING.md](../../CONTRIBUTING.md) 的 Conventional Commit policy，commit 与 PR title 共用同一规则。
 - 集成策略：按仓库维护者要求使用 PR/受控合并；不执行强制 reset/checkout。
 - 自动允许：本地可逆的读、编辑、测试、构建和文档审计。
 - 需要确认：push/merge、生产发布、真实第三方凭据、签名/公证和不可逆迁移。

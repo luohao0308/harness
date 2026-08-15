@@ -8,6 +8,30 @@ on:
       - "plan-*"
 
 jobs:
+  commit-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test commit policy
+        run: python3 scripts/test-commit-message-policy.py
+      - name: Validate pull request commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git log --no-merges --format=%s "${BASE_SHA}..HEAD" \
+            | python3 scripts/validate-commit-message.py --stdin --label commit
+      - name: Validate pull request title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$PR_TITLE" \
+            | python3 scripts/validate-commit-message.py --stdin --label "PR title"
+
   lint-backend:
     runs-on: ubuntu-latest
     steps:
