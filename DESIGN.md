@@ -2,7 +2,7 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-08-07
+- Last refreshed: 2026-08-13
 - Primary product surfaces:
   - `hao` 本地 Agent CLI / TUI 的单输入、slash command、工具输出和权限提示
   - 全局 Console Shell 侧边栏与页面标题中文术语
@@ -30,6 +30,12 @@
   - `apps/agent-console/src/features/agents/components/ChatSurface.tsx`
   - `apps/agent-console/src/features/agents/pages/AgentWorkspacePage.tsx`
   - `apps/agent-console/src/features/teams/pages/TeamPage.tsx`
+  - `apps/agent-console/src/features/teams/pages/TeamPage/TeamHeader.tsx`
+  - `apps/agent-console/src/features/teams/pages/TeamPage/TeamWorkspaceSurface.tsx`
+  - `apps/agent-console/src/features/teams/pages/TeamPage/DesktopTeamMemberRoster.tsx`
+  - `apps/agent-console/src/features/teams/pages/TeamPage/DesktopTeamInspector.tsx`
+  - `apps/agent-console/src/features/teams/pages/TeamPage/AgentColumn.tsx`
+  - `apps/agent-console/src/features/teams/components/TeamRail.tsx`
   - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx`
   - `apps/agent-console/src/features/runs/pages/RunHistoryPage.tsx`
   - `apps/agent-console/src/features/observability/pages/ObservabilityPage.tsx`
@@ -38,6 +44,8 @@
   - `apps/agent-console/src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx`
   - `apps/agent-console/src/features/settings/pages/AdvancedFeaturesPage.tsx`
   - `apps/agent-console/src/features/settings/pages/__tests__/AdvancedFeaturesPage.test.tsx`
+  - `apps/agent-console/src/features/terminal/components/TerminalWorkspace.tsx`
+  - `apps/agent-console/src/features/terminal/components/TerminalPane.tsx`
   - `apps/desktop-app/src/main.ts`
   - `apps/desktop-app/src/preload.ts`
   - `apps/desktop-app/src/preload-api.ts`
@@ -49,6 +57,11 @@
   - `docs/design/desktop/apple-style-guidelines.md`
   - `docs/design/desktop/team-mode-workspace.md`
   - `docs/architecture/team-mode-product-surface.md`
+  - `.omx/artifacts/visual-ralph/desktop-team-mode/desktop-collaboration.png`
+  - `/var/folders/j3/1pxq4hf53bn1df3r6mvmw3zw0000gp/T/codex-clipboard-701527fd-8d62-43b5-897c-cd4826f5fd4c.png`
+  - `/var/folders/j3/1pxq4hf53bn1df3r6mvmw3zw0000gp/T/codex-clipboard-bf279e83-50d2-439f-8f47-b80bd544dc81.png`（当前 Team 实现基线）
+  - `/var/folders/j3/1pxq4hf53bn1df3r6mvmw3zw0000gp/T/codex-clipboard-4c6ef58c-f5ad-480f-85aa-efb46ad95bff.jpg`（并行 Agent 概览参考）
+  - `/var/folders/j3/1pxq4hf53bn1df3r6mvmw3zw0000gp/T/codex-clipboard-91946013-7478-418b-9512-f021287e5670.png`（对话与任务图并排参考）
   - `.omx/artifacts/visual-ralph/desktop-team-mode/reference-task-graph.png`
   - `.omx/artifacts/visual-ralph/desktop-team-mode/reference-team-inspector.png`
   - `omx_wiki/session-2026-07-04-desktop-full-function-startup-smoke.md`
@@ -86,7 +99,7 @@
   - 让新安装用户先进入可浏览、可操作的任务工作台，再从独立设置中心配置唯一必需项“模型 API Key”；未配置密钥只阻止模型执行，不阻止打开应用、设置、文件或终端。
   - 明确桌面与网页分工：Electron 用于创建任务、团队协作、终端操作、工作区文件和运行审批；网页用于配置、统计、审计、评测和观测。
   - 让桌面版文档达到生产可用：开发、测试、打包、签名、公证、更新、反馈、遥测、排障都有明确入口和验收口径。
-  - 让桌面 Team Mode 默认以单会话协作为中心，并能切换任务依赖图和现有多列视图。
+  - 让桌面 Team Mode 默认先回答“团队整体进行得怎样”，需要判断细节时再进入单 Agent 完整对话；任务依赖图和现有多列视图继续保留。
   - 将所有关键交互改成中文、可解释、可回溯的反馈。
   - 统一确认弹窗与操作成功/失败提示，降低误操作焦虑。
   - 在移动端提供离线优先的任务查看、新建、完成和同步恢复路径。
@@ -106,6 +119,8 @@
   - 桌面任务工作区不出现网页版控制台导航、面包屑、环境切换、全局搜索和账号工具条。
   - 桌面发布文档能区分本地可验证项和 Apple/Windows 凭证门槛，不把凭证门槛包装成已完成。
   - 桌面 Team 页能在同一会话状态下切换“协作 / 任务图 / 多列”，网页端仍默认现有多列模式。
+  - 桌面 Team 的“协作”首屏能在不打开每个对话的情况下看到目标、成员状态、任务完成度、阻塞/失败和最近活动；点击成员后进入其“专注”对话且不丢失草稿、滚动位置、未读和流式状态。
+  - “专注”模式能显示单 Agent 完整消息流与 composer，并可按需打开任务详情或依赖图；返回“协作”后保留原概览筛选和选中成员。
   - 点击桌面“团队”后，有现有团队时直接进入最近可用团队；没有团队时直接显示创建入口，不经过网页版管理壳层。
   - 桌面任一操作页都能一键返回任务、团队、终端、文件和审批，不出现网页控制台的双重侧栏。
   - 所有 destructive / branching 操作都通过自定义弹窗确认。
@@ -140,8 +155,8 @@
   - `/agents`: Agent Studio 中的知识和能力配置
   - `/agents/:agentId/workspace`: 会话与执行入口
   - `/teams/:teamId`: 团队编排与成员管理
-    - 网页：现有 Agent 横向多列为默认视图。
-    - Electron：默认“协作”单会话 + 团队检查器，可切换“任务图”和“多列”。
+    - 网页：现有 Agent 横向多列为默认视图，保持不变。
+    - Electron：默认“协作”团队概览；点击 Agent 进入“专注”完整对话；可切换“任务图”和“多列”。四种编排均共享同一 Team 会话状态。
   - `/runs`: 运行列表与入口摘要
   - `/token-savings`: 标记节省总览与近期运行证据
   - `/settings/models`: 当前默认模型摘要、内置成本来源、模型切换、自定义供应商弹窗、Fallback 和供应商观测
@@ -158,6 +173,8 @@
 - Content hierarchy:
   - 先显示状态与结果，再显示配置输入
   - 先给“下一步”，再给底层包信息
+  - Team 概览先给聚合状态和异常，再给成员进度与最近活动；单 Agent 的原始消息、工具细节和上下文只在“专注”层展开。
+  - 任务图是结构判断工具，不是默认 Dashboard；它只在概览辅助面板、专注按需面板或独立视图出现，不与完整聊天和多列同时争夺首屏。
   - 桌面主体验采用任务式工作台：任务列表、消息流和输入框常驻；运行证据、工具、模型、文件与设置按需展开。
   - `/desktop` 保留文档式设置页，但不再承担 Electron 启动首页或主工作流。
   - 桌面发布/运维文档采用“生产运行手册”层级：状态、能力图、启动、验证、发布、隐私安全、排障、外部凭证边界。
@@ -183,6 +200,10 @@
   - 桌面导航按动作组织，网页导航按系统与数据域组织；同一路由可共享数据和业务组件，但 Electron 不继承网页的信息架构。
 - Principle 9:
   - 设置按用户意图分组，不按后端模块分组。每一行只表达一个设置，标题、简短说明和控件横向对齐；密钥值永不回显。
+- Principle 10:
+  - Team 采用“概览 / 专注”双层模型：概览服务快速扫描，专注服务证据阅读；二者切换只改变信息编排，不复制或重置 Team 数据。
+- Principle 11:
+  - 概览中的成员项是可比较的状态行，不是聊天卡片；只有进入专注后，消息气泡、工具结果和上下文操作才获得完整空间。
 - Tradeoffs:
   - 保留 MCP 等必要缩写，但配合中文说明。
   - 原始 ID 和包元数据仍然展示，但降到结果卡片与摘要层。
@@ -197,14 +218,24 @@
   - `hao` TUI 采用 本地 Agent CLI 的 inline 终端节奏：不切换全屏 alternate screen，不呈现编辑器式大画布；欢迎卡、主会话、底部 `›` 输入行和轻量状态留在当前 shell 输出流里。底部状态必须包含当前模型、模型强度、compact 圆环、输出风格、审批数和命令数。工具工作台只按需作为底部 drawer 出现，不默认右侧分屏。
   - Electron 任务侧栏固定约 `280px`，中央会话使用稳定的最大阅读宽度，输入框固定在底部；桌面工作区顶栏保持单行，主要操作使用图标和 tooltip。
   - Electron 设置左栏约 `248px`，内容列最大宽度约 `920px`；分组由标题、细分隔线和设置行构成，避免大面积彩色摘要、数据卡片和营销式说明。
+  - 桌面 Team 首屏只保留一条团队工具栏、一个活动会话和一个辅助面板；成员 roster 属于会话内容，不再与顶部 Agent tabs 同时承担完整成员导航。
+  - “协作”概览采用三段式：中央团队摘要与最近活动，中部成员进度列表，右侧系统看板。看板默认约 `280px`，只显示当前目标、完成度、阻塞/失败、最近活动和人工待处理项。
+  - “专注”采用两段式：左侧团队/成员上下文，中央稳定 `760px` 对话阅读列；右侧任务详情或依赖图按需打开，默认不抢占对话宽度。
+  - Team 会话消息采用稳定阅读列（目标 `min(100% - 48px, 760px)`），空消息区保留呼吸感但不使用大段无意义垂直空白；composer 固定在会话底部并与阅读列同宽。
+  - 桌面 Team 辅助面板默认约 `280px`，任务图可扩大到 `44%`；面板内容密度通过分组标题和行间距控制，不以连续小卡片填满视口。
 - Shape/radius/elevation:
   - 使用现有圆角卡片与轻阴影，不引入新材质语言。
   - 桌面版避免把页面大区块做成套娃卡片；使用留白、分隔、短章节和状态行建立层级。
+  - 桌面终端只保留一层低对比度轮廓；激活态使用轻量焦点环，不用高对比整圈描边。标题栏、终端底色和页面背景使用相邻中性色，并以内容内边距完成过渡。
+  - Team 页面的大区块使用白底、相邻中性色和 `1px` 分隔线建立连续平面；不要给 rail、header、roster、inspector 和 composer 各自叠加阴影或高对比外框。
+  - 重复成员项使用无卡片列表行；仅选中项使用淡蓝底和单一焦点环。状态徽标只保留在成员行和任务行，顶部不重复显示同一组计数。
 - Motion:
   - 点击与加载反馈以轻量状态切换、toast、按钮忙碌文案为主。
   - 桌面版不使用夸张动效；更新、反馈、离线任务和终端状态以稳定文字反馈为主。
+  - Team 成员活动不得使用持续 `animate-pulse` 作为常态提示；运行中使用静态“执行中”文字/图标，动画只用于短暂状态变更。
 - Imagery/iconography:
   - 继续使用 Lucide 图标，图标服务于状态理解，不单独承担含义。
+  - 图标按钮必须有 `aria-label` 与 tooltip；折叠分栏、全屏、上下滚动等不熟悉动作在首次出现时应提供可见文字或状态提示。
 
 ## Components
 - Existing components to reuse:
@@ -229,6 +260,10 @@
   - Electron 设置壳层：返回应用、设置搜索、分类导航、设置分组、设置行，以及模型密钥的掩码输入、保存/替换/删除状态。
   - 模型连接设置：Base URL 输入与检测按钮、模型下拉/可编辑选择、刷新模型列表图标按钮、连接耗时和模型数量反馈。
   - 桌面 Team 视图分段控件、成员进度列表、团队检查器、任务依赖图和可调整分栏
+  - `TeamOverviewSurface`：聚合目标、成员状态、任务进度、最近活动和异常，并提供进入 Agent 专注的明确动作。
+  - `TeamAgentFocusSurface`：复用现有 Agent 消息、composer、上下文压缩、分支和运行详情能力，维护每个 Agent 的局部 UI 状态。
+  - `TeamSystemBoard`：概览右侧低密度系统看板；不承载完整消息流，不新增后端实体。
+  - 桌面 Team 视觉收敛：`TeamHeader` 单行主操作、`TeamAgentTabs` 与 roster 的职责拆分、按需打开的 inspector/任务图、稳定阅读列消息布局
   - 桌面生产文档能力图、发布验收矩阵、Apple 风格检查表和排障表
   - 模型配置弹窗和模型页右下角快捷添加入口
   - 移动端任务卡片、同步横幅、底部新建任务表单、状态徽标
@@ -239,6 +274,7 @@
   - 桌面桥接至少区分“桌面桥接已连接 / 网页回退模式 / 桥接读取失败”，并给出可执行下一步。
   - 桌面更新至少区分“稳定 / Beta / 检查中 / 有新版本 / 无更新 / 下载中 / 已下载 / 错误”。
   - 桌面 Team 至少区分“协作 / 任务图 / 多列”，并显示 Agent 与任务的进行中、等待、完成、失败状态。
+  - 桌面 Team 还需区分“概览 / 专注”层级：概览显示聚合摘要和可比较成员项，专注显示完整对话与按需任务上下文。
   - 模型与密钥至少区分“未配置 / 已配置 / 保存中 / 检测中 / 检测成功 / 验证失败 / 安全存储不可用”；Web 扩展显示只读状态和“在桌面应用中配置”。
   - 模型检测失败要区分无密钥、鉴权失败、超时、地址不可达和模型列表格式不兼容；成功后显示连接耗时与获取到的模型数量。
 - Token/component ownership:
@@ -251,7 +287,7 @@
   - 自定义弹窗支持 Esc 关闭、可见关闭按钮、明确焦点边界。
   - 桌面核心工作流必须可用键盘完成：切换终端、打开/聚焦 Run 窗口、关闭弹窗、执行主要按钮。
 - Contrast/readability:
-  - 维持当前高对比文本与状态底色。
+  - 维持当前高对比文本与状态底色；正文至少使用 `slate-700`，仅时间、辅助统计和禁用态可使用 `slate-500`，避免 `text-[10px]` 与浅灰组合承载关键状态。
 - Screen-reader semantics:
   - 弹窗提供 `role="dialog"`、`aria-modal`、标题与说明关联。
   - 桌面状态摘要、终端列表、最近结果和错误区保留可读标签，不能只靠颜色或图标表达状态。
@@ -267,6 +303,9 @@
   - 桌面任务工作台和终端必须在桌面与窄屏宽度都保持 0 文档级水平溢出。
   - Electron 宽屏使用任务侧栏 + 会话 + 按需检查器；窄屏继续复用现有历史侧栏覆盖与检查器抽屉，不引入网页版全局导航。
   - 桌面 Team 的协作视图默认 `80/20` 分栏，任务图默认 `56/44` 分栏；低于桌面宽度时任务图切为临时全幅面板，网页保持现有多列/移动单列响应式规则。
+  - 概览在宽屏可使用“中央摘要 + 中部成员进度 + 右侧系统看板”；在 `1024px` 以下把看板变为抽屉或顶部摘要行，成员项保持横向可滚动，不能挤压专注对话和 composer。
+  - 专注模式在窄屏只保留单 Agent 对话，任务图和系统看板通过临时全幅抽屉打开；切换回概览后恢复原滚动位置和选中 Agent。
+  - 桌面 Team 在 `1024px` 至 `1199px` 之间隐藏团队 rail 的非必要标题文字，保留可识别图标与完整 tooltip；不得同时压缩会话阅读列和 composer 到不可用宽度。
 - Touch/hover differences:
   - 不能依赖 hover 才能理解状态，点击后必须有显式反馈。
 
@@ -286,6 +325,7 @@
 - Disabled:
   - 禁用按钮应保留原因提示或上下文说明。
   - 未配置密钥的模型切换按钮不执行直接切换，使用“配置并启用”进入弹窗。
+  - Team 辅助面板收起后，折叠按钮仍显示当前动作的文字提示；不能只留下没有语义的圆形图标。
 - Offline/slow network, if applicable:
   - 网络或源降级时保留本地推荐，并明确说明部分源不可用。
   - 移动端离线时任务保存在本机，显示“待同步”并在网络恢复后复用桌面同步协议上传。
@@ -330,3 +370,7 @@
 
 ## Open questions
 - [ ] 是否要把整个控制台从“中文优先”升级为“纯中文唯一文案”规范；当前先落在 MCP / Skill 商店和本次修改触达页面。
+- [ ] Team 顶部的目标进度、工具数量和任务数量是否应合并为一个“当前目标”摘要行；本审计建议默认只显示目标状态与完成数，drift/fix/budget 放入详情。
+- [ ] 是否将桌面协作视图的成员 roster 改为可折叠列表；本审计建议默认展开但只显示姓名、状态、当前任务和简短进度，完整活动留在 inspector。
+- [x] 是否融合“快速团队概览”和“单 Agent 深度对话”；已决定采用“协作 = 概览、专注 = 完整对话、任务图 = 按需结构视图、多列 = 专家并行视图”的四层编排。
+- [x] 概览右侧系统看板的异常聚合字段暂不需要后端新增聚合接口；阶段 1-3 已由现有 Team、目标、任务、消息和 wake 查询组合完成，后续只有出现性能或一致性不足才重新立契约。

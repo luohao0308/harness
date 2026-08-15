@@ -1,6 +1,6 @@
 # Desktop 本地会话续期实施计划
 
-_状态：active | 更新：2026-08-11 | 关联任务：desktop-local-session-renewal-2026-08-11 | 关联设计：[Desktop 本地运行时计划](../../.omx/plans/desktop-local-runtime-sqlite-install-ready.md)_
+_状态：completed | 更新：2026-08-11 | 关联任务：desktop-local-session-renewal-2026-08-11 | 关联设计：[Desktop 本地运行时计划](../../.omx/plans/desktop-local-runtime-sqlite-install-ready.md)_
 
 ## 1. 目标、成功标准与停止条件
 
@@ -80,13 +80,21 @@ _状态：active | 更新：2026-08-11 | 关联任务：desktop-local-session-re
 
 ## 9. 文档同步
 
-- [ ] `task-progress.yaml`
-- [ ] 当前 handoff 与 wiki log
-- [ ] 计划状态改为 completed
+- [x] `task-progress.yaml`
+- [x] 当前 handoff 与 wiki log
+- [x] 计划状态改为 completed
 
 ## 10. 完成定义
 
-- [ ] 所有阶段验收通过。
-- [ ] 适用测试、构建、重启和真实冒烟通过。
-- [ ] 认证边界与模型密钥不回显证据已记录。
-- [ ] 应用停留在默认工作区供用户检查。
+- [x] 所有阶段验收通过。
+- [x] 适用测试、构建、重启和真实冒烟通过。
+- [x] 认证边界与模型密钥不回显证据已记录。
+- [x] 应用停留在默认工作区供用户检查。
+
+## 11. 完成证据
+
+- Desktop 全量测试：`38 files / 324 tests passed`；Console 401 续签定向测试：`31 passed`；backend local-runtime：`40 passed`。
+- `npm run build:main`、`npm run build:renderer`、`npm run build:runtime` 与独立 macOS 目录包 `release-session-renewal` 均通过。
+- 同一 profile 重启后，模型配置保持 `configured` / `persistent`，Provider 为 `chybenzun-openai-compatible`，Base URL 为 `https://chybenzun.top/v1`，模型为 `deepseek-v4-flash`。
+- 将 `harness_local_session` 覆盖为无效值后，同一 `/api/agents/local-agent/connections` 请求先返回 401，IPC 自动续签重试返回 200；真实 Run `d255c87b-e96e-4772-974c-dc1eaf911b5d` 完成，ModelCall 为 `SUCCESS`，可见回复为 `SESSION_RENEWAL_OK_20260811`。
+- API Key、Cookie 和 bootstrap token 均未写入 renderer 存储、URL、响应证据或日志输出。
