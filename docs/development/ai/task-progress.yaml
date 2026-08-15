@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-08-11T21:20:34+08:00
+last_updated_at: 2026-08-13T23:59:00+08:00
 last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/development/ai/task-progress.yaml
@@ -4864,6 +4864,92 @@ post_stage_hardening:
       - User-confirmed business changes and dev-workflow changes are delivered together; 697 source, configuration, test, and documentation files are staged.
       - Reproducible Electron release outputs and native sidecar builds are ignored at apps/desktop-app/release*/ and apps/desktop-app/resources/runtime/<platform>/<arch>/; 5205 generated files were removed from the index without deleting local packages.
       - Desktop production main build and all 324 tests pass. The broader type-check script currently mixes Node, DOM, and test environments and remains an evidence-backed technical debt item rather than an unreported completion claim.
+
+  - id: desktop-local-session-renewal-2026-08-11
+    date: 2026-08-11
+    status: completed
+    demo: Harness Desktop now keeps its packaged local session alive across long runtimes, concurrent 401 responses, harnessd restarts, and macOS sleep/resume while preserving the real interview-web provider configuration in secure storage.
+    verification_result: desktop_unit_console_retry_backend_contract_package_restart_and_real_provider_e2e_passed
+    verification_commands:
+      - "cd apps/desktop-app && npm test -- --reporter=dot -> 38 files / 324 tests passed"
+      - "cd apps/agent-console && targeted tasks API retry regression -> 31 passed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_local_runtime_bootstrap.py -q -> 40 passed"
+      - "cd apps/desktop-app && npm run build:main -> passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false && npm run build -> passed; 2414 modules transformed"
+      - "cd apps/desktop-app && npm run build:renderer && npm run build:runtime -> passed"
+      - "cd apps/desktop-app && CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --dir --mac --config.directories.output=release-session-renewal -> passed as unsigned x64 package"
+      - "packaged same-profile Electron smoke -> invalid local cookie produced 401, trusted IPC renewed the session, retry returned 200, Run d255c87b-e96e-4772-974c-dc1eaf911b5d completed with ModelCall SUCCESS and reply SESSION_RENEWAL_OK_20260811"
+    acceptance_notes:
+      - Electron renews the HttpOnly local session every 30 minutes, coalesces concurrent renewals, rejects stale runtime generations, clears timers on stop/restart, and renews immediately after macOS resume.
+      - Desktop local requests retry exactly once after a 401 through the trusted preload IPC; normal Web enterprise refresh behavior remains unchanged.
+      - The Desktop profile restored `chybenzun-openai-compatible`, `https://chybenzun.top/v1`, `deepseek-v4-flash`, and persistent secret storage from the interview-web configuration without exposing the API key.
+      - The replacement app is running from `apps/desktop-app/release-session-renewal/mac/Harness Desktop.app` on CDP port 9335 with the same profile and canonical SQLite data.
+      - API Key, bootstrap token, and Cookie values were not printed or written into renderer storage, URLs, test evidence, or documentation.
+
+  - id: frontend-terminal-ui-soft-boundaries-2026-08-12
+    date: 2026-08-12
+    status: completed
+    demo: Terminal workspace panels use a softer visual boundary, integrated desktop terminal framing, and consistent content breathing room without changing terminal behavior.
+    verification_result: targeted_terminal_tests_frontend_build_docs_validation_and_diff_check_passed
+    verification_commands:
+      - "cd apps/agent-console && npm test -- --run src/features/terminal/components/__tests__/TerminalWorkspace.test.tsx src/features/terminal/components/__tests__/XtermTerminal.test.tsx -> 2 files / 14 tests passed"
+      - "cd apps/agent-console && npm run build -> passed; 2414 modules transformed"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - Desktop terminal uses one low-contrast outline and a restrained active focus ring instead of a high-contrast blue frame.
+      - Header, terminal surface, and page background use adjacent neutral tones; terminal content receives 12px inner padding.
+      - Web four-panel layout retains resizable separators and existing panel appearance; desktop renders one integrated terminal pane.
+      - Browser verification rendered the Web terminal at 127.0.0.1:4178 with API-backed dev auth; Electron-only desktop branch was covered by component contract tests because the browser window cannot expose the preload desktopApi object.
+
+  - id: desktop-team-ui-apple-codex-audit-2026-08-12
+    date: 2026-08-12
+    status: completed
+    demo: The desktop Team workspace completed the approved P0/P1/P2 Apple/Codex-style UI convergence while preserving Team runtime semantics.
+    verification_result: implementation_visual_frontend_build_targeted_browser_and_docs_gates_passed
+    verification_commands:
+      - "read-only screenshot inspection -> no blocking overlap or unreadable content; hierarchy, density, contrast, and discoverability issues ranked"
+      - "code trace -> ConsoleShell, Team rail, Team header, Agent tabs, workspace split, roster, inspector, and Agent column evidence recorded with file and line references"
+      - "Visual Ralph final review against updated screenshots -> 91/100 PASS; collaboration, task graph, columns, web columns, and 390px mobile evidence archived under .omx/artifacts/visual-ralph/desktop-team-mode-updated/"
+      - "cd apps/agent-console && npm exec vitest -- run src/features/teams/__tests__/TeamPages.test.tsx --reporter=dot -> 27 passed"
+      - "cd apps/agent-console && HARNESS_TEAM_VISUAL_DIR=../../.omx/artifacts/visual-ralph/desktop-team-mode-updated npx playwright test --project=chromium e2e/team-mode.smoke.spec.ts -> 3 passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false -> passed"
+      - "cd apps/agent-console && npm run build -> passed"
+      - "python3 scripts/check-markdown-links.py -> 314 files / 478 local links"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - No Team business code, API, SSE, mailbox, task, goal, or desktop IPC behavior changed; only presentation, responsive shell visibility, and test contracts changed.
+      - P0 converges the header and member responsibilities; goal diagnostics remain accessible through the more-actions menu.
+      - P1 replaces stacked borders/cards with continuous neutral planes and a stable 760px message/composer reading column.
+      - P2 unifies Chinese-first copy, removes persistent activity pulsing, preserves usable width at 1024-1199px, hides the web global console rail at 390px, and adds mobile tab scroll affordance.
+      - Desktop Collaboration/Task graph/columns, browser columns, 390px no-overflow behavior, and the >=90 Visual Ralph floor are verified.
+
+  - id: desktop-team-overview-focus-fusion-design-2026-08-13
+    date: 2026-08-13
+    status: completed
+    demo: "Electron Team now opens a fast-scanning overview in 协作, enters a complete single-Agent focus conversation from member rows, and keeps task graph and columns as explicit alternate modes. Focus can switch its right-side surface between inspector and task graph without resetting the conversation."
+    verification_result: "phase_1_to_3_frontend_implementation_and_regression_gates_passed"
+    verification_commands:
+      - "read-only visual inspection of the current Team screenshot and two user references -> shared layout principles and differences recorded"
+      - "repository trace of TeamHeader, TeamWorkspaceSurface, TeamAgentTabs, roster, inspector, AgentColumn, and task graph -> existing ownership and preserved contracts confirmed"
+      - "cd apps/agent-console && npx tsc --noEmit --pretty false -> passed"
+      - "cd apps/agent-console && npx vitest run src/features/teams/__tests__/TeamPages.test.tsx --reporter=dot -> 27 passed"
+      - "cd apps/agent-console && npx playwright test --project=chromium e2e/team-mode.smoke.spec.ts -> 3 passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false -> passed"
+      - "cd apps/agent-console && npm run build -> passed; 2414 modules transformed"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "协作 is the default overview layer: target summary, member progress, task completion, blocked/failed states, recent activity, and human-attention items are visible without opening every conversation."
+      - "专注 is the single-Agent deep conversation layer: existing messages, composer, streaming, stop/continue, branch, compression, run details, files, and approvals remain available."
+      - "任务图 remains an on-demand structural view; 多列 remains the advanced parallel conversation view; browser Team default remains multi-column."
+      - "No Team API, SSE, mailbox, wake, task, goal, event, or desktop IPC behavior was changed."
+      - "Implementation plan is docs/plans/desktop-team-overview-focus-2026-08-13.md; design source is DESIGN.md."
+      - "Desktop overview uses existing Team, goal, task, message, and wake data; no backend aggregation contract was added."
+      - "At 900px the focus conversation remains chat-first; at 1100px the inspector is available; at 390px the browser Team remains single-column and has no document-level horizontal overflow."
 
 stage_completion_rule:
   - run_backend_tests

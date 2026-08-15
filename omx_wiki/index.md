@@ -1,8 +1,12 @@
 # Wiki Index
 
-> 58 pages | Last updated: 2026-08-10T17:28:00+08:00
+> 60 pages | Last updated: 2026-08-13T23:59:00+08:00
 
 ## session-log
+
+- [Team 概览与 Agent 专注融合方案](session-2026-08-13-team-overview-focus-fusion.md) — 吸收参考截图的全局扫描与对话/任务并排思路，保留既有 Team 三视图，确定“协作概览 + 专注对话 + 按需任务图 + 多列专家模式”的双层融合方案。
+
+- [Team UI Apple/Codex 风格审计与优化方案](session-2026-08-12-team-ui-apple-codex-audit.md) — 已连续完成 P0/P1/P2 UI 收敛，保留 Team 数据语义，记录阅读列、连续平面、中文优先、响应式和 Visual Ralph 验证证据。
 
 - [dev-workflow v0.2.0 接入与文档整理](session-2026-08-10-dev-workflow-install-and-docs.md) — 安装 Core 与全部五个流程包，验证 Bash 3.2 兼容修复，并完成全仓文档分类、权威源去重、历史归档、任务审计与全量链接门禁。
 
@@ -63,6 +67,8 @@
 - [LangGraph/LangChain Compatibility Harness V1](session-2026-06-02-langgraph-langchain-compatibility-harness-v1.md) — LangGraph workflow import, LangChain adapters, and Eval contrast experiment V1 evidence.
 
 ## reference
+
+- [Frontend Terminal UI Soft Boundaries](session-2026-08-12-frontend-terminal-ui-soft-boundaries.md) — Terminal workspace borders, neutral surface transitions, and desktop integrated framing were softened without changing terminal behavior.
 
 - [project-handoff-current-state](project-handoff-current-state.md) — [[project-handoff-current-state]]
 - [agent-startup-context](../docs/development/ai/agent-startup-context.md) — docs/development/ai/agent-startup-context.md

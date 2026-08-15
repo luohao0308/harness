@@ -22,6 +22,7 @@ _状态：当前计划索引 | 更新：2026-08-10_
 | [roadmap.md](roadmap.md) | active | 生产就绪路线 | 持续维护 | 2026-08-10 |
 | [roadmap-acceptance.md](roadmap-acceptance.md) | reference | 阶段交付与验收 | 历史/参考 | 2026-08-10 |
 | [workspace-pro-gap-register.md](workspace-pro-gap-register.md) | verified register | Workspace Pro | 已关闭项核验 | 2026-08-10 |
+| [desktop-team-overview-focus-2026-08-13.md](desktop-team-overview-focus-2026-08-13.md) | completed | Desktop Team 概览 / 专注融合 | 阶段 1-3 已实现 | 2026-08-13 |
 
 ## 维护规则
 
