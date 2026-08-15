@@ -25,6 +25,18 @@ def _bootstrap(tmp_path: Path, *, canary: str = "model-secret-canary-at-least-32
     )
 
 
+def _route_paths(routes) -> set[str]:
+    paths: set[str] = set()
+    for route in routes:
+        path = getattr(route, "path", None)
+        if isinstance(path, str):
+            paths.add(path)
+        nested_routes = getattr(route, "routes", None)
+        if nested_routes:
+            paths.update(_route_paths(nested_routes))
+    return paths
+
+
 def test_bind_loopback_socket_uses_dynamic_port_and_ready_schema() -> None:
     listener = harnessd.bind_loopback_socket(0)
     try:
@@ -141,7 +153,7 @@ def test_local_app_keeps_desktop_session_surface() -> None:
 
 def test_local_app_includes_core_desktop_route_inventory() -> None:
     app = harnessd.build_local_runtime_app()
-    startup_paths = {route.path for route in app.routes}
+    startup_paths = _route_paths(app.routes)
 
     assert "/api/health/readiness" in startup_paths
     assert "/api/local-runtime/desktop-session" in startup_paths

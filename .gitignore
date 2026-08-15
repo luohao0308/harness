@@ -1,4 +1,6 @@
 .venv/
+/services/api-server/certs/*.crt
+/services/api-server/certs/*.key
 venv/
 env/
 __pycache__/
