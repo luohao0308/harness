@@ -26,6 +26,8 @@ const apiMock = vi.hoisted(() => ({
   startSAML: vi.fn(),
 }));
 
+const originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+
 vi.mock("../../AuthProvider", () => ({
   useAuth: () => ({
     loginWithPassword: authMock.loginWithPassword,
@@ -57,6 +59,9 @@ function renderLogin(initialPath = "/login") {
 }
 
 afterEach(() => {
+  if (originalLocationDescriptor) {
+    Object.defineProperty(window, "location", originalLocationDescriptor);
+  }
   authMock.loginWithPassword.mockClear();
   apiMock.getAuthConfig.mockReset();
   apiMock.getAuthConfig.mockResolvedValue({
