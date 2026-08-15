@@ -152,7 +152,7 @@ export function TeamColumnList({
               role="group"
               aria-label={text("代理会话列", "Agent columns")}
               className={cn(
-                "flex h-full min-h-0 w-full snap-x snap-proximity overflow-x-auto overflow-y-hidden bg-slate-50/40 [scrollbar-width:none]",
+                "flex h-full min-h-0 w-full snap-x snap-proximity overflow-x-auto overflow-y-hidden bg-white [scrollbar-width:none]",
                 (fullscreenSlotId ? 1 : orderedAgents.length) <= 2 ? "justify-start" : "",
               )}
             >
@@ -446,9 +446,10 @@ function ScrollButton({
     <button
       type="button"
       aria-label={label}
+      title={label}
       onClick={onClick}
       className={cn(
-        "absolute top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-slate-600 shadow-panel hover:bg-slate-50 hover:text-slate-950",
+        "absolute top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-950",
         direction === "left" ? "left-2" : "right-2",
       )}
     >

@@ -380,6 +380,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       <aside
         className={cn(
           "flex h-screen min-h-0 shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
+          isTeamRoute && isNarrowShell && "hidden",
           effectiveSidebarCollapsed ? (isTeamRoute ? "w-[44px]" : "w-[64px]") : "w-[248px]",
         )}
       >

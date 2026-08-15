@@ -45,9 +45,10 @@ describe('XtermTerminal', () => {
   })
 
   it('renders terminal container', () => {
-    render(<XtermTerminal id="test-terminal" />)
+    render(<XtermTerminal id="test-terminal" className="box-border p-3" />)
     const container = screen.getByTestId('xterm-container')
     expect(container).toBeInTheDocument()
+    expect(container).toHaveClass('box-border', 'p-3')
   })
 
   it('initializes xterm.js terminal on mount', async () => {

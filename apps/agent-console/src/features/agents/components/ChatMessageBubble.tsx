@@ -87,6 +87,8 @@ export type ChatMessageBubbleProps = {
   // --- Phase 4 additive: branch (Req 16.1, 16.2) ---
   /** Called when the user clicks "Branch" on an assistant message. */
   onBranch?: () => void;
+  /** Uses a quieter surface for dense workspace views such as Team mode. */
+  visualStyle?: "default" | "quiet";
 };
 
 export function ChatMessageBubble({
@@ -103,6 +105,7 @@ export function ChatMessageBubble({
   isPinned = false,
   onTogglePin,
   onBranch,
+  visualStyle = "default",
 }: ChatMessageBubbleProps): JSX.Element {
   const { text, isChinese } = useI18n();
   const isUser = node.role === "user";
@@ -113,10 +116,15 @@ export function ChatMessageBubble({
   const isEditing = editingNodeId === node.id && isUser;
 
   const bubbleClass = cn(
-    "rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm",
+    "px-4 py-3 text-sm leading-6",
+    visualStyle === "quiet" ? "rounded-lg shadow-none" : "rounded-2xl shadow-sm",
     isUser
-      ? "bg-white border border-slate-200 text-slate-900"
-      : "bg-slate-50 text-slate-800 border border-slate-200",
+      ? visualStyle === "quiet"
+        ? "border border-slate-200 bg-slate-50/80 text-slate-900"
+        : "border border-slate-200 bg-white text-slate-900"
+      : visualStyle === "quiet"
+        ? "border border-slate-100 bg-white text-slate-800"
+        : "border border-slate-200 bg-slate-50 text-slate-800",
     isPinned && "ring-2 ring-amber-300",
   );
 
@@ -245,7 +253,7 @@ export function ChatMessageBubble({
             <time
               dateTime={node.created_at}
               title={formatLocalIso(createdMs)}
-              className="text-[10px] text-slate-400"
+              className={cn("text-[10px]", visualStyle === "quiet" ? "text-slate-500" : "text-slate-400")}
             >
               {formatRelativeTime(createdMs, Date.now(), isChinese ? "zh-CN" : "en")}
             </time>

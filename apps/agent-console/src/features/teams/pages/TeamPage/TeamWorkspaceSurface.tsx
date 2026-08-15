@@ -1,12 +1,12 @@
-import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { GitFork, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 
 import { cn } from "../../../../lib/utils";
 
 import { DesktopTeamInspector } from "./DesktopTeamInspector";
-import { DesktopTeamMemberRoster } from "./DesktopTeamMemberRoster";
 import { DesktopTeamTaskGraph } from "./DesktopTeamTaskGraph";
+import { DesktopTeamOverview } from "./DesktopTeamOverview";
 import type { TeamWorkspaceView } from "./DesktopTeamViewSwitch";
 import { displayAgentStatus } from "./teamState";
 import { TeamColumnList } from "./TeamColumnList";
@@ -50,7 +50,7 @@ function DesktopSplitView({
         <Panel id={`${mode}-conversation`} defaultSize={primarySize} minSize="480px">
           <div className="flex h-full min-h-0">{renderPrimary(toggleSecondary)}</div>
         </Panel>
-        <Separator className="relative z-20 w-px bg-slate-200 transition-colors hover:bg-blue-400 focus-visible:bg-blue-500 focus-visible:outline-none">
+        <Separator className="relative z-20 w-px bg-slate-100 transition-colors hover:bg-blue-400 focus-visible:bg-blue-500 focus-visible:outline-none">
           <button
             type="button"
             aria-label={toggleLabel}
@@ -60,7 +60,7 @@ function DesktopSplitView({
               toggleSecondary();
             }}
             className={cn(
-              "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-blue-300 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+              "absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 transition-colors hover:border-blue-300 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
               collapsed ? "translate-x-1" : "",
             )}
           >
@@ -88,13 +88,23 @@ export function TeamWorkspaceSurface({
   desktopEnabled,
   view,
   activeSlotId,
+  focusSlotId,
   onSelectAgent,
+  onEnterFocus,
+  onExitFocus,
+  focusPanel,
+  onFocusPanelChange,
   columnListProps,
 }: {
   desktopEnabled: boolean;
   view: TeamWorkspaceView;
   activeSlotId: string;
+  focusSlotId: string | null;
   onSelectAgent: (slotId: string) => void;
+  onEnterFocus: (slotId: string) => void;
+  onExitFocus: () => void;
+  focusPanel: "inspector" | "graph";
+  onFocusPanelChange: (panel: "inspector" | "graph") => void;
   columnListProps: TeamColumnListProps;
 }) {
   const {
@@ -123,6 +133,28 @@ export function TeamWorkspaceSurface({
     return <TeamColumnList {...columnListProps} />;
   }
 
+  const selectAgent = (slotId: string) => {
+    onSelectAgent(slotId);
+    if (view === "collaboration" && focusSlotId === null) onEnterFocus(slotId);
+  };
+
+  if (view === "collaboration" && focusSlotId === null) {
+    return (
+      <DesktopTeamOverview
+        team={activeTeam}
+        agents={orderedAgents}
+        tasks={tasks}
+        messages={messages}
+        activeSlotId={activeSlotId}
+        pendingWakeSlotIds={pendingWakeSlotIds}
+        streamingWakes={streamingWakes}
+        settledWakeCutoffs={settledWakeCutoffs}
+        text={text}
+        onSelectAgent={selectAgent}
+      />
+    );
+  }
+
   const singleConversation = (
     supplement?: ReactNode,
     fullscreenAction: ((slotId: string) => void) | null = null,
@@ -138,6 +170,32 @@ export function TeamWorkspaceSurface({
     />
   );
 
+  const focusHeader = (
+    <div className="mx-auto flex w-full max-w-[760px] items-center justify-between border-b border-slate-100 px-1 py-2 text-xs text-slate-600">
+      <span>{text("专注对话", "Focus conversation")}</span>
+      <div className="flex items-center gap-1">
+        {!columnListProps.isNarrowColumns ? (
+          <button
+            type="button"
+            aria-pressed={focusPanel === "graph"}
+            onClick={() => onFocusPanelChange(focusPanel === "graph" ? "inspector" : "graph")}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <GitFork aria-hidden="true" className="h-3 w-3" />
+            {focusPanel === "graph" ? text("返回检查器", "Back to inspector") : text("查看任务图", "View task graph")}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onExitFocus}
+          className="rounded-md px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          {text("返回团队概览", "Back to team overview")}
+        </button>
+      </div>
+    </div>
+  );
+
   if (columnListProps.isNarrowColumns) {
     if (view === "graph") {
       return (
@@ -151,18 +209,7 @@ export function TeamWorkspaceSurface({
         />
       );
     }
-    return singleConversation(
-      view === "collaboration" ? (
-        <DesktopTeamMemberRoster
-          agents={orderedAgents}
-          tasks={tasks}
-          activeSlotId={activeSlotId}
-          statusBySlotId={statusBySlotId}
-          text={text}
-          onSelectAgent={onSelectAgent}
-        />
-      ) : undefined,
-    );
+    return singleConversation(focusHeader);
   }
 
   if (view === "graph") {
@@ -186,34 +233,34 @@ export function TeamWorkspaceSurface({
     );
   }
 
-  const roster = (
-    <DesktopTeamMemberRoster
-      agents={orderedAgents}
-      tasks={tasks}
-      activeSlotId={activeSlotId}
-      statusBySlotId={statusBySlotId}
-      text={text}
-      onSelectAgent={onSelectAgent}
-    />
-  );
-
   return (
     <DesktopSplitView
       mode="collaboration"
-      renderPrimary={(toggleSecondary) => singleConversation(roster, () => toggleSecondary())}
+      renderPrimary={(toggleSecondary) => singleConversation(focusHeader, () => toggleSecondary())}
       secondary={
-        <DesktopTeamInspector
-          team={activeTeam}
-          agents={orderedAgents}
-          selectedAgent={selectedAgent}
-          tasks={tasks}
-          messages={messages}
-          status={selectedAgent ? statusBySlotId.get(selectedAgent.slot_id) ?? selectedAgent.status : null}
-          text={text}
-          onSelectAgent={onSelectAgent}
-        />
+        focusPanel === "graph" ? (
+          <DesktopTeamTaskGraph
+            team={activeTeam}
+            agents={orderedAgents}
+            tasks={tasks}
+            activeSlotId={activeSlotId}
+            text={text}
+            onSelectAgent={onSelectAgent}
+          />
+        ) : (
+          <DesktopTeamInspector
+            team={activeTeam}
+            agents={orderedAgents}
+            selectedAgent={selectedAgent}
+            tasks={tasks}
+            messages={messages}
+            status={selectedAgent ? statusBySlotId.get(selectedAgent.slot_id) ?? selectedAgent.status : null}
+            text={text}
+            onSelectAgent={onSelectAgent}
+          />
+        )
       }
-      secondaryLabel={text("团队检查器", "team inspector")}
+      secondaryLabel={focusPanel === "graph" ? text("任务图", "task graph") : text("团队检查器", "team inspector")}
       text={text}
     />
   );

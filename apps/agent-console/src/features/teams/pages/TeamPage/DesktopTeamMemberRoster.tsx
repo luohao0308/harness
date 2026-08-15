@@ -18,6 +18,7 @@ export function DesktopTeamMemberRoster({
   statusBySlotId,
   text,
   onSelectAgent,
+  interactive = true,
 }: {
   agents: TeamAgent[];
   tasks: TeamTask[];
@@ -25,6 +26,7 @@ export function DesktopTeamMemberRoster({
   statusBySlotId: Map<string, TeamAgent["status"]>;
   text: TextFn;
   onSelectAgent: (slotId: string) => void;
+  interactive?: boolean;
 }) {
   const visibleTasks = tasks.filter((task) => task.status !== "deleted");
   const completedTaskCount = visibleTasks.filter((task) => task.status === "completed").length;
@@ -38,7 +40,7 @@ export function DesktopTeamMemberRoster({
         <div className="text-xs font-semibold text-slate-800">
           {text(`${agents.length} 个协作成员`, `${agents.length} collaborators`)}
         </div>
-        <div className="text-[11px] text-slate-400">
+        <div className="text-[11px] text-slate-500">
           {text(
             `${completedTaskCount}/${visibleTasks.length} 项任务`,
             `${completedTaskCount}/${visibleTasks.length} tasks`,
@@ -58,19 +60,28 @@ export function DesktopTeamMemberRoster({
             assignedTasks[0];
           const selected = activeSlotId === agent.slot_id;
           const AvatarIcon = agent.role === "leader" ? Crown : Bot;
+          const Row = interactive ? "button" : "div";
+          const agentDisplayName = agent.role === "leader" && agent.agent_name.trim().toLowerCase() === "leader"
+            ? text("队长", "Leader")
+            : agent.agent_name;
 
           return (
-            <button
+            <Row
               key={agent.slot_id}
-              type="button"
-              aria-pressed={selected}
-              aria-label={text(`打开 ${agent.agent_name} 会话`, `Open ${agent.agent_name} conversation`)}
-              onClick={() => onSelectAgent(agent.slot_id)}
+              {...(interactive
+                ? {
+                    type: "button" as const,
+                    "aria-pressed": selected,
+                    "aria-label": text(`打开 ${agentDisplayName} 会话`, `Open ${agentDisplayName} conversation`),
+                    onClick: () => onSelectAgent(agent.slot_id),
+                  }
+                : {})}
               className={cn(
-                "grid min-h-[50px] w-full grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border px-2 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+                "grid min-h-[50px] w-full grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 border-b border-slate-100 px-1 py-1 text-left transition-colors",
                 selected
-                  ? "border-blue-300 bg-blue-50/80"
-                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50",
+                  ? "bg-blue-50/60"
+                  : "bg-transparent",
+                interactive ? "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" : "",
               )}
             >
               <span
@@ -85,7 +96,7 @@ export function DesktopTeamMemberRoster({
 
               <span className="min-w-0">
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold text-slate-900">{agent.agent_name}</span>
+                  <span className="truncate text-xs font-semibold text-slate-900" title={agentDisplayName}>{agentDisplayName}</span>
                   <span className="truncate text-[10px] text-slate-400">
                     {agent.role === "leader" ? text("队长", "Leader") : text("成员", "Teammate")}
                   </span>
@@ -109,7 +120,7 @@ export function DesktopTeamMemberRoster({
                       />
                     ))}
                   </span>
-                  <span className="w-9 text-right text-[10px] tabular-nums text-slate-400">
+                  <span className="w-9 text-right text-[10px] tabular-nums text-slate-500">
                     {assignedTasks.length > 0 ? `${completedCount}/${assignedTasks.length}` : "-"}
                   </span>
                 </span>
@@ -119,9 +130,9 @@ export function DesktopTeamMemberRoster({
                 <Badge className="px-1.5 py-0 text-[10px]" tone={teamAgentStatusTone(status)}>
                   {teamAgentStatusLabel(status)}
                 </Badge>
-                {currentTask ? <span className="text-[9px] text-slate-400">{teamTaskStatusLabel(currentTask.status)}</span> : null}
+                {currentTask ? <span className="text-[9px] text-slate-500">{teamTaskStatusLabel(currentTask.status)}</span> : null}
               </span>
-            </button>
+            </Row>
           );
         })}
       </div>

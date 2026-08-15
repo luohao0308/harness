@@ -62,6 +62,7 @@ export function TeamChatMessage({
       ) : (
         <ChatMessageBubble
           node={entry.node}
+          visualStyle="quiet"
           onOpenInspector={(section) => onOpenInspector(section, entry.node)}
           editingNodeId={editingMessageId}
           onStartEdit={onStartEdit}
@@ -115,7 +116,7 @@ export function TeamMessageRunLinks({
   const { text } = useI18n();
   const createdLabel = runCreatedAt ? formatShortDate(runCreatedAt) : null;
   return (
-    <div className="ml-11 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 shadow-sm">
+    <div className="ml-11 flex flex-wrap items-center gap-1.5 border-t border-slate-100 px-1 py-1.5 text-[11px] text-slate-600">
       <GitBranch aria-hidden="true" className="h-3.5 w-3.5 text-slate-500" />
       <span className="font-mono text-slate-800">运行 {runId.slice(0, 8)}</span>
       {runStatus ? <Badge tone="info">{statusLabel(runStatus)}</Badge> : null}

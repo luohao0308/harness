@@ -1,7 +1,7 @@
 import type { TerminalTheme } from '../types'
 
 export const macOSTerminalTheme: TerminalTheme = {
-  background: '#FFFFFF',
+  background: '#FBFBFC',
   foreground: '#1E2227',
   cursor: '#3C5A78',
   selection: 'rgba(60, 90, 120, 0.2)',
