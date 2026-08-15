@@ -389,8 +389,16 @@ def build_local_runtime_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    for module_name, prefix in EAGER_LOCAL_RUNTIME_ROUTER_MODULES:
+    def import_router_module(module_name: str):
+        """Load a router module even if an earlier app assembly emptied its router."""
         module = importlib.import_module(module_name)
+        router = getattr(module, "router", None)
+        if router is not None and not getattr(router, "routes", None):
+            module = importlib.reload(module)
+        return module
+
+    for module_name, prefix in EAGER_LOCAL_RUNTIME_ROUTER_MODULES:
+        module = import_router_module(module_name)
         local_app.include_router(module.router, prefix=prefix)
 
     deferred_routes_loaded = False
@@ -406,7 +414,7 @@ def build_local_runtime_app() -> FastAPI:
                 return
             deferred_router = APIRouter()
             for module_name, prefix in DEFERRED_LOCAL_RUNTIME_ROUTER_MODULES:
-                module = importlib.import_module(module_name)
+                module = import_router_module(module_name)
                 deferred_router.include_router(module.router, prefix=prefix)
             local_app.include_router(deferred_router)
             deferred_routes_loaded = True
