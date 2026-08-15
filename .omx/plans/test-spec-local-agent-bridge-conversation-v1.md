@@ -84,4 +84,3 @@ cd apps/agent-console && npm run lint -- --pretty false
 python3 scripts/validate-docs.py
 git diff --check
 ```
-

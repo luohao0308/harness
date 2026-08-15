@@ -1,0 +1,55 @@
+# Context Snapshot: Agent Knowledge Harness P4 Memory And Context Router V2
+
+- Task statement: use `$ralplan` to plan P4 based on current task progress.
+- Desired outcome: produce an execution-ready consensus plan for P4 Memory and Context Router V2, starting after P3 real policy-gated web research is recorded as live-provider verified. Do not begin implementation in this planning lane.
+- Known facts/evidence:
+  - Canonical roadmap: `omx_wiki/agent-knowledge-harness-roadmap.md` defines P4 as "Build Memory And Context Router V2" with session/branch memory projection, durable long-term memory, prompt assembly manifest reasons, Workspace Context panel, and Run Detail snapshot.
+  - Current progress source: `docs/task-progress.md` records "Completed: P3 Real Policy-Gated Web Research" on 2026-05-17 with 94 backend tests, Ruff, and Tavily live smoke passed.
+  - Machine progress source: `docs/ai/task-progress.yaml` records post-stage hardening `p3-real-policy-gated-web-research` with status `live_provider_verified`.
+  - Wiki handoff is stale: `omx_wiki/project-handoff-current-state.md` still says P3 is next planned work. P4 execution should update wiki/handoff before or during progress promotion.
+  - The worktree is dirty with P3 implementation/progress changes, including `services/api-server/app/knowledge.py`, `services/api-server/app/knowledge_web.py`, `services/api-server/app/sandbox/policies.py`, P3 tests, docs, and migration `20260517_0016_create_web_research_attempts.py`.
+  - Existing persistence includes `AgentRun.context_json` for run context, `TaskSnapshot` for event-sourced state snapshots, `RetrievalSession`, `RetrievalHit`, `CitationRecord`, `PromptAssemblyManifest`, and append-only `KnowledgePolicyAudit`.
+  - Existing model-call audit binding uses `ModelCall.prompt_manifest_id`, `grounding_correlation_id`, recomputable request hashes, prompt/completion tokens, and terminal status.
+  - Existing chat stream request accepts `pinned_node_ids`, `context_window_turns`, optional `context_max_tokens`, and optional `compressed_context`, but the backend currently treats `context_max_tokens` as a UI-side hint.
+  - Existing Workspace frontend has pinned messages, branch-aware compression summaries, token usage controls, and payload-only truncation.
+  - Existing chat prompt assembly is split: `_workspace_context_messages` assembles attachment/compression/pinned/recent chat context, then `ground_query` injects knowledge evidence as an extra system message. There is no single persisted router manifest covering memory, RAG, pinned, compression, attachments, and token-budget omissions.
+- Progress conclusion:
+  - P4 can start because P1/P2 local knowledge and P3 real web fallback evidence are available.
+  - The immediate product gap is not another retrieval provider; it is unified, auditable context selection across short-term memory, long-term memory, RAG/web evidence, pinned context, compression summaries, attachments, and token budget.
+- P4 target:
+  - Add a backend-owned context router that creates a persisted prompt/context assembly manifest before model calls.
+  - Project short-term memory from current conversation branch, run events, pins, compression summaries, tool observations, and recent user/assistant turns.
+  - Add durable long-term memory records with provenance, source type, scope, lifecycle/deletion, policy audits, and retrieval eligibility.
+  - Extend the existing PromptAssemblyManifest or add a router-specific manifest so included/omitted sections and token budget reasons are inspectable.
+  - Expose Workspace Context evidence and Run Detail context-router snapshots without claiming factual verification from memory alone.
+- Constraints:
+  - Preserve P3 dirty worktree changes and do not overwrite uncommitted work.
+  - Do not mix P4 with MCP/Skills productization, groundedness dashboards, or P7 release/demo hardening beyond required progress docs.
+  - Do not store unrestricted raw prompt previews when existing P1/P3 request-hash privacy contracts already avoid that.
+  - Memory must be policy-gated and deletable; deleted/expired memory must not be eligible for prompt assembly.
+  - Context router must be deterministic enough for tests and Eval contracts; no live model calls in normal CI beyond existing mocked gateway patterns.
+  - Memory snippets and summaries are source material, not instructions; prompt ordering must preserve existing system prompt authority.
+- Unknowns/open questions:
+  - Whether to extend `PromptAssemblyManifest` directly or introduce a new `ContextAssemblyManifest` table linked to it.
+  - Whether P4 should expose manual long-term memory CRUD in Agent Studio immediately or limit UI to Workspace Context/Run Detail evidence while backend APIs mature.
+  - How aggressive auto-memory writes should be in P4; safest first slice is explicit/manual or policy-derived writes rather than autonomous extraction from every assistant response.
+  - Whether P4 should migrate existing client-only compression summaries into persisted backend context summaries or keep them client cached but router-audited.
+- Likely codebase touchpoints:
+  - `services/api-server/app/db/models.py`
+  - `services/api-server/alembic/versions/`
+  - `services/api-server/app/api/schemas.py`
+  - `services/api-server/app/api/agents.py`
+  - `services/api-server/app/knowledge.py`
+  - `services/api-server/tests/test_agents.py`
+  - `services/api-server/tests/test_knowledge_rag.py`
+  - `services/api-server/tests/test_evals.py`
+  - `apps/agent-console/src/features/agents/hooks/useChatStream.ts`
+  - `apps/agent-console/src/features/agents/components/ChatSurface.tsx`
+  - `apps/agent-console/src/features/agents/lib/contextCompression.ts`
+  - `apps/agent-console/src/features/agents/lib/contextTruncation.ts`
+  - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx`
+  - `apps/agent-console/src/features/tasks/api.ts`
+  - `docs/ai/task-progress.yaml`
+  - `docs/task-progress.md`
+  - `omx_wiki/project-handoff-current-state.md`
+  - `omx_wiki/agent-knowledge-harness-roadmap.md`

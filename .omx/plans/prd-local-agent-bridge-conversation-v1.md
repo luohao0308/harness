@@ -85,4 +85,3 @@ V1 验收范围只启用 fake bridge 和 hao adapter。Codex CLI / Claude Code a
 - Duplicate client message id is idempotent within one binding and does not collide across bindings.
 - Duplicate bridge event id returns duplicate receipt; new terminal event after completion is rejected.
 - Browser tests prove `/connections/register` is never called from UI.
-

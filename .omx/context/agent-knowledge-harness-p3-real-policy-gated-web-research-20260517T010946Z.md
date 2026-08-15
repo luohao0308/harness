@@ -1,0 +1,53 @@
+# Context Snapshot: Agent Knowledge Harness P3 Real Policy-Gated Web Research
+
+- Task statement: use `$ralplan` to plan P3 based on current task progress.
+- Desired outcome: produce an execution-ready consensus plan for P3 real policy-gated web research that starts from completed P2 local knowledge management and does not begin implementation in this planning lane.
+- Known facts/evidence:
+  - Canonical handoff: `omx_wiki/project-handoff-current-state.md`.
+  - Roadmap: `omx_wiki/agent-knowledge-harness-roadmap.md`.
+  - P1 gate result: `.omx/reports/agent-knowledge-harness-p1/p1-gate-result-20260516T211017Z.md` records `status: verified_baseline`.
+  - P2 plan: `.omx/plans/ralplan-agent-knowledge-harness-p2-local-knowledge-management.md`.
+  - Machine progress: `docs/ai/task-progress.yaml` records P2 local knowledge management as completed on 2026-05-17.
+  - Human progress: `docs/task-progress.md` records P2 backend, frontend, file import, restore, and private compose smoke evidence.
+  - Current implementation has `WebResearchSource`, web-source retrieval hits/citations, `WEB_RESEARCH_STARTED` / `WEB_RESEARCH_COMPLETED` events, URL safety helper `_is_safe_research_url`, and a fake fixture provider isolated behind `knowledge.web_research_provider=fake`.
+  - Current fake fixture semantics explicitly set `grounding_provider=fake_web_fixture`, `fixture_grounded=true`, `verified_grounded=false`, and `grounding_verification_reason=fixture_web_not_verified`.
+  - Run Detail already displays web sources, fixture evidence, verified grounding, policy audits, retrieval hits, citations, and prompt manifests.
+- Progress conclusion:
+  - P3 may start from a verified P1/P2 foundation.
+  - The P3 blocker is no longer local knowledge lifecycle; it is provider selection/configuration, network safety policy, real-source snapshotting, and avoiding false verified-grounding claims.
+- P3 target:
+  - Add real external research only when a configured provider and policy boundary exist.
+  - Preserve "local evidence insufficient" behavior when real provider is disabled or policy blocks research.
+  - Replace user-facing fake web fallback with real-provider-only verified web grounding.
+  - Keep deterministic fake provider available only for tests and explicit fixture-mode development evidence.
+- Constraints:
+  - Do not present mock/fake web sources as real user evidence.
+  - Do not allow arbitrary crawling or private-network access.
+  - Do not add broad crawler infrastructure, browser automation, paid-network CI, or complex RBAC in P3.
+  - Continue using existing org/agent isolation and P2 lifecycle/audit records.
+  - Tests must not depend on live network or paid provider calls; use fake provider adapters and recorded fixtures.
+  - Provider credentials must be configuration/secret driven and redacted from audit/logs.
+- Unknowns/open questions:
+  - Final real provider choice and credential availability.
+  - Whether first P3 implementation should expose provider settings in Agent Studio or restrict them to environment/admin settings.
+  - Whether result snapshots should persist full extracted page text or bounded excerpts only.
+  - Whether approval behavior is automatic for low-risk allowlisted domains or requires a user/admin gate for all web research.
+- Likely codebase touchpoints:
+  - `services/api-server/app/knowledge.py`
+  - `services/api-server/app/api/agents.py`
+  - `services/api-server/app/api/schemas.py`
+  - `services/api-server/app/db/models.py`
+  - `services/api-server/app/events/event_types.py`
+  - `services/api-server/app/core/config.py`
+  - `services/api-server/app/sandbox/policies.py`
+  - `services/api-server/app/tools/http.py`
+  - `services/api-server/tests/test_knowledge_rag.py`
+  - `services/api-server/tests/test_agents.py`
+  - `services/api-server/tests/test_evals.py`
+  - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx`
+  - `apps/agent-console/src/features/agents/components/KnowledgeManagementPanel.tsx`
+  - `docs/runbooks/deployment.md`
+  - `docs/runbooks/troubleshooting.md`
+  - `docs/task-progress.md`
+  - `docs/ai/task-progress.yaml`
+  - `omx_wiki/agent-knowledge-harness-roadmap.md`
