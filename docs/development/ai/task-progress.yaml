@@ -4953,9 +4953,9 @@ post_stage_hardening:
 
   - id: git-history-opc-delivery-2026-08-16
     date: 2026-08-16
-    status: completed_rewrite_branch_pushed_pr_open_pending_merge
+    status: completed_rewrite_branch_pushed_pr_checks_passed_pending_merge
     demo: "Published a date-preserving rewritten delivery branch and a protected archive branch, then added a lightweight single-maintainer commit and PR standard without rewriting main or the original feature branch."
-    verification_result: "strict_history_manifest_remote_refs_local_policy_tests_docs_and_pr_creation_passed_ci_pending"
+    verification_result: "strict_history_manifest_remote_refs_local_policy_tests_docs_pr_creation_and_all_14_pr_checks_passed"
     verification_commands:
       - "strict manifest comparison -> 107/107 historical commits preserved identical trees, author dates, committer dates, and mapped parents"
       - "history shape comparison -> 107 commits / 9 merges / 73 first-parent commits preserved"
@@ -4966,12 +4966,14 @@ post_stage_hardening:
       - "git diff --check -> passed for newly added workflow and documentation commits"
       - "git ls-remote --heads origin -> main and original branch unchanged; archive and feat/platform-desktop-delivery published"
       - "GitHub PR #34 -> opened from feat/platform-desktop-delivery to main"
+      - "GitHub PR #34 checks on implementation head 78f96a9 -> 14/14 passed"
     acceptance_notes:
       - "Original feature tip 6796bfed9555ae5f8f09b5c0b26b8ab94330369c remains available on both codex/desktop-team-ai-provider and archive/2026-08-16-codex-desktop-team-ai-provider-before-rewrite."
       - "Rewritten historical tip is b5d04a5cd919e99b5c4432ba837320da71bd9cd3; the first workflow commit is 0f7ee3acc7f5dbdaa6f81ec3cd74c2211be9e772."
       - "Historical commit subjects use scoped Conventional Commits with an 88-character limit; bodies and file trees remain unchanged."
       - "Repository-native hooks perform staged whitespace and message checks; PR CI validates commit subjects and PR title without adding a third-party dependency."
-      - "No force push, branch deletion, main rewrite, or merge was performed. PR checks and merge remain separate gates."
+      - "No force push, branch deletion, main rewrite, or merge was performed. All 14 PR checks passed; merge remains a separately authorized gate."
+      - "Backend CI installs the uv.lock dependency graph with uv sync --frozen and runs commands through uv run --frozen, preventing framework drift between local and CI environments."
       - "GitHub push and PR event timestamps are platform events and cannot be backdated; Git author and committer timestamps are preserved exactly."
 
 stage_completion_rule:

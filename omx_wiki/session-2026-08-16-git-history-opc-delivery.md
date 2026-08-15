@@ -14,7 +14,7 @@ Tags: `git`, `history`, `delivery`, `opc`, `github`, `ci`
 - 只读回退分支 `archive/2026-08-16-codex-desktop-team-ai-provider-before-rewrite` 指向同一原始提交。
 - 新交付分支为 `feat/platform-desktop-delivery`。
 - 严格重排后的历史终点为 `b5d04a5cd919e99b5c4432ba837320da71bd9cd3`；新增工作流提交为 `0f7ee3acc7f5dbdaa6f81ec3cd74c2211be9e772`。
-- GitHub PR [#34](https://github.com/luohao0308/harness/pull/34) 已从新交付分支创建到 `main`，等待 CI 和合并决策。
+- GitHub PR [#34](https://github.com/luohao0308/harness/pull/34) 已从新交付分支创建到 `main`；实现 head `78f96a9` 的 14 项检查全部通过，等待独立合并决策。
 - `main` 仍为 `fa5425eb20bb8a011d134877009d921c06f4bf1e`；没有强推、删除旧分支、重写 `main` 或合并 PR。
 
 ## 严格保时边界
@@ -50,6 +50,8 @@ GitHub 的分支推送时间、Actions 时间和 PR 创建时间属于平台事�
 - 所有重排后的非 merge 标题和 PR 标题均通过同一校验器。
 - 文档结构校验、Markdown 本地链接校验和新增提交 whitespace 检查通过。
 - 远端四个关键 ref 已核对：`main`、原始分支未变化；归档分支和新交付分支已发布。
+- PR #34 在实现 head `78f96a9` 上的 14 项检查全部通过，包括 backend、frontend、Docker、迁移、文档、提交策略和 whitespace 门禁。
+- Backend CI 通过 `uv sync --frozen` 与 `uv run --frozen` 严格使用 `uv.lock`，避免 FastAPI 等依赖在本地与 CI 间漂移。
 
 ## 后续边界
 

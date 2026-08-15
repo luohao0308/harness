@@ -2,6 +2,7 @@
 
 ## 2026-08-16
 
+- Closed the PR #34 implementation gate on head `78f96a9`: all 14 checks passed after backend workflows were switched to the frozen `uv.lock` dependency graph, preventing FastAPI version drift while retaining compatibility coverage for the newer router representation. The PR remains open and unmerged pending a separately authorized merge decision.
 - Added [[session-2026-08-16-git-history-opc-delivery]] and refreshed [[project-handoff-current-state]], [[index]], `docs/TASKS.md`, and `docs/development/ai/task-progress.yaml`. Rewrote 107 historical commit subjects into scoped Conventional Commits while preserving every historical tree, author/committer timestamp, mapped parent, and all 9 merges; published `feat/platform-desktop-delivery` plus a rollback archive without changing `main` or the original branch; opened GitHub PR #34; and installed dependency-free local hooks plus CI commit/PR policy checks for a lightweight single-maintainer delivery flow.
 
 ## 2026-08-10
