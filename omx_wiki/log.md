@@ -1,5 +1,9 @@
 # Wiki Log
 
+## 2026-08-16
+
+- Added [[session-2026-08-16-git-history-opc-delivery]] and refreshed [[project-handoff-current-state]], [[index]], `docs/TASKS.md`, and `docs/development/ai/task-progress.yaml`. Rewrote 107 historical commit subjects into scoped Conventional Commits while preserving every historical tree, author/committer timestamp, mapped parent, and all 9 merges; published `feat/platform-desktop-delivery` plus a rollback archive without changing `main` or the original branch; opened GitHub PR #34; and installed dependency-free local hooks plus CI commit/PR policy checks for a lightweight single-maintainer delivery flow.
+
 ## 2026-08-10
 
 - Refreshed [[project-handoff-current-state]] and `docs/development/ai/task-progress.yaml` after fixing the packaged Desktop model-discovery `write EIO` chain. Trusted model IPC failures now stay renderer-local through a structured envelope, detached stdout/stderr `EIO`/`EPIPE` is guarded, discovery sends a stable Harness User-Agent, and sandbox preload remains self-contained. Desktop regression passed `37 files / 315 tests` plus a final `4 files / 26 tests`, backend local-runtime passed `40`, Ruff and builds passed, and live packaged smoke discovered `300` real models with zero renderer errors; the replacement LaunchServices process is running with `/dev/null` standard streams.

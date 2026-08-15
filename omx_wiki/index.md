@@ -1,8 +1,10 @@
 # Wiki Index
 
-> 60 pages | Last updated: 2026-08-13T23:59:00+08:00
+> 61 pages | Last updated: 2026-08-16T01:47:50+08:00
 
 ## session-log
+
+- [Git 历史重排与单维护者 OPC 交付](session-2026-08-16-git-history-opc-delivery.md) — 严格保留 107 个历史提交的 tree、作者/提交者时间和拓扑，发布新交付分支与回退归档，并建立无额外依赖的轻量提交、PR 和 CI 标准。
 
 - [Team 概览与 Agent 专注融合方案](session-2026-08-13-team-overview-focus-fusion.md) — 吸收参考截图的全局扫描与对话/任务并排思路，保留既有 Team 三视图，确定“协作概览 + 专注对话 + 按需任务图 + 多列专家模式”的双层融合方案。
 

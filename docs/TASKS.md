@@ -1,6 +1,6 @@
 # Task Board
 
-_last-updated: 2026-08-11_
+_last-updated: 2026-08-16_
 
 > **唯一用途**：记录当前进行中、明确待办、阻塞和技术债。稳定事实写入架构/设计文档，详细验证过程写入工作日志（如项目启用）。
 >
@@ -36,6 +36,7 @@ _last-updated: 2026-08-11_
 - [x] DW-001：安装 `dev-workflow v0.2.0` 全部流程包，完成项目画像、文档映射和接入审计；证据见 [WORKFLOW-ADOPTION.md](WORKFLOW-ADOPTION.md)。
 - [x] DW-002：按 dev-workflow 完成全仓文档分类、权威源去重、历史归档、任务审计和全量链接门禁；证据见 [实施计划](plans/documentation-reorganization-2026-08-10.md) 与 [Wiki 会话记录](../omx_wiki/session-2026-08-10-dev-workflow-install-and-docs.md)。
 - [x] DW-003：将统一文档与 Markdown 链接门禁接入 Docs CI，并由 `validate-docs.py` 锁定 CI 调用契约；证据见 [接入记录](WORKFLOW-ADOPTION.md)。
+- [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；新交付分支与归档分支已发布，PR #34 已创建，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
 
 ## 技术债 (Technical Debt)
 
