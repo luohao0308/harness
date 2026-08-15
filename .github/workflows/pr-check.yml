@@ -39,14 +39,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
       - name: Install backend
         working-directory: services/api-server
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --frozen --extra dev
       - name: Ruff
         working-directory: services/api-server
-        run: ruff check app tests
+        run: uv run --frozen ruff check app tests
 
   lint-frontend:
     runs-on: ubuntu-latest
@@ -96,6 +95,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -110,12 +110,10 @@ jobs:
         run: bash scripts/generate-test-saml-certs.sh services/api-server/certs
       - name: Install backend
         working-directory: services/api-server
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,sidecar]"
+        run: uv sync --frozen --extra dev --extra sidecar
       - name: Pytest
         working-directory: services/api-server
-        run: pytest
+        run: uv run --frozen pytest
 
   test-frontend:
     runs-on: ubuntu-latest
@@ -180,14 +178,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
       - name: Alembic upgrade head
         working-directory: services/api-server
         env:
           DATABASE_URL: postgresql+psycopg://harness:harness@localhost:5432/harness
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          alembic upgrade head
+          uv sync --frozen --extra dev
+          uv run --frozen alembic upgrade head
 
   docs-validation:
     runs-on: ubuntu-latest

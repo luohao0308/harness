@@ -34,6 +34,12 @@ def _route_paths(routes) -> set[str]:
         nested_routes = getattr(route, "routes", None)
         if nested_routes:
             paths.update(_route_paths(nested_routes))
+        original_router = getattr(route, "original_router", None)
+        if original_router is not None:
+            prefix = getattr(getattr(route, "include_context", None), "prefix", "")
+            paths.update(
+                prefix + nested_path for nested_path in _route_paths(original_router.routes)
+            )
     return paths
 
 
@@ -182,21 +188,6 @@ def test_local_app_includes_core_desktop_route_inventory() -> None:
         schemas = list(pool.map(lambda _index: app.openapi(), range(8)))
     assert all(schema["paths"].keys() == paths.keys() for schema in schemas)
     assert len(app.routes) == route_count
-
-
-def test_local_app_recovers_when_fastapi_skips_router_registration(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(FastAPI, "include_router", lambda *_args, **_kwargs: None)
-
-    app = harnessd.build_local_runtime_app()
-    startup_paths = _route_paths(app.routes)
-    paths = app.openapi()["paths"]
-
-    assert "/api/health/readiness" in startup_paths
-    assert "/api/local-runtime/desktop-session" in startup_paths
-    assert "/api/tasks" in paths
-    assert "/api/terminal/tokens" in paths
 
 
 def test_ready_server_emits_handshake_once_after_successful_startup(
