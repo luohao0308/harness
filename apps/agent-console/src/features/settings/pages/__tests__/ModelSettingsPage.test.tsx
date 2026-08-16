@@ -199,6 +199,17 @@ describe("ModelSettingsPage", () => {
     expect(screen.queryByRole("button", { name: /gpt-oss-120b 切换/ })).not.toBeInTheDocument();
   });
 
+  it("renders an allowed runtime model even when it is absent from the static catalog", async () => {
+    const settings = modelSettingsPayload(true);
+    settings.default_model = "runtime-only-model";
+    settings.providers[0].model = "runtime-only-model";
+    settings.providers[0].label = "runtime-only-model";
+    renderPage(fetchForSettings(settings));
+
+    expect(await screen.findByRole("button", { name: /平台托管模型.*1 个模型/ })).toBeInTheDocument();
+    expect(screen.getAllByText("runtime-only-model").length).toBeGreaterThan(0);
+  });
+
   it("does not advertise platform models before the backend allowlist loads", () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       if (requestPath(input) === "/api/settings/models") {

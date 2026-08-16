@@ -168,6 +168,46 @@ export function flattenModelCatalog(catalog = modelCatalog): ProviderConfig[] {
   );
 }
 
+export function buildRuntimeModelCatalog(
+  catalog: ModelCatalogProvider[],
+  providers: ProviderConfig[],
+): ModelCatalogProvider[] {
+  const platform = catalog.find((catalogProvider) => catalogProvider.managedByPlatform === true);
+  if (!platform) return catalog;
+
+  const runtimeModels = providers
+    .filter((provider) => provider.managed_by_platform === true)
+    .reduce<ModelCatalogModel[]>((models, provider) => {
+      const model = String(provider.model ?? "").trim();
+      if (!model || models.some((item) => item.model === model)) return models;
+      const known = platform.models.find((item) => item.model === model);
+      models.push(
+        known ?? {
+          model,
+          label: String(provider.label || model),
+          model_kind: String(provider.model_kind || "文本模型"),
+          model_context_window_tokens: Number(provider.model_context_window_tokens || 0) || undefined,
+          max_output_tokens: Number(provider.max_output_tokens || 0) || undefined,
+          rate_limit_rpm: Number(provider.rate_limit_rpm || 0) || undefined,
+          rate_limit_tpm: Number(provider.rate_limit_tpm || 0) || undefined,
+          timeout_seconds: Number(provider.timeout_seconds || 0) || undefined,
+          health_timeout_seconds: Number(provider.health_timeout_seconds || 0) || undefined,
+        },
+      );
+      return models;
+    }, []);
+
+  return catalog.map((catalogProvider) =>
+    catalogProvider.providerId === platform.providerId
+      ? {
+          ...catalogProvider,
+          baseUrl: String(providers.find((provider) => provider.managed_by_platform === true)?.base_url || catalogProvider.baseUrl),
+          models: runtimeModels,
+        }
+      : catalogProvider,
+  );
+}
+
 export function catalogProviderModelToProvider(
   catalogProvider: ModelCatalogProvider,
   model: ModelCatalogModel,

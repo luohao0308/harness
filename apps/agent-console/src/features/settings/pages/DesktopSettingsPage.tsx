@@ -220,6 +220,7 @@ function ModelAndKeySettings() {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<string[]>([]);
+  const [modelsBaseUrl, setModelsBaseUrl] = useState("");
   const [initialized, setInitialized] = useState(false);
   const baseUrlDirty = useRef(false);
   const modelDirty = useRef(false);
@@ -263,6 +264,7 @@ function ModelAndKeySettings() {
 
   const applyDiscoveryResult = (result: { models: string[]; durationMs: number }) => {
     setModels(result.models);
+    setModelsBaseUrl(normalizeBaseUrlForComparison(baseUrl));
     if (!model.trim() && result.models[0]) setModel(result.models[0]);
     setFeedback({
       tone: "success",
@@ -286,6 +288,9 @@ function ModelAndKeySettings() {
       const nextStatus = await localRuntime.saveModelConfiguration({
         baseUrl: validateBaseUrl(baseUrl),
         model: model.trim(),
+        ...(modelsBaseUrl === normalizeBaseUrlForComparison(baseUrl) && models.includes(model.trim())
+          ? { models }
+          : {}),
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
       queryClient.setQueryData(["local-runtime", "model-status"], nextStatus);
@@ -294,6 +299,10 @@ function ModelAndKeySettings() {
     onSuccess: async (nextStatus) => {
       setBaseUrl(nextStatus.base_url);
       setModel(nextStatus.model);
+      if (modelsBaseUrl !== normalizeBaseUrlForComparison(nextStatus.base_url) || !models.includes(nextStatus.model)) {
+        setModels([]);
+        setModelsBaseUrl("");
+      }
       setApiKey("");
       setFeedback({ tone: "success", text: "模型配置已保存，新的任务将使用当前默认模型。" });
       await status.refetch();
@@ -342,7 +351,12 @@ function ModelAndKeySettings() {
               value={baseUrl}
               onChange={(event) => {
                 baseUrlDirty.current = true;
-                setBaseUrl(event.target.value);
+                const nextBaseUrl = event.target.value;
+                setBaseUrl(nextBaseUrl);
+                if (normalizeBaseUrlForComparison(nextBaseUrl) !== modelsBaseUrl) {
+                  setModels([]);
+                  setModelsBaseUrl("");
+                }
               }}
               placeholder="https://api.example.com/v1"
               className="min-w-0 flex-1 font-mono text-xs"
@@ -459,6 +473,10 @@ function validateBaseUrl(value: string) {
     throw new Error("INVALID_BASE_URL");
   }
   return normalized;
+}
+
+function normalizeBaseUrlForComparison(value: string) {
+  return value.trim().replace(/\/+$/, "");
 }
 
 function modelConnectionErrorMessage(error: unknown) {

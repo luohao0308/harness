@@ -44,8 +44,8 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 |---|---|---|---|---|---|---|
 | S1 | 模型目录随 Desktop 配置安全持久化并进入 bootstrap | preload、IPC、secure profile | 无 | Desktop 单元测试与主进程构建 | 移除新增目录字段，旧 profile 仍兼容 | completed |
 | S2 | 后端使用动态目录作为 allowlist | local runtime API、bootstrap、settings | S1 | 后端定向测试与 Ruff | 缺失目录时保留单模型 fail-closed | completed |
-| S3 | 设置页保存并展示动态目录 | Desktop settings、Model Settings | S2 | Vitest、lint、build | 保留原保存路径，目录字段可省略 | in_progress |
-| S4 | 完整回归、桌面冒烟与交付 | tests、docs、Desktop package、Git | S1-S3 | 检测/保存/重启/随机消息和交付门禁 | 回退本计划提交，不迁移用户数据 | pending |
+| S3 | 设置页保存并展示动态目录 | Desktop settings、Model Settings | S2 | Vitest、lint、build | 保留原保存路径，目录字段可省略 | completed |
+| S4 | 完整回归、桌面冒烟与交付 | tests、docs、Desktop package、Git | S1-S3 | 检测/保存/重启/随机消息和交付门禁 | 回退本计划提交，不迁移用户数据 | in_progress |
 
 ## 5. 原则与决策
 
@@ -78,15 +78,16 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 
 ### S3：动态设置页
 
-- 状态：in_progress
+- 状态：completed
 - 修改范围：Desktop 设置页、模型设置页、目录工具和测试。
 - 步骤：绑定检测结果与规范化 Base URL；Save 发送可信目录；后端行驱动可用模型展示。
 - 切片验收：Base URL 变化清空旧目录；新模型可选；不可用旧模型不显示。
+- 验证证据：DesktopSettingsPage/ModelSettingsPage -> 2 files / 27 tests passed；`npm run lint -- --pretty false` -> passed；`npm run build` -> passed（2414 modules）。
 - 回退点：可省略目录字段，保存继续兼容单模型模式。
 
 ### S4：集成验证与交付
 
-- 状态：pending
+- 状态：in_progress
 - 修改范围：回归、Desktop 运行、文档和 Git。
 - 步骤：完整质量门禁；桌面实机检测、保存、重启、随机消息；按切片提交并推送。
 - 切片验收：全部命令和实机证据通过，无凭据进入 Git 或输出。
@@ -94,7 +95,7 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 
 ## 7. 偏移控制
 
-- 当前允许修改的切片范围：S3 动态设置页。
+- 当前允许修改的切片范围：S4 集成验证与交付。
 - 跨切片共享前置修改：仅新增可选字段和测试夹具。
 - 需要重新确认的变化：引入自动联网、额外数据存储、公共 API 破坏性变化或新的密钥处理方式。
 - 不需要重新确认的变化：字段命名、校验帮助函数和测试组织等切片内部细节。

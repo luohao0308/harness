@@ -38,6 +38,7 @@ import {
 import { formatShortDate } from "../../../lib/utils";
 import {
   buildSwitchboardRows,
+  buildRuntimeModelCatalog,
   emptyProvider,
   findConfiguredProviderForModel,
   groupProvidersByVendor,
@@ -130,13 +131,11 @@ export function ModelSettingsPage() {
         .map((provider) => String(provider.model ?? ""))
         .filter(Boolean),
     );
-    return modelCatalog.map((catalogProvider) =>
+    return buildRuntimeModelCatalog(modelCatalog, providers).map((catalogProvider) =>
       catalogProvider.managedByPlatform
         ? {
             ...catalogProvider,
-            models: catalogProvider.models.filter((model) =>
-              allowedPlatformModels.has(model.model),
-            ),
+            models: catalogProvider.models.filter((model) => allowedPlatformModels.has(model.model)),
           }
         : catalogProvider,
     );

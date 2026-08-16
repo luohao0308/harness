@@ -169,10 +169,25 @@ describe("DesktopSettingsPage", () => {
     await waitFor(() => expect(window.desktopApi?.localRuntime?.saveModelConfiguration).toHaveBeenCalledWith({
       baseUrl: "https://models.example/v1",
       model: "model-beta",
+      models: ["model-alpha", "model-beta"],
       apiKey: "sk-replacement",
     }));
     expect(screen.getByLabelText("API Key")).toHaveValue("");
     expect(screen.getByRole("status")).toHaveTextContent("模型配置已保存");
+  });
+
+  it("clears a discovered catalog when the Base URL changes", async () => {
+    renderPage("/desktop?section=models");
+
+    await screen.findByDisplayValue("shipped-model");
+    await userEvent.click(screen.getByRole("button", { name: "获取模型列表" }));
+    expect(document.querySelector('datalist#desktop-discovered-models option[value="model-alpha"]')).not.toBeNull();
+
+    const baseUrl = screen.getByLabelText("Base URL");
+    await userEvent.clear(baseUrl);
+    await userEvent.type(baseUrl, "https://other.example/v1");
+
+    expect(document.querySelector('datalist#desktop-discovered-models option[value="model-alpha"]')).toBeNull();
   });
 
   it("omits an empty API Key so saving preserves the existing secret", async () => {
