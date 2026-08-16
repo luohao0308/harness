@@ -1,10 +1,11 @@
 # Wiki Index
 
-> 63 pages | Last updated: 2026-08-16T21:16:00+08:00
+> 64 pages | Last updated: 2026-08-16T23:33:33+08:00
 
 ## session-log
 
-- [Desktop 已验证模型目录收敛](session-2026-08-16-desktop-verified-model-catalog.md) — 将 Desktop 默认服务、模型目录和本地运行时 allowlist 收敛到 5 个真实调用验证通过的模型，旧目录中的未验证模型不再展示。
+- [Desktop 动态模型目录与重启持久化](session-2026-08-16-desktop-dynamic-model-catalog.md) — 模型目录由显式发现结果驱动，安全持久化并在重启后恢复；高级设置页展示服务端动态 allowlist。
+- [Desktop 已验证模型目录收敛](session-2026-08-16-desktop-verified-model-catalog.md) — 历史记录：将 Desktop 默认服务、模型目录和本地运行时 allowlist 收敛到 5 个真实调用验证通过的模型。
 
 - [大型计划自动拆分与用户确认门](session-2026-08-16-large-plan-decomposition-gate.md) — 大型计划在实现前自动拆成 2–6 个可验证切片并等待用户确认，确认后单切片连续执行，范围或风险实质变化时重新确认。
 

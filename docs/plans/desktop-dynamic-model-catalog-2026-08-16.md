@@ -1,6 +1,6 @@
 # Desktop 动态模型目录实施计划
 
-_状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联设计：[Desktop 模型目录记录](../../omx_wiki/session-2026-08-16-desktop-verified-model-catalog.md)_
+_状态：completed | 更新：2026-08-16 | 关联任务：DESK-002 | 关联设计：[Desktop 动态模型目录记录](../../omx_wiki/session-2026-08-16-desktop-dynamic-model-catalog.md)_
 
 ## 1. 目标、成功标准与停止条件
 
@@ -45,7 +45,7 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 | S1 | 模型目录随 Desktop 配置安全持久化并进入 bootstrap | preload、IPC、secure profile | 无 | Desktop 单元测试与主进程构建 | 移除新增目录字段，旧 profile 仍兼容 | completed |
 | S2 | 后端使用动态目录作为 allowlist | local runtime API、bootstrap、settings | S1 | 后端定向测试与 Ruff | 缺失目录时保留单模型 fail-closed | completed |
 | S3 | 设置页保存并展示动态目录 | Desktop settings、Model Settings | S2 | Vitest、lint、build | 保留原保存路径，目录字段可省略 | completed |
-| S4 | 完整回归、桌面冒烟与交付 | tests、docs、Desktop package、Git | S1-S3 | 检测/保存/重启/随机消息和交付门禁 | 回退本计划提交，不迁移用户数据 | in_progress |
+| S4 | 完整回归、桌面冒烟与交付 | tests、docs、Desktop package、Git | S1-S3 | 检测/保存/重启/随机消息和交付门禁 | 回退本计划提交，不迁移用户数据 | completed |
 
 ## 5. 原则与决策
 
@@ -87,10 +87,11 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 
 ### S4：集成验证与交付
 
-- 状态：in_progress
+- 状态：completed
 - 修改范围：回归、Desktop 运行、文档和 Git。
 - 步骤：完整质量门禁；桌面实机检测、保存、重启、随机消息；按切片提交并推送。
 - 切片验收：全部命令和实机证据通过，无凭据进入 Git 或输出。
+- 验证证据：后端全量 `1544 passed`；Desktop `38 files / 326 tests passed`；Console 模型/桌面定向 `43 passed`，隔离 `workspaceScope` `2 passed`；Console lint/build 与 Desktop package 通过；新包发现 6 模型、保存后 Settings 6 模型、重启恢复 6 模型、随机中文消息返回非空回复。
 - 回退点：使用切片提交独立 revert；profile 新字段被旧版本忽略。
 
 ## 7. 偏移控制
@@ -127,16 +128,16 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 
 ## 11. 文档同步
 
-- [ ] `TASKS.md` / 上下文
+- [x] `TASKS.md` / 上下文
 - [ ] `PROJECT-SUMMARY.md`
 - [ ] 架构/ADR
 - [ ] 设计/契约/生成物
-- [ ] Runbook/工作日志
+- [x] Runbook/工作日志
 
 ## 12. 完成定义
 
 - [x] 大型计划已获得用户确认并记录切片版本。
-- [ ] 所有切片验收通过，且过程状态按顺序更新。
-- [ ] 适用测试、构建、重启和冒烟通过。
-- [ ] 契约、文档和长期知识已同步。
-- [ ] 最终证据、SHA/产物身份和剩余风险已记录。
+- [x] 所有切片验收通过，且过程状态按顺序更新。
+- [x] 适用测试、构建、重启和冒烟通过。
+- [x] 契约、文档和长期知识已同步。
+- [x] 最终证据、SHA/产物身份和剩余风险已记录。

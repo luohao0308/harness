@@ -77,12 +77,16 @@ export function setLocalRuntimeModelApiKey(value: string): LocalRuntimeSecretSta
 
 export function persistLocalRuntimeModelConfiguration(
   status: LocalRuntimeModelStatus,
-  input: Pick<LocalRuntimeModelConfigInput, 'apiKey' | 'models'>,
+  input: Pick<LocalRuntimeModelConfigInput, 'baseUrl' | 'model' | 'apiKey' | 'models'>,
 ): LocalRuntimeSecretStatus {
   const persisted = readPersistedSecrets()
+  const sameModelConfiguration = persisted.modelBaseUrl === status.base_url
+    && persisted.modelName === status.model
   persisted.modelBaseUrl = status.base_url
   persisted.modelName = status.model
-  persisted.modelIds = input.models ?? [status.model]
+  persisted.modelIds = input.models ?? (sameModelConfiguration && persisted.modelIds?.includes(status.model)
+    ? persisted.modelIds
+    : [status.model])
 
   if (Object.prototype.hasOwnProperty.call(input, 'apiKey')) {
     const modelApiKey = input.apiKey?.trim() || ''

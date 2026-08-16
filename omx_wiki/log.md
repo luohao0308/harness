@@ -2,6 +2,8 @@
 
 ## 2026-08-16
 
+- Added [[session-2026-08-16-desktop-dynamic-model-catalog]] and refreshed the implementation plan, Task Board, handoff, and machine progress. Desktop now persists explicit model discovery results, removes provider-specific allowlist hardcoding, renders backend-discovered IDs such as `glm-5.2`, and restores the six-model catalog after restart. Backend `1544` tests, Desktop `326`, Console targeted `43`, lint/build, package, live save/restart, and random-message smoke passed; isolated `workspaceScope` rerun passed `2/2`.
+
 - Added [[session-2026-08-16-desktop-verified-model-catalog]] and refreshed `docs/development/ai/task-progress.yaml`. Desktop and platform model settings now default to `https://ai.112102.xyz/v1` / `minimax-m3`, retain a five-model verified allowlist with singleton fallback for custom or unknown IDs, and remove the previous unverified platform entries. Live discovery/calls, restart persistence, backend `62 + 60` tests, frontend model settings `13` tests, and diff checks passed; the API key remains only in Electron secure storage.
 
 - Added [[session-2026-08-16-large-plan-decomposition-gate]] and a `large-plan-decomposition` context route. Large plans now stop before implementation, present 2-6 ordered slices for user approval, run exactly one approved slice at a time, auto-continue after slice validation, and re-confirm only for material scope, ordering, interface, migration, or risk drift; docs validation locks the contract across AGENTS, execution protocol, plan sources, and context routing.

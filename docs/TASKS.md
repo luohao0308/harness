@@ -15,7 +15,6 @@ _last-updated: 2026-08-16_
 
 | ID | 任务 | 范围/仓库 | 上下文 | 阻塞 |
 |---|---|---|---|---|
-| DESK-002 | [~] 将 Desktop 模型目录改为检测后持久化的动态 allowlist | Desktop IPC/profile、local runtime、设置页 | [实施计划](plans/desktop-dynamic-model-catalog-2026-08-16.md) | 无 |
 | REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [启动性能记录](../omx_wiki/session-2026-07-31-desktop-startup-performance-budget.md) | 本地 native ABI/审批服务不能替代正式 Release CI 证据 |
 
 ## 待办 (Todo)
@@ -39,6 +38,7 @@ _last-updated: 2026-08-16_
 - [x] DW-003：将统一文档与 Markdown 链接门禁接入 Docs CI，并由 `validate-docs.py` 锁定 CI 调用契约；证据见 [接入记录](WORKFLOW-ADOPTION.md)。
 - [x] GIT-001：以严格保留历史作者/提交者时间和文件树的方式重排线上功能分支，并建立轻量单维护者 OPC 提交流程；PR #34 已在 14 项检查通过后合并，原功能分支通过精确租约更新到已验证历史，独立归档仍保留原始 tip，证据见 [Git 历史与 OPC 交付记录](../omx_wiki/session-2026-08-16-git-history-opc-delivery.md)。
 - [x] WF-001：建立大型计划自动拆分与用户确认门；AI 在实现前列出 `2-6` 个可验证切片并等待一次确认，确认后单切片连续执行，范围或风险实质变化时重新确认，证据见 [大型计划拆分门记录](../omx_wiki/session-2026-08-16-large-plan-decomposition-gate.md)。
+- [x] DESK-002：将 Desktop 模型目录改为检测后持久化的动态 allowlist；后端、设置页、高级模型目录和重启/真实消息冒烟已验证，证据见 [实施计划](plans/desktop-dynamic-model-catalog-2026-08-16.md) 与 [动态目录记录](../omx_wiki/session-2026-08-16-desktop-dynamic-model-catalog.md)。
 
 ## 技术债 (Technical Debt)
 

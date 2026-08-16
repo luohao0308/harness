@@ -159,7 +159,10 @@ def apply_model_config(
             ai_provider_base_url=base_url,
             model_gateway_base_url=base_url,
         )
-    identity_changed = payload.base_url is not None or payload.model is not None
+    identity_changed = (
+        base_url != settings.ai_provider_base_url.rstrip("/")
+        or model != settings.ai_provider_model
+    )
     if payload.model is not None:
         try:
             model = validate_model_id(payload.model)

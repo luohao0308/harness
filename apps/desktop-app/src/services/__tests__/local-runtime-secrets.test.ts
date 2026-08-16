@@ -45,7 +45,10 @@ describe('local runtime secret storage', () => {
     }))
     mockElectron(true)
     const secrets = await import('../local-runtime-secrets')
-    secrets.persistLocalRuntimeModelConfiguration(modelStatus(), {})
+    secrets.persistLocalRuntimeModelConfiguration(modelStatus(), {
+      baseUrl: 'https://provider.example/v1',
+      model: 'provider-model',
+    })
 
     vi.resetModules()
     mockElectron(true)
@@ -139,6 +142,26 @@ describe('local runtime secret storage', () => {
       model_name: 'provider-model',
       model_ids: ['provider-model', 'input-model'],
     })
+  })
+
+  test('keeps a saved catalog when saving the same model configuration without a new discovery', async () => {
+    mockElectron(true)
+    const secrets = await import('../local-runtime-secrets')
+    secrets.persistLocalRuntimeModelConfiguration(modelStatus(), {
+      baseUrl: 'https://provider.example/v1',
+      model: 'provider-model',
+      models: ['provider-model', 'provider-pro'],
+    })
+
+    secrets.persistLocalRuntimeModelConfiguration(modelStatus(), {
+      baseUrl: 'https://provider.example/v1',
+      model: 'provider-model',
+    })
+
+    expect(secrets.createLocalRuntimeBootstrapSecrets().model_ids).toEqual([
+      'provider-model',
+      'provider-pro',
+    ])
   })
 
   test('rejects untrusted model catalogs before calling the local runtime', async () => {

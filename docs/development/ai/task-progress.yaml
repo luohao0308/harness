@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-08-16T21:16:00+08:00
+last_updated_at: 2026-08-16T23:33:33+08:00
 last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/development/ai/task-progress.yaml
@@ -5000,23 +5000,30 @@ post_stage_hardening:
       - "Exactly one slice may be in_progress, and material scope/order/interface/migration/risk changes require a revised decomposition and another confirmation."
       - "The lightweight OPC default remains one branch and one PR for the whole plan; multiple PRs are reserved for independently shippable or risk-isolated slices."
 
-  - id: desktop-verified-model-catalog-2026-08-16
+  - id: desktop-dynamic-model-catalog-2026-08-16
     date: 2026-08-16
     status: completed
-    demo: "Desktop and platform model settings now use the verified ai.112102.xyz provider catalog, default to minimax-m3, and expose only the five models confirmed by live calls for the configured key."
-    verification_result: "backend_local_runtime_settings_frontend_catalog_and_live_desktop_model_smoke_passed"
+    demo: "Desktop now persists the model directory returned by an explicit provider discovery, boots the local runtime with that dynamic allowlist, and shows only backend-allowed models while retaining a fail-closed singleton fallback."
+    verification_result: "dynamic_catalog_contract_full_regression_frontend_build_packaged_desktop_save_restart_and_random_message_smoke_passed"
     verification_commands:
-      - "cd services/api-server && .venv/bin/python -m pytest tests/test_settings.py tests/test_local_runtime_bootstrap.py -q -> 62 passed"
-      - "cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py tests/test_team_model_runtime.py -q -> 60 passed"
-      - "cd apps/agent-console && npx vitest run src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx --reporter=dot -> 13 passed"
-      - "live Desktop discovery -> 5 models returned; each model produced HTTP 200, Run COMPLETED, and a successful ModelCall"
-      - "live Desktop restart smoke -> minimax-m3 restored with persistent secure storage and base URL https://ai.112102.xyz/v1"
-      - "live Desktop random-message smoke -> minimax-m3 returned a non-empty Chinese response; Run COMPLETED and ModelCall SUCCESS"
+      - "cd services/api-server && .venv/bin/python -m pytest tests -q -> 1544 passed"
+      - "cd services/api-server && .venv/bin/python -m ruff check app tests -> passed"
+      - "cd apps/agent-console && npx vitest run src/features/settings/pages/__tests__/DesktopSettingsPage.test.tsx src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx src/features/tasks/__tests__/api.test.ts --reporter=dot -> 43 passed"
+      - "cd apps/agent-console && npm run lint -- --pretty false && npm run build -> passed; 2414 modules"
+      - "cd apps/desktop-app && npm test -- --run -> 38 files / 326 tests passed"
+      - "cd apps/desktop-app && npm run build:main -> passed"
+      - "cd apps/desktop-app && npm run package -- --config.directories.output=release-dynamic-model-catalog -> passed"
+      - "packaged Desktop discovery -> 6 models returned, including runtime-only glm-5.2; no provider key was logged"
+      - "packaged Desktop save -> backend model settings returned the same six model IDs with default minimax-m3"
+      - "packaged Desktop restart -> loopback origin changed and the same six-model catalog/default restored"
+      - "packaged Desktop random-message smoke -> random Chinese prompt returned a non-empty natural response"
+      - "python3 scripts/validate-docs.py -> passed"
       - "git diff --check -> passed"
     acceptance_notes:
-      - "Verified model IDs are deepseek-v4-flash, gpt-oss-120b, mimo-v2.5, minimax-m3, and nvidia-gpt-oss."
-      - "The local runtime keeps the verified five-model allowlist for the provider URL; custom URLs and unknown manual IDs remain singleton allowlists, so the change does not widen arbitrary providers."
-      - "The frontend catalog removes the previous seven unverified platform entries and continues to intersect with the backend allowlist before rendering."
+      - "The discovered catalog is optional in the Electron contract, validated and deduplicated in the main process and backend, bounded to 300 safe model IDs, and persisted atomically in the existing 0600 profile."
+      - "Base URL/model changes without a matching fresh catalog fail closed to the selected model; saving the same identity without rediscovery preserves the existing catalog."
+      - "The advanced model page builds its platform catalog from backend provider rows, using static metadata only for friendly labels and allowing unknown runtime IDs such as glm-5.2."
+      - "Discovery is explicit and never runs automatically during startup; failed probes do not overwrite the last saved catalog."
       - "The API key remains outside the repository and is read only from the existing Electron secure-storage profile."
 
 stage_completion_rule:

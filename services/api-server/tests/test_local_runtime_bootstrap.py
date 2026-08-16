@@ -372,6 +372,26 @@ def test_model_config_preserves_catalog_for_key_only_update(local_settings) -> N
     assert get_settings().ai_provider_models == ("minimax-m3", "minimax-m3-fast")
 
 
+def test_model_config_preserves_catalog_when_identity_is_unchanged(local_settings) -> None:
+    installed = local_settings.model_copy(
+        update={"ai_provider_models": ("minimax-m3", "minimax-m3-fast")}
+    )
+    install_runtime_settings(installed)
+    client = TestClient(app, base_url="http://127.0.0.1:8000")
+
+    response = client.put(
+        "/api/local-runtime/model-config",
+        headers={"X-Harness-Desktop-Bootstrap": installed.local_desktop_bootstrap_token},
+        json={
+            "base_url": installed.ai_provider_base_url,
+            "model": installed.ai_provider_model,
+        },
+    )
+
+    assert response.status_code == 200
+    assert get_settings().ai_provider_models == ("minimax-m3", "minimax-m3-fast")
+
+
 def _install_discovery_transport(monkeypatch, handler):
     real_client = httpx.Client
     client_options: dict[str, object] = {}
