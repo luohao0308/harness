@@ -1,0 +1,17 @@
+[Unit]
+Description=Agent Harness Team Runtime Worker
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-harness/services/api-server
+EnvironmentFile=-/etc/agent-harness/api.env
+ExecStart=/opt/agent-harness/services/api-server/.venv/bin/python -m app.workers.team_runtime_worker
+Restart=always
+RestartSec=5
+User=agent-harness
+Group=agent-harness
+
+[Install]
+WantedBy=multi-user.target

@@ -15,6 +15,29 @@ PLANNER_PROMPT_VERSION = "1.1.0"
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 ALLOWED_FANOUT_AGGREGATIONS = {"synthesizer_chain", "concat", "first_success"}
 ALLOWED_EXECUTION_MODES = {"sync", "async", "langgraph_node"}
+EXPERT_REVIEW_MARKERS = {
+    "review",
+    "audit",
+    "expert",
+    "risk",
+    "compliance",
+    "safety",
+    "logic",
+    "session",
+    "conversation",
+    "审查",
+    "评审",
+    "审核",
+    "专家",
+    "风险",
+    "合规",
+    "安全",
+    "逻辑",
+    "会话",
+}
+SPECIALIST_PLAN_REPAIR_WARNING = (
+    "计划目标需要专家证据但模型未包含异步子 Agent 步骤，已自动补充专家审查步骤。"
+)
 
 
 class DeterministicPlanner:
@@ -23,7 +46,12 @@ class DeterministicPlanner:
 
     def create_plan(self, task: Task, model_content: str | None = None) -> ExecutionPlan:
         if model_content:
-            plan = self.parse_model_plan(model_content, planner_source="llm", planner_attempts=1)
+            plan = self.parse_model_plan(
+                model_content,
+                planner_source="llm",
+                planner_attempts=1,
+                task=task,
+            )
             if plan is not None:
                 return plan
         return self._deterministic_plan(task)
@@ -34,12 +62,16 @@ class DeterministicPlanner:
         *,
         planner_source: str,
         planner_attempts: int,
+        task: Task | None = None,
     ) -> ExecutionPlan | None:
-        return self._plan_from_model_content(
+        plan = self._plan_from_model_content(
             model_content,
             planner_source=planner_source,
             planner_attempts=planner_attempts,
         )
+        if plan is None:
+            return None
+        return self._finalize_plan(task, plan)
 
     def _deterministic_plan(self, task: Task) -> ExecutionPlan:
         goal_text = f"{task.title} {task.goal}".lower()
@@ -106,7 +138,7 @@ class DeterministicPlanner:
             planner_source="deterministic",
             planner_attempts=1,
         )
-        return self._with_quality_report(plan)
+        return self._finalize_plan(task, plan)
 
     def _plan_from_model_content(
         self,
@@ -130,7 +162,66 @@ class DeterministicPlanner:
             plan = ExecutionPlan.model_validate(normalized)
         except ValidationError:
             return None
+        return plan
+
+    def _finalize_plan(self, task: Task | None, plan: ExecutionPlan) -> ExecutionPlan:
+        if task is not None:
+            plan = self._with_required_specialist_steps(task, plan)
         return self._with_quality_report(plan)
+
+    def _with_required_specialist_steps(self, task: Task, plan: ExecutionPlan) -> ExecutionPlan:
+        if task.max_subagents <= 0:
+            return plan
+        if not self._task_requires_specialist_evidence(task):
+            return plan
+        if any(
+            step.execution_mode == "async"
+            and (
+                step.can_spawn_subagent
+                or step.recommended_specialist_slug
+                or step.fanout_specialist_slugs
+            )
+            for step in plan.steps
+        ):
+            return plan
+
+        existing_keys = {step.key for step in plan.steps}
+        step_key = self._deduplicate_step_key(key="expert_review", seen_keys=set(existing_keys))
+        fanout_slugs = (
+            ["code-reviewer", "safety-checker"] if task.max_subagents >= 2 else []
+        )
+        specialist_step = PlanStep(
+            key=step_key,
+            description=(
+                "Run an independent expert subagent review for the requested session logic, "
+                "risks, and acceptance evidence."
+            ),
+            execution_mode="async",
+            requires_sandbox=False,
+            can_spawn_subagent=True,
+            recommended_specialist_slug="code-reviewer",
+            fanout_specialist_slugs=fanout_slugs,
+            fanout_aggregation="synthesizer_chain",
+            depends_on=[],
+            expected_events=["STEP_STARTED", "SUBAGENT_SPAWNED", "STEP_COMPLETED"],
+            tool_hints=[],
+            acceptance_criteria=["专家子 Agent 写入结构化审查证据。"],
+            risk_level="medium",
+            artifact_expectations=["专家审查证据"],
+            quality_notes=["由 Harness 规划约束自动补充，避免专家证据为空。"],
+            timeout_seconds=300,
+        )
+        payload = plan.model_dump()
+        payload["steps"] = [*payload["steps"], specialist_step.model_dump()]
+        warnings = list(payload.get("validation_warnings") or [])
+        if SPECIALIST_PLAN_REPAIR_WARNING not in warnings:
+            warnings.append(SPECIALIST_PLAN_REPAIR_WARNING)
+        payload["validation_warnings"] = warnings
+        return ExecutionPlan.model_validate(payload)
+
+    def _task_requires_specialist_evidence(self, task: Task) -> bool:
+        task_text = f"{task.title or ''} {task.goal or ''}".casefold()
+        return any(marker.casefold() in task_text for marker in EXPERT_REVIEW_MARKERS)
 
     def _parse_model_json(self, model_content: str) -> dict[str, Any] | None:
         text = model_content.strip()
@@ -252,7 +343,7 @@ class DeterministicPlanner:
         }
 
     def _with_quality_report(self, plan: ExecutionPlan) -> ExecutionPlan:
-        warnings: list[str] = []
+        warnings: list[str] = list(plan.validation_warnings)
         steps = plan.steps
         step_count = len(steps)
         async_steps = [step for step in steps if step.execution_mode == "async"]

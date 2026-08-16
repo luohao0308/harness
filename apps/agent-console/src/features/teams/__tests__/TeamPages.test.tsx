@@ -10,12 +10,14 @@ import type {
   Team,
   TeamAgent,
   TeamEvent,
+  TeamGoal,
   TeamMailboxMessage,
   TeamMessageMode,
   TeamTask,
 } from "../../tasks/api";
 import { TeamListPage } from "../pages/TeamListPage";
 import { applyTeamEventToTeam, TeamPage } from "../pages/TeamPage";
+import { buildTeamTaskGraphLayout } from "../pages/TeamPage/DesktopTeamTaskGraph";
 
 const apiBaseUrl = "http://127.0.0.1:8000";
 const now = "2026-05-23T08:00:00Z";
@@ -152,6 +154,34 @@ function teamEvent(overrides: Partial<TeamEvent>): TeamEvent {
   };
 }
 
+function teamGoal(overrides: Partial<TeamGoal> = {}): TeamGoal {
+  return {
+    id: "goal-1",
+    team_id: "team-1",
+    organization_id: "dev-org",
+    status: "active",
+    objective: "让团队自主推进目标",
+    non_goals_json: ["不要加依赖"],
+    acceptance_criteria_json: ["必须有验证"],
+    supervision_policy_json: {},
+    correction_budget_json: { max_interventions: 3 },
+    progress_json: {
+      phase: "running",
+      open_task_count: 1,
+      completed_task_count: 0,
+      drift_count: 0,
+      intervention_count: 0,
+      budget_remaining: 3,
+    },
+    supervisor_state_json: {},
+    version: 1,
+    created_at: now,
+    updated_at: now,
+    completed_at: null,
+    ...overrides,
+  };
+}
+
 function teamFixture(overrides: Partial<Team> = {}): Team {
   const leader = teamAgent({
     id: "leader-agent",
@@ -201,6 +231,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
     agents: [leader, product, ui],
     messages: [message],
     tasks: [task],
+    active_goal: teamGoal(),
     unread_counts: { product: 1 },
     team_tools: ["team_send_message", "team_task_create", "team_task_update", "team_members"],
     created_at: now,
@@ -517,6 +548,28 @@ function routeTeamApis(state: TeamState) {
       return jsonResponse(clone(task));
     }
 
+    const goalPatchMatch = path.match(/^\/api\/teams\/([^/]+)\/goals\/([^/]+)$/);
+    if (goalPatchMatch && method === "PATCH") {
+      const team = state.teams.find((candidate) => candidate.id === goalPatchMatch[1]);
+      if (!team?.active_goal || team.active_goal.id !== goalPatchMatch[2]) {
+        return jsonResponse({ detail: "not found" }, 404);
+      }
+      const previousGoal = team.active_goal;
+      const payload = parseBody<Partial<TeamGoal>>(init);
+      const updatedGoal = {
+        ...previousGoal,
+        ...payload,
+        objective: payload.objective ?? previousGoal.objective,
+        version: previousGoal.version + 1,
+        updated_at: now,
+      };
+      team.active_goal = updatedGoal;
+      if (updatedGoal.status === "completed" || updatedGoal.status === "blocked") {
+        team.active_goal = null;
+      }
+      return jsonResponse(clone(updatedGoal));
+    }
+
     const agentsMatch = path.match(/^\/api\/teams\/([^/]+)\/agents$/);
     if (agentsMatch && method === "POST") {
       const team = state.teams.find((candidate) => candidate.id === agentsMatch[1]);
@@ -673,6 +726,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete (window as unknown as { desktopApi?: unknown }).desktopApi;
+  window.localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -851,6 +906,24 @@ describe("Team pages", () => {
     expect(await screen.findByText("打开团队详情")).toBeInTheDocument();
   });
 
+  it("opens the first active Team directly in desktop runtime", async () => {
+    (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+    const state = stateFixture();
+    const fetchMock = routeTeamApis(state);
+
+    renderWithClient(
+      <Routes>
+        <Route path="/teams" element={<TeamListPage />} />
+        <Route path="/teams/:teamId" element={<div>桌面团队详情</div>} />
+      </Routes>,
+      fetchMock,
+      ["/teams"],
+    );
+
+    expect(await screen.findByText("桌面团队详情")).toBeInTheDocument();
+    expect(screen.queryByText("团队模式")).not.toBeInTheDocument();
+  });
+
   it("renders columns, creates members, and supports direct mailbox messages", async () => {
     const user = userEvent.setup();
     const state = stateFixture();
@@ -869,6 +942,7 @@ describe("Team pages", () => {
     expect(screen.getByRole("link", { name: /协作团队/ })).toBeInTheDocument();
     expect(screen.getByRole("tablist", { name: "代理切换" })).toBeInTheDocument();
     expect(screen.getByTestId("team-tab-bar")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "团队工作区视图" })).not.toBeInTheDocument();
     const productTab = await screen.findByRole("tab", { name: /产品经理/ });
     (Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).mockClear();
     await user.click(productTab);
@@ -911,9 +985,22 @@ describe("Team pages", () => {
     await user.click(within(productColumn).getByRole("button", { name: "下一个分支" }));
     expect(await within(productColumn).findByLabelText("分支 2/2")).toBeInTheDocument();
     expect(within(productColumn).getByText("2/2")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(productColumn).queryByRole("button", { name: "停止生成" })).not.toBeInTheDocument();
+    });
+    await user.click(within(productColumn).getByRole("button", { name: "重新生成" }));
+    await waitFor(() => {
+      expect(state.lastMessagePayload).toMatchObject({
+        target: "product",
+        content: "请设计团队窗口",
+      });
+    });
+    expect(await within(productColumn).findByLabelText("分支 3/3")).toBeInTheDocument();
+    expect(within(productColumn).getAllByText("请设计团队窗口")).toHaveLength(1);
     expect(screen.getByLabelText("代理会话列")).toBeInTheDocument();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth);
-    await user.click(screen.getByRole("button", { name: "添加成员" }));
+    await user.click(screen.getByRole("button", { name: "更多团队操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "添加成员" }));
     const addMemberDialog = await screen.findByRole("dialog", { name: "添加成员" });
     expect(await within(addMemberDialog).findByText("default · default/default")).toBeInTheDocument();
     await user.type(within(addMemberDialog).getByLabelText("成员名称"), "测试工程师");
@@ -983,6 +1070,8 @@ describe("Team pages", () => {
     });
 
     const leaderColumn = (await screen.findAllByRole("region", { name: /队长 队长 列/ }))[0];
+    expect(within(leaderColumn).getByText(/0 项任务/)).toBeInTheDocument();
+    expect(within(leaderColumn).queryByText("实现多列 UI")).not.toBeInTheDocument();
     await user.click(await screen.findByRole("tab", { name: /队长/ }));
     await user.type(within(leaderColumn).getByRole("textbox"), "Ask 产品负责人 to sync UI 状态");
     await user.click(within(leaderColumn).getByRole("button", { name: "发送" }));
@@ -1007,6 +1096,160 @@ describe("Team pages", () => {
 
     expect(await within(productColumn).findByText("实现多列 UI")).toBeInTheDocument();
   }, 15000);
+
+  it("uses collaboration, task graph, and existing columns as desktop Team workspace views", async () => {
+    const user = userEvent.setup();
+    (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+    const state = stateFixture();
+    state.teams[0].tasks.push(
+      teamTask({
+        id: "task-2",
+        subject: "验证桌面工作区",
+        description: "验证协作、任务图和多列切换",
+        owner_slot_id: "ui",
+        status: "completed",
+        blocked_by_json: ["task-1"],
+      }),
+    );
+    const fetchMock = routeTeamApis(state);
+
+    renderWithClient(
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamPage />} />
+      </Routes>,
+      fetchMock,
+      ["/teams/team-1"],
+    );
+
+    const viewSwitch = await screen.findByRole("group", { name: "团队工作区视图" });
+    expect(within(viewSwitch).getByRole("button", { name: "协作" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByTestId("desktop-team-overview")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队系统看板" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("代理会话列")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "进入 产品经理 专注对话" }));
+    expect(await screen.findByText("专注对话")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队检查器" })).toBeInTheDocument();
+    const collaborationColumn = screen.getByRole("region", { name: /产品经理 成员 列/ });
+    await user.click(screen.getByRole("button", { name: "返回团队概览" }));
+    expect(await screen.findByTestId("desktop-team-overview")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队系统看板" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "进入 队长 专注对话" }));
+    expect(await screen.findByRole("button", { name: "返回团队概览" })).toBeInTheDocument();
+    const leaderColumn = await screen.findByRole("region", { name: /队长 队长 列/ });
+    await user.click(screen.getByRole("button", { name: "查看任务图" }));
+    expect(await screen.findByRole("region", { name: "团队任务图" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回检查器" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "返回检查器" }));
+    expect(await screen.findByRole("complementary", { name: "团队检查器" })).toBeInTheDocument();
+    await user.click(within(leaderColumn).getByRole("button", { name: "切换全屏列" }));
+    expect(await screen.findByRole("button", { name: "展开团队检查器" })).toBeInTheDocument();
+    await user.click(within(leaderColumn).getByRole("button", { name: "切换全屏列" }));
+    expect(await screen.findByRole("button", { name: "收起团队检查器" })).toBeInTheDocument();
+
+    await user.click(within(viewSwitch).getByRole("button", { name: "任务图" }));
+    expect(await screen.findByRole("region", { name: "团队任务图" })).toBeInTheDocument();
+    expect(screen.getByText("1/2 已完成")).toBeInTheDocument();
+
+    await user.click(within(viewSwitch).getByRole("button", { name: "多列" }));
+    expect(await screen.findByLabelText("代理会话列")).toBeInTheDocument();
+    expect(window.localStorage.getItem("harness-desktop-team-view-team-1")).toBe("columns");
+  });
+
+  it("restores a valid desktop Team view and ignores an invalid stored value", async () => {
+    (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+    window.localStorage.setItem("harness-desktop-team-view-team-1", "graph");
+    const state = stateFixture();
+
+    const { unmount } = renderWithClient(
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamPage />} />
+      </Routes>,
+      routeTeamApis(state),
+      ["/teams/team-1"],
+    );
+
+    expect(await screen.findByRole("region", { name: "团队任务图" })).toBeInTheDocument();
+    unmount();
+
+    window.localStorage.setItem("harness-desktop-team-view-team-1", "unknown-view");
+    renderWithClient(
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamPage />} />
+      </Routes>,
+      routeTeamApis(state),
+      ["/teams/team-1"],
+    );
+
+    expect(await screen.findByTestId("desktop-team-overview")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "团队系统看板" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "团队任务图" })).not.toBeInTheDocument();
+  });
+
+  it("does not write the previous Team view into the next Team storage key", async () => {
+    const user = userEvent.setup();
+    (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+    window.localStorage.setItem("harness-desktop-team-view-team-1", "graph");
+    window.localStorage.setItem("harness-desktop-team-view-team-2", "columns");
+    const setItemSpy = vi.spyOn(Storage.prototype, "setItem");
+    setItemSpy.mockClear();
+    const state = stateFixture();
+    state.teams.push(teamFixture({ id: "team-2", name: "第二团队" }));
+
+    renderWithClient(
+      <Routes>
+        <Route
+          path="/teams/:teamId"
+          element={
+            <>
+              <Link to="/teams/team-2">打开第二团队</Link>
+              <TeamPage />
+            </>
+          }
+        />
+      </Routes>,
+      routeTeamApis(state),
+      ["/teams/team-1"],
+    );
+
+    expect(await screen.findByRole("region", { name: "团队任务图" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "打开第二团队" }));
+    expect(await screen.findByLabelText("代理会话列")).toBeInTheDocument();
+
+    const secondTeamWrites = setItemSpy.mock.calls.filter(
+      ([key]) => key === "harness-desktop-team-view-team-2",
+    );
+    expect(secondTeamWrites).toEqual([["harness-desktop-team-view-team-2", "columns"]]);
+  });
+
+  it("degrades cyclic task dependencies into a deterministic row", () => {
+    const team = teamFixture();
+    const tasks = [
+      teamTask({ id: "task-root", subject: "Root", blocks_json: ["task-a"] }),
+      teamTask({ id: "task-a", subject: "A", blocked_by_json: ["task-c"] }),
+      teamTask({ id: "task-b", subject: "B", blocked_by_json: ["task-a"] }),
+      teamTask({ id: "task-c", subject: "C", blocked_by_json: ["task-b"], blocks_json: ["task-d"] }),
+      teamTask({ id: "task-d", subject: "D", blocked_by_json: [] }),
+    ];
+    const first = buildTeamTaskGraphLayout(team, [tasks[3], tasks[1], tasks[4], tasks[0], tasks[2]]);
+    const second = buildTeamTaskGraphLayout(team, [tasks[2], tasks[4], tasks[0], tasks[3], tasks[1]]);
+    const coordinates = (layout: ReturnType<typeof buildTeamTaskGraphLayout>) =>
+      Object.fromEntries(layout.nodes.map((node) => [node.id, { x: node.x, y: node.y }]));
+    const firstCoordinates = coordinates(first);
+
+    expect(first.cycleTaskIds).toEqual(["task-a", "task-b", "task-c"]);
+    expect(first.cycleTaskIds).toEqual(second.cycleTaskIds);
+    expect(firstCoordinates).toEqual(coordinates(second));
+    expect(new Set(first.nodes.filter((node) => first.cycleTaskIds.includes(node.id)).map((node) => node.y)).size).toBe(1);
+    expect(firstCoordinates["task-root"].y).toBeLessThan(firstCoordinates["task-a"].y);
+    expect(firstCoordinates["task-d"].y).toBeGreaterThan(firstCoordinates["task-c"].y);
+    expect(first.edges).toContainEqual({ id: "task-c:task-d", sourceId: "task-c", targetId: "task-d" });
+    expect(
+      first.edges.filter(
+        (edge) => first.cycleTaskIds.includes(edge.sourceId) && first.cycleTaskIds.includes(edge.targetId),
+      ),
+    ).toEqual([]);
+  });
 
   it("supports team goal mode, plan mode, and model selection from the composer", async () => {
     const user = userEvent.setup();
@@ -1150,6 +1393,113 @@ describe("Team pages", () => {
     expect(await within(productColumn).findByText("deepseek-pro / deepseek-v4-pro")).toBeInTheDocument();
 
   }, 15000);
+
+  it("projects team goal progress events without regressing on duplicate or older versions", () => {
+    const base = teamFixture({
+      active_goal: teamGoal({
+        version: 2,
+        progress_json: {
+          phase: "running",
+          open_task_count: 1,
+          completed_task_count: 0,
+          drift_count: 1,
+          intervention_count: 1,
+          budget_remaining: 2,
+        },
+      }),
+    });
+
+    const upgraded = applyTeamEventToTeam(
+      base,
+      teamEvent({
+        event_type: "TEAM_GOAL_PROGRESS",
+        payload_json: {
+          goal: teamGoal({
+            version: 3,
+            progress_json: {
+              phase: "running",
+              open_task_count: 0,
+              completed_task_count: 1,
+              drift_count: 2,
+              intervention_count: 2,
+              budget_remaining: 1,
+            },
+          }),
+        },
+      }),
+    );
+    expect(upgraded?.active_goal?.version).toBe(3);
+    expect(upgraded?.active_goal?.progress_json.drift_count).toBe(2);
+
+    const stale = applyTeamEventToTeam(
+      upgraded!,
+      teamEvent({
+        event_type: "TEAM_GOAL_PROGRESS",
+        payload_json: {
+          goal: teamGoal({
+            version: 2,
+            progress_json: {
+              phase: "running",
+              open_task_count: 1,
+              completed_task_count: 0,
+              drift_count: 1,
+              intervention_count: 1,
+              budget_remaining: 2,
+            },
+          }),
+        },
+      }),
+    );
+    expect(stale?.active_goal?.version).toBe(3);
+    expect(stale?.active_goal?.progress_json.drift_count).toBe(2);
+
+    const terminalProgress = applyTeamEventToTeam(
+      upgraded!,
+      teamEvent({
+        event_type: "TEAM_GOAL_PROGRESS",
+        payload_json: {
+          goal: teamGoal({
+            status: "blocked",
+            version: 4,
+            progress_json: {
+              phase: "running",
+              open_task_count: 0,
+              completed_task_count: 1,
+              drift_count: 3,
+              intervention_count: 3,
+              budget_remaining: 0,
+            },
+          }),
+        },
+      }),
+    );
+    expect(terminalProgress?.active_goal).toBeNull();
+  });
+
+  it("renders active goal strip and correction marker in team task board", async () => {
+    const user = userEvent.setup();
+    const state = stateFixture();
+    state.teams[0].tasks[0].metadata_json = { needs_correction: true };
+    const fetchMock = routeTeamApis(state);
+
+    renderWithClient(
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamPage />} />
+      </Routes>,
+      fetchMock,
+      ["/teams/team-1"],
+    );
+
+    expect(await screen.findByText("让团队自主推进目标")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "更多团队操作" }));
+    expect(screen.getByRole("menuitem", { name: /暂停目标/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "编辑目标" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "目标详情" })).toHaveTextContent("0");
+    expect(screen.getByRole("group", { name: "目标详情" })).toHaveTextContent("3");
+
+    await user.click(await screen.findByRole("button", { name: "任务板" }));
+    expect(await screen.findByText("需纠偏")).toBeInTheDocument();
+  });
 
   it("compresses a Team column context from slash command and usage ring", async () => {
     const user = userEvent.setup();
@@ -1406,6 +1756,60 @@ describe("Team pages", () => {
 
     const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
     expect(await within(productColumn).findByText("正在生成...")).toBeInTheDocument();
+  });
+
+  it("restores a persisted wake error after reload and lets the user retry", async () => {
+    const user = userEvent.setup();
+    const state = stateFixture();
+    const team = state.teams[0];
+    const product = team.agents.find((agent) => agent.slot_id === "product")!;
+    product.status = "failed";
+    product.updated_at = "2026-05-23T08:02:01Z";
+    product.metadata_json = {
+      wake: {
+        in_progress: false,
+        failed_at: "2026-05-23T08:02:01Z",
+        last_error: "The read operation timed out",
+      },
+    };
+    product.session_messages = [
+      agentMessage({
+        id: "failed-wake-user-turn",
+        session_id: product.session_id ?? "product-session",
+        role: "user",
+        content: "请重试团队模型调用",
+      }),
+    ];
+    const fetchMock = routeTeamApis(state);
+
+    renderWithClient(
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamPage />} />
+      </Routes>,
+      fetchMock,
+      ["/teams/team-1"],
+    );
+
+    const productColumn = await screen.findByRole("region", { name: /产品经理 成员 列/ });
+    expect(await within(productColumn).findByText("The read operation timed out")).toBeInTheDocument();
+
+    await user.click(within(productColumn).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestPath(input) === "/api/teams/team-1/messages" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          requestPath(input) === "/api/teams/team-1/agents/product/wake/stream" &&
+          init?.method === "POST",
+      ),
+    ).toBe(true);
   });
 
   it("replaces the wake stream placeholder with the final assistant message", async () => {

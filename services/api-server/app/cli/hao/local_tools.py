@@ -7,6 +7,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -714,6 +715,14 @@ def _shell_command(input_json: dict[str, Any], *, default: str = "") -> str:
     return str(input_json.get("command") or input_json.get("cmd") or default).strip()
 
 
+def _normalize_shell_command(command: str) -> str:
+    if command == "python":
+        return sys.executable
+    if command.startswith("python "):
+        return f"{sys.executable} {command.removeprefix('python ')}"
+    return command
+
+
 def _run_process_with_lifecycle(
     *,
     tool_name: str,
@@ -932,6 +941,7 @@ def execute_local_command_tool(
         command = _shell_command(input_json, default="pytest")
         if not command:
             raise ValueError("command is required")
+        command = _normalize_shell_command(command)
         timeout_seconds = max(1, min(int(input_json.get("timeout_seconds", 300)), 900))
     elif tool_name == "git":
         if not command:
@@ -943,6 +953,7 @@ def execute_local_command_tool(
     else:
         if not command:
             raise ValueError("command is required")
+        command = _normalize_shell_command(command)
         timeout_seconds = max(1, min(int(input_json.get("timeout_seconds", 60)), 600))
     created = session_store.create_command(
         session_id,

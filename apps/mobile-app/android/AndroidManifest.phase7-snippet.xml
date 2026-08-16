@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merge this snippet into android/app/src/main/AndroidManifest.xml after
+  `expo prebuild` or move it into a config plugin when the native project is
+  committed. It declares the Phase 7 Android platform surfaces.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <application>
+    <receiver
+      android:name=".widgets.HarnessTaskWidgetProvider"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.appwidget.provider"
+        android:resource="@xml/harness_task_widget_info" />
+    </receiver>
+
+    <service
+      android:name=".tiles.HarnessQuickSettingsTile"
+      android:exported="true"
+      android:icon="@mipmap/ic_launcher"
+      android:label="Harness"
+      android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+      <intent-filter>
+        <action android:name="android.service.quicksettings.action.QS_TILE" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

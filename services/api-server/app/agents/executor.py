@@ -1,6 +1,8 @@
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from shlex import quote
 
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -30,7 +32,7 @@ from app.agents.specialists import (
     ensure_system_specialists,
 )
 from app.agents.subagent_manager import FanoutCapacityExceededError, SubagentManager
-from app.db.models import AgentEvent, Task, TaskStep, utc_now
+from app.db.models import AgentEvent, AgentRun, Task, TaskStep, utc_now
 from app.db.models import ExecutionPlan as ExecutionPlanModel
 from app.events.event_store import EventStore
 from app.events.event_types import EventType
@@ -44,6 +46,7 @@ DEFAULT_TOOL_TIMEOUT = 60
 DEFAULT_SUBAGENT_TIMEOUT = 300
 SUBAGENT_HEARTBEAT_INTERVAL = 30
 MAX_STEP_OUTPUT_BYTES = 64 * 1024  # 64KB
+SUBAGENT_FAILURE_STATUSES = {"FAILED", "TIMEOUT", "BUDGET_EXCEEDED", "CANCELLED"}
 
 PLANNER_SYSTEM_PROMPT = f"""You are the Planner inside an enterprise AI Agent Harness platform.
 
@@ -180,6 +183,7 @@ class Executor:
             planner_response.content,
             planner_source="llm",
             planner_attempts=1,
+            task=task,
         )
         if plan is None and not self._is_empty_mock_plan(planner_response.content):
             self.event_store.append(
@@ -198,6 +202,7 @@ class Executor:
                     repair_response.content,
                     planner_source="llm_repaired",
                     planner_attempts=2,
+                    task=task,
                 )
 
         # DAG validation: if model plan has invalid DAG, fall back to deterministic
@@ -464,11 +469,19 @@ class Executor:
         if task.agent_id is None:
             ensure_default_agents(self.session, task.organization_id or "")
             task.agent_id = "default"
+        capability_registry = CapabilityRegistry(
+            self.session,
+            task.organization_id,
+        )
+        capability_registry.ensure_builtin_tool_attachment(
+            task.agent_id,
+            "mcp_artifact_put",
+            attached_by="executor",
+            priority=-1,
+        )
+        task.capability_snapshot_json = {}
         if not task.capability_snapshot_json:
-            _registry, snapshot = CapabilityRegistry(
-                self.session,
-                task.organization_id,
-            ).tool_registry_for_agent(task.agent_id)
+            _registry, snapshot = capability_registry.tool_registry_for_agent(task.agent_id)
             task.capability_snapshot_json = snapshot
         self.session.flush()
 
@@ -773,12 +786,23 @@ class Executor:
                 next_action="stop",
             )
         try:
-            if step.requires_sandbox and task.enable_sandbox:
-                sandbox = WarmPoolManager().acquire(
-                    session=self.session,
-                    task_id=task.id,
-                    workspace_root=str(self.workspace_root),
-                )
+            if (
+                (step.requires_sandbox or _tool_requires_sandbox(tool_name))
+                and task.enable_sandbox
+            ):
+                try:
+                    sandbox = WarmPoolManager().acquire(
+                        session=self.session,
+                        task_id=task.id,
+                        workspace_root=str(self.workspace_root),
+                    )
+                except Exception:
+                    return self._sandbox_runtime_unavailable_result(
+                        task=task,
+                        step=step,
+                        step_row=step_row,
+                        tool_name=tool_name,
+                    )
             execution = ToolRunner(
                 session=self.session,
                 workspace_root=self.workspace_root,
@@ -896,6 +920,44 @@ class Executor:
         self.session.flush()
         return result
 
+    def _sandbox_runtime_unavailable_result(
+        self,
+        *,
+        task: Task,
+        step: PlanStep,
+        step_row: TaskStep,
+        tool_name: str,
+    ) -> StepResult:
+        message = (
+            "Sandbox runtime unavailable: Docker daemon is not running or cannot be reached. "
+            "Start Docker Desktop, or rerun this task with sandbox disabled when the step only "
+            "needs to produce a Harness artifact."
+        )
+        step_row.status = "STEP_FAILED"
+        step_row.error_message = message
+        step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.STEP_FAILED,
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "summary": message,
+                "tool_name": tool_name,
+                "permission_boundary": "sandbox_runtime",
+                "recoverable": True,
+            },
+        )
+        self.session.flush()
+        return StepResult(
+            step_key=step.key,
+            status="STEP_FAILED",
+            summary=message,
+            output="",
+            tool_calls=[],
+            next_action="stop",
+        )
+
     def _execute_langgraph_step(
         self,
         task: Task,
@@ -989,6 +1051,18 @@ class Executor:
                 "specialist_slug": specialist.slug if specialist is not None else None,
             },
         )
+        self._execute_queue_deferred_subagents_inline(
+            task=task,
+            step_key=step.key,
+            agent_runs=[agent_run],
+        )
+        if agent_run.status in SUBAGENT_FAILURE_STATUSES:
+            return self._subagent_step_failed_result(
+                task=task,
+                step=step,
+                step_row=step_row,
+                agent_runs=[agent_run],
+            )
 
         result = StepResult(
             step_key=step.key,
@@ -1133,6 +1207,19 @@ class Executor:
                     "specialist_slug": agent_run.context_json.get("specialist_slug"),
                 },
             )
+        self._execute_queue_deferred_subagents_inline(
+            task=task,
+            step_key=step.key,
+            agent_runs=agent_runs,
+        )
+        failed_runs = [run for run in agent_runs if run.status in SUBAGENT_FAILURE_STATUSES]
+        if failed_runs:
+            return self._subagent_step_failed_result(
+                task=task,
+                step=step,
+                step_row=step_row,
+                agent_runs=failed_runs,
+            )
         result = StepResult(
             step_key=step.key,
             status="STEP_COMPLETED",
@@ -1184,6 +1271,103 @@ class Executor:
         )
         self.session.flush()
         return result
+
+    def _execute_queue_deferred_subagents_inline(
+        self,
+        *,
+        task: Task,
+        step_key: str,
+        agent_runs: list[AgentRun],
+    ) -> None:
+        for agent_run in agent_runs:
+            if agent_run.status != "PENDING" or not self._subagent_queue_deferred(agent_run.id):
+                continue
+            self.event_store.append(
+                task_id=task.id,
+                agent_run_id=agent_run.id,
+                event_type=EventType.SUBAGENT_PROGRESS,
+                payload_json={
+                    "agent_run_id": agent_run.id,
+                    "step_key": step_key,
+                    "stage": "inline_executor_fallback",
+                    "summary": (
+                        "Subagent queue unavailable; executing inline in the current worker."
+                    ),
+                },
+            )
+            try:
+                from app.workers.subagent_worker import execute_subagent
+
+                execute_subagent(
+                    agent_run.id,
+                    session=self.session,
+                    workspace_root=self.workspace_root,
+                )
+            except Exception as exc:
+                self.event_store.append(
+                    task_id=task.id,
+                    agent_run_id=agent_run.id,
+                    event_type=EventType.SUBAGENT_PROGRESS,
+                    payload_json={
+                        "agent_run_id": agent_run.id,
+                        "step_key": step_key,
+                        "stage": "inline_executor_failed",
+                        "summary": "Inline subagent execution failed.",
+                        "error": str(exc),
+                    },
+                )
+            finally:
+                self.session.flush()
+                self.session.refresh(agent_run)
+
+    def _subagent_queue_deferred(self, agent_run_id: str) -> bool:
+        payloads = self.session.execute(
+            select(AgentEvent.payload_json).where(
+                AgentEvent.agent_run_id == agent_run_id,
+                AgentEvent.event_type == EventType.SUBAGENT_PROGRESS,
+            )
+        ).scalars()
+        return any(
+            isinstance(payload, dict) and payload.get("stage") == "queue_deferred"
+            for payload in payloads
+        )
+
+    def _subagent_step_failed_result(
+        self,
+        *,
+        task: Task,
+        step: PlanStep,
+        step_row: TaskStep,
+        agent_runs: list[AgentRun],
+    ) -> StepResult:
+        failed_ids = [agent_run.id for agent_run in agent_runs]
+        summary = f"Subagent execution failed: {', '.join(failed_ids)}"
+        step_row.status = "STEP_FAILED"
+        step_row.error_message = summary
+        step_row.completed_at = utc_now()
+        self.event_store.append(
+            task_id=task.id,
+            event_type=EventType.STEP_FAILED,
+            payload_json={
+                "step_id": step_row.id,
+                "step_key": step.key,
+                "summary": summary,
+                "failed_agent_run_ids": failed_ids,
+                "failed_agent_statuses": {
+                    agent_run.id: agent_run.status for agent_run in agent_runs
+                },
+                "permission_boundary": "subagent_execution",
+            },
+        )
+        self.session.flush()
+        return StepResult(
+            step_key=step.key,
+            status="STEP_FAILED",
+            summary=summary,
+            output="",
+            tool_calls=[],
+            next_action="stop",
+        )
 
     def _select_specialist(self, *, task: Task, step: PlanStep):
         ensure_system_specialists(self.session)
@@ -1260,16 +1444,225 @@ class Executor:
             },
         )
 
-        # Default tool selection based on step properties
-        tool_name = "run_shell" if step.requires_sandbox else "read_file"
-        tool_input: dict = (
-            {
-                "command": f"echo {step.key}",
-                "cwd": "/workspace",
-                "timeout_seconds": step.timeout_seconds or DEFAULT_TOOL_TIMEOUT,
-            }
-            if step.requires_sandbox
-            else {"path": "pyproject.toml"}
+        return self._default_tool_for_step(task=task, step=step)
+
+    def _default_tool_for_step(
+        self,
+        *,
+        task: Task,
+        step: PlanStep,
+    ) -> tuple[str, dict]:
+        artifact_tool_name = (
+            "write_file" if task.enable_sandbox and step.requires_sandbox else "mcp_artifact_put"
+        )
+        step_text = " ".join(
+            [
+                step.key,
+                step.description,
+                " ".join(step.artifact_expectations),
+                " ".join(step.acceptance_criteria),
+            ]
+        ).lower()
+        task_text = " ".join([task.title or "", task.goal or ""]).lower()
+        text = f"{step_text} {task_text}"
+        generation_requested = any(
+            marker in text
+            for marker in (
+                "write",
+                "draft",
+                "story",
+                "novel",
+                "outline",
+                "final",
+                "compose",
+                "generate",
+                "reply",
+                "response",
+                "summary",
+                "summarize",
+                "report",
+                "output",
+                "article",
+                "content",
+                "sci-fi",
+                "science fiction",
+                "写",
+                "撰写",
+                "生成",
+                "创作",
+                "草稿",
+                "大纲",
+                "小说",
+                "科幻",
+                "故事",
+                "结局",
+                "主角",
+                "文章",
+                "内容",
+                "回复",
+                "回答",
+                "客服",
+                "总结",
+                "报告",
+                "说明",
+                "输出",
+                "字",
+                "最终",
+                "调整",
+            )
+        )
+        project_context_requested = any(
+            marker in task_text
+            for marker in (
+                "read",
+                "inspect",
+                "file",
+                "directory",
+                "repo",
+                "repository",
+                "project",
+                "code",
+                "bug",
+                "test",
+                "读取",
+                "查看",
+                "检查",
+                "文件",
+                "目录",
+                "仓库",
+                "项目",
+                "代码",
+                "报错",
+                "错误",
+                "修复",
+                "测试",
+            )
+        )
+        prefer_artifact_output = generation_requested and not project_context_requested
+        tool_hints = list(dict.fromkeys(step.tool_hints))
+        if tool_hints:
+            for candidate in (
+                "mcp_artifact_put",
+                "write_file",
+                "run_shell",
+                "run_tests",
+                "list_files",
+                "read_file",
+            ):
+                if candidate in tool_hints:
+                    if candidate in {"list_files", "read_file"} and prefer_artifact_output:
+                        continue
+                    if candidate == "write_file":
+                        candidate = artifact_tool_name
+                    return candidate, self._default_tool_input(
+                        task=task,
+                        step=step,
+                        tool_name=candidate,
+                    )
+
+        if generation_requested:
+            return artifact_tool_name, self._default_tool_input(
+                task=task,
+                step=step,
+                tool_name=artifact_tool_name,
+            )
+        if any(
+            marker in text
+            for marker in ("count", "wc ", "shell", "test", "run", "统计", "计数", "命令")
+        ):
+            return "run_shell", self._default_tool_input(
+                task=task,
+                step=step,
+                tool_name="run_shell",
+            )
+        return "read_file", self._default_tool_input(
+            task=task,
+            step=step,
+            tool_name="read_file",
         )
 
-        return tool_name, tool_input
+    def _default_tool_input(
+        self,
+        *,
+        task: Task,
+        step: PlanStep,
+        tool_name: str,
+    ) -> dict:
+        timeout = step.timeout_seconds or DEFAULT_TOOL_TIMEOUT
+        idempotency_key = f"{task.id}:{step.key}:{tool_name}"
+        if tool_name == "write_file":
+            return {
+                "path": self._artifact_path_for_step(step),
+                "content": self._artifact_content_for_step(task=task, step=step),
+                "idempotency_key": idempotency_key,
+                "timeout_seconds": timeout,
+            }
+        if tool_name == "mcp_artifact_put":
+            return {
+                "name": self._artifact_path_for_step(step),
+                "content": self._artifact_content_for_step(task=task, step=step),
+                "idempotency_key": idempotency_key,
+                "timeout_seconds": timeout,
+            }
+        if tool_name == "run_shell":
+            return {
+                "command": f"printf '%s\\n' {quote(step.description)}",
+                "cwd": "/workspace",
+                "timeout_seconds": timeout,
+                "idempotency_key": idempotency_key,
+            }
+        if tool_name == "run_tests":
+            return {
+                "command": "python -m pytest -q",
+                "cwd": "/workspace",
+                "timeout_seconds": timeout,
+                "idempotency_key": idempotency_key,
+            }
+        if tool_name == "list_files":
+            return {"root": ".", "glob": "*"}
+        return {"path": "pyproject.toml"}
+
+    def _artifact_path_for_step(self, step: PlanStep) -> str:
+        for expectation in step.artifact_expectations:
+            path = _path_from_artifact_expectation(expectation)
+            if path:
+                return path
+        return f"{step.key}.md"
+
+    def _artifact_content_for_step(self, *, task: Task, step: PlanStep) -> str:
+        parts = [
+            f"# {step.description}",
+            "",
+            f"Task: {task.title}",
+            f"Goal: {task.goal}",
+        ]
+        for dep_key in step.depends_on:
+            dep_result = self.step_context.get(dep_key)
+            if dep_result is not None and dep_result.output:
+                parts.extend(["", f"## {dep_key}", dep_result.output[:4000]])
+        return "\n".join(parts).strip() + "\n"
+
+
+def _path_from_artifact_expectation(expectation: str) -> str | None:
+    value = str(expectation or "").strip()
+    if not value:
+        return None
+    if ":" in value:
+        value = value.split(":", 1)[1].strip()
+    value = value.split()[0].strip("`'\"()[]，。；;,")
+    if not value or value.startswith("/"):
+        return None
+    if ".." in Path(value).parts:
+        return None
+    safe = re.sub(r"[^A-Za-z0-9._/-]", "_", value)
+    return safe or None
+
+
+def _tool_requires_sandbox(tool_name: str) -> bool:
+    return tool_name in {
+        "write_file",
+        "run_shell",
+        "run_tests",
+        "git_command",
+        "network_request",
+    }

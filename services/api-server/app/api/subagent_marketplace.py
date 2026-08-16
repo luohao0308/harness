@@ -300,7 +300,7 @@ def _verify_signature(manifest: dict, signature: str) -> None:
 def _validate_manifest(session: Session, manifest: dict) -> None:
     if not isinstance(manifest, dict):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="manifest 必须是对象",
         )
     schema = manifest.get("output_schema_json")
@@ -310,14 +310,14 @@ def _validate_manifest(session: Session, manifest: dict) -> None:
         normalize_budget(budget if isinstance(budget, dict) else {})
     except SpecialistValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     prompt = str(manifest.get("system_prompt") or "").casefold()
     for term in SENSITIVE_PROMPT_TERMS:
         if term.casefold() in prompt:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"system_prompt 命中安全黑名单: {term}",
             )
     unknown_capabilities = sorted(
@@ -325,7 +325,7 @@ def _validate_manifest(session: Session, manifest: dict) -> None:
     )
     if unknown_capabilities:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="未知 capability: " + ", ".join(unknown_capabilities),
         )
 

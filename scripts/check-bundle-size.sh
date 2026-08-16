@@ -10,23 +10,26 @@ if [[ ! -d "$DIST_DIR/assets" ]]; then
   exit 1
 fi
 
-largest_js="$(
-  find "$DIST_DIR/assets" -type f -name '*.js' -print0 \
-    | xargs -0 stat -f '%z %N' 2>/dev/null \
-    | sort -nr \
-    | head -n 1
-)"
+largest_size=-1
+largest_path=""
 
-if [[ -z "$largest_js" ]]; then
+while IFS= read -r -d '' asset; do
+  asset_size="$(wc -c < "$asset")"
+  asset_size="${asset_size//[[:space:]]/}"
+  if (( asset_size > largest_size )); then
+    largest_size="$asset_size"
+    largest_path="$asset"
+  fi
+done < <(find "$DIST_DIR/assets" -type f -name '*.js' -print0)
+
+if (( largest_size < 0 )); then
   echo "No JavaScript assets found in $DIST_DIR/assets" >&2
   exit 1
 fi
 
-size="${largest_js%% *}"
-path="${largest_js#* }"
-echo "largest_js=$path bytes=$size max=$MAX_BYTES"
+echo "largest_js=$largest_path bytes=$largest_size max=$MAX_BYTES"
 
-if (( size > MAX_BYTES )); then
+if (( largest_size > MAX_BYTES )); then
   echo "Largest JS asset exceeds MAX_MAIN_CHUNK_BYTES" >&2
   exit 1
 fi

@@ -32,6 +32,28 @@ class WorkspaceToolEventService:
         self.sse = sse
         self.estimated_input_tokens = estimated_input_tokens
 
+    def _finalize_disconnect(self, run: Task) -> None:
+        self.session.rollback()
+        self.session.refresh(run)
+        if run.status == "CANCELLED":
+            self.session.commit()
+            return
+        if run.status in {"COMPLETED", "FAILED", "WAITING_APPROVAL", "PAUSED"}:
+            self.session.commit()
+            return
+        run.status = "PAUSED"
+        run.updated_at = utc_now()
+        EventStore(self.session).append(
+            task_id=run.id,
+            event_type=EventType.TASK_PAUSED,
+            payload_json={
+                "task_id": run.id,
+                "reason": "client_disconnected",
+                "resume_hint": "resume the run to continue",
+            },
+        )
+        self.session.commit()
+
     def requested_tool_payload(
         self,
         mention,
@@ -332,17 +354,31 @@ class WorkspaceToolEventService:
         run.status = "RUNNING"
         run.updated_at = utc_now()
         self.session.flush()
-        yield self.sse(
-            "run_created",
-            {
-                "run_id": run.id,
-                "status": run.status,
-                "step_count": 0,
-                "message": "Chat tool run started.",
-            },
-        )
+        self.session.commit()
+        self.session.refresh(run)
+        try:
+            yield self.sse(
+                "run_created",
+                {
+                    "run_id": run.id,
+                    "status": run.status,
+                    "step_count": 0,
+                    "message": "Chat tool run started.",
+                },
+            )
+        except GeneratorExit:
+            self._finalize_disconnect(run)
+            raise
         summaries: list[dict] = []
-        yield from self.workspace_tool_mention_events(run_id=run.id, goal=goal, summaries=summaries)
+        try:
+            yield from self.workspace_tool_mention_events(
+                run_id=run.id,
+                goal=goal,
+                summaries=summaries,
+            )
+        except GeneratorExit:
+            self._finalize_disconnect(run)
+            raise
         content = self.workspace_tool_delta(summaries)
         current_run = self.session.get(Task, run.id)
         pending_approval = any(summary["status"] == "PENDING_APPROVAL" for summary in summaries)

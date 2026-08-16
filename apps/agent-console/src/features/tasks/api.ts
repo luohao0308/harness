@@ -1,5 +1,15 @@
 const DEFAULT_API_BASE_URL = "/";
 
+export class ApiHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, detail = "") {
+    super(`请求失败 ${status}${detail ? `：${detail}` : ""}`);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
+}
+
 function stripTrailingSlash(value: string) {
   return value.replace(/\/$/, "");
 }
@@ -16,6 +26,8 @@ function hostForUrl(hostname: string) {
 export function resolveApiBaseUrl(
   configured = import.meta.env.VITE_API_BASE_URL ?? DEFAULT_API_BASE_URL,
   pageHostname = typeof window === "undefined" ? null : window.location.hostname,
+  pageProtocol =
+    typeof window === "undefined" ? (pageHostname ? "http:" : null) : window.location.protocol,
 ) {
   const baseUrl = configured.trim() || DEFAULT_API_BASE_URL;
   if (baseUrl.startsWith("/")) {
@@ -29,7 +41,8 @@ export function resolveApiBaseUrl(
   try {
     const url = new URL(baseUrl);
     const pageHost = pageHostname;
-    if (isLoopbackHost(url.hostname) && !isLoopbackHost(pageHost)) {
+    const isHttpPage = pageProtocol === "http:" || pageProtocol === "https:";
+    if (isHttpPage && isLoopbackHost(url.hostname) && !isLoopbackHost(pageHost)) {
       url.hostname = hostForUrl(pageHost);
     }
     return stripTrailingSlash(url.toString());
@@ -45,41 +58,53 @@ const DEV_ADMIN_BEARER_TOKEN =
   import.meta.env.VITE_DEV_ADMIN_BEARER_TOKEN ?? (import.meta.env.DEV ? "dev-admin-token" : "");
 const AUTH_ACCESS_TOKEN_KEY = "harness.auth.access_token";
 const AUTH_REFRESH_TOKEN_KEY = "harness.auth.refresh_token";
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 5_000;
 export const AUTH_SESSION_EXPIRED_EVENT = "harness.auth.session_expired";
 export const KNOWLEDGE_ADMIN_CONTROLS_ENABLED = DEV_ADMIN_BEARER_TOKEN.trim().length > 0;
 const KNOWLEDGE_SOURCE_CREATE_TIMEOUT_MS = 12_000;
+
+function isLocalRuntimeProfile() {
+  return import.meta.env.VITE_RUNTIME_PROFILE === "local";
+}
 
 function browserStorage() {
   return typeof window === "undefined" ? null : window.localStorage;
 }
 
 export function getStoredAccessToken() {
+  if (isLocalRuntimeProfile()) return "";
   return browserStorage()?.getItem(AUTH_ACCESS_TOKEN_KEY) ?? "";
 }
 
 export function getStoredRefreshToken() {
+  if (isLocalRuntimeProfile()) return "";
   return browserStorage()?.getItem(AUTH_REFRESH_TOKEN_KEY) ?? "";
 }
 
 export function getAuthBearerToken() {
+  if (isLocalRuntimeProfile()) return "";
   return getStoredAccessToken().trim() || DEV_BEARER_TOKEN.trim();
 }
 
 export function isDevAuthFallbackEnabled() {
+  if (isLocalRuntimeProfile()) return false;
   return !getStoredAccessToken().trim() && DEV_BEARER_TOKEN.trim().length > 0;
 }
 
 function getAdminBearerToken() {
+  if (isLocalRuntimeProfile()) return "";
   return getStoredAccessToken().trim() || DEV_ADMIN_BEARER_TOKEN.trim();
 }
 
 export function setAuthTokens(tokens: { access_token: string; refresh_token: string }) {
+  if (isLocalRuntimeProfile()) return;
   const storage = browserStorage();
   storage?.setItem(AUTH_ACCESS_TOKEN_KEY, tokens.access_token);
   storage?.setItem(AUTH_REFRESH_TOKEN_KEY, tokens.refresh_token);
 }
 
 export function clearAuthTokens() {
+  if (isLocalRuntimeProfile()) return;
   const storage = browserStorage();
   storage?.removeItem(AUTH_ACCESS_TOKEN_KEY);
   storage?.removeItem(AUTH_REFRESH_TOKEN_KEY);
@@ -117,6 +142,14 @@ async function refreshAuthForRetry() {
   }
 }
 
+async function renewLocalRuntimeSessionForRetry() {
+  if (!isLocalRuntimeProfile() || typeof window === "undefined") return false;
+  const renewSession = window.desktopApi?.localRuntime?.renewSession;
+  if (typeof renewSession !== "function") return false;
+  await renewSession();
+  return true;
+}
+
 async function fetchWithAuthRetry(
   path: string,
   init: RequestInit,
@@ -126,6 +159,12 @@ async function fetchWithAuthRetry(
   const response = await fetchApi(path, init);
   if (response.status !== 401 || options.skipRefresh) {
     return response;
+  }
+  if (await renewLocalRuntimeSessionForRetry()) {
+    return fetchApi(path, {
+      ...init,
+      headers: headersWithoutAuthorization(init.headers),
+    });
   }
   const refreshed = await refreshAuthForRetry();
   if (!refreshed) {
@@ -170,7 +209,7 @@ async function fetchApi(path: string, init?: RequestInit) {
   let lastError: unknown = null;
   for (const url of urls) {
     try {
-      return await fetch(url, init);
+      return await fetch(url, { credentials: "same-origin", ...init });
     } catch (error) {
       lastError = error;
     }
@@ -196,6 +235,7 @@ export type TaskStatus =
 
 export type Task = {
   id: string;
+  agent_id?: string | null;
   title: string;
   goal: string;
   status: TaskStatus;
@@ -217,9 +257,31 @@ export type AuthTokenResponse = {
   expires_in: number;
 };
 
+export type LocalRuntimeModelStatus = {
+  state: "setup_required" | "configured" | "healthy" | "error";
+  provider: string;
+  model: string;
+  base_url: string;
+  secret_storage: "persistent" | "session" | "unavailable";
+  message?: string | null;
+};
+
+export type TerminalTokenResponse = {
+  token: string;
+  terminal_id: string;
+  expires_at: string;
+};
+
+export type SamlProvider = {
+  id: string;
+  name: string;
+  enabled: boolean;
+};
+
 export type AuthConfigResponse = {
   public_registration_enabled: boolean;
   oauth_providers: string[];
+  saml_providers: SamlProvider[];
 };
 
 export type OrganizationSummary = {
@@ -255,6 +317,43 @@ export type ApiKeyResponse = {
 
 export type ApiKeyCreateResponse = ApiKeyResponse & {
   key: string;
+};
+
+export type PluginMarketplaceItem = {
+  id: string;
+  name: string;
+  description: string;
+  category: "tool" | "prompt" | "workflow" | "local-model";
+  publisher: string;
+  version: string;
+  permissions: string[];
+  install_state: "available" | "installed";
+  installed_at: string | null;
+  config_json: Record<string, unknown>;
+};
+
+export type PluginMarketplaceResponse = {
+  items: PluginMarketplaceItem[];
+  installed_count: number;
+};
+
+export type PromptTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  tags: string[];
+  source: "built-in" | "custom" | "plugin";
+  plugin_id: string | null;
+  updated_at: string | null;
+};
+
+export type PromptTemplatePayload = {
+  id?: string | null;
+  name: string;
+  description?: string;
+  body: string;
+  tags?: string[];
 };
 
 export type UserMember = {
@@ -377,6 +476,16 @@ export type AgentDefinition = {
   updated_at: string;
 };
 
+export type AgentVersion = {
+  id: string;
+  agent_id: string;
+  version_number: number;
+  config_snapshot: Partial<AgentDefinition> & Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  is_active: boolean;
+};
+
 export type AgentCapabilityAttachmentSummary = {
   attachment_id: string;
   capability_id: string;
@@ -386,6 +495,112 @@ export type AgentCapabilityAttachmentSummary = {
   enabled: boolean;
   priority: number;
   status: string;
+};
+
+export type LocalAgentPairing = {
+  id: string;
+  agent_id: string;
+  pair_code: string;
+  pair_token: string | null;
+  command: string | null;
+  status: string;
+  expires_at: string;
+  created_at: string;
+};
+
+export type LocalAgentRecoveryCommand = {
+  connection_id: string;
+  adapter_kind: string;
+  command: string;
+  state_home: string;
+  status: string;
+};
+
+export type LocalAgentConnection = {
+  id: string;
+  agent_id: string;
+  owner_user_id: string;
+  pairing_token_id: string | null;
+  onboarding_confirmed: boolean;
+  display_name: string;
+  adapter_kind: string;
+  protocol_version: string;
+  bridge_version: string;
+  status: string;
+  workspace_root: string | null;
+  capabilities_json: Record<string, unknown>;
+  risk_capabilities_json: string[];
+  last_seen_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentConnectionPage = {
+  items: LocalAgentConnection[];
+};
+
+export type LocalAgentConversationBinding = {
+  id: string;
+  connection_id: string;
+  agent_id: string;
+  agent_session_id: string;
+  adapter_session_id: string | null;
+  resume_mode: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentConversationBindingPage = {
+  items: LocalAgentConversationBinding[];
+};
+
+export type LocalAgentSendMessagePayload = {
+  content: string;
+  client_message_id: string;
+  resume_of_client_message_id?: string | null;
+  resume_of_user_message_id?: string | null;
+  workspace_context_provided?: boolean;
+  workspace_mode?: AgentChatStreamPayload["mode"];
+  model_provider?: string | null;
+  model_name?: string | null;
+  messages?: AgentChatStreamMessage[];
+  active_leaf_id?: string | null;
+  active_branch_id?: string | null;
+  pinned_node_ids?: string[];
+  context_window_turns?: number;
+  tool_mentions?: ToolMention[];
+  attachment_names?: string[];
+  attachments?: AgentAttachmentPayload[];
+  context_max_tokens?: number;
+  compressed_context?: AgentChatStreamPayload["compressed_context"];
+};
+
+export type LocalAgentSendMessageResponse = {
+  bridge_task_id: string;
+  run_id: string;
+  agent_session_id: string;
+  user_message_id: string;
+  status: string;
+};
+
+export type LocalAgentBindingTask = {
+  id: string;
+  connection_id: string;
+  binding_id: string;
+  agent_session_id: string;
+  run_id: string;
+  user_message_id: string;
+  client_message_id: string;
+  status: string;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LocalAgentBindingTaskPage = {
+  items: LocalAgentBindingTask[];
 };
 
 export type AgentAssignment = {
@@ -470,6 +685,24 @@ export type TeamTask = {
   updated_at: string | null;
 };
 
+export type TeamGoal = {
+  id: string;
+  team_id: string;
+  organization_id: string | null;
+  status: string;
+  objective: string;
+  non_goals_json: string[];
+  acceptance_criteria_json: string[];
+  supervision_policy_json: Record<string, unknown>;
+  correction_budget_json: Record<string, unknown>;
+  progress_json: Record<string, unknown>;
+  supervisor_state_json: Record<string, unknown>;
+  version: number;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+};
+
 export type Team = {
   id: string;
   organization_id: string | null;
@@ -482,6 +715,7 @@ export type Team = {
   agents: TeamAgent[];
   messages: TeamMailboxMessage[];
   tasks: TeamTask[];
+  active_goal: TeamGoal | null;
   unread_counts: Record<string, number>;
   team_tools: string[];
   created_at: string | null;
@@ -576,6 +810,24 @@ export type TeamTaskUpdatePayload = {
   blocked_by?: string[];
 };
 
+export type TeamGoalCreatePayload = {
+  objective: string;
+  non_goals_json?: string[];
+  acceptance_criteria_json?: string[];
+  supervision_policy_json?: Record<string, unknown>;
+  correction_budget_json?: Record<string, unknown>;
+  start_immediately?: boolean;
+};
+
+export type TeamGoalUpdatePayload = {
+  status?: "draft" | "active" | "paused" | "completed" | "failed" | "blocked";
+  objective?: string | null;
+  non_goals_json?: string[] | null;
+  acceptance_criteria_json?: string[] | null;
+  supervision_policy_json?: Record<string, unknown> | null;
+  correction_budget_json?: Record<string, unknown> | null;
+};
+
 export type NotificationChannelKind = "slack" | "email" | "webhook";
 
 export type NotificationChannel = {
@@ -668,7 +920,7 @@ export type AgentMessage = {
   id: string;
   session_id: string;
   agent_id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   metadata_json: Record<string, unknown>;
   created_at: string;
@@ -726,14 +978,16 @@ export type AgentAttachmentPayload = {
 };
 
 export type AgentChatStreamPayload = {
-  mode?: "chat" | "markdown_plan" | "plan";
+  mode?: "chat" | "markdown_plan" | "plan" | "goal";
   orchestration_mode?: "auto" | "none" | "multi_agent" | "subagent";
+  specialist_slug?: string | null;
   goal?: string | null;
   model_provider?: string | null;
   model_name?: string | null;
   messages: AgentChatStreamMessage[];
   active_leaf_id?: string | null;
   run_id?: string | null;
+  client_run_id?: string | null;
   active_branch_id?: string | null;
   pinned_node_ids: string[];
   context_window_turns: number;
@@ -797,9 +1051,29 @@ export type WorkspaceContextCompressionResponse = {
   error?: string | null;
 };
 
+export type GoalProgressStatus =
+  | "running"
+  | "paused"
+  | "needs_input"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
 export type AgentChatStreamEvent =
   | { type: "delta"; content: string }
   | { type: "think_delta"; content: string }
+  | {
+      type: "goal_progress";
+      run_id: string;
+      goal: string;
+      status: GoalProgressStatus;
+      phase: string;
+      turn: number;
+      step_count: number;
+      message: string;
+      started_at: string | null;
+      elapsed_ms: number;
+    }
   | {
       type: "orchestration";
       mode: string;
@@ -871,7 +1145,13 @@ export type AgentChatStreamEvent =
       message: string;
       knowledge_grounding?: string | null;
     }
-  | { type: "error"; message: string; recoverable?: boolean };
+  | {
+      type: "error";
+      message: string;
+      recoverable?: boolean;
+      kind?: "server" | "rate_limited" | "model_auth";
+      run_id?: string;
+    };
 
 export type AgentEvent = {
   id: string;
@@ -1218,6 +1498,7 @@ export type CacheSourceSummary = {
 export type TokenSavingsRunItem = {
   run_id: string;
   agent_id: string | null;
+  model_names: string[];
   title: string;
   status: string;
   created_at: string;
@@ -2287,6 +2568,36 @@ export type ToolExecuteResult = {
   output: Record<string, unknown>;
 };
 
+export type AgentTrigger = {
+  id: string;
+  agent_id: string;
+  type: "webhook";
+  endpoint_path: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_triggered_at: string | null;
+};
+
+export type AgentTriggerPage = {
+  items: AgentTrigger[];
+};
+
+export type AgentTriggerCreateRequest = {
+  type?: "webhook";
+  endpoint_path?: string | null;
+  enabled?: boolean;
+};
+
+export type AgentTriggerCreateResponse = {
+  trigger: AgentTrigger;
+  secret: string;
+};
+
+export type AgentTriggerUpdateRequest = {
+  enabled?: boolean | null;
+};
+
 export type ToolCallFilters = {
   tool_name?: string;
   status?: string;
@@ -2776,7 +3087,7 @@ async function request<T>(
     } catch {
       detail = "";
     }
-    throw new Error(`请求失败 ${response.status}${detail}`);
+    throw new ApiHttpError(response.status, detail.replace(/^：/, ""));
   }
   if (response.status === 204) {
     return undefined as T;
@@ -2807,7 +3118,7 @@ async function requestMultipart<T>(
     } catch {
       detail = "";
     }
-    throw new Error(`请求失败 ${response.status}${detail}`);
+    throw new ApiHttpError(response.status, detail.replace(/^：/, ""));
   }
   return response.json() as Promise<T>;
 }
@@ -2873,7 +3184,7 @@ export async function logout() {
 }
 
 export async function getMe() {
-  return request<AuthMeResponse>("/api/auth/me");
+  return request<AuthMeResponse>("/api/auth/me", { timeoutMs: AUTH_BOOTSTRAP_TIMEOUT_MS });
 }
 
 export async function uploadCurrentUserAvatar(file: File) {
@@ -2886,11 +3197,26 @@ export async function getAuthConfig() {
   return request<AuthConfigResponse>("/api/auth/config", { skipRefresh: true });
 }
 
+export async function createTerminalToken(terminalId: string) {
+  return request<TerminalTokenResponse>("/api/terminal/tokens", {
+    method: "POST",
+    body: JSON.stringify({ terminal_id: terminalId }),
+  });
+}
+
 export async function startOAuth(provider: "github" | "google") {
   return request<{ provider: string; authorization_url: string; state: string }>(
     `/api/auth/oauth/${provider}/start`,
     { skipRefresh: true },
   );
+}
+
+export async function startSAML(providerId: string) {
+  return request<{ redirect_url: string }>(`/api/auth/saml/login`, {
+    method: "POST",
+    body: JSON.stringify({ provider_id: providerId }),
+    skipRefresh: true,
+  });
 }
 
 export async function listApiKeys() {
@@ -2916,6 +3242,12 @@ export async function revokeApiKey(keyId: string) {
 
 export async function listStoredSecrets() {
   return request<StoredSecretPage>("/api/secrets");
+}
+
+export async function getLocalRuntimeModelStatus() {
+  return request<LocalRuntimeModelStatus>("/api/local-runtime/model", {
+    skipRefresh: true,
+  });
 }
 
 export async function saveStoredSecret(payload: StoredSecretUpsertPayload) {
@@ -2992,7 +3324,7 @@ export async function downloadAuditCsv() {
     headers: authHeaders(),
   });
   if (!response.ok) {
-    throw new Error(`请求失败 ${response.status}`);
+    throw new ApiHttpError(response.status);
   }
   return {
     blob: await response.blob(),
@@ -3013,6 +3345,82 @@ export async function updateRetentionPolicy(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+export type SAMLProvider = {
+  id: string;
+  organization_id: string;
+  name: string;
+  entity_id: string;
+  sso_url: string;
+  idp_metadata_url: string | null;
+  idp_metadata_xml: string | null;
+  certificate: string | null;
+  status: "active" | "inactive" | "testing";
+  test_connection_status: "pending" | "success" | "failed" | null;
+  test_connection_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SAMLProviderCreatePayload = {
+  name: string;
+  entity_id: string;
+  sso_url: string;
+  idp_metadata_url?: string | null;
+  idp_metadata_xml?: string | null;
+};
+
+export type SAMLProviderUpdatePayload = {
+  name?: string;
+  entity_id?: string;
+  sso_url?: string;
+  idp_metadata_url?: string | null;
+  idp_metadata_xml?: string | null;
+  status?: "active" | "inactive";
+};
+
+export type SAMLTestConnectionResult = {
+  status: "success" | "failed";
+  message: string;
+  error?: string | null;
+};
+
+export async function listSAMLProviders() {
+  return request<SAMLProvider[]>("/api/auth/saml/providers");
+}
+
+export async function getSAMLProvider(providerId: string) {
+  return request<SAMLProvider>(`/api/auth/saml/providers/${encodeURIComponent(providerId)}`);
+}
+
+export async function createSAMLProvider(payload: SAMLProviderCreatePayload) {
+  return request<SAMLProvider>("/api/auth/saml/providers", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSAMLProvider(providerId: string, payload: SAMLProviderUpdatePayload) {
+  return request<SAMLProvider>(`/api/auth/saml/providers/${encodeURIComponent(providerId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSAMLProvider(providerId: string) {
+  return request<void>(`/api/auth/saml/providers/${encodeURIComponent(providerId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function testSAMLConnection(providerId: string) {
+  return request<SAMLTestConnectionResult>(
+    `/api/auth/saml/providers/${encodeURIComponent(providerId)}/test`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function runRetentionNow() {
@@ -3082,6 +3490,99 @@ export async function createTask(payload: TaskCreatePayload) {
 
 export async function listAgents() {
   return listAgentsPage();
+}
+
+export async function createLocalAgentPairingToken(agentId: string) {
+  const scope: Record<string, unknown> = {
+    executable: true,
+    adapters: ["hao", "codex", "claude_code"],
+  };
+  return request<LocalAgentPairing>("/api/agents/local-agent/pairing-tokens", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: agentId,
+      ttl_minutes: 10,
+      scope,
+    }),
+  });
+}
+
+export async function revokeLocalAgentPairingToken(tokenId: string) {
+  return request<LocalAgentPairing>(`/api/agents/local-agent/pairing-tokens/${tokenId}/revoke`, {
+    method: "POST",
+  });
+}
+
+export async function listLocalAgentConnections() {
+  return request<LocalAgentConnectionPage>("/api/agents/local-agent/connections");
+}
+
+export async function getLocalAgentRecoveryCommand(connectionId: string) {
+  return request<LocalAgentRecoveryCommand>(
+    `/api/agents/local-agent/connections/${connectionId}/recovery-command`,
+  );
+}
+
+export async function updateLocalAgentConnection(connectionId: string, payload: { display_name: string }) {
+  return request<LocalAgentConnection>(`/api/agents/local-agent/connections/${connectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function revokeLocalAgentConnection(connectionId: string) {
+  return request<LocalAgentConnection>(`/api/agents/local-agent/connections/${connectionId}/revoke`, {
+    method: "POST",
+  });
+}
+
+export async function listLocalAgentConversationBindings(connectionId: string) {
+  return request<LocalAgentConversationBindingPage>(
+    `/api/agents/local-agent/connections/${connectionId}/bindings`,
+  );
+}
+
+export async function bindLocalAgentConversation(
+  connectionId: string,
+  payload: {
+    agent_session_id?: string | null;
+    title?: string | null;
+    adapter_session_id?: string | null;
+    resume_mode?: "native_resume" | "context_replay_new_session";
+  } = {},
+) {
+  return request<LocalAgentConversationBinding>(
+    `/api/agents/local-agent/connections/${connectionId}/bindings`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function listAgentSessionMessages(sessionId: string) {
+  return request<{ items: AgentMessage[]; next_cursor: string | null }>(
+    `/api/agents/sessions/${sessionId}/messages`,
+  );
+}
+
+export async function listLocalAgentBindingTasks(bindingId: string) {
+  return request<LocalAgentBindingTaskPage>(
+    `/api/agents/local-agent/bindings/${bindingId}/tasks`,
+  );
+}
+
+export async function sendLocalAgentMessage(
+  bindingId: string,
+  payload: LocalAgentSendMessagePayload,
+) {
+  return request<LocalAgentSendMessageResponse>(
+    `/api/agents/local-agent/bindings/${bindingId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function listAgentsPage(options: { cursor?: string | null; limit?: number } = {}) {
@@ -3197,6 +3698,31 @@ export async function createTeamTask(teamId: string, payload: TeamTaskCreatePayl
 
 export async function updateTeamTask(teamId: string, taskId: string, payload: TeamTaskUpdatePayload) {
   return request<TeamTask>(`/api/teams/${teamId}/tasks/${taskId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createTeamGoal(
+  teamId: string,
+  payload: TeamGoalCreatePayload,
+): Promise<TeamGoal> {
+  return request<TeamGoal>(`/api/teams/${teamId}/goals`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getActiveTeamGoal(teamId: string): Promise<TeamGoal | null> {
+  return request<TeamGoal | null>(`/api/teams/${teamId}/goals/active`);
+}
+
+export async function updateTeamGoal(
+  teamId: string,
+  goalId: string,
+  payload: TeamGoalUpdatePayload,
+): Promise<TeamGoal> {
+  return request<TeamGoal>(`/api/teams/${teamId}/goals/${goalId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
@@ -4042,6 +4568,38 @@ export async function getToolRegistry(
   return request<ToolRegistry>(`/api/tools/registry${suffix ? `?${suffix}` : ""}`);
 }
 
+export async function listAgentTriggers(agentId: string) {
+  return request<AgentTriggerPage>(`/api/agents/${encodeURIComponent(agentId)}/triggers`);
+}
+
+export async function createAgentTrigger(agentId: string, payload: AgentTriggerCreateRequest) {
+  return request<AgentTriggerCreateResponse>(`/api/agents/${encodeURIComponent(agentId)}/triggers`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: payload.type ?? "webhook",
+      endpoint_path: payload.endpoint_path ?? null,
+      enabled: payload.enabled ?? true,
+    }),
+  });
+}
+
+export async function updateAgentTrigger(
+  agentId: string,
+  triggerId: string,
+  payload: AgentTriggerUpdateRequest,
+) {
+  return request<AgentTrigger>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAgentTrigger(agentId: string, triggerId: string) {
+  return request<void>(`/api/agents/${encodeURIComponent(agentId)}/triggers/${encodeURIComponent(triggerId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function listAdapters() {
   return request<{ items: AdapterMetadata[] }>("/api/tools/adapters");
 }
@@ -4326,6 +4884,23 @@ export async function getEvalRun(evalRunId: string) {
   return request<EvalRun>(`/api/evals/runs/${evalRunId}`);
 }
 
+export async function listPendingHumanReviewResults() {
+  return request<EvalResult[]>("/api/evals/results/pending-review", {
+    headers: adminAuthHeaders(),
+  });
+}
+
+export async function reviewEvalResult(
+  resultId: string,
+  payload: { verdict: "approved" | "rejected"; notes?: string | null },
+) {
+  return request<EvalResult>(`/api/evals/results/${encodeURIComponent(resultId)}/review`, {
+    method: "POST",
+    headers: adminAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function createEvalExperiment(datasetId: string, payload: EvalExperimentCreatePayload) {
   return request<EvalExperiment>(`/api/evals/datasets/${datasetId}/experiments`, {
     method: "POST",
@@ -4403,16 +4978,22 @@ export async function getEvalRunRegression(evalRunId: string) {
 }
 
 export function taskEventStreamUrl(taskId: string) {
-  const params = new URLSearchParams({ access_token: authToken() });
-  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+  const params = new URLSearchParams();
+  const token = authToken();
+  if (token) params.set("access_token", token);
+  const query = params.toString();
+  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream${query ? `?${query}` : ""}`;
 }
 
 export function taskEventReconnectStreamUrl(taskId: string, lastEventId: string | null) {
-  const params = new URLSearchParams({ access_token: authToken() });
+  const params = new URLSearchParams();
+  const token = authToken();
+  if (token) params.set("access_token", token);
   if (lastEventId) {
     params.set("after_sequence", lastEventId);
   }
-  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream?${params.toString()}`;
+  const query = params.toString();
+  return `${API_BASE_URL}/api/tasks/${taskId}/events/stream${query ? `?${query}` : ""}`;
 }
 
 function parseSseFrame(frame: string): AgentPlanStreamEvent | null {
@@ -4463,6 +5044,20 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
   if (eventType === "delta") return { type: "delta", content: String(payload.content ?? "") };
   if (eventType === "think_delta") {
     return { type: "think_delta", content: String(payload.content ?? "") };
+  }
+  if (eventType === "goal_progress") {
+    return {
+      type: "goal_progress",
+      run_id: String(payload.run_id ?? ""),
+      goal: String(payload.goal ?? ""),
+      status: goalProgressStatus(payload.status),
+      phase: String(payload.phase ?? "running"),
+      turn: Number(payload.turn ?? 0),
+      step_count: Number(payload.step_count ?? 0),
+      message: String(payload.message ?? ""),
+      started_at: typeof payload.started_at === "string" ? payload.started_at : null,
+      elapsed_ms: Number(payload.elapsed_ms ?? 0),
+    };
   }
   if (eventType === "run_created") {
     const contextAssembly = asRecord(payload.context_assembly);
@@ -4564,6 +5159,8 @@ export function parseChatSseFrame(frame: string): AgentChatStreamEvent | null {
       type: "error",
       message: String(payload.message ?? "stream failed"),
       recoverable: Boolean(payload.recoverable ?? false),
+      kind: chatStreamErrorKind(payload.kind),
+      run_id: typeof payload.run_id === "string" ? payload.run_id : undefined,
     };
   }
   return null;
@@ -4573,6 +5170,27 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function chatStreamErrorKind(value: unknown): "server" | "rate_limited" | "model_auth" | undefined {
+  if (value === "server" || value === "rate_limited" || value === "model_auth") {
+    return value;
+  }
+  return undefined;
+}
+
+function goalProgressStatus(value: unknown): GoalProgressStatus {
+  if (
+    value === "running" ||
+    value === "paused" ||
+    value === "needs_input" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled"
+  ) {
+    return value;
+  }
+  return "running";
 }
 
 function artifactType(value: unknown): "code" | "json" | "diff" | "chart" | "text" {
@@ -4679,6 +5297,50 @@ export async function getPolicySettings() {
   return request<PolicySettings>("/api/settings/policies");
 }
 
+export async function listPluginMarketplace() {
+  return request<PluginMarketplaceResponse>("/api/plugins/marketplace");
+}
+
+export async function installPlugin(pluginId: string, payload: { enabled?: boolean; config_json?: Record<string, unknown> } = {}) {
+  return request<PluginMarketplaceItem>(`/api/plugins/marketplace/${encodeURIComponent(pluginId)}/install`, {
+    method: "POST",
+    body: JSON.stringify({
+      enabled: payload.enabled ?? true,
+      config_json: payload.config_json ?? {},
+    }),
+  });
+}
+
+export async function uninstallPlugin(pluginId: string) {
+  return request<PluginMarketplaceItem>(`/api/plugins/marketplace/${encodeURIComponent(pluginId)}/install`, {
+    method: "DELETE",
+  });
+}
+
+export async function listPromptTemplates() {
+  return request<{ items: PromptTemplate[] }>("/api/plugins/prompt-templates");
+}
+
+export async function createPromptTemplate(payload: PromptTemplatePayload) {
+  return request<PromptTemplate>("/api/plugins/prompt-templates", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePromptTemplate(templateId: string, payload: PromptTemplatePayload) {
+  return request<PromptTemplate>(`/api/plugins/prompt-templates/${encodeURIComponent(templateId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePromptTemplate(templateId: string) {
+  return request<{ items: PromptTemplate[] }>(`/api/plugins/prompt-templates/${encodeURIComponent(templateId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getWarmPool() {
   return request<WarmPool>("/api/sandboxes/warm-pool");
 }
@@ -4694,6 +5356,23 @@ export async function listWarmPoolBenchmarks(limit = 20) {
   return request<{ items: WarmPoolBenchmark[]; next_cursor: string | null }>(
     `/api/sandboxes/warm-pool/benchmarks?limit=${limit}`,
   );
+}
+
+export async function listAgentVersions(agentId: string) {
+  return request<{ items: AgentVersion[] }>(`/api/agents/${agentId}/versions`);
+}
+
+export async function createAgentVersion(agentId: string, payload: { activate?: boolean } = {}) {
+  return request<AgentVersion>(`/api/agents/${agentId}/versions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function activateAgentVersion(agentId: string, versionId: string) {
+  return request<AgentVersion>(`/api/agents/${agentId}/versions/${versionId}/activate`, {
+    method: "PATCH",
+  });
 }
 
 export async function getSandboxQuotaUsage() {

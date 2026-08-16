@@ -41,6 +41,7 @@ type UseTeamComposerActionsArgs = {
   teamFileInputsRef: MutableRefObject<Record<string, HTMLInputElement | null>>;
   setComposerState: Dispatch<SetStateAction<ComposerState>>;
   setPendingSends: Dispatch<SetStateAction<PendingSend[]>>;
+  setStreamingWakes: Dispatch<SetStateAction<StreamingWake[]>>;
   setAttachmentsBySlotId: Dispatch<SetStateAction<Record<string, ComposerAttachment[]>>>;
   setBottomPanelBySlotId: Dispatch<SetStateAction<Record<string, TeamBottomPanel>>>;
   setBranchGroupsBySlotId: Dispatch<SetStateAction<TeamBranchGroupsBySlot>>;
@@ -50,6 +51,11 @@ type UseTeamComposerActionsArgs = {
 };
 
 type TeamSendMutation = UseMutationResult<unknown, Error, PendingSend, unknown>;
+
+type BranchSendOptions = {
+  anchorUserId: string;
+  originalAssistantId: string;
+};
 
 export function useTeamComposerActions({
   teamId,
@@ -64,6 +70,7 @@ export function useTeamComposerActions({
   teamFileInputsRef,
   setComposerState,
   setPendingSends,
+  setStreamingWakes,
   setAttachmentsBySlotId,
   setBottomPanelBySlotId,
   setBranchGroupsBySlotId,
@@ -85,7 +92,12 @@ export function useTeamComposerActions({
       triggerWake(variables.recipientSlotIds);
       await invalidateTeam();
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (variables.branchAssistantId) {
+        setStreamingWakes((current) =>
+          current.filter((wake) => wake.branchAssistantId !== variables.branchAssistantId),
+        );
+      }
       notifyFeedback({
         tone: "error",
         title: text("团队消息发送失败", "Team message send failed"),
@@ -117,6 +129,7 @@ export function useTeamComposerActions({
       target: string,
       attachments: ComposerAttachment[] = [],
       mode: WorkspaceMode = "chat",
+      branchOptions?: BranchSendOptions,
     ) => {
       const trimmed = content.trim();
       if (!trimmed || !activeTeam) return;
@@ -136,8 +149,12 @@ export function useTeamComposerActions({
         );
       if (duplicate) return;
       pendingSendKeysRef.current.add(key);
+      const pendingSendId = `${key}:${Date.now()}`;
+      const branchAssistantId = branchOptions
+        ? `team-${teamId}-${agent.slot_id}-branch-${encodeURIComponent(pendingSendId)}`
+        : undefined;
       const pendingSend: PendingSend = {
-        id: `${key}:${Date.now()}`,
+        id: pendingSendId,
         key,
         sourceSlotId: agent.slot_id,
         target,
@@ -145,8 +162,49 @@ export function useTeamComposerActions({
         files,
         mode,
         recipientSlotIds,
+        anchorUserId: branchOptions?.anchorUserId,
+        branchAssistantId,
       };
       setPendingSends((current) => [...current, pendingSend]);
+      if (branchOptions && branchAssistantId) {
+        setStreamingWakes((current) =>
+          current.some((wake) => wake.branchAssistantId === branchAssistantId)
+            ? current
+            : [
+                ...current,
+                {
+                  slotId: agent.slot_id,
+                  content: "",
+                  anchorUserId: branchOptions.anchorUserId,
+                  branchAssistantId,
+                },
+              ],
+        );
+        setBranchGroupsBySlotId((current) => {
+          const slotGroups = current[agent.slot_id] ?? {};
+          const existing = slotGroups[branchOptions.anchorUserId];
+          const branchNodeIds = Array.from(
+            new Set([
+              ...(existing?.branchNodeIds ?? []),
+              branchOptions.originalAssistantId,
+              branchAssistantId,
+            ]),
+          );
+          return {
+            ...current,
+            [agent.slot_id]: {
+              ...slotGroups,
+              [branchOptions.anchorUserId]: {
+                anchorUserId: branchOptions.anchorUserId,
+                anchorContent: trimmed,
+                branchNodeIds,
+                hiddenUserNodeIds: existing?.hiddenUserNodeIds ?? [],
+                activeNodeId: branchAssistantId,
+              },
+            },
+          };
+        });
+      }
       setComposerState((current) => ({
         ...current,
         [agent.slot_id]: { ...(current[agent.slot_id] ?? {}), draft: "", mode },
@@ -160,8 +218,11 @@ export function useTeamComposerActions({
       pendingSends,
       sendMutation,
       setAttachmentsBySlotId,
+      setBranchGroupsBySlotId,
       setComposerState,
       setPendingSends,
+      setStreamingWakes,
+      teamId,
     ],
   );
 
@@ -181,30 +242,12 @@ export function useTeamComposerActions({
       if (!previousUser) return;
       const originalAssistant = entries.find((entry) => entry.node.id === assistantNodeId);
       if (!originalAssistant) return;
-      const branchKey = previousUser.node.id;
-      setBranchGroupsBySlotId((current) => {
-        const slotGroups = current[agent.slot_id] ?? {};
-        const existing = slotGroups[branchKey];
-        const branchNodeIds = Array.from(
-          new Set([...(existing?.branchNodeIds ?? []), originalAssistant.node.id]),
-        );
-        return {
-          ...current,
-          [agent.slot_id]: {
-            ...slotGroups,
-            [branchKey]: {
-              anchorUserId: previousUser.node.id,
-              anchorContent: previousUser.node.content,
-              branchNodeIds,
-              hiddenUserNodeIds: existing?.hiddenUserNodeIds ?? [],
-              activeNodeId: originalAssistant.node.id,
-            },
-          },
-        };
+      sendFromComposer(agent, previousUser.node.content, previousUser.target, [], "chat", {
+        anchorUserId: previousUser.node.id,
+        originalAssistantId: originalAssistant.node.id,
       });
-      sendFromComposer(agent, previousUser.node.content, previousUser.target);
     },
-    [sendFromComposer, setBranchGroupsBySlotId],
+    [sendFromComposer],
   );
 
   const switchTeamBranch = useCallback((slotId: string, anchorUserId: string, nodeId: string) => {
@@ -243,10 +286,11 @@ export function useTeamComposerActions({
         let nextSlotGroups = slotGroups;
         for (const [anchorUserId, group] of Object.entries(slotGroups)) {
           const visibleBranchNodeIds = group.branchNodeIds.filter((nodeId) => byId.has(nodeId));
+          const activeBranchWasReplaced = !visibleBranchNodeIds.includes(group.activeNodeId);
           let workingGroup = group;
           if (
             visibleBranchNodeIds.length !== group.branchNodeIds.length ||
-            !visibleBranchNodeIds.includes(group.activeNodeId)
+            activeBranchWasReplaced
           ) {
             workingGroup = {
               ...group,
@@ -280,7 +324,9 @@ export function useTeamComposerActions({
               ...workingGroup,
               branchNodeIds: nextBranchNodeIds,
               hiddenUserNodeIds: [...hiddenUserNodeIds].filter((nodeId) => byId.has(nodeId)),
-              activeNodeId: lastAssistant.node.id,
+              activeNodeId: activeBranchWasReplaced
+                ? lastAssistant.node.id
+                : workingGroup.activeNodeId,
             },
           };
           changed = true;

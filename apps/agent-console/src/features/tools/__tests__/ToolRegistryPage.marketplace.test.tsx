@@ -197,6 +197,67 @@ afterEach(() => {
 });
 
 describe("ToolRegistryPage marketplace controls", () => {
+  it("renders API-backed webhook triggers and creates a one-time secret", async () => {
+    const user = userEvent.setup();
+    let triggers: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = url.startsWith(apiBaseUrl) ? url.slice(apiBaseUrl.length) : url;
+      if (path.startsWith("/api/tools/registry") && !init?.method) return jsonResponse(registryPayload());
+      if (path === "/api/agents" && !init?.method) {
+        return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
+      }
+      if (path === "/api/agents/default/triggers" && !init?.method) {
+        return jsonResponse({ items: triggers });
+      }
+      if (path === "/api/agents/default/triggers" && init?.method === "POST") {
+        triggers = [
+          {
+            id: "trigger-1",
+            agent_id: "default",
+            type: "webhook",
+            endpoint_path: "release-check",
+            enabled: true,
+            created_at: "2026-06-21T00:00:00Z",
+            updated_at: "2026-06-21T00:00:00Z",
+            last_triggered_at: null,
+          },
+        ];
+        return jsonResponse({ trigger: triggers[0], secret: "htrg_test_secret" }, 201);
+      }
+      if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
+        return jsonResponse(emptyMarketplacePayload());
+      }
+      if (path === "/api/tools/capabilities/dependency-preflight" && !init?.method) {
+        return jsonResponse({ local_release_path: "no-container" });
+      }
+      return jsonResponse({ detail: `unexpected ${path}` }, 404);
+    });
+
+    renderPage(fetchMock);
+
+    expect((await screen.findAllByText("触发器")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("暂无 webhook 触发器")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("触发器路径"), "release-check");
+    await user.click(screen.getByRole("button", { name: /创建触发器/ }));
+
+    expect(await screen.findByText("只显示一次的 Secret")).toBeInTheDocument();
+    expect(await screen.findByText("htrg_test_secret")).toBeInTheDocument();
+    expect((await screen.findAllByText(/\/api\/webhook\/trigger\/release-check/)).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input).endsWith("/api/agents/default/triggers") && init?.method === "POST",
+      );
+      expect(createCall).toBeDefined();
+      expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+        type: "webhook",
+        endpoint_path: "release-check",
+        enabled: true,
+      });
+    });
+  });
+
   it("opens a MCP / Skill marketplace panel and routes installs through Harness gates", async () => {
     let packagePayload: Record<string, unknown> | null = null;
     let marketplaceToolInstalled = false;
@@ -231,6 +292,9 @@ describe("ToolRegistryPage marketplace controls", () => {
       }
       if (path === "/api/agents" && !init?.method) {
         return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
+      }
+      if (path === "/api/agents/default/triggers" && !init?.method) {
+        return jsonResponse({ items: [] });
       }
       if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
         return jsonResponse(marketplacePayload());
@@ -461,6 +525,9 @@ describe("ToolRegistryPage marketplace controls", () => {
       if (path === "/api/agents" && !init?.method) {
         return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
       }
+      if (path === "/api/agents/default/triggers" && !init?.method) {
+        return jsonResponse({ items: [] });
+      }
       if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
         return jsonResponse(emptyMarketplacePayload());
       }
@@ -662,6 +729,9 @@ describe("ToolRegistryPage marketplace controls", () => {
           next_cursor: null,
         });
       }
+      if (path === "/api/agents/default/triggers" && !init?.method) {
+        return jsonResponse({ items: [] });
+      }
       if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
         return jsonResponse({
           ...marketplacePayload(),
@@ -720,6 +790,9 @@ describe("ToolRegistryPage marketplace controls", () => {
       if (path.startsWith("/api/tools/registry") && !init?.method) return jsonResponse(registryPayload());
       if (path === "/api/agents" && !init?.method) {
         return jsonResponse({ items: [{ id: "default", name: "默认智能体", capability_attachments: [] }], next_cursor: null });
+      }
+      if (path === "/api/agents/default/triggers" && !init?.method) {
+        return jsonResponse({ items: [] });
       }
       if (path.startsWith("/api/tools/capabilities/marketplace") && !init?.method) {
         return jsonResponse(emptyMarketplacePayload());

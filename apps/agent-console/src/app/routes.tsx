@@ -1,11 +1,12 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
+import { createBrowserRouter, createHashRouter, Navigate, useLocation } from "react-router-dom";
 
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { RouteSkeleton } from "../components/ui/RouteSkeleton";
 import { useAuth } from "../features/auth/AuthProvider";
-import { getOnboardingState } from "../features/tasks/api";
+import { API_BASE_URL, getOnboardingState } from "../features/tasks/api";
+import { isLocalRuntimeProfile } from "../lib/local-runtime";
 
 const AgentListPage = lazy(() => import("../features/agents/pages/AgentListPage").then((module) => ({ default: module.AgentListPage })));
 const AgentWorkspacePage = lazy(() => import("../features/agents/pages/AgentWorkspacePage").then((module) => ({ default: module.AgentWorkspacePage })));
@@ -23,6 +24,8 @@ const ObservabilityPage = lazy(() => import("../features/observability/pages/Obs
 const TokenSavingsPage = lazy(() => import("../features/observability/pages/TokenSavingsPage").then((module) => ({ default: module.TokenSavingsPage })));
 const TraceExplorerPage = lazy(() => import("../features/observability/pages/TraceExplorerPage").then((module) => ({ default: module.TraceExplorerPage })));
 const SandboxesPage = lazy(() => import("../features/sandboxes/pages/SandboxesPage").then((module) => ({ default: module.SandboxesPage })));
+const AdvancedFeaturesPage = lazy(() => import("../features/settings/pages/AdvancedFeaturesPage").then((module) => ({ default: module.AdvancedFeaturesPage })));
+const DesktopSettingsRoutePage = lazy(() => import("../features/settings/pages/DesktopSettingsRoutePage").then((module) => ({ default: module.DesktopSettingsRoutePage })));
 const ApiKeysPage = lazy(() => import("../features/settings/pages/ApiKeysPage").then((module) => ({ default: module.ApiKeysPage })));
 const AuditLogPage = lazy(() => import("../features/settings/pages/AuditLogPage").then((module) => ({ default: module.AuditLogPage })));
 const DataManagementPage = lazy(() => import("../features/settings/pages/DataManagementPage").then((module) => ({ default: module.DataManagementPage })));
@@ -43,8 +46,12 @@ const RunDetailPage = lazy(() => import("../features/runs/pages/RunDetailPage").
 const RunHistoryPage = lazy(() => import("../features/runs/pages/RunHistoryPage").then((module) => ({ default: module.RunHistoryPage })));
 const ToolConfigurationPage = lazy(() => import("../features/tools/pages/ToolConfigurationPage").then((module) => ({ default: module.ToolConfigurationPage })));
 const ToolRegistryPage = lazy(() => import("../features/tools/pages/ToolRegistryPage").then((module) => ({ default: module.ToolRegistryPage })));
+const TerminalWorkspace = lazy(() => import("../features/terminal/components/TerminalWorkspace").then((module) => ({ default: module.TerminalWorkspace })));
 
-export const router = createBrowserRouter([
+const createConsoleRouter =
+  import.meta.env.VITE_DESKTOP_ROUTER === "hash" ? createHashRouter : createBrowserRouter;
+
+export const router = createConsoleRouter([
   {
     path: "/",
     errorElement: <RouteErrorBoundary />,
@@ -52,6 +59,7 @@ export const router = createBrowserRouter([
       { path: "login", element: routeElement(<LoginPage />) },
       { path: "register", element: routeElement(<RegisterPage />) },
       { path: "oauth/callback", element: routeElement(<OAuthCallbackPage />) },
+      { path: "setup/model", element: <LegacyModelSetupRedirect /> },
       { index: true, element: protectedElement(<OnboardingGate />) },
       { path: "onboarding", element: protectedElement(<OnboardingWizardPage />) },
       { path: "agents", element: protectedElement(<AgentListPage />) },
@@ -76,6 +84,7 @@ export const router = createBrowserRouter([
       { path: "observability/trace", element: protectedElement(<TraceExplorerPage />) },
       { path: "observability/alerts", element: protectedElement(<AlertRulesPage />) },
       { path: "token-savings", element: protectedElement(<TokenSavingsPage />) },
+      { path: "desktop", element: protectedElement(<DesktopSettingsRoutePage />) },
       { path: "tools", element: protectedElement(<ToolRegistryPage />) },
       { path: "tools/config", element: protectedElement(<ToolConfigurationPage />) },
       { path: "knowledge", element: protectedElement(<KnowledgePage />) },
@@ -83,6 +92,7 @@ export const router = createBrowserRouter([
       { path: "help", element: protectedElement(<HelpCenterPage />) },
       { path: "help/troubleshooting", element: protectedElement(<HelpCenterPage />) },
       { path: "settings/models", element: protectedElement(<ModelSettingsPage />) },
+      { path: "settings/advanced", element: protectedElement(<AdvancedFeaturesPage />) },
       { path: "settings/secrets", element: protectedElement(<SecretVaultPage />) },
       { path: "settings/policies", element: protectedElement(<PolicySettingsPage />) },
       { path: "settings/users", element: protectedElement(<UserManagementPage />) },
@@ -90,12 +100,17 @@ export const router = createBrowserRouter([
       { path: "settings/audit", element: protectedElement(<AuditLogPage />) },
       { path: "settings/data-management", element: protectedElement(<DataManagementPage />) },
       { path: "settings/frontend-errors", element: protectedElement(<FrontendErrorsPage />) },
+      { path: "terminal", element: protectedElement(<TerminalWorkspace />) },
     ],
   },
 ]);
 
 function routeElement(element: ReactNode) {
   return <Suspense fallback={<RouteSkeleton />}>{element}</Suspense>;
+}
+
+export function LegacyModelSetupRedirect() {
+  return <Navigate to="/desktop?section=models" replace />;
 }
 
 function protectedElement(element: ReactNode) {
@@ -113,18 +128,59 @@ export function RequireAuth({ children }: { children: ReactNode }) {
       </div>
     );
   }
+  if (!auth.user && auth.error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-md rounded-lg border border-red-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-600">API 连接异常</p>
+          <h1 className="mt-2 text-lg font-semibold text-slate-950">无法打开控制台页面</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            登录态验证没有完成，请确认本地 API 正在响应。
+          </p>
+          <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+            <div>API：{API_BASE_URL || "/"}</div>
+            <div className="mt-1 break-words">错误：{auth.error}</div>
+          </div>
+          <button
+            type="button"
+            className="mt-4 inline-flex h-8 items-center justify-center rounded-md border border-slate-900 bg-slate-900 px-3 text-xs font-medium text-white hover:bg-slate-800"
+            onClick={() => void auth.reload()}
+          >
+            重新验证
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!auth.user) {
+    if (isLocalRuntimeProfile()) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <h1 className="text-base font-semibold text-slate-950">Local session unavailable</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Reopen this surface from Harness Desktop to establish a same-origin session.
+            </p>
+          </div>
+        </div>
+      );
+    }
     return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
   }
   return <>{children}</>;
 }
 
 function OnboardingGate() {
+  const localRuntime = isLocalRuntimeProfile();
   const onboarding = useQuery({
     queryKey: ["onboarding", "state"],
     queryFn: getOnboardingState,
+    enabled: !localRuntime,
     retry: false,
   });
+  if (localRuntime) {
+    return <Navigate to="/agents/default/workspace" replace />;
+  }
   if (onboarding.isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">

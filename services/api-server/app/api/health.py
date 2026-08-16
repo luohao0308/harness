@@ -1,6 +1,5 @@
 from typing import Annotated
 
-import redis
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -8,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.agents.model_gateway import ModelHealthChecker
 from app.core.config import get_settings
 from app.db.session import get_db_session
+from app.sandbox.capabilities import probe_docker_sandbox
 
 router = APIRouter(tags=["health"])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -41,6 +41,15 @@ def readiness(
     ] = None,
     organization_id: Annotated[str, Query(description="模型设置所属组织")] = "dev-org",
 ) -> dict:
+    settings = get_settings()
+    if getattr(settings, "runtime_profile", "server") == "local":
+        return _local_readiness(
+            response=response,
+            session=session,
+            check=check,
+            organization_id=organization_id,
+        )
+
     checks: dict[str, dict] = {}
     requested = {check} if check else {"db", "redis", "llm"}
     if "db" in requested:
@@ -55,6 +64,54 @@ def readiness(
     return {"ready": ready, **checks}
 
 
+@router.get(
+    "/api/health/capabilities",
+    summary="可选运行能力",
+    description="探测可选能力；能力缺失不会改变核心应用就绪状态。",
+)
+def capabilities() -> dict[str, dict[str, object]]:
+    return {"docker_sandbox": probe_docker_sandbox()}
+
+
+def _local_readiness(
+    *,
+    response: Response,
+    session: Session,
+    check: str | None,
+    organization_id: str,
+) -> dict:
+    requested = {check} if check else {"db", "llm"}
+    payload: dict[str, object] = {
+        "profile": "local",
+    }
+    required_checks: list[dict] = []
+
+    if "db" in requested:
+        db_check = _db_readiness(session)
+        payload["db"] = db_check
+        required_checks.append(db_check)
+    if "llm" in requested:
+        payload["model"] = _local_model_readiness(
+            session=session,
+            organization_id=organization_id,
+        )
+    if "redis" in requested:
+        payload["redis"] = {
+            "status": "disabled",
+            "required": False,
+            "reason": "local_runtime_uses_sqlite_jobs",
+        }
+    if "docker" in requested:
+        payload["capabilities"] = {"docker_sandbox": probe_docker_sandbox()}
+
+    runtime_ready = all(item["status"] == "ok" for item in required_checks)
+    payload["runtime_ready"] = runtime_ready
+    payload["ready"] = runtime_ready
+    if not runtime_ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return payload
+
+
 def _db_readiness(session: Session) -> dict:
     try:
         session.execute(text("SELECT 1")).scalar_one()
@@ -64,6 +121,8 @@ def _db_readiness(session: Session) -> dict:
 
 
 def _redis_readiness() -> dict:
+    import redis
+
     settings = get_settings()
     try:
         client = redis.Redis.from_url(
@@ -89,3 +148,17 @@ def _llm_readiness(*, session: Session, organization_id: str) -> dict:
         "provider_count": len(results),
         "providers": results,
     }
+
+
+def _local_model_readiness(*, session: Session, organization_id: str) -> dict:
+    settings = get_settings()
+    if not settings.ai_provider_api_key.strip():
+        return {
+            "status": "setup_required",
+            "state": "setup_required",
+            "configured": False,
+        }
+    result = _llm_readiness(session=session, organization_id=organization_id)
+    if result["status"] == "ok":
+        return {**result, "state": "healthy", "configured": True}
+    return {**result, "state": "error", "configured": True}

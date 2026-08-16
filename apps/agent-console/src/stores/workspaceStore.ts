@@ -20,6 +20,10 @@ import {
   sortConversationsByUpdatedAt,
   type ConversationSummary,
 } from "../features/agents/lib/conversationHistory";
+import {
+  readWorkspaceRegistrySnapshot,
+  saveWorkspaceRegistrySnapshot,
+} from "./workspaceRegistryPersistence";
 
 export type ConversationRole = "user" | "assistant" | "system" | "tool";
 export type ConversationState = "draft" | "streaming" | "paused" | "done" | "error";
@@ -51,9 +55,20 @@ export type ConversationNode = {
     model_call_id?: string | null;
     active_branch_id?: string | null;
     workspace_mode?: "chat" | "markdown_plan" | "plan" | "goal";
+    goal_status?: "running" | "paused" | "needs_input" | "completed" | "failed" | "cancelled";
+    goal_text?: string;
+    goal_phase?: string;
+    goal_turn?: number;
+    goal_step_count?: number;
+    goal_message?: string;
+    goal_started_at?: string | null;
+    goal_elapsed_ms?: number;
+    goal_run_id?: string;
+    goal_cleared?: boolean;
     knowledge_grounding?: string | null;
     orchestration?: Record<string, unknown>;
     error?: ConversationErrorMeta;
+    retry_disabled?: boolean;
     // v2 additive (Design §Data Models → ConversationNode)
     streaming_diagnostic?: "possible_buffering";
   };
@@ -66,6 +81,18 @@ type WorkspaceStream = {
   node_id: string;
   controller: AbortController;
   started_at: number;
+};
+
+export type WorkspaceConfig = {
+  contextMaxTokens: number;
+  autoCompressionRatio: number;
+  historyPanelCollapsed: boolean;
+  localFileRootPath: string | null;
+};
+
+export type WorkspaceRegistryEntry = {
+  agentId: string;
+  config: WorkspaceConfig;
 };
 
 type WorkspaceState = {
@@ -106,8 +133,11 @@ type WorkspaceState = {
   // --- v5 additive fields (Run state persistence across navigation) ---
   /** Active Run id; survives route navigation so returning to Workspace shows the last Run. */
   activeRunId: string | null;
+  workspaceRegistry: Record<string, WorkspaceRegistryEntry>;
+  activeWorkspaceId: string;
   // --- v1 actions (unchanged) ---
   reset: () => void;
+  resetConversationRuntime: () => void;
   setDraft: (draft: string) => void;
   setContextWindowTurns: (turns: number) => void;
   setActiveStream: (stream: WorkspaceStream | null) => void;
@@ -138,6 +168,7 @@ type WorkspaceState = {
     currentConversationId: string;
     historyPanelCollapsed?: boolean;
   }) => void;
+  upsertConversationSummary: (summary: ConversationSummary) => void;
   // --- v4 additive actions ---
   /** Route the value through `clampContextMaxTokens` before writing. */
   setContextMaxTokens: (value: number) => void;
@@ -146,6 +177,9 @@ type WorkspaceState = {
   clearContextCompression: (branchKey: string) => void;
   // --- v5 additive actions ---
   setActiveRunId: (runId: string | null) => void;
+  registerWorkspace: (workspaceId: string, agentId: string) => void;
+  switchWorkspace: (workspaceId: string) => void;
+  updateWorkspaceConfig: (workspaceId: string, patch: Partial<WorkspaceConfig>) => void;
 };
 
 const rootNode: ConversationNode = {
@@ -177,6 +211,48 @@ function createNode(input: Omit<ConversationNode, "id" | "children_ids" | "creat
 // The initial genesis conversation is created lazily to guarantee a fresh
 // `created_at` / `updated_at` pair and a fresh id per module instance.
 const initialGenesis = genesisConversation(new Date().toISOString());
+
+function defaultWorkspaceConfig(): WorkspaceConfig {
+  return {
+    contextMaxTokens: CONTEXT_MAX_TOKENS_DEFAULT,
+    autoCompressionRatio: AUTO_COMPRESSION_RATIO_DEFAULT,
+    historyPanelCollapsed: false,
+    localFileRootPath: null,
+  };
+}
+
+function normalizeWorkspaceRegistryEntry(
+  workspaceId: string,
+  entry: WorkspaceRegistryEntry | undefined,
+): WorkspaceRegistryEntry {
+  return {
+    agentId: entry?.agentId ?? workspaceId,
+    config: {
+      contextMaxTokens: clampContextMaxTokens(entry?.config.contextMaxTokens ?? CONTEXT_MAX_TOKENS_DEFAULT),
+      autoCompressionRatio: clampAutoCompressionRatio(
+        entry?.config.autoCompressionRatio ?? AUTO_COMPRESSION_RATIO_DEFAULT,
+      ),
+      historyPanelCollapsed: entry?.config.historyPanelCollapsed ?? false,
+      localFileRootPath: entry?.config.localFileRootPath ?? null,
+    },
+  };
+}
+
+function updateWorkspaceRegistryEntry(
+  state: WorkspaceState,
+  workspaceId: string,
+  patch: Partial<WorkspaceConfig>,
+): WorkspaceRegistryEntry | null {
+  const entry = state.workspaceRegistry[workspaceId];
+  if (!entry) return null;
+  return {
+    ...entry,
+    config: {
+      ...entry.config,
+      ...patch,
+    },
+  };
+}
 
 /**
  * Internal reducer: given the current runtime state (nodesById / etc.) and
@@ -240,18 +316,49 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   contextCompressions: initialGenesis.contextCompressions,
   // v5 — persists across navigation
   activeRunId: null,
+  workspaceRegistry: {
+    default: {
+      agentId: "default",
+      config: defaultWorkspaceConfig(),
+    },
+  },
+  activeWorkspaceId: "default",
   reset: () =>
     set({
       nodesById: { [rootNode.id]: { ...rootNode, children_ids: [] } },
+      rootNodeId: rootNode.id,
       activeLeafId: rootNode.id,
       pinnedNodeIds: [],
       activeStream: null,
       draftFromNodeId: null,
       draft: "",
       dismissedPlanNodeIds: [],
+      contextWindowTurns: 8,
       contextMaxTokens: CONTEXT_MAX_TOKENS_DEFAULT,
       autoCompressionRatio: AUTO_COMPRESSION_RATIO_DEFAULT,
       contextCompressions: {},
+      activeRunId: null,
+      workspaceRegistry: {
+        default: {
+          agentId: "default",
+          config: defaultWorkspaceConfig(),
+        },
+      },
+      activeWorkspaceId: "default",
+    }),
+  resetConversationRuntime: () =>
+    set({
+      nodesById: { [rootNode.id]: { ...rootNode, children_ids: [] } },
+      rootNodeId: rootNode.id,
+      activeLeafId: rootNode.id,
+      pinnedNodeIds: [],
+      activeStream: null,
+      draftFromNodeId: null,
+      draft: "",
+      dismissedPlanNodeIds: [],
+      contextWindowTurns: 8,
+      contextCompressions: {},
+      activeRunId: null,
     }),
   setDraft: (draft) => set({ draft }),
   setContextWindowTurns: (turns) => set({ contextWindowTurns: turns }),
@@ -361,7 +468,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const state = get();
     let current = state.nodesById[nodeIdToInspect];
     if (!current) return null;
+    const seenNodeIds = new Set<string>();
     while (current.children_ids.length > 0) {
+      if (seenNodeIds.has(current.id)) break;
+      seenNodeIds.add(current.id);
       const nextId = current.children_ids[current.children_ids.length - 1];
       const next = state.nodesById[nextId];
       if (!next) break;
@@ -375,8 +485,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activePath: () => {
     const state = get();
     const path: ConversationNode[] = [];
+    const seenNodeIds = new Set<string>();
     let current: string | null = state.activeLeafId;
     while (current) {
+      if (seenNodeIds.has(current)) break;
+      seenNodeIds.add(current);
       const node: ConversationNode | undefined = state.nodesById[current];
       if (!node) break;
       if (node.id !== state.rootNodeId) path.push(node);
@@ -492,11 +605,62 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         c.id === id ? { ...c, title, updated_at: new Date().toISOString() } : c,
       ),
     })),
-  setHistoryPanelCollapsed: (collapsed) => set({ historyPanelCollapsed: collapsed }),
+  setHistoryPanelCollapsed: (collapsed) =>
+    set((state) => {
+      const workspaceId = state.activeWorkspaceId;
+      const nextEntry = updateWorkspaceRegistryEntry(state, workspaceId, {
+        historyPanelCollapsed: collapsed,
+      });
+      return {
+        historyPanelCollapsed: collapsed,
+        ...(nextEntry
+          ? {
+              workspaceRegistry: {
+                ...state.workspaceRegistry,
+                [workspaceId]: nextEntry,
+              },
+            }
+          : null),
+      };
+    }),
   setContextMaxTokens: (value) =>
-    set({ contextMaxTokens: clampContextMaxTokens(value) }),
+    set((state) => {
+      const nextValue = clampContextMaxTokens(value);
+      const workspaceId = state.activeWorkspaceId;
+      const nextEntry = updateWorkspaceRegistryEntry(state, workspaceId, {
+        contextMaxTokens: nextValue,
+      });
+      return {
+        contextMaxTokens: nextValue,
+        ...(nextEntry
+          ? {
+              workspaceRegistry: {
+                ...state.workspaceRegistry,
+                [workspaceId]: nextEntry,
+              },
+            }
+          : null),
+      };
+    }),
   setAutoCompressionRatio: (value) =>
-    set({ autoCompressionRatio: clampAutoCompressionRatio(value) }),
+    set((state) => {
+      const nextValue = clampAutoCompressionRatio(value);
+      const workspaceId = state.activeWorkspaceId;
+      const nextEntry = updateWorkspaceRegistryEntry(state, workspaceId, {
+        autoCompressionRatio: nextValue,
+      });
+      return {
+        autoCompressionRatio: nextValue,
+        ...(nextEntry
+          ? {
+              workspaceRegistry: {
+                ...state.workspaceRegistry,
+                [workspaceId]: nextEntry,
+              },
+            }
+          : null),
+      };
+    }),
   setContextCompression: (branchKey, summary) =>
     set((state) => ({
       contextCompressions: {
@@ -511,6 +675,56 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return { contextCompressions: next };
     }),
   setActiveRunId: (runId) => set({ activeRunId: runId }),
+  registerWorkspace: (workspaceId, agentId) =>
+    set((state) => {
+      const nextEntry = normalizeWorkspaceRegistryEntry(workspaceId, {
+        agentId,
+        config: state.workspaceRegistry[workspaceId]?.config ?? defaultWorkspaceConfig(),
+      });
+      return {
+        workspaceRegistry: {
+          ...state.workspaceRegistry,
+          [workspaceId]: nextEntry,
+        },
+      };
+    }),
+  switchWorkspace: (workspaceId) => {
+    const state = get();
+    const workspace = state.workspaceRegistry[workspaceId];
+    if (!workspace) return;
+    set({
+      activeWorkspaceId: workspaceId,
+      _agentScope: workspace.agentId,
+      contextMaxTokens: workspace.config.contextMaxTokens,
+      autoCompressionRatio: workspace.config.autoCompressionRatio,
+      historyPanelCollapsed: workspace.config.historyPanelCollapsed,
+    });
+  },
+  updateWorkspaceConfig: (workspaceId, patch) =>
+    set((state) => {
+      const entry = state.workspaceRegistry[workspaceId];
+      if (!entry) return state;
+      const nextEntry: WorkspaceRegistryEntry = {
+        ...entry,
+        config: {
+          ...entry.config,
+          ...patch,
+        },
+      };
+      return {
+        workspaceRegistry: {
+          ...state.workspaceRegistry,
+          [workspaceId]: nextEntry,
+        },
+        ...(state.activeWorkspaceId === workspaceId
+          ? {
+              contextMaxTokens: nextEntry.config.contextMaxTokens,
+              autoCompressionRatio: nextEntry.config.autoCompressionRatio,
+              historyPanelCollapsed: nextEntry.config.historyPanelCollapsed,
+            }
+          : null),
+      };
+    }),
   hydrateFromConversations: (snapshot) => {
     if (snapshot.conversations.length === 0) return;
     const target =
@@ -533,7 +747,43 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       draftFromNodeId: null,
     });
   },
+  upsertConversationSummary: (summary) =>
+    set((state) => ({
+      conversations: state.conversations.some((conversation) => conversation.id === summary.id)
+        ? state.conversations.map((conversation) =>
+            conversation.id === summary.id ? summary : conversation,
+          )
+        : [...state.conversations, summary],
+    })),
 }));
+
+const restoredWorkspaceRegistry = readWorkspaceRegistrySnapshot();
+if (restoredWorkspaceRegistry !== null) {
+  useWorkspaceStore.setState((state) => {
+    const nextWorkspaceRegistry = {
+      ...state.workspaceRegistry,
+      ...Object.fromEntries(
+        Object.entries(restoredWorkspaceRegistry.workspaceRegistry).map(([workspaceId, entry]) => [
+          workspaceId,
+          normalizeWorkspaceRegistryEntry(workspaceId, entry),
+        ]),
+      ),
+    };
+    const activeWorkspaceId =
+      restoredWorkspaceRegistry.activeWorkspaceId in nextWorkspaceRegistry
+        ? restoredWorkspaceRegistry.activeWorkspaceId
+        : state.activeWorkspaceId;
+    const activeWorkspace = nextWorkspaceRegistry[activeWorkspaceId] ?? nextWorkspaceRegistry.default;
+    return {
+      workspaceRegistry: nextWorkspaceRegistry,
+      activeWorkspaceId,
+      _agentScope: activeWorkspace.agentId,
+      contextMaxTokens: activeWorkspace.config.contextMaxTokens,
+      autoCompressionRatio: activeWorkspace.config.autoCompressionRatio,
+      historyPanelCollapsed: activeWorkspace.config.historyPanelCollapsed,
+    };
+  });
+}
 
 // ---------------------------------------------------------------------------
 // v3 persistence: 300 ms debounced `conversations` snapshot write-through.
@@ -572,5 +822,9 @@ useWorkspaceStore.subscribe((state) => {
       lastAutoCompressionRatioWritten = state.autoCompressionRatio;
       saveAutoCompressionRatio(scope, state.autoCompressionRatio);
     }
+    saveWorkspaceRegistrySnapshot({
+      activeWorkspaceId: state.activeWorkspaceId,
+      workspaceRegistry: state.workspaceRegistry,
+    });
   }, 300);
 });

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+merge_head="$(git rev-parse --git-path MERGE_HEAD)"
+
+if [[ -f "$merge_head" ]]; then
+  exit 0
+fi
+
+exec python3 "$repo_root/scripts/validate-commit-message.py" \
+  --message-file "$1" \
+  --allow-fixup

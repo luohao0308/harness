@@ -13,30 +13,53 @@
  *   - Keep v2 shortcut handling (Cmd+K / ? / Escape) untouched.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
+import { Copy, RefreshCw } from "lucide-react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
 import { notifyFeedback } from "../../../components/ui/feedback-toast";
 import { useI18n } from "../../../lib/i18n";
+import { createReconnectingSseClient, type SseClient } from "../../../lib/sse-client";
+import { cn } from "../../../lib/utils";
 import {
   useWorkspaceStore,
   type ConversationArtifact,
   type ConversationNode,
 } from "../../../stores/workspaceStore";
 import {
+  bindLocalAgentConversation,
+  ApiHttpError,
+  cancelTask,
   createTeam,
   getAgent,
   getAgentRunWorkspace,
+  getLocalAgentRecoveryCommand,
   getModelSettings,
   getToolRegistry,
+  listAgentsPage,
+  listLocalAgentBindingTasks,
+  listAgentSessionMessages,
+  listLocalAgentConnections,
+  listLocalAgentConversationBindings,
   listTeams,
+  sendLocalAgentMessage,
+  taskEventReconnectStreamUrl,
+  type AgentEvent,
+  type AgentChatStreamMessage,
+  type AgentMessage,
+  type LocalAgentSendMessagePayload,
+  type LocalAgentBindingTask,
+  type LocalAgentConnection,
+  type LocalAgentConversationBinding,
+  type LocalAgentConversationBindingPage,
+  type LocalAgentRecoveryCommand,
   type ModelSettings,
   type ToolCall,
 } from "../../tasks/api";
-import { ChatSurface } from "../components/ChatSurface";
+import { ChatSurface, type LocalAgentSubmitContext } from "../components/ChatSurface";
 import { ConversationHistoryPanel } from "../components/ConversationHistoryPanel";
 import { InspectorDrawer } from "../components/InspectorDrawer";
 import type { ModelOption } from "../components/ModelPicker";
@@ -49,6 +72,7 @@ import {
   exportMarkdown,
 } from "../lib/exporter";
 import { readAutoCompressionRatio, readContextMaxTokens } from "../lib/contextTokens";
+import { copyText } from "../lib/clipboard";
 import {
   generateConversationId,
   genesisConversationLocalized,
@@ -57,8 +81,10 @@ import {
   readHistoryPanelCollapsed,
   saveConversationsSnapshot,
   CONVERSATIONS_SCHEMA_VERSION,
+  type ConversationSummary,
 } from "../lib/conversationHistory";
 import { clearSnapshot, loadSnapshot } from "../lib/localPersistence";
+import { workspaceInstanceId } from "../lib/workspaceScope";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
 import { nextAvailableTeamName } from "../../teams/pages/TeamCreateModal";
 import {
@@ -68,18 +94,50 @@ import {
   isNodeVisibleInPath,
   summarizeUsage,
 } from "./agentWorkspaceDerive";
+import { runDetailPath } from "../lib/runLinks";
+
+const CANCEL_RETRY_DELAYS_MS = [80, 120, 180, 260, 360] as const;
+
+async function cancelWorkspaceRun(runId: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= CANCEL_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await cancelTask(runId);
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable =
+        (error instanceof ApiHttpError && error.status === 404) ||
+        /database is locked|database is busy/i.test(message);
+      if (!retryable || attempt === CANCEL_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, CANCEL_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastError;
+}
 
 export function AgentWorkspacePage() {
   const { text } = useI18n();
   const { confirm, confirmDialog } = useConfirmDialog();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { agentId = "default" } = useParams();
+  const requestedConversationId = searchParams.get("conversation_id");
+  const requestedDesktopPanel = searchParams.get("desktop_panel");
+  const requestedConversationAppliedRef = useRef<string | null>(null);
+  const currentWorkspaceId = workspaceInstanceId(agentId);
 
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("chat");
   const [inspectorSection, setInspectorSection] = useState<InspectorSection | null>(null);
   const activeRunId = useWorkspaceStore((s) => s.activeRunId);
   const setActiveRunId = useWorkspaceStore((s) => s.setActiveRunId);
+  const registerWorkspace = useWorkspaceStore((s) => s.registerWorkspace);
+  const switchWorkspace = useWorkspaceStore((s) => s.switchWorkspace);
+  const updateWorkspaceConfig = useWorkspaceStore((s) => s.updateWorkspaceConfig);
+  const workspaceRegistry = useWorkspaceStore((s) => s.workspaceRegistry);
   const updateNode = useWorkspaceStore((s) => s.updateNode);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutOpen, setShortcutOpen] = useState(false);
@@ -89,14 +147,181 @@ export function AgentWorkspacePage() {
   const [historyOverlayOpen, setHistoryOverlayOpen] = useState(false);
   const [historyNarrow, setHistoryNarrow] = useState(false);
   const [jumpTarget, setJumpTarget] = useState<{ nodeId: string; seq: number } | null>(null);
+  const [localAgentEnabled, setLocalAgentEnabled] = useState(false);
+  const [selectedLocalConnectionId, setSelectedLocalConnectionId] = useState<string | null>(null);
+  const [localAgentRestorePending, setLocalAgentRestorePending] = useState(false);
+  const [localAgentRecoveryCommand, setLocalAgentRecoveryCommand] =
+    useState<LocalAgentRecoveryCommand | null>(null);
+
+  useEffect(() => {
+    if (requestedDesktopPanel === "approvals") {
+      setInspectorSection("runtime");
+    }
+  }, [location.key, requestedDesktopPanel]);
+  const [localAgentRecoveryCommandCopied, setLocalAgentRecoveryCommandCopied] = useState(false);
+  const [activeLocalBinding, setActiveLocalBinding] =
+    useState<LocalAgentConversationBinding | null>(null);
+  const [localPendingAssistantNodeId, setLocalPendingAssistantNodeId] = useState<string | null>(null);
+  const [localAgentControlPendingNodeId, setLocalAgentControlPendingNodeId] =
+    useState<string | null>(null);
+  const localPendingAssistantNodeIdRef = useRef<string | null>(null);
+  const localPendingDraftRef = useRef<{
+    userNode: ConversationNode;
+    assistantNode: ConversationNode;
+  } | null>(null);
+  const localBindingCreateForRef = useRef<string | null>(null);
+  const localTargetRequestSeqRef = useRef(0);
+  const localBindingFocusConnectionRef = useRef<string | null>(null);
+  const localBindingTargetHintRef = useRef<{
+    bindingId: string;
+    connectionId: string;
+    agentSessionId: string;
+  } | null>(null);
+  const selectedLocalConnectionIdRef = useRef<string | null>(null);
+  const localAgentEnabledRef = useRef(localAgentEnabled);
+  const focusLocalConversationOnceRef = useRef(false);
+  const localAgentStreamRef = useRef<SseClient | null>(null);
+  const localAgentStreamTokenRef = useRef<string | null>(null);
+  const localModelSyncConnectionRef = useRef<string | null>(null);
+  const userSelectedModelRef = useRef(false);
+  const setLocalPendingAssistant = useCallback((nodeId: string | null) => {
+    localPendingAssistantNodeIdRef.current = nodeId;
+    if (nodeId === null) {
+      localPendingDraftRef.current = null;
+    }
+    setLocalPendingAssistantNodeId(nodeId);
+  }, []);
 
   const agent = useQuery({ queryKey: ["agents", agentId], queryFn: () => getAgent(agentId) });
+  const agentsQuery = useQuery({
+    queryKey: ["agents", "page"],
+    queryFn: () => listAgentsPage({ limit: 100 }),
+  });
   const settings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings });
   const toolsQuery = useQuery({
     queryKey: ["tools", "registry", agentId],
     queryFn: () => getToolRegistry(agentId),
   });
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: listTeams });
+  const localConnectionsQuery = useQuery({
+    queryKey: ["local-agent-connections"],
+    queryFn: listLocalAgentConnections,
+    refetchInterval: 3000,
+  });
+  const localConnections = useMemo(
+    () =>
+      sortLocalAgentConnections(
+        (localConnectionsQuery.data?.items ?? []).filter(
+          (connection) =>
+            connection.agent_id === agentId && isUsableLocalAgentConnection(connection),
+        ),
+      ),
+    [agentId, localConnectionsQuery.data],
+  );
+  const selectedLocalConnection = useMemo(
+    () => {
+      if (selectedLocalConnectionId !== null) {
+        return (
+          localConnections.find((connection) => connection.id === selectedLocalConnectionId) ??
+          null
+        );
+      }
+      return defaultLocalAgentConnection(localConnections);
+    },
+    [localConnections, selectedLocalConnectionId],
+  );
+  const selectedLocalAgentModel = useMemo(
+    () => localAgentModelFromConnection(selectedLocalConnection),
+    [selectedLocalConnection],
+  );
+  selectedLocalConnectionIdRef.current =
+    selectedLocalConnectionId ?? selectedLocalConnection?.id ?? null;
+  localAgentEnabledRef.current = localAgentEnabled;
+
+  const localBindingsQuery = useQuery({
+    queryKey: ["local-agent-bindings", selectedLocalConnection?.id],
+    queryFn: () => listLocalAgentConversationBindings(selectedLocalConnection?.id ?? ""),
+    enabled: localAgentEnabled && selectedLocalConnection !== null,
+  });
+  const localMessagesQuery = useQuery({
+    queryKey: [
+      "agent-session-messages",
+      activeLocalBinding?.agent_session_id,
+      activeLocalBinding?.id,
+      activeLocalBinding?.connection_id,
+    ],
+    queryFn: () => listAgentSessionMessages(activeLocalBinding?.agent_session_id ?? ""),
+    enabled: localAgentEnabled && activeLocalBinding !== null,
+    refetchInterval: localAgentEnabled && activeLocalBinding !== null ? 2000 : false,
+  });
+  const localBindingTasksQuery = useQuery({
+    queryKey: ["local-agent-binding-tasks", activeLocalBinding?.id],
+    queryFn: () => listLocalAgentBindingTasks(activeLocalBinding?.id ?? ""),
+    enabled: localAgentEnabled && activeLocalBinding !== null,
+    refetchInterval: localAgentEnabled && activeLocalBinding !== null ? 2000 : false,
+  });
+  const localBindingMutation = useMutation({
+    mutationFn: (connectionId: string) =>
+      bindLocalAgentConversation(connectionId, {
+        title: `${agent.data?.name ?? agentId} 本地 Agent 会话`,
+      }),
+    onSuccess: async (binding) => {
+      queryClient.setQueryData<LocalAgentConversationBindingPage>(
+        ["local-agent-bindings", binding.connection_id],
+        (current) => {
+          const items = current?.items ?? [];
+          const nextItems = items.some((item) => item.id === binding.id)
+            ? items.map((item) => (item.id === binding.id ? binding : item))
+            : [binding, ...items];
+          return { items: nextItems };
+        },
+      );
+      if (
+        localAgentEnabledRef.current &&
+        selectedLocalConnectionIdRef.current === binding.connection_id
+      ) {
+        setActiveLocalBinding(binding);
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ["local-agent-bindings", binding.connection_id],
+      });
+    },
+  });
+  const localSendMutation = useMutation({
+    mutationFn: ({
+      bindingId,
+      content,
+      clientMessageId,
+      context,
+    }: {
+      bindingId: string;
+      content: string;
+      clientMessageId: string;
+      context: LocalAgentSubmitContext;
+    }) => {
+      const payload: LocalAgentSendMessagePayload = {
+        content,
+        client_message_id: clientMessageId,
+        resume_of_client_message_id: context.resume_of_client_message_id ?? null,
+        resume_of_user_message_id: context.resume_of_user_message_id ?? null,
+        workspace_context_provided: true,
+        workspace_mode: context.mode,
+        model_provider: context.model_provider,
+        model_name: context.model_name,
+        messages: context.messages,
+        active_leaf_id: context.active_leaf_id,
+        active_branch_id: context.active_branch_id,
+        pinned_node_ids: context.pinned_node_ids,
+        context_window_turns: context.context_window_turns,
+        tool_mentions: context.tool_mentions,
+        attachment_names: context.attachment_names,
+        attachments: context.attachments,
+        context_max_tokens: context.context_max_tokens,
+        compressed_context: context.compressed_context,
+      };
+      return sendLocalAgentMessage(bindingId, payload);
+    },
+  });
 
   const workspace = useQuery({
     queryKey: ["agent-run-workspace", activeRunId],
@@ -129,6 +354,60 @@ export function AgentWorkspacePage() {
   );
   const modelLabelIsFallback = settings.isError || settings.data === undefined;
 
+  useEffect(() => {
+    if (!localAgentEnabled || selectedLocalAgentModel === null) {
+      localModelSyncConnectionRef.current = null;
+      userSelectedModelRef.current = false;
+      return;
+    }
+    const connectionId = selectedLocalConnection?.id ?? null;
+    if (localModelSyncConnectionRef.current !== connectionId) {
+      localModelSyncConnectionRef.current = connectionId;
+      userSelectedModelRef.current = false;
+    }
+    if (userSelectedModelRef.current) return;
+    if (
+      selectedProviderId !== selectedLocalAgentModel.providerId ||
+      selectedModelId !== selectedLocalAgentModel.modelId
+    ) {
+      setSelectedProviderId(selectedLocalAgentModel.providerId);
+      setSelectedModelId(selectedLocalAgentModel.modelId);
+    }
+  }, [
+    localAgentEnabled,
+    selectedLocalAgentModel,
+    selectedLocalConnection?.id,
+    selectedModelId,
+    selectedProviderId,
+  ]);
+  const workspaceAgents = useMemo(() => {
+    const items = agentsQuery.data?.items ?? [];
+    if (agent.data === undefined || items.some((item) => item.id === agent.data.id)) {
+      return items;
+    }
+    return [agent.data, ...items];
+  }, [agent.data, agentsQuery.data?.items]);
+  const workspaceOptions = useMemo(
+    () =>
+      workspaceAgents.map((item) => ({
+        value: workspaceInstanceId(item.id),
+        label: item.name,
+        description: `${text("工作区", "Workspace")} · ${item.status}`,
+      })),
+    [text, workspaceAgents],
+  );
+  const conversationGroupLabel = useCallback(
+    (conversation: ConversationSummary): string => {
+      const localConnectionId = localAgentConnectionIdFromConversation(conversation);
+      if (localConnectionId !== null) {
+        const connection = localConnections.find((item) => item.id === localConnectionId);
+        return connection?.display_name ?? connection?.adapter_kind ?? "本地 Agent";
+      }
+      return agent.data?.name ?? agentId;
+    },
+    [agent.data?.name, agentId, localConnections],
+  );
+
   const tools = useMemo(() => toolsQuery.data?.items ?? [], [toolsQuery.data]);
   const stream = useChatStream({
     agentId,
@@ -137,6 +416,9 @@ export function AgentWorkspacePage() {
     selectedModelId,
     tools,
     onRunCreated: setActiveRunId,
+    onRunCancel: async (runId) => {
+      await cancelWorkspaceRun(runId);
+    },
   });
 
   const nodesById = useWorkspaceStore((s) => s.nodesById);
@@ -145,6 +427,20 @@ export function AgentWorkspacePage() {
   const activePath = useMemo(
     () => buildActivePath(nodesById, activeLeafId, rootNodeId),
     [nodesById, activeLeafId, rootNodeId],
+  );
+  const localAgentTaskBlocking =
+    localBindingMutation.isPending ||
+    localSendMutation.isPending ||
+    (localAgentEnabled &&
+      (selectedLocalConnection === null ||
+        activeLocalBinding === null ||
+        activeLocalBinding.connection_id !== selectedLocalConnection.id ||
+        localMessagesQuery.data === undefined ||
+        localBindingTasksQuery.data === undefined)) ||
+    (localBindingTasksQuery.data?.items.some(isLocalAgentTaskActive) ?? false);
+  const localAgentActiveNode = useMemo(
+    () => activeLocalAgentControlNode(activePath, activeLocalBinding),
+    [activeLocalBinding, activePath],
   );
   const createTeamFromConversation = useMutation({
     mutationFn: async () => {
@@ -192,6 +488,56 @@ export function AgentWorkspacePage() {
   const deleteConversation = useWorkspaceStore((s) => s.deleteConversation);
   const setHistoryPanelCollapsed = useWorkspaceStore((s) => s.setHistoryPanelCollapsed);
   const hydrateFromConversations = useWorkspaceStore((s) => s.hydrateFromConversations);
+  const upsertConversationSummary = useWorkspaceStore((s) => s.upsertConversationSummary);
+  const visibleConversations = useMemo(() => {
+    if (!localAgentEnabled) {
+      return conversations.filter((conversation) => !isLocalAgentConversation(conversation));
+    }
+    const connectionId = selectedLocalConnection?.id ?? selectedLocalConnectionId;
+    if (connectionId === null) return [];
+    return conversations.filter(
+      (conversation) => localAgentConnectionIdFromConversation(conversation) === connectionId,
+    );
+  }, [
+    conversations,
+    localAgentEnabled,
+    selectedLocalConnection?.id,
+    selectedLocalConnectionId,
+  ]);
+  const runReturnTarget = useMemo(
+    () => ({
+      agentId,
+      conversationId: currentConversationId,
+    }),
+    [agentId, currentConversationId],
+  );
+  const navigateToConversation = useCallback(
+    (conversationId: string) => {
+      const nextSearch = new URLSearchParams(location.search);
+      nextSearch.set("conversation_id", conversationId);
+      navigate(
+        {
+          pathname: location.pathname,
+          search: `?${nextSearch.toString()}`,
+        },
+        { replace: true },
+      );
+    },
+    [location.pathname, location.search, navigate],
+  );
+  const handleWorkspaceChange = useCallback(
+    (nextWorkspaceId: string) => {
+      switchWorkspace(nextWorkspaceId);
+      const nextAgentId =
+        workspaceRegistry[nextWorkspaceId]?.agentId ??
+        workspaceAgents.find((item) => workspaceInstanceId(item.id) === nextWorkspaceId)?.id ??
+        agentId;
+      if (nextAgentId !== agentId) {
+        navigate(`/agents/${nextAgentId}/workspace`);
+      }
+    },
+    [agentId, navigate, switchWorkspace, workspaceAgents, workspaceRegistry],
+  );
 
   const inspectorArtifacts = useMemo<ConversationArtifact[]>(
     () => activePath.flatMap((node) => node.artifacts).slice(-10),
@@ -203,6 +549,280 @@ export function AgentWorkspacePage() {
   );
   const pendingApprovalCount =
     workspace.data?.approvals.filter((approval) => approval.status === "PENDING").length ?? 0;
+
+  useEffect(() => {
+    if (!localAgentEnabled) return;
+    const conversation = conversations.find((item) => item.id === currentConversationId);
+    if (conversation === undefined || !isLocalAgentConversation(conversation)) return;
+    const localRunId = [...activePath]
+      .reverse()
+      .find(
+        (node) =>
+          node.metadata.orchestration?.source === "local_agent" &&
+          typeof node.run_id === "string",
+      )?.run_id;
+    if (localRunId && activeRunId !== localRunId) {
+      setActiveRunId(localRunId);
+    }
+  }, [
+    activePath,
+    activeRunId,
+    conversations,
+    currentConversationId,
+    localAgentEnabled,
+    setActiveRunId,
+  ]);
+
+  useEffect(() => {
+    if (!localAgentEnabled || activeLocalBinding === null || selectedLocalConnection === null) {
+      return;
+    }
+    if (activeLocalBinding.connection_id !== selectedLocalConnection.id) {
+      return;
+    }
+    const shouldFocus = focusLocalConversationOnceRef.current;
+    ensureLocalAgentConversation({
+      binding: activeLocalBinding,
+      connection: selectedLocalConnection,
+      fallbackTitle: `${agent.data?.name ?? agentId} 本地 Agent`,
+      pendingApprovalCount,
+      focus: shouldFocus,
+    });
+    if (shouldFocus) {
+      focusLocalConversationOnceRef.current = false;
+      localBindingFocusConnectionRef.current = null;
+    }
+  }, [
+    activeLocalBinding,
+    agent.data?.name,
+    agentId,
+    localAgentEnabled,
+    pendingApprovalCount,
+    selectedLocalConnection,
+  ]);
+
+  useEffect(() => {
+    if (selectedLocalConnectionId !== null || localAgentEnabled) {
+      return;
+    }
+    setSelectedLocalConnectionId(defaultLocalAgentConnection(localConnections)?.id ?? null);
+  }, [localAgentEnabled, localConnections, selectedLocalConnectionId]);
+
+  useEffect(() => {
+    const targetHint = localBindingTargetHintRef.current;
+    setActiveLocalBinding(null);
+    setLocalPendingAssistant(null);
+    localBindingCreateForRef.current = null;
+    localBindingTargetHintRef.current =
+      targetHint !== null && targetHint.connectionId === selectedLocalConnectionId
+        ? targetHint
+        : null;
+    localAgentStreamTokenRef.current = null;
+    localAgentStreamRef.current?.close();
+    localAgentStreamRef.current = null;
+  }, [agentId, selectedLocalConnectionId, setLocalPendingAssistant]);
+
+  useEffect(
+    () => () => {
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!localAgentEnabled || selectedLocalConnection === null) return;
+    const bindings = localBindingsQuery.data?.items;
+    if (bindings === undefined) return;
+    const state = useWorkspaceStore.getState();
+    const currentConversation = state.conversations.find(
+      (conversation) => conversation.id === state.currentConversationId,
+    );
+    const currentLocalBinding = localAgentBindingHintFromConversation(currentConversation);
+    const targetLocalBinding =
+      localBindingTargetHintRef.current?.connectionId === selectedLocalConnection.id
+        ? localBindingTargetHintRef.current
+        : currentLocalBinding;
+    const bindingRequestedForFocus =
+      localBindingFocusConnectionRef.current === selectedLocalConnection.id;
+    const currentBindingMatchesConnection =
+      currentLocalBinding?.connectionId === selectedLocalConnection.id;
+    const targetBindingMatchesConnection =
+      targetLocalBinding?.connectionId === selectedLocalConnection.id;
+    const exactTargetBinding =
+      targetBindingMatchesConnection && targetLocalBinding !== null
+        ? bindings.find(
+            (binding) =>
+              binding.status === "active" &&
+              localAgentBindingMatchesHint(binding, targetLocalBinding),
+          )
+        : undefined;
+    const currentActiveBinding =
+      targetBindingMatchesConnection &&
+      targetLocalBinding !== null &&
+      activeLocalBinding !== null &&
+      activeLocalBinding.status === "active" &&
+      localAgentBindingMatchesHint(activeLocalBinding, targetLocalBinding)
+        ? activeLocalBinding
+        : undefined;
+    const activeBinding =
+      exactTargetBinding ??
+      currentActiveBinding ??
+      (!targetBindingMatchesConnection && (!currentBindingMatchesConnection || bindingRequestedForFocus)
+        ? (bindingRequestedForFocus
+            ? mostRecentActiveBindingForConnection(bindings, selectedLocalConnection.id)
+            : undefined) ??
+          bindings.find((binding) => binding.status === "active")
+        : undefined);
+    if (activeBinding !== undefined) {
+      if (activeBinding.connection_id !== selectedLocalConnection.id) return;
+      if (activeLocalBinding?.id !== activeBinding.id) {
+        setActiveLocalBinding(activeBinding);
+      }
+      if (
+        localBindingTargetHintRef.current !== null &&
+        localAgentBindingMatchesHint(activeBinding, localBindingTargetHintRef.current)
+      ) {
+        localBindingTargetHintRef.current = null;
+      }
+      return;
+    }
+    if ((currentBindingMatchesConnection || targetBindingMatchesConnection) && !bindingRequestedForFocus) {
+      if (activeLocalBinding !== null) {
+        setActiveLocalBinding(null);
+      }
+      return;
+    }
+    if (
+      localBindingCreateForRef.current === selectedLocalConnection.id ||
+      localBindingMutation.isPending
+    ) {
+      return;
+    }
+    localBindingCreateForRef.current = selectedLocalConnection.id;
+    localBindingMutation.mutate(selectedLocalConnection.id);
+  }, [
+    activeLocalBinding?.id,
+    currentConversationId,
+    localAgentEnabled,
+    localBindingMutation,
+    localBindingsQuery.data?.items,
+    selectedLocalConnection,
+  ]);
+
+  useEffect(() => {
+    if (!localAgentEnabled || activeLocalBinding === null || localMessagesQuery.data === undefined) {
+      return;
+    }
+    if (
+      selectedLocalConnection === null ||
+      activeLocalBinding.connection_id !== selectedLocalConnection.id
+    ) {
+      return;
+    }
+    const state = useWorkspaceStore.getState();
+    const localConversationId = localAgentConversationId(activeLocalBinding.id);
+    const localHydrationState = localAgentHydrationStateForConversation(
+      state,
+      localConversationId,
+    );
+    const pendingDraft = localPendingDraftRef.current;
+    const activeLocalPath =
+      state.currentConversationId === localConversationId ? state.activePath() : [];
+    const activePendingNode = activeLocalAgentControlNode(activeLocalPath, activeLocalBinding);
+    const refPendingNode =
+      localPendingAssistantNodeIdRef.current !== null
+        ? state.nodesById[localPendingAssistantNodeIdRef.current] ??
+          (pendingDraft?.assistantNode.id === localPendingAssistantNodeIdRef.current
+            ? pendingDraft.assistantNode
+            : undefined)
+        : undefined;
+    const pendingNode = refPendingNode ?? activePendingNode ?? undefined;
+    const pendingUserNode =
+      pendingNode?.parent_id !== null && pendingNode?.parent_id !== undefined
+        ? state.nodesById[pendingNode.parent_id] ??
+          activeLocalPath.find((node) => node.id === pendingNode.parent_id) ??
+          (pendingDraft?.userNode.id === pendingNode.parent_id ? pendingDraft.userNode : undefined)
+        : undefined;
+    const summary = localAgentConversationFromMessages({
+      binding: activeLocalBinding,
+      messages: localMessagesQuery.data.items.filter((message) =>
+        localAgentMessageMatchesBinding(message, activeLocalBinding),
+      ),
+      pendingTasks: (localBindingTasksQuery.data?.items ?? []).filter(
+        (task) => task.binding_id === activeLocalBinding.id,
+      ),
+      connection: selectedLocalConnection,
+      fallbackTitle: `${agent.data?.name ?? agentId} 本地 Agent`,
+      pendingApprovalCount,
+      ...localHydrationState,
+      pendingNode: localAgentNodeMatchesBinding(pendingNode, activeLocalBinding)
+        ? pendingNode
+        : undefined,
+      pendingUserNode: localAgentNodeMatchesBinding(pendingUserNode, activeLocalBinding)
+        ? pendingUserNode
+        : undefined,
+    });
+    const summaryWithDraft = {
+      ...summary,
+      draft: state.draft,
+    };
+    const summaryActiveRunId = summaryWithDraft.nodesById[summaryWithDraft.activeLeafId]?.run_id;
+    if (summaryActiveRunId && activeRunId !== summaryActiveRunId) {
+      setActiveRunId(summaryActiveRunId);
+    }
+    const shouldFocusLocalConversation = focusLocalConversationOnceRef.current;
+    focusLocalConversationOnceRef.current = false;
+    if (shouldFocusLocalConversation) {
+      localBindingFocusConnectionRef.current = null;
+    }
+    const shouldHydrateLocalConversation =
+      shouldFocusLocalConversation ||
+      state.currentConversationId === summaryWithDraft.id;
+    if (shouldHydrateLocalConversation) {
+      const conversationsWithoutLocal = state.conversations.filter(
+        (conversation) =>
+          conversation.id !== summaryWithDraft.id &&
+          !isPendingLocalAgentConversationForConnection(
+            conversation,
+            activeLocalBinding.connection_id,
+          ),
+      );
+      hydrateFromConversations({
+        conversations: [...conversationsWithoutLocal, summaryWithDraft],
+        currentConversationId: summaryWithDraft.id,
+        historyPanelCollapsed,
+      });
+    } else {
+      upsertConversationSummary(summaryWithDraft);
+    }
+      if (pendingNode != null) {
+        const nextPendingNode = summaryWithDraft.nodesById[pendingNode.id];
+        if (
+          nextPendingNode === undefined ||
+          nextPendingNode.state === "done"
+        ) {
+          setLocalPendingAssistant(null);
+        }
+    }
+  }, [
+    activeLocalBinding,
+    activeRunId,
+    agent.data?.name,
+    agentId,
+    historyPanelCollapsed,
+    hydrateFromConversations,
+    localBindingTasksQuery.data?.items,
+    localAgentEnabled,
+    localMessagesQuery.data,
+    localPendingAssistantNodeId,
+    pendingApprovalCount,
+    selectedLocalConnection,
+    setActiveRunId,
+    setLocalPendingAssistant,
+    upsertConversationSummary,
+  ]);
 
   useEffect(() => {
     if (!workspace.data?.tool_calls.length) return;
@@ -217,7 +837,11 @@ export function AgentWorkspacePage() {
 
   // ─── Agent scope + rehydration (v3 Req 4.10, Legacy migration) ─────────
   useEffect(() => {
-    useWorkspaceStore.getState().setAgentScope(agentId);
+    const stateBeforeScope = useWorkspaceStore.getState();
+    registerWorkspace(currentWorkspaceId, agentId);
+    switchWorkspace(currentWorkspaceId);
+    const hasCurrentAgentScope = stateBeforeScope._agentScope === agentId;
+    stateBeforeScope.setAgentScope(agentId);
     const now = new Date().toISOString();
     const locale = "zh-CN";
     const collapsed = readHistoryPanelCollapsed(agentId);
@@ -226,10 +850,12 @@ export function AgentWorkspacePage() {
       const saved = readContextMaxTokens(agentId);
       if (saved !== null) {
         useWorkspaceStore.getState().setContextMaxTokens(saved);
+        updateWorkspaceConfig(currentWorkspaceId, { contextMaxTokens: saved });
       }
       const savedRatio = readAutoCompressionRatio(agentId);
       if (savedRatio !== null) {
         useWorkspaceStore.getState().setAutoCompressionRatio(savedRatio);
+        updateWorkspaceConfig(currentWorkspaceId, { autoCompressionRatio: savedRatio });
       }
     };
 
@@ -258,9 +884,10 @@ export function AgentWorkspacePage() {
           .reduce((total: number, node: any) => total + (node.content?.length ?? 0), 0)
       : 0;
     if (
-      currentState.activeStream !== null ||
-      hasStreamingNode ||
-      storeAssistantContent > snapshotAssistantContent
+      hasCurrentAgentScope &&
+      (currentState.activeStream !== null ||
+        hasStreamingNode ||
+        storeAssistantContent > snapshotAssistantContent)
     ) {
       applyContextMaxTokens();
       return () => {
@@ -270,9 +897,38 @@ export function AgentWorkspacePage() {
 
     const v3 = v3Snapshot;
     if (v3 !== null) {
+      const requestedConversation = requestedConversationId
+        ? v3.conversations.find((conversation) => conversation.id === requestedConversationId)
+        : undefined;
+      const currentConversationIdForHydration = requestedConversation?.id ?? v3.currentConversationId;
+      const cloudCurrentConversationId = currentCloudConversationId(
+        v3.conversations,
+        currentConversationIdForHydration,
+      );
+      const cloudSafeSnapshot =
+        requestedConversation !== undefined
+          ? {
+              conversations: v3.conversations,
+              currentConversationId: requestedConversation.id,
+            }
+          : cloudCurrentConversationId !== null
+          ? {
+              conversations: v3.conversations,
+              currentConversationId: cloudCurrentConversationId,
+            }
+          : (() => {
+              const genesis = genesisConversationLocalized(now, locale, generateConversationId);
+              return {
+                conversations: [...v3.conversations, genesis],
+                currentConversationId: genesis.id,
+              };
+            })();
       hydrateFromConversations({
-        conversations: v3.conversations,
-        currentConversationId: v3.currentConversationId,
+        conversations: cloudSafeSnapshot.conversations,
+        currentConversationId: cloudSafeSnapshot.currentConversationId,
+        historyPanelCollapsed: collapsed ?? false,
+      });
+      updateWorkspaceConfig(currentWorkspaceId, {
         historyPanelCollapsed: collapsed ?? false,
       });
       applyContextMaxTokens();
@@ -287,6 +943,9 @@ export function AgentWorkspacePage() {
       hydrateFromConversations({
         conversations: [migrated],
         currentConversationId: migrated.id,
+        historyPanelCollapsed: collapsed ?? false,
+      });
+      updateWorkspaceConfig(currentWorkspaceId, {
         historyPanelCollapsed: collapsed ?? false,
       });
       saveConversationsSnapshot(agentId, {
@@ -307,13 +966,101 @@ export function AgentWorkspacePage() {
       currentConversationId: genesis.id,
       historyPanelCollapsed: collapsed ?? false,
     });
+    updateWorkspaceConfig(currentWorkspaceId, {
+      historyPanelCollapsed: collapsed ?? false,
+    });
     applyContextMaxTokens();
     return () => {
       useWorkspaceStore.getState().setAgentScope(null);
     };
     // Locale is fixed Chinese; changing old locale state must not rehydrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, hydrateFromConversations]);
+  }, [agentId, currentWorkspaceId, hydrateFromConversations]);
+
+  useEffect(() => {
+    if (localAgentEnabled) return;
+    if (requestedConversationId !== null) {
+      const requestedConversation = useWorkspaceStore
+        .getState()
+        .conversations.find((conversation) => conversation.id === requestedConversationId);
+      if (isLocalAgentConversation(requestedConversation)) return;
+    }
+    const store = useWorkspaceStore.getState();
+    const currentConversation = store.conversations.find(
+      (conversation) => conversation.id === store.currentConversationId,
+    );
+    if (!isLocalAgentConversation(currentConversation)) return;
+    const cloudConversationId = currentCloudConversationId(store.conversations);
+    if (cloudConversationId !== null) {
+      store.setCurrentConversation(cloudConversationId);
+      return;
+    }
+    newConversation();
+  }, [
+    conversations,
+    currentConversationId,
+    localAgentEnabled,
+    newConversation,
+    requestedConversationId,
+  ]);
+
+  useEffect(() => {
+    if (!requestedConversationId) return;
+    if (requestedConversationAppliedRef.current === requestedConversationId) return;
+    const target = conversations.find((conversation) => conversation.id === requestedConversationId);
+    if (target === undefined) return;
+    requestedConversationAppliedRef.current = requestedConversationId;
+    const localBinding = localAgentBindingHintFromConversation(target);
+    if (localBinding !== null) {
+      selectedLocalConnectionIdRef.current = localBinding.connectionId;
+      localAgentEnabledRef.current = true;
+      localBindingFocusConnectionRef.current = null;
+      localBindingTargetHintRef.current = localBinding;
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      const bindingFromCache = queryClient
+        .getQueryData<LocalAgentConversationBindingPage>([
+          "local-agent-bindings",
+          localBinding.connectionId,
+        ])
+        ?.items.find(
+          (binding) =>
+            binding.status === "active" &&
+            localAgentBindingMatchesHint(binding, localBinding),
+        );
+      if (bindingFromCache !== undefined) {
+        localBindingTargetHintRef.current = null;
+      }
+      setActiveLocalBinding(bindingFromCache ?? null);
+      setLocalPendingAssistant(null);
+      setSelectedLocalConnectionId(localBinding.connectionId);
+      setLocalAgentEnabled(true);
+    } else {
+      localAgentEnabledRef.current = false;
+      localBindingFocusConnectionRef.current = null;
+      localBindingTargetHintRef.current = null;
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      setActiveLocalBinding(null);
+      setLocalPendingAssistant(null);
+      setLocalAgentEnabled(false);
+    }
+    if (target.id === currentConversationId) return;
+    setCurrentConversation(target.id);
+  }, [
+    conversations,
+    currentConversationId,
+    queryClient,
+    requestedConversationId,
+    setCurrentConversation,
+    setLocalPendingAssistant,
+  ]);
+
+  useEffect(() => {
+    requestedConversationAppliedRef.current = null;
+  }, [agentId]);
 
   // ─── Seed the session model override from settings defaults ────────────
   useEffect(() => {
@@ -385,7 +1132,7 @@ export function AgentWorkspacePage() {
     // v3: clearing only resets the current conversation's runtime fields;
     // the conversations list itself is unchanged. Persistence subscribe
     // will write the empty state back to the active conversation.
-    useWorkspaceStore.getState().reset();
+    useWorkspaceStore.getState().resetConversationRuntime();
     notifyFeedback({
       tone: "warning",
       title: "当前会话已清空",
@@ -394,6 +1141,7 @@ export function AgentWorkspacePage() {
   }, [confirm]);
 
   const handleModelChange = useCallback((providerId: string, modelId: string) => {
+    userSelectedModelRef.current = true;
     setSelectedProviderId(providerId);
     setSelectedModelId(modelId);
   }, []);
@@ -423,23 +1171,1167 @@ export function AgentWorkspacePage() {
     setModelPickerOpenSeq((seq) => seq + 1);
   }, []);
 
+  const handleAgentChange = useCallback(
+    (nextAgentId: string): void => {
+      localAgentEnabledRef.current = false;
+      focusLocalConversationOnceRef.current = false;
+      localBindingFocusConnectionRef.current = null;
+      localBindingTargetHintRef.current = null;
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      setLocalAgentEnabled(false);
+      if (nextAgentId === agentId) {
+        const store = useWorkspaceStore.getState();
+        const cloudConversation = store.conversations
+          .filter((conversation) => !isLocalAgentConversation(conversation))
+          .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+        if (cloudConversation !== undefined) {
+          store.setCurrentConversation(cloudConversation.id);
+        } else {
+          newConversation();
+        }
+        return;
+      }
+      navigate(`/agents/${nextAgentId}/workspace`);
+    },
+    [agentId, navigate, newConversation],
+  );
+
+  const handleLocalAgentTargetChange = useCallback((connectionId: string): void => {
+    localTargetRequestSeqRef.current += 1;
+    selectedLocalConnectionIdRef.current = connectionId;
+    localAgentEnabledRef.current = true;
+    focusLocalConversationOnceRef.current = true;
+    localBindingFocusConnectionRef.current = connectionId;
+    localBindingTargetHintRef.current = null;
+    localAgentStreamTokenRef.current = null;
+    localAgentStreamRef.current?.close();
+    localAgentStreamRef.current = null;
+    setActiveLocalBinding(null);
+    setLocalPendingAssistant(null);
+    setSelectedLocalConnectionId(connectionId);
+    setLocalAgentEnabled(true);
+    const connection =
+      localConnections.find((item) => item.id === connectionId) ?? null;
+    const existingConversation = mostRecentLocalAgentConversationForConnection(
+      useWorkspaceStore.getState().conversations,
+      connectionId,
+    );
+    if (existingConversation !== undefined) {
+      const localBinding = localAgentBindingHintFromConversation(existingConversation);
+      if (localBinding !== null) {
+        const bindingFromCache = queryClient
+          .getQueryData<LocalAgentConversationBindingPage>([
+            "local-agent-bindings",
+            localBinding.connectionId,
+          ])
+          ?.items.find(
+            (binding) =>
+              binding.status === "active" &&
+              localAgentBindingMatchesHint(binding, localBinding),
+          );
+        if (bindingFromCache !== undefined) {
+          setActiveLocalBinding(bindingFromCache);
+          localBindingFocusConnectionRef.current = null;
+          setCurrentConversation(existingConversation.id);
+          return;
+        }
+        localBindingTargetHintRef.current = localBinding;
+      }
+    }
+    ensurePendingLocalAgentConversation({
+      connection,
+      fallbackTitle: `${connection?.display_name ?? "本地 Agent"} 正在恢复`,
+      focus: true,
+    });
+  }, [
+    agentId,
+    localConnections,
+    queryClient,
+    setCurrentConversation,
+    setLocalPendingAssistant,
+  ]);
+
+  const handleLocalAgentEnabledChange = useCallback(
+    (enabled: boolean): void => {
+      const connection = selectedLocalConnection;
+      localAgentEnabledRef.current = enabled;
+      if (enabled) {
+        localTargetRequestSeqRef.current += 1;
+        focusLocalConversationOnceRef.current = true;
+        localBindingFocusConnectionRef.current = connection?.id ?? null;
+        localBindingTargetHintRef.current = null;
+        if (connection !== null) {
+          selectedLocalConnectionIdRef.current = connection.id;
+          setSelectedLocalConnectionId(connection.id);
+        }
+      } else {
+        focusLocalConversationOnceRef.current = false;
+        localBindingFocusConnectionRef.current = null;
+        localBindingTargetHintRef.current = null;
+        localAgentStreamTokenRef.current = null;
+        localAgentStreamRef.current?.close();
+        localAgentStreamRef.current = null;
+      }
+      setLocalAgentEnabled(enabled);
+      if (!enabled || connection === null) return;
+      const connectionId = connection.id;
+      const requestSeq = localTargetRequestSeqRef.current;
+      void (async () => {
+        try {
+          const bindings = await queryClient.fetchQuery({
+            queryKey: ["local-agent-bindings", connectionId],
+            queryFn: () => listLocalAgentConversationBindings(connectionId),
+          });
+          if (localTargetRequestSeqRef.current !== requestSeq) return;
+          const localBindingHint = mostRecentLocalAgentBindingHintForConnection(
+            useWorkspaceStore.getState().conversations,
+            connectionId,
+          );
+          const activeBinding =
+            (localBindingHint !== null
+              ? bindings.items.find(
+                  (binding) =>
+                    binding.status === "active" &&
+                    localAgentBindingMatchesHint(binding, localBindingHint),
+                )
+              : undefined) ??
+            (!localBindingHint
+              ? (bindings.items.find((binding) => binding.status === "active") ??
+                bindings.items[0])
+              : undefined);
+          if (activeBinding !== undefined) {
+            if (
+              localAgentEnabledRef.current &&
+              selectedLocalConnectionIdRef.current === activeBinding.connection_id
+            ) {
+              setActiveLocalBinding(activeBinding);
+            }
+            return;
+          }
+          if (localBindingHint !== null) {
+            localBindingTargetHintRef.current = localBindingHint;
+            ensurePendingLocalAgentConversation({
+              connection,
+              fallbackTitle: `${connection.display_name ?? "本地 Agent"} 正在恢复`,
+              focus: true,
+            });
+            return;
+          }
+          localBindingCreateForRef.current = connectionId;
+          const created = await localBindingMutation.mutateAsync(connectionId);
+          if (localTargetRequestSeqRef.current !== requestSeq) return;
+          if (
+            localAgentEnabledRef.current &&
+            selectedLocalConnectionIdRef.current === created.connection_id
+          ) {
+            setActiveLocalBinding(created);
+          }
+        } catch (error) {
+          notifyFeedback({
+            tone: "error",
+            title: "本地 Agent 会话恢复失败",
+            description: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+    },
+    [localBindingMutation, queryClient, selectedLocalConnection],
+  );
+
+  const refreshLocalAgentState = useCallback(async (connectionId: string) => {
+    await queryClient.invalidateQueries({ queryKey: ["local-agent-connections"] });
+    const connections = await queryClient.fetchQuery({
+      queryKey: ["local-agent-connections"],
+      queryFn: listLocalAgentConnections,
+    });
+    const refreshedConnection = connections.items.find(
+      (connection) => connection.id === connectionId,
+    );
+    const refreshes: Array<Promise<unknown>> = [
+      queryClient.invalidateQueries({ queryKey: ["local-agent-bindings", connectionId] }),
+    ];
+    if (activeLocalBinding?.connection_id === connectionId) {
+      refreshes.push(
+        queryClient.invalidateQueries({
+          queryKey: ["agent-session-messages", activeLocalBinding.agent_session_id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["local-agent-binding-tasks", activeLocalBinding.id],
+        }),
+      );
+    }
+    if (activeRunId !== null) {
+      refreshes.push(
+        queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", activeRunId] }),
+      );
+    }
+    await Promise.all(refreshes);
+    handleLocalAgentEnabledChange(true);
+    return refreshedConnection;
+  }, [
+    activeLocalBinding?.agent_session_id,
+    activeLocalBinding?.connection_id,
+    activeLocalBinding?.id,
+    activeRunId,
+    handleLocalAgentEnabledChange,
+    queryClient,
+  ]);
+
+  const handleLocalAgentRestore = useCallback((): void => {
+    const connectionId = selectedLocalConnection?.id ?? selectedLocalConnectionIdRef.current;
+    if (connectionId === null) {
+      navigate("/agents");
+      return;
+    }
+    setLocalAgentRestorePending(true);
+    void (async () => {
+      try {
+        const refreshedConnection = await refreshLocalAgentState(connectionId);
+        if (
+          refreshedConnection?.status === "online" ||
+          refreshedConnection?.status === "busy"
+        ) {
+          setLocalAgentRecoveryCommand(null);
+          setLocalAgentRecoveryCommandCopied(false);
+          notifyFeedback({
+            tone: "success",
+            title: "本地 Agent 已恢复",
+            description: "已重新同步连接、会话和待处理任务。",
+          });
+        } else {
+          const recoveryCommand = await getLocalAgentRecoveryCommand(connectionId);
+          setLocalAgentRecoveryCommand(recoveryCommand);
+          setLocalAgentRecoveryCommandCopied(false);
+          notifyFeedback({
+            tone: "warning",
+            title: "本地 Agent 仍离线，已生成恢复命令",
+            description: "复制下方命令到本地终端运行，运行后点击“我已执行，刷新”。",
+          });
+        }
+      } catch (error) {
+        notifyFeedback({
+          tone: "error",
+          title: "本地 Agent 恢复失败",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setLocalAgentRestorePending(false);
+      }
+    })();
+  }, [
+    navigate,
+    refreshLocalAgentState,
+    selectedLocalConnection?.id,
+  ]);
+
+  const handleLocalAgentRecoveryRefresh = useCallback((): void => {
+    const connectionId = selectedLocalConnection?.id ?? selectedLocalConnectionIdRef.current;
+    if (connectionId === null) {
+      navigate("/agents");
+      return;
+    }
+    setLocalAgentRestorePending(true);
+    void (async () => {
+      try {
+        const refreshedConnection = await refreshLocalAgentState(connectionId);
+        if (
+          refreshedConnection?.status === "online" ||
+          refreshedConnection?.status === "busy"
+        ) {
+          setLocalAgentRecoveryCommand(null);
+          setLocalAgentRecoveryCommandCopied(false);
+          notifyFeedback({
+            tone: "success",
+            title: "本地 Agent 已恢复",
+            description: "已检测到 bridge 心跳并同步当前会话。",
+          });
+        } else {
+          notifyFeedback({
+            tone: "warning",
+            title: "本地 Agent 仍离线",
+            description: "还没有检测到 bridge 心跳；确认终端命令仍在运行后再刷新。",
+          });
+        }
+      } catch (error) {
+        notifyFeedback({
+          tone: "error",
+          title: "本地 Agent 状态刷新失败",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setLocalAgentRestorePending(false);
+      }
+    })();
+  }, [navigate, refreshLocalAgentState, selectedLocalConnection?.id]);
+
+  const handleLocalAgentRecoveryCommandCopy = useCallback((): void => {
+    const command = localAgentRecoveryCommand?.command ?? "";
+    if (!command) return;
+    void (async () => {
+      const ok = await copyText(command);
+      setLocalAgentRecoveryCommandCopied(ok);
+      if (!ok) {
+        notifyFeedback({
+          tone: "error",
+          title: "恢复命令复制失败",
+          description: "浏览器无法写入剪贴板，请手动复制下方命令。",
+        });
+      }
+    })();
+  }, [localAgentRecoveryCommand?.command]);
+
+  const startLocalAgentEventStream = useCallback(
+    ({
+      runId,
+      bridgeTaskId,
+      assistantNodeId,
+      connection,
+      binding,
+    }: {
+      runId: string;
+      bridgeTaskId: string;
+      assistantNodeId: string;
+      connection: LocalAgentConnection;
+      binding: LocalAgentConversationBinding;
+    }): void => {
+      if (typeof window === "undefined" || typeof window.EventSource !== "function") {
+        return;
+      }
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      const streamToken = `${runId}:${bridgeTaskId}:${binding.id}:${assistantNodeId}`;
+      localAgentStreamTokenRef.current = streamToken;
+      let streamedContent = "";
+      const closeOwnedStream = () => {
+        if (localAgentStreamTokenRef.current !== streamToken) return;
+        localAgentStreamTokenRef.current = null;
+        localAgentStreamRef.current?.close();
+        localAgentStreamRef.current = null;
+      };
+      const eventStillTargetsCurrentLocalConversation = (): boolean => {
+        const state = useWorkspaceStore.getState();
+        const node = state.nodesById[assistantNodeId];
+        const orchestration = node?.metadata.orchestration;
+        return (
+          localAgentStreamTokenRef.current === streamToken &&
+          localAgentEnabledRef.current &&
+          selectedLocalConnectionIdRef.current === connection.id &&
+          state.currentConversationId === localAgentConversationId(binding.id) &&
+          node !== undefined &&
+          node.run_id === runId &&
+          orchestration?.source === "local_agent" &&
+          orchestration.binding_id === binding.id &&
+          orchestration.connection_id === connection.id &&
+          orchestration.agent_session_id === binding.agent_session_id &&
+          orchestration.bridge_task_id === bridgeTaskId
+        );
+      };
+      const streamClient = createReconnectingSseClient<AgentEvent>(
+        (lastEventId) => taskEventReconnectStreamUrl(runId, lastEventId),
+        {
+          parse: (data) => JSON.parse(data) as AgentEvent,
+          onMessage: (event) => {
+            if (event.payload_json.bridge_task_id !== bridgeTaskId) return;
+            if (event.agent_run_id !== null && event.agent_run_id !== runId) return;
+            if (!eventStillTargetsCurrentLocalConversation()) return;
+            if (
+              event.event_type === "TOOL_APPROVAL_REQUESTED" ||
+              event.event_type === "LOCAL_AGENT_TOOL_REQUESTED"
+            ) {
+              const toolName =
+                typeof event.payload_json.tool_name === "string"
+                  ? event.payload_json.tool_name
+                  : "本地工具";
+              const approvalId =
+                typeof event.payload_json.approval_id === "string"
+                  ? event.payload_json.approval_id
+                  : null;
+              const state = useWorkspaceStore.getState();
+              const node = state.nodesById[assistantNodeId];
+              if (node === undefined || node.state === "done" || node.state === "error") return;
+              state.updateNode(assistantNodeId, {
+                content: localAgentToolApprovalContent(connection, toolName, approvalId),
+                state: "streaming",
+                metadata: {
+                  ...node.metadata,
+                  orchestration: {
+                    ...node.metadata.orchestration,
+                    status: "waiting_approval",
+                    streaming_via: "task_event_sse",
+                    tool_name: toolName,
+                    approval_id: approvalId,
+                  },
+                },
+                tool_calls: [
+                  ...node.tool_calls,
+                  {
+                    tool_name: toolName,
+                    status: "PENDING_APPROVAL",
+                    approval_id: approvalId,
+                  },
+                ],
+              });
+              void queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] });
+              return;
+            }
+            if (event.event_type === "LOCAL_AGENT_DELTA_RECEIVED") {
+              const content =
+                typeof event.payload_json.content === "string"
+                  ? event.payload_json.content
+                  : "";
+              if (!content) return;
+              streamedContent += content;
+              const state = useWorkspaceStore.getState();
+              const node = state.nodesById[assistantNodeId];
+              if (node === undefined || node.state === "done" || node.state === "error") return;
+              state.updateNode(assistantNodeId, {
+                content: streamedContent,
+                state: "streaming",
+                metadata: {
+                  ...node.metadata,
+                  output_tokens: Math.max(1, Math.ceil(streamedContent.length / 4)),
+                  orchestration: {
+                    ...node.metadata.orchestration,
+                    status: "streaming",
+                    streaming_via: "task_event_sse",
+                  },
+                },
+              });
+              return;
+            }
+            if (event.event_type === "LOCAL_AGENT_MESSAGE_COMPLETED") {
+              const state = useWorkspaceStore.getState();
+              const node = state.nodesById[assistantNodeId];
+              const hasStreamedContent = streamedContent.trim().length > 0;
+              if (node !== undefined) {
+                state.updateNode(assistantNodeId, {
+                  content: hasStreamedContent ? streamedContent : node.content,
+                  state: hasStreamedContent ? "done" : "streaming",
+                  metadata: {
+                    ...node.metadata,
+                    orchestration: {
+                      ...node.metadata.orchestration,
+                      status: hasStreamedContent ? "completed" : "awaiting_message_hydration",
+                      streaming_via: "task_event_sse",
+                    },
+                  },
+                });
+              }
+              if (hasStreamedContent && localPendingAssistantNodeIdRef.current === assistantNodeId) {
+                setLocalPendingAssistant(null);
+              }
+              closeOwnedStream();
+              void queryClient.invalidateQueries({
+                queryKey: ["agent-session-messages", binding.agent_session_id],
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["local-agent-binding-tasks", binding.id],
+              });
+              void queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] });
+              return;
+            }
+            if (event.event_type === "LOCAL_AGENT_MESSAGE_FAILED") {
+              const errorMessage =
+                typeof event.payload_json.error_message === "string"
+                  ? event.payload_json.error_message
+                  : "本地 Agent 执行失败。";
+              const state = useWorkspaceStore.getState();
+              const node = state.nodesById[assistantNodeId];
+              if (node !== undefined) {
+                state.updateNode(assistantNodeId, {
+                  content: "",
+                  state: "error",
+                  metadata: {
+                    ...node.metadata,
+                    retry_disabled: true,
+                    error: {
+                      kind: "server",
+                      detail: "本地 Agent 执行失败",
+                      body_preview: errorMessage,
+                      happened_at: event.created_at,
+                    },
+                    orchestration: {
+                      ...node.metadata.orchestration,
+                      status: "failed",
+                      connection_id: connection.id,
+                    },
+                  },
+                });
+              }
+              closeOwnedStream();
+              void queryClient.invalidateQueries({
+                queryKey: ["local-agent-binding-tasks", binding.id],
+              });
+            }
+          },
+          maxAttemptsBeforeNotice: 6,
+        },
+      );
+      localAgentStreamRef.current = streamClient;
+    },
+    [queryClient, setLocalPendingAssistant],
+  );
+
+  const sendLocalAgentTurn = useCallback(
+    async ({
+      goal,
+      context,
+      reuseUserNodeId = null,
+      reuseAssistantNodeId = null,
+      clearDraftOnSuccess = true,
+    }: {
+      goal: string;
+      context: LocalAgentSubmitContext;
+      reuseUserNodeId?: string | null;
+      reuseAssistantNodeId?: string | null;
+      clearDraftOnSuccess?: boolean;
+    }): Promise<boolean> => {
+      const selectedTargetConnectionId = selectedLocalConnectionIdRef.current;
+      if (
+        !localAgentEnabledRef.current ||
+        selectedTargetConnectionId === null ||
+        selectedLocalConnection === null ||
+        selectedLocalConnection.id !== selectedTargetConnectionId
+      ) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在切换本地连接，请稍后再发送。",
+        });
+        return false;
+      }
+      if (activeLocalBinding === null || localBindingMutation.isPending) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在创建或恢复本地会话，请稍后再发送。",
+        });
+        return false;
+      }
+      if (activeLocalBinding.connection_id !== selectedTargetConnectionId) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在切换本地连接，请稍后再发送。",
+        });
+        return false;
+      }
+      if (localMessagesQuery.data === undefined) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在同步本地会话消息，请稍后再发送。",
+        });
+        return false;
+      }
+      if (localBindingTasksQuery.data === undefined) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在同步本地任务状态，请稍后再发送。",
+        });
+        return false;
+      }
+
+      const store = useWorkspaceStore.getState();
+      focusLocalConversationOnceRef.current = true;
+      const localConversationId = localAgentConversationId(activeLocalBinding.id);
+      const currentConversation = store.conversations.find(
+        (conversation) => conversation.id === store.currentConversationId,
+      );
+      const currentLocalBinding = localAgentBindingHintFromConversation(currentConversation);
+      if (
+        currentLocalBinding !== null &&
+        (currentLocalBinding.bindingId !== activeLocalBinding.id ||
+          currentLocalBinding.connectionId !== selectedLocalConnection.id ||
+          currentLocalBinding.agentSessionId !== activeLocalBinding.agent_session_id)
+      ) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在切换本地会话，请稍后再发送。",
+        });
+        return false;
+      }
+      if (
+        !store.conversations.some((conversation) => conversation.id === localConversationId) ||
+        store.currentConversationId !== localConversationId ||
+        currentLocalBinding === null
+      ) {
+        ensureLocalAgentConversation({
+          binding: activeLocalBinding,
+          connection: selectedLocalConnection,
+          fallbackTitle: `${agent.data?.name ?? agentId} 本地 Agent`,
+          pendingApprovalCount,
+          focus: true,
+        });
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 会话尚未就绪",
+          description: "正在切换到目标本地会话，请稍后再发送。",
+        });
+        return false;
+      }
+      focusLocalConversationOnceRef.current = false;
+      const localStore = useWorkspaceStore.getState();
+      let localSubmitContext = localAgentSubmitContextForBinding(
+        context,
+        localStore,
+        activeLocalBinding,
+      );
+      if (reuseUserNodeId !== null && reuseAssistantNodeId !== null) {
+        localSubmitContext = {
+          ...localSubmitContext,
+          messages: localSubmitContext.messages.filter(
+            (message) => message.id !== reuseAssistantNodeId,
+          ),
+          active_leaf_id: reuseUserNodeId,
+          active_branch_id: reuseUserNodeId,
+          compressed_context:
+            localSubmitContext.compressed_context?.branch_id === reuseUserNodeId
+              ? localSubmitContext.compressed_context
+              : null,
+          resume_of_client_message_id: context.resume_of_client_message_id ?? null,
+          resume_of_user_message_id: context.resume_of_user_message_id ?? reuseUserNodeId,
+        };
+      }
+      const clearSubmittedLocalDraft = () => {
+        if (!clearDraftOnSuccess) return;
+        const currentDraft = useWorkspaceStore.getState().draft;
+        if (currentDraft.trim() === goal) {
+          useWorkspaceStore.getState().setDraft("");
+        }
+      };
+      const clientMessageId = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      let userNodeId: string;
+      let assistantNodeId: string;
+      if (reuseUserNodeId !== null && reuseAssistantNodeId !== null) {
+        const reusableState = useWorkspaceStore.getState();
+        const reusableUserNode = reusableState.nodesById[reuseUserNodeId];
+        const reusableAssistantNode = reusableState.nodesById[reuseAssistantNodeId];
+        if (
+          reusableUserNode === undefined ||
+          reusableAssistantNode === undefined ||
+          reusableUserNode.role !== "user" ||
+          reusableAssistantNode.role !== "assistant"
+        ) {
+          notifyFeedback({
+            tone: "warning",
+            title: "本地 Agent 无法继续发送",
+            description: "当前回合已被切换或水合，请重新发送消息。",
+          });
+          return false;
+        }
+        userNodeId = reusableUserNode.id;
+        assistantNodeId = reusableAssistantNode.id;
+        reusableState.updateNode(userNodeId, {
+          content: goal,
+          state: "done",
+          metadata: {
+            ...reusableUserNode.metadata,
+            workspace_mode: context.workspace_mode,
+            orchestration: {
+              ...reusableUserNode.metadata.orchestration,
+              source: "local_agent",
+              connection_id: selectedLocalConnection.id,
+              binding_id: activeLocalBinding.id,
+              agent_session_id: activeLocalBinding.agent_session_id,
+              client_message_id: clientMessageId,
+              resume_of_client_message_id: localSubmitContext.resume_of_client_message_id,
+              resume_of_user_message_id: localSubmitContext.resume_of_user_message_id,
+              model_provider: context.model_provider,
+              model_name: context.model_name,
+              tool_mentions: context.tool_mentions.map((tool) => tool.name),
+              attachment_names: context.attachment_names,
+            },
+          },
+        });
+        reusableState.updateNode(assistantNodeId, {
+          run_id: undefined,
+          content: localAgentPendingTaskContent(
+            "pending",
+            selectedLocalConnection,
+            pendingApprovalCount,
+          ),
+          state: "streaming",
+          tool_calls: [],
+          metadata: {
+            ...reusableAssistantNode.metadata,
+            workspace_mode: context.workspace_mode,
+            input_tokens: estimateLocalAgentInputTokens(goal, localSubmitContext),
+            output_tokens: 0,
+            model_call_id: `${selectedLocalConnection.adapter_kind}:${selectedModelLabel}`,
+            duration_ms: 0,
+            retry_disabled: false,
+            error: undefined,
+            orchestration: {
+              ...reusableAssistantNode.metadata.orchestration,
+              source: "local_agent",
+              connection_id: selectedLocalConnection.id,
+              binding_id: activeLocalBinding.id,
+              agent_session_id: activeLocalBinding.agent_session_id,
+              client_message_id: clientMessageId,
+              resume_of_client_message_id: localSubmitContext.resume_of_client_message_id,
+              resume_of_user_message_id: localSubmitContext.resume_of_user_message_id,
+              adapter_kind: selectedLocalConnection.adapter_kind,
+              model_provider: context.model_provider,
+              model_name: context.model_name,
+              tool_mentions: context.tool_mentions.map((tool) => tool.name),
+              attachment_names: context.attachment_names,
+              status: "pending",
+              bridge_task_id: undefined,
+            },
+          },
+        });
+        useWorkspaceStore.getState().setActiveLeafId(assistantNodeId);
+      } else {
+        userNodeId = localStore.appendNode({
+          parent_id: localStore.activeLeafId,
+          role: "user",
+          content: goal,
+          state: "done",
+          metadata: {
+            workspace_mode: context.workspace_mode,
+            orchestration: {
+              source: "local_agent",
+              connection_id: selectedLocalConnection.id,
+              binding_id: activeLocalBinding.id,
+              agent_session_id: activeLocalBinding.agent_session_id,
+              client_message_id: clientMessageId,
+              model_provider: context.model_provider,
+              model_name: context.model_name,
+              tool_mentions: context.tool_mentions.map((tool) => tool.name),
+              attachment_names: context.attachment_names,
+            },
+          },
+          tool_calls: [],
+          artifacts: [],
+        });
+        assistantNodeId = useWorkspaceStore.getState().appendNode({
+          parent_id: userNodeId,
+          role: "assistant",
+          content: localAgentPendingTaskContent(
+            "pending",
+            selectedLocalConnection,
+            pendingApprovalCount,
+          ),
+          state: "streaming",
+          metadata: {
+            workspace_mode: context.workspace_mode,
+            input_tokens: estimateLocalAgentInputTokens(goal, localSubmitContext),
+            output_tokens: 0,
+            model_call_id: `${selectedLocalConnection.adapter_kind}:${selectedModelLabel}`,
+            duration_ms: 0,
+            orchestration: {
+              source: "local_agent",
+              connection_id: selectedLocalConnection.id,
+              binding_id: activeLocalBinding.id,
+              agent_session_id: activeLocalBinding.agent_session_id,
+              client_message_id: clientMessageId,
+              adapter_kind: selectedLocalConnection.adapter_kind,
+              model_provider: context.model_provider,
+              model_name: context.model_name,
+              tool_mentions: context.tool_mentions.map((tool) => tool.name),
+              attachment_names: context.attachment_names,
+            },
+          },
+          tool_calls: [],
+          artifacts: [],
+        });
+      }
+      const pendingState = useWorkspaceStore.getState();
+      const pendingUserNode = pendingState.nodesById[userNodeId];
+      const pendingAssistantNode = pendingState.nodesById[assistantNodeId];
+      if (pendingUserNode !== undefined && pendingAssistantNode !== undefined) {
+        localPendingDraftRef.current = {
+          userNode: pendingUserNode,
+          assistantNode: pendingAssistantNode,
+        };
+      }
+      setLocalPendingAssistant(assistantNodeId);
+
+      try {
+        const response = await localSendMutation.mutateAsync({
+          bindingId: activeLocalBinding.id,
+          content: goal,
+          clientMessageId,
+          context: localSubmitContext,
+        });
+        if (
+          localAgentEnabledRef.current &&
+          selectedLocalConnectionIdRef.current === activeLocalBinding.connection_id
+        ) {
+          clearSubmittedLocalDraft();
+        }
+        const responseState = useWorkspaceStore.getState();
+        const responseStillTargetsCurrentLocalConversation =
+          localAgentEnabledRef.current &&
+          selectedLocalConnectionIdRef.current === activeLocalBinding.connection_id &&
+          responseState.currentConversationId === localConversationId &&
+          responseState.nodesById[assistantNodeId] !== undefined;
+        if (!responseStillTargetsCurrentLocalConversation) {
+          await queryClient.invalidateQueries({
+            queryKey: ["agent-session-messages", activeLocalBinding.agent_session_id],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["local-agent-binding-tasks", activeLocalBinding.id],
+          });
+          return false;
+        }
+        clearSubmittedLocalDraft();
+        setActiveRunId(response.run_id);
+        useWorkspaceStore.getState().updateNode(assistantNodeId, {
+          run_id: response.run_id,
+          metadata: {
+            ...useWorkspaceStore.getState().nodesById[assistantNodeId]?.metadata,
+            orchestration: {
+              source: "local_agent",
+              connection_id: selectedLocalConnection.id,
+              binding_id: activeLocalBinding.id,
+              agent_session_id: activeLocalBinding.agent_session_id,
+              bridge_task_id: response.bridge_task_id,
+              client_message_id: clientMessageId,
+              resume_of_client_message_id: localSubmitContext.resume_of_client_message_id,
+              resume_of_user_message_id: localSubmitContext.resume_of_user_message_id,
+              adapter_kind: selectedLocalConnection.adapter_kind,
+              model_provider: context.model_provider,
+              model_name: context.model_name,
+              tool_mentions: context.tool_mentions.map((tool) => tool.name),
+              attachment_names: context.attachment_names,
+              status: response.status,
+            },
+          },
+        });
+        const updatedAssistantNode = useWorkspaceStore.getState().nodesById[assistantNodeId];
+        if (updatedAssistantNode !== undefined && localPendingDraftRef.current !== null) {
+          localPendingDraftRef.current = {
+            ...localPendingDraftRef.current,
+            assistantNode: updatedAssistantNode,
+          };
+        }
+        startLocalAgentEventStream({
+          runId: response.run_id,
+          bridgeTaskId: response.bridge_task_id,
+          assistantNodeId,
+          connection: selectedLocalConnection,
+          binding: activeLocalBinding,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["agent-session-messages", activeLocalBinding.agent_session_id],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["local-agent-binding-tasks", activeLocalBinding.id],
+        });
+        await queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", response.run_id] });
+        clearSubmittedLocalDraft();
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const errorState = useWorkspaceStore.getState();
+        const errorStillTargetsCurrentLocalConversation =
+          localAgentEnabledRef.current &&
+          selectedLocalConnectionIdRef.current === activeLocalBinding.connection_id &&
+          errorState.currentConversationId === localConversationId &&
+          errorState.nodesById[assistantNodeId] !== undefined;
+        if (!errorStillTargetsCurrentLocalConversation) {
+          return false;
+        }
+        useWorkspaceStore.getState().updateNode(assistantNodeId, {
+          content: message,
+          state: "error",
+          metadata: {
+            ...useWorkspaceStore.getState().nodesById[assistantNodeId]?.metadata,
+            retry_disabled: true,
+            error: {
+              kind: "server",
+              detail: message,
+              happened_at: new Date().toISOString(),
+            },
+          },
+        });
+        setLocalPendingAssistant(null);
+        notifyFeedback({
+          tone: "error",
+          title: "本地 Agent 发送失败",
+          description: message,
+        });
+        return false;
+      }
+    },
+    [
+      activeLocalBinding,
+      agent.data?.name,
+      agentId,
+      localBindingTasksQuery.data,
+      localMessagesQuery.data,
+      localSendMutation,
+      pendingApprovalCount,
+      queryClient,
+      selectedLocalConnection,
+      selectedModelLabel,
+      setActiveRunId,
+      setLocalPendingAssistant,
+      startLocalAgentEventStream,
+    ],
+  );
+
+  const handleLocalAgentSubmit = useCallback(
+    (goal: string, context: LocalAgentSubmitContext): Promise<boolean> =>
+      sendLocalAgentTurn({ goal, context }),
+    [sendLocalAgentTurn],
+  );
+
+  const handleLocalAgentPause = useCallback(
+    async (nodeId: string): Promise<void> => {
+      const state = useWorkspaceStore.getState();
+      const node = state.nodesById[nodeId];
+      const orchestration = node?.metadata.orchestration;
+      const runId = node?.run_id;
+      const bridgeTaskId = orchestration?.bridge_task_id;
+      if (
+        node === undefined ||
+        node.role !== "assistant" ||
+        typeof runId !== "string" ||
+        typeof bridgeTaskId !== "string"
+      ) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 暂停不可用",
+          description: "当前本地任务尚未返回 Run ID，请稍后再试。",
+        });
+        return;
+      }
+      setLocalAgentControlPendingNodeId(nodeId);
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      try {
+        await cancelTask(runId);
+        const latestNode = useWorkspaceStore.getState().nodesById[nodeId] ?? node;
+        useWorkspaceStore.getState().updateNode(nodeId, {
+          content: localAgentPausedTaskContent(latestNode.content),
+          state: "paused",
+          metadata: {
+            ...latestNode.metadata,
+            retry_disabled: false,
+            error: undefined,
+            orchestration: {
+              ...latestNode.metadata.orchestration,
+              status: "paused",
+              bridge_task_id: bridgeTaskId,
+              paused_run_id: runId,
+              paused_bridge_task_id: bridgeTaskId,
+              paused_at: new Date().toISOString(),
+            },
+          },
+        });
+        setLocalPendingAssistant(nodeId);
+        if (activeLocalBinding !== null) {
+          await queryClient.invalidateQueries({
+            queryKey: ["local-agent-binding-tasks", activeLocalBinding.id],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["agent-session-messages", activeLocalBinding.agent_session_id],
+          });
+        }
+        await queryClient.invalidateQueries({ queryKey: ["agent-run-workspace", runId] });
+      } catch (error) {
+        notifyFeedback({
+          tone: "error",
+          title: "本地 Agent 暂停失败",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setLocalAgentControlPendingNodeId(null);
+      }
+    },
+    [activeLocalBinding, queryClient, setLocalPendingAssistant],
+  );
+
+  const handleLocalAgentResume = useCallback(
+    async (
+      nodeId: string,
+      goal: string,
+      context: LocalAgentSubmitContext,
+    ): Promise<boolean> => {
+      const state = useWorkspaceStore.getState();
+      const assistantNode = state.nodesById[nodeId];
+      const userNode =
+        assistantNode?.parent_id !== null && assistantNode?.parent_id !== undefined
+          ? state.nodesById[assistantNode.parent_id]
+          : undefined;
+      if (
+        assistantNode === undefined ||
+        userNode === undefined ||
+        assistantNode.role !== "assistant" ||
+        userNode.role !== "user"
+      ) {
+        notifyFeedback({
+          tone: "warning",
+          title: "本地 Agent 无法继续发送",
+          description: "当前回合已被切换或水合，请重新发送消息。",
+        });
+        return false;
+      }
+      setLocalAgentControlPendingNodeId(nodeId);
+      try {
+        return await sendLocalAgentTurn({
+          goal,
+          context: {
+            ...context,
+            resume_of_user_message_id: context.resume_of_user_message_id ?? userNode.id,
+          },
+          reuseUserNodeId: userNode.id,
+          reuseAssistantNodeId: assistantNode.id,
+          clearDraftOnSuccess: false,
+        });
+      } finally {
+        setLocalAgentControlPendingNodeId(null);
+      }
+    },
+    [sendLocalAgentTurn],
+  );
+
   // v3 conversation history handlers
   const handleNewConversation = useCallback(() => {
-    newConversation();
+    focusLocalConversationOnceRef.current = false;
+    if (localAgentEnabled && selectedLocalConnection !== null) {
+      localTargetRequestSeqRef.current += 1;
+      const requestSeq = localTargetRequestSeqRef.current;
+      const connectionId = selectedLocalConnection.id;
+      selectedLocalConnectionIdRef.current = connectionId;
+      localBindingFocusConnectionRef.current = connectionId;
+      focusLocalConversationOnceRef.current = true;
+      localAgentStreamTokenRef.current = null;
+      localAgentStreamRef.current?.close();
+      localAgentStreamRef.current = null;
+      localBindingTargetHintRef.current = null;
+      setActiveLocalBinding(null);
+      setLocalPendingAssistant(null);
+      void (async () => {
+        try {
+          const binding = await localBindingMutation.mutateAsync(connectionId);
+          if (
+            localTargetRequestSeqRef.current !== requestSeq ||
+            !localAgentEnabledRef.current ||
+            selectedLocalConnectionIdRef.current !== binding.connection_id
+          ) {
+            return;
+          }
+          setActiveLocalBinding(binding);
+          ensureLocalAgentConversation({
+            binding,
+            connection: selectedLocalConnection,
+            fallbackTitle: `${agent.data?.name ?? agentId} 本地 Agent`,
+            pendingApprovalCount,
+            focus: true,
+          });
+          navigateToConversation(localAgentConversationId(binding.id));
+          await queryClient.invalidateQueries({
+            queryKey: ["local-agent-bindings", connectionId],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["agent-session-messages", binding.agent_session_id],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["local-agent-binding-tasks", binding.id],
+          });
+        } catch (error) {
+          focusLocalConversationOnceRef.current = false;
+          localBindingFocusConnectionRef.current = null;
+          notifyFeedback({
+            tone: "error",
+            title: "本地 Agent 新会话创建失败",
+            description: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
+      notifyFeedback({
+        tone: "info",
+        title: "已新建本地 Agent 会话",
+        description: "正在创建独立的本地会话，不会复用上一段上下文。",
+      });
+      if (historyNarrow) setHistoryOverlayOpen(false);
+      return;
+    }
+    navigateToConversation(newConversation());
     notifyFeedback({
       tone: "info",
       title: "已新建会话",
       description: "现在可以从空白工作台开始新的问题、安装验证或演示流程。",
     });
     if (historyNarrow) setHistoryOverlayOpen(false);
-  }, [historyNarrow, newConversation]);
+  }, [
+    agent.data?.name,
+    agentId,
+    historyNarrow,
+    localAgentEnabled,
+    localBindingMutation,
+    navigateToConversation,
+    newConversation,
+    pendingApprovalCount,
+    queryClient,
+    selectedLocalConnection,
+    setLocalPendingAssistant,
+  ]);
 
   const handleSelectConversation = useCallback(
     (id: string) => {
+      focusLocalConversationOnceRef.current = false;
+      const conversation = useWorkspaceStore
+        .getState()
+        .conversations.find((item) => item.id === id);
+      const localBinding = localAgentBindingHintFromConversation(conversation);
+      if (localBinding !== null) {
+        selectedLocalConnectionIdRef.current = localBinding.connectionId;
+        localAgentEnabledRef.current = true;
+        localBindingFocusConnectionRef.current = null;
+        localBindingTargetHintRef.current = localBinding;
+        localAgentStreamTokenRef.current = null;
+        localAgentStreamRef.current?.close();
+        localAgentStreamRef.current = null;
+        const bindingFromCache = queryClient
+          .getQueryData<LocalAgentConversationBindingPage>([
+            "local-agent-bindings",
+            localBinding.connectionId,
+          ])
+          ?.items.find(
+            (binding) =>
+              binding.status === "active" &&
+              localAgentBindingMatchesHint(binding, localBinding),
+          );
+        if (bindingFromCache !== undefined) {
+          localBindingTargetHintRef.current = null;
+        }
+        setActiveLocalBinding(bindingFromCache ?? null);
+        setLocalPendingAssistant(null);
+        setSelectedLocalConnectionId(localBinding.connectionId);
+        setLocalAgentEnabled(true);
+      } else {
+        localAgentEnabledRef.current = false;
+        localBindingFocusConnectionRef.current = null;
+        localBindingTargetHintRef.current = null;
+        localAgentStreamTokenRef.current = null;
+        localAgentStreamRef.current?.close();
+        localAgentStreamRef.current = null;
+        setActiveLocalBinding(null);
+        setLocalPendingAssistant(null);
+        setLocalAgentEnabled(false);
+      }
       setCurrentConversation(id);
+      navigateToConversation(id);
       if (historyNarrow) setHistoryOverlayOpen(false);
     },
-    [historyNarrow, setCurrentConversation],
+    [
+      agentId,
+      historyNarrow,
+      navigateToConversation,
+      queryClient,
+      setCurrentConversation,
+      setLocalPendingAssistant,
+    ],
   );
 
   const handleDeleteConversation = useCallback(
@@ -454,13 +2346,14 @@ export function AgentWorkspacePage() {
       });
       if (!confirmed) return;
       deleteConversation(id);
+      navigateToConversation(useWorkspaceStore.getState().currentConversationId);
       notifyFeedback({
         tone: "warning",
         title: "对话已删除",
         description: title ? `已删除“${title}”。` : "已删除当前对话。",
       });
     },
-    [confirm, deleteConversation],
+    [confirm, deleteConversation, navigateToConversation],
   );
 
   const handleToggleHistoryCollapsed = useCallback(() => {
@@ -480,8 +2373,9 @@ export function AgentWorkspacePage() {
       <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-white">
         <ConversationHistoryPanel
           collapsed={historyCollapsed}
-          conversations={conversations}
+          conversations={visibleConversations}
           currentConversationId={currentConversationId}
+          groupLabelForConversation={conversationGroupLabel}
           onNewConversation={handleNewConversation}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
@@ -490,13 +2384,17 @@ export function AgentWorkspacePage() {
         <ChatSurface
           agentId={agentId}
           agentName={agent.data?.name ?? agentId}
+          workspaceId={currentWorkspaceId}
+          workspaceOptions={workspaceOptions}
           modelLabel={selectedModelLabel}
           modelLabelIsFallback={modelLabelIsFallback}
           workspaceMode={workspaceMode}
           onWorkspaceModeChange={setWorkspaceMode}
+          onWorkspaceChange={handleWorkspaceChange}
           activeRunId={activeRunId}
           runStatus={workspace.data?.run.status}
           runCreatedAt={workspace.data?.run.created_at}
+          runReturnTarget={runReturnTarget}
           pendingApprovalCount={pendingApprovalCount}
           metadataUsage={inspectorUsage}
           onOpenInspector={setInspectorSection}
@@ -515,12 +2413,64 @@ export function AgentWorkspacePage() {
           jumpTarget={jumpTarget}
           onCreateTeamFromConversation={() => createTeamFromConversation.mutate()}
           isCreatingTeam={createTeamFromConversation.isPending}
+          agents={workspaceAgents}
+          agentsLoading={agentsQuery.isLoading}
+          onAgentChange={handleAgentChange}
+          localAgentEnabled={localAgentEnabled}
+          localAgentConnections={localConnections}
+          selectedLocalConnectionId={
+            localAgentEnabled
+              ? selectedLocalConnectionId ?? selectedLocalConnection?.id ?? null
+              : null
+          }
+          onLocalAgentTargetChange={handleLocalAgentTargetChange}
+          localAgentControl={
+            <LocalAgentWorkspaceControl
+              enabled={localAgentEnabled}
+              connections={localConnections}
+              selectedConnectionId={selectedLocalConnection?.id ?? null}
+              binding={activeLocalBinding}
+              isBindingPending={localBindingMutation.isPending}
+              isSending={localSendMutation.isPending}
+              isRestoring={localAgentRestorePending}
+              recoveryCommand={localAgentRecoveryCommand}
+              recoveryCommandCopied={localAgentRecoveryCommandCopied}
+              pendingApprovalCount={pendingApprovalCount}
+              activeRunId={activeRunId}
+              runDetailHref={
+                activeRunId ? runDetailPath(activeRunId, runReturnTarget, "approvals") : null
+              }
+              onEnabledChange={handleLocalAgentEnabledChange}
+              onRestore={handleLocalAgentRestore}
+              onCopyRecoveryCommand={handleLocalAgentRecoveryCommandCopy}
+              onRefreshRecoveryCommand={handleLocalAgentRecoveryRefresh}
+              onOpenStudio={() => navigate("/agents")}
+            />
+          }
+          localAgentPending={
+            localAgentEnabled &&
+            localAgentTaskBlocking
+          }
+          localAgentActiveNode={localAgentEnabled ? localAgentActiveNode : null}
+          localAgentControlPending={localAgentControlPendingNodeId !== null}
+          onLocalAgentSubmit={localAgentEnabled ? handleLocalAgentSubmit : undefined}
+          onLocalAgentPause={localAgentEnabled ? handleLocalAgentPause : undefined}
+          onLocalAgentResume={localAgentEnabled ? handleLocalAgentResume : undefined}
+          desktopPanel={
+            requestedDesktopPanel === "files" || requestedDesktopPanel === "approvals"
+              ? requestedDesktopPanel
+              : null
+          }
+          desktopPanelRequestKey={location.key}
         />
         <InspectorDrawer
           section={inspectorSection}
           activeRunId={activeRunId}
           pendingApprovalCount={pendingApprovalCount}
+          approvals={workspace.data?.approvals ?? []}
           artifacts={inspectorArtifacts}
+          runReturnTarget={runReturnTarget}
+          onApprovalsChanged={() => workspace.refetch()}
           onClose={() => setInspectorSection(null)}
         />
       </div>
@@ -563,6 +2513,1231 @@ function deriveModelOptions(settings: ModelSettings | undefined): ModelOption[] 
     });
   }
   return out;
+}
+
+function localAgentModelFromConnection(
+  connection: LocalAgentConnection | null,
+): { providerId: string; modelId: string } | null {
+  if (connection === null) return null;
+  const providerId = firstStringCapability(
+    connection.capabilities_json,
+    "model_provider",
+    "selected_model_provider",
+    "default_model_provider",
+  );
+  const modelId = firstStringCapability(
+    connection.capabilities_json,
+    "model_name",
+    "selected_model",
+    "default_model",
+    "ANTHROPIC_MODEL",
+  );
+  if (providerId === null || modelId === null) return null;
+  if (providerId === "default" || modelId === "default") return null;
+  return { providerId, modelId };
+}
+
+function firstStringCapability(
+  capabilities: Record<string, unknown>,
+  ...keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = capabilities[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return null;
+}
+
+function LocalAgentWorkspaceControl({
+  enabled,
+  connections,
+  selectedConnectionId,
+  binding,
+  isBindingPending,
+  isSending,
+  isRestoring,
+  recoveryCommand,
+  recoveryCommandCopied,
+  pendingApprovalCount,
+  activeRunId,
+  runDetailHref,
+  onEnabledChange,
+  onRestore,
+  onCopyRecoveryCommand,
+  onRefreshRecoveryCommand,
+  onOpenStudio,
+}: {
+  enabled: boolean;
+  connections: LocalAgentConnection[];
+  selectedConnectionId: string | null;
+  binding: LocalAgentConversationBinding | null;
+  isBindingPending: boolean;
+  isSending: boolean;
+  isRestoring: boolean;
+  recoveryCommand: LocalAgentRecoveryCommand | null;
+  recoveryCommandCopied: boolean;
+  pendingApprovalCount: number;
+  activeRunId: string | null;
+  runDetailHref: string | null;
+  onEnabledChange: (enabled: boolean) => void;
+  onRestore: () => void;
+  onCopyRecoveryCommand: () => void;
+  onRefreshRecoveryCommand: () => void;
+  onOpenStudio: () => void;
+}) {
+  const selected =
+    connections.find((connection) => connection.id === selectedConnectionId) ?? null;
+  const usesClaudePermissionBridge =
+    selected !== null && localAgentUsesClaudePermissionBridge(selected);
+  const pendingApprovalLabel = usesClaudePermissionBridge
+    ? "等待 Claude Code 本地工具审批"
+    : "等待本地工具审批";
+  const statusLabel = selected ? localAgentStatusLabel(selected.status) : "未接入";
+  const statusClassName = selected
+    ? selected.status === "online" || selected.status === "busy"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : selected.status === "offline"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-slate-200 bg-slate-50 text-slate-600"
+    : "border-slate-200 bg-slate-50 text-slate-600";
+  const localAgentSummary = enabled
+    ? "本地 Agent"
+    : connections.length > 0
+      ? `${connections.length} 个本地`
+      : "本地 Agent";
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      {connections.length === 0 ? (
+        <button
+          type="button"
+          onClick={onOpenStudio}
+          title="打开智能体工作室"
+          className="inline-flex h-7 items-center rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+        >
+          接入本地 Agent
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onEnabledChange(!enabled)}
+          className={cn(
+            "inline-flex h-7 items-center rounded-md border px-2 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+            enabled
+              ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+          )}
+          aria-label={enabled ? "关闭本地 Agent" : "启用本地 Agent"}
+          title={enabled ? "关闭本地 Agent" : "启用本地 Agent"}
+        >
+          {localAgentSummary}
+        </button>
+      )}
+      <span
+        className={cn(
+          "inline-flex h-7 shrink-0 items-center rounded-md border px-2 text-[11px] font-medium",
+          statusClassName,
+        )}
+      >
+        {statusLabel}
+      </span>
+      {enabled && selected !== null ? (
+        <span className="max-w-[12rem] truncate text-[11px] text-slate-500">
+          {localAgentConnectionOptionLabel(selected)}
+        </span>
+      ) : null}
+      {enabled && isBindingPending ? (
+        <span className="shrink-0 text-[11px] text-slate-500">正在恢复...</span>
+      ) : null}
+      {enabled && binding !== null ? (
+        <span className="shrink-0 font-mono text-[11px] text-slate-500">
+          Session {formatLocalAgentSessionId(binding.agent_session_id)}
+        </span>
+      ) : null}
+      {enabled && isSending ? (
+        <span className="shrink-0 text-[11px] text-slate-500">正在排队...</span>
+      ) : null}
+      {enabled && selected?.status === "offline" ? (
+        <>
+          <button
+            type="button"
+            onClick={onRestore}
+            disabled={isRestoring}
+            aria-label="恢复本地 Agent"
+            title="刷新连接并恢复本地 Agent 会话"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-white px-2 text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={cn("h-3 w-3", isRestoring && "animate-spin")}
+            />
+            {isRestoring ? "恢复中" : "恢复"}
+          </button>
+          <span className="max-w-[18rem] truncate text-[11px] text-amber-700">
+            消息保持 pending
+          </span>
+        </>
+      ) : null}
+      {enabled && selected?.status === "offline" && recoveryCommand?.command ? (
+        <div className="basis-full rounded-md border border-amber-200 bg-amber-50/70 p-2 text-[11px] text-amber-900">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium">恢复命令已生成 · {recoveryCommand.adapter_kind}</div>
+            <div className="font-mono text-amber-700">HAO_HOME {recoveryCommand.state_home}</div>
+          </div>
+          <pre className="mt-2 max-h-24 overflow-auto rounded-md border border-amber-200 bg-white p-2 font-mono text-[11px] leading-5 text-slate-800">
+            {recoveryCommand.command}
+          </pre>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onCopyRecoveryCommand}
+              aria-label="复制恢复命令"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-amber-200 bg-white px-2 text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+            >
+              <Copy aria-hidden="true" className="h-3 w-3" />
+              {recoveryCommandCopied ? "已复制" : "复制命令"}
+            </button>
+            <button
+              type="button"
+              onClick={onRefreshRecoveryCommand}
+              disabled={isRestoring}
+              aria-label="我已执行恢复命令，刷新本地 Agent"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-amber-200 bg-white px-2 text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+            >
+              <RefreshCw
+                aria-hidden="true"
+                className={cn("h-3 w-3", isRestoring && "animate-spin")}
+              />
+              我已执行，刷新
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {enabled && pendingApprovalCount > 0 ? (
+        <span className="max-w-[18rem] truncate text-[11px] text-amber-700">
+          {pendingApprovalLabel}
+          {activeRunId && runDetailHref ? (
+            <a
+              className="ml-1 font-medium underline-offset-2 hover:underline"
+              href={runDetailHref}
+            >
+              运行详情
+            </a>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function localAgentUsesClaudePermissionBridge(connection: LocalAgentConnection | null): boolean {
+  return (
+    connection !== null &&
+    connection.adapter_kind === "claude_code" &&
+    connection.capabilities_json.permission_bridge === "harness_local_tool_request_v1" &&
+    connection.capabilities_json.permission_bridge_execution === "harness_owned_executor" &&
+    connection.capabilities_json.sdk_native_tool_execution_enabled === false
+  );
+}
+
+function localAgentConnectionOptionLabel(connection: LocalAgentConnection): string {
+  if (localAgentUsesClaudePermissionBridge(connection)) {
+    return `${connection.display_name} · Claude Code · 权限桥 · 上下文重放`;
+  }
+  if (connection.adapter_kind === "claude_code") {
+    return `${connection.display_name} · Claude Code · 对话模式 · 上下文重放`;
+  }
+  return `${connection.display_name} · ${connection.adapter_kind}`;
+}
+
+function localAgentStatusLabel(status: string): string {
+  switch (status) {
+    case "online":
+      return "在线";
+    case "busy":
+      return "执行中";
+    case "offline":
+      return "离线";
+    case "revoked":
+      return "已撤销";
+    default:
+      return status || "未知";
+  }
+}
+
+function formatLocalAgentSessionId(sessionId: string): string {
+  return sessionId.length <= 12 ? sessionId : sessionId.slice(0, 8);
+}
+
+function localAgentConversationFromMessages({
+  binding,
+  messages,
+  pendingTasks,
+  connection,
+  fallbackTitle,
+  pendingApprovalCount,
+  pinnedNodeIds = [],
+  contextWindowTurns = 8,
+  contextCompressions = {},
+  pendingUserNode,
+  pendingNode,
+}: {
+  binding: LocalAgentConversationBinding;
+  messages: AgentMessage[];
+  pendingTasks: LocalAgentBindingTask[];
+  connection: LocalAgentConnection | null;
+  fallbackTitle: string;
+  pendingApprovalCount: number;
+  pinnedNodeIds?: string[];
+  contextWindowTurns?: number;
+  contextCompressions?: ConversationSummary["contextCompressions"];
+  pendingUserNode?: ConversationNode;
+  pendingNode?: ConversationNode;
+}): ConversationSummary {
+  const createdAt = messages[0]?.created_at ?? binding.created_at;
+  const updatedAt = latestLocalAgentConversationTime(messages, pendingTasks, binding.updated_at);
+  const root: ConversationNode = {
+    id: "root",
+    parent_id: null,
+    children_ids: [],
+    role: "system",
+    content: "Agent Workspace Pro root",
+    state: "done",
+    metadata: {
+      orchestration: {
+        source: "local_agent",
+        binding_id: binding.id,
+        connection_id: binding.connection_id,
+        agent_session_id: binding.agent_session_id,
+        adapter_kind: connection?.adapter_kind,
+      },
+    },
+    tool_calls: [],
+    artifacts: [],
+    created_at: createdAt,
+  };
+  const nodesById: Record<string, ConversationNode> = { [root.id]: root };
+  const messageNodeIds = new Map<string, string>();
+  const clientMessageNodeIds = new Map<string, string>();
+  let parentId = root.id;
+  let firstUserContent: string | null = null;
+
+  for (const message of messages) {
+    const nodeId = `local-msg:${message.id}`;
+    const clientMessageId = message.metadata_json.client_message_id;
+    const resumeOfClientMessageId = message.metadata_json.resume_of_client_message_id;
+    if (
+      message.role === "user" &&
+      typeof clientMessageId === "string" &&
+      typeof resumeOfClientMessageId === "string"
+    ) {
+      const resumedNodeId = clientMessageNodeIds.get(resumeOfClientMessageId);
+      const resumedNode = resumedNodeId !== undefined ? nodesById[resumedNodeId] : undefined;
+      if (resumedNode?.role === "user" && resumedNode.content === message.content) {
+        clientMessageNodeIds.set(clientMessageId, resumedNode.id);
+        messageNodeIds.set(message.id, resumedNode.id);
+        continue;
+      }
+    }
+    const node: ConversationNode = {
+      id: nodeId,
+      parent_id: parentId,
+      children_ids: [],
+      role: message.role,
+      content: message.content,
+      state: "done",
+      run_id: typeof message.metadata_json.run_id === "string" ? message.metadata_json.run_id : undefined,
+      metadata: {
+        workspace_mode:
+          typeof message.metadata_json.workspace_mode === "string"
+            ? (message.metadata_json.workspace_mode as ConversationNode["metadata"]["workspace_mode"])
+            : "chat",
+        input_tokens: readNumberMetadata(message.metadata_json.input_tokens),
+        output_tokens: readNumberMetadata(message.metadata_json.output_tokens),
+        duration_ms: readNumberMetadata(message.metadata_json.duration_ms),
+        cost_usd:
+          typeof message.metadata_json.cost_usd === "string"
+            ? message.metadata_json.cost_usd
+            : null,
+        cost_unavailable: message.metadata_json.cost_unavailable === true,
+        model_call_id:
+          typeof message.metadata_json.model_call_id === "string"
+            ? message.metadata_json.model_call_id
+            : null,
+        orchestration: {
+          message_id: message.id,
+          ...message.metadata_json,
+          source: "local_agent",
+          binding_id: binding.id,
+          connection_id: binding.connection_id,
+          agent_session_id: binding.agent_session_id,
+        },
+      },
+      tool_calls: [],
+      artifacts: [],
+      created_at: message.created_at,
+    };
+    messageNodeIds.set(message.id, node.id);
+    if (message.role === "user" && typeof clientMessageId === "string") {
+      clientMessageNodeIds.set(clientMessageId, node.id);
+    }
+    nodesById[parentId] = {
+      ...nodesById[parentId],
+      children_ids: [...nodesById[parentId].children_ids, node.id],
+    };
+    nodesById[node.id] = node;
+    parentId = node.id;
+    if (firstUserContent === null && message.role === "user" && message.content.trim()) {
+      firstUserContent = message.content.trim();
+    }
+  }
+  let activeLeafId = parentId;
+
+  const hasServerUserForPending =
+    pendingUserNode !== undefined &&
+    messages.some(
+      (message) =>
+        message.role === "user" &&
+        message.metadata_json.client_message_id ===
+          pendingUserNode.metadata.orchestration?.client_message_id,
+    );
+  const lastServerMessage = messages[messages.length - 1];
+  const pendingBridgeTaskId = pendingNode?.metadata.orchestration?.bridge_task_id;
+  const hasServerAssistantForPending =
+    typeof pendingBridgeTaskId === "string" &&
+    messages.some(
+      (message) =>
+        message.role === "assistant" && message.metadata_json.bridge_task_id === pendingBridgeTaskId,
+    );
+  const pendingTaskForBrowserNode = pendingTasks.find(
+    (task) =>
+      task.client_message_id === pendingNode?.metadata.orchestration?.client_message_id ||
+      task.id === pendingNode?.metadata.orchestration?.bridge_task_id,
+  );
+  const pendingNodeIsPaused =
+    pendingNode !== undefined &&
+    (pendingNode.state === "paused" || pendingNode.metadata.orchestration?.status === "paused");
+  const pendingTaskIsTerminalError =
+    !pendingNodeIsPaused &&
+    (pendingTaskForBrowserNode?.status === "failed" ||
+      pendingTaskForBrowserNode?.status === "cancelled");
+  const pendingTaskIsActive =
+    pendingTaskForBrowserNode !== undefined && isLocalAgentTaskActive(pendingTaskForBrowserNode);
+  const pendingTaskErrorMessage =
+    pendingTaskForBrowserNode?.error_message?.trim() ||
+    (pendingTaskForBrowserNode?.status === "cancelled"
+      ? "本地 Agent 任务已取消。"
+      : "本地 Agent 执行失败。");
+  const pendingNodeHasStreamedContent =
+    pendingNode?.metadata.orchestration?.streaming_via === "task_event_sse" &&
+    pendingNode.content.trim().length > 0;
+  const pendingNodeHasActiveStreamedContent =
+    pendingNode !== undefined &&
+    pendingNodeHasStreamedContent &&
+    ["streaming", "waiting_approval", "awaiting_message_hydration"].includes(
+      String(pendingNode.metadata.orchestration?.status ?? ""),
+    ) &&
+    !pendingTaskIsTerminalError &&
+    !hasServerAssistantForPending;
+  const shouldKeepPendingAssistant =
+    pendingNode !== undefined &&
+    (pendingNodeIsPaused ||
+      pendingTaskIsActive ||
+      (pendingTaskIsTerminalError && !hasServerAssistantForPending) ||
+      pendingNodeHasActiveStreamedContent ||
+      (!hasServerAssistantForPending &&
+        pendingTaskForBrowserNode === undefined &&
+        lastServerMessage?.role !== "assistant"));
+
+  if (pendingUserNode !== undefined && !hasServerUserForPending) {
+    const existingPendingUser = nodesById[pendingUserNode.id];
+    if (existingPendingUser !== undefined) {
+      nodesById[pendingUserNode.id] = {
+        ...existingPendingUser,
+        content: pendingUserNode.content,
+        state: pendingUserNode.state,
+        metadata: {
+          ...existingPendingUser.metadata,
+          ...pendingUserNode.metadata,
+        },
+      };
+      parentId = pendingUserNode.id;
+      if (firstUserContent === null && pendingUserNode.content.trim()) {
+        firstUserContent = pendingUserNode.content.trim();
+      }
+      } else if (pendingUserNode.id !== parentId) {
+        const user = { ...pendingUserNode, parent_id: parentId, children_ids: [] };
+        nodesById[parentId] = {
+          ...nodesById[parentId],
+          children_ids: [...nodesById[parentId].children_ids, user.id],
+        };
+        nodesById[user.id] = user;
+        parentId = user.id;
+        if (firstUserContent === null && user.content.trim()) {
+          firstUserContent = user.content.trim();
+        }
+      }
+  }
+
+  if (shouldKeepPendingAssistant) {
+    const pendingStatus =
+      pendingNodeIsPaused
+        ? "paused"
+        : typeof pendingTaskForBrowserNode?.status === "string"
+          ? pendingTaskForBrowserNode.status
+          : typeof pendingNode.metadata.orchestration?.status === "string"
+            ? pendingNode.metadata.orchestration.status
+            : "pending";
+    const assistant = {
+      ...pendingNode,
+      parent_id: parentId,
+      children_ids: [],
+      run_id: pendingTaskForBrowserNode?.run_id ?? pendingNode.run_id,
+      content: pendingTaskIsTerminalError
+        ? ""
+        : pendingNodeIsPaused
+        ? localAgentPausedTaskContent(pendingNode.content)
+        : pendingNodeHasStreamedContent
+        ? pendingNode.content
+        : localAgentPendingTaskContent(pendingStatus, connection, pendingApprovalCount),
+      state: pendingTaskIsTerminalError
+        ? "error"
+        : pendingNodeIsPaused
+          ? "paused"
+          : pendingNode.state,
+      metadata: {
+        ...pendingNode.metadata,
+        orchestration: {
+          ...pendingNode.metadata.orchestration,
+          connection_id:
+            pendingTaskForBrowserNode?.connection_id ??
+            pendingNode.metadata.orchestration?.connection_id,
+          binding_id:
+            pendingTaskForBrowserNode?.binding_id ??
+            pendingNode.metadata.orchestration?.binding_id,
+          agent_session_id:
+            pendingTaskForBrowserNode?.agent_session_id ??
+            pendingNode.metadata.orchestration?.agent_session_id,
+          bridge_task_id:
+            pendingTaskForBrowserNode?.id ??
+            pendingNode.metadata.orchestration?.bridge_task_id,
+          client_message_id:
+            pendingTaskForBrowserNode?.client_message_id ??
+            pendingNode.metadata.orchestration?.client_message_id,
+          status: pendingStatus,
+        },
+        ...(pendingTaskIsTerminalError
+          ? {
+              retry_disabled: true,
+              error: {
+                kind: "server" as const,
+                detail:
+                  pendingTaskForBrowserNode?.status === "cancelled"
+                    ? "本地 Agent 任务已取消"
+                    : "本地 Agent 执行失败",
+                body_preview: pendingTaskErrorMessage,
+                happened_at: pendingTaskForBrowserNode?.updated_at ?? pendingNode.created_at,
+              },
+            }
+          : {}),
+      },
+    };
+    nodesById[parentId] = {
+      ...nodesById[parentId],
+      children_ids: [...nodesById[parentId].children_ids, assistant.id],
+    };
+    nodesById[assistant.id] = assistant;
+    parentId = assistant.id;
+    activeLeafId = assistant.id;
+  }
+
+  for (const task of pendingTasks) {
+    if (task.id === pendingTaskForBrowserNode?.id) {
+      continue;
+    }
+    if (
+      messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.metadata_json.bridge_task_id === task.id,
+      )
+    ) {
+      continue;
+    }
+    const taskParentId =
+      task.id === pendingNode?.metadata.orchestration?.bridge_task_id
+        ? pendingNode.parent_id ?? undefined
+        : messageNodeIds.get(task.user_message_id) ?? clientMessageNodeIds.get(task.client_message_id);
+    const taskNodeId = `local-task:${task.id}:${task.status}`;
+    if (taskParentId === undefined || nodesById[taskNodeId] !== undefined) {
+      continue;
+    }
+    const taskParentHadChildren = nodesById[taskParentId].children_ids.length > 0;
+    const isTerminalError = task.status === "failed" || task.status === "cancelled";
+    const errorMessage =
+      task.error_message?.trim() ||
+      (task.status === "cancelled" ? "本地 Agent 任务已取消。" : "本地 Agent 执行失败。");
+    const assistant: ConversationNode = {
+      id: taskNodeId,
+      parent_id: taskParentId,
+      children_ids: [],
+      role: "assistant",
+      content: isTerminalError
+        ? ""
+        : localAgentPendingTaskContent(task.status, connection, pendingApprovalCount),
+      state: isTerminalError ? "error" : "streaming",
+      run_id: task.run_id,
+      metadata: {
+        workspace_mode: "chat",
+        orchestration: {
+          source: "local_agent",
+          connection_id: task.connection_id,
+          binding_id: task.binding_id,
+          agent_session_id: task.agent_session_id,
+          bridge_task_id: task.id,
+          client_message_id: task.client_message_id,
+          status: task.status,
+        },
+        ...(isTerminalError
+          ? {
+              retry_disabled: true,
+              error: {
+                kind: "server",
+                detail:
+                  task.status === "cancelled"
+                    ? "本地 Agent 任务已取消"
+                    : "本地 Agent 执行失败",
+                body_preview: errorMessage,
+                happened_at: task.updated_at,
+              },
+            }
+          : {}),
+      },
+      tool_calls: [],
+      artifacts: [],
+      created_at: isTerminalError ? task.updated_at : task.created_at,
+    };
+    nodesById[taskParentId] = {
+      ...nodesById[taskParentId],
+      children_ids: [...nodesById[taskParentId].children_ids, assistant.id],
+    };
+    nodesById[assistant.id] = assistant;
+    if (!taskParentHadChildren) {
+      parentId = assistant.id;
+      activeLeafId = assistant.id;
+    }
+  }
+
+  const title = firstUserContent?.slice(0, 40) || fallbackTitle;
+  const conversationId = localAgentConversationId(binding.id);
+  return {
+    id: conversationId,
+    title,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    nodesById,
+    rootNodeId: root.id,
+    activeLeafId,
+    pinnedNodeIds: pinnedNodeIds.filter((nodeId) => nodesById[nodeId] !== undefined),
+    dismissedPlanNodeIds: [],
+    draft: "",
+    contextWindowTurns,
+    contextCompressions: localAgentContextCompressionsForConversation(
+      contextCompressions,
+      conversationId,
+    ),
+  };
+}
+
+function localAgentHydrationStateForConversation(
+  store: ReturnType<typeof useWorkspaceStore.getState>,
+  conversationId: string,
+): Pick<
+  ConversationSummary,
+  "pinnedNodeIds" | "contextWindowTurns" | "contextCompressions"
+> {
+  const existing = store.conversations.find(
+    (conversation) => conversation.id === conversationId,
+  );
+  const isActiveConversation = store.currentConversationId === conversationId;
+  const contextCompressions = isActiveConversation
+    ? store.contextCompressions
+    : existing?.contextCompressions ?? {};
+  return {
+    pinnedNodeIds: isActiveConversation
+      ? store.pinnedNodeIds
+      : existing?.pinnedNodeIds ?? [],
+    contextWindowTurns: isActiveConversation
+      ? store.contextWindowTurns
+      : existing?.contextWindowTurns ?? 8,
+    contextCompressions: localAgentContextCompressionsForConversation(
+      contextCompressions,
+      conversationId,
+    ),
+  };
+}
+
+function localAgentContextCompressionsForConversation(
+  contextCompressions: ConversationSummary["contextCompressions"],
+  conversationId: string,
+): ConversationSummary["contextCompressions"] {
+  const prefix = `${conversationId}:`;
+  return Object.fromEntries(
+    Object.entries(contextCompressions).filter(
+      ([branchKey, summary]) =>
+        branchKey.startsWith(prefix) && summary.branchKey.startsWith(prefix),
+    ),
+  );
+}
+
+function readNumberMetadata(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function localAgentConversationId(bindingId: string): string {
+  return `local-agent:${bindingId}`;
+}
+
+function localAgentBindingHintFromConversation(
+  conversation: ConversationSummary | undefined,
+): { bindingId: string; connectionId: string; agentSessionId: string } | null {
+  if (conversation === undefined) return null;
+  for (const node of Object.values(conversation.nodesById)) {
+    const orchestration = node.metadata.orchestration;
+    if (orchestration?.source !== "local_agent") continue;
+    const bindingId = orchestration?.binding_id;
+    const connectionId = orchestration?.connection_id;
+    const agentSessionId = orchestration?.agent_session_id;
+    if (
+      typeof bindingId === "string" &&
+      bindingId.length > 0 &&
+      typeof connectionId === "string" &&
+      connectionId.length > 0 &&
+      typeof agentSessionId === "string" &&
+      agentSessionId.length > 0
+    ) {
+      return { bindingId, connectionId, agentSessionId };
+    }
+  }
+  return null;
+}
+
+function isLocalAgentConversation(conversation: ConversationSummary | undefined): boolean {
+  if (conversation === undefined) return false;
+  if (conversation.id.startsWith("local-agent:")) return true;
+  if (conversation.id.startsWith("local-agent-pending:")) return true;
+  return Object.values(conversation.nodesById).some(
+    (node) => node.metadata.orchestration?.source === "local_agent",
+  );
+}
+
+function currentCloudConversationId(
+  conversations: ConversationSummary[],
+  preferredId?: string,
+): string | null {
+  if (preferredId !== undefined) {
+    const preferred = conversations.find((conversation) => conversation.id === preferredId);
+    if (preferred !== undefined && !isLocalAgentConversation(preferred)) return preferred.id;
+  }
+  return (
+    conversations
+      .filter((conversation) => !isLocalAgentConversation(conversation))
+      .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0]?.id ?? null
+  );
+}
+
+function localAgentBindingMatchesHint(
+  binding: LocalAgentConversationBinding,
+  hint: { bindingId: string; connectionId: string; agentSessionId: string },
+): boolean {
+  return (
+    binding.id === hint.bindingId &&
+    binding.connection_id === hint.connectionId &&
+    binding.agent_session_id === hint.agentSessionId
+  );
+}
+
+function mostRecentLocalAgentConversationForConnection(
+  conversations: ConversationSummary[],
+  connectionId: string,
+): ConversationSummary | undefined {
+  return conversations
+    .filter((conversation) => {
+      const hint = localAgentBindingHintFromConversation(conversation);
+      return hint?.connectionId === connectionId;
+    })
+    .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+}
+
+function mostRecentLocalAgentBindingHintForConnection(
+  conversations: ConversationSummary[],
+  connectionId: string,
+): { bindingId: string; connectionId: string; agentSessionId: string } | null {
+  const conversation = mostRecentLocalAgentConversationForConnection(conversations, connectionId);
+  return localAgentBindingHintFromConversation(conversation);
+}
+
+function mostRecentActiveBindingForConnection(
+  bindings: LocalAgentConversationBinding[],
+  connectionId: string,
+): LocalAgentConversationBinding | undefined {
+  return bindings
+    .filter(
+      (binding) =>
+        binding.connection_id === connectionId && binding.status === "active",
+    )
+    .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0];
+}
+
+function ensureLocalAgentConversation({
+  binding,
+  connection,
+  fallbackTitle,
+  pendingApprovalCount,
+  focus,
+}: {
+  binding: LocalAgentConversationBinding;
+  connection: LocalAgentConnection | null;
+  fallbackTitle: string;
+  pendingApprovalCount: number;
+  focus: boolean;
+}): void {
+  const store = useWorkspaceStore.getState();
+  const conversationId = localAgentConversationId(binding.id);
+  const existing = store.conversations.find((conversation) => conversation.id === conversationId);
+  if (existing === undefined) {
+    const localHydrationState = localAgentHydrationStateForConversation(store, conversationId);
+    const summary = localAgentConversationFromMessages({
+      binding,
+      messages: [],
+      pendingTasks: [],
+      connection,
+      fallbackTitle,
+      pendingApprovalCount,
+      ...localHydrationState,
+    });
+    const root = summary.nodesById[summary.rootNodeId];
+    const summaryWithConnectionMarker: ConversationSummary = {
+      ...summary,
+      nodesById: {
+        ...summary.nodesById,
+        [summary.rootNodeId]: {
+          ...root,
+          metadata: {
+            ...root.metadata,
+            orchestration: {
+              source: "local_agent",
+              binding_id: binding.id,
+              connection_id: binding.connection_id,
+              agent_session_id: binding.agent_session_id,
+              adapter_kind: connection?.adapter_kind,
+            },
+          },
+        },
+      },
+      draft: store.draft,
+    };
+    store.upsertConversationSummary(summaryWithConnectionMarker);
+  }
+  if (focus && useWorkspaceStore.getState().currentConversationId !== conversationId) {
+    useWorkspaceStore.getState().setCurrentConversation(conversationId);
+  }
+}
+
+function ensurePendingLocalAgentConversation({
+  connection,
+  fallbackTitle,
+  focus,
+}: {
+  connection: LocalAgentConnection | null;
+  fallbackTitle: string;
+  focus: boolean;
+}): void {
+  if (connection === null) return;
+  const store = useWorkspaceStore.getState();
+  const conversationId = pendingLocalAgentConversationId(connection.id);
+  const existing = store.conversations.find((conversation) => conversation.id === conversationId);
+  if (existing === undefined) {
+    const now = new Date().toISOString();
+    const root: ConversationNode = {
+      id: "root",
+      parent_id: null,
+      children_ids: ["local-agent-pending"],
+      role: "system",
+      content: "Agent Workspace Pro root",
+      state: "done",
+      metadata: {
+        orchestration: {
+          source: "local_agent",
+          connection_id: connection.id,
+          adapter_kind: connection.adapter_kind,
+          pending_binding: true,
+        },
+      },
+      tool_calls: [],
+      artifacts: [],
+      created_at: now,
+    };
+    const pending: ConversationNode = {
+      id: "local-agent-pending",
+      parent_id: root.id,
+      children_ids: [],
+      role: "assistant",
+      content: `正在恢复 ${connection.display_name} 的本地会话...`,
+      state: "streaming",
+      metadata: {
+        workspace_mode: "chat",
+        orchestration: {
+          source: "local_agent",
+          connection_id: connection.id,
+          adapter_kind: connection.adapter_kind,
+          pending_binding: true,
+        },
+      },
+      tool_calls: [],
+      artifacts: [],
+      created_at: now,
+    };
+    store.upsertConversationSummary({
+      id: conversationId,
+      title: fallbackTitle,
+      created_at: now,
+      updated_at: now,
+      nodesById: { [root.id]: root, [pending.id]: pending },
+      rootNodeId: root.id,
+      activeLeafId: pending.id,
+      pinnedNodeIds: [],
+      dismissedPlanNodeIds: [],
+      draft: "",
+      contextWindowTurns: 8,
+      contextCompressions: {},
+    });
+  }
+  if (focus && useWorkspaceStore.getState().currentConversationId !== conversationId) {
+    useWorkspaceStore.getState().setCurrentConversation(conversationId);
+  }
+}
+
+function pendingLocalAgentConversationId(connectionId: string): string {
+  return `local-agent-pending:${connectionId}`;
+}
+
+function isPendingLocalAgentConversationForConnection(
+  conversation: ConversationSummary,
+  connectionId: string,
+): boolean {
+  if (conversation.id === pendingLocalAgentConversationId(connectionId)) {
+    return true;
+  }
+  return Object.values(conversation.nodesById).some((node) => {
+    const orchestration = node.metadata.orchestration;
+    return (
+      orchestration?.source === "local_agent" &&
+      orchestration.pending_binding === true &&
+      orchestration.connection_id === connectionId
+    );
+  });
+}
+
+function localAgentSubmitContextForBinding(
+  context: LocalAgentSubmitContext,
+  store: ReturnType<typeof useWorkspaceStore.getState>,
+  binding: LocalAgentConversationBinding,
+): LocalAgentSubmitContext {
+  const localConversationId = localAgentConversationId(binding.id);
+  const useRuntimeConversation = store.currentConversationId === localConversationId;
+  let nodesById: Record<string, ConversationNode>;
+  let activeLeafId: string;
+  let rootNodeId: string;
+  let pinnedNodeIds: string[];
+  let contextWindowTurns: number;
+  if (useRuntimeConversation) {
+    nodesById = store.nodesById;
+    activeLeafId = store.activeLeafId;
+    rootNodeId = store.rootNodeId;
+    pinnedNodeIds = store.pinnedNodeIds;
+    contextWindowTurns = store.contextWindowTurns;
+  } else {
+    const conversation = store.conversations.find((item) => item.id === localConversationId);
+    if (conversation === undefined) {
+      return {
+        ...context,
+        messages: [],
+        active_leaf_id: null,
+        active_branch_id: null,
+        pinned_node_ids: [],
+        compressed_context: null,
+      };
+    }
+    nodesById = conversation.nodesById;
+    activeLeafId = conversation.activeLeafId;
+    rootNodeId = conversation.rootNodeId;
+    pinnedNodeIds = conversation.pinnedNodeIds;
+    contextWindowTurns = conversation.contextWindowTurns;
+  }
+  const activePath = buildActivePath(nodesById, activeLeafId, rootNodeId);
+  const messages = activePath
+    .filter((node) => localAgentNodeMatchesBinding(node, binding))
+    .map(localAgentMessageFromNode);
+  const messageIds = new Set(messages.map((message) => message.id));
+  return {
+    ...context,
+    messages,
+    active_leaf_id: activeLeafId,
+    active_branch_id: activeLeafId,
+    pinned_node_ids: pinnedNodeIds,
+    context_window_turns: contextWindowTurns,
+    compressed_context: localAgentCompressedContextForBinding(
+      context.compressed_context,
+      activeLeafId,
+      messageIds,
+    ),
+  };
+}
+
+function localAgentCompressedContextForBinding(
+  compressedContext: LocalAgentSubmitContext["compressed_context"],
+  activeLeafId: string,
+  messageIds: Set<string>,
+): LocalAgentSubmitContext["compressed_context"] {
+  if (compressedContext === null || compressedContext === undefined) return null;
+  if (compressedContext.branch_id !== activeLeafId) return null;
+  if (compressedContext.coverage_node_ids.some((nodeId) => !messageIds.has(nodeId))) {
+    return null;
+  }
+  return compressedContext;
+}
+
+function localAgentMessageFromNode(node: ConversationNode): AgentChatStreamMessage {
+  return {
+    id: node.id,
+    parent_id: node.parent_id,
+    children_ids: node.children_ids,
+    role: node.role,
+    content: node.content,
+    state: node.state,
+    run_id: node.run_id,
+    metadata: { ...node.metadata },
+    tool_calls: node.tool_calls,
+    artifacts: node.artifacts.map((artifact) => ({ ...artifact })),
+    created_at: node.created_at,
+  };
+}
+
+function localAgentNodeMatchesBinding(
+  node: ConversationNode | null | undefined,
+  binding: LocalAgentConversationBinding,
+): node is ConversationNode {
+  if (node === null || node === undefined) return false;
+  const orchestration = node.metadata.orchestration;
+  if (orchestration === undefined) return false;
+  const source = orchestration.source;
+  if (source !== "local_agent") return false;
+  const bindingId = orchestration.binding_id;
+  const connectionId = orchestration.connection_id;
+  const sessionId = orchestration.agent_session_id;
+  if (bindingId !== binding.id) return false;
+  if (connectionId !== binding.connection_id) return false;
+  return sessionId === binding.agent_session_id;
+}
+
+function localAgentMessageMatchesBinding(
+  message: AgentMessage,
+  binding: LocalAgentConversationBinding,
+): boolean {
+  if (message.session_id !== binding.agent_session_id) return false;
+  const metadata = message.metadata_json ?? {};
+  const source = metadata.source;
+  if (source !== "local_agent") return false;
+  const bindingId = metadata.binding_id;
+  const connectionId = metadata.connection_id;
+  const sessionId = metadata.agent_session_id;
+  if (bindingId !== binding.id) return false;
+  if (connectionId !== binding.connection_id) return false;
+  return sessionId === binding.agent_session_id;
+}
+
+function estimateLocalAgentInputTokens(goal: string, context: LocalAgentSubmitContext): number {
+  const messageChars = context.messages.reduce(
+    (total, message) => total + message.content.length + JSON.stringify(message.metadata).length,
+    0,
+  );
+  const attachmentChars = context.attachments.reduce(
+    (total, attachment) =>
+      total +
+      attachment.name.length +
+      (attachment.content_text?.length ?? 0) +
+      JSON.stringify({
+        mime_type: attachment.mime_type,
+        size_bytes: attachment.size_bytes,
+        content_status: attachment.content_status,
+        truncated: attachment.truncated,
+      }).length,
+    0,
+  );
+  const toolChars =
+    JSON.stringify(context.tool_mentions).length + context.attachment_names.join("\n").length;
+  const compressedContext = context.compressed_context ?? null;
+  const compressedChars =
+    compressedContext === null
+      ? 0
+      : compressedContext.summary.length +
+        compressedContext.coverage_node_ids.join("\n").length +
+        compressedContext.coverage_path_hash.length;
+  return Math.max(
+    1,
+    Math.ceil((goal.length + messageChars + attachmentChars + toolChars + compressedChars) / 4),
+  );
+}
+
+function localAgentConnectionIdFromConversation(conversation: ConversationSummary): string | null {
+  for (const node of Object.values(conversation.nodesById)) {
+    const orchestration = node.metadata.orchestration;
+    if (orchestration?.source !== "local_agent") continue;
+    const connectionId = orchestration.connection_id;
+    if (typeof connectionId === "string" && connectionId.length > 0) {
+      return connectionId;
+    }
+  }
+  return null;
+}
+
+function activeLocalAgentControlNode(
+  activePath: ConversationNode[],
+  binding: LocalAgentConversationBinding | null,
+): ConversationNode | null {
+  if (binding === null) return null;
+  for (let index = activePath.length - 1; index >= 0; index -= 1) {
+    const node = activePath[index];
+    if (node.role !== "assistant") continue;
+    if (!localAgentNodeMatchesBinding(node, binding)) continue;
+    const status = String(node.metadata.orchestration?.status ?? "");
+    if (node.state === "paused" || status === "paused") return node;
+    if (
+      node.state === "streaming" &&
+      !["completed", "failed", "cancelled"].includes(status)
+    ) {
+      return node;
+    }
+  }
+  return null;
+}
+
+function isLocalAgentTaskActive(task: LocalAgentBindingTask): boolean {
+  return task.status === "pending" || task.status === "leased" || task.status === "running";
+}
+
+function latestLocalAgentConversationTime(
+  messages: AgentMessage[],
+  tasks: LocalAgentBindingTask[],
+  fallback: string,
+): string {
+  const candidates = [
+    fallback,
+    ...messages.map((message) => message.created_at),
+    ...tasks.map((task) => task.updated_at || task.created_at),
+  ];
+  return candidates.reduce((latest, candidate) =>
+    Date.parse(candidate) > Date.parse(latest) ? candidate : latest,
+  );
+}
+
+function sortLocalAgentConnections(connections: LocalAgentConnection[]): LocalAgentConnection[] {
+  const adapterRank: Record<string, number> = {
+    hao: 0,
+    codex: 1,
+    claude_code: 2,
+    fake: 3,
+  };
+  return [...connections].sort((a, b) => {
+    const rank = (adapterRank[a.adapter_kind] ?? 99) - (adapterRank[b.adapter_kind] ?? 99);
+    if (rank !== 0) return rank;
+    const name = a.display_name.localeCompare(b.display_name, "zh-CN");
+    if (name !== 0) return name;
+    const workspace = String(a.workspace_root ?? "").localeCompare(
+      String(b.workspace_root ?? ""),
+      "zh-CN",
+    );
+    if (workspace !== 0) return workspace;
+    const created = Date.parse(a.created_at) - Date.parse(b.created_at);
+    if (created !== 0) return created;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function isUsableLocalAgentConnection(connection: LocalAgentConnection): boolean {
+  return (
+    connection.status !== "revoked" &&
+    connection.status !== "pending_confirmation" &&
+    connection.onboarding_confirmed === true
+  );
+}
+
+function defaultLocalAgentConnection(
+  connections: LocalAgentConnection[],
+): LocalAgentConnection | null {
+  return (
+    connections.find(
+      (connection) => connection.status === "online" || connection.status === "busy",
+    ) ??
+    connections[0] ??
+    null
+  );
+}
+
+function localAgentPendingTaskContent(
+  taskStatus: string,
+  connection: LocalAgentConnection | null,
+  pendingApprovalCount = 0,
+): string {
+  if (taskStatus === "paused") {
+    return localAgentPausedTaskContent("");
+  }
+  if (connection?.status === "offline") {
+    return "本地 Agent 当前离线，消息已排队。点击上方“恢复”生成重启命令，bridge 恢复后会继续处理。";
+  }
+  if (pendingApprovalCount > 0 && !localAgentUsesClaudePermissionBridge(connection)) {
+    return "等待本地工具审批。可在运行详情处理审批。";
+  }
+  if (localAgentUsesClaudePermissionBridge(connection) && pendingApprovalCount > 0) {
+    return "等待 Claude Code 本地工具审批。可在运行详情处理审批。";
+  }
+  if (taskStatus === "running" || taskStatus === "leased") {
+    return "本地 Agent 正在处理，完成后会同步到这里。";
+  }
+  return "等待本地 Agent 响应...";
+}
+
+function localAgentPausedTaskContent(content: string): string {
+  const trimmed = content.trim();
+  if (
+    trimmed &&
+    !trimmed.startsWith("等待本地 Agent") &&
+    !trimmed.startsWith("本地 Agent 正在处理") &&
+    !trimmed.startsWith("本地 Agent 当前离线")
+  ) {
+    return content;
+  }
+  return "本地 Agent 已暂停。点击“继续发送”会重新发送这一轮消息。";
+}
+
+function localAgentToolApprovalContent(
+  connection: LocalAgentConnection | null,
+  toolName: string,
+  approvalId: string | null,
+): string {
+  const adapterLabel =
+    connection?.adapter_kind === "claude_code"
+      ? "Claude Code"
+      : connection?.adapter_kind === "codex"
+        ? "Codex CLI"
+        : "本地 Agent";
+  const approvalHint = approvalId
+    ? `审批 ${approvalId.slice(0, 8)}`
+    : "审批";
+  return `${adapterLabel} 请求本地工具 ${toolName}，正在等待 ${approvalHint}。处理后会继续流式输出。`;
 }
 
 function syncNodeToolCallsFromWorkspace(

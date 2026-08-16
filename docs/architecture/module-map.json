@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "generated_note": "Source of truth for docs/architecture/MODULE-INDEX.md. Edit here; run scripts/agent-context-brief.py --gen-module-index to regenerate the index.",
+  "modules": [
+    {
+      "name": "agents",
+      "path": "services/api-server/app/agents",
+      "docs": [
+        "docs/architecture/agent-runtime-spec.md"
+      ],
+      "summary": "Agent lifecycle management: create, clone, configure, run workspace plans."
+    },
+    {
+      "name": "api",
+      "path": "services/api-server/app/api",
+      "docs": [
+        "docs/contracts/api/api-spec.md"
+      ],
+      "summary": "FastAPI route definitions, request/response models, OpenAPI spec."
+    },
+    {
+      "name": "core",
+      "path": "services/api-server/app/core",
+      "docs": [
+        "docs/architecture/system-architecture-spec.md"
+      ],
+      "summary": "Shared utilities, base classes, cross-cutting concerns."
+    },
+    {
+      "name": "db",
+      "path": "services/api-server/app/db",
+      "docs": [
+        "docs/contracts/data-model-and-event-spec.md"
+      ],
+      "summary": "SQLAlchemy models, Alembic migrations, database session management."
+    },
+    {
+      "name": "events",
+      "path": "services/api-server/app/events",
+      "docs": [
+        "docs/contracts/data-model-and-event-spec.md"
+      ],
+      "summary": "Event sourcing, append-only event log, replay infrastructure."
+    },
+    {
+      "name": "knowledge",
+      "path": "services/api-server/app/knowledge",
+      "docs": [
+        "docs/testing/eval-harness-spec.md"
+      ],
+      "summary": "RAG pipeline: local sources, connector sync, chunking, grounding citations."
+    },
+    {
+      "name": "observability",
+      "path": "services/api-server/app/observability",
+      "docs": [
+        "docs/testing/benchmark-spec.md"
+      ],
+      "summary": "OpenTelemetry traces, spans, model calls, tool calls, cost rollups, alerts."
+    },
+    {
+      "name": "sandbox",
+      "path": "services/api-server/app/sandbox",
+      "docs": [
+        "docs/contracts/tool-mcp-runtime-spec.md"
+      ],
+      "summary": "Docker sandbox warmpool, sandboxed code execution, resource isolation."
+    },
+    {
+      "name": "security",
+      "path": "services/api-server/app/security",
+      "docs": [
+        "docs/architecture/system-architecture-spec.md",
+        "docs/contracts/guardrail-policy-spec.md"
+      ],
+      "summary": "JWT/API-key auth, org RBAC, audit logs, encrypted secrets."
+    },
+    {
+      "name": "teams",
+      "path": "services/api-server/app/teams",
+      "docs": [
+        "docs/architecture/agent-runtime-spec.md"
+      ],
+      "summary": "Multi-agent team coordination, specialist routing, dynamic fanout."
+    },
+    {
+      "name": "tools",
+      "path": "services/api-server/app/tools",
+      "docs": [
+        "docs/contracts/tool-mcp-runtime-spec.md"
+      ],
+      "summary": "27+ tool adapters (filesystem, shell, GitHub, Slack, MCP), registry, policy."
+    },
+    {
+      "name": "workers",
+      "path": "services/api-server/app/workers",
+      "docs": [
+        "docs/architecture/agent-runtime-spec.md"
+      ],
+      "summary": "Dramatiq background job queue, async task execution, warmpool workers."
+    },
+    {
+      "name": "agent-console",
+      "path": "apps/agent-console",
+      "docs": [
+        "docs/design/console-ui-spec.md"
+      ],
+      "summary": "React 18 + TypeScript operator UI: workspace, studio, tools, evals, observability."
+    },
+    {
+      "name": "web-site",
+      "path": "apps/web-site",
+      "docs": [
+        "docs/design/portfolio-demo-spec.md"
+      ],
+      "summary": "Public-facing website and portfolio demo flows."
+    }
+  ]
+}

@@ -88,7 +88,7 @@ function ExportMenu({ onExport }: ExportMenuProps): JSX.Element {
         <div
           role="menu"
           aria-label={text("导出对话", "Export conversation")}
-          className="absolute bottom-full right-0 z-30 mb-2 w-[160px] rounded-2xl border border-slate-200 bg-white p-1 shadow-lg"
+          className="absolute bottom-full right-0 z-30 mb-2 w-[160px] rounded-2xl border border-slate-200 bg-white p-1 shadow-none"
         >
           <button
             type="button"

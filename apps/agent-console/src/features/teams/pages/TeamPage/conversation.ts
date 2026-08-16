@@ -120,10 +120,15 @@ export function teamConversationEntries(team: Team, agent: TeamAgent, mailboxMes
   return entries;
 }
 
-export function streamingEntry(team: Team, agent: TeamAgent, wake?: StreamingWake): TeamConversationEntry {
+export function streamingEntry(
+  team: Team,
+  agent: TeamAgent,
+  wake?: StreamingWake,
+  pendingSend?: PendingSend,
+): TeamConversationEntry {
   return {
     node: {
-      id: `team-${team.id}-${agent.slot_id}-streaming`,
+      id: pendingSend?.branchAssistantId ?? wake?.branchAssistantId ?? `team-${team.id}-${agent.slot_id}-streaming`,
       parent_id: null,
       children_ids: [],
       role: "assistant",
@@ -135,13 +140,13 @@ export function streamingEntry(team: Team, agent: TeamAgent, wake?: StreamingWak
             error: {
               kind: "server",
               detail: wake.error,
-              happened_at: new Date().toISOString(),
+              happened_at: wake.happenedAt ?? new Date().toISOString(),
             },
           }
         : { workspace_mode: "chat" },
       tool_calls: [],
       artifacts: [],
-      created_at: agent.updated_at ?? new Date().toISOString(),
+      created_at: wake?.happenedAt ?? agent.updated_at ?? new Date().toISOString(),
     },
     target: defaultComposerTarget(agent),
   };
@@ -182,24 +187,46 @@ export function teamConversationEntriesWithPending(
 ) {
   const entries = teamConversationEntries(team, agent, mailboxMessages);
   const streamingWake = streamingWakes.find((wake) => wake.slotId === agent.slot_id);
+  const wakeState = readRecord(agent.metadata_json, "wake");
+  const failedAt = readString(wakeState, "failed_at") ?? agent.updated_at ?? new Date().toISOString();
+  const persistedError = agent.status === "failed" ? readString(wakeState, "last_error") : null;
+  const persistedFailedWake: StreamingWake | undefined = persistedError
+    ? {
+        slotId: agent.slot_id,
+        content: "",
+        error: persistedError,
+        happenedAt: failedAt,
+        branchAssistantId: `team-${team.id}-${agent.slot_id}-wake-error-${encodeURIComponent(failedAt)}`,
+      }
+    : undefined;
+  const visibleWake = streamingWake ?? persistedFailedWake;
+  const pendingSend =
+    pendingSends.find((send) => send.recipientSlotIds.includes(agent.slot_id) && send.branchAssistantId) ??
+    pendingSends.find((send) => send.recipientSlotIds.includes(agent.slot_id));
   const completedWakeTurn = hasCompletedWakeTurn(agent, pendingWakeSlotIds, streamingWakes);
   const hasLocalWake =
     !completedWakeTurn &&
     (Boolean(streamingWake && !streamingWake.error) || pendingWakeSlotIds.includes(agent.slot_id));
+  const hasWakeError = Boolean(visibleWake?.error);
   const shouldShowStreaming =
-    !completedWakeTurn &&
-    (hasLocalWake ||
-      agentWakeInProgress(agent, settledWakeCutoffs) ||
-      pendingSends.some((send) => send.recipientSlotIds.includes(agent.slot_id)));
+    hasWakeError ||
+    (!completedWakeTurn &&
+      (hasLocalWake ||
+        agentWakeInProgress(agent, settledWakeCutoffs) ||
+        pendingSends.some((send) => send.recipientSlotIds.includes(agent.slot_id))));
   if (!shouldShowStreaming) return entries;
   const lastEntry = entries[entries.length - 1];
   if (lastEntry?.node.role === "assistant" && lastEntry.node.state === "streaming") {
     return entries;
   }
-  const pending = streamingEntry(team, agent, streamingWake);
-  pending.node.parent_id = lastEntry?.node.id ?? `team-${team.id}-${agent.slot_id}-root`;
-  if (lastEntry) {
-    lastEntry.node.children_ids = [...new Set([...lastEntry.node.children_ids, pending.node.id])];
+  const pending = streamingEntry(team, agent, visibleWake, pendingSend);
+  const parent =
+    pendingSend?.anchorUserId || visibleWake?.anchorUserId
+      ? entries.find((entry) => entry.node.id === (pendingSend?.anchorUserId ?? visibleWake?.anchorUserId))
+      : lastEntry;
+  pending.node.parent_id = parent?.node.id ?? `team-${team.id}-${agent.slot_id}-root`;
+  if (parent) {
+    parent.node.children_ids = [...new Set([...parent.node.children_ids, pending.node.id])];
   }
   return [...entries, pending];
 }

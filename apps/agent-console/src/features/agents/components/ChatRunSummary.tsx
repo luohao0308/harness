@@ -20,6 +20,7 @@ import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { useI18n } from "../../../lib/i18n";
 import { statusLabel } from "../../../lib/labels";
+import { runDetailPath } from "../lib/runLinks";
 
 export type ChatRunSummaryProps = {
   /** Run identifier. Must be non-empty; parent guards this. */
@@ -28,17 +29,24 @@ export type ChatRunSummaryProps = {
   runStatus?: string;
   /** ISO-8601 timestamp. Renders a localised timestamp when parseable. */
   runCreatedAt?: string;
+  returnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 };
 
 export function ChatRunSummary({
   runId,
   runStatus,
   runCreatedAt,
+  returnTarget,
 }: ChatRunSummaryProps): JSX.Element {
   const { text, locale } = useI18n();
   const shortHash = runId.slice(0, 8);
   const createdLabel = formatLocalisedTimestamp(runCreatedAt, locale);
   const linkLabel = text("查看运行详情", "Open run detail");
+
+  const detailPath = returnTarget ? runDetailPath(runId, returnTarget) : `/runs/${runId}`;
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-sm">
@@ -47,7 +55,7 @@ export function ChatRunSummary({
       {runStatus && <Badge tone={statusTone(runStatus)}>{statusLabel(runStatus)}</Badge>}
       {createdLabel && <span className="text-slate-500">{createdLabel}</span>}
       <div className="ml-auto">
-        <Link to={`/runs/${runId}`} aria-label={linkLabel}>
+        <Link to={detailPath} aria-label={linkLabel}>
           <Button variant="ghost">{linkLabel}</Button>
         </Link>
       </div>

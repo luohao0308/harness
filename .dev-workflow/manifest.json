@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 2,
+  "managedBy": "dev-workflow",
+  "workflowVersion": "0.2.0",
+  "installedPacks": [
+    "architecture",
+    "contracts",
+    "delivery",
+    "design",
+    "operations"
+  ],
+  "files": [
+    {"path":"AGENTS.md","source":"core","action":"appended","installedSha256":null},
+    {"path":"DESIGN.md","source":"design","action":"preserved","installedSha256":null},
+    {"path":"docs/PROJECT-SUMMARY.md","source":"core","action":"created","installedSha256":"a995b471a6644d3ede23cdfb442129c0b6658fce61ad66dd71bc5cf748ef2e77"},
+    {"path":"docs/README.md","source":"core","action":"created","installedSha256":"a415f372c6f5c6bb08da7a2c38af37d1cc529f315ffb745b07927a4daaf5b515"},
+    {"path":"docs/TASKS.md","source":"core","action":"created","installedSha256":"e408923b7e48dcec584adfd33f9b8861400d1cde4da060b9afbc27b14cd28ddc"},
+    {"path":"docs/WORKFLOW-ADOPTION.md","source":"core","action":"created","installedSha256":"53fb0d21debbe06cfdb145135b07020f6adf9ffb597068f8951e666aa158fda7"},
+    {"path":"docs/WORKING-CONTEXT.md","source":"core","action":"created","installedSha256":"582da25168f8baa4e901858f7a5786951d482bbc1a416a7ddfbc6ad6ed89c12a"},
+    {"path":"docs/architecture/DECISIONS.md","source":"architecture","action":"created","installedSha256":"2d9d3a9584cf54cea1fba567ade05d595cfa3a8c2eeeb8af7d7dc956531b660b"},
+    {"path":"docs/architecture/MODULES.md","source":"architecture","action":"created","installedSha256":"e3f98c36028e954868871e427c1227338a70840dc1417d72806bc1a55638f6ac"},
+    {"path":"docs/architecture/README.md","source":"architecture","action":"created","installedSha256":"ca6ae62e65f850870e1793857da59ad3436bf3f412a5cb9c3c2d1949f23fad5a"},
+    {"path":"docs/architecture/SUBPROJECT-AGENTS-TEMPLATE.md","source":"architecture","action":"created","installedSha256":"37d161a6b09ea9b64ba590dde804240f6f685da934d6343eeaf9f31ed0983528"},
+    {"path":"docs/architecture/SYSTEM.md","source":"architecture","action":"created","installedSha256":"8c99407786fde6cf25b0b61318972abce00477448d93f82a1d6cd3bbb2ba0a17"},
+    {"path":"docs/contracts/CHANGE-CHECKLIST.md","source":"contracts","action":"created","installedSha256":"e8e7579d7ef3905f98bff0c8ec6980a29b6d227e7365ca2f2ea02174317269cd"},
+    {"path":"docs/contracts/CONTRACT-TEMPLATE.md","source":"contracts","action":"created","installedSha256":"b8bd091aca9711a69333a37ebe415790623a2f2e2a8ab9e056fb738340216cfd"},
+    {"path":"docs/contracts/MIGRATION-TEMPLATE.md","source":"contracts","action":"created","installedSha256":"ad81f111621bacfb21f62b82404211ad345e66cb1086babb322874bdaf1215b0"},
+    {"path":"docs/contracts/README.md","source":"contracts","action":"created","installedSha256":"88a4841b75777d84a6174cfc59898e98109b409e10fef522716c29569ed06413"},
+    {"path":"docs/design/README.md","source":"design","action":"created","installedSha256":"9fc7f1a4585fa333c12589708cb5b24b85559fd54b88033d0f6bee6601be5286"},
+    {"path":"docs/design/TEMPLATE.md","source":"design","action":"created","installedSha256":"edfb536861386a1bbed032307b863746d09c487b8338272ae6a76f6fafd93aec"},
+    {"path":"docs/development/GIT-WORKTREE-WORKFLOW.md","source":"delivery","action":"created","installedSha256":"4345dfd87556386d56492a625b91fcd238cf28426cdc9b3ea355f43694ad89a2"},
+    {"path":"docs/development/README.md","source":"delivery","action":"created","installedSha256":"a647c524f1fa34cd1e58018504f8d8959b0c97ed706cee07116e747d312c57f6"},
+    {"path":"docs/operations/OBSERVABILITY.md","source":"operations","action":"created","installedSha256":"cdf68fec3887a41d8d7c976ffbb58d2ba8d9e907a93fa2888a70700523df5d3a"},
+    {"path":"docs/operations/README.md","source":"operations","action":"created","installedSha256":"9a42056afd78450041686e72ba27a3c1a1119dcd389910e536db3df13efcaf1e"},
+    {"path":"docs/operations/RELEASE-CHECKLIST.md","source":"operations","action":"created","installedSha256":"dfa133e1eca1f8b85ef1da2124f779408af678da3983df6612d03a970e0a9c7f"},
+    {"path":"docs/plans/README.md","source":"delivery","action":"created","installedSha256":"41101734035f86f429b7f0bc511825ebc263393dccf1adb88e60c6a45ab9c682"},
+    {"path":"docs/plans/TEMPLATE.md","source":"delivery","action":"created","installedSha256":"8f45fbd4a8637a44deeadeb31fdad277c30d94448c4c1c1f7f11c13fc1eee433"},
+    {"path":"docs/project-memory/README.md","source":"core","action":"created","installedSha256":"31fdffd3fc6f6c871b6834c2efee1f7ca61b2abbb7f5ba13dd054877656d0d30"},
+    {"path":"docs/project-memory/RUNBOOK-TEMPLATE.md","source":"operations","action":"created","installedSha256":"db86cc5cca7d3d39fc7b475eb157061f8095f8bef505144657d277082d93a441"},
+    {"path":"docs/testing/README.md","source":"delivery","action":"created","installedSha256":"49e90bb1fb197389ba3b5171b870f3ed5dec9b811640bce5f9dc86374f7599ba"},
+    {"path":"docs/working-context/README.md","source":"delivery","action":"created","installedSha256":"a797cba431072dc7d9c3d812272b4aef63e799b0ca7c8c360a2736303d7573f2"},
+    {"path":"docs/working-context/TEMPLATE.md","source":"delivery","action":"created","installedSha256":"bb4d33d7b4287dbb28cb9b4451b4eb05ed4d9ba7dc5342a1d16a57b030bdbb66"},
+    {"path":"docs/工作日志/README.md","source":"delivery","action":"created","installedSha256":"f3aecb3f0f81edfbaf6b78f487b0afc648ac319e14e5ce582a1b31ad809fe316"},
+    {"path":"docs/工作日志/TEMPLATE.md","source":"delivery","action":"created","installedSha256":"c457fdb1e03595909bdcd3beb6780469903abc362b70c36d7c053413116755ad"}
+  ],
+  "installedAt": "2026-08-10T09:17:37Z",
+  "updatedAt": "2026-08-11T12:43:42Z",
+  "onboarding": {
+    "status": "ready",
+    "lastAuditAt": "2026-08-11T12:43:42Z"
+  }
+}

@@ -113,7 +113,7 @@ export function ContextRing({
       >
         {isPending ? <span className="sr-only">{text("压缩中", "Compressing")}</span> : pct}
       </span>
-      <div className="pointer-events-none absolute bottom-full right-0 z-40 mb-1.5 hidden w-32 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-center text-[10px] text-slate-600 shadow-lg group-hover:block group-focus-visible:block">
+      <div className="pointer-events-none absolute bottom-full right-0 z-40 mb-1.5 hidden w-32 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-center text-[10px] text-slate-600 shadow-none group-hover:block group-focus-visible:block">
         <div>
           {text("上下文", "Context")}
         </div>

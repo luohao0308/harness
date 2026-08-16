@@ -141,7 +141,7 @@ export function PinPopover({ pinnedNodes, onUnpin }: PinPopoverProps): JSX.Eleme
         <div
           role="dialog"
           aria-label={text("已固定消息", "Pinned messages")}
-          className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-slate-200 bg-white p-3 shadow-lg"
+          className="absolute bottom-full left-0 z-20 mb-2 w-[320px] rounded-2xl border border-slate-200 bg-white p-3 shadow-none"
         >
           <PinPopoverContent pinnedNodes={pinnedNodes} onUnpin={onUnpin} />
         </div>

@@ -27,7 +27,12 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-grpc>=1.25.0,<2.0.0",
   "jsonschema>=4.23,<5",
   "aiosmtplib>=3.0.0,<4.0.0",
-  "cryptography>=42.0.0,<45.0.0",
+  "cryptography>=46.0.5,<50.0.0",
+  "python3-saml>=1.16.0,<2.0.0",
+  "psycopg2-binary>=2.9.9,<3.0.0",
+  "psutil>=6.0.0,<7.0.0",
+  "PyJWT>=2.8.0,<3.0.0",
+  "python-multipart>=0.0.6,<1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -35,9 +40,14 @@ dev = [
   "pytest>=8.3.0,<9.0.0",
   "ruff>=0.6.0,<1.0.0"
 ]
+sidecar = [
+  "pyinstaller>=6.11.0,<7.0.0"
+]
 
 [project.scripts]
 hao = "app.cli.hao:main"
+harnessd = "app.cli.harnessd:main"
+harness-import-local-data = "app.cli.import_local_data:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

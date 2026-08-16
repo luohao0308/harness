@@ -3223,6 +3223,746 @@ def test_hao_v3_headless_confirm_shell_leaves_pending_tool_without_execution(
     assert store.list_tool_events(session.id) == []
 
 
+def test_hao_bridge_v3_requests_authorization_before_shell_execution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    session = store.create_session(
+        cwd=str(tmp_path),
+        agent_id="default",
+        mode="confirm",
+        cli_mode="act",
+        target="host",
+    )
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("tool_request", {"device_token": device_token, **payload}))
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "server-tool-1",
+                "approval_id": "approval-1",
+                "decision": "approval_required",
+                "status": "approval_required",
+                "executable": False,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "reason": "approval required",
+                "decision_json": {},
+                "expires_at": None,
+            }
+
+    def fail_local_tool(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("bridge must not execute before Harness approval")
+
+    monkeypatch.setattr(hao_main, "execute_local_tool", fail_local_tool)
+
+    result = hao_main.run_headless_once(
+        command="act",
+        prompt="run shell",
+        cwd=tmp_path,
+        session_store=store,
+        session_id=session.id,
+        permission_mode="full-auto",
+        target="host",
+        max_auto_turns=3,
+        api_client=FakeBridgeClient(),
+        bridge_context=hao_main.BridgeToolContext(
+            bridge_task_id="bridge-task-1",
+            device_token="device-token-1",
+        ),
+        fake_events=[
+            SSEEvent(
+                event="run_created",
+                data={"run_id": "run-bridge-v3"},
+                raw='event: run_created\ndata: {"run_id": "run-bridge-v3"}',
+            ),
+            SSEEvent(
+                event="tool_call_requested",
+                data={
+                    "tool_call_id": "shell-1",
+                    "tool_name": "run_shell",
+                    "input_json": {"command": "printf ok"},
+                },
+                raw="event: tool_call_requested\ndata: {}",
+            ),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert result.status == "pending_approval"
+    assert result.stdout_json["pending_tool"]["tool_request_id"] == "bridge-task-1:shell-1"
+    assert result.stdout_json["pending_tool"]["backend_tool_call_id"] == "server-tool-1"
+    assert calls[0][0] == "tool_request"
+    assert calls[0][1]["device_token"] == "device-token-1"
+    assert calls[0][1]["tool_name"] == "run_shell"
+    assert calls[0][1]["bridge_task_id"] == "bridge-task-1"
+    assert store.list_tool_events(session.id) == []
+    assert store.list_commands(session.id) == []
+
+
+def test_hao_bridge_v3_pending_state_file_does_not_persist_raw_sensitive_input(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "hao-home"
+    home.mkdir()
+    config = SimpleNamespace(
+        home=home,
+        session_db_path=tmp_path / "hao.db",
+        sessions_dir=tmp_path / "sessions",
+    )
+    store = SessionStore(config.session_db_path, config.sessions_dir)
+    session = store.create_session(
+        cwd="/Users/luohao/private-project",
+        agent_id="default",
+        mode="confirm",
+        cli_mode="act",
+        target="host",
+    )
+    raw_command = (
+        "export AWS_SECRET_ACCESS_KEY=supersecret123; "
+        "cd /Users/luohao/private-project; "
+        "printf 'Authorization: Bearer sat-secret-value'"
+    )
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("tool_request", {"device_token": device_token, **payload}))
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "server-tool-sensitive",
+                "approval_id": "approval-sensitive",
+                "decision": "approval_required",
+                "status": "approval_required",
+                "executable": False,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": payload["input_json"],
+                "reason": "approval required",
+                "decision_json": {},
+                "expires_at": None,
+            }
+
+    def fail_local_tool(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("pending approval must not execute")
+
+    monkeypatch.setattr(hao_main, "execute_local_tool", fail_local_tool)
+
+    result = hao_main.run_headless_once(
+        command="act",
+        prompt="run sensitive command",
+        cwd=tmp_path,
+        session_store=store,
+        session_id=session.id,
+        permission_mode="full-auto",
+        target="host",
+        max_auto_turns=3,
+        api_client=FakeBridgeClient(),
+        bridge_context=hao_main.BridgeToolContext(
+            bridge_task_id="bridge-task-sensitive",
+            device_token="device-token-sensitive",
+        ),
+        fake_events=[
+            SSEEvent(
+                event="run_created",
+                data={"run_id": "run-sensitive"},
+                raw='event: run_created\ndata: {"run_id": "run-sensitive"}',
+            ),
+            SSEEvent(
+                event="tool_call_requested",
+                data={
+                    "tool_call_id": "shell-sensitive",
+                    "tool_name": "run_shell",
+                    "input_json": {"command": raw_command},
+                },
+                raw="event: tool_call_requested\ndata: {}",
+            ),
+        ],
+    )
+    assert result.status == "pending_approval"
+
+    state: dict[str, Any] = {
+        "cwd": "/Users/luohao/private-project",
+        "pending_tool_requests": [],
+    }
+    assert hao_main._finalize_pending_bridge_result(
+        config=config,
+        state=state,
+        result=result,
+    )
+
+    persisted = (home / "bridge.json").read_text(encoding="utf-8")
+    assert "input_json" not in persisted
+    assert "cwd" not in persisted
+    assert raw_command not in persisted
+    assert "supersecret123" not in persisted
+    assert "sat-secret-value" not in persisted
+    assert "/Users/luohao" not in persisted
+    assert state["pending_tool_requests"] == [
+        {
+            "tool_request_id": "bridge-task-sensitive:shell-sensitive",
+            "bridge_task_id": "bridge-task-sensitive",
+            "command": "act",
+            "tool_name": "run_shell",
+            "tool_call_id": "shell-sensitive",
+            "backend_tool_call_id": "server-tool-sensitive",
+            "approval_id": "approval-sensitive",
+            "local_session_id": session.id,
+            "run_id": "run-sensitive",
+            "agent_id": "default",
+            "model_provider": "default",
+            "model_name": "default",
+            "risk_level": "high",
+            "permission_mode": "full-auto",
+        }
+    ]
+    assert calls[0][0] == "tool_request"
+
+
+def test_hao_bridge_v3_executes_after_approved_decision_and_reports_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    session = store.create_session(
+        cwd=str(tmp_path),
+        agent_id="default",
+        mode="full-auto",
+        cli_mode="act",
+        target="host",
+    )
+    calls: list[tuple[str, dict]] = []
+
+    class FakeBridgeClient:
+        def create_local_agent_tool_request(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("tool_request", {"device_token": device_token, **payload}))
+            return {
+                "tool_request_id": payload["tool_request_id"],
+                "bridge_task_id": payload["bridge_task_id"],
+                "tool_call_id": "server-tool-2",
+                "approval_id": "approval-2",
+                "decision": "approved",
+                "status": "approved",
+                "executable": True,
+                "server_execution": False,
+                "tool_name": payload["tool_name"],
+                "input_json": {"command": "printf approved"},
+                "reason": "",
+                "decision_json": {"input_json": {"command": "printf approved"}},
+                "expires_at": None,
+            }
+
+        def report_local_agent_command_event(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_event",
+                    {"device_token": device_token, "command_id": command_id, **payload},
+                )
+            )
+            return {"command_id": command_id, "status": payload["event_type"]}
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {
+                        "device_token": device_token,
+                        "tool_request_id": tool_request_id,
+                        **payload,
+                    },
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "tool_call_id": "server-tool-2",
+                "decision": "succeeded",
+                "status": "succeeded",
+                "executable": False,
+            }
+
+    def fake_local_tool(
+        tool_name: str,
+        input_json: dict,
+        workspace_root: Path,
+        **kwargs,
+    ) -> ToolExecutionResult:
+        del workspace_root
+        session_store = kwargs["session_store"]
+        session_id = kwargs["session_id"]
+        command = session_store.create_command(
+            session_id,
+            tool_name=tool_name,
+            command=input_json["command"],
+            command_json=input_json,
+            timeout_seconds=30,
+        )
+        session_store.start_command(command["id"])
+        session_store.record_command_output(command["id"], stream="stdout", chunk="approved\n")
+        session_store.finish_command(
+            command["id"],
+            status="success",
+            exit_code=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+        )
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            status="SUCCESS",
+            input_json=input_json,
+            output_json={
+                "command_id": command["id"],
+                "command": input_json["command"],
+                "command_status": "success",
+                "exit_code": 0,
+                "stdout": "approved\n",
+                "stderr": "",
+            },
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(hao_main, "execute_local_tool", fake_local_tool)
+
+    result = hao_main.run_headless_once(
+        command="act",
+        prompt="run shell",
+        cwd=tmp_path,
+        session_store=store,
+        session_id=session.id,
+        permission_mode="full-auto",
+        target="host",
+        max_auto_turns=3,
+        api_client=FakeBridgeClient(),
+        bridge_context=hao_main.BridgeToolContext(
+            bridge_task_id="bridge-task-2",
+            device_token="device-token-2",
+        ),
+        fake_events=[
+            SSEEvent(
+                event="run_created",
+                data={"run_id": "run-bridge-v3-approved"},
+                raw='event: run_created\ndata: {"run_id": "run-bridge-v3-approved"}',
+            ),
+            SSEEvent(
+                event="tool_call_requested",
+                data={
+                    "tool_call_id": "shell-2",
+                    "tool_name": "run_shell",
+                    "input_json": {"command": "printf original"},
+                },
+                raw="event: tool_call_requested\ndata: {}",
+            ),
+            SSEEvent(event="done", data={}, raw="event: done\ndata: {}"),
+        ],
+    )
+
+    command_events = [payload for name, payload in calls if name == "command_event"]
+    tool_results = [payload for name, payload in calls if name == "tool_result"]
+    assert result.exit_code == 0
+    assert result.status == "completed"
+    assert [event["event_type"] for event in command_events] == [
+        "started",
+        "output",
+        "finished",
+    ]
+    assert tool_results[0]["tool_request_id"] == "bridge-task-2:shell-2"
+    assert tool_results[0]["status"] == "SUCCESS"
+    assert tool_results[0]["command_id"] == store.list_commands(session.id)[0]["id"]
+    assert store.list_tool_events(session.id)[0]["tool_call_id"] == "server-tool-2"
+    assert store.list_tool_events(session.id)[0]["input_json"]["command"] == "printf approved"
+
+
+def test_hao_bridge_v3_pending_resume_merges_api_truth_and_executes_modified_input(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "hao-home"
+    home.mkdir()
+    config = SimpleNamespace(
+        home=home,
+        session_db_path=tmp_path / "hao.db",
+        sessions_dir=tmp_path / "sessions",
+    )
+    store = SessionStore(config.session_db_path, config.sessions_dir)
+    session = store.create_session(
+        cwd=str(tmp_path),
+        agent_id="default",
+        mode="full-auto",
+        cli_mode="act",
+        target="host",
+    )
+    state: dict[str, Any] = {"pending_tool_requests": []}
+    calls: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        def list_pending_local_agent_tool_requests(self, *, device_token: str) -> dict:
+            calls.append(("pending_list", {"device_token": device_token}))
+            return {
+                "items": [
+                    {
+                        "tool_request_id": "tool-resume-1",
+                        "bridge_task_id": "bridge-task-resume",
+                        "tool_call_id": "server-tool-resume",
+                        "approval_id": "approval-resume",
+                        "decision": "approved",
+                        "status": "approved",
+                        "executable": True,
+                        "server_execution": False,
+                        "tool_name": "run_shell",
+                        "input_json": {"command": "printf modified"},
+                        "reason": "",
+                        "decision_json": {
+                            "metadata": {
+                                "local_session_id": session.id,
+                                "run_id": "run-resume",
+                                "agent_id": "default",
+                                "tool_call_id": "model-shell-resume",
+                                "command": "act",
+                                "cwd": str(tmp_path),
+                                "permission_mode": "full-auto",
+                                "risk_level": "high",
+                            }
+                        },
+                        "expires_at": None,
+                    }
+                ]
+            }
+
+        def get_local_agent_tool_decision(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+        ) -> dict:
+            calls.append(
+                (
+                    "decision",
+                    {"device_token": device_token, "tool_request_id": tool_request_id},
+                )
+            )
+            return {
+                "tool_request_id": tool_request_id,
+                "bridge_task_id": "bridge-task-resume",
+                "tool_call_id": "server-tool-resume",
+                "approval_id": "approval-resume",
+                "decision": "approved",
+                "status": "approved",
+                "executable": True,
+                "server_execution": False,
+                "tool_name": "run_shell",
+                "input_json": {"command": "printf modified"},
+                "reason": "",
+                "decision_json": {},
+                "expires_at": None,
+            }
+
+        def report_local_agent_command_event(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_event",
+                    {"device_token": device_token, "command_id": command_id, **payload},
+                )
+            )
+            return {"command_id": command_id, "status": payload["event_type"]}
+
+        def get_local_agent_command_status(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_status",
+                    {"device_token": device_token, "command_id": command_id},
+                )
+            )
+            return {"command_id": command_id, "status": "running", "cancel_requested": False}
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {
+                        "device_token": device_token,
+                        "tool_request_id": tool_request_id,
+                        **payload,
+                    },
+                )
+            )
+            return {"tool_request_id": tool_request_id, "tool_call_id": "server-tool-resume"}
+
+        def report_local_agent_bridge_event(self, *, device_token: str, payload: dict) -> dict:
+            calls.append(("bridge_event", {"device_token": device_token, **payload}))
+            return {"duplicate": False}
+
+    def fake_local_tool(
+        tool_name: str,
+        input_json: dict,
+        workspace_root: Path,
+        **kwargs,
+    ) -> ToolExecutionResult:
+        del workspace_root
+        assert tool_name == "run_shell"
+        assert input_json == {"command": "printf modified"}
+        assert kwargs.get("cancel_check") is not None
+        session_store = kwargs["session_store"]
+        session_id = kwargs["session_id"]
+        command = session_store.create_command(
+            session_id,
+            tool_name=tool_name,
+            command=input_json["command"],
+            command_json=input_json,
+            timeout_seconds=30,
+        )
+        session_store.start_command(command["id"])
+        session_store.finish_command(
+            command["id"],
+            status="success",
+            exit_code=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+        )
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            status="SUCCESS",
+            input_json=input_json,
+            output_json={
+                "command_id": command["id"],
+                "command": input_json["command"],
+                "command_status": "success",
+                "exit_code": 0,
+            },
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(hao_main, "execute_local_tool", fake_local_tool)
+    monkeypatch.setattr(
+        hao_main,
+        "run_headless_once",
+        lambda **kwargs: hao_main.HeadlessRunResult(
+            exit_code=0,
+            status="completed",
+            stdout_json={"assistant": "continued", "session_id": session.id},
+        ),
+    )
+
+    hao_main._resume_bridge_pending_tools(
+        config=config,
+        state=state,
+        client=FakeClient(),
+        device_token="device-token-resume",
+    )
+
+    assert state["pending_tool_requests"] == []
+    assert [name for name, _payload in calls][:3] == [
+        "pending_list",
+        "decision",
+        "command_event",
+    ]
+    tool_results = [payload for name, payload in calls if name == "tool_result"]
+    assert tool_results[0]["status"] == "SUCCESS"
+    assert tool_results[0]["tool_request_id"] == "tool-resume-1"
+    assert store.list_tool_events(session.id)[0]["input_json"] == {"command": "printf modified"}
+
+
+def test_hao_bridge_v3_cancelled_command_reports_cancelled_and_acks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = SessionStore(tmp_path / "hao.db", tmp_path / "sessions")
+    session = store.create_session(
+        cwd=str(tmp_path),
+        agent_id="default",
+        mode="full-auto",
+        cli_mode="act",
+        target="host",
+    )
+    pending = {
+        "tool_request_id": "tool-cancel-1",
+        "bridge_task_id": "bridge-cancel-1",
+        "tool_call_id": "shell-cancel-1",
+        "backend_tool_call_id": "server-tool-cancel",
+        "tool_name": "run_shell",
+        "input_json": {"command": "sleep 10"},
+        "local_session_id": session.id,
+        "run_id": "run-cancel",
+        "agent_id": "default",
+        "command": "act",
+        "cwd": str(tmp_path),
+        "risk_level": "high",
+        "permission_mode": "full-auto",
+    }
+    decision = {
+        "tool_request_id": "tool-cancel-1",
+        "bridge_task_id": "bridge-cancel-1",
+        "tool_call_id": "server-tool-cancel",
+        "decision": "approved",
+        "status": "approved",
+        "executable": True,
+        "input_json": {"command": "sleep 10"},
+    }
+    calls: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        def report_local_agent_command_event(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_event",
+                    {"device_token": device_token, "command_id": command_id, **payload},
+                )
+            )
+            return {"command_id": command_id, "status": payload["event_type"]}
+
+        def get_local_agent_command_status(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+        ) -> dict:
+            calls.append(
+                (
+                    "command_status",
+                    {"device_token": device_token, "command_id": command_id},
+                )
+            )
+            return {"command_id": command_id, "status": "running", "cancel_requested": True}
+
+        def report_local_agent_tool_result(
+            self,
+            *,
+            device_token: str,
+            tool_request_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "tool_result",
+                    {
+                        "device_token": device_token,
+                        "tool_request_id": tool_request_id,
+                        **payload,
+                    },
+                )
+            )
+            return {"tool_request_id": tool_request_id, "tool_call_id": "server-tool-cancel"}
+
+        def ack_local_agent_command_cancel(
+            self,
+            *,
+            device_token: str,
+            command_id: str,
+            payload: dict,
+        ) -> dict:
+            calls.append(
+                (
+                    "cancel_ack",
+                    {"device_token": device_token, "command_id": command_id, **payload},
+                )
+            )
+            return {"command_id": command_id, "status": payload["status"]}
+
+    def fake_local_tool(
+        tool_name: str,
+        input_json: dict,
+        workspace_root: Path,
+        **kwargs,
+    ) -> ToolExecutionResult:
+        del input_json, workspace_root
+        session_store = kwargs["session_store"]
+        session_id = kwargs["session_id"]
+        cancel_check = kwargs["cancel_check"]
+        command = session_store.create_command(
+            session_id,
+            tool_name=tool_name,
+            command="sleep 10",
+            command_json={"command": "sleep 10"},
+            timeout_seconds=30,
+        )
+        session_store.start_command(command["id"])
+        assert cancel_check(command["id"]) is True
+        session_store.finish_command(
+            command["id"],
+            status="cancelled",
+            exit_code=None,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            error_message="cancelled",
+        )
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            status="FAILED",
+            input_json={"command": "sleep 10"},
+            output_json={
+                "command_id": command["id"],
+                "command": "sleep 10",
+                "command_status": "cancelled",
+                "exit_code": None,
+                "error": "cancelled",
+            },
+            duration_ms=1,
+            error_message="cancelled",
+        )
+
+    monkeypatch.setattr(hao_main, "execute_local_tool", fake_local_tool)
+
+    handled = hao_main._execute_approved_bridge_pending_tool(
+        pending=pending,
+        decision=decision,
+        client=FakeClient(),
+        device_token="device-token-cancel",
+        store=store,
+        local_session_id=session.id,
+        cwd=tmp_path,
+    )
+
+    assert handled.status == "executed"
+    command_events = [payload for name, payload in calls if name == "command_event"]
+    assert command_events[-1]["event_type"] == "cancelled"
+    tool_result = [payload for name, payload in calls if name == "tool_result"][0]
+    assert tool_result["status"] == "CANCELLED"
+    cancel_ack = [payload for name, payload in calls if name == "cancel_ack"][0]
+    assert cancel_ack["status"] == "cancelled"
+
+
 def test_hao_v3_headless_denied_tool_records_denial_without_execution(
     tmp_path: Path,
     monkeypatch,

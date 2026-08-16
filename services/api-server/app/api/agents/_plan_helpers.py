@@ -2,6 +2,7 @@
 
 # ruff: noqa: F401,F403,F405,I001,UP037
 from .common import *
+from app.api.plan_projection import build_plan_response
 
 def _complete_plan_prompt(*, task: Task, session: Session) -> str:
     response = AuditedModelGateway(session=session, task_id=task.id).complete(
@@ -55,50 +56,7 @@ def _repair_plan_prompt(*, task: Task, invalid_content: str, session: Session) -
     return response.content
 
 def _plan_response(plan: ExecutionPlan) -> TaskPlanResponse:
-    steps = []
-    for raw_step in plan.plan_json.get("steps", []):
-        step_key = str(raw_step.get("key", ""))
-        steps.append(
-            TaskPlanStepState(
-                step_key=step_key,
-                description=str(raw_step.get("description", "")),
-                depends_on=_string_list(raw_step.get("depends_on")),
-                execution_mode=str(raw_step.get("execution_mode", "")),
-                requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
-                can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),
-                tool_hints=_string_list(raw_step.get("tool_hints")),
-                acceptance_criteria=_string_list(raw_step.get("acceptance_criteria")),
-                risk_level=str(raw_step.get("risk_level") or "low"),
-                artifact_expectations=_string_list(raw_step.get("artifact_expectations")),
-                quality_notes=_string_list(raw_step.get("quality_notes")),
-                status="PENDING",
-                assigned_agent_id=None,
-                error_message=None,
-                trace_summary=None,
-                last_event_sequence=None,
-                execution_trace=[],
-            )
-        )
-    return TaskPlanResponse(
-        id=plan.id,
-        task_id=plan.task_id,
-        version=plan.version,
-        status=plan.status,
-        summary=plan.plan_json.get("summary"),
-        planner_source=str(plan.plan_json.get("planner_source", "deterministic")),
-        planner_attempts=int(plan.plan_json.get("planner_attempts", 1) or 1),
-        planner_prompt_version=str(plan.plan_json.get("planner_prompt_version") or "1.1.0"),
-        quality_score=int(plan.plan_json.get("quality_score", 100) or 100),
-        validation_warnings=_string_list(plan.plan_json.get("validation_warnings")),
-        quality_gates=(
-            plan.plan_json.get("quality_gates")
-            if isinstance(plan.plan_json.get("quality_gates"), dict)
-            else {}
-        ),
-        plan_json=plan.plan_json,
-        steps=steps,
-        created_at=plan.created_at,
-    )
+    return build_plan_response(plan)
 
 
 def _string_list(value: object) -> list[str]:

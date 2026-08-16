@@ -36,6 +36,21 @@ class Base(DeclarativeBase):
     pass
 
 
+class DeletedEntity(Base):
+    """Track deleted entities for sync purposes."""
+
+    __tablename__ = "deleted_entities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    entity_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    deleted_by: Mapped[str] = mapped_column(String(36), nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    data_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class User(Base):
     __tablename__ = "users"
     __table_args__ = (
@@ -108,6 +123,161 @@ class OAuthAccount(Base):
     provider_user_id: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str] = mapped_column(Text, nullable=False, default="")
     raw_profile_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class UserExternalId(Base):
+    """
+    External identity mappings for federated authentication.
+
+    Story 2.3 - User Provisioning from SAML
+    Stores mappings between local users and external identity providers (SAML, OAuth, etc).
+    Links users to their IdP-specific identifiers.
+    """
+
+    __tablename__ = "user_external_ids"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "external_entity_id",
+            "external_user_id",
+            name="user_external_ids_provider_entity_user_uidx",
+        ),
+        Index("ix_user_external_ids_user_provider", "user_id", "provider"),
+        Index("ix_user_external_ids_external_entity", "external_entity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    external_entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    external_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SAMLProvider(Base):
+    """
+    SAML Identity Provider configuration.
+
+    Story 1.2 - IdP Configuration Management
+    Stores IdP metadata for SAML SSO integration.
+    """
+
+    __tablename__ = "saml_providers"
+    __table_args__ = (
+        Index("ix_saml_providers_org_active", "organization_id", "is_active"),
+        Index("ix_saml_providers_entity_id", "entity_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sso_url: Mapped[str] = mapped_column(Text, nullable=False)
+    slo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    x509_cert: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class SAMLAssertionUsage(Base):
+    """
+    Tracks used SAML assertion IDs to prevent replay attacks.
+
+    Story 6.3 - SAML Replay Attack Prevention
+    CRITICAL SECURITY: OWASP A04:2021 - Security Misconfiguration
+
+    Stores assertion IDs that have been successfully processed to ensure
+    each assertion can only be used once. Records expire after 1 hour to
+    prevent unbounded growth while allowing for clock skew tolerance.
+
+    Attack Prevention:
+    - Replay attacks: Attacker cannot reuse intercepted SAML assertions
+    - Timing attacks: Concurrent requests with same assertion ID rejected
+    - Session hijacking: Assertions tied to specific sessions
+    """
+
+    __tablename__ = "saml_assertion_usage"
+    __table_args__ = (
+        UniqueConstraint("assertion_id", name="saml_assertion_usage_assertion_uidx"),
+        Index("ix_saml_assertion_usage_provider", "provider_id"),
+        Index("ix_saml_assertion_usage_expires", "expires_at"),
+        Index("ix_saml_assertion_usage_used", "used_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    assertion_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    provider_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    subject_id: Mapped[str] = mapped_column(Text, nullable=False)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    authn_request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SAMLAuthnRequest(Base):
+    """
+    Tracks issued SAML AuthnRequest IDs for InResponseTo validation.
+
+    Story 6.3 - SAML Replay Attack Prevention
+    CRITICAL SECURITY: Validates that SAML Responses match original requests.
+
+    Stores AuthnRequest IDs issued during SP-initiated SSO flows to verify
+    that incoming SAML Responses contain matching InResponseTo fields.
+
+    Attack Prevention:
+    - Response forgery: Ensures responses are for legitimate requests
+    - Cross-session attacks: Validates response belongs to correct session
+    """
+
+    __tablename__ = "saml_authn_requests"
+    __table_args__ = (
+        UniqueConstraint("request_id", name="saml_authn_requests_request_uidx"),
+        Index("ix_saml_authn_requests_session", "session_id"),
+        Index("ix_saml_authn_requests_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    request_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    provider_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    relay_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserSession(Base):
+    """
+    User authentication sessions for SSO and standard login.
+
+    Story 4.1 - SSO Session Lifecycle Management
+    Stores JWT tokens and session metadata for authenticated users.
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        Index("ix_user_sessions_user_active", "user_id", "revoked_at"),
+        Index("ix_user_sessions_token_hash", "token_hash"),
+        Index("ix_user_sessions_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    roles_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# Preserve the historical import name used by SSO integrations and tests.
+Session = UserSession
 
 
 class ApiKey(Base):
@@ -270,6 +440,78 @@ class Agent(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class Trigger(Base):
+    __tablename__ = "triggers"
+    __table_args__ = (
+        UniqueConstraint("endpoint_path", name="triggers_endpoint_path_uidx"),
+        Index("ix_triggers_org_agent_enabled", "organization_id", "agent_id", "enabled"),
+        Index("ix_triggers_org_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    type: Mapped[str] = mapped_column(String(32), nullable=False, default="webhook")
+    endpoint_path: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class ApiGatewayRoute(Base):
+    __tablename__ = "api_gateway_routes"
+    __table_args__ = (
+        UniqueConstraint("slug", name="api_gateway_routes_slug_uidx"),
+        Index("ix_api_gateway_routes_org_agent_enabled", "organization_id", "agent_id", "enabled"),
+        Index("ix_api_gateway_routes_org_created", "organization_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    api_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    rate_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_invoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class AgentVersion(Base):
+    __tablename__ = "agent_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "agent_id",
+            "version_number",
+            name="agent_versions_org_agent_number_uidx",
+        ),
+        Index("ix_agent_versions_org_agent_active", "organization_id", "agent_id", "is_active"),
+        Index("ix_agent_versions_org_agent_created", "organization_id", "agent_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class Team(Base):
     __tablename__ = "teams"
     __table_args__ = (
@@ -304,6 +546,43 @@ class Team(Base):
         back_populates="team",
         cascade="all, delete-orphan",
     )
+
+
+class TeamGoal(Base):
+    """Team goal with supervision policy."""
+
+    __tablename__ = "team_goals"
+    __table_args__ = (
+        Index("ix_team_goals_team_status", "team_id", "status"),
+        Index("ix_team_goals_org_team_created", "organization_id", "team_id", "created_at"),
+        Index(
+            "ix_team_goals_one_current_per_team_uidx",
+            "team_id",
+            unique=True,
+            sqlite_where=text("status IN ('active', 'paused')"),
+            postgresql_where=text("status IN ('active', 'paused')"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    non_goals_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    acceptance_criteria_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    supervision_policy_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    correction_budget_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    progress_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    supervisor_state_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TeamAgent(Base):
@@ -445,6 +724,7 @@ class CapabilityVersion(Base):
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
+
 class AgentCapabilityAttachment(Base):
     __tablename__ = "agent_capability_attachments"
     __table_args__ = (
@@ -556,6 +836,364 @@ class AgentMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentPairingToken(Base):
+    __tablename__ = "local_agent_pairing_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="local_agent_pairing_tokens_hash_uidx"),
+        Index("ix_local_agent_pairing_org_user", "organization_id", "user_id"),
+        Index("ix_local_agent_pairing_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    pair_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentConnection(Base):
+    __tablename__ = "local_agent_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "device_token_hash",
+            name="local_agent_connections_device_token_hash_uidx",
+        ),
+        UniqueConstraint(
+            "pairing_token_id",
+            "adapter_kind",
+            name="local_agent_connections_pairing_adapter_uidx",
+        ),
+        Index("ix_local_agent_connections_org_user", "organization_id", "owner_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    pairing_token_id: Mapped[str | None] = mapped_column(
+        ForeignKey("local_agent_pairing_tokens.id"),
+        nullable=True,
+        index=True,
+    )
+    device_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    adapter_kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    protocol_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    bridge_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="online", index=True)
+    workspace_root: Mapped[str | None] = mapped_column(Text, nullable=True)
+    capabilities_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    risk_capabilities_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentConversationBinding(Base):
+    __tablename__ = "local_agent_conversation_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "agent_session_id",
+            name="local_agent_bindings_connection_session_uidx",
+        ),
+        Index(
+            "ix_local_agent_bindings_active_session_uidx",
+            "organization_id",
+            "agent_session_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        Index(
+            "ix_local_agent_bindings_active_global_session_uidx",
+            "agent_session_id",
+            unique=True,
+            sqlite_where=text("status = 'active' AND organization_id IS NULL"),
+            postgresql_where=text("status = 'active' AND organization_id IS NULL"),
+        ),
+        Index("ix_local_agent_bindings_org_user", "organization_id", "owner_user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False, index=True)
+    agent_session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    adapter_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resume_mode: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="native_resume",
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active", index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentBridgeTask(Base):
+    __tablename__ = "local_agent_bridge_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "binding_id",
+            "client_message_id",
+            name="local_agent_bridge_tasks_binding_message_uidx",
+        ),
+        Index("ix_local_agent_bridge_tasks_connection_status", "connection_id", "status"),
+        Index("ix_local_agent_bridge_tasks_task", "task_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    agent_session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    user_message_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_messages.id"),
+        nullable=False,
+        index=True,
+    )
+    client_message_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    leased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentBridgeEventReceipt(Base):
+    __tablename__ = "local_agent_bridge_event_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "event_id",
+            name="local_agent_bridge_receipts_connection_event_uidx",
+        ),
+        Index("ix_local_agent_bridge_receipts_task", "task_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str | None] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=True,
+        index=True,
+    )
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    agent_event_id: Mapped[str | None] = mapped_column(ForeignKey("agent_events.id"), nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(ForeignKey("tool_calls.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentToolRequest(Base):
+    __tablename__ = "local_agent_tool_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "tool_request_id",
+            name="local_agent_tool_requests_connection_request_uidx",
+        ),
+        UniqueConstraint("tool_call_id", name="local_agent_tool_requests_tool_call_uidx"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    tool_request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_call_id: Mapped[str] = mapped_column(
+        ForeignKey("tool_calls.id"),
+        nullable=False,
+        index=True,
+    )
+    approval_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tool_approvals.id"),
+        nullable=True,
+        index=True,
+    )
+    tool_name: Mapped[str] = mapped_column(String(160), nullable=False, index=True)
+    execution_target: Mapped[str] = mapped_column(String(32), nullable=False, default="host")
+    risk_level: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    permission_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="confirm")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="requested", index=True)
+    input_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    policy_decision_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    decision_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    result_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    decision_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentCommand(Base):
+    __tablename__ = "local_agent_commands"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "command_id",
+            name="local_agent_commands_connection_command_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    local_agent_tool_request_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_tool_requests.id"),
+        nullable=False,
+        index=True,
+    )
+    tool_request_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    command_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    command: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending", index=True)
+    retry_of_command_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_summary_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    event_receipts_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LocalAgentPendingChange(Base):
+    __tablename__ = "local_agent_pending_changes"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id",
+            "change_id",
+            name="local_agent_pending_changes_connection_change_uidx",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_connections.id"),
+        nullable=False,
+        index=True,
+    )
+    binding_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_conversation_bindings.id"),
+        nullable=False,
+        index=True,
+    )
+    bridge_task_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_bridge_tasks.id"),
+        nullable=False,
+        index=True,
+    )
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False, index=True)
+    local_agent_tool_request_id: Mapped[str] = mapped_column(
+        ForeignKey("local_agent_tool_requests.id"),
+        nullable=False,
+        index=True,
+    )
+    tool_request_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    command_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tool_approvals.id"),
+        nullable=True,
+        index=True,
+    )
+    change_id: Mapped[str] = mapped_column(Text, nullable=False)
+    target_paths_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    diff_sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    preview_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="previewed", index=True)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    denied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class ExecutionPlan(Base):
@@ -697,9 +1335,7 @@ class SpecialistSelectionDecision(Base):
 
 class SpecialistMarketplaceListing(Base):
     __tablename__ = "specialist_marketplace_listings"
-    __table_args__ = (
-        UniqueConstraint("slug", name="specialist_marketplace_listings_slug_uidx"),
-    )
+    __table_args__ = (UniqueConstraint("slug", name="specialist_marketplace_listings_slug_uidx"),)
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_uuid)
     slug: Mapped[str] = mapped_column(String(96), nullable=False, index=True)
@@ -1559,14 +2195,19 @@ class EvalResult(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[str] = mapped_column(String(32), nullable=False, default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    reviewer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class EvalExperiment(Base):
     __tablename__ = "eval_experiments"
-    __table_args__ = (
-        Index("ix_eval_experiments_org_created", "organization_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_eval_experiments_org_created", "organization_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     dataset_id: Mapped[str] = mapped_column(
@@ -1802,6 +2443,53 @@ class NotificationChannel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class MobileDevice(Base):
+    __tablename__ = "mobile_devices"
+    __table_args__ = (
+        UniqueConstraint("push_token", name="mobile_devices_push_token_uidx"),
+        Index("ix_mobile_devices_user_platform", "user_id", "platform"),
+        Index("ix_mobile_devices_org_enabled", "organization_id", "notifications_enabled"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    push_token: Mapped[str] = mapped_column(Text, nullable=False)
+    device_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    app_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    preferences_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class OnboardingState(Base):
+    """
+    Global onboarding state per user (Story 1.1).
+    Tracks wizard progress and completion for Onboarding v1.
+    """
+
+    __tablename__ = "onboarding_state"
+    __table_args__ = (
+        UniqueConstraint("user_id", name="onboarding_state_user_uidx"),
+        Index("ix_onboarding_state_user_id", "user_id"),
+        Index("ix_onboarding_state_dismissed", "dismissed"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    dismissed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class UserOnboardingState(Base):
     __tablename__ = "user_onboarding_state"
     __table_args__ = (
@@ -1826,6 +2514,28 @@ class UserOnboardingState(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentTemplate(Base):
+    """
+    Agent templates for wizard Step 6 (Story 5.1).
+    Pre-configured agent templates with system prompts, tools, and settings.
+    """
+
+    __tablename__ = "agent_templates"
+    __table_args__ = (
+        Index("ix_agent_templates_is_active", "is_active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    icon: Mapped[str] = mapped_column(String(32), nullable=False)
+    tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class FrontendError(Base):
@@ -1920,3 +2630,52 @@ class StoredSecret(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeJob(Base):
+    __tablename__ = "runtime_jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')",
+            name="runtime_jobs_status_chk",
+        ),
+        CheckConstraint("attempt >= 0", name="runtime_jobs_attempt_chk"),
+        CheckConstraint("max_attempts >= 1", name="runtime_jobs_max_attempts_chk"),
+        CheckConstraint("lease_generation >= 0", name="runtime_jobs_lease_generation_chk"),
+        Index("ix_runtime_jobs_claim", "status", "available_at", "created_at"),
+        Index("ix_runtime_jobs_lease", "status", "lease_until"),
+        Index(
+            "ix_runtime_jobs_active_dedupe_uidx",
+            "dedupe_key",
+            unique=True,
+            sqlite_where=text(
+                "dedupe_key IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+            postgresql_where=text(
+                "dedupe_key IS NOT NULL AND status IN ('queued', 'running')"
+            ),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    kind: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued", index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

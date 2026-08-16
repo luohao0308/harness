@@ -118,6 +118,38 @@ def test_tool_runner_records_adapter_snapshot_for_real_adapter(db_session: Sessi
     assert len(snapshot["adapter"]["input_schema_sha256"]) == 64
 
 
+def test_mcp_artifact_put_preserves_chart_artifact_payload(db_session: Session) -> None:
+    task = create_task(db_session, tools=["mcp_artifact_put"])
+
+    execution = ToolRunner(session=db_session, agent_id=task.agent_id).execute(
+        task_id=task.id,
+        tool_name="mcp_artifact_put",
+        input_json={
+            "name": "latency.chart.json",
+            "artifact_type": "chart",
+            "content": '{"chartType":"line","xAxis":["P50","P95"],"series":[10,42]}',
+            "idempotency_key": "chart-artifact",
+        },
+        roles=["engineer"],
+    )
+
+    assert execution.allowed is True
+    assert execution.tool_call.status == "SUCCESS"
+    assert execution.output["result"]["artifact"]["artifact_type"] == "chart"
+    assert execution.output["artifacts"] == [
+        {
+            "name": "latency.chart.json",
+            "artifact_type": "chart",
+            "status": "ready",
+            "content": {
+                "chartType": "line",
+                "xAxis": ["P50", "P95"],
+                "series": [10, 42],
+            },
+        }
+    ]
+
+
 def test_tool_runner_requests_approval_for_sandbox_file_write(db_session: Session) -> None:
     task = create_task(db_session, tools=["sandbox.write_file"])
 

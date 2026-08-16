@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CheckCircle2, Gauge, KeyRound, Play, Settings2 } from "lucide-react";
+import { Bot, CheckCircle2, Gauge, Play, ServerCog, Settings2 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
@@ -12,16 +12,18 @@ import { Input } from "../../../components/ui/input";
 import {
   completeOnboarding,
   createAgentDefinition,
+  getModelSettings,
   getOnboardingState,
   loadDemoData,
   updateOnboardingState,
 } from "../../tasks/api";
 
-const providers = [
-  { id: "deepseek", label: "DeepSeek", enabled: true },
-  { id: "openai-compatible", label: "OpenAI GPT-5.5", enabled: true },
-  { id: "anthropic", label: "Anthropic", enabled: false },
-];
+const STEP_LABELS: Record<number, string> = {
+  1: "第 1 步 · 选择模型",
+  2: "第 2 步 · 配置连接",
+  3: "第 3 步 · 创建智能体",
+  4: "第 4 步 · 运行演示",
+};
 
 const templates = [
   { id: "research", name: "研究助手", prompt: "Answer with grounded evidence and cite run details." },
@@ -35,15 +37,60 @@ export function OnboardingWizardPage() {
   const [searchParams] = useSearchParams();
   const requestedStep = Number(searchParams.get("step") ?? 0);
   const state = useQuery({ queryKey: ["onboarding", "state"], queryFn: getOnboardingState });
+  const modelSettings = useQuery({ queryKey: ["settings", "models"], queryFn: getModelSettings, retry: false });
   const initialStep = requestedStep >= 1 && requestedStep <= 4 ? requestedStep : state.data?.current_step ?? 1;
   const [localStep, setLocalStep] = useState(initialStep);
   const step = state.data ? Math.max(localStep, state.data.current_step) : localStep;
-  const [provider, setProvider] = useState("deepseek");
-  const [endpoint, setEndpoint] = useState("https://api.deepseek.com");
-  const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState("default");
+  const [model, setModel] = useState("default");
   const [selectedTemplate, setSelectedTemplate] = useState("research");
   const [agentId, setAgentId] = useState("first-run-agent");
   const [demoTaskId, setDemoTaskId] = useState<string | null>(null);
+
+  const modelOptions = useMemo(() => {
+    const options: Array<{
+      provider: string;
+      model: string;
+      label: string;
+      endpoint: string;
+      status: string;
+    }> = [];
+    const seen = new Set<string>();
+    for (const item of modelSettings.data?.providers ?? []) {
+      if (item.managed_by_platform !== true && item.platform_managed !== true) continue;
+      const providerName = typeof item.name === "string" ? item.name : "";
+      const modelName = typeof item.model === "string" ? item.model : "";
+      if (!providerName || !modelName) continue;
+      const key = `${providerName}:${modelName}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        provider: providerName,
+        model: modelName,
+        label: typeof item.label === "string" ? item.label : modelName,
+        endpoint: typeof item.base_url === "string" ? item.base_url : "",
+        status: typeof item.status === "string" ? item.status : "healthy",
+      });
+    }
+    return options;
+  }, [modelSettings.data]);
+
+  useEffect(() => {
+    if (!modelSettings.data) return;
+    const preferred = modelOptions.find(
+      (option) =>
+        option.provider === modelSettings.data?.default_provider &&
+        option.model === modelSettings.data?.default_model,
+    ) ?? modelOptions[0];
+    if (preferred) {
+      setProvider(preferred.provider);
+      setModel(preferred.model);
+    }
+  }, [modelOptions, modelSettings.data]);
+
+  const selectedModel = modelOptions.find(
+    (option) => option.provider === provider && option.model === model,
+  );
 
   const saveProgress = useMutation({
     mutationFn: updateOnboardingState,
@@ -60,8 +107,8 @@ export function OnboardingWizardPage() {
         name: template.name,
         description: "Created from first-run onboarding",
         role: "assistant",
-        model_provider: "default",
-        model_name: "default",
+        model_provider: provider,
+        model_name: model,
         system_prompt: template.prompt,
         tools_json: [],
         routing_tags: ["first-run"],
@@ -98,15 +145,28 @@ export function OnboardingWizardPage() {
   });
   const complete = useMutation({
     mutationFn: completeOnboarding,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["onboarding", "state"] });
-      navigate("/");
+    onSuccess: (next) => {
+      queryClient.setQueryData(["onboarding", "state"], next);
+      void queryClient.invalidateQueries({ queryKey: ["onboarding", "state"] });
+      navigate("/", { replace: true });
     },
   });
 
+  useEffect(() => {
+    if (state.data?.completed || state.data?.skipped) {
+      navigate("/", { replace: true });
+    }
+  }, [navigate, state.data?.completed, state.data?.skipped]);
+
   const providerSummary = useMemo(
-    () => ({ provider, endpoint, key_configured: apiKey.trim().length > 0 }),
-    [apiKey, endpoint, provider],
+    () => ({
+      provider,
+      model,
+      endpoint: selectedModel?.endpoint ?? null,
+      managed_by_platform: true,
+      status: selectedModel?.status ?? "degraded",
+    }),
+    [model, provider, selectedModel?.endpoint, selectedModel?.status],
   );
 
   const moveTo = async (nextStep: number) => {
@@ -138,9 +198,10 @@ export function OnboardingWizardPage() {
               <button
                 key={item}
                 type="button"
+                data-testid={`step-indicator-${item}`}
                 onClick={() => setLocalStep(item)}
                 className={`h-2 rounded-full ${item <= step ? "bg-slate-900" : "bg-slate-200"}`}
-                aria-label={`步骤 ${item}`}
+                aria-label={STEP_LABELS[item] ?? `步骤 ${item}`}
               />
             ))}
           </div>
@@ -149,11 +210,11 @@ export function OnboardingWizardPage() {
         <Card>
           <CardHeader>
             <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-              {step === 1 && <KeyRound className="h-4 w-4" />}
+              {step === 1 && <ServerCog className="h-4 w-4" />}
               {step === 2 && <Settings2 className="h-4 w-4" />}
               {step === 3 && <Bot className="h-4 w-4" />}
               {step === 4 && <Play className="h-4 w-4" />}
-              Step {step}
+              {STEP_LABELS[step] ?? `第 ${step} 步`}
             </div>
             <Badge tone={state.data?.completed ? "success" : "info"}>
               {state.data?.completed ? "已完成" : "进行中"}
@@ -162,43 +223,47 @@ export function OnboardingWizardPage() {
           <div className="p-4">
             {step === 1 ? (
               <div className="space-y-4">
-                <div className="text-sm font-semibold text-slate-900">选择 LLM Provider</div>
+                <div className="text-sm font-semibold text-slate-900">选择平台模型</div>
                 <div className="grid gap-2 md:grid-cols-3">
-                  {providers.map((item) => (
+                  {modelOptions.map((item) => (
                     <button
-                      key={item.id}
-                      disabled={!item.enabled}
-                      onClick={() => setProvider(item.id)}
+                      key={`${item.provider}-${item.model}`}
+                      data-testid={`model-${item.model}`}
+                      onClick={() => {
+                        setProvider(item.provider);
+                        setModel(item.model);
+                      }}
                       className={`rounded-lg border p-3 text-left text-sm transition ${
-                        provider === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"
-                      } disabled:cursor-not-allowed disabled:opacity-50`}
+                        provider === item.provider && model === item.model
+                          ? "border-slate-900 bg-slate-50"
+                          : "border-slate-200 bg-white"
+                      }`}
                     >
-                      <div className="font-semibold text-slate-900">{item.label}</div>
-                      <div className="mt-1 text-xs text-slate-500">{item.enabled ? "可配置" : "占位待接入"}</div>
+                      <div className="font-semibold text-slate-900">{item.model}</div>
+                      <div className="mt-1 text-xs text-slate-500">{item.label}</div>
                     </button>
                   ))}
                 </div>
-                <Button variant="primary" onClick={() => moveTo(2)}>下一步</Button>
+                {modelOptions.length === 0 ? (
+                  <p className="text-xs text-slate-500">模型服务暂不可用；可继续完成设置，稍后在模型设置中恢复。</p>
+                ) : null}
+                <Button data-testid="next-button" variant="primary" onClick={() => moveTo(2)}>下一步</Button>
               </div>
             ) : null}
 
             {step === 2 ? (
               <div className="grid gap-4">
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">配置模型连接</div>
-                  <p className="mt-1 text-xs text-slate-500">保存 provider 摘要；正式密钥仍应通过后端环境变量或模型设置管理。</p>
+                  <div className="text-sm font-semibold text-slate-900">平台托管连接</div>
+                  <p className="mt-1 text-xs text-slate-500">模型访问由平台服务端统一托管，不需要在浏览器中填写密钥。</p>
                 </div>
-                <label className="grid gap-1 text-xs font-medium text-slate-600">
-                  Endpoint
-                  <Input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} />
-                </label>
-                <label className="grid gap-1 text-xs font-medium text-slate-600">
-                  API Key
-                  <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
-                </label>
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  <div>状态：{selectedModel?.status === "healthy" ? "平台连接正常" : "暂不可用，可稍后恢复"}</div>
+                  <div className="mt-1 break-all text-xs text-slate-500">端点：{selectedModel?.endpoint || "等待服务端模型配置"}</div>
+                </div>
                 <div className="flex gap-2">
                   <Link to="/settings/models"><Button>打开模型设置</Button></Link>
-                  <Button variant="primary" onClick={() => moveTo(3)}>保存并继续</Button>
+                  <Button data-testid="save-and-continue-button" variant="primary" onClick={() => moveTo(3)}>继续</Button>
                 </div>
               </div>
             ) : null}
@@ -210,6 +275,7 @@ export function OnboardingWizardPage() {
                   {templates.map((template) => (
                     <button
                       key={template.id}
+                      data-testid={`template-${template.id}`}
                       onClick={() => setSelectedTemplate(template.id)}
                       className={`rounded-lg border p-3 text-left text-sm ${
                         selectedTemplate === template.id ? "border-slate-900 bg-slate-50" : "border-slate-200"
@@ -222,9 +288,9 @@ export function OnboardingWizardPage() {
                 </div>
                 <label className="grid gap-1 text-xs font-medium text-slate-600">
                   智能体 ID
-                  <Input value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+                  <Input data-testid="agent-id-input" value={agentId} onChange={(event) => setAgentId(event.target.value)} />
                 </label>
-                <Button variant="primary" onClick={() => createAgent.mutate()} disabled={createAgent.isPending || !agentId.trim()}>
+                <Button data-testid="create-agent-button" variant="primary" onClick={() => createAgent.mutate()} disabled={createAgent.isPending || !agentId.trim()}>
                   <Bot className="h-3.5 w-3.5" />
                   从模板创建
                 </Button>
@@ -244,11 +310,11 @@ export function OnboardingWizardPage() {
                   </div>
                 ) : null}
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="primary" onClick={() => loadDemo.mutate()} disabled={loadDemo.isPending}>
+                  <Button data-testid="trigger-demo-button" variant="primary" onClick={() => loadDemo.mutate()} disabled={loadDemo.isPending}>
                     <Gauge className="h-3.5 w-3.5" />
                     触发演示
                   </Button>
-                  <Button onClick={() => complete.mutate({ agent_id: agentId, demo_task_id: demoTaskId })} disabled={complete.isPending}>
+                  <Button data-testid="complete-setup-button" onClick={() => complete.mutate({ agent_id: agentId, demo_task_id: demoTaskId })} disabled={complete.isPending}>
                     完成设置
                   </Button>
                   {demoTaskId ? <Link to={`/runs/${demoTaskId}`}><Button>打开运行详情</Button></Link> : null}

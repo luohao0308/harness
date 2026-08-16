@@ -40,7 +40,9 @@ import {
   useState,
   type JSX,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
+import { Badge } from "../../../components/ui/badge";
 import { useWorkspaceStore, type ConversationNode } from "../../../stores/workspaceStore";
 import {
   AUTO_FOLLOW_BREAK_THRESHOLD_PX,
@@ -76,6 +78,10 @@ export type ChatMessageListProps = {
   activeRunId: string | null;
   runStatus?: string;
   runCreatedAt?: string;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 
   // v2 additions (Req 4 / Req 5 / Req 10)
   editingNodeId: string | null;
@@ -279,6 +285,103 @@ export const ChatMessageList = forwardRef<
     [props.activePath],
   );
 
+  const lastAssistant = findLastAssistant(props.activePath);
+  const lastAssistantId = lastAssistant?.id ?? null;
+  const hasGoalModeNode = props.activePath.some(
+    (node) =>
+      node.role === "assistant" &&
+      (node.metadata.workspace_mode === "goal" || Boolean(node.metadata.goal_status)),
+  );
+  const showRunSummary =
+    props.activeRunId != null &&
+    props.activeRunId.length > 0 &&
+    lastAssistant !== null &&
+    lastAssistant.state === "done" &&
+    !hasGoalModeNode &&
+    typeof lastAssistant.run_id === "string" &&
+    lastAssistant.run_id.length > 0;
+  const virtualRowCount = props.activePath.length + (showRunSummary ? 1 : 0);
+  const shouldVirtualizeMessages =
+    props.activePath.length > 120 &&
+    typeof window !== "undefined" &&
+    "ResizeObserver" in window;
+  const messageVirtualizer = useVirtualizer({
+    count: virtualRowCount,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 140,
+    overscan: 8,
+    getItemKey: (index) => props.activePath[index]?.id ?? "run-summary",
+  });
+
+  const renderMessageNode = (node: ConversationNode): JSX.Element => {
+    if (node.state === "error" && node.metadata.error) {
+      return (
+        <ChatErrorBubble
+          node={node}
+          error={node.metadata.error}
+          onRetry={() => props.onRetry(node.id)}
+        />
+      );
+    }
+    const canRegenerate =
+      node.role === "assistant" &&
+      node.id === lastAssistantId &&
+      (node.state === "done" ||
+        node.state === "error" ||
+        node.state === "paused");
+    const branchSiblings = getAssistantBranchSiblings(node, nodesById);
+    const branchIndex = branchSiblings.findIndex(
+      (sibling) => sibling.id === node.id,
+    );
+    return (
+      <div
+        data-conversation-node-id={node.id}
+        className={[
+          "flex flex-col gap-1 rounded-xl transition-shadow duration-300",
+          highlightedNodeId === node.id
+            ? "shadow-[0_0_0_3px_rgba(37,99,235,0.22)]"
+            : "",
+        ].join(" ")}
+      >
+        <ChatMessageBubble
+          node={node}
+          onOpenInspector={props.onOpenInspector}
+          editingNodeId={props.editingNodeId}
+          onStartEdit={props.onStartEdit}
+          onCancelEdit={props.onCancelEdit}
+          onSaveEdit={props.onSaveEdit}
+          canRegenerate={canRegenerate}
+          isStreaming={props.isStreaming}
+          onCopy={props.onCopy}
+          onRegenerate={props.onRegenerate}
+          isPinned={props.pinnedNodeIds?.includes(node.id) ?? false}
+          onTogglePin={props.onTogglePin}
+          onBranch={
+            node.role === "assistant" && props.onBranch
+              ? () => props.onBranch!(node.id)
+              : undefined
+          }
+        />
+        {branchSiblings.length > 1 && branchIndex >= 0 && (
+          <div className="ml-11 flex justify-start">
+            <BranchSwitcher
+              currentIndex={branchIndex + 1}
+              totalBranches={branchSiblings.length}
+              onPrevious={() => {
+                const previous = branchSiblings[branchIndex - 1];
+                if (previous) switchToBranch(previous.id);
+              }}
+              onNext={() => {
+                const next = branchSiblings[branchIndex + 1];
+                if (next) switchToBranch(next.id);
+              }}
+            />
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (props.activePath.length === 0) {
     return (
       <div className="relative flex-1 min-h-0 w-full">
@@ -299,110 +402,65 @@ export const ChatMessageList = forwardRef<
     );
   }
 
-  const lastAssistant = findLastAssistant(props.activePath);
-  const lastAssistantId = lastAssistant?.id ?? null;
-  const showRunSummary =
-    props.activeRunId != null &&
-    props.activeRunId.length > 0 &&
-    lastAssistant !== null &&
-    lastAssistant.state === "done" &&
-    typeof lastAssistant.run_id === "string" &&
-    lastAssistant.run_id.length > 0;
-
   return (
     <div className="relative flex-1 min-h-0 w-full">
       <div
         ref={containerRef}
         className="absolute inset-0 overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
-          {groups.map((group, groupIdx) => (
-            <section
-              key={`group-${groupIdx}`}
-              role="group"
-              aria-label={`${group.role}-messages`}
-              className="flex flex-col gap-3"
-            >
-              {group.nodes.map((node) => {
-                if (node.state === "error" && node.metadata.error) {
-                  return (
-                    <ChatErrorBubble
-                      key={node.id}
-                      node={node}
-                      error={node.metadata.error}
-                      onRetry={() => props.onRetry(node.id)}
-                    />
-                  );
-                }
-                const canRegenerate =
-                  node.role === "assistant" &&
-                  node.id === lastAssistantId &&
-                  (node.state === "done" ||
-                    node.state === "error" ||
-                    node.state === "paused");
-                const branchSiblings = getAssistantBranchSiblings(node, nodesById);
-                const branchIndex = branchSiblings.findIndex(
-                  (sibling) => sibling.id === node.id,
-                );
+        {shouldVirtualizeMessages ? (
+          <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+            <div className="mb-3 flex justify-end">
+              <Badge tone="info">虚拟滚动 · {props.activePath.length} messages</Badge>
+            </div>
+            <div className="relative w-full" style={{ height: messageVirtualizer.getTotalSize() }}>
+              {messageVirtualizer.getVirtualItems().map((virtualRow) => {
+                const node = props.activePath[virtualRow.index];
                 return (
                   <div
-                    key={node.id}
-                    data-conversation-node-id={node.id}
-                    className={[
-                      "flex flex-col gap-1 rounded-xl transition-shadow duration-300",
-                      highlightedNodeId === node.id
-                        ? "shadow-[0_0_0_3px_rgba(37,99,235,0.22)]"
-                        : "",
-                    ].join(" ")}
+                    key={virtualRow.key}
+                    ref={messageVirtualizer.measureElement}
+                    data-index={virtualRow.index}
+                    className="absolute left-0 top-0 w-full py-2"
+                    style={{ transform: `translateY(${virtualRow.start}px)` }}
                   >
-                    <ChatMessageBubble
-                      node={node}
-                      onOpenInspector={props.onOpenInspector}
-                      editingNodeId={props.editingNodeId}
-                      onStartEdit={props.onStartEdit}
-                      onCancelEdit={props.onCancelEdit}
-                      onSaveEdit={props.onSaveEdit}
-                      canRegenerate={canRegenerate}
-                      isStreaming={props.isStreaming}
-                      onCopy={props.onCopy}
-                      onRegenerate={props.onRegenerate}
-                      isPinned={props.pinnedNodeIds?.includes(node.id) ?? false}
-                      onTogglePin={props.onTogglePin}
-                      onBranch={
-                        node.role === "assistant" && props.onBranch
-                          ? () => props.onBranch!(node.id)
-                          : undefined
-                      }
-                    />
-                    {branchSiblings.length > 1 && branchIndex >= 0 && (
-                      <div className="ml-11 flex justify-start">
-                        <BranchSwitcher
-                          currentIndex={branchIndex + 1}
-                          totalBranches={branchSiblings.length}
-                          onPrevious={() => {
-                            const previous = branchSiblings[branchIndex - 1];
-                            if (previous) switchToBranch(previous.id);
-                          }}
-                          onNext={() => {
-                            const next = branchSiblings[branchIndex + 1];
-                            if (next) switchToBranch(next.id);
-                          }}
-                        />
-                      </div>
-                    )}
+                    {node ? renderMessageNode(node) : showRunSummary && props.activeRunId ? (
+                      <ChatRunSummary
+                        runId={props.activeRunId}
+                        runStatus={props.runStatus}
+                        runCreatedAt={props.runCreatedAt}
+                        returnTarget={props.runReturnTarget}
+                      />
+                    ) : null}
                   </div>
                 );
               })}
-            </section>
-          ))}
-          {showRunSummary && props.activeRunId && (
-            <ChatRunSummary
-              runId={props.activeRunId}
-              runStatus={props.runStatus}
-              runCreatedAt={props.runCreatedAt}
-            />
-          )}
-        </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-6 sm:px-6">
+            {groups.map((group, groupIdx) => (
+              <section
+                key={`group-${groupIdx}`}
+                role="group"
+                aria-label={`${group.role}-messages`}
+                className="flex flex-col gap-3"
+              >
+                {group.nodes.map((node) => (
+                  <div key={node.id}>{renderMessageNode(node)}</div>
+                ))}
+              </section>
+            ))}
+            {showRunSummary && props.activeRunId && (
+              <ChatRunSummary
+                runId={props.activeRunId}
+                runStatus={props.runStatus}
+                runCreatedAt={props.runCreatedAt}
+                returnTarget={props.runReturnTarget}
+              />
+            )}
+          </div>
+        )}
         <div ref={sentinelRef} aria-hidden="true" style={{ height: 1 }} />
       </div>
       {followState.showJumpButton && !followState.autoFollow && (

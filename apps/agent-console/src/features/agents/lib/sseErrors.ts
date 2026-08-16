@@ -12,6 +12,7 @@ export type SseErrorKind =
   | "non_sse"
   | "stream_closed"
   | "auth"
+  | "model_auth"
   | "not_found"
   | "server"
   | "rate_limited";
@@ -38,6 +39,26 @@ type SseErrorInit = {
   detail?: string;
   body_preview?: string;
 };
+
+export function isModelAuthError(error: {
+  kind?: SseErrorKind;
+  status?: number;
+  detail?: string;
+}): boolean {
+  if (error.kind === "model_auth") return true;
+  const detail = error.detail ?? "";
+  if (/\bMODEL_SETUP_REQUIRED\b/i.test(detail)) return true;
+  const authStatus =
+    error.status === 401 ||
+    error.status === 403 ||
+    /HTTP\s+(401|403)\b/i.test(detail);
+  if (!authStatus) return false;
+  return (
+    /api\s*key/i.test(detail) ||
+    /upstream model gateway/i.test(detail) ||
+    /(model|provider).*(auth|credential|key)/i.test(detail)
+  );
+}
 
 /**
  * Concrete error type thrown inside `useChatStream` when the SSE pre-flight or
@@ -186,6 +207,10 @@ export const ERROR_COPY_KEYS = {
   NON_SSE: ["响应不是 SSE 服务端事件流", "Response is not an SSE stream"],
   STREAM_CLOSED: ["SSE 服务端事件流意外中断", "SSE stream closed unexpectedly"],
   AUTH: ["鉴权失败，请重新登录", "Authentication failed. Please sign in again."],
+  MODEL_AUTH: [
+    "模型密钥无效",
+    "Model API key is invalid",
+  ],
   NOT_FOUND: ["目标 Agent 不存在", "Target agent not found"],
   SERVER: ["后端内部错误", "Backend internal error"],
   RATE_LIMITED: [
@@ -199,6 +224,7 @@ export const ERROR_COPY_KEYS = {
   readonly NON_SSE: readonly [string, string];
   readonly STREAM_CLOSED: readonly [string, string];
   readonly AUTH: readonly [string, string];
+  readonly MODEL_AUTH: readonly [string, string];
   readonly NOT_FOUND: readonly [string, string];
   readonly SERVER: readonly [string, string];
   readonly RATE_LIMITED: readonly [string, string];
@@ -219,9 +245,23 @@ export function formatErrorMessage(
   const parts: string[] = [];
   let title: string;
 
-  switch (error.kind) {
+  const kind = isModelAuthError(error) ? "model_auth" : error.kind;
+
+  switch (kind) {
     case "auth": {
       title = text(ERROR_COPY_KEYS.AUTH[0], ERROR_COPY_KEYS.AUTH[1]);
+      if (typeof error.status === "number") parts.push(`HTTP ${error.status}`);
+      if (error.detail) parts.push(error.detail);
+      break;
+    }
+    case "model_auth": {
+      title = text(ERROR_COPY_KEYS.MODEL_AUTH[0], ERROR_COPY_KEYS.MODEL_AUTH[1]);
+      parts.push(
+        text(
+          "当前模型供应商认证失败。请在模型设置里更新 DeepSeek API Key，或切换到可用供应商。",
+          "The selected model provider rejected authentication. Update the provider API key in Model Settings or switch to a working provider.",
+        ),
+      );
       if (typeof error.status === "number") parts.push(`HTTP ${error.status}`);
       if (error.detail) parts.push(error.detail);
       break;

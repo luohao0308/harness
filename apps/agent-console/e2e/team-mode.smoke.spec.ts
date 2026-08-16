@@ -6,6 +6,7 @@
  * layouts usable.
  */
 import { expect, test, type Page, type Request, type Route } from "@playwright/test";
+import path from "node:path";
 
 import type {
   AgentDefinition,
@@ -18,6 +19,15 @@ import type {
 
 const API_RE = /http:\/\/(?:127\.0\.0\.1|localhost):(?:8000|5173|5177|15174)\/api\/.*/;
 const now = "2026-05-23T08:00:00.000Z";
+const authUser = {
+  user_id: "team-mode-user",
+  email: "team-mode@example.com",
+  name: "Team Mode Operator",
+  organization_id: "dev-org",
+  role: "admin",
+  permissions: ["*"],
+  organizations: [{ id: "dev-org", name: "Harness", slug: "harness", role: "admin" }],
+};
 
 type TeamState = {
   teams: Team[];
@@ -182,6 +192,7 @@ function teamFixture(overrides: Partial<Team> = {}): Team {
     agents: [leader, product],
     messages: [teamMessage({})],
     tasks: [teamTask({})],
+    active_goal: null,
     unread_counts: { product: 1 },
     team_tools: [
       "team_send_message",
@@ -231,6 +242,7 @@ function createdTeamFixture(payload: Record<string, unknown>): Team {
     ],
     messages: [],
     tasks: [],
+    active_goal: null,
     unread_counts: {},
     team_tools: [
       "team_send_message",
@@ -265,6 +277,11 @@ function routeTeamApis(state: TeamState) {
     const url = new URL(route.request().url());
     const path = url.pathname;
     const method = route.request().method();
+
+    if (path === "/api/auth/me" && method === "GET") {
+      await json(route, authUser);
+      return;
+    }
 
     if (path === "/api/agents" && method === "GET") {
       await json(route, { items: [agentDefinition()], next_cursor: null });
@@ -514,6 +531,172 @@ async function hasNoHorizontalOverflow(page: Page): Promise<boolean> {
 }
 
 test.describe("Team Mode browser smoke", () => {
+  test("adds desktop collaboration and task graph views without replacing columns", async ({ page }) => {
+    const state = stateFixture();
+    const team = state.teams[0];
+    const leader = team.agents.find((agent) => agent.slot_id === team.leader_slot_id);
+    if (!leader) throw new Error("leader missing");
+    leader.status = "active";
+    leader.session_id = "leader-session";
+    leader.conversation_id = "leader-session";
+    leader.session_messages = [
+      agentMessage({
+        id: "desktop-user-request",
+        role: "user",
+        content: "把桌面版团队模式改成会话协作和任务图，同时保留多列模式。",
+      }),
+      agentMessage({
+        id: "desktop-leader-response",
+        role: "assistant",
+        content: "已拆成四个并行方向：交互结构、桌面布局、任务语义和视觉验收。",
+      }),
+    ];
+    team.agents.push(
+      teamAgent({ slot_id: "ui", agent_name: "界面设计", status: "active" }),
+      teamAgent({ slot_id: "quality", agent_name: "质量验证", status: "completed" }),
+    );
+    team.messages.push(
+      teamMessage({
+        id: "message-ui-ready",
+        from_agent_slot_id: "ui",
+        to_agent_slot_id: "leader",
+        content: "协作视图和紧凑成员状态已经完成。",
+        created_at: "2026-05-23T08:03:00.000Z",
+      }),
+      teamMessage({
+        id: "message-quality-review",
+        from_agent_slot_id: "quality",
+        to_agent_slot_id: "leader",
+        content: "任务图分支已核对，正在收敛视觉差异。",
+        created_at: "2026-05-23T08:04:00.000Z",
+      }),
+      teamMessage({
+        id: "message-product-sync",
+        from_agent_slot_id: "product",
+        to_agent_slot_id: "leader",
+        content: "网页版多列模式保持原有交互，不改变共享状态。",
+        created_at: "2026-05-23T08:05:00.000Z",
+      }),
+    );
+    team.tasks[0].blocked_by_json = ["task-0"];
+    team.tasks.push(
+      teamTask({
+        id: "task-0",
+        subject: "梳理桌面交互",
+        description: "确认会话、成员与检查器层级",
+        owner_slot_id: "leader",
+        status: "completed",
+      }),
+      teamTask({
+        id: "task-2",
+        subject: "交付桌面布局",
+        description: "完成协作视图和团队检查器",
+        owner_slot_id: "ui",
+        status: "completed",
+        blocked_by_json: ["task-1"],
+      }),
+      teamTask({
+        id: "task-3",
+        subject: "核对任务语义",
+        description: "核对共享 Team 状态和依赖关系",
+        owner_slot_id: "quality",
+        status: "completed",
+        blocked_by_json: ["task-1"],
+      }),
+      teamTask({
+        id: "task-4",
+        subject: "执行视觉验收",
+        description: "核对任务图和多列回退",
+        owner_slot_id: "quality",
+        status: "pending",
+        blocked_by_json: ["task-2", "task-3"],
+        metadata_json: { needs_correction: true },
+      }),
+      teamTask({
+        id: "task-5",
+        subject: "完成交付复核",
+        description: "通过构建、回归和文档校验",
+        owner_slot_id: "quality",
+        status: "pending",
+        blocked_by_json: ["task-4"],
+      }),
+    );
+    team.active_goal = {
+      id: "goal-desktop-team",
+      team_id: team.id,
+      organization_id: team.organization_id,
+      status: "active",
+      objective: "交付桌面团队协作工作区",
+      non_goals_json: [],
+      acceptance_criteria_json: ["保留网页版多列"],
+      supervision_policy_json: {},
+      correction_budget_json: {},
+      progress_json: {
+        open_task_count: 2,
+        completed_task_count: 2,
+        drift_count: 0,
+        intervention_count: 0,
+        budget_remaining: 3,
+      },
+      supervisor_state_json: {},
+      version: 1,
+      created_at: now,
+      updated_at: now,
+      completed_at: null,
+    };
+    await page.addInitScript(() => {
+      (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+    });
+    await fulfillTeamApis(page, state);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    await page.goto("/teams/team-1");
+    const viewSwitch = page.getByRole("group", { name: "团队工作区视图" });
+    await expect(viewSwitch.getByRole("button", { name: "协作" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("desktop-team-overview")).toBeVisible();
+    await expect(page.getByRole("complementary", { name: "团队系统看板" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "代理会话列" })).toHaveCount(0);
+    expect(await hasNoHorizontalOverflow(page)).toBe(true);
+
+    const visualDir = process.env.HARNESS_TEAM_VISUAL_DIR;
+    if (visualDir) {
+      await page.screenshot({ path: path.join(visualDir, "desktop-collaboration.png") });
+    }
+
+    await viewSwitch.getByRole("button", { name: "任务图" }).click();
+    const graph = page.getByRole("region", { name: "团队任务图" });
+    await expect(graph).toBeVisible();
+    await expect(graph.getByText("3/6 已完成")).toBeVisible();
+    await expect(graph.getByRole("button", { name: /^执行视觉验收/ })).toBeVisible();
+    if (visualDir) {
+      await page.screenshot({ path: path.join(visualDir, "desktop-task-graph.png") });
+    }
+
+    await page.setViewportSize({ width: 900, height: 800 });
+    await expect(graph).toBeVisible();
+    expect(await hasNoHorizontalOverflow(page)).toBe(true);
+    await viewSwitch.getByRole("button", { name: "协作" }).click();
+    await expect(page.getByTestId("desktop-team-overview")).toBeVisible();
+    await page.getByRole("button", { name: "进入 队长 专注对话" }).click();
+    await expect(page.getByTestId("team-composer-leader")).toBeVisible();
+    expect(await hasNoHorizontalOverflow(page)).toBe(true);
+
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await expect(page.getByRole("complementary", { name: "团队检查器" })).toBeVisible();
+    const teamRail = page.getByRole("complementary", { name: "团队侧栏" });
+    await expect(teamRail).toHaveCSS("width", "56px");
+    await expect(teamRail.getByRole("link", { name: team.name })).toHaveAttribute("title", team.name);
+    expect(await hasNoHorizontalOverflow(page)).toBe(true);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await viewSwitch.getByRole("button", { name: "多列" }).click();
+    await expect(page.getByRole("group", { name: "代理会话列" })).toBeVisible();
+    if (visualDir) {
+      await page.screenshot({ path: path.join(visualDir, "desktop-columns.png") });
+    }
+    expect(await hasNoHorizontalOverflow(page)).toBe(true);
+  });
+
   test("creates a team, sends through the leader, and opens extra columns on desktop", async ({ page }) => {
     test.setTimeout(45_000);
     const state = stateFixture();
@@ -556,7 +739,8 @@ test.describe("Team Mode browser smoke", () => {
     await expect(
       leaderColumn.getByText("同步队长状态"),
     ).toBeVisible();
-    await page.getByRole("button", { name: "添加成员" }).click();
+    await page.getByRole("button", { name: "更多团队操作" }).click();
+    await page.getByRole("menuitem", { name: "添加成员" }).click();
     const addMemberDialog = page.getByRole("dialog", { name: "添加成员" });
     await expect(addMemberDialog.getByText("已选择")).toBeVisible();
     await expect(addMemberDialog.getByRole("button", { name: /智能体定义/ })).toContainText("默认智能体");
@@ -645,6 +829,11 @@ test.describe("Team Mode browser smoke", () => {
 
     await productColumn.locator("summary").click();
     await expect(productColumn.getByText("实现多列 UI")).toBeVisible();
+    if (process.env.HARNESS_TEAM_VISUAL_DIR) {
+      await page.screenshot({
+        path: path.join(process.env.HARNESS_TEAM_VISUAL_DIR, "web-columns.png"),
+      });
+    }
   });
 
   test("keeps the mobile layout single-column and sendable without overflow", async ({ page }) => {
@@ -653,6 +842,7 @@ test.describe("Team Mode browser smoke", () => {
     await page.setViewportSize({ width: 390, height: 844 });
 
     await page.goto("/teams/team-1");
+    await expect(page.getByRole("navigation", { name: "控制台导航" })).toHaveCount(0);
     await expect(page.getByText("协作团队").first()).toBeVisible();
     await expect(page.getByRole("tab", { name: /产品经理/ })).toBeVisible();
 
@@ -674,5 +864,15 @@ test.describe("Team Mode browser smoke", () => {
     });
     await expect(leaderColumn.getByText("移动端验证")).toBeVisible();
     expect(await hasNoHorizontalOverflow(page)).toBe(true);
+    if (process.env.HARNESS_TEAM_VISUAL_DIR) {
+      await page.screenshot({
+        path: path.join(process.env.HARNESS_TEAM_VISUAL_DIR, "web-mobile.png"),
+      });
+    }
+    const mobileMetrics = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(mobileMetrics.scrollWidth).toBeLessThanOrEqual(mobileMetrics.clientWidth + 1);
   });
 });

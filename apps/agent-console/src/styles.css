@@ -11,6 +11,56 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+:root.theme-high-contrast {
+  color: #ffffff;
+  background: #050505;
+}
+
+:root.theme-high-contrast body,
+:root.theme-high-contrast .bg-page,
+:root.theme-high-contrast .bg-slate-50,
+:root.theme-high-contrast .bg-white,
+:root.theme-high-contrast .bg-white\/90,
+:root.theme-high-contrast .bg-white\/95 {
+  background-color: #050505 !important;
+  color: #ffffff !important;
+}
+
+:root.theme-high-contrast .text-slate-400,
+:root.theme-high-contrast .text-slate-500,
+:root.theme-high-contrast .text-slate-600,
+:root.theme-high-contrast .text-slate-700,
+:root.theme-high-contrast .text-slate-800,
+:root.theme-high-contrast .text-slate-900,
+:root.theme-high-contrast .text-slate-950 {
+  color: #ffffff !important;
+}
+
+:root.theme-high-contrast .border-slate-100,
+:root.theme-high-contrast .border-slate-200,
+:root.theme-high-contrast .border-slate-300,
+:root.theme-high-contrast .border-transparent {
+  border-color: #facc15 !important;
+}
+
+:root.theme-high-contrast button,
+:root.theme-high-contrast input,
+:root.theme-high-contrast textarea,
+:root.theme-high-contrast select,
+:root.theme-high-contrast a {
+  outline-color: #facc15;
+}
+
+:root.theme-high-contrast *:focus-visible {
+  outline: 3px solid #facc15 !important;
+  outline-offset: 3px !important;
+  box-shadow: none !important;
+}
+
+:root.theme-high-contrast .shadow-panel {
+  box-shadow: 0 0 0 1px #facc15 !important;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -47,5 +97,36 @@ textarea {
   .animate-streaming-caret {
     animation: none !important;
     visibility: visible !important;
+  }
+}
+
+/*
+ * Onboarding wizard UI polish animations
+ * Respects prefers-reduced-motion for accessibility
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Smooth focus visible for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Better touch targets for mobile */
+@media (hover: none) and (pointer: coarse) {
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
   }
 }

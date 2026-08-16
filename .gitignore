@@ -1,4 +1,6 @@
 .venv/
+/services/api-server/certs/*.crt
+/services/api-server/certs/*.key
 venv/
 env/
 __pycache__/
@@ -62,7 +64,15 @@ tmp/
 artifacts/
 data/
 
+/apps/desktop-app/release*/
+/apps/desktop-app/resources/runtime/*/*/
+!/apps/desktop-app/build/
+!/apps/desktop-app/build/entitlements.mac.plist
+!/apps/desktop-app/build/icon.png
+
 .docker/
 docker-data/
 *.pid
 *.sock
+.claude/settings.local.json
+docs/development/ai/session-log-pointers.md

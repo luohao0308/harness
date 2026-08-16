@@ -31,45 +31,80 @@ BLOCKED_TERMS = [
 ]
 
 TOP_LEVEL_SPECS = [
-    "docs/00-product-spec.md",
-    "docs/01-system-architecture.md",
-    "docs/02-data-model-and-event-spec.md",
-    "docs/03-api-spec.md",
-    "docs/04-agent-runtime-spec.md",
-    "docs/05-tool-mcp-runtime-spec.md",
-    "docs/06-guardrail-policy-spec.md",
-    "docs/07-eval-harness-spec.md",
-    "docs/08-console-ui-spec.md",
-    "docs/09-benchmark-spec.md",
-    "docs/10-portfolio-demo-spec.md",
-    "docs/task-progress.md",
+    "docs/design/product-spec.md",
+    "docs/architecture/system-architecture-spec.md",
+    "docs/contracts/data-model-and-event-spec.md",
+    "docs/contracts/api/api-spec.md",
+    "docs/architecture/agent-runtime-spec.md",
+    "docs/contracts/tool-mcp-runtime-spec.md",
+    "docs/contracts/guardrail-policy-spec.md",
+    "docs/testing/eval-harness-spec.md",
+    "docs/design/console-ui-spec.md",
+    "docs/testing/benchmark-spec.md",
+    "docs/design/portfolio-demo-spec.md",
 ]
 
+LEGACY_DOC_DIRS = [
+    "docs/adr",
+    "docs/ai",
+    "docs/api",
+    "docs/api-reference",
+    "docs/cli",
+    "docs/demo",
+    "docs/desktop",
+    "docs/evals",
+    "docs/gifs",
+    "docs/human",
+    "docs/mobile",
+    "docs/qa",
+    "docs/reports",
+    "docs/runbooks",
+    "docs/screenshots",
+    "docs/sdk",
+    "docs/security",
+]
+
+STALE_ACTIVE_DOC_MARKERS = {
+    "docs/README.md": [
+        "继续保持原路径作为权威来源",
+    ],
+    "docs/development/ai/00-master-prompt.md": [
+        "docs/工作日志/archive/task-progress-human.md",
+    ],
+    "docs/development/git-github-workflow.md": [
+        "docs/工作日志/archive/task-progress-human.md",
+    ],
+}
+
 STAGE_FILES = [
-    "docs/ai/stages/01-agent-workspace-console.md",
-    "docs/ai/stages/02-agent-studio-config.md",
-    "docs/ai/stages/03-harness-tool-mcp.md",
-    "docs/ai/stages/04-event-sourcing-replay-ui.md",
-    "docs/ai/stages/05-eval-regression.md",
-    "docs/ai/stages/06-warmpool-infra.md",
+    "docs/development/ai/stages/01-agent-workspace-console.md",
+    "docs/development/ai/stages/02-agent-studio-config.md",
+    "docs/development/ai/stages/03-harness-tool-mcp.md",
+    "docs/development/ai/stages/04-event-sourcing-replay-ui.md",
+    "docs/development/ai/stages/05-eval-regression.md",
+    "docs/development/ai/stages/06-warmpool-infra.md",
 ]
 
 REQUIRED_FILES = [
     "AGENTS.md",
     "README.md",
-    "docs/ai/README.md",
-    "docs/ai/00-execution-protocol.md",
-    "docs/ai/agent-startup-context.md",
-    "docs/ai/context-index.json",
-    "docs/ai/01-task-progress.md",
-    "docs/ai/task-progress.yaml",
-    "docs/human/10-task-progress.md",
-    "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
+    "docs/README.md",
+    "docs/PROJECT-SUMMARY.md",
+    "docs/TASKS.md",
+    "docs/development/ai/README.md",
+    "docs/development/ai/00-execution-protocol.md",
+    "docs/development/ai/agent-startup-context.md",
+    "docs/development/ai/context-index.json",
+    "docs/development/ai/01-task-progress.md",
+    "docs/development/ai/task-progress.yaml",
+    "docs/contracts/SPEC-INDEX.md",
+    "docs/architecture/MODULE-INDEX.md",
     "omx_wiki/index.md",
     "omx_wiki/project-handoff-current-state.md",
     *TOP_LEVEL_SPECS,
     *STAGE_FILES,
     "scripts/agent-context-brief.py",
+    "docs/architecture/module-map.json",
 ]
 
 STAGE_SECTIONS = [
@@ -102,11 +137,36 @@ def check_required_files() -> None:
             fail(f"missing required file: {rel}")
 
 
+def check_docs_ci_contract() -> None:
+    workflow = read_text(ROOT / ".github/workflows/docs.yml")
+    required_markers = [
+        "bash scripts/check-docs.sh",
+        "git diff --exit-code docs/contracts/api-reference",
+    ]
+    for marker in required_markers:
+        if marker not in workflow:
+            fail(f"docs CI missing required command: {marker}")
+
+
 def check_no_old_stage_docs() -> None:
-    old_stage_docs = list((ROOT / "docs/ai").glob("[0-9][0-9]-stage-*.md"))
+    old_stage_docs = list((ROOT / "docs/development/ai").glob("[0-9][0-9]-stage-*.md"))
     if old_stage_docs:
         names = ", ".join(str(path.relative_to(ROOT)) for path in old_stage_docs)
         fail(f"old stage docs still present: {names}")
+
+
+def check_no_legacy_doc_dirs() -> None:
+    existing = [rel for rel in LEGACY_DOC_DIRS if (ROOT / rel).exists()]
+    if existing:
+        fail(f"legacy documentation directories still present: {', '.join(existing)}")
+
+
+def check_no_stale_active_doc_markers() -> None:
+    for rel, markers in STALE_ACTIVE_DOC_MARKERS.items():
+        text = read_text(ROOT / rel)
+        for marker in markers:
+            if marker in text:
+                fail(f"stale active-document marker found in {rel}: {marker}")
 
 
 def check_blocked_terms() -> None:
@@ -114,12 +174,11 @@ def check_blocked_terms() -> None:
         ROOT / "README.md",
         *[ROOT / rel for rel in TOP_LEVEL_SPECS],
         *[ROOT / rel for rel in STAGE_FILES],
-        ROOT / "docs/ai/README.md",
-        ROOT / "docs/ai/00-execution-protocol.md",
-        ROOT / "docs/ai/01-task-progress.md",
-        ROOT / "docs/ai/task-progress.yaml",
-        ROOT / "docs/human/10-task-progress.md",
-        ROOT / "docs/TECHNICAL-IMPLEMENTATION-PROGRESS.md",
+        ROOT / "docs/development/ai/README.md",
+        ROOT / "docs/development/ai/00-execution-protocol.md",
+        ROOT / "docs/development/ai/01-task-progress.md",
+        ROOT / "docs/development/ai/task-progress.yaml",
+        ROOT / "docs/TASKS.md",
         ROOT / ".github",
     ]
     files: list[Path] = []
@@ -147,35 +206,35 @@ def check_stage_docs() -> None:
 
 
 def check_progress_alignment() -> None:
-    yaml_text = read_text(ROOT / "docs/ai/task-progress.yaml")
-    human_text = read_text(ROOT / "docs/human/10-task-progress.md")
+    yaml_text = read_text(ROOT / "docs/development/ai/task-progress.yaml")
+    task_board_text = read_text(ROOT / "docs/TASKS.md")
     for rel in STAGE_FILES:
         if rel not in yaml_text:
             fail(f"{rel} missing from task-progress.yaml")
-        stage_id = Path(rel).stem
-        if stage_id not in human_text:
-            fail(f"{stage_id} missing from human task progress")
     if "spec_first_stage_gated_vertical_slice" not in yaml_text:
         fail("task-progress.yaml missing spec execution mode")
-    if "Eval Harness" not in human_text:
-        fail("human progress missing Eval Harness")
+    for marker in ["## 进行中", "## 待办", "## 已完成", "## 技术债"]:
+        if marker not in task_board_text:
+            fail(f"docs/TASKS.md missing section {marker}")
+    if "docs/development/ai/task-progress.yaml" not in task_board_text:
+        fail("docs/TASKS.md missing machine progress source")
 
 
 def check_agent_context_contract() -> None:
     agents_rel = "AGENTS.md"
-    startup_rel = "docs/ai/agent-startup-context.md"
-    index_rel = "docs/ai/context-index.json"
+    startup_rel = "docs/development/ai/agent-startup-context.md"
+    index_rel = "docs/development/ai/context-index.json"
     script_rel = "scripts/agent-context-brief.py"
     agents_text = read_text(ROOT / agents_rel)
     startup_text = read_text(ROOT / startup_rel)
-    protocol_text = read_text(ROOT / "docs/ai/00-execution-protocol.md")
+    protocol_text = read_text(ROOT / "docs/development/ai/00-execution-protocol.md")
     readme_text = read_text(ROOT / "README.md")
     wiki_index_text = read_text(ROOT / "omx_wiki/index.md")
-    yaml_text = read_text(ROOT / "docs/ai/task-progress.yaml")
+    yaml_text = read_text(ROOT / "docs/development/ai/task-progress.yaml")
 
     required_startup_markers = [
         "Model + Harness = Agent",
-        "docs/ai/task-progress.yaml",
+        "docs/development/ai/task-progress.yaml",
         "scripts/agent-context-brief.py",
         "omx_wiki/project-handoff-current-state.md",
         "Completion Write-Back",
@@ -185,10 +244,10 @@ def check_agent_context_contract() -> None:
             fail(f"{startup_rel} missing marker {marker}")
 
     required_agents_markers = [
-        "docs/ai/agent-startup-context.md",
-        "docs/ai/task-progress.yaml",
+        "docs/development/ai/agent-startup-context.md",
+        "docs/development/ai/task-progress.yaml",
         "scripts/agent-context-brief.py",
-        "docs/ai/00-execution-protocol.md",
+        "docs/development/ai/00-execution-protocol.md",
         "omx_wiki/",
     ]
     for marker in required_agents_markers:
@@ -205,7 +264,7 @@ def check_agent_context_contract() -> None:
 
     if "[[project-handoff-current-state]]" not in wiki_index_text:
         fail("wiki index missing canonical project handoff link")
-    if "docs/ai/task-progress.yaml" not in yaml_text:
+    if "docs/development/ai/task-progress.yaml" not in yaml_text:
         fail("task-progress.yaml missing self-reference to machine progress source")
 
     try:
@@ -215,7 +274,7 @@ def check_agent_context_contract() -> None:
 
     if context_index.get("entrypoint") != startup_rel:
         fail(f"{index_rel} has wrong entrypoint")
-    if context_index.get("machine_progress") != "docs/ai/task-progress.yaml":
+    if context_index.get("machine_progress") != "docs/development/ai/task-progress.yaml":
         fail(f"{index_rel} has wrong machine progress source")
 
     routes = context_index.get("routes")
@@ -249,7 +308,7 @@ def check_agent_context_contract() -> None:
             fail(f"{index_rel} route {route_id} needs keywords")
         if not route.get("read_first"):
             fail(f"{index_rel} route {route_id} needs read_first paths")
-        if "docs/ai/task-progress.yaml" not in route.get("progress_write_targets", []):
+        if "docs/development/ai/task-progress.yaml" not in route.get("progress_write_targets", []):
             fail(f"{index_rel} route {route_id} missing task-progress write target")
         for field in ["read_first", "deep_read"]:
             for rel in route.get(field, []):
@@ -298,6 +357,39 @@ def check_agent_context_brief_fixtures() -> None:
             )
 
 
+def check_module_map() -> None:
+    """Parse docs/architecture/module-map.json and assert every path/doc exists on disk (R4, R5)."""
+    map_path = ROOT / "docs/architecture/module-map.json"
+    try:
+        data = json.loads(read_text(map_path))
+    except json.JSONDecodeError as exc:
+        fail(f"docs/architecture/module-map.json is not valid JSON: {exc}")
+    modules = data.get("modules")
+    if not isinstance(modules, list) or not modules:
+        fail("docs/architecture/module-map.json must have a non-empty 'modules' list")
+    for m in modules:
+        name = m.get("name", "<unnamed>")
+        for field in ("name", "path", "summary"):
+            if not m.get(field):
+                fail(f"docs/architecture/module-map.json module {name!r} missing field {field!r}")
+        if not (ROOT / m["path"]).exists():
+            fail(f"docs/architecture/module-map.json module {name!r} path not found: {m['path']}")
+        for doc in m.get("docs", []):
+            if not (ROOT / doc).exists():
+                fail(f"docs/architecture/module-map.json module {name!r} references missing doc: {doc}")
+
+
+def check_memory_files() -> None:
+    """Assert error-registry.md and anti-patterns.md each have at least one ## heading (R4)."""
+    for rel in ("docs/development/ai/error-registry.md", "docs/development/ai/anti-patterns.md"):
+        path = ROOT / rel
+        if not path.is_file():
+            fail(f"missing memory file: {rel}")
+        headings = [line for line in read_text(path).splitlines() if line.startswith("## ")]
+        if not headings:
+            fail(f"{rel} has no '## ' section headings — must contain at least one entry")
+
+
 def check_readme_links() -> None:
     readme = read_text(ROOT / "README.md")
     for rel in TOP_LEVEL_SPECS + STAGE_FILES:
@@ -308,11 +400,16 @@ def check_readme_links() -> None:
 
 def main() -> None:
     check_required_files()
+    check_docs_ci_contract()
     check_no_old_stage_docs()
+    check_no_legacy_doc_dirs()
+    check_no_stale_active_doc_markers()
     check_blocked_terms()
     check_stage_docs()
     check_progress_alignment()
     check_agent_context_contract()
+    check_module_map()
+    check_memory_files()
     check_readme_links()
     print("docs validation passed")
 

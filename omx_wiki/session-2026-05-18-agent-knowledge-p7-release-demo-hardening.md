@@ -29,7 +29,7 @@ P7 keeps the private handoff release gate current while preserving P1-P6 evidenc
 - Wired `knowledge-demo.smoke.spec.ts` into `npm run e2e:smoke:release`.
 - Updated `apps/agent-console/e2e/eval-page.smoke.spec.ts` for P6 regression-delta fields so the release gate stays compatible with groundedness metrics.
 - Updated deployment, troubleshooting, and web-research runbooks for P7 seed/readback, service-level migration/restore smoke, release browser smoke, and the local-fixture versus live-provider boundary.
-- Updated `docs/ai/task-progress.yaml`, `docs/task-progress.md`, [[agent-knowledge-harness-roadmap]], and [[project-handoff-current-state]].
+- Updated `docs/development/ai/task-progress.yaml`, `docs/工作日志/archive/task-progress-legacy.md`, [[agent-knowledge-harness-roadmap]], and [[project-handoff-current-state]].
 - Added follow-up console UI hardening:
   - new shared `MenuSelect` for model, knowledge, run, and settings selectors;
   - keyboard/focus behavior, disabled-option skipping, grouping, top/bottom placement, and exact selector test coverage;
@@ -117,6 +117,38 @@ Pull request URL:
 ```text
 https://github.com/luohao0308/harness/pull/new/p7-release-demo-hardening
 ```
+
+## 2026-06-21 Demo Artifact Refresh
+
+Branch `chore/demo-artifacts` refreshed the demo evidence files only.
+
+```text
+POST /api/sandboxes/warm-pool/benchmark
+request: {"iterations":30}
+environment: local-dev, isolated SQLite database, one seeded IDLE WarmPoolContainer
+status: PASS
+warm_p95_ms: 1
+warm_avg_ms: 0
+cold_avg_ms: 275 synthetic baseline
+hit_rate: 100
+sample_size: 30
+```
+
+Updated files:
+
+```text
+docs/工作日志/reports/benchmark-report.md
+docs/design/media/gifs/README.md
+docs/design/media/gifs/first-agent-run.gif
+docs/design/media/gifs/first-agent-run-screenshot.png
+```
+
+Capture notes: `ffmpeg` and Docker Compose were available. macOS
+`screencapture` initially produced a short test recording, then returned
+`capture error` during the full-flow attempt, so the final GIF uses Playwright
+Chromium `recordVideo` converted with `ffmpeg`. The GIF exercises the real
+Agent Console UI with mocked local API/SSE responses and does not require
+external model-provider credentials or a Docker worker.
 
 ## Boundaries
 

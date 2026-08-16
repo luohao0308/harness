@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -80,14 +81,27 @@ class MCPAdapter:
                 },
             )
         if metadata.name == "mcp_artifact_put":
+            artifact_type = str(input_json.get("artifact_type") or input_json.get("type") or "text")
+            content = input_json.get("content", "")
+            data = input_json.get("data")
+            preview = data if data is not None else _decode_artifact_content(content)
             return MCPToolResult(
                 server=server,
                 method=method,
                 output_json={
                     "artifact": {
                         "name": str(input_json.get("name", "artifact")),
-                        "size_bytes": len(str(input_json.get("content", "")).encode("utf-8")),
+                        "artifact_type": artifact_type,
+                        "size_bytes": len(str(content).encode("utf-8")),
                     },
+                    "artifacts": [
+                        {
+                            "name": str(input_json.get("name", "artifact")),
+                            "artifact_type": artifact_type,
+                            "status": "ready",
+                            "content": preview,
+                        }
+                    ],
                     "source": "mcp-adapter",
                     "runtime": runtime_evidence,
                 },
@@ -156,6 +170,18 @@ def _runtime_evidence(*, runtime: dict, secret_ref: Any) -> dict:
         "command_configured": command_configured,
         "secret_ref_configured": bool(str(secret_ref or "").strip()),
     }
+
+
+def _decode_artifact_content(content: Any) -> Any:
+    if not isinstance(content, str):
+        return content
+    stripped = content.strip()
+    if not stripped or not stripped.startswith(("{", "[")):
+        return content
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return content
 
 
 def _execute_brave_search(

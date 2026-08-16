@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1129,6 +1129,7 @@ def test_token_savings_page_projects_recent_run_evidence(db_session: Session) ->
             ModelCall(
                 id="call-token-savings",
                 task_id=task.id,
+                context_manifest_id="manifest-token-savings",
                 model_provider="openai-compatible",
                 model_name="cheap-model",
                 status="SUCCESS",
@@ -1196,6 +1197,7 @@ def test_token_savings_page_projects_recent_run_evidence(db_session: Session) ->
     assert run["context_manifest_id"] == "manifest-token-savings"
     assert run["estimated_saved_tokens"] == 400
     assert run["actual_prompt_tokens"] == 550
+    assert run["model_names"] == ["cheap-model"]
     assert run["optimizer_labels"] == ["均衡"]
     assert run["optimizer_decision_count"] == 1
     assert run["cache_sources"][0]["cache_source"] == "compression_summary"
@@ -1215,4 +1217,125 @@ def test_token_savings_page_projects_recent_run_evidence(db_session: Session) ->
     assert run["omission_reasons"] == [
         {"reason": "optimizer_section_limit", "count": 2},
         {"reason": "optimizer_budget", "count": 1},
+    ]
+
+
+def test_token_savings_page_binds_model_names_to_context_manifest(
+    db_session: Session,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        agent_id="default",
+        created_by="dev-engineer",
+        title="Multi manifest optimizer run",
+        goal="Show manifest scoped models",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    db_session.add_all(
+        [
+            ContextAssemblyManifest(
+                id="manifest-newer",
+                organization_id="dev-org",
+                agent_id="default",
+                run_id=task.id,
+                mode="authoritative",
+                token_budget_json={
+                    "optimized_vs_baseline": {"estimated_saved_tokens": 10},
+                },
+                sections_json=[],
+                included_refs_json=[],
+                omitted_refs_json=[],
+                policy_decisions_json=[],
+                tombstoned_refs_json=[],
+                context_text_sha256="newer",
+                metadata_json={},
+                created_at=utc_now(),
+            ),
+            ContextAssemblyManifest(
+                id="manifest-older",
+                organization_id="dev-org",
+                agent_id="default",
+                run_id=task.id,
+                mode="authoritative",
+                token_budget_json={
+                    "optimized_vs_baseline": {"estimated_saved_tokens": 20},
+                },
+                sections_json=[],
+                included_refs_json=[],
+                omitted_refs_json=[],
+                policy_decisions_json=[],
+                tombstoned_refs_json=[],
+                context_text_sha256="older",
+                metadata_json={},
+                created_at=utc_now() - timedelta(minutes=5),
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            ModelCall(
+                id="call-newer",
+                task_id=task.id,
+                context_manifest_id="manifest-newer",
+                model_provider="openai-compatible",
+                model_name="newer-model",
+                status="SUCCESS",
+                prompt_tokens=100,
+                completion_tokens=10,
+                request_json={"low_cost_routing_reason": "newer route"},
+                response_json={},
+                created_at=utc_now(),
+            ),
+            ModelCall(
+                id="call-older",
+                task_id=task.id,
+                context_manifest_id="manifest-older",
+                model_provider="openai-compatible",
+                model_name="older-model",
+                status="SUCCESS",
+                prompt_tokens=200,
+                completion_tokens=20,
+                request_json={"low_cost_routing_reason": "older route"},
+                response_json={},
+                created_at=utc_now() - timedelta(minutes=5),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = TestClient(app).get("/api/observability/token-savings", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    runs_by_manifest = {
+        run["context_manifest_id"]: run for run in response.json()["runs"]
+    }
+    newer = runs_by_manifest["manifest-newer"]
+    older = runs_by_manifest["manifest-older"]
+    assert newer["model_names"] == ["newer-model"]
+    assert newer["actual_total_tokens"] == 110
+    assert newer["low_cost_routes"] == [
+        {
+            "model_call_id": "call-newer",
+            "model_name": "newer-model",
+            "reason": "newer route",
+        }
+    ]
+    assert older["model_names"] == ["older-model"]
+    assert older["actual_total_tokens"] == 220
+    assert older["low_cost_routes"] == [
+        {
+            "model_call_id": "call-older",
+            "model_name": "older-model",
+            "reason": "older route",
+        }
     ]

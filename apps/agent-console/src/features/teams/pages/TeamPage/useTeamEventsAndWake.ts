@@ -46,7 +46,16 @@ export function useTeamEventsAndWake({
   const userCancelledWakeSlotIdsRef = useRef<Set<string>>(new Set());
   const failedWakeStreamSlotIdsRef = useRef<Set<string>>(new Set());
   const terminalWakeSlotIdsRef = useRef<Set<string>>(new Set());
+  const cancelledWakeCutoffsRef = useRef<Record<string, number>>({});
   const followUpWakeRef = useRef<(slotIds: string[]) => void>(() => undefined);
+
+  const isCancelledWakeEvent = useCallback((slotId: string | null | undefined, updatedAt?: string | null) => {
+    if (!slotId) return false;
+    const cutoff = cancelledWakeCutoffsRef.current[slotId];
+    if (!cutoff) return false;
+    const updatedAtMs = timestampMs(updatedAt ?? undefined);
+    return updatedAtMs === null || updatedAtMs <= cutoff;
+  }, []);
 
   useEffect(() => {
     if (!teamId || !streamReadyTeamId) return;
@@ -57,12 +66,27 @@ export function useTeamEventsAndWake({
         let applied = false;
         queryClient.setQueryData<Team>(["teams", teamId], (current) => {
           if (!current) return current;
+          const eventAgent = event.payload_json.agent;
+          if (
+            isTeamAgent(eventAgent) &&
+            isCancelledWakeEvent(eventAgent.slot_id, eventAgent.updated_at)
+          ) {
+            applied = true;
+            return current;
+          }
           const next = applyTeamEventToTeam(current, event);
           if (!next) return current;
           applied = true;
           return next;
         });
         queryClient.setQueryData<TeamPageEnvelope>(["teams"], (current) => {
+          const eventAgent = event.payload_json.agent;
+          if (
+            isTeamAgent(eventAgent) &&
+            isCancelledWakeEvent(eventAgent.slot_id, eventAgent.updated_at)
+          ) {
+            return current;
+          }
           const next = applyTeamEventToTeamPage(current, event);
           return next ?? current;
         });
@@ -100,6 +124,7 @@ export function useTeamEventsAndWake({
     setPendingWakeSlotIds,
     setSettledWakeCutoffs,
     setStreamingWakes,
+    isCancelledWakeEvent,
     streamReadyTeamId,
     teamId,
   ]);
@@ -107,6 +132,7 @@ export function useTeamEventsAndWake({
   const applyWakeStreamEvent = useCallback(
     (event: TeamWakeStreamEvent) => {
       if (event.type === "delta") {
+        if (isCancelledWakeEvent(event.slot_id)) return;
         setStreamingWakes((current) => {
           const existing = current.find((wake) => wake.slotId === event.slot_id);
           if (!existing) {
@@ -121,6 +147,7 @@ export function useTeamEventsAndWake({
         return;
       }
       if (event.type === "status" || event.type === "done") {
+        if (isCancelledWakeEvent(event.agent.slot_id, event.agent.updated_at)) return;
         queryClient.setQueryData<Team>(["teams", teamId], (current) => {
           if (!current) return current;
           const incomingAgent = event.type === "done" ? settledWakeAgent(event.agent) : event.agent;
@@ -154,13 +181,17 @@ export function useTeamEventsAndWake({
       if (event.type === "error") {
         const slotId = event.agent?.slot_id ?? event.slot_id;
         if (!slotId) return;
+        if (isCancelledWakeEvent(slotId, event.agent?.updated_at)) return;
         terminalWakeSlotIdsRef.current.add(slotId);
         failedWakeStreamSlotIdsRef.current.add(slotId);
         setPendingWakeSlotIds((current) => current.filter((candidate) => candidate !== slotId));
         setStreamingWakes((current) => {
           const existing = current.find((wake) => wake.slotId === slotId);
-          if (!existing) return [...current, { slotId, content: "", error: event.message }];
-          return current.map((wake) => wake.slotId === slotId ? { ...wake, error: event.message } : wake);
+          const happenedAt = event.agent?.updated_at ?? undefined;
+          if (!existing) return [...current, { slotId, content: "", error: event.message, happenedAt }];
+          return current.map((wake) =>
+            wake.slotId === slotId ? { ...wake, error: event.message, happenedAt } : wake,
+          );
         });
         if (event.agent) {
           queryClient.setQueryData<Team>(["teams", teamId], (current) => {
@@ -182,7 +213,7 @@ export function useTeamEventsAndWake({
         }
       }
     },
-    [queryClient, setPendingWakeSlotIds, setSettledWakeCutoffs, setStreamingWakes, teamId],
+    [isCancelledWakeEvent, queryClient, setPendingWakeSlotIds, setSettledWakeCutoffs, setStreamingWakes, teamId],
   );
 
   const settleWakeLocally = useCallback(
@@ -223,6 +254,7 @@ export function useTeamEventsAndWake({
       const uniqueSlotIds = [...new Set(slotIds)].filter(Boolean);
       for (const slotId of uniqueSlotIds) {
         if (wakeControllersRef.current[slotId]) continue;
+        delete cancelledWakeCutoffsRef.current[slotId];
         failedWakeStreamSlotIdsRef.current.delete(slotId);
         terminalWakeSlotIdsRef.current.delete(slotId);
         setSettledWakeCutoffs((current) => {
@@ -286,6 +318,7 @@ export function useTeamEventsAndWake({
   const stopWake = useCallback(
     (slotId: string) => {
       userCancelledWakeSlotIdsRef.current.add(slotId);
+      cancelledWakeCutoffsRef.current[slotId] = Date.now();
       wakeControllersRef.current[slotId]?.abort();
       settleWakeLocally(slotId);
       cancelWakeTeamAgent(teamId, slotId)

@@ -5,6 +5,7 @@ import {
   sidebarRouteInventory,
   staticConsoleRoutePaths,
 } from "../routeInventory";
+import { consoleNavEntries } from "../consoleNav";
 import { router } from "../routes";
 
 const requiredDynamicSamples = [
@@ -26,8 +27,9 @@ describe("enterprise route inventory", () => {
   it("locks all left-sidebar links to routable static paths", () => {
     const routerPaths = routePathsFromRouter();
 
-    expect(sidebarRouteInventory).toHaveLength(21);
-    expect(new Set(sidebarRouteInventory.map((item) => item.href)).size).toBe(21);
+    expect(consoleNavEntries).toHaveLength(13);
+    expect(sidebarRouteInventory).toHaveLength(24);
+    expect(new Set(sidebarRouteInventory.map((item) => item.href)).size).toBe(24);
     for (const item of sidebarRouteInventory) {
       expect(staticConsoleRoutePaths).toContain(item.href);
       expect(routerPaths).toContain(item.href);

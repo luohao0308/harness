@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type DragEvent as ReactDragEvent,
   type JSX,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -23,13 +24,19 @@ import {
   ChevronRight,
   ListChecks,
   Paperclip,
+  PauseCircle,
+  Pencil,
+  PlayCircle,
   PlugZap,
   Target,
+  Trash2,
   X,
 } from "lucide-react";
 
-import { useConfirmDialog } from "../../../components/ui/confirm-dialog";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
 import { notifyFeedback } from "../../../components/ui/feedback-toast";
+import { Button } from "../../../components/ui/button";
+import { Textarea } from "../../../components/ui/input";
 import { useI18n } from "../../../lib/i18n";
 import { cn } from "../../../lib/utils";
 import {
@@ -38,7 +45,11 @@ import {
 } from "../../../stores/workspaceStore";
 import {
   compressAgentWorkspaceContext,
+  type AgentDefinition,
   type AgentAttachmentPayload,
+  type AgentChatStreamMessage,
+  type AgentChatStreamPayload,
+  type LocalAgentConnection,
   type ToolMetadata,
   type WorkspaceContextCompressionResponse,
 } from "../../tasks/api";
@@ -61,6 +72,7 @@ import { AUTO_COMPRESSION_RATIO_DEFAULT } from "../lib/contextTokens";
 import { estimateTextTokens } from "../lib/contextTruncation";
 import { planApprovalGate } from "../lib/planApprovalGate";
 import type { SlashCommand } from "../lib/slashCommands";
+import { extractToolMentions } from "../lib/toolMentions";
 import type { InspectorSection, WorkspaceMode } from "../lib/types";
 import {
   ChatComposer,
@@ -73,13 +85,55 @@ import { PlanApprovalPanel } from "./PlanApprovalPanel";
 import { ContextRing } from "./ContextRing";
 import { ContextSummaryManager } from "./ContextSummaryManager";
 import { ContextMaxTokensSlider } from "./ContextMaxTokensSlider";
+import { editFormShouldSubmit } from "./MessageEditForm";
 import { WorkspaceShellBar } from "./WorkspaceShellBar";
 
 const MAX_ATTACHMENT_TEXT_BYTES = 120_000;
+const MAX_FILE_LIST_ENTRIES = 32;
+
+type DesktopFileEntry = {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  sizeBytes: number;
+  modifiedAt: string;
+  depth: number;
+  mimeType: string | null;
+};
+
+type DesktopFileWatchState = {
+  rootPath: string | null;
+  watching: boolean;
+};
+
+export type LocalAgentSubmitContext = {
+  workspace_mode: WorkspaceMode;
+  mode: AgentChatStreamPayload["mode"];
+  model_provider?: string | null;
+  model_name?: string | null;
+  resume_of_client_message_id?: string | null;
+  resume_of_user_message_id?: string | null;
+  messages: AgentChatStreamMessage[];
+  active_leaf_id?: string | null;
+  active_branch_id?: string | null;
+  pinned_node_ids: string[];
+  context_window_turns: number;
+  tool_mentions: NonNullable<AgentChatStreamPayload["tool_mentions"]>;
+  attachment_names: string[];
+  attachments: AgentAttachmentPayload[];
+  context_max_tokens?: number;
+  compressed_context: AgentChatStreamPayload["compressed_context"];
+};
 
 export type ChatSurfaceProps = {
   agentId: string;
   agentName: string;
+  workspaceId?: string;
+  workspaceOptions?: Array<{
+    value: string;
+    label: string;
+    description?: string;
+  }>;
   modelLabel: string;
   modelLabelIsFallback: boolean;
   workspaceMode: WorkspaceMode;
@@ -87,9 +141,14 @@ export type ChatSurfaceProps = {
   activeRunId: string | null;
   runStatus?: string;
   runCreatedAt?: string;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
   pendingApprovalCount: number;
   metadataUsage: UsageSummary;
   onOpenInspector: (section: InspectorSection) => void;
+  onWorkspaceChange?: (workspaceId: string) => void;
   stream: ChatStreamController;
 
   tools: ToolMetadata[];
@@ -110,20 +169,47 @@ export type ChatSurfaceProps = {
   jumpTarget?: { nodeId: string; seq: number } | null;
   onCreateTeamFromConversation?: () => void;
   isCreatingTeam?: boolean;
+  agents?: AgentDefinition[];
+  agentsLoading?: boolean;
+  onAgentChange?: (agentId: string) => void;
+  localAgentEnabled?: boolean;
+  localAgentConnections?: LocalAgentConnection[];
+  selectedLocalConnectionId?: string | null;
+  onLocalAgentTargetChange?: (connectionId: string) => void;
+  localAgentControl?: ReactNode;
+  localAgentPending?: boolean;
+  localAgentActiveNode?: ConversationNode | null;
+  localAgentControlPending?: boolean;
+  onLocalAgentSubmit?: (
+    goal: string,
+    context: LocalAgentSubmitContext,
+  ) => Promise<boolean | void> | boolean | void;
+  onLocalAgentPause?: (nodeId: string) => Promise<void> | void;
+  onLocalAgentResume?: (
+    nodeId: string,
+    goal: string,
+    context: LocalAgentSubmitContext,
+  ) => Promise<boolean | void> | boolean | void;
+  desktopPanel?: "files" | "approvals" | null;
+  desktopPanelRequestKey?: string;
 };
 
 export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const {
     agentId,
     agentName,
+    workspaceId,
+    workspaceOptions = [],
     modelLabel,
     workspaceMode,
     onWorkspaceModeChange,
     activeRunId,
     runStatus,
     runCreatedAt,
+    runReturnTarget,
     metadataUsage,
     onOpenInspector,
+    onWorkspaceChange,
     stream,
     tools,
     providers,
@@ -135,10 +221,25 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     onOpenShortcut,
     onCreateTeamFromConversation,
     isCreatingTeam = false,
+    agents = [],
+    agentsLoading = false,
+    onAgentChange,
+    localAgentEnabled = false,
+    localAgentConnections = [],
+    selectedLocalConnectionId = null,
+    onLocalAgentTargetChange,
+    localAgentControl = null,
+    localAgentPending = false,
+    localAgentActiveNode = null,
+    localAgentControlPending = false,
+    onLocalAgentSubmit,
+    onLocalAgentPause,
+    onLocalAgentResume,
+    desktopPanel = null,
+    desktopPanelRequestKey = "",
   } = props;
 
   const { text } = useI18n();
-  const { confirm, confirmDialog } = useConfirmDialog();
   const draft = useWorkspaceStore((state) => state.draft);
   const setDraft = useWorkspaceStore((state) => state.setDraft);
   const nodesById = useWorkspaceStore((state) => state.nodesById);
@@ -154,6 +255,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const setContextCompression = useWorkspaceStore((state) => state.setContextCompression);
   const clearContextCompression = useWorkspaceStore((state) => state.clearContextCompression);
   const currentConversationId = useWorkspaceStore((state) => state.currentConversationId);
+  const workspaceConfig = useWorkspaceStore((state) => {
+    const workspaceKey = workspaceId ?? state.activeWorkspaceId;
+    return state.workspaceRegistry[workspaceKey]?.config ?? null;
+  });
   const dismissedPlanNodeIds = useWorkspaceStore((state) => state.dismissedPlanNodeIds);
   const dismissPlanNode = useWorkspaceStore((state) => state.dismissPlanNode);
   const activeStream = useWorkspaceStore((state) => state.activeStream);
@@ -162,6 +267,19 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     () => buildActivePath(nodesById, activeLeafId, rootNodeId),
     [nodesById, activeLeafId, rootNodeId],
   );
+  const activeGoalNode = useMemo(
+    () => findActiveGoalNode(activePath),
+    [activePath],
+  );
+  const activeLocalAgentUserNode = useMemo(() => {
+    if (localAgentActiveNode === null) return null;
+    const parent =
+      localAgentActiveNode.parent_id !== null
+        ? nodesById[localAgentActiveNode.parent_id]
+        : undefined;
+    if (parent?.role === "user") return parent;
+    return findPrevUserNode(activePath, localAgentActiveNode.id);
+  }, [activePath, localAgentActiveNode, nodesById]);
 
   // Raw context usage is the full visible history. Effective usage mirrors the
   // next prompt after semantic compression: summary + pinned/uncovered raw
@@ -252,12 +370,28 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   );
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [goalEditOpen, setGoalEditOpen] = useState(false);
   const [planSubmitting, setPlanSubmitting] = useState(false);
-  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | "mcp" | null>(null);
+  const [bottomPanel, setBottomPanel] = useState<"tools" | "model" | "mcp" | "files" | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [desktopFileState, setDesktopFileState] = useState<DesktopFileWatchState>({
+    rootPath: workspaceConfig?.localFileRootPath ?? null,
+    watching: false,
+  });
+  const [desktopFileBridgeReady, setDesktopFileBridgeReady] = useState(
+    !window.desktopApi?.file?.getWorkspaceRoot,
+  );
+  const [desktopFiles, setDesktopFiles] = useState<DesktopFileEntry[]>([]);
+  const [selectedDesktopFilePath, setSelectedDesktopFilePath] = useState<string | null>(null);
+  const [selectedDesktopFileContent, setSelectedDesktopFileContent] = useState("");
+  const [desktopFileSaving, setDesktopFileSaving] = useState(false);
+  const [desktopFileLoading, setDesktopFileLoading] = useState(false);
+  const [desktopFileNotice, setDesktopFileNotice] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const desktopFileInputRef = useRef<HTMLInputElement | null>(null);
+  const handledDesktopPanelRequestRef = useRef<string | null>(null);
   const chatListRef = useRef<ChatMessageListHandle | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
   const compressionInFlightRef = useRef<string | null>(null);
@@ -276,6 +410,75 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [],
   );
 
+  useEffect(() => {
+    if (!activeGoalNode) setGoalEditOpen(false);
+  }, [activeGoalNode]);
+
+  useEffect(() => {
+    if (workspaceConfig?.localFileRootPath === undefined) return;
+    setDesktopFileState((current) =>
+      current.rootPath === workspaceConfig.localFileRootPath
+        ? current
+        : {
+            ...current,
+            rootPath: workspaceConfig.localFileRootPath,
+          },
+    );
+  }, [workspaceConfig?.localFileRootPath]);
+
+  useEffect(() => {
+    const api = window.desktopApi?.file;
+    if (!api?.getWorkspaceRoot) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let next = await api.getWorkspaceRoot?.();
+        if (!next || cancelled) return;
+        if (
+          next.rootPath === null &&
+          workspaceConfig?.localFileRootPath != null
+        ) {
+          next = api.setWorkspaceRoot
+            ? await api.setWorkspaceRoot(workspaceConfig.localFileRootPath)
+            : { rootPath: workspaceConfig.localFileRootPath, watching: false };
+        }
+        if (cancelled) return;
+        setDesktopFileState(next);
+        if (next.rootPath !== null && next.rootPath !== workspaceConfig?.localFileRootPath) {
+          useWorkspaceStore
+            .getState()
+            .updateWorkspaceConfig(workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId, {
+              localFileRootPath: next.rootPath,
+            });
+        }
+      } catch {
+        // The file panel remains usable for a manual directory selection.
+      } finally {
+        if (!cancelled) setDesktopFileBridgeReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceConfig?.localFileRootPath, workspaceId]);
+
+  useEffect(() => {
+    const api = window.desktopApi?.file;
+    if (!api?.onChange) return;
+    return api.onChange((event) => {
+      setDesktopFileState((current) => ({
+        ...current,
+        rootPath: event.rootPath,
+      }));
+      if (event.kind === "file") {
+        void refreshDesktopFiles(event.rootPath);
+      }
+      if (selectedDesktopFilePath === event.path) {
+        void loadDesktopFile(event.path);
+      }
+    });
+  }, [selectedDesktopFilePath]);
+
   const attachmentNames = useMemo(
     () => attachments.map((attachment) => attachment.name),
     [attachments],
@@ -293,10 +496,58 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     [attachments],
   );
 
+  const buildLocalAgentSubmitContext = useCallback(
+    (goal: string): LocalAgentSubmitContext => {
+      const store = useWorkspaceStore.getState();
+      const path = store.activePath();
+      return {
+        workspace_mode: workspaceMode,
+        mode: workspaceMode,
+        model_provider: selectedProviderId,
+        model_name: selectedModelId,
+        messages: serializeLocalAgentMessages(path),
+        active_leaf_id: store.activeLeafId,
+        active_branch_id: store.activeLeafId,
+        pinned_node_ids: store.pinnedNodeIds,
+        context_window_turns: store.contextWindowTurns,
+        tool_mentions: extractToolMentions(goal, tools),
+        attachment_names: attachmentNames,
+        attachments: attachmentPayloads,
+        context_max_tokens: store.contextMaxTokens,
+        compressed_context:
+          activeCompression === null
+            ? null
+            : {
+                summary: activeCompression.summary,
+                branch_id: store.activeLeafId,
+                coverage_node_ids: activeCompression.coverageNodeIds,
+                coverage_path_hash: activeCompression.coveragePathHash,
+                summary_schema_version: SUMMARY_SCHEMA_VERSION,
+                compression_prompt_version: COMPRESSION_PROMPT_VERSION,
+                compressor_provider: activeCompression.compressorProvider,
+                compressor_model: activeCompression.compressorModel,
+                estimated_original_tokens: activeCompression.estimatedOriginalTokens,
+                estimated_summary_tokens: activeCompression.estimatedSummaryTokens,
+                cache_status: activeCompression.cacheStatus ?? null,
+              },
+      };
+    },
+    [
+      activeCompression,
+      attachmentNames,
+      attachmentPayloads,
+      selectedModelId,
+      selectedProviderId,
+      tools,
+      workspaceMode,
+    ],
+  );
+
   const commitCompressionResponse = useCallback(
     (
       branchKey: string,
       response: WorkspaceContextCompressionResponse,
+      requested: { providerId: string | null; modelId: string | null },
     ): ContextCompressionSummary => {
       const summary: ContextCompressionSummary = {
         branchKey,
@@ -306,8 +557,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         lastCoveredNodeId: response.last_covered_node_id,
         summarySchemaVersion: response.summary_schema_version,
         compressionPromptVersion: response.compression_prompt_version,
-        compressorProvider: response.compressor_provider,
-        compressorModel: response.compressor_model,
+        compressorProvider: normalizeModelId(requested.providerId),
+        compressorModel: normalizeModelId(requested.modelId),
         estimatedOriginalTokens: response.estimated_original_tokens,
         estimatedSummaryTokens: response.estimated_summary_tokens,
         estimatedUncoveredTokens: response.estimated_uncovered_tokens,
@@ -403,7 +654,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
           compressor_provider: existing?.compressorProvider ?? selectedProviderId,
           compressor_model: existing?.compressorModel ?? selectedModelId,
         });
-        const summary = commitCompressionResponse(branchKey, response);
+        const summary = commitCompressionResponse(branchKey, response, {
+          providerId: selectedProviderId,
+          modelId: selectedModelId,
+        });
         if (reason === "manual") {
           notifyFeedback({
             tone: "success",
@@ -509,22 +763,10 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   ]);
 
   // ─── Composer callbacks ────────────────────────────────────────────────
-  const handleSubmit = useCallback(async (): Promise<void> => {
+  const handleSubmit = useCallback(async (): Promise<boolean | void> => {
     const goal = draft.trim();
-    if (goal.length === 0) return;
-    if (stream.isStreaming) return;
-
-    if (workspaceMode === "plan" || workspaceMode === "goal") {
-      const confirmed = await confirm({
-        title: workspaceMode === "goal" ? "进入追求目标模式" : "创建规划后执行运行",
-        description:
-          workspaceMode === "goal"
-            ? "这会进入追求目标模式，并立即创建可执行运行。"
-            : "这会创建规划后执行运行，并立即触发可执行执行链路。",
-        confirmText: workspaceMode === "goal" ? "确认进入" : "确认创建",
-      });
-      if (!confirmed) return;
-    }
+    if (goal.length === 0) return false;
+    if (stream.isStreaming || localAgentPending) return false;
 
     if (contextUsageRatio >= autoCompressionRatio) {
       const usable = isCompressionSummaryUsable({
@@ -541,6 +783,16 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     }
 
     chatListRef.current?.notifyUserSubmit();
+    if (onLocalAgentSubmit !== undefined) {
+      const sent = await onLocalAgentSubmit(goal, buildLocalAgentSubmitContext(goal));
+      if (sent === false) return false;
+      setAttachments((current) => {
+        for (const attachment of current) revokeAttachmentPreview(attachment);
+        return [];
+      });
+      return true;
+    }
+
     void stream.start({
       goal,
       mode: workspaceMode,
@@ -551,16 +803,20 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       for (const attachment of current) revokeAttachmentPreview(attachment);
       return [];
     });
+    return true;
   }, [
     activeCompression,
     activePath,
     attachmentNames,
     attachmentPayloads,
     autoCompressionRatio,
+    buildLocalAgentSubmitContext,
     compressionBranchKey,
     compressCurrentContext,
     contextUsageRatio,
     draft,
+    localAgentPending,
+    onLocalAgentSubmit,
     pinnedNodeIds,
     selectedModelId,
     selectedProviderId,
@@ -573,8 +829,139 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
     stream.pause();
   }, [stream]);
 
+  const handleLocalAgentPause = useCallback((): void => {
+    if (localAgentActiveNode === null || onLocalAgentPause === undefined) return;
+    void onLocalAgentPause(localAgentActiveNode.id);
+  }, [localAgentActiveNode, onLocalAgentPause]);
+
+  const handleLocalAgentResume = useCallback((): void => {
+    if (
+      localAgentActiveNode === null ||
+      activeLocalAgentUserNode === null ||
+      onLocalAgentResume === undefined
+    ) {
+      return;
+    }
+    const goal = activeLocalAgentUserNode.content.trim();
+    if (!goal) return;
+    const context = buildLocalAgentSubmitContext(goal);
+    const sourceClientMessageId =
+      activeLocalAgentUserNode.metadata.orchestration?.client_message_id;
+    const resumedContext: LocalAgentSubmitContext = {
+      ...context,
+      messages: context.messages.filter((message) => message.id !== localAgentActiveNode.id),
+      active_leaf_id: activeLocalAgentUserNode.id,
+      active_branch_id: activeLocalAgentUserNode.id,
+      compressed_context:
+        context.compressed_context?.branch_id === activeLocalAgentUserNode.id
+          ? context.compressed_context
+          : null,
+      resume_of_client_message_id:
+        typeof sourceClientMessageId === "string" ? sourceClientMessageId : null,
+      resume_of_user_message_id: activeLocalAgentUserNode.id,
+    };
+    void onLocalAgentResume(localAgentActiveNode.id, goal, resumedContext);
+  }, [
+    activeLocalAgentUserNode,
+    buildLocalAgentSubmitContext,
+    localAgentActiveNode,
+    onLocalAgentResume,
+  ]);
+
+  const handleResumeGoal = useCallback((): void => {
+    if (!activeGoalNode) return;
+    setGoalEditOpen(false);
+    void stream.resume(activeGoalNode.id);
+  }, [activeGoalNode, stream]);
+
+  const handleEditGoal = useCallback((): void => {
+    if (!activeGoalNode) return;
+    if (stream.isStreaming && activeStream?.node_id === activeGoalNode.id) {
+      stream.pause();
+    }
+    setGoalEditOpen(true);
+  }, [activeGoalNode, activeStream, stream]);
+
+  const handleCancelGoalEdit = useCallback((): void => {
+    setGoalEditOpen(false);
+  }, []);
+
+  const handleSaveGoalEdit = useCallback(
+    async (nextGoal: string): Promise<void> => {
+      if (!activeGoalNode) return;
+      const trimmed = nextGoal.trim();
+      if (trimmed.length === 0) return;
+      const storeState = useWorkspaceStore.getState();
+      const previousGoal =
+        activeGoalNode.metadata.goal_text || findPrevUserContent(activePath, activeGoalNode.id);
+      const previousUserNode = findPrevUserNode(activePath, activeGoalNode.id);
+
+      if (stream.isStreaming && activeStream?.node_id === activeGoalNode.id) {
+        stream.pause();
+      }
+
+      if (previousUserNode) {
+        storeState.updateNode(previousUserNode.id, {
+          content: trimmed,
+        });
+      }
+
+      storeState.updateNode(activeGoalNode.id, {
+        state: "paused",
+        metadata: {
+          ...activeGoalNode.metadata,
+          workspace_mode: "goal",
+          goal_status: "paused",
+          goal_text: trimmed,
+          goal_phase: "paused",
+          goal_message: text("目标已更新，准备继续追踪。", "Goal updated and ready to resume."),
+          goal_cleared: false,
+        },
+      });
+
+      setGoalEditOpen(false);
+      onWorkspaceModeChange("goal");
+      void stream.resume(activeGoalNode.id);
+
+      if (previousGoal !== trimmed) {
+        notifyFeedback({
+          tone: "success",
+          title: text("目标已更新", "Goal updated"),
+          description: text(
+            "已基于新目标继续追踪执行。",
+            "The pursuit has resumed from the updated goal.",
+          ),
+        });
+      }
+    },
+    [activeGoalNode, activePath, activeStream, onWorkspaceModeChange, stream, text],
+  );
+
+  const handleClearGoal = useCallback((): void => {
+    if (!activeGoalNode) return;
+    setGoalEditOpen(false);
+    if (stream.isStreaming && activeStream?.node_id === activeGoalNode.id) {
+      stream.pause();
+    }
+    useWorkspaceStore.getState().updateNode(activeGoalNode.id, {
+      metadata: {
+        ...activeGoalNode.metadata,
+        goal_status: "cancelled",
+        goal_message: text("目标追踪已清除。", "Goal tracking cleared."),
+        goal_cleared: true,
+      },
+    });
+  }, [activeGoalNode, activeStream, stream, text]);
+
   const handleRetry = useCallback(
     (nodeId: string): void => {
+      const node = useWorkspaceStore.getState().nodesById[nodeId];
+      if (
+        node?.metadata.retry_disabled === true ||
+        node?.metadata.orchestration?.source === "local_agent"
+      ) {
+        return;
+      }
       void stream.retry(nodeId);
     },
     [stream],
@@ -590,6 +977,159 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   const handleAddFiles = useCallback((): void => {
     fileInputRef.current?.click();
   }, []);
+
+  const refreshDesktopFiles = useCallback(async (path?: string | null): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.listFiles) return;
+    const rootPath = path ?? desktopFileState.rootPath;
+    if (rootPath === null) return;
+    setDesktopFileLoading(true);
+    try {
+      const result = await api.listFiles({
+        path: rootPath,
+        maxDepth: 2,
+        maxEntries: MAX_FILE_LIST_ENTRIES,
+      });
+      setDesktopFiles(result.entries);
+      setDesktopFileState((current) => ({
+        ...current,
+        rootPath: result.rootPath ?? current.rootPath,
+      }));
+      setDesktopFileNotice(
+        result.truncated
+          ? text("文件列表已截断", "File list truncated")
+          : text("文件列表已刷新", "File list refreshed"),
+      );
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件列表刷新失败", "Failed to refresh files"));
+    } finally {
+      setDesktopFileLoading(false);
+    }
+  }, [desktopFileState.rootPath, text]);
+
+  const loadDesktopFile = useCallback(async (path: string): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.readFile) return;
+    setDesktopFileLoading(true);
+    try {
+      const result = await api.readFile(path);
+      setSelectedDesktopFilePath(result.path);
+      setSelectedDesktopFileContent(result.content);
+      setDesktopFileNotice(
+        result.truncated
+          ? text("文件内容已截断", "File content truncated")
+          : text("文件已打开", "File opened"),
+      );
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件打开失败", "Failed to open file"));
+    } finally {
+      setDesktopFileLoading(false);
+    }
+  }, [text]);
+
+  const handleSelectWorkspaceRoot = useCallback(async (): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.selectWorkspaceRoot) return;
+    try {
+      const next = await api.selectWorkspaceRoot();
+      if (next === null) return;
+      setDesktopFileState(next);
+      useWorkspaceStore.getState().updateWorkspaceConfig(workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId, {
+        localFileRootPath: next.rootPath,
+      });
+      setDesktopFileNotice(
+        next.rootPath === null
+          ? text("工作区目录已清除", "Workspace root cleared")
+          : text("工作区目录已选择", "Workspace root selected"),
+      );
+      await refreshDesktopFiles(next.rootPath);
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("选择工作区目录失败", "Failed to select workspace root"));
+    }
+  }, [refreshDesktopFiles, text, workspaceId]);
+
+  const handleToggleDesktopWatch = useCallback(async (): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api) return;
+    try {
+      const next = desktopFileState.watching
+        ? await api.stopWatch?.()
+        : await api.startWatch?.();
+      if (next) {
+        setDesktopFileState(next);
+        setDesktopFileNotice(
+          next.watching
+            ? text("文件监视已开启", "File watch enabled")
+            : text("文件监视已关闭", "File watch disabled"),
+        );
+      }
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件监视切换失败", "Failed to toggle file watch"));
+    }
+  }, [desktopFileState.watching, text]);
+
+  const handleSaveDesktopFile = useCallback(async (): Promise<void> => {
+    const api = window.desktopApi?.file;
+    if (!api?.writeFile || !selectedDesktopFilePath) return;
+    setDesktopFileSaving(true);
+    try {
+      await api.writeFile(selectedDesktopFilePath, selectedDesktopFileContent);
+      setDesktopFileNotice(text("文件已保存", "File saved"));
+      await refreshDesktopFiles(desktopFileState.rootPath);
+    } catch (error) {
+      setDesktopFileNotice(error instanceof Error ? error.message : text("文件保存失败", "Failed to save file"));
+    } finally {
+      setDesktopFileSaving(false);
+    }
+  }, [desktopFileState.rootPath, refreshDesktopFiles, selectedDesktopFileContent, selectedDesktopFilePath, text]);
+
+  useEffect(() => {
+    if (desktopPanel === "approvals") {
+      setBottomPanel((current) => (current === "files" ? null : current));
+      return;
+    }
+    if (desktopPanel !== "files") return;
+    const requestId = `${desktopPanel}:${desktopPanelRequestKey}`;
+    setBottomPanel("files");
+    if (
+      !desktopFileBridgeReady ||
+      desktopFileState.rootPath === null ||
+      handledDesktopPanelRequestRef.current === requestId
+    ) {
+      return;
+    }
+    handledDesktopPanelRequestRef.current = requestId;
+    void refreshDesktopFiles(desktopFileState.rootPath);
+  }, [desktopFileBridgeReady, desktopFileState.rootPath, desktopPanel, desktopPanelRequestKey, refreshDesktopFiles]);
+
+  const handleFileDrop = useCallback((event: ReactDragEvent<HTMLDivElement>): void => {
+    const dropped = Array.from(event.dataTransfer.files ?? []);
+    if (dropped.length === 0) return;
+    event.preventDefault();
+    void (async () => {
+      const prepared = await Promise.all(dropped.map(toComposerAttachment));
+      setAttachments((current) => {
+        const next = [...current];
+        const existingKeys = new Set(current.map(attachmentKey));
+        for (const attachment of prepared) {
+          const key = attachmentKey(attachment);
+          if (existingKeys.has(key) || next.length >= 12) {
+            revokeAttachmentPreview(attachment);
+            continue;
+          }
+          next.push(attachment);
+          existingKeys.add(key);
+        }
+        return next;
+      });
+    })();
+  }, []);
+
+  useEffect(() => {
+    const api = window.desktopApi?.file;
+    if (!api?.setWorkspaceRoot || desktopFileState.rootPath === workspaceConfig?.localFileRootPath) return;
+    void api.setWorkspaceRoot(desktopFileState.rootPath).catch(() => undefined);
+  }, [desktopFileState.rootPath, workspaceConfig?.localFileRootPath]);
 
   const handleFilesSelected = useCallback(
     (event: ChangeEvent<HTMLInputElement>): void => {
@@ -942,6 +1482,9 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
   return (
     <div className="flex h-full w-full min-w-0 flex-col bg-white">
       <WorkspaceShellBar
+        workspaceId={workspaceId}
+        workspaceOptions={workspaceOptions}
+        onWorkspaceChange={onWorkspaceChange}
         agentId={agentId}
         agentName={agentName}
         tools={tools}
@@ -956,6 +1499,15 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         onOpenInspector={onOpenInspector}
         onCreateTeamFromConversation={onCreateTeamFromConversation}
         isCreatingTeam={isCreatingTeam}
+        agents={agents}
+        agentsLoading={agentsLoading}
+        onAgentChange={onAgentChange}
+        localAgentEnabled={localAgentEnabled}
+        localAgentConnections={localAgentConnections}
+        selectedLocalConnectionId={selectedLocalConnectionId}
+        onLocalAgentTargetChange={onLocalAgentTargetChange}
+        localAgentControl={localAgentControl}
+        runReturnTarget={runReturnTarget}
         summaryManager={
           <ContextSummaryManager
             summary={activeCompression}
@@ -979,6 +1531,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
         activeRunId={activeRunId}
         runStatus={runStatus}
         runCreatedAt={runCreatedAt}
+        runReturnTarget={runReturnTarget}
         editingNodeId={editingNodeId}
         onStartEdit={handleStartEdit}
         onCancelEdit={handleCancelEdit}
@@ -993,7 +1546,12 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
       />
 
       <footer className="sticky bottom-0 z-10 bg-gradient-to-t from-white via-white/95 to-white/0 px-3 pb-5 pt-6">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+        <div
+          data-testid="chat-surface-dropzone"
+          className="mx-auto flex w-full max-w-3xl flex-col gap-2"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={handleFileDrop}
+        >
           {planGate.visible && planGate.planNode && (
             <PlanApprovalPanel
               planNode={planGate.planNode}
@@ -1016,6 +1574,27 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               <span>{text("正在压缩上下文...", "Compressing context...")}</span>
             </div>
           )}
+          {activeGoalNode && (
+            <GoalProgressRow
+              node={activeGoalNode}
+              isActiveStream={stream.isStreaming && activeStream?.node_id === activeGoalNode.id}
+              onPause={handlePause}
+              onResume={handleResumeGoal}
+              onEdit={handleEditGoal}
+              onClear={handleClearGoal}
+              text={text}
+            />
+          )}
+          {localAgentActiveNode && activeLocalAgentUserNode && (
+            <LocalAgentProgressRow
+              node={localAgentActiveNode}
+              userNode={activeLocalAgentUserNode}
+              pending={localAgentControlPending}
+              onPause={handleLocalAgentPause}
+              onResume={handleLocalAgentResume}
+              text={text}
+            />
+          )}
           <div className="relative">
             <BottomToolsPopover
               open={bottomPanel !== null}
@@ -1024,6 +1603,8 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               title={
                 bottomPanel === "model"
                   ? text("切换模型", "Switch model")
+                  : bottomPanel === "files"
+                    ? text("工作区文件", "Workspace files")
                   : bottomPanel === "mcp"
                     ? text("可用 MCP", "Available MCP")
                   : text("输入设置", "Composer settings")
@@ -1041,21 +1622,70 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
                   modelLabelFallback={modelLabel}
                   text={text}
                 />
-              ) : (
-                <ComposerSettingsPanel
-                  workspaceMode={workspaceMode}
-                  onWorkspaceModeChange={onWorkspaceModeChange}
-                  attachmentNames={attachmentNames}
-                  onAddFiles={handleAddFiles}
-                  tools={tools}
-                  onInsertMention={handleShellToolMention}
+              ) : bottomPanel === "files" ? (
+                <WorkspaceFileBridgePanel
+                  available={Boolean(window.desktopApi?.file)}
+                  rootPath={desktopFileState.rootPath}
+                  watching={desktopFileState.watching}
+                  loading={desktopFileLoading}
+                  saving={desktopFileSaving}
+                  files={desktopFiles}
+                  notice={desktopFileNotice}
+                  selectedPath={selectedDesktopFilePath}
+                  selectedContent={selectedDesktopFileContent}
+                  onSelectRoot={handleSelectWorkspaceRoot}
+                  onToggleWatch={handleToggleDesktopWatch}
+                  onRefresh={() => {
+                    void refreshDesktopFiles();
+                  }}
+                  onSelectFile={(path) => {
+                    void loadDesktopFile(path);
+                  }}
+                  onOpenFilePicker={() => desktopFileInputRef.current?.click()}
+                  onSelectedContentChange={setSelectedDesktopFileContent}
+                  onSave={handleSaveDesktopFile}
                   text={text}
-                  contextMaxTokens={contextMaxTokens}
-                  onContextMaxTokensChange={setContextMaxTokens}
-                  autoCompressionRatio={autoCompressionRatio}
-                  onAutoCompressionRatioChange={setAutoCompressionRatio}
-                  pluginsInitiallyOpen={bottomPanel === "mcp"}
                 />
+              ) : (
+                <>
+                  <ComposerSettingsPanel
+                    workspaceMode={workspaceMode}
+                    onWorkspaceModeChange={onWorkspaceModeChange}
+                    attachmentNames={attachmentNames}
+                    onAddFiles={handleAddFiles}
+                    tools={tools}
+                    onInsertMention={handleShellToolMention}
+                    text={text}
+                    contextMaxTokens={contextMaxTokens}
+                    onContextMaxTokensChange={setContextMaxTokens}
+                    autoCompressionRatio={autoCompressionRatio}
+                    onAutoCompressionRatioChange={setAutoCompressionRatio}
+                    pluginsInitiallyOpen={bottomPanel === "mcp"}
+                  />
+                  <WorkspaceFileBridgePanel
+                    available={Boolean(window.desktopApi?.file)}
+                    rootPath={desktopFileState.rootPath}
+                    watching={desktopFileState.watching}
+                    loading={desktopFileLoading}
+                    saving={desktopFileSaving}
+                    files={desktopFiles}
+                    notice={desktopFileNotice}
+                    selectedPath={selectedDesktopFilePath}
+                    selectedContent={selectedDesktopFileContent}
+                    onSelectRoot={handleSelectWorkspaceRoot}
+                    onToggleWatch={handleToggleDesktopWatch}
+                    onRefresh={() => {
+                      void refreshDesktopFiles();
+                    }}
+                    onSelectFile={(path) => {
+                      void loadDesktopFile(path);
+                    }}
+                    onOpenFilePicker={() => desktopFileInputRef.current?.click()}
+                    onSelectedContentChange={setSelectedDesktopFileContent}
+                    onSave={handleSaveDesktopFile}
+                    text={text}
+                  />
+                </>
               )}
             </BottomToolsPopover>
             <ChatComposer
@@ -1066,6 +1696,11 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               onPause={handlePause}
               isStreaming={stream.isStreaming}
               mode={workspaceMode}
+              streamingLabel={
+                activeGoalNode && activeStream?.node_id === activeGoalNode.id
+                  ? text("暂停目标", "Pause goal")
+                  : undefined
+              }
               onChangeMode={onWorkspaceModeChange}
               placeholder={placeholder}
               optionsOpen={bottomPanel !== null}
@@ -1100,7 +1735,7 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
               }
               attachments={attachments}
               onRemoveAttachment={handleRemoveAttachment}
-              isEditLocked={editingNodeId !== null}
+              isEditLocked={editingNodeId !== null || goalEditOpen || localAgentPending}
               onSlashDispatch={handleSlashDispatch}
             />
           </div>
@@ -1112,6 +1747,35 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             className="hidden"
             onChange={handleFilesSelected}
           />
+          <input
+            ref={desktopFileInputRef}
+            type="file"
+            multiple
+            aria-label={text("选择本地文件", "Select local files")}
+            className="hidden"
+            onChange={(event) => {
+              const selected = Array.from(event.currentTarget.files ?? []);
+              if (selected.length === 0) return;
+              void (async () => {
+                const prepared = await Promise.all(selected.map(toComposerAttachment));
+                setAttachments((current) => {
+                  const next = [...current];
+                  const existingKeys = new Set(current.map(attachmentKey));
+                  for (const attachment of prepared) {
+                    const key = attachmentKey(attachment);
+                    if (existingKeys.has(key) || next.length >= 12) {
+                      revokeAttachmentPreview(attachment);
+                      continue;
+                    }
+                    next.push(attachment);
+                    existingKeys.add(key);
+                  }
+                  return next;
+                });
+              })();
+              event.currentTarget.value = "";
+            }}
+          />
         </div>
         <p className="sr-only" aria-live="polite">
           {stream.isStreaming
@@ -1119,7 +1783,14 @@ export function ChatSurface(props: ChatSurfaceProps): JSX.Element {
             : text(`工作台 ${agentId}`, `Workspace for ${agentId}`)}
         </p>
       </footer>
-      {confirmDialog}
+      {goalEditOpen && activeGoalNode ? (
+        <GoalEditDialog
+          goal={activeGoalNode.metadata.goal_text || activeGoalNode.content || ""}
+          onCancel={handleCancelGoalEdit}
+          onSave={handleSaveGoalEdit}
+          text={text}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1206,7 +1877,7 @@ function BottomToolsPopover({
       aria-modal="false"
       aria-label={title}
       className={cn(
-        "absolute bottom-[58px] left-4 right-4 z-30 max-h-[min(70vh,480px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl",
+        "absolute bottom-[58px] left-4 right-4 z-30 max-h-[min(70vh,480px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-none",
         align === "right"
           ? "sm:left-auto sm:right-4 sm:w-[280px]"
           : "sm:left-4 sm:right-auto sm:w-[280px]",
@@ -1551,7 +2222,16 @@ function ComposerMetadataRow({
 }: {
   usage: UsageSummary;
   text: (zh: string, en: string) => string;
-}): JSX.Element {
+}): JSX.Element | null {
+  const isEmpty =
+    usage.inputTokens === 0 &&
+    usage.outputTokens === 0 &&
+    usage.modelCalls === 0 &&
+    usage.toolCalls === 0 &&
+    usage.durationMs === 0;
+
+  if (isEmpty) return null;
+
   const items = [
     [text("输入", "In"), formatMetricNumber(usage.inputTokens)],
     [text("输出", "Out"), formatMetricNumber(usage.outputTokens)],
@@ -1574,6 +2254,532 @@ function ComposerMetadataRow({
       ))}
     </div>
   );
+}
+
+function WorkspaceFileBridgePanel({
+  available,
+  rootPath,
+  watching,
+  loading,
+  saving,
+  files,
+  notice,
+  selectedPath,
+  selectedContent,
+  onSelectRoot,
+  onToggleWatch,
+  onRefresh,
+  onSelectFile,
+  onOpenFilePicker,
+  onSelectedContentChange,
+  onSave,
+  text,
+}: {
+  available: boolean;
+  rootPath: string | null;
+  watching: boolean;
+  loading: boolean;
+  saving: boolean;
+  files: DesktopFileEntry[];
+  notice: string | null;
+  selectedPath: string | null;
+  selectedContent: string;
+  onSelectRoot: () => void;
+  onToggleWatch: () => void;
+  onRefresh: () => void;
+  onSelectFile: (path: string) => void;
+  onOpenFilePicker: () => void;
+  onSelectedContentChange: (value: string) => void;
+  onSave: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const hasRoot = rootPath !== null;
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-3 text-xs text-slate-800">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-slate-900">
+            {text("文件桥接", "File bridge")}
+          </div>
+          <div className="mt-0.5 truncate text-[11px] text-slate-500">
+            {hasRoot ? rootPath : text("未选择工作区目录", "No workspace root selected")}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onSelectRoot}
+            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+          >
+            {text("选择目录", "Choose root")}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleWatch}
+            disabled={!available || !hasRoot}
+            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {watching ? text("停止监视", "Stop watch") : text("开始监视", "Start watch")}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={!available || !hasRoot || loading}
+          className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {loading ? text("刷新中", "Refreshing") : text("刷新文件", "Refresh files")}
+        </button>
+        <button
+          type="button"
+          onClick={onOpenFilePicker}
+          className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-50"
+        >
+          {text("添加到输入框", "Add to composer")}
+        </button>
+        {notice ? <span className="text-[11px] text-slate-500">{notice}</span> : null}
+      </div>
+
+      <div className="mt-3 grid gap-2">
+        <div className="max-h-36 overflow-y-auto rounded-xl border border-slate-100">
+          {files.length === 0 ? (
+            <div className="px-2 py-2 text-[11px] text-slate-500">
+              {text("暂无文件列表", "No files listed")}
+            </div>
+          ) : (
+            files.map((entry) => (
+              <button
+                key={entry.path}
+                type="button"
+                onClick={() => onSelectFile(entry.path)}
+                className={[
+                  "block w-full border-b border-slate-100 px-2 py-1.5 text-left text-[11px] last:border-b-0",
+                  selectedPath === entry.path ? "bg-slate-50" : "hover:bg-slate-50",
+                ].join(" ")}
+              >
+                <span className="block truncate font-mono text-slate-800">{entry.name}</span>
+                <span className="block truncate text-slate-500">
+                  {entry.kind} · {entry.mimeType ?? text("未知类型", "Unknown type")}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        {selectedPath ? (
+          <div className="grid gap-2">
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium text-slate-700">
+                {text("文件内容", "File content")}
+              </span>
+              <Textarea
+                value={selectedContent}
+                onChange={(event) => onSelectedContentChange(event.target.value)}
+                rows={6}
+                className="min-h-28 text-xs"
+                aria-label={text("文件内容", "File content")}
+              />
+            </label>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={onSave}
+                disabled={saving}
+                className="h-8 px-2"
+              >
+                {saving ? text("保存中", "Saving") : text("保存文件", "Save file")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function LocalAgentProgressRow({
+  node,
+  userNode,
+  pending,
+  onPause,
+  onResume,
+  text,
+}: {
+  node: ConversationNode;
+  userNode: ConversationNode;
+  pending: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const orchestrationStatus = String(node.metadata.orchestration?.status ?? "");
+  const paused = node.state === "paused" || orchestrationStatus === "paused";
+  const waitingApproval = orchestrationStatus === "waiting_approval";
+  const titleLabel = paused
+    ? text("本地 Agent 已暂停", "Local Agent paused")
+    : waitingApproval
+      ? text("本地 Agent 等待审批", "Local Agent waiting for approval")
+      : text("本地 Agent 正在发送", "Local Agent sending");
+  const phaseLabel = paused
+    ? text("继续会重新发送这一轮消息", "Continue will resend this turn")
+    : waitingApproval
+      ? text("处理审批后会继续", "Approve the request to continue")
+      : text("bridge task 运行中", "Bridge task running");
+  const goal = userNode.content || text("本地消息", "Local message");
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mx-auto w-[calc(100%-56px)] max-w-[760px] min-w-0 rounded-[18px] border border-emerald-200/90 bg-white/95 px-3 py-1.5 text-[11px] leading-4 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className={cn(
+            "mt-0.5 h-2 w-2 shrink-0 rounded-full",
+            paused
+              ? "bg-amber-500"
+              : waitingApproval
+                ? "bg-amber-500"
+                : "animate-pulse bg-emerald-500",
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-medium text-slate-900">{titleLabel}</span>
+            <span className="truncate text-slate-700" title={goal}>
+              {goal}
+            </span>
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-slate-500">
+            <span>{phaseLabel}</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {paused ? (
+            <IconButton
+              label={text("继续发送", "Continue sending")}
+              onClick={onResume}
+              disabled={pending}
+            >
+              <PlayCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          ) : (
+            <IconButton
+              label={text("暂停发送", "Pause sending")}
+              onClick={onPause}
+              disabled={pending}
+            >
+              <PauseCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoalProgressRow({
+  node,
+  isActiveStream,
+  onPause,
+  onResume,
+  onEdit,
+  onClear,
+  text,
+}: {
+  node: ConversationNode;
+  isActiveStream: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  onEdit: () => void;
+  onClear: () => void;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const status = node.metadata.goal_status ?? (node.state === "paused" ? "paused" : "running");
+  const goal = node.metadata.goal_text || node.content || text("未命名目标", "Untitled goal");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const isLive = status === "running" && (isActiveStream || node.state === "streaming");
+  useEffect(() => {
+    if (!isLive) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isLive, node.id, node.metadata.goal_started_at, node.metadata.goal_elapsed_ms]);
+
+  const elapsedMs = goalElapsedMs(node, nowMs, isLive);
+  const phaseLabel = goalPhaseLabel(node.metadata.goal_phase, status, text);
+  const canResume = node.state === "paused" || status === "paused";
+  const canPause = status === "running" && isActiveStream && !canResume;
+  const titleLabel =
+    status === "completed"
+      ? text("目标已完成", "Goal completed")
+      : canResume
+        ? text("目标已暂停", "Paused goal")
+        : text("进行中的目标", "Goal in progress");
+  const resumeLabel = text("恢复目标", "Resume goal");
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mx-auto w-[calc(100%-56px)] max-w-[760px] min-w-0 rounded-[18px] border border-slate-200/90 bg-white/95 px-3 py-1.5 text-[11px] leading-4 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.06)]"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className={cn(
+            "mt-0.5 h-2 w-2 shrink-0 rounded-full",
+            status === "failed" || status === "cancelled"
+              ? "bg-rose-500"
+              : status === "completed"
+                ? "bg-emerald-500"
+                : status === "paused" || status === "needs_input"
+                  ? "bg-amber-500"
+                  : "animate-pulse bg-sky-500",
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-medium text-slate-900">{titleLabel}</span>
+            <span className="truncate text-slate-700" title={goal}>
+              {goal}
+            </span>
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-slate-500">
+            <span>{formatGoalElapsed(elapsedMs)}</span>
+            {phaseLabel && (
+              <>
+                <span className="text-slate-300">·</span>
+                <span>{phaseLabel}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <IconButton
+            label={text("编辑目标", "Edit goal")}
+            onClick={onEdit}
+            disabled={status === "completed" || status === "cancelled"}
+          >
+            <Pencil aria-hidden="true" className="h-3 w-3" />
+          </IconButton>
+          {canResume ? (
+            <IconButton label={resumeLabel} onClick={onResume}>
+              <PlayCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          ) : (
+            <IconButton
+              label={text("暂停目标", "Pause goal")}
+              onClick={onPause}
+              disabled={!canPause}
+            >
+              <PauseCircle aria-hidden="true" className="h-3 w-3" />
+            </IconButton>
+          )}
+          <IconButton label={text("清除目标", "Clear goal")} onClick={onClear}>
+            <Trash2 aria-hidden="true" className="h-3 w-3" />
+          </IconButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoalEditDialog({
+  goal,
+  onCancel,
+  onSave,
+  text,
+}: {
+  goal: string;
+  onCancel: () => void;
+  onSave: (value: string) => void | Promise<void>;
+  text: (zh: string, en: string) => string;
+}): JSX.Element {
+  const [value, setValue] = useState(goal);
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isComposingRef = useRef(false);
+
+  useEffect(() => {
+    setValue(goal);
+  }, [goal]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => textareaRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [goal]);
+
+  const canSubmit = value.trim().length > 0 && !saving;
+
+  async function submit(): Promise<void> {
+    if (!canSubmit) return;
+    setSaving(true);
+    try {
+      await onSave(value);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ConfigDialog
+      open
+      title={text("编辑目标", "Edit goal")}
+      description={text("修改当前追踪中的目标内容。", "Edit the current pursuit goal.")}
+      onClose={onCancel}
+      className="max-w-lg"
+    >
+      <div className="grid gap-4 text-xs">
+        <label className="grid gap-1.5">
+          <span className="font-medium text-slate-600">{text("目标", "Goal")}</span>
+          <Textarea
+            id="goal-edit-textarea"
+            ref={textareaRef}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancel();
+                return;
+              }
+              if (editFormShouldSubmit(event.nativeEvent, value, isComposingRef.current)) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
+            rows={5}
+            aria-label={text("编辑目标", "Edit goal")}
+            className="min-h-32 max-h-[40vh] w-full resize-y text-sm leading-6"
+          />
+        </label>
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            aria-label={text("取消编辑目标", "Cancel goal edit")}
+          >
+            {text("取消", "Cancel")}
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={!canSubmit}
+            onClick={() => {
+              void submit();
+            }}
+            aria-label={text("保存目标", "Save goal")}
+          >
+            {saving ? text("保存中", "Saving") : text("保存", "Save")}
+          </Button>
+        </div>
+      </div>
+    </ConfigDialog>
+  );
+}
+
+function IconButton({
+  label,
+  onClick,
+  disabled = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
+function findActiveGoalNode(activePath: ConversationNode[]): ConversationNode | null {
+  for (let index = activePath.length - 1; index >= 0; index -= 1) {
+    const node = activePath[index];
+    if (node.role !== "assistant") continue;
+    if (node.metadata.workspace_mode !== "goal" && !node.metadata.goal_status) continue;
+    if (node.metadata.goal_cleared) return null;
+    const status = node.metadata.goal_status;
+    if (status === "cancelled" || status === undefined) return null;
+    return node;
+  }
+  return null;
+}
+
+function findPrevUserContent(activePath: ConversationNode[], nodeId: string): string {
+  return findPrevUserNode(activePath, nodeId)?.content ?? "";
+}
+
+function findPrevUserNode(activePath: ConversationNode[], nodeId: string): ConversationNode | null {
+  const index = activePath.findIndex((node) => node.id === nodeId);
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const node = activePath[cursor];
+    if (node.role === "user") return node;
+  }
+  return null;
+}
+
+function goalPhaseLabel(
+  phase: string | undefined,
+  status: ConversationNode["metadata"]["goal_status"],
+  text: (zh: string, en: string) => string,
+): string {
+  if (status === "paused") return text("已暂停", "Paused");
+  if (status === "needs_input") return text("需要输入", "Needs input");
+  if (status === "failed") return text("失败", "Failed");
+  if (status === "completed") return text("已完成", "Completed");
+  if (phase === "planning") return text("规划中", "Planning");
+  if (phase === "executing") return text("执行中", "Executing");
+  if (phase === "orchestrating") return text("编排中", "Orchestrating");
+  return text("运行中", "Running");
+}
+
+function goalElapsedMs(node: ConversationNode, nowMs: number, isLive: boolean): number {
+  const serverElapsed =
+    typeof node.metadata.goal_elapsed_ms === "number" ? node.metadata.goal_elapsed_ms : 0;
+  if (!isLive) return serverElapsed;
+  const startedAtMs = parseGoalStartedAtMs(node.metadata.goal_started_at);
+  if (startedAtMs === null) return serverElapsed;
+  return Math.max(serverElapsed, nowMs - startedAtMs);
+}
+
+function parseGoalStartedAtMs(value: string | null | undefined): number | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatGoalElapsed(elapsedMs: number): string {
+  const seconds = Math.max(0, Math.round(elapsedMs / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}m ${rest}s`;
 }
 
 async function toComposerAttachment(file: File): Promise<ComposerAttachment> {
@@ -1708,12 +2914,31 @@ function buildActivePath(
   rootNodeId: string,
 ): ConversationNode[] {
   const path: ConversationNode[] = [];
+  const seenNodeIds = new Set<string>();
   let current: string | null = activeLeafId;
   while (current) {
+    if (seenNodeIds.has(current)) break;
+    seenNodeIds.add(current);
     const node: ConversationNode | undefined = nodesById[current];
     if (!node) break;
     if (node.id !== rootNodeId) path.push(node);
     current = node.parent_id;
   }
   return path.reverse();
+}
+
+function serializeLocalAgentMessages(nodes: ConversationNode[]): AgentChatStreamMessage[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    parent_id: node.parent_id,
+    children_ids: node.children_ids,
+    role: node.role,
+    content: node.content,
+    state: node.state,
+    run_id: node.run_id,
+    metadata: { ...node.metadata },
+    tool_calls: node.tool_calls,
+    artifacts: node.artifacts.map((artifact) => ({ ...artifact })),
+    created_at: node.created_at,
+  }));
 }

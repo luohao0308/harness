@@ -3,6 +3,7 @@ import type {
   Team,
   TeamAgent,
   TeamEvent,
+  TeamGoal,
   TeamMailboxMessage,
   TeamTask,
 } from "../../../tasks/api";
@@ -36,6 +37,14 @@ export function isAgentMessage(value: unknown): value is AgentMessage {
 
 export function isTeamTask(value: unknown): value is TeamTask {
   return Boolean(isRecord(value) && "subject" in value && "status" in value);
+}
+
+export function isTeamGoal(value: unknown): value is TeamGoal {
+  return Boolean(isRecord(value) && "objective" in value && "status" in value && "version" in value);
+}
+
+export function isTerminalTeamGoalStatus(status: string) {
+  return status === "completed" || status === "failed" || status === "blocked";
 }
 
 export function upsertById<T>(items: T[], item: T, idOf: (value: T) => string) {
@@ -436,6 +445,36 @@ export function applyTeamEventToTeam(team: Team, event: TeamEvent): Team | null 
           ? team.tasks.filter((candidate) => candidate.id !== task.id)
           : upsertById(team.tasks, task, (candidate) => candidate.id);
       return { ...team, tasks, updated_at: event.created_at ?? team.updated_at };
+    }
+    case "TEAM_GOAL_CREATED":
+    case "TEAM_GOAL_STARTED":
+    case "TEAM_GOAL_PROGRESS": {
+      const goal = payload.goal;
+      if (!isTeamGoal(goal)) return null;
+      const current = team.active_goal;
+      if (current && current.id === goal.id && current.version > goal.version) {
+        return team;
+      }
+      return {
+        ...team,
+        active_goal: isTerminalTeamGoalStatus(goal.status) ? null : goal,
+        updated_at: event.created_at ?? team.updated_at,
+      };
+    }
+    case "TEAM_GOAL_BLOCKED":
+    case "TEAM_GOAL_COMPLETED":
+    case "TEAM_GOAL_FAILED": {
+      const goal = payload.goal;
+      if (isTeamGoal(goal)) {
+        return {
+          ...team,
+          active_goal: isTerminalTeamGoalStatus(goal.status) ? null : goal,
+          updated_at: event.created_at ?? team.updated_at,
+        };
+      }
+      return team.active_goal
+        ? { ...team, active_goal: null, updated_at: event.created_at ?? team.updated_at }
+        : team;
     }
     default:
       return null;

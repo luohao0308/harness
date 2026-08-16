@@ -67,7 +67,7 @@ export function TeamBottomPopover({
       aria-modal="false"
       aria-label={title}
       className={cn(
-        "absolute bottom-[58px] z-30 w-[min(280px,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl",
+        "absolute bottom-[58px] z-30 w-[min(280px,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-none",
         align === "right" ? "right-4" : "left-4",
       )}
     >

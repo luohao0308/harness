@@ -16,7 +16,7 @@ scrape_configs:
     relabel_configs:
       - source_labels:
           - __meta_docker_container_label_com_docker_compose_service
-        regex: (agent-assignment-worker|agent-console|agent-worker|api-server|db-migrate|grafana|loki|nginx|otel-collector|postgres|prometheus|promtail|redis|sandbox-worker|subagent-recovery|tempo|warm-pool|web-site)
+        regex: (agent-assignment-worker|agent-console|agent-worker|api-server|db-migrate|grafana|loki|nginx|otel-collector|postgres|prometheus|promtail|redis|sandbox-worker|subagent-recovery|team-runtime|tempo|warm-pool|web-site)
         action: keep
       - source_labels:
           - __meta_docker_container_label_com_docker_compose_service

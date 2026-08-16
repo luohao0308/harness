@@ -36,7 +36,7 @@ git diff --check -> passed
 Visual summary:
 
 ```text
-docs/reports/langgraph-langchain-visual-summary-2026-06-03.html
+docs/工作日志/reports/langgraph-langchain-visual-summary-2026-06-03.html
 ```
 
 Subagent gate:

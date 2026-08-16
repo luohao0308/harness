@@ -4,6 +4,7 @@ import {
   AUTH_SESSION_EXPIRED_EVENT,
   clearAuthTokens,
   createAgentKnowledgeSource,
+  createTerminalToken,
   deleteAgentKnowledgeSource,
   getAuthBearerToken,
   getStoredAccessToken,
@@ -13,6 +14,7 @@ import {
   saveStoredSecret,
   setAuthTokens,
   uploadCurrentUserAvatar,
+  taskEventStreamUrl,
 } from "../api";
 
 function stubBrowserStorage() {
@@ -36,6 +38,52 @@ afterEach(() => {
   clearAuthTokens();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
+
+describe("local runtime cookie authentication", () => {
+  it("does not expose a bearer token in EventSource URLs", () => {
+    vi.stubEnv("VITE_RUNTIME_PROFILE", "local");
+    stubBrowserStorage();
+    window.localStorage.setItem("harness.auth.access_token", "stale-enterprise-token");
+    setAuthTokens({ access_token: "new-runtime-token", refresh_token: "new-runtime-refresh" });
+
+    expect(getStoredAccessToken()).toBe("");
+    expect(window.localStorage.getItem("harness.auth.access_token")).toBe("stale-enterprise-token");
+    expect(window.localStorage.getItem("harness.auth.refresh_token")).toBeNull();
+    expect(getAuthBearerToken()).toBe("");
+    expect(taskEventStreamUrl("task-1")).toBe("/api/tasks/task-1/events/stream");
+  });
+
+  it("renews an expired desktop cookie and retries the original request once", async () => {
+    vi.stubEnv("VITE_RUNTIME_PROFILE", "local");
+    stubBrowserStorage();
+    const renewSession = vi.fn(() => Promise.resolve());
+    window.desktopApi = { localRuntime: { renewSession } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Bearer token 无效" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        token: "terminal-token",
+        terminal_id: "term-1",
+        expires_at: "2026-08-11T21:00:30Z",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createTerminalToken("term-1")).resolves.toMatchObject({
+      token: "terminal-token",
+      terminal_id: "term-1",
+    });
+
+    expect(renewSession).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).has("authorization")).toBe(false);
+  });
 });
 
 describe("resolveApiBaseUrl", () => {
@@ -50,6 +98,12 @@ describe("resolveApiBaseUrl", () => {
   it("keeps loopback API URLs for loopback console hosts", () => {
     expect(resolveApiBaseUrl("http://127.0.0.1:8000", "127.0.0.1")).toBe("http://127.0.0.1:8000");
     expect(resolveApiBaseUrl("http://127.0.0.1:8000", "localhost")).toBe("http://127.0.0.1:8000");
+  });
+
+  it("keeps loopback API URLs for the trusted desktop renderer protocol", () => {
+    expect(
+      resolveApiBaseUrl("http://127.0.0.1:8000", "renderer", "harness-app:"),
+    ).toBe("http://127.0.0.1:8000");
   });
 
   it("rewrites loopback API URLs when the console is opened through a LAN host", () => {
@@ -106,6 +160,34 @@ describe("json API requests", () => {
   it("falls back to the development bearer token only when no JWT is stored", () => {
     clearAuthTokens();
     expect(getAuthBearerToken()).toBe("dev-engineer-token");
+  });
+
+  it("creates terminal tokens with authenticated API requests", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          token: "terminal-token",
+          terminal_id: "term-1",
+          expires_at: "2026-07-12T00:00:30Z",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(createTerminalToken("term-1")).resolves.toEqual({
+      token: "terminal-token",
+      terminal_id: "term-1",
+      expires_at: "2026-07-12T00:00:30Z",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/terminal/tokens",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ terminal_id: "term-1" }),
+        headers: expect.objectContaining({ Authorization: "Bearer dev-engineer-token" }),
+      }),
+    );
   });
 
   it("clears stored tokens and notifies auth state when refresh fails", async () => {

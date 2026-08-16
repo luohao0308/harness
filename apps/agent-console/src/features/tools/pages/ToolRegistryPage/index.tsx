@@ -15,14 +15,18 @@ import { AdapterSchemaDrawer } from "../../components/AdapterSchemaDrawer";
 import {
   approveCapabilityPackage,
   type AgentDefinition,
+  type AgentTrigger,
   attachCapabilityPackage,
   attachAgentCapability,
   capabilityDependencyPreflight,
+  createAgentTrigger,
+  deleteAgentTrigger,
   enableStagedCapability,
   getToolRegistry,
   installTrustedUrlCapability,
   installUploadedCapability,
   discoverMCPServer,
+  listAgentTriggers,
   listMCPServers,
   listAgents,
   listAdapters,
@@ -35,6 +39,7 @@ import {
   stagePublicCapabilityPackage,
   testInvokeCapability,
   uninstallCapabilityPackage,
+  updateAgentTrigger,
   updateCapabilityPackageAttachment,
   validateCapabilityPackage,
   type CapabilityMarketplaceItem,
@@ -58,7 +63,12 @@ import {
   simpleInstallSuccessSummary,
 } from "./labels";
 import { ToolRegistryOverview, ToolRegistryTable } from "./sections";
-import type { MarketplaceFilter, ToolConfigDialog } from "./types";
+import {
+  useToolRegistryInstallDraftState,
+  useToolRegistryMarketplaceState,
+  useToolRegistryShellState,
+  useToolRegistryTestDraftState,
+} from "./state";
 
 const DEFAULT_LANGGRAPH_MANIFEST = JSON.stringify(
   {
@@ -105,66 +115,89 @@ const DEFAULT_LANGCHAIN_INVOKE_INPUT = JSON.stringify(
 export function ToolRegistryPage() {
   const { text } = useI18n();
   const queryClient = useQueryClient();
-  const [sourceFilter, setSourceFilter] = useState("all");
-  const [marketplaceFilter, setMarketplaceFilter] = useState<MarketplaceFilter>("all");
-  const [marketplaceSearch, setMarketplaceSearch] = useState("");
-  const [activeConfigDialog, setActiveConfigDialog] = useState<ToolConfigDialog>(null);
-  const [selectedMarketplaceItemId, setSelectedMarketplaceItemId] = useState<string | null>(null);
-  const [trustedUrl, setTrustedUrl] = useState("https://example.com/customer-research.skill");
-  const [publicUrl, setPublicUrl] = useState("https://example.com/community-skill.skill");
-  const [uploadName, setUploadName] = useState("uploaded-skill");
-  const [uploadContent, setUploadContent] = useState("# Uploaded Skill\n\nRun the operator test.");
-  const [simpleAgentId, setSimpleAgentId] = useState("default");
-  const [packageSource, setPackageSource] = useState("git+https://github.com/acme/skill-pack.git");
-  const [packagePinnedRef, setPackagePinnedRef] = useState("commit:demo-pinned-commit");
-  const [packageAgentId, setPackageAgentId] = useState("default");
-  const [rollbackVersionId, setRollbackVersionId] = useState("");
-  const [latestAttachmentId, setLatestAttachmentId] = useState<string | null>(null);
-  const [packageManifest, setPackageManifest] = useState(`{
-  "package_manifest": {
-    "package_type": "context_optimizer",
-    "name": "conservative-token-saver",
-    "version": "1.0.0",
-    "description": "声明式智能体上下文优化器",
-    "permissions": ["context:optimize"],
-    "optimizer": {
-      "mode": "budget_overlay",
-      "max_candidate_tokens_ratio": 0.8,
-      "section_limits": {
-        "recent_window": 12,
-        "long_term_memory": 8,
-        "rag_evidence": 6
-      },
-      "drop_order": [
-        "rag_evidence_low_relevance_first",
-        "long_term_memory_low_score_first",
-        "recent_window_oldest_first"
-      ],
-      "prefer_valid_compressed_summary": true,
-      "low_cost_route_hint": "summarization under budget"
-    },
-    "secret_refs": []
-  }
-}`);
-  const [testAgentId, setTestAgentId] = useState("default");
-  const [testToolName, setTestToolName] = useState("mcp_context_search");
-  const [invokeInput, setInvokeInput] = useState(`{ "query": "release readiness", "limit": 2 }`);
-  const [langGraphManifest, setLangGraphManifest] = useState(DEFAULT_LANGGRAPH_MANIFEST);
-  const [langGraphJson, setLangGraphJson] = useState(DEFAULT_LANGGRAPH_JSON);
-  const [langGraphAgentId, setLangGraphAgentId] = useState("default");
-  const [langChainAgentId, setLangChainAgentId] = useState("default");
-  const [langChainToolName, setLangChainToolName] = useState("langchain.invoke_tool");
-  const [langChainInvokeInput, setLangChainInvokeInput] = useState(DEFAULT_LANGCHAIN_INVOKE_INPUT);
-  const [marketplaceQuickQuery, setMarketplaceQuickQuery] = useState("发布准备情况");
-  const [schemaAdapterSlug, setSchemaAdapterSlug] = useState<string | null>(null);
-  const [codeInput, setCodeInput] = useState('print("hello from sandbox")');
-  const [lastDirectAttachedMarketplaceItemId, setLastDirectAttachedMarketplaceItemId] = useState<string | null>(null);
-  const [lastAttachedMarketplacePackageId, setLastAttachedMarketplacePackageId] = useState<string | null>(null);
+  const {
+    sourceFilter,
+    setSourceFilter,
+    activeConfigDialog,
+    setActiveConfigDialog,
+    simpleAgentId,
+    setSimpleAgentId,
+    schemaAdapterSlug,
+    setSchemaAdapterSlug,
+    codeInput,
+    setCodeInput,
+  } = useToolRegistryShellState();
+  const {
+    marketplaceFilter,
+    setMarketplaceFilter,
+    marketplaceSearch,
+    setMarketplaceSearch,
+    selectedMarketplaceItemId,
+    setSelectedMarketplaceItemId,
+    marketplaceQuickQuery,
+    setMarketplaceQuickQuery,
+    lastDirectAttachedMarketplaceItemId,
+    setLastDirectAttachedMarketplaceItemId,
+    lastAttachedMarketplacePackageId,
+    setLastAttachedMarketplacePackageId,
+  } = useToolRegistryMarketplaceState();
+  const {
+    trustedUrl,
+    setTrustedUrl,
+    publicUrl,
+    setPublicUrl,
+    uploadName,
+    setUploadName,
+    uploadContent,
+    setUploadContent,
+    packageSource,
+    setPackageSource,
+    packagePinnedRef,
+    setPackagePinnedRef,
+    packageAgentId,
+    setPackageAgentId,
+    rollbackVersionId,
+    setRollbackVersionId,
+    latestAttachmentId,
+    setLatestAttachmentId,
+    packageManifest,
+    setPackageManifest,
+  } = useToolRegistryInstallDraftState();
+  const {
+    testAgentId,
+    setTestAgentId,
+    testToolName,
+    setTestToolName,
+    invokeInput,
+    setInvokeInput,
+    langGraphManifest,
+    setLangGraphManifest,
+    langGraphJson,
+    setLangGraphJson,
+    langGraphAgentId,
+    setLangGraphAgentId,
+    langChainAgentId,
+    setLangChainAgentId,
+    langChainToolName,
+    setLangChainToolName,
+    langChainInvokeInput,
+    setLangChainInvokeInput,
+  } = useToolRegistryTestDraftState({
+    defaultLangGraphManifest: DEFAULT_LANGGRAPH_MANIFEST,
+    defaultLangGraphJson: DEFAULT_LANGGRAPH_JSON,
+    defaultLangChainInvokeInput: DEFAULT_LANGCHAIN_INVOKE_INPUT,
+  });
+  const [triggerEndpointPath, setTriggerEndpointPath] = useState("");
+  const [lastTriggerSecret, setLastTriggerSecret] = useState<string | null>(null);
   const registryQuery = useQuery({
     queryKey: ["tool-registry", simpleAgentId],
     queryFn: () => getToolRegistry(simpleAgentId),
   });
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: listAgents });
+  const triggersQuery = useQuery({
+    queryKey: ["agent-triggers", simpleAgentId],
+    queryFn: () => listAgentTriggers(simpleAgentId),
+  });
   const adaptersQuery = useQuery({ queryKey: ["tool-adapters"], queryFn: listAdapters });
   const mcpServersQuery = useQuery({
     queryKey: ["mcp-servers", simpleAgentId],
@@ -230,6 +263,52 @@ export function ToolRegistryPage() {
     },
     [],
   );
+  const refreshTriggers = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["agent-triggers", simpleAgentId] });
+  };
+  const createTriggerMutation = useMutation({
+    mutationFn: () =>
+      createAgentTrigger(simpleAgentId, {
+        endpoint_path: triggerEndpointPath.trim() || null,
+        enabled: true,
+      }),
+    onSuccess: async (result) => {
+      setTriggerEndpointPath("");
+      setLastTriggerSecret(result.secret);
+      notifyFeedback({
+        tone: "success",
+        title: "触发器已创建",
+        description: `路径 ${result.trigger.endpoint_path} 已启用；Secret 只在当前页面显示一次。`,
+      });
+      await refreshTriggers();
+    },
+    onError: (error) => notifyMutationError("触发器创建失败", error, "请检查路径是否重复或格式是否正确。"),
+  });
+  const updateTriggerMutation = useMutation({
+    mutationFn: (trigger: AgentTrigger) =>
+      updateAgentTrigger(simpleAgentId, trigger.id, { enabled: !trigger.enabled }),
+    onSuccess: async (trigger) => {
+      notifyFeedback({
+        tone: "success",
+        title: trigger.enabled ? "触发器已启用" : "触发器已停用",
+        description: trigger.endpoint_path,
+      });
+      await refreshTriggers();
+    },
+    onError: (error) => notifyMutationError("触发器更新失败", error, "请检查权限或稍后重试。"),
+  });
+  const deleteTriggerMutation = useMutation({
+    mutationFn: (trigger: AgentTrigger) => deleteAgentTrigger(simpleAgentId, trigger.id),
+    onSuccess: async () => {
+      notifyFeedback({
+        tone: "warning",
+        title: "触发器已删除",
+        description: "外部系统将不能再通过该路径触发 Run。",
+      });
+      await refreshTriggers();
+    },
+    onError: (error) => notifyMutationError("触发器删除失败", error, "请检查权限或稍后重试。"),
+  });
   const validationMutation = useMutation({
     mutationFn: () =>
       validateCapabilityPackage({
@@ -762,6 +841,19 @@ export function ToolRegistryPage() {
             marketplaceTrustedInstallMutation.error ??
             marketplaceUploadInstallMutation.error
           }
+          triggers={triggersQuery.data?.items ?? []}
+          triggersLoading={triggersQuery.isLoading}
+          triggerEndpointPath={triggerEndpointPath}
+          triggerSecret={lastTriggerSecret}
+          triggerPending={
+            createTriggerMutation.isPending ||
+            updateTriggerMutation.isPending ||
+            deleteTriggerMutation.isPending
+          }
+          onTriggerEndpointPathChange={setTriggerEndpointPath}
+          onCreateTrigger={() => createTriggerMutation.mutate()}
+          onToggleTrigger={(trigger) => updateTriggerMutation.mutate(trigger)}
+          onDeleteTrigger={(trigger) => deleteTriggerMutation.mutate(trigger)}
           onOpenDialog={(dialog) => setActiveConfigDialog(dialog)}
         />
 

@@ -32,9 +32,10 @@ import { SlashCommandMenu } from "./SlashCommandMenu";
 export type ChatComposerProps = {
   draft: string;
   onDraftChange: (next: string) => void;
-  onSubmit: () => void;
+  onSubmit: () => boolean | void | Promise<boolean | void>;
   onPause: () => void;
   isStreaming: boolean;
+  streamingLabel?: string;
   mode: WorkspaceMode;
   onChangeMode: (m: WorkspaceMode) => void;
   placeholder: string;
@@ -45,6 +46,7 @@ export type ChatComposerProps = {
   /** Rendered in the bottom action row, immediately beside the Send button. */
   bottomCenter?: ReactNode;
   containerClassName?: string;
+  frameClassName?: string;
   goalModeToggleVisible?: boolean;
   attachments?: ComposerAttachment[];
   onRemoveAttachment?: (id: string) => void;
@@ -126,6 +128,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       onSubmit,
       onPause,
       isStreaming,
+      streamingLabel,
       mode,
       onChangeMode,
       placeholder,
@@ -135,6 +138,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       metadata = null,
       bottomCenter = null,
       containerClassName,
+      frameClassName,
       goalModeToggleVisible = true,
       attachments = [],
       onRemoveAttachment,
@@ -146,6 +150,8 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
   ) {
     const { text } = useI18n();
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const submitInFlightRef = useRef(false);
+    const [submitInFlight, setSubmitInFlight] = useState(false);
 
     // ── v3: slash command state ─────────────────────────────────────────
     const slashState = useMemo(
@@ -181,10 +187,12 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       });
     }, [candidates.length]);
 
-    const sendDisabled = !draft.trim() || isStreaming || isEditLocked || slashOpen;
+    const sendDisabled = !draft.trim() || isStreaming || isEditLocked || slashOpen || submitInFlight;
     const primaryDisabled = isStreaming ? false : sendDisabled;
     const goalModeActive = mode === "goal";
-    const primaryLabel = isStreaming ? text("停止生成", "Stop generation") : text("发送", "Send");
+    const primaryLabel = isStreaming
+      ? streamingLabel ?? text("停止生成", "Stop generation")
+      : text("发送", "Send");
 
     function assignTextareaRef(node: HTMLTextAreaElement | null) {
       textareaRef.current = node;
@@ -271,12 +279,27 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
       }
     }
 
+    async function submitAndMaybeClear(): Promise<void> {
+      if (submitInFlightRef.current) return;
+      const submittedDraft = draft;
+      submitInFlightRef.current = true;
+      setSubmitInFlight(true);
+      try {
+        const submitted = await onSubmit();
+        if (submitted === false) return;
+        if (textareaRef.current?.value !== submittedDraft) return;
+        onDraftChange("");
+      } finally {
+        submitInFlightRef.current = false;
+        setSubmitInFlight(false);
+      }
+    }
+
     function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
       if (handleSlashKeyDown(event)) return;
       if (composerShouldSubmit(event.nativeEvent, draft, isStreaming, isEditLocked)) {
         event.preventDefault();
-        onSubmit();
-        onDraftChange("");
+        void submitAndMaybeClear();
         textareaRef.current?.focus();
       }
     }
@@ -303,7 +326,12 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
     return (
       <div className="w-full">
         <div className={cn("mx-auto w-full max-w-3xl px-3 sm:px-4 lg:px-6", containerClassName)}>
-          <div className="relative rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-slate-300">
+          <div
+            className={cn(
+              "relative rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.08)] focus-within:border-slate-300",
+              frameClassName,
+            )}
+          >
             <SlashCommandMenu
               open={slashOpen}
               candidates={candidates}
@@ -393,8 +421,7 @@ export const ChatComposer = forwardRef<HTMLTextAreaElement, ChatComposerProps>(
                       return;
                     }
                     if (sendDisabled) return;
-                    onSubmit();
-                    onDraftChange("");
+                    void submitAndMaybeClear();
                     textareaRef.current?.focus();
                   }}
                   disabled={primaryDisabled}

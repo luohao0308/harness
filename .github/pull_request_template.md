@@ -1,15 +1,23 @@
-## Summary
+## Intent
 
-- 
+- What user or operational outcome does this change deliver?
 
-## Verification
+## Changes
 
-- [ ] I ran the relevant local checks.
-- [ ] Documentation and task progress are updated when required.
+- What changed, and what intentionally did not change?
 
-## Risk
+## Validation
 
-- [ ] Database migration
-- [ ] API contract change
-- [ ] Runtime or sandbox behavior change
-- [ ] Deployment change
+- [ ] Targeted tests for the changed behavior
+- [ ] Relevant lint, type, build, migration, or documentation checks
+- Commands and results:
+
+## Risk and rollback
+
+- Risk level: low / medium / high
+- Rollback path:
+
+## Evidence
+
+- [ ] Documentation or task progress updated when required
+- [ ] UI screenshots attached when the visible interface changes

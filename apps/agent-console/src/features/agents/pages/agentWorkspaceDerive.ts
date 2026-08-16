@@ -26,8 +26,11 @@ export function buildActivePath(
   rootNodeId: string,
 ): ConversationNode[] {
   const path: ConversationNode[] = [];
+  const seenNodeIds = new Set<string>();
   let current: string | null = activeLeafId;
   while (current) {
+    if (seenNodeIds.has(current)) break;
+    seenNodeIds.add(current);
     const node: ConversationNode | undefined = nodesById[current];
     if (!node) break;
     if (node.id !== rootNodeId) path.push(node);
@@ -112,7 +115,19 @@ export function summarizeUsage(
     outputTokens,
     costUsd,
     durationMs,
-    modelCalls: workspace?.model_calls.length ?? 0,
-    toolCalls: workspace?.tool_calls.length ?? 0,
+    modelCalls:
+      workspace?.model_calls.length ??
+      path.filter((node) => typeof node.metadata.model_call_id === "string").length,
+    toolCalls:
+      workspace?.tool_calls.length ??
+      path.reduce(
+        (count, node) =>
+          count +
+          node.tool_calls.length +
+          (Array.isArray(node.metadata.orchestration?.tool_mentions)
+            ? node.metadata.orchestration.tool_mentions.length
+            : 0),
+        0,
+      ),
   };
 }

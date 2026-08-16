@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 
 import { cn } from "../../../../lib/utils";
 import type { ComposerAttachment } from "../../../agents/components/ChatComposer";
@@ -67,6 +67,9 @@ export function TeamColumnList({
   teamFileInputsRef,
   composerSharedProps,
   text,
+  selectedColumnSupplement,
+  hideSelectedTaskSteps,
+  selectedColumnFullscreenAction,
   onCompressContext,
   onComposerChange,
   onSendFromComposer,
@@ -110,6 +113,9 @@ export function TeamColumnList({
   teamFileInputsRef: MutableRefObject<Record<string, HTMLInputElement | null>>;
   composerSharedProps: ComposerSharedProps;
   text: TextFn;
+  selectedColumnSupplement?: ReactNode;
+  hideSelectedTaskSteps?: boolean;
+  selectedColumnFullscreenAction?: ((slotId: string) => void) | null;
   onCompressContext: (
     agent: TeamAgent,
     entries: TeamConversationEntry[],
@@ -137,8 +143,8 @@ export function TeamColumnList({
   onScrollColumns: (direction: "left" | "right") => void;
 }) {
   return (
-    <div className="relative flex min-h-0 flex-1">
-      <div className="min-w-0 flex-1">
+    <div className="relative flex h-full min-h-0 flex-1">
+      <div className="h-full min-w-0 flex-1">
         {!isNarrowColumns ? (
           <div className="relative h-full min-h-0">
             <div
@@ -146,7 +152,7 @@ export function TeamColumnList({
               role="group"
               aria-label={text("代理会话列", "Agent columns")}
               className={cn(
-                "flex h-full min-h-0 w-full snap-x snap-proximity overflow-x-auto overflow-y-hidden bg-slate-50/40 [scrollbar-width:none]",
+                "flex h-full min-h-0 w-full snap-x snap-proximity overflow-x-auto overflow-y-hidden bg-white [scrollbar-width:none]",
                 (fullscreenSlotId ? 1 : orderedAgents.length) <= 2 ? "justify-start" : "",
               )}
             >
@@ -212,7 +218,7 @@ export function TeamColumnList({
         ) : null}
 
         {isNarrowColumns && selectedAgent ? (
-          <div className="flex min-h-0 flex-1">
+          <div className="flex h-full min-h-0 flex-1">
             <TeamAgentColumn
               activeTeam={activeTeam}
               agent={selectedAgent}
@@ -246,9 +252,15 @@ export function TeamColumnList({
               onTogglePin={onTogglePin}
               onOpenMessageInspector={onOpenMessageInspector}
               onStopWake={onStopWake}
-              onToggleFullscreen={onToggleFullscreen}
+              onToggleFullscreen={
+                selectedColumnFullscreenAction === undefined
+                  ? onToggleFullscreen
+                  : selectedColumnFullscreenAction ?? undefined
+              }
               onRemoveAgent={onRemoveAgent}
               onFocusAgent={onFocusAgent}
+              conversationSupplement={selectedColumnSupplement}
+              hideTaskSteps={hideSelectedTaskSteps}
             />
           </div>
         ) : null}
@@ -295,6 +307,8 @@ function TeamAgentColumn({
   onToggleFullscreen,
   onRemoveAgent,
   onFocusAgent,
+  conversationSupplement,
+  hideTaskSteps,
 }: {
   activeTeam: Team;
   agent: TeamAgent;
@@ -340,9 +354,11 @@ function TeamAgentColumn({
   onTogglePin: (nodeId: string) => void;
   onOpenMessageInspector: (section: InspectorSection, node: ConversationNode) => void;
   onStopWake: (slotId: string) => void;
-  onToggleFullscreen: (slotId: string) => void;
+  onToggleFullscreen?: (slotId: string) => void;
   onRemoveAgent: (agent: TeamAgent) => void;
   onFocusAgent: (slotId: string) => void;
+  conversationSupplement?: ReactNode;
+  hideTaskSteps?: boolean;
 }) {
   const selectedTarget = defaultComposerTarget(agent);
   const selectedMode = composer.mode ?? "chat";
@@ -397,10 +413,12 @@ function TeamAgentColumn({
       onTogglePin={onTogglePin}
       onOpenMessageInspector={onOpenMessageInspector}
       onStopWake={() => onStopWake(agent.slot_id)}
-      onFullscreen={() => onToggleFullscreen(agent.slot_id)}
+      onFullscreen={onToggleFullscreen ? () => onToggleFullscreen(agent.slot_id) : undefined}
       onRemove={() => onRemoveAgent(agent)}
       onFocus={() => onFocusAgent(agent.slot_id)}
       isFlashing={isFlashing}
+      conversationSupplement={conversationSupplement}
+      hideTaskSteps={hideTaskSteps}
       setScrollRef={(node) => {
         scrollRefs.current[agent.slot_id] = node;
       }}
@@ -428,9 +446,10 @@ function ScrollButton({
     <button
       type="button"
       aria-label={label}
+      title={label}
       onClick={onClick}
       className={cn(
-        "absolute top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-slate-600 shadow-panel hover:bg-slate-50 hover:text-slate-950",
+        "absolute top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-950",
         direction === "left" ? "left-2" : "right-2",
       )}
     >

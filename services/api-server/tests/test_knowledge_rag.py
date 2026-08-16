@@ -2007,7 +2007,9 @@ def test_real_web_research_success_is_source_bound_with_mock_adapter(
         provider="tavily",
         updated_by="dev-engineer",
     )
-    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.knowledge.resolve_web_research_api_key", lambda provider, **_kwargs: "key"
+    )
     monkeypatch.setattr(
         "app.sandbox.policies.socket.getaddrinfo",
         lambda host, *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
@@ -2036,7 +2038,9 @@ def test_real_web_research_success_is_source_bound_with_mock_adapter(
             ]
 
     adapter = Adapter()
-    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: adapter)
+    monkeypatch.setattr(
+        "app.knowledge.get_web_research_adapter", lambda provider, **_kwargs: adapter
+    )
 
     result = ground_query(
         db_session,
@@ -2100,9 +2104,11 @@ def test_missing_tavily_key_does_not_call_provider(
         provider="tavily",
         updated_by="dev-engineer",
     )
-    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "")
+    monkeypatch.setattr(
+        "app.knowledge.resolve_web_research_api_key", lambda provider, **_kwargs: ""
+    )
 
-    def fail_adapter(provider):
+    def fail_adapter(provider, **_kwargs):
         raise AssertionError("provider adapter must not be called")
 
     monkeypatch.setattr("app.knowledge.get_web_research_adapter", fail_adapter)
@@ -2145,9 +2151,11 @@ def test_pre_call_policy_denied_does_not_call_provider(
         provider="tavily",
         updated_by="dev-engineer",
     )
-    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.knowledge.resolve_web_research_api_key", lambda provider, **_kwargs: "key"
+    )
 
-    def fail_adapter(provider):
+    def fail_adapter(provider, **_kwargs):
         raise AssertionError("provider adapter must not be called")
 
     monkeypatch.setattr("app.knowledge.get_web_research_adapter", fail_adapter)
@@ -2182,7 +2190,9 @@ def test_denied_web_result_does_not_persist_raw_secret_url(
         provider="tavily",
         updated_by="dev-engineer",
     )
-    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.knowledge.resolve_web_research_api_key", lambda provider, **_kwargs: "key"
+    )
 
     class Adapter:
         provider = "tavily"
@@ -2198,7 +2208,9 @@ def test_denied_web_result_does_not_persist_raw_secret_url(
                 )
             ]
 
-    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: Adapter())
+    monkeypatch.setattr(
+        "app.knowledge.get_web_research_adapter", lambda provider, **_kwargs: Adapter()
+    )
 
     result = ground_query(
         db_session,
@@ -2274,7 +2286,9 @@ def test_web_research_policy_limits_content_and_calls(
         provider="tavily",
         updated_by="dev-engineer",
     )
-    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.knowledge.resolve_web_research_api_key", lambda provider, **_kwargs: "key"
+    )
     monkeypatch.setattr(
         "app.sandbox.policies.socket.getaddrinfo",
         lambda host, *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
@@ -2297,7 +2311,9 @@ def test_web_research_policy_limits_content_and_calls(
                 )
             ]
 
-    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: Adapter())
+    monkeypatch.setattr(
+        "app.knowledge.get_web_research_adapter", lambda provider, **_kwargs: Adapter()
+    )
 
     first = ground_query(
         db_session,
@@ -2354,7 +2370,9 @@ def test_local_sufficient_grounding_does_not_consume_web_call_budget(
         created_by="dev-engineer",
         idempotency_key="budget-local-facts",
     )
-    monkeypatch.setattr("app.knowledge.resolve_web_research_api_key", lambda provider: "key")
+    monkeypatch.setattr(
+        "app.knowledge.resolve_web_research_api_key", lambda provider, **_kwargs: "key"
+    )
     monkeypatch.setattr(
         "app.sandbox.policies.socket.getaddrinfo",
         lambda host, *_args, **_kwargs: [(None, None, None, None, ("93.184.216.34", 443))],
@@ -2377,7 +2395,9 @@ def test_local_sufficient_grounding_does_not_consume_web_call_budget(
                 )
             ]
 
-    monkeypatch.setattr("app.knowledge.get_web_research_adapter", lambda provider: Adapter())
+    monkeypatch.setattr(
+        "app.knowledge.get_web_research_adapter", lambda provider, **_kwargs: Adapter()
+    )
 
     local = ground_query(
         db_session,

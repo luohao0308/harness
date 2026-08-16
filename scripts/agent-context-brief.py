@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-STARTUP_CONTEXT = ROOT / "docs/ai/agent-startup-context.md"
-CONTEXT_INDEX = ROOT / "docs/ai/context-index.json"
-TASK_PROGRESS = ROOT / "docs/ai/task-progress.yaml"
+STARTUP_CONTEXT = ROOT / "docs/development/ai/agent-startup-context.md"
+CONTEXT_INDEX = ROOT / "docs/development/ai/context-index.json"
+TASK_PROGRESS = ROOT / "docs/development/ai/task-progress.yaml"
+MODULE_MAP = ROOT / "docs/architecture/module-map.json"
+MODULE_INDEX = ROOT / "docs/architecture/MODULE-INDEX.md"
+SESSION_POINTERS = ROOT / "docs/development/ai/session-log-pointers.md"
 GENERIC_SINGLE_TERMS = {
     "context",
     "token",
@@ -131,10 +135,58 @@ def render_list(items: list[str]) -> str:
     return "\n".join(f"- `{item}`" for item in items)
 
 
-def render_brief(task: str, max_pages: int, max_routes: int, show_startup: bool) -> str:
+def load_module_map() -> list[dict[str, Any]]:
+    return json.loads(MODULE_MAP.read_text(encoding="utf-8"))["modules"]
+
+
+def generate_module_index() -> None:
+    """Generate docs/architecture/MODULE-INDEX.md from docs/architecture/module-map.json (deterministic, sortedby name)."""
+    modules = sorted(load_module_map(), key=lambda m: m["name"])
+    lines = [
+        "<!-- AUTO-GENERATED from docs/architecture/module-map.json — do not hand-edit -->",
+        "<!-- Regenerate: python3 scripts/agent-context-brief.py --gen-module-index -->",
+        "",
+        "# Module Index",
+        "",
+        "Code module → owning docs. For feature→spec mapping see [SPEC-INDEX](../contracts/SPEC-INDEX.md).",
+        "",
+        "| Module | Path | Summary | Docs |",
+        "| --- | --- | --- | --- |",
+    ]
+    for m in modules:
+        name = m["name"]
+        path = m["path"]
+        summary = m.get("summary", "")
+        docs = m.get("docs", [])
+        doc_links = ", ".join(
+            f"[{Path(d).name}]({Path(os.path.relpath(ROOT / d, MODULE_INDEX.parent)).as_posix()})"
+            if d.startswith("docs/")
+            else f"`{d}`"
+            for d in docs
+        ) if docs else "—"
+        lines.append(f"| `{name}` | `{path}` | {summary} | {doc_links} |")
+    lines.append("")
+    MODULE_INDEX.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    print(f"Generated {MODULE_INDEX.relative_to(ROOT)} ({len(modules)} modules)")
+
+
+def render_recent_sessions() -> str:
+    """Return a '## Recent Sessions' section from the last 5 pointer lines (--show-sessions only)."""
+    if not SESSION_POINTERS.exists():
+        return ""
+    pointer_lines = [
+        line for line in SESSION_POINTERS.read_text(encoding="utf-8").splitlines()
+        if line.startswith("- ")
+    ][-5:]
+    if not pointer_lines:
+        return ""
+    return "\n".join(["", "## Recent Sessions", ""] + pointer_lines)
+
+
+def render_brief(task: str, max_pages: int, max_routes: int, show_startup: bool, show_sessions: bool = False) -> str:
     index = load_index()
     routes = select_routes(index, task, max_routes)
-    base_read_order = ["docs/ai/agent-startup-context.md", "docs/ai/task-progress.yaml"]
+    base_read_order = ["docs/development/ai/agent-startup-context.md", "docs/development/ai/task-progress.yaml"]
     read_first = unique_ordered(
         path for route in routes for path in route.get("read_first", [])
     )
@@ -192,7 +244,10 @@ def render_brief(task: str, max_pages: int, max_routes: int, show_startup: bool)
     )
     if show_startup:
         lines.extend(["", "## Startup Context Excerpt", "", trim_startup_context()])
-    return "\n".join(lines).rstrip() + "\n"
+    result = "\n".join(lines).rstrip()
+    if show_sessions:
+        result += render_recent_sessions()
+    return result + "\n"
 
 
 def main() -> None:
@@ -217,11 +272,25 @@ def main() -> None:
         action="store_true",
         help="Append the startup context excerpt to the brief.",
     )
+    parser.add_argument(
+        "--show-sessions",
+        action="store_true",
+        help="Append last 5 session pointers from docs/development/ai/session-log-pointers.md to the brief.",
+    )
+    parser.add_argument(
+        "--gen-module-index",
+        action="store_true",
+        help="Generate docs/architecture/MODULE-INDEX.md from docs/architecture/module-map.json and exit.",
+    )
     args = parser.parse_args()
+
+    if args.gen_module_index:
+        generate_module_index()
+        return
 
     max_pages = max(1, args.max_pages)
     max_routes = max(1, args.max_routes)
-    print(render_brief(args.task, max_pages, max_routes, args.show_startup), end="")
+    print(render_brief(args.task, max_pages, max_routes, args.show_startup, args.show_sessions), end="")
 
 
 if __name__ == "__main__":

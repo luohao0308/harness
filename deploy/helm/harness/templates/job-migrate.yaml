@@ -14,6 +14,9 @@ spec:
           image: {{ .Values.image.api }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["python", "-m", "alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: harness-config
           env:
             - name: DATABASE_URL
               valueFrom:
@@ -40,8 +43,3 @@ spec:
                 secretKeyRef:
                   name: harness-secrets
                   key: secret-encryption-key-id
-            - name: DEEPSEEK_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: harness-secrets
-                  key: deepseek-api-key

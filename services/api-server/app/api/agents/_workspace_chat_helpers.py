@@ -1,8 +1,68 @@
 """Workspace chat run, orchestration, and context helper functions."""
 
 # ruff: noqa: F401,F403,F405,I001,UP037
+from app.agents.specialists import SubagentSpecialistRegistry, ensure_system_specialists
+
 from .common import *
 from ._plan_helpers import *
+
+
+WORKSPACE_DEFAULT_SUBAGENT_SPECIALIST_SLUG = "researcher"
+WORKSPACE_SPECIALIST_HEURISTICS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "code-reviewer",
+        (
+            "code review",
+            "review",
+            "diff",
+            "patch",
+            "代码",
+            "审查",
+            "变更",
+        ),
+    ),
+    (
+        "safety-checker",
+        (
+            "release",
+            "readiness",
+            "checklist",
+            "risk",
+            "safe",
+            "policy",
+            "检查",
+            "发布",
+            "清单",
+            "风险",
+            "安全",
+            "合规",
+        ),
+    ),
+    (
+        "researcher",
+        (
+            "research",
+            "source",
+            "citation",
+            "调研",
+            "资料",
+            "引用",
+            "来源",
+        ),
+    ),
+    (
+        "synthesizer",
+        (
+            "summary",
+            "summarize",
+            "synthesize",
+            "总结",
+            "汇总",
+            "归纳",
+        ),
+    ),
+)
+
 
 def _workspace_max_subagents(request: AgentChatStreamRequest) -> int:
     return 5 if request.orchestration_mode in {"auto", "multi_agent", "subagent"} else 0
@@ -83,6 +143,74 @@ def _asks_to_invoke_agent(value: str) -> bool:
     )
 
 
+def _workspace_specialist_match_text(*, goal: str, request: AgentChatStreamRequest) -> str:
+    recent_context = " ".join(
+        node.content
+        for node in request.messages[-6:]
+        if node.role in {"user", "assistant", "system"}
+    )
+    return f"{goal}\n{recent_context}".strip()
+
+
+def _workspace_heuristic_specialist_slug(match_text: str) -> str:
+    normalized = match_text.casefold()
+    compact = _normalize_orchestration_text(match_text)
+    for slug, keywords in WORKSPACE_SPECIALIST_HEURISTICS:
+        for keyword in keywords:
+            keyword_normalized = keyword.casefold()
+            compact_keyword = _normalize_orchestration_text(keyword)
+            if keyword_normalized in normalized or compact_keyword in compact:
+                return slug
+    return WORKSPACE_DEFAULT_SUBAGENT_SPECIALIST_SLUG
+
+
+def _select_workspace_subagent_specialist(
+    *,
+    goal: str,
+    request: AgentChatStreamRequest,
+    session: Session,
+    principal: Principal,
+):
+    ensure_system_specialists(session)
+    registry = SubagentSpecialistRegistry(session, principal.organization_id)
+    match_text = _workspace_specialist_match_text(goal=goal, request=request)
+    requested_slug = (request.specialist_slug or "").strip()
+    if requested_slug:
+        specialist = registry.get_by_slug(requested_slug)
+        if specialist is not None:
+            return specialist, {
+                "resolved_by": "request_slug",
+                "requested_specialist_slug": requested_slug,
+                "selected_slug": specialist.slug,
+            }
+
+    keyword_specialist, keyword_trace = registry.match_by_keywords_with_trace(match_text)
+    if keyword_specialist is not None:
+        return keyword_specialist, {
+            **keyword_trace,
+            "resolved_by": f"workspace_{keyword_trace.get('resolved_by', 'keyword_match')}",
+            "requested_specialist_slug": requested_slug or None,
+        }
+
+    fallback_slug = _workspace_heuristic_specialist_slug(match_text)
+    fallback_specialist = registry.get_by_slug(fallback_slug)
+    if fallback_specialist is not None:
+        return fallback_specialist, {
+            "resolved_by": "workspace_heuristic_or_default",
+            "requested_specialist_slug": requested_slug or None,
+            "requested_slug_missing": bool(requested_slug),
+            "selected_slug": fallback_specialist.slug,
+            "fallback_slug": fallback_slug,
+        }
+
+    return None, {
+        "resolved_by": "no_active_specialist",
+        "requested_specialist_slug": requested_slug or None,
+        "requested_slug_missing": bool(requested_slug),
+        "fallback_slug": fallback_slug,
+    }
+
+
 def _apply_workspace_orchestration(
     *,
     run: Task,
@@ -111,10 +239,15 @@ def _apply_workspace_orchestration(
             "message": "Workspace chat created inspectable multi-agent orchestration evidence.",
         }
     if mode == "subagent":
+        specialist, specialist_selection = _select_workspace_subagent_specialist(
+            goal=goal,
+            request=request,
+            session=session,
+            principal=principal,
+        )
         try:
             subagent = SubagentManager(session).spawn(
                 task=run,
-                parent_agent_id=agent_id,
                 assignment={
                     "label": "Workspace forced subagent",
                     "goal": goal,
@@ -122,8 +255,10 @@ def _apply_workspace_orchestration(
                     "step_key": "workspace_forced_subagent",
                     "source": "workspace_chat",
                     "orchestration_mode": mode,
+                    "specialist_selection": specialist_selection,
                 },
                 enqueue=False,
+                specialist=specialist,
             )
         except SubagentLimitExceededError as exc:
             EventStore(session).append(
@@ -150,7 +285,11 @@ def _apply_workspace_orchestration(
             "subagent_id": subagent.id,
             "status": subagent.status,
             "agent_type": subagent.agent_type,
-            "message": "Workspace chat spawned an inspectable subagent run.",
+            "specialist_id": specialist.id if specialist is not None else None,
+            "specialist_slug": specialist.slug if specialist is not None else None,
+            "specialist_role": specialist.role if specialist is not None else None,
+            "specialist_selection": specialist_selection,
+            "message": "Workspace chat spawned an inspectable specialist subagent run.",
         }
     return None
 
@@ -161,12 +300,15 @@ def _create_workspace_chat_run(
     goal: str,
     session: Session,
     principal: Principal,
-    mode: Literal["chat", "markdown_plan", "context_compression", "cli_agent"] = "chat",
+    mode: Literal["chat", "markdown_plan", "context_compression", "goal", "cli_agent"] = "chat",
     model_provider: str | None = None,
     model_name: str | None = None,
     max_subagents: int = 0,
+    task_id: str | None = None,
+    commit: bool = True,
 ) -> Task:
     task = Task(
+        id=task_id,
         organization_id=principal.organization_id,
         agent_id=agent_id,
         created_by=principal.user_id,
@@ -185,6 +327,13 @@ def _create_workspace_chat_run(
     session.add(task)
     session.flush()
     capability_registry = CapabilityRegistry(session, principal.organization_id)
+    if mode == "goal":
+        capability_registry.ensure_builtin_tool_attachment(
+            agent_id,
+            "mcp_artifact_put",
+            attached_by=principal.user_id,
+            priority=-1,
+        )
     _registry, capability_snapshot = capability_registry.tool_registry_for_agent(agent_id)
     task.capability_snapshot_json = capability_snapshot
     EventStore(session).append(
@@ -200,8 +349,11 @@ def _create_workspace_chat_run(
         actor_type="user",
         actor_id=principal.user_id,
     )
-    session.commit()
-    session.refresh(task)
+    if commit:
+        session.commit()
+        session.refresh(task)
+    else:
+        session.flush()
     return task
 
 

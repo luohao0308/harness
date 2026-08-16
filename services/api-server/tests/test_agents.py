@@ -2,15 +2,21 @@ import hashlib
 import json
 import re
 from types import SimpleNamespace
+from uuid import uuid4
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.agents.model_gateway import ModelGatewayError, ModelResponse, ModelStreamChunk
+from app.agents.orchestrator import MultiAgentOrchestrator
 from app.agents.planner import DeterministicPlanner
+from app.agents.registry import ensure_default_agents
 from app.api.agents import _create_workspace_chat_run, _normalize_grounding_citations
+from app.api.agents.agent_chat.streaming import stream_agent_chat_run
+from app.api.schemas import AgentChatStreamRequest
 from app.db.models import (
     AdminAuditEvent,
     Agent,
@@ -34,10 +40,13 @@ from app.db.models import (
     ToolCall,
     utc_now,
 )
+from app.events.event_store import EventStore
+from app.events.event_types import EventType
 from app.knowledge import KnowledgeIngestionError, ingest_knowledge_source
 from app.knowledge_dify import DifyRetrievalResult
 from app.main import app
 from app.sandbox.docker_manager import SandboxCommandResult
+from app.security.auth import AuthenticatedPrincipal
 from app.tools.capabilities import CapabilityRegistry
 from app.workers.agent_assignment_worker import execute_agent_assignment
 from tests.conftest import AUTH_HEADERS
@@ -45,6 +54,12 @@ from tests.test_knowledge_rag import _ensure_agent, _two_chunk_content
 
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 OPERATOR_HEADERS = {"Authorization": "Bearer dev-operator-token"}
+ENGINEER_PRINCIPAL = AuthenticatedPrincipal(
+    user_id="dev-engineer",
+    organization_id="dev-org",
+    roles=["engineer"],
+    role="member",
+)
 
 
 def parse_sse_events(body: str) -> list[tuple[str, dict]]:
@@ -61,6 +76,62 @@ def parse_sse_events(body: str) -> list[tuple[str, dict]]:
             )
         )
     return events
+
+
+def collect_streaming_response_text(response) -> str:
+    iterator = response.body_iterator
+    if hasattr(iterator, "__iter__") and not hasattr(iterator, "__aiter__"):
+        return "".join(str(chunk) for chunk in iterator)
+
+    async def _collect() -> str:
+        chunks: list[str] = []
+        async for chunk in iterator:
+            chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
+        return "".join(chunks)
+
+    return anyio.run(_collect)
+
+
+class CapturedStreamingResponse:
+    def __init__(self, content, **_kwargs) -> None:
+        self.body_iterator = content
+
+
+def write_file_plan_response(
+    *,
+    model_provider: str,
+    model_name: str,
+    step_key: str = "draft_answer",
+    requires_sandbox: bool = False,
+) -> ModelResponse:
+    return ModelResponse(
+        content=json.dumps(
+            {
+                "summary": "Write a user-facing artifact",
+                "steps": [
+                    {
+                        "key": step_key,
+                        "description": "撰写一份可交付内容",
+                        "execution_mode": "sync",
+                        "requires_sandbox": requires_sandbox,
+                        "can_spawn_subagent": False,
+                        "depends_on": [],
+                        "tool_hints": ["write_file"],
+                        "acceptance_criteria": ["生成可审计的交付内容。"],
+                        "risk_level": "low",
+                        "artifact_expectations": ["result.md"],
+                        "expected_events": ["STEP_STARTED", "STEP_COMPLETED"],
+                        "timeout_seconds": 60,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        model_provider=model_provider,
+        model_name=model_name,
+        usage={"prompt_tokens": 10, "completion_tokens": 8},
+        raw_response={"mode": "write-file-plan"},
+    )
 
 
 def test_normalize_grounding_citations_supports_web_citation_keys() -> None:
@@ -380,6 +451,7 @@ class FakeWarmPoolManager:
         session: Session,
         task_id: str,
         agent_run_id: str | None = None,
+        workspace_root: str | None = None,
     ) -> SandboxInstance:
         sandbox = SandboxInstance(
             task_id=task_id,
@@ -504,6 +576,939 @@ def test_agent_workspace_pro_chat_stream_answers_normal_chat_without_plan(
         "denied",
         "no_omission_applicable",
     }
+
+
+def test_agent_workspace_pro_chat_stream_emits_incremental_deltas_with_grounding(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        assert request_payload.response_format == "text"
+        yield ModelStreamChunk(text="第一段")
+        yield ModelStreamChunk(text="第二段")
+        yield ModelStreamChunk(
+            usage={"prompt_tokens": 6, "completion_tokens": 4},
+            raw_response={"mode": "streaming-test"},
+            done=True,
+        )
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+    client_run_id = str(uuid4())
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证流式",
+            messages=[
+                {
+                    "id": "user-streaming-chat",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "验证流式",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            active_leaf_id="user-streaming-chat",
+            active_branch_id="branch-streaming-chat",
+            client_run_id=client_run_id,
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    deltas = [payload["content"] for event, payload in events if event == "delta"]
+    assert deltas == ["第一段", "第二段"]
+    done = next(payload for event, payload in events if event == "done")
+    assert done["status"] == "COMPLETED"
+    run_created = next(payload for event, payload in events if event == "run_created")
+    assert run_created["run_id"] == client_run_id
+    persisted = db_session.get(Task, client_run_id)
+    assert persisted is not None
+    assert persisted.status == "COMPLETED"
+
+
+def test_agent_workspace_chat_stream_honors_run_cancellation_before_completion(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        yield ModelStreamChunk(text="第一段")
+        fresh_session = sessionmaker(bind=db_session.get_bind())()
+        try:
+            run = fresh_session.scalar(
+                select(Task)
+                .where(Task.goal == "验证取消")
+                .order_by(Task.created_at.desc())
+            )
+            assert run is not None
+            run.status = "CANCELLED"
+            run.updated_at = utc_now()
+            run.completed_at = utc_now()
+            fresh_session.commit()
+        finally:
+            fresh_session.close()
+        yield ModelStreamChunk(text="不应继续发送")
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证取消",
+            messages=[
+                {
+                    "id": "user-cancel-stream",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "验证取消",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            active_leaf_id="user-cancel-stream",
+            active_branch_id="branch-cancel-stream",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    events = parse_sse_events(collect_streaming_response_text(response))
+    deltas = [payload["content"] for event, payload in events if event == "delta"]
+    done = next(payload for event, payload in events if event == "done")
+    run = db_session.scalar(
+        select(Task).where(Task.goal == "验证取消").order_by(Task.created_at.desc())
+    )
+
+    assert deltas == ["第一段"]
+    assert done["status"] == "CANCELLED"
+    assert run is not None
+    assert run.status == "CANCELLED"
+
+
+def test_agent_workspace_late_model_error_does_not_overwrite_external_cancellation(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        fresh_session = sessionmaker(bind=self.session.get_bind())()
+        try:
+            run = fresh_session.get(Task, self.task_id)
+            assert run is not None
+            run.status = "CANCELLED"
+            run.updated_at = utc_now()
+            run.completed_at = utc_now()
+            EventStore(fresh_session).append(
+                task_id=run.id,
+                event_type=EventType.TASK_CANCELLED,
+                payload_json={"task_id": run.id, "cancelled_by": "dev-engineer"},
+                actor_type="user",
+                actor_id="dev-engineer",
+            )
+            fresh_session.commit()
+        finally:
+            fresh_session.close()
+        raise ModelGatewayError("late upstream failure")
+        yield
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证零输出取消竞态",
+            messages=[],
+            active_leaf_id="root",
+            active_branch_id="branch-late-model-error",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+    events = parse_sse_events(collect_streaming_response_text(response))
+    run_created = next(payload for event, payload in events if event == "run_created")
+    done = next(payload for event, payload in events if event == "done")
+    db_session.expire_all()
+    persisted = db_session.get(Task, run_created["run_id"])
+
+    assert done["status"] == "CANCELLED"
+    assert all(event != "error" for event, _payload in events)
+    assert persisted is not None
+    assert persisted.status == "CANCELLED"
+
+
+def test_agent_workspace_cancelled_disconnect_does_not_append_paused_event(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    def fake_stream(self, request_payload, *, fallback_requests=None):
+        yield ModelStreamChunk(text="第一段")
+        yield ModelStreamChunk(text="第二段")
+
+    monkeypatch.setattr("app.api.agents.AuditedModelGateway.stream", fake_stream)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证取消断开",
+            messages=[],
+            active_leaf_id="root",
+            active_branch_id="branch-cancel-disconnect",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+    iterator = response.body_iterator
+    run_id = ""
+    for _ in range(16):
+        chunk = next(iterator)
+        events = parse_sse_events(chunk)
+        run_created = next(
+            (payload for event, payload in events if event == "run_created"),
+            None,
+        )
+        if run_created is not None:
+            run_id = run_created["run_id"]
+        if any(event == "delta" for event, _payload in events):
+            break
+    assert run_id
+
+    fresh_session = sessionmaker(bind=db_session.get_bind())()
+    try:
+        run = fresh_session.get(Task, run_id)
+        assert run is not None
+        run.status = "CANCELLED"
+        run.updated_at = utc_now()
+        run.completed_at = utc_now()
+        EventStore(fresh_session).append(
+            task_id=run_id,
+            event_type=EventType.TASK_CANCELLED,
+            payload_json={"task_id": run_id, "cancelled_by": "dev-engineer"},
+            actor_type="user",
+            actor_id="dev-engineer",
+        )
+        fresh_session.commit()
+    finally:
+        fresh_session.close()
+
+    iterator.close()
+    db_session.expire_all()
+    persisted = db_session.get(Task, run_id)
+    event_types = list(
+        db_session.scalars(
+            select(AgentEvent.event_type)
+            .where(AgentEvent.task_id == run_id)
+            .order_by(AgentEvent.sequence)
+        )
+    )
+
+    assert persisted is not None
+    assert persisted.status == "CANCELLED"
+    assert EventType.TASK_CANCELLED.value in event_types
+    assert EventType.TASK_PAUSED.value not in event_types
+
+
+def test_agent_workspace_pre_frame_disconnect_does_not_leave_run_running(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+    client_run_id = str(uuid4())
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            goal="验证首帧前断开",
+            client_run_id=client_run_id,
+            messages=[],
+            active_leaf_id="root",
+            active_branch_id="branch-pre-frame-disconnect",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+    iterator = response.body_iterator
+    first_chunk = next(iterator)
+    first_events = parse_sse_events(first_chunk)
+    assert any(event == "run_created" for event, _payload in first_events)
+
+    iterator.close()
+    db_session.expire_all()
+    persisted = db_session.get(Task, client_run_id)
+    event_types = list(
+        db_session.scalars(
+            select(AgentEvent.event_type)
+            .where(AgentEvent.task_id == client_run_id)
+            .order_by(AgentEvent.sequence)
+        )
+    )
+
+    assert persisted is not None
+    assert persisted.status == "PAUSED"
+    assert EventType.TASK_PAUSED.value in event_types
+
+
+def test_agent_workspace_goal_mode_executes_without_plan_artifact(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class FakeExecutor:
+        def __init__(self, session: Session) -> None:
+            self.session = session
+
+        def start_task(self, task: Task) -> Task:
+            task.status = "COMPLETED"
+            task.completed_at = utc_now()
+            task.updated_at = utc_now()
+            self.session.flush()
+            return task
+
+    monkeypatch.setattr("app.api.agents.agent_chat.streaming.Executor", FakeExecutor)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="持续完成目标",
+            messages=[
+                {
+                    "id": "user-goal-mode",
+                    "parent_id": None,
+                    "children_ids": [],
+                    "role": "user",
+                    "content": "持续完成目标",
+                    "state": "done",
+                    "metadata": {},
+                    "tool_calls": [],
+                    "artifacts": [],
+                }
+            ],
+            active_leaf_id="user-goal-mode",
+            active_branch_id="branch-goal-mode",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    event_names = [event for event, _payload in events]
+    deltas = [payload["content"] for event, payload in events if event == "delta"]
+    goal_progress = [payload for event, payload in events if event == "goal_progress"]
+    run_created = next(payload for event, payload in events if event == "run_created")
+    done = next(payload for event, payload in events if event == "done")
+    run = db_session.get(Task, run_created["run_id"])
+
+    assert "artifact_created" not in event_names
+    assert "plan.json" not in body
+    assert goal_progress[0]["status"] == "running"
+    assert goal_progress[0]["phase"] == "started"
+    assert goal_progress[0]["goal"] == "持续完成目标"
+    assert any(progress["phase"] == "planning" for progress in goal_progress)
+    assert goal_progress[-1]["status"] == "completed"
+    assert any("目标已达成" in delta for delta in deltas)
+    assert "已推进" not in body
+    assert "Run Detail" not in body
+    assert done["status"] == "COMPLETED"
+    assert run is not None
+    assert run.status == "COMPLETED"
+    created_event = next(
+        event
+        for event in db_session.query(AgentEvent).filter(AgentEvent.task_id == run.id).all()
+        if event.event_type == EventType.TASK_CREATED
+    )
+    assert created_event.payload_json["mode"] == "goal"
+
+
+def test_agent_workspace_goal_mode_continues_paused_existing_plan(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    class FakeExecutor:
+        def __init__(self, session: Session) -> None:
+            self.session = session
+
+        def execute_existing_plan(self, task: Task) -> Task:
+            task.status = "COMPLETED"
+            task.completed_at = utc_now()
+            task.updated_at = utc_now()
+            self.session.flush()
+            return task
+
+    monkeypatch.setattr("app.api.agents.agent_chat.streaming.Executor", FakeExecutor)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    run = Task(
+        organization_id="dev-org",
+        agent_id="default",
+        created_by="dev-engineer",
+        title="Paused goal",
+        goal="继续完成暂停目标",
+        status="PAUSED",
+        model_provider="default",
+        model_name="default",
+        enable_sandbox=False,
+        enable_network=False,
+    )
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(
+        ExecutionPlan(
+            task_id=run.id,
+            version=1,
+            status="READY",
+            plan_json={
+                "summary": "Paused plan",
+                "steps": [{"key": "resume", "description": "Resume"}],
+            },
+        )
+    )
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="继续完成暂停目标",
+            run_id=run.id,
+            messages=[],
+            active_leaf_id="user-goal-paused",
+            active_branch_id="branch-goal-paused",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    events = parse_sse_events(collect_streaming_response_text(response))
+    progress = [payload for event, payload in events if event == "goal_progress"]
+    done = next(payload for event, payload in events if event == "done")
+
+    assert any(item["status"] == "paused" for item in progress)
+    assert any(item["phase"] == "executing" for item in progress)
+    assert progress[-1]["status"] == "completed"
+    assert done["status"] == "COMPLETED"
+
+
+def test_agent_workspace_goal_mode_surfaces_model_auth_failure_as_error(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_auth_detail = (
+        'upstream model gateway returned HTTP 401: {"error":{"message":'
+        '"Authentication Fails, Your api key: ****9b48 is invalid"}}'
+    )
+
+    class BrokenExecutor:
+        def __init__(self, session: Session) -> None:
+            self.session = session
+
+        def start_task(self, task: Task) -> Task:
+            task.status = "FAILED"
+            task.updated_at = utc_now()
+            EventStore(self.session).append(
+                task_id=task.id,
+                event_type=EventType.MODEL_CALL_FAILED,
+                payload_json={
+                    "model_provider": task.model_provider,
+                    "model_name": task.model_name,
+                    "error": model_auth_detail,
+                },
+            )
+            EventStore(self.session).append(
+                task_id=task.id,
+                event_type=EventType.TASK_FAILED,
+                payload_json={"summary": model_auth_detail, "stage": "model_gateway"},
+            )
+            self.session.flush()
+            return task
+
+    monkeypatch.setattr("app.api.agents.agent_chat.streaming.Executor", BrokenExecutor)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="验证追踪目标模式显示进度行",
+            messages=[],
+            active_leaf_id="goal-model-auth",
+            active_branch_id="branch-goal-model-auth",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    event_names = [event for event, _payload in events]
+    progress = [payload for event, payload in events if event == "goal_progress"]
+    error = next(payload for event, payload in events if event == "error")
+
+    assert "done" not in event_names
+    assert error["kind"] == "model_auth"
+    assert error["recoverable"] is True
+    assert error["message"] == model_auth_detail
+    assert progress[-1]["status"] == "failed"
+    assert progress[-1]["message"] == f"目标暂未达成：{model_auth_detail}"
+    assert "目标暂未达成，遇到需要处理的阻塞" not in body
+
+
+def test_agent_workspace_goal_mode_returns_visible_completed_output(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeExecutor:
+        def __init__(self, session: Session) -> None:
+            self.session = session
+
+        def start_task(self, task: Task) -> Task:
+            task.status = "COMPLETED"
+            task.completed_at = utc_now()
+            task.updated_at = utc_now()
+            self.session.flush()
+            return task
+
+    class FakeFinalGateway:
+        def __init__(self, session: Session, task_id: str) -> None:
+            self.session = session
+            self.task_id = task_id
+
+        def stream(self, request_payload, *, fallback_requests=None):
+            assert request_payload.model_provider == "default"
+            assert request_payload.model_name == "default"
+            assert request_payload.response_format == "text"
+            assert "写个500字科幻小说" in request_payload.messages[-1].content
+            yield ModelStreamChunk(text="星港的最后一盏蓝灯亮起，")
+            yield ModelStreamChunk(text="主角终于出现在舱门前。")
+            yield ModelStreamChunk(
+                usage={"prompt_tokens": 12, "completion_tokens": 18},
+                raw_response={"mode": "goal-final-stream"},
+                done=True,
+            )
+
+    monkeypatch.setattr("app.api.agents.agent_chat.streaming.Executor", FakeExecutor)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.AuditedModelGateway",
+        FakeFinalGateway,
+    )
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="写个500字科幻小说，直到结局出现为止",
+            messages=[],
+            active_leaf_id="goal-visible-output",
+            active_branch_id="branch-goal-visible-output",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    deltas = [payload["content"] for event, payload in events if event == "delta"]
+    delta_indexes = [index for index, (event, _payload) in enumerate(events) if event == "delta"]
+    generating_indexes = [
+        index
+        for index, (event, payload) in enumerate(events)
+        if event == "goal_progress"
+        and payload["status"] == "running"
+        and payload["phase"] == "generating"
+    ]
+    completed_progress_indexes = [
+        index
+        for index, (event, payload) in enumerate(events)
+        if event == "goal_progress" and payload["status"] == "completed"
+    ]
+    done = next(payload for event, payload in events if event == "done")
+    usage = next(payload for event, payload in events if event == "usage")
+
+    assert done["status"] == "COMPLETED"
+    assert deltas == ["星港的最后一盏蓝灯亮起，", "主角终于出现在舱门前。"]
+    assert generating_indexes
+    assert generating_indexes[-1] < delta_indexes[0]
+    assert completed_progress_indexes
+    assert completed_progress_indexes[0] > delta_indexes[-1]
+    assert usage["input_tokens"] == 12
+    assert usage["output_tokens"] == 18
+    assert all(delta != "目标已达成。\n" for delta in deltas)
+
+
+def test_agent_workspace_goal_mode_writing_goal_ignores_unattached_read_hint(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlannerGateway:
+        def complete(self, request_payload) -> ModelResponse:
+            return ModelResponse(
+                content=json.dumps(
+                    {
+                        "summary": "Write the requested story",
+                        "steps": [
+                            {
+                                "key": "complete_goal",
+                                "description": "完成目标",
+                                "execution_mode": "sync",
+                                "requires_sandbox": False,
+                                "can_spawn_subagent": False,
+                                "depends_on": [],
+                                "tool_hints": ["read_file"],
+                                "acceptance_criteria": ["完成用户要求。"],
+                                "risk_level": "low",
+                                "artifact_expectations": ["result.md"],
+                                "expected_events": ["STEP_STARTED", "STEP_COMPLETED"],
+                                "timeout_seconds": 60,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                usage={"prompt_tokens": 12, "completion_tokens": 8},
+                raw_response={"mode": "test-plan"},
+            )
+
+    class FakeFinalGateway:
+        def __init__(self, session: Session, task_id: str) -> None:
+            self.session = session
+            self.task_id = task_id
+
+        def stream(self, request_payload, *, fallback_requests=None):
+            yield ModelStreamChunk(text="最终小说正文")
+            yield ModelStreamChunk(done=True)
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda _provider, **_kwargs: FakePlannerGateway(),
+    )
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.AuditedModelGateway",
+        FakeFinalGateway,
+    )
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    db_session.add(
+        Agent(
+            id="客服",
+            organization_id=None,
+            name="客服",
+            description="Only produces user-facing responses.",
+            role="support",
+            status="ACTIVE",
+            model_provider="default",
+            model_name="default",
+            system_prompt="Use attached capabilities only.",
+            tools_json=[],
+            routing_tags=[],
+        )
+    )
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "客服",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="写个500字的科幻小说，直到结局出现为止",
+            messages=[],
+            active_leaf_id="goal-support-story",
+            active_branch_id="branch-support-story",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    run_id = next(payload for event, payload in events if event == "run_created")["run_id"]
+    deltas = [payload["content"] for event, payload in events if event == "delta"]
+    delta_index = next(index for index, (event, _payload) in enumerate(events) if event == "delta")
+    completed_progress_index = next(
+        index
+        for index, (event, payload) in enumerate(events)
+        if event == "goal_progress" and payload["status"] == "completed"
+    )
+    done = next(payload for event, payload in events if event == "done")
+    tool_call = db_session.execute(select(ToolCall).where(ToolCall.task_id == run_id)).scalar_one()
+
+    assert done["status"] == "COMPLETED"
+    assert tool_call.tool_name == "mcp_artifact_put"
+    assert tool_call.status == "SUCCESS"
+    assert completed_progress_index > delta_index
+    assert "not attached to capability read_file" not in body
+    assert deltas == ["最终小说正文"]
+
+
+def test_agent_workspace_goal_mode_uses_artifact_tool_without_sandbox(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ExplodingWarmPoolManager:
+        def acquire(self, **_kwargs):
+            raise AssertionError("goal mode should not request Docker for artifact-only work")
+
+        def release(self, **_kwargs):
+            raise AssertionError("sandbox release should not run without an acquired sandbox")
+
+    class FakeGateway:
+        def complete(self, request_payload):
+            return write_file_plan_response(
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda _provider, **_kwargs: FakeGateway(),
+    )
+    monkeypatch.setattr("app.agents.executor.WarmPoolManager", ExplodingWarmPoolManager)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="写一段客服回复",
+            messages=[],
+            active_leaf_id="goal-artifact",
+            active_branch_id="branch-goal-artifact",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    run_id = next(payload for event, payload in events if event == "run_created")["run_id"]
+    done = next(payload for event, payload in events if event == "done")
+    run = db_session.get(Task, run_id)
+    tool_call = db_session.execute(select(ToolCall).where(ToolCall.task_id == run_id)).scalar_one()
+    event_types = [
+        event.event_type
+        for event in db_session.execute(
+            select(AgentEvent).where(AgentEvent.task_id == run_id).order_by(AgentEvent.sequence)
+        ).scalars()
+    ]
+
+    assert run is not None
+    assert run.enable_sandbox is False
+    assert done["status"] == "COMPLETED"
+    assert tool_call.tool_name == "mcp_artifact_put"
+    assert tool_call.status == "SUCCESS"
+    assert tool_call.requires_sandbox is False
+    assert "SANDBOX_REQUESTED" not in event_types
+
+
+def test_agent_workspace_goal_mode_reports_sandbox_runtime_unavailable(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenWarmPoolManager:
+        def acquire(self, **_kwargs):
+            raise FileNotFoundError(2, "No such file or directory")
+
+        def release(self, **_kwargs):
+            raise AssertionError("release should not run when acquire fails")
+
+    class FakeGateway:
+        def complete(self, request_payload):
+            return write_file_plan_response(
+                model_provider=request_payload.model_provider,
+                model_name=request_payload.model_name,
+                step_key="write_with_sandbox",
+                requires_sandbox=True,
+            )
+
+    monkeypatch.setattr(
+        "app.agents.model_gateway.model_gateway_for_provider",
+        lambda _provider, **_kwargs: FakeGateway(),
+    )
+    monkeypatch.setattr("app.agents.executor.WarmPoolManager", BrokenWarmPoolManager)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="写一段需要沙箱保存的内容",
+            enable_sandbox=True,
+            messages=[],
+            active_leaf_id="goal-sandbox",
+            active_branch_id="branch-goal-sandbox",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    run_id = next(payload for event, payload in events if event == "run_created")["run_id"]
+    done = next(payload for event, payload in events if event == "done")
+    step = db_session.execute(select(TaskStep).where(TaskStep.task_id == run_id)).scalar_one()
+    failed_event = (
+        db_session.execute(
+            select(AgentEvent)
+            .where(AgentEvent.task_id == run_id, AgentEvent.event_type == "STEP_FAILED")
+            .order_by(AgentEvent.sequence.desc())
+        )
+        .scalars()
+        .first()
+    )
+
+    assert done["status"] == "FAILED"
+    assert step.status == "STEP_FAILED"
+    assert step.error_message is not None
+    assert step.error_message.startswith("Sandbox runtime unavailable")
+    assert failed_event is not None
+    assert failed_event.payload_json["permission_boundary"] == "sandbox_runtime"
+    assert "FileNotFoundError" not in body
+    assert "Error while fetching server API version" not in body
+
+
+def test_agent_workspace_goal_mode_sanitizes_unexpected_docker_runtime_error(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenExecutor:
+        def __init__(self, session: Session) -> None:
+            self.session = session
+
+        def start_task(self, _task: Task) -> Task:
+            raise RuntimeError(
+                "Error while fetching server API version: "
+                "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))"
+            )
+
+    monkeypatch.setattr("app.api.agents.agent_chat.streaming.Executor", BrokenExecutor)
+    monkeypatch.setattr(
+        "app.api.agents.agent_chat.streaming.StreamingResponse",
+        CapturedStreamingResponse,
+    )
+    ensure_default_agents(db_session, "dev-org")
+    db_session.commit()
+
+    response = stream_agent_chat_run(
+        "default",
+        AgentChatStreamRequest(
+            mode="goal",
+            goal="写一段客服回复",
+            messages=[],
+            active_leaf_id="goal-docker-error",
+            active_branch_id="branch-goal-docker-error",
+            pinned_node_ids=[],
+            context_window_turns=8,
+        ),
+        db_session,
+        ENGINEER_PRINCIPAL,
+    )
+
+    body = collect_streaming_response_text(response)
+    events = parse_sse_events(body)
+    run_id = next(payload for event, payload in events if event == "run_created")["run_id"]
+    error = next(payload for event, payload in events if event == "error")
+    run = db_session.get(Task, run_id)
+
+    assert run is not None
+    assert run.status == "FAILED"
+    assert error["kind"] == "server"
+    assert error["recoverable"] is True
+    assert error["run_id"] == run_id
+    assert error["message"].startswith("Sandbox runtime unavailable")
+    assert "FileNotFoundError" not in body
+    assert "Error while fetching server API version" not in body
 
 
 def test_agent_workspace_chat_stream_surfaces_dify_connector_secret_failure(
@@ -1893,6 +2898,8 @@ def test_agent_workspace_chat_force_subagent_persists_inspectable_agent_run(
     assert orchestration["mode"] == "subagent"
     assert orchestration["agent_type"] == "subagent"
     assert orchestration["status"] == "PENDING"
+    assert orchestration["specialist_slug"] == "safety-checker"
+    assert orchestration["specialist_role"] == "checker"
     subagent_id = orchestration["subagent_id"]
     run_id = orchestration["run_id"]
 
@@ -1900,6 +2907,10 @@ def test_agent_workspace_chat_force_subagent_persists_inspectable_agent_run(
     assert subagent is not None
     assert subagent.agent_type == "subagent"
     assert subagent.task_id == run_id
+    assert subagent.parent_agent_id is None
+    assert subagent.specialist_id is not None
+    assert subagent.context_json["specialist_slug"] == "safety-checker"
+    assert subagent.context_json["specialist_role"] == "checker"
     assert subagent.context_json["source"] == "workspace_chat"
 
     workspace = TestClient(app).get(f"/api/agents/runs/{run_id}/workspace", headers=AUTH_HEADERS)
@@ -3346,6 +4357,121 @@ def test_agent_execute_run_rejects_non_planned_status(db_session: Session) -> No
     assert response.status_code == 409
 
 
+def test_agent_run_workspace_merges_plan_step_state(db_session: Session) -> None:
+    run = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Workspace step projection",
+        goal="展示真实计划执行状态",
+        status="COMPLETED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=5,
+        enable_sandbox=True,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(run)
+    db_session.flush()
+    plan = ExecutionPlan(
+        task_id=run.id,
+        version=1,
+        status="READY",
+        plan_json={
+            "summary": "Workspace step projection",
+            "steps": [
+                {
+                    "key": "inspect",
+                    "description": "Inspect inline",
+                    "execution_mode": "sync",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": False,
+                },
+                {
+                    "key": "subagent_research",
+                    "description": "Run delegated research",
+                    "depends_on": ["inspect"],
+                    "execution_mode": "async",
+                    "requires_sandbox": False,
+                    "can_spawn_subagent": True,
+                    "tool_hints": ["read_file"],
+                },
+            ],
+        },
+        created_at=utc_now(),
+    )
+    db_session.add(plan)
+    db_session.flush()
+    subagent = AgentRun(
+        task_id=run.id,
+        agent_type="subagent",
+        status="SUCCESS",
+        context_json={
+            "step_key": "subagent_research",
+            "result": {"summary": "delegated branch finished"},
+        },
+        capability_snapshot_json={},
+        started_at=utc_now(),
+        completed_at=utc_now(),
+    )
+    db_session.add(subagent)
+    db_session.flush()
+    db_session.add_all(
+        [
+            TaskStep(
+                task_id=run.id,
+                plan_id=plan.id,
+                step_key="inspect",
+                description="Inspect inline",
+                status="STEP_COMPLETED",
+                execution_mode="sync",
+                started_at=utc_now(),
+                completed_at=utc_now(),
+            ),
+            TaskStep(
+                task_id=run.id,
+                plan_id=plan.id,
+                step_key="subagent_research",
+                description="Run delegated research",
+                status="STEP_COMPLETED",
+                execution_mode="async",
+                assigned_agent_id=subagent.id,
+                started_at=utc_now(),
+                completed_at=utc_now(),
+            ),
+        ]
+    )
+    EventStore(db_session).append(
+        task_id=run.id,
+        agent_run_id=subagent.id,
+        event_type=EventType.STEP_COMPLETED,
+        payload_json={
+            "step_key": "subagent_research",
+            "summary": "delegated branch finished",
+            "trace_summary": "子代理分支已完成",
+        },
+    )
+    db_session.commit()
+
+    response = TestClient(app).get(f"/api/agents/runs/{run.id}/workspace", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    payload = response.json()
+    steps = {step["step_key"]: step for step in payload["plan"]["steps"]}
+    assert steps["inspect"]["status"] == "STEP_COMPLETED"
+    assert steps["subagent_research"]["status"] == "STEP_COMPLETED"
+    assert steps["subagent_research"]["depends_on"] == ["inspect"]
+    assert steps["subagent_research"]["execution_mode"] == "async"
+    assert steps["subagent_research"]["can_spawn_subagent"] is True
+    assert steps["subagent_research"]["assigned_agent_id"] == subagent.id
+    assert steps["subagent_research"]["trace_summary"] == "子代理分支已完成"
+    assert steps["subagent_research"]["last_event_sequence"] is not None
+    assert payload["subagents"][0]["status"] == "SUCCESS"
+    assert payload["subagents"][0]["context_json"]["step_key"] == "subagent_research"
+
+
 def test_agent_execute_run_waits_for_admin_approval(db_session: Session) -> None:
     db_session.add(
         SystemSetting(
@@ -3570,6 +4696,66 @@ def test_agent_orchestration_execute_runs_assignments_and_reduces(
     assert "AGENT_REDUCE_COMPLETED" in event_types
     assert "TOOL_CALLED" in event_types
     assert "TOOL_RESULT_RECEIVED" in event_types
+
+
+def test_agent_orchestration_execute_continues_after_terminal_failed_assignment(
+    db_session: Session,
+) -> None:
+    ensure_default_agents(db_session, "dev-org")
+    run = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Retry partial multi-agent execution",
+        goal="重新执行时不要让已失败分支挡住其它待执行分支",
+        status="FAILED",
+        model_provider="openai-compatible",
+        model_name="default",
+        enable_sandbox=True,
+        enable_network=False,
+    )
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(
+        ExecutionPlan(
+            task_id=run.id,
+            version=1,
+            status="COMPLETED",
+            plan_json={
+                "summary": "Existing plan",
+                "planner_source": "test",
+                "planner_attempts": 1,
+                "steps": [],
+            },
+        )
+    )
+    failed_assignment = AgentAssignment(
+        run_id=run.id,
+        agent_id="default",
+        role="generalist",
+        status="FAILED",
+        input_json={},
+        output_json={"summary": "previous failure"},
+    )
+    pending_assignment = AgentAssignment(
+        run_id=run.id,
+        agent_id="reviewer",
+        role="reviewer",
+        status="PENDING",
+        input_json={},
+        output_json={},
+    )
+    db_session.add_all([failed_assignment, pending_assignment])
+    db_session.commit()
+
+    assignments, _handoffs = MultiAgentOrchestrator(db_session).execute_assignments(run=run)
+
+    assert failed_assignment.status == "FAILED"
+    assert pending_assignment.status == "SUCCESS"
+    assert pending_assignment.output_json["tool_name"] == "read_file"
+    assert {assignment.id for assignment in assignments} == {
+        failed_assignment.id,
+        pending_assignment.id,
+    }
 
 
 def test_agent_orchestration_enqueue_marks_assignments_for_worker(

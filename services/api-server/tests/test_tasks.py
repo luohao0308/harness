@@ -1,8 +1,10 @@
 from datetime import timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.api.tasks import cancel_task
 from app.db.models import (
     AgentRun,
     ExecutionPlan,
@@ -17,7 +19,15 @@ from app.events.event_store import EventStore
 from app.events.event_types import EventType
 from app.events.replay import EventReplay
 from app.main import app
+from app.security.auth import AuthenticatedPrincipal
 from tests.conftest import AUTH_HEADERS
+
+ENGINEER_PRINCIPAL = AuthenticatedPrincipal(
+    user_id="dev-engineer",
+    organization_id="dev-org",
+    roles=["engineer"],
+    role="member",
+)
 
 
 def test_create_task_writes_task_created_event() -> None:
@@ -126,10 +136,115 @@ def test_task_cancel_resume_result_replay_and_audit_endpoints() -> None:
     assert model_calls.json()["items"][0]["model_provider"] == "openai-compatible"
     assert tool_calls.status_code == 200
     tool_call = tool_calls.json()["items"][0]
-    assert tool_call["tool_name"] == "read_file"
-    assert tool_call["output_kind"] == "file_content"
-    assert tool_call["output_summary"].startswith("文件内容")
+    assert tool_call["tool_name"] == "mcp_artifact_put"
+    assert tool_call["output_kind"] == "json"
+    assert tool_call["output_summary"].startswith("JSON 输出字段")
     assert tool_call["timeout_category"] is None
+
+
+def test_task_cancel_retries_transient_sqlite_lock(
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Cancel retry",
+        goal="Exercise transient SQLite cancellation lock",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=0,
+        enable_sandbox=False,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    original_commit = db_session.commit
+    attempts = 0
+
+    def flaky_commit() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OperationalError("database is locked", None, None)
+        original_commit()
+
+    monkeypatch.setattr(db_session, "commit", flaky_commit)
+    cancelled = cancel_task(task.id, db_session, ENGINEER_PRINCIPAL)
+
+    assert attempts == 2
+    assert cancelled.status == "CANCELLED"
+    assert db_session.get(Task, task.id).status == "CANCELLED"
+
+
+def test_task_cancel_terminalizes_active_model_calls(
+    db_session: Session,
+) -> None:
+    task = Task(
+        organization_id="dev-org",
+        created_by="dev-engineer",
+        title="Cancel model call",
+        goal="Cancel an active model stream",
+        status="RUNNING",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=0,
+        enable_sandbox=False,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    active = ModelCall(
+        task_id=task.id,
+        model_provider="openai-compatible",
+        model_name="default",
+        status="RUNNING",
+        prompt_tokens=0,
+        completion_tokens=0,
+        duration_ms=0,
+        request_json={},
+        response_json={},
+    )
+    completed = ModelCall(
+        task_id=task.id,
+        model_provider="openai-compatible",
+        model_name="default",
+        status="SUCCESS",
+        terminal_status="success",
+        prompt_tokens=1,
+        completion_tokens=1,
+        duration_ms=10,
+        request_json={},
+        response_json={},
+    )
+    db_session.add_all([active, completed])
+    db_session.commit()
+
+    cancelled = cancel_task(task.id, db_session, ENGINEER_PRINCIPAL)
+    db_session.expire_all()
+    persisted_active = db_session.get(ModelCall, active.id)
+    persisted_completed = db_session.get(ModelCall, completed.id)
+    events = EventStore(db_session).list_by_task(task_id=task.id)
+
+    assert cancelled.status == "CANCELLED"
+    assert persisted_active is not None
+    assert persisted_active.status == "FAILED"
+    assert persisted_active.terminal_status == "stream_aborted"
+    assert persisted_active.error_message == "stream closed before completion"
+    assert persisted_completed is not None
+    assert persisted_completed.status == "SUCCESS"
+    failed_events = [event for event in events if event.event_type == EventType.MODEL_CALL_FAILED]
+    assert len(failed_events) == 1
+    assert failed_events[0].payload_json["cancelled"] is True
+    assert events[-1].event_type == EventType.TASK_CANCELLED
 
 
 def test_task_plan_steps_and_tool_execute_endpoints() -> None:

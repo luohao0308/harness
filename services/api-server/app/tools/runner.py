@@ -876,11 +876,15 @@ class ToolRunner:
                     else None
                 ),
             )
-            return {
+            output = {
                 "mcp_server": result.server,
                 "mcp_method": result.method,
                 "result": result.output_json,
             }
+            artifacts = result.output_json.get("artifacts")
+            if isinstance(artifacts, list):
+                output["artifacts"] = artifacts
+            return output
         if metadata.name not in self.registry.tools:
             return {
                 "package_tool": metadata.name,

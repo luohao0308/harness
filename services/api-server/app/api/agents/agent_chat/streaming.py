@@ -1,6 +1,17 @@
 """Agent Workspace streaming chat endpoint."""
 
 # ruff: noqa: F401,F403,F405,I001,UP037
+from fastapi.security import HTTPAuthorizationCredentials
+
+from app.security.jwt_utils import token_error
+from app.security.auth import (
+    AuthenticatedPrincipal,
+    LocalAgentBridgeStreamPrincipal,
+    bearer_scheme,
+    get_current_principal,
+    principal_from_local_agent_bridge_stream_token,
+)
+
 from ..common import *
 from .._capability_helpers import *
 from .._grounding_helpers import *
@@ -12,6 +23,46 @@ from .._workspace_chat_helpers import *
 from .._workspace_response_helpers import *
 from ..agent_runs import plan_with_agent
 from ._tool_events import WorkspaceToolEventService
+
+
+async def _agent_chat_stream_principal(
+    http_request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    session: DbSession,
+) -> AuthenticatedPrincipal | LocalAgentBridgeStreamPrincipal:
+    token = (
+        credentials.credentials
+        if credentials is not None
+        else http_request.query_params.get("access_token")
+    )
+    if token is not None:
+        try:
+            body = await http_request.json()
+        except Exception:
+            body = {}
+        if isinstance(body, dict):
+            bridge_task_id = str(body.get("local_bridge_task_id") or "").strip()
+            run_id = str(body.get("run_id") or "").strip()
+            agent_id = str(http_request.path_params.get("agent_id") or "").strip()
+            if bridge_task_id and run_id and agent_id:
+                try:
+                    return principal_from_local_agent_bridge_stream_token(
+                        token,
+                        session,
+                        agent_id=agent_id,
+                        run_id=run_id,
+                        bridge_task_id=bridge_task_id,
+                    )
+                except HTTPException:
+                    pass
+    return get_current_principal(http_request, credentials, session)
+
+
+AgentChatStreamPrincipal = Annotated[
+    AuthenticatedPrincipal | LocalAgentBridgeStreamPrincipal,
+    Depends(_agent_chat_stream_principal),
+]
+
 
 @router.post(
     "/{agent_id}/runs/chat/stream",
@@ -25,13 +76,61 @@ def stream_agent_chat_run(
     agent_id: str,
     request: AgentChatStreamRequest,
     session: DbSession,
-    principal: Principal,
+    principal: AgentChatStreamPrincipal,
 ) -> StreamingResponse:
+    stream_context = (
+        principal if isinstance(principal, LocalAgentBridgeStreamPrincipal) else None
+    )
+    if stream_context is not None:
+        principal = stream_context.principal
     require_role(principal, {"admin", "engineer"})
     _get_agent(agent_id=agent_id, session=session, principal=principal)
 
     def sse(event: str, payload: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def finalize_workspace_disconnect(run: Task) -> None:
+        # Disconnection may interrupt a yield while audit/context writes are
+        # still pending. Roll back first so the next cancellation request is
+        # not blocked by this session's SQLite write transaction.
+        session.rollback()
+        session.refresh(run)
+        if run.status == "CANCELLED":
+            session.commit()
+            return
+        if run.status in {"COMPLETED", "FAILED", "WAITING_APPROVAL", "PAUSED"}:
+            session.commit()
+            return
+        run.status = "PAUSED"
+        run.updated_at = utc_now()
+        EventStore(session).append(
+            task_id=run.id,
+            event_type=EventType.TASK_PAUSED,
+            payload_json={
+                "task_id": run.id,
+                "reason": "client_disconnected",
+                "resume_hint": "resume the run to continue",
+            },
+        )
+        session.commit()
+
+    sandbox_runtime_unavailable_message = (
+        "Sandbox runtime unavailable: Docker daemon is not running or cannot be reached. "
+        "Start Docker Desktop, or rerun this task with sandbox disabled when the step only "
+        "needs to produce a Harness artifact."
+    )
+
+    def is_sandbox_runtime_unavailable_error(exc: BaseException) -> bool:
+        detail = str(exc)
+        return (
+            "Error while fetching server API version" in detail
+            or "Docker daemon" in detail
+            or "docker.sock" in detail
+            or (
+                "FileNotFoundError" in detail
+                and "No such file or directory" in detail
+            )
+        )
 
     def message_goal() -> str:
         if request.goal and request.goal.strip():
@@ -64,6 +163,37 @@ def stream_agent_chat_run(
             len(node.content) for node in [*pinned_nodes, *carried]
         )
         return max(1, content_length // 4)
+
+    def workspace_content_requires_postprocessing(
+        content: str,
+        *,
+        enable_knowledge_grounding: bool,
+    ) -> bool:
+        if "<function_calls" in content.casefold() or FUNCTION_CALLS_BLOCK_RE.search(content):
+            return True
+        if _workspace_content_is_pending_search(content):
+            return True
+        if enable_knowledge_grounding and re.search(r"\[(?:(?:web-)?\d+|W\d+)\]", content):
+            return True
+        return False
+
+    local_bridge_task_id = (
+        request.local_bridge_task_id.strip() if request.local_bridge_task_id else ""
+    )
+    local_bridge_stream_metadata = (
+        {
+            "source": "local_agent_bridge_stream",
+            "local_bridge_task_id": local_bridge_task_id,
+        }
+        if stream_context is not None and local_bridge_task_id
+        else None
+    )
+    if stream_context is not None:
+        _consume_local_bridge_stream_token(
+            stream_context=stream_context,
+            request=request,
+            session=session,
+        )
 
     tool_events = WorkspaceToolEventService(
         agent_id=agent_id,
@@ -157,34 +287,47 @@ def stream_agent_chat_run(
         run.status = "RUNNING"
         run.updated_at = utc_now()
         session.flush()
-        yield sse(
-            "run_created",
-            {
-                "run_id": run.id,
-                "status": run.status,
-                "step_count": 0,
-                "message": run_created_message,
-                "context_assembly": {
-                    "context_manifest_id": context_manifest.id if context_manifest else None,
-                    "mode": context_manifest.mode if context_manifest else None,
-                    "included_count": len(context_manifest.included_refs_json)
-                    if context_manifest
-                    else 0,
-                    "omitted_count": len(context_manifest.omitted_refs_json)
-                    if context_manifest
-                    else 0,
-                    "omission_reasons": sorted(
-                        {
-                            str(ref.get("omission_reason"))
-                            for ref in (
-                                context_manifest.omitted_refs_json if context_manifest else []
-                            )
-                            if isinstance(ref, dict) and ref.get("omission_reason")
-                        }
-                    ),
+        # Commit before the first SSE frame. Context assembly can write audit
+        # rows, and leaving that transaction open blocks the stop/cancel
+        # request that arrives before the client receives run_created.
+        session.commit()
+        session.refresh(run)
+        try:
+            yield sse(
+                "run_created",
+                {
+                    "run_id": run.id,
+                    "status": run.status,
+                    "step_count": 0,
+                    "message": run_created_message,
+                    "context_assembly": {
+                        "context_manifest_id": context_manifest.id
+                        if context_manifest
+                        else None,
+                        "mode": context_manifest.mode if context_manifest else None,
+                        "included_count": len(context_manifest.included_refs_json)
+                        if context_manifest
+                        else 0,
+                        "omitted_count": len(context_manifest.omitted_refs_json)
+                        if context_manifest
+                        else 0,
+                        "omission_reasons": sorted(
+                            {
+                                str(ref.get("omission_reason"))
+                                for ref in (
+                                    context_manifest.omitted_refs_json
+                                    if context_manifest
+                                    else []
+                                )
+                                if isinstance(ref, dict) and ref.get("omission_reason")
+                            }
+                        ),
+                    },
                 },
-            },
-        )
+            )
+        except GeneratorExit:
+            finalize_workspace_disconnect(run)
+            raise
         orchestration_payload = _apply_workspace_orchestration(
             run=run,
             agent_id=agent_id,
@@ -194,8 +337,13 @@ def stream_agent_chat_run(
             principal=principal,
         )
         if orchestration_payload is not None:
-            yield sse("orchestration", orchestration_payload)
+            try:
+                yield sse("orchestration", orchestration_payload)
+            except GeneratorExit:
+                finalize_workspace_disconnect(run)
+                raise
         content_accumulator = ""
+        streamed_content = ""
         usage: dict = {}
         first_delta_at: float | None = None
         stream_iter = None
@@ -246,6 +394,7 @@ def stream_agent_chat_run(
                     if authoritative_context_manifest is not None
                     else None
                 ),
+                request_metadata=local_bridge_stream_metadata,
             )
             stream_iter = gateway.stream(
                 ModelRequest(
@@ -256,15 +405,48 @@ def stream_agent_chat_run(
                 )
             )
             for chunk in stream_iter:
+                # The Workspace stop control cancels the persisted Run from
+                # another request. Refresh before handling each provider chunk
+                # so a disconnected client cannot later overwrite CANCELLED.
+                session.refresh(run)
+                if run.status == "CANCELLED":
+                    stream_iter.close()
+                    session.commit()
+                    yield sse(
+                        "done",
+                        {
+                            "run_id": run.id,
+                            "active_branch_id": request.active_branch_id,
+                            "continue_from_node_id": request.continue_from_node_id,
+                            "status": "CANCELLED",
+                            "step_count": 0,
+                            "message": "生成已取消。",
+                            "knowledge_grounding": grounding.evidence_message
+                            if grounding
+                            else None,
+                        },
+                    )
+                    return
                 if chunk.text:
                     content_accumulator += chunk.text
                     if first_delta_at is None:
                         first_delta_at = time.monotonic()
+                    should_stream_model_chunks = not (
+                        enable_knowledge_grounding
+                        and grounding is not None
+                        and grounding.grounded
+                        and grounding.citations
+                    )
                     can_stream_plain_delta = (
-                        not enable_knowledge_grounding
-                        and "<function_calls" not in content_accumulator
+                        should_stream_model_chunks
+                        and not workspace_content_requires_postprocessing(
+                            content_accumulator,
+                            enable_knowledge_grounding=enable_knowledge_grounding,
+                        )
+                        and content_accumulator.strip() != "{}"
                     )
                     if can_stream_plain_delta:
+                        streamed_content += chunk.text
                         yield sse("delta", {"content": chunk.text})
                 if chunk.usage:
                     usage.update(chunk.usage)
@@ -354,10 +536,37 @@ def stream_agent_chat_run(
             if citation_suffix:
                 content += citation_suffix
                 content_accumulator = content
+            if first_delta_at is None:
+                first_delta_at = time.monotonic()
+            if content.startswith(streamed_content):
+                final_delta = content[len(streamed_content) :]
+            elif streamed_content and content != streamed_content:
+                final_delta = "\n\n" + content
+            else:
+                final_delta = content
+            if final_delta:
+                yield sse("delta", {"content": final_delta})
             if enable_knowledge_grounding:
                 if first_delta_at is None:
                     first_delta_at = time.monotonic()
-                yield sse("delta", {"content": content})
+            session.refresh(run)
+            if run.status == "CANCELLED":
+                session.commit()
+                yield sse(
+                    "done",
+                    {
+                        "run_id": run.id,
+                        "active_branch_id": request.active_branch_id,
+                        "continue_from_node_id": request.continue_from_node_id,
+                        "status": "CANCELLED",
+                        "step_count": 0,
+                        "message": "生成已取消。",
+                        "knowledge_grounding": grounding.evidence_message
+                        if grounding
+                        else None,
+                    },
+                )
+                return
             run.status = "WAITING_APPROVAL" if local_tools_requested else "COMPLETED"
             if not local_tools_requested:
                 run.completed_at = utc_now()
@@ -395,23 +604,748 @@ def stream_agent_chat_run(
                 },
             )
         except ModelGatewayError as exc:
+            # The gateway audit may be pending in this session, while the
+            # stop endpoint has already committed CANCELLED elsewhere. Commit
+            # audit state first, then refresh before deciding the Run outcome.
+            session.commit()
+            session.refresh(run)
+            if run.status == "CANCELLED":
+                yield sse(
+                    "done",
+                    {
+                        "run_id": run.id,
+                        "active_branch_id": request.active_branch_id,
+                        "continue_from_node_id": request.continue_from_node_id,
+                        "status": "CANCELLED",
+                        "step_count": 0,
+                        "message": "生成已取消。",
+                        "knowledge_grounding": grounding.evidence_message
+                        if grounding
+                        else None,
+                    },
+                )
+                return
             run.status = "FAILED"
             run.updated_at = utc_now()
             session.commit()
-            yield sse("error", {"message": str(exc), "recoverable": True, "run_id": run.id})
+            error_kind = "model_auth" if isinstance(exc, ModelAuthError) else "server"
+            yield sse(
+                "error",
+                {
+                    "kind": error_kind,
+                    "message": str(exc),
+                    "recoverable": True,
+                    "run_id": run.id,
+                },
+            )
         except GeneratorExit:
             if stream_iter is not None:
                 stream_iter.close()
-            run.status = "CANCELLED"
-            run.completed_at = utc_now()
-            run.updated_at = utc_now()
-            EventStore(session).append(
-                task_id=run.id,
-                event_type=EventType.TASK_CANCELLED,
-                payload_json={"task_id": run.id, "reason": "client_disconnected"},
-            )
-            session.commit()
+            finalize_workspace_disconnect(run)
             raise
+
+    def _workspace_goal_failure_detail(run: Task) -> tuple[str | None, str]:
+        events = list(
+            session.execute(
+                select(AgentEvent)
+                .where(
+                    AgentEvent.task_id == run.id,
+                    AgentEvent.event_type.in_(
+                        [
+                            EventType.MODEL_CALL_FAILED,
+                            EventType.TASK_FAILED,
+                            EventType.STEP_FAILED,
+                            EventType.TOOL_FAILED,
+                            EventType.TOOL_TIMEOUT,
+                            EventType.SUBAGENT_FAILED,
+                            EventType.AGENT_ASSIGNMENT_FAILED,
+                        ]
+                    ),
+                )
+                .order_by(AgentEvent.sequence.desc())
+                .limit(8)
+            )
+            .scalars()
+            .all()
+        )
+        fallback: str | None = None
+        for event in events:
+            detail = _workspace_failure_detail_from_payload(event.payload_json)
+            if detail is None:
+                continue
+            fallback = fallback or detail
+            if _workspace_failure_detail_is_generic(detail):
+                continue
+            return detail, _workspace_failure_kind(detail)
+        if fallback is not None:
+            return fallback, _workspace_failure_kind(fallback)
+        return None, "server"
+
+    def _workspace_failure_detail_from_payload(payload: dict) -> str | None:
+        for key in ("error", "summary", "trace_summary", "message", "detail"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        errors = payload.get("errors")
+        if errors:
+            return json.dumps(errors, ensure_ascii=False)[:500]
+        return None
+
+    def _workspace_failure_detail_is_generic(detail: str) -> bool:
+        return bool(re.match(r"^Task failed: \d+ step\(s\) failed$", detail.strip()))
+
+    def _workspace_failure_kind(detail: str) -> str:
+        if (
+            re.search(r"HTTP\s+(401|403)\b", detail, re.IGNORECASE)
+            and re.search(
+                r"api\s*key|upstream model gateway|(model|provider).*(auth|credential|key)",
+                detail,
+                re.IGNORECASE,
+            )
+        ):
+            return "model_auth"
+        return "server"
+
+    def _workspace_goal_status_delta(*, run: Task, step_count: int) -> str:
+        if run.status == "COMPLETED":
+            return "目标已达成。\n"
+        if run.status == "WAITING_SUBAGENTS":
+            return "目标仍在推进，正在等待并行分支回传结果。\n"
+        if run.status == "WAITING_APPROVAL":
+            return "目标需要确认，批准后会继续追踪。\n"
+        if run.status == "FAILED":
+            detail, _kind = _workspace_goal_failure_detail(run)
+            if detail:
+                return f"目标暂未达成：{detail}\n"
+            return "目标暂未达成，遇到需要处理的阻塞。\n"
+        if run.status == "CANCELLED":
+            return "目标追踪已取消。\n"
+        return "目标仍在推进。\n"
+
+    def _workspace_goal_model_auth_error_event(
+        *,
+        run: Task,
+    ) -> str | None:
+        if run.status != "FAILED":
+            return None
+        detail, kind = _workspace_goal_failure_detail(run)
+        if kind != "model_auth" or not detail:
+            return None
+        return sse(
+            "error",
+            {
+                "kind": "model_auth",
+                "message": detail,
+                "recoverable": True,
+                "run_id": run.id,
+            },
+        )
+
+    def _workspace_goal_delta(*, run: Task, goal: str, step_count: int) -> str:
+        if run.status != "COMPLETED":
+            return _workspace_goal_status_delta(run=run, step_count=step_count)
+        evidence = _workspace_goal_visible_evidence(run)
+        if evidence:
+            return _workspace_goal_evidence_fallback(evidence)
+        return _workspace_goal_status_delta(run=run, step_count=step_count)
+
+    def _workspace_goal_output_events(*, run: Task, goal: str, step_count: int):
+        output_text = ""
+        usage: dict = {}
+        first_delta_at: float | None = None
+        if run.status == "COMPLETED" and _workspace_goal_needs_visible_output(goal):
+            evidence = _workspace_goal_visible_evidence(run)
+            try:
+                chunks = AuditedModelGateway(session=session, task_id=run.id).stream(
+                    _workspace_goal_synthesis_request(
+                        run=run,
+                        goal=goal,
+                        evidence=evidence,
+                    )
+                )
+                for chunk in chunks:
+                    if chunk.text:
+                        output_text += chunk.text
+                        if first_delta_at is None:
+                            first_delta_at = time.monotonic()
+                        yield sse("delta", {"content": chunk.text})
+                    if chunk.usage:
+                        usage.update(chunk.usage)
+            except ModelAuthError:
+                raise
+            except ModelGatewayError:
+                output_text = ""
+                usage = {}
+                first_delta_at = None
+            if output_text.strip():
+                return output_text, usage, first_delta_at
+
+        fallback = _workspace_goal_delta(run=run, goal=goal, step_count=step_count)
+        if fallback:
+            first_delta_at = time.monotonic()
+            yield sse("delta", {"content": fallback})
+            output_text = fallback
+        return output_text, usage, first_delta_at
+
+    def _workspace_goal_needs_visible_output(goal: str) -> bool:
+        normalized = unicodedata.normalize("NFKC", goal).lower()
+        return any(
+            marker in normalized
+            for marker in (
+                "写",
+                "小说",
+                "文章",
+                "故事",
+                "回复",
+                "输出",
+                "生成",
+                "总结",
+                "报告",
+                "整理",
+                "说明",
+                "列出",
+                "给我",
+                "write",
+                "draft",
+                "story",
+                "novel",
+                "reply",
+                "summarize",
+                "summary",
+                "report",
+                "output",
+                "generate",
+            )
+        )
+
+    def _workspace_goal_visible_evidence(run: Task) -> list[dict[str, str]]:
+        tool_calls = list(
+            session.execute(
+                select(ToolCall)
+                .where(ToolCall.task_id == run.id, ToolCall.status == "SUCCESS")
+                .order_by(ToolCall.created_at.asc(), ToolCall.id.asc())
+                .limit(12)
+            )
+            .scalars()
+            .all()
+        )
+        evidence: list[dict[str, str]] = []
+        for tool_call in tool_calls:
+            item = _workspace_goal_visible_tool_evidence(tool_call)
+            if item is not None:
+                evidence.append(item)
+        return evidence
+
+    def _workspace_goal_visible_tool_evidence(tool_call: ToolCall) -> dict[str, str] | None:
+        input_json = tool_call.input_json if isinstance(tool_call.input_json, dict) else {}
+        output_json = tool_call.output_json if isinstance(tool_call.output_json, dict) else {}
+        name = str(input_json.get("name") or input_json.get("path") or tool_call.tool_name)
+        content = _workspace_goal_visible_text_from_tool(tool_call, input_json, output_json)
+        if content:
+            return {
+                "tool_name": tool_call.tool_name,
+                "name": name,
+                "content": content[:12000],
+            }
+        return None
+
+    def _workspace_goal_visible_text_from_tool(
+        tool_call: ToolCall,
+        input_json: dict,
+        output_json: dict,
+    ) -> str | None:
+        if tool_call.tool_name in {"mcp_artifact_put", "write_file"}:
+            content = input_json.get("content") or output_json.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        for key in ("content", "stdout", "stdout_preview", "body", "body_preview", "summary"):
+            value = output_json.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        result = output_json.get("result")
+        if isinstance(result, dict):
+            for key in ("content", "text", "summary"):
+                value = result.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
+
+    def _workspace_goal_evidence_fallback(evidence: list[dict[str, str]]) -> str:
+        if len(evidence) == 1:
+            return evidence[0]["content"].rstrip() + "\n"
+        sections = []
+        for item in evidence[:6]:
+            title = item["name"] or item["tool_name"]
+            sections.append(f"## {title}\n\n{item['content'].rstrip()}")
+        return "\n\n".join(sections).rstrip() + "\n"
+
+    def _workspace_goal_synthesis_request(
+        *,
+        run: Task,
+        goal: str,
+        evidence: list[dict[str, str]],
+    ) -> ModelRequest:
+        evidence_text = _workspace_goal_evidence_prompt(evidence)
+        return ModelRequest(
+            model_provider=run.model_provider,
+            model_name=run.model_name,
+            response_format="text",
+            messages=[
+                ModelMessage(
+                    role="system",
+                    content=(
+                        "你是 Agent Workspace 追踪目标模式的最终输出渲染器。"
+                        "目标运行已经完成。只输出用户要的最终结果正文，"
+                        "不要写“目标已完成”、不要解释运行过程、不要输出计划。"
+                        "如果目标要求写作、回复、总结或生成内容，直接交付完整成品。"
+                    ),
+                ),
+                ModelMessage(
+                    role="user",
+                    content=(
+                        f"目标：\n{goal}\n\n"
+                        f"可用执行证据或工具产物：\n{evidence_text}\n\n"
+                        "请输出最终交付内容："
+                    ),
+                ),
+            ],
+        )
+
+    def _workspace_goal_evidence_prompt(evidence: list[dict[str, str]]) -> str:
+        if not evidence:
+            return "无结构化工具产物；请直接根据目标交付最终内容。"
+        sections = []
+        for index, item in enumerate(evidence[:6], start=1):
+            sections.append(
+                f"[产物 {index}] {item['name']} ({item['tool_name']})\n"
+                f"{item['content'][:4000]}"
+            )
+        return "\n\n".join(sections)
+
+    def _workspace_goal_progress_status(run_status: str) -> str:
+        if run_status == "COMPLETED":
+            return "completed"
+        if run_status == "WAITING_APPROVAL":
+            return "needs_input"
+        if run_status == "FAILED":
+            return "failed"
+        if run_status == "CANCELLED":
+            return "cancelled"
+        if run_status == "PAUSED":
+            return "paused"
+        return "running"
+
+    def _workspace_goal_phase(run_status: str) -> str:
+        if run_status == "COMPLETED":
+            return "completed"
+        if run_status == "WAITING_SUBAGENTS":
+            return "orchestrating"
+        if run_status == "WAITING_APPROVAL":
+            return "needs_input"
+        if run_status == "FAILED":
+            return "failed"
+        if run_status == "CANCELLED":
+            return "cancelled"
+        if run_status == "PLANNING":
+            return "planning"
+        if run_status == "PLANNED":
+            return "executing"
+        return "running"
+
+    def _workspace_goal_progress_event(
+        *,
+        run: Task,
+        goal: str,
+        phase: str | None,
+        turn: int,
+        step_count: int,
+        message: str,
+        started_at: float,
+        status: str | None = None,
+    ) -> str:
+        return sse(
+            "goal_progress",
+            {
+                "run_id": run.id,
+                "goal": goal,
+                "status": status or _workspace_goal_progress_status(run.status),
+                "phase": phase or _workspace_goal_phase(run.status),
+                "turn": turn,
+                "step_count": step_count,
+                "message": message,
+                "started_at": run.created_at.isoformat() if run.created_at else None,
+                "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+            },
+        )
+
+    def workspace_goal_pursuit_events(
+        *,
+        goal: str,
+        started_at: float,
+        first_byte_at: float,
+        existing_run: Task | None = None,
+    ) -> Iterator[str]:
+        run = existing_run
+        if run is None:
+            run = _create_workspace_chat_run(
+                agent_id=agent_id,
+                goal=goal,
+                session=session,
+                principal=principal,
+                mode="goal",
+                model_provider=request.model_provider,
+                model_name=request.model_name,
+                max_subagents=_workspace_max_subagents(request),
+                task_id=(
+                    str(request.client_run_id)
+                    if request.client_run_id is not None
+                    else None
+                ),
+                commit=False,
+            )
+            run.enable_sandbox = request.enable_sandbox
+            run.enable_network = request.enable_network
+            session.commit()
+            session.refresh(run)
+        def latest_step_count() -> int:
+            current_plan = _latest_plan(run_id=run.id, session=session)
+            if current_plan is None:
+                return 0
+            steps = current_plan.plan_json.get("steps", [])
+            return len(steps) if isinstance(steps, list) else 0
+
+        plan = _latest_plan(run_id=run.id, session=session)
+        step_count = latest_step_count()
+        try:
+            yield sse(
+                "run_created",
+                {
+                    "run_id": run.id,
+                    "status": run.status,
+                    "step_count": step_count,
+                    "message": "Goal pursuit run started.",
+                },
+            )
+            yield _workspace_goal_progress_event(
+                run=run,
+                goal=goal,
+                phase="started",
+                turn=0,
+                step_count=step_count,
+                message="进行中的目标已启动。",
+                started_at=started_at,
+            )
+        except GeneratorExit:
+            finalize_workspace_disconnect(run)
+            raise
+        terminal_statuses = {"COMPLETED", "FAILED", "CANCELLED", "WAITING_APPROVAL"}
+        active_statuses = {"CREATED", "PLANNING", "RUNNING", "WAITING_SUBAGENTS"}
+        goal_output_text = ""
+        goal_output_usage: dict = {}
+        goal_output_first_delta_at: float | None = None
+        final_progress_pending = False
+        final_progress_turn = 0
+        try:
+            if run.status in terminal_statuses:
+                final_content = _workspace_goal_status_delta(run=run, step_count=step_count)
+                terminal_phase = _workspace_goal_phase(run.status)
+                terminal_status = _workspace_goal_progress_status(run.status)
+                if run.status == "COMPLETED" and _workspace_goal_needs_visible_output(goal):
+                    final_progress_pending = True
+                    final_progress_turn = 0
+                    final_content = "正在生成最终回复。"
+                    terminal_phase = "generating"
+                    terminal_status = "running"
+                yield _workspace_goal_progress_event(
+                    run=run,
+                    goal=goal,
+                    phase=terminal_phase,
+                    turn=0,
+                    step_count=step_count,
+                    message=final_content.strip(),
+                    started_at=started_at,
+                    status=terminal_status,
+                )
+                model_auth_error = _workspace_goal_model_auth_error_event(run=run)
+                if model_auth_error is not None:
+                    yield model_auth_error
+                    return
+                (
+                    goal_output_text,
+                    goal_output_usage,
+                    goal_output_first_delta_at,
+                ) = yield from _workspace_goal_output_events(
+                    run=run,
+                    goal=goal,
+                    step_count=step_count,
+                )
+            else:
+                orchestration_payload = _apply_workspace_orchestration(
+                    run=run,
+                    agent_id=agent_id,
+                    goal=goal,
+                    request=request,
+                    session=session,
+                    principal=principal,
+                )
+                if orchestration_payload is not None:
+                    yield sse("orchestration", orchestration_payload)
+                    if orchestration_payload.get("mode") == "multi_agent":
+                        yield _workspace_goal_progress_event(
+                            run=run,
+                            goal=goal,
+                            phase="orchestrating",
+                            turn=0,
+                            step_count=step_count,
+                            message="正在协调多智能体协作，继续推进目标。",
+                            started_at=started_at,
+                        )
+                max_goal_turns = 12
+                turn = 0
+                while run.status not in terminal_statuses:
+                    turn += 1
+                    if turn > max_goal_turns:
+                        run.status = "PAUSED"
+                        run.updated_at = utc_now()
+                        EventStore(session).append(
+                            task_id=run.id,
+                            event_type=EventType.TASK_PAUSED,
+                            payload_json={
+                                "reason": "goal_loop_turn_guard",
+                                "max_goal_turns": max_goal_turns,
+                                "trace_summary": (
+                                    "Goal pursuit paused after the per-stream turn guard; "
+                                    "resume the goal to continue pursuing it."
+                                ),
+                            },
+                        )
+                        session.commit()
+                        yield _workspace_goal_progress_event(
+                            run=run,
+                            goal=goal,
+                            phase="paused",
+                            turn=turn - 1,
+                            step_count=latest_step_count(),
+                            message="目标追踪已暂停：本次持续追踪达到单次推进上限，恢复后继续。",
+                            started_at=started_at,
+                        )
+                        break
+
+                    plan = _latest_plan(run_id=run.id, session=session)
+                    step_count = latest_step_count()
+                    if plan is None:
+                        yield _workspace_goal_progress_event(
+                            run=run,
+                            goal=goal,
+                            phase="planning",
+                            turn=turn,
+                            step_count=step_count,
+                            message="正在理解目标，并准备下一步行动。",
+                            started_at=started_at,
+                        )
+                        executed = Executor(session).start_task(run)
+                    elif run.status in {"PLANNED", "PAUSED"}:
+                        yield _workspace_goal_progress_event(
+                            run=run,
+                            goal=goal,
+                            phase="executing",
+                            turn=turn,
+                            step_count=step_count,
+                            message="正在继续推进当前目标。",
+                            started_at=started_at,
+                        )
+                        executed = Executor(session).execute_existing_plan(run)
+                    elif run.status in active_statuses:
+                        yield _workspace_goal_progress_event(
+                            run=run,
+                            goal=goal,
+                            phase=_workspace_goal_phase(run.status),
+                            turn=turn,
+                            step_count=step_count,
+                            message="目标仍在推进，正在等待下一步进展。",
+                            started_at=started_at,
+                        )
+                        executed = run
+                    else:
+                        previous_status = run.status
+                        run.status = "PAUSED"
+                        run.updated_at = utc_now()
+                        EventStore(session).append(
+                            task_id=run.id,
+                            event_type=EventType.TASK_PAUSED,
+                            payload_json={
+                                "reason": "goal_loop_unknown_nonterminal_status",
+                                "status": previous_status,
+                            },
+                        )
+                        executed = run
+
+                    session.commit()
+                    session.refresh(executed)
+                    run = executed
+                    step_count = latest_step_count()
+                    phase = _workspace_goal_phase(run.status)
+                    status_override: str | None = None
+                    progress_message = _workspace_goal_status_delta(
+                        run=run,
+                        step_count=step_count,
+                    ).strip()
+                    if run.status == "COMPLETED" and _workspace_goal_needs_visible_output(goal):
+                        final_progress_pending = True
+                        final_progress_turn = turn
+                        phase = "generating"
+                        status_override = "running"
+                        progress_message = "正在生成最终回复。"
+                    yield _workspace_goal_progress_event(
+                        run=run,
+                        goal=goal,
+                        phase=phase,
+                        turn=turn,
+                        step_count=step_count,
+                        message=progress_message,
+                        started_at=started_at,
+                        status=status_override,
+                    )
+
+                    if run.status in active_statuses:
+                        yield _workspace_goal_progress_event(
+                            run=run,
+                            goal=goal,
+                            phase="running",
+                            turn=turn,
+                            step_count=step_count,
+                            message="目标仍在推进，继续下一轮执行。",
+                            started_at=started_at,
+                        )
+                        time.sleep(0.5)
+                        continue
+
+                model_auth_error = _workspace_goal_model_auth_error_event(run=run)
+                if model_auth_error is not None:
+                    yield model_auth_error
+                    return
+                (
+                    goal_output_text,
+                    goal_output_usage,
+                    goal_output_first_delta_at,
+                ) = yield from _workspace_goal_output_events(
+                    run=run,
+                    goal=goal,
+                    step_count=step_count,
+                )
+            if final_progress_pending:
+                yield _workspace_goal_progress_event(
+                    run=run,
+                    goal=goal,
+                    phase="completed",
+                    turn=final_progress_turn,
+                    step_count=step_count,
+                    message="目标已达成。",
+                    started_at=started_at,
+                )
+        except GeneratorExit:
+            finalize_workspace_disconnect(run)
+            raise
+        except (ModelGatewayError, ValueError, ValidationError) as exc:
+                session.commit()
+                session.refresh(run)
+                if run.status == "CANCELLED":
+                    step_count = latest_step_count()
+                else:
+                    run.status = "FAILED"
+                    run.updated_at = utc_now()
+                    session.commit()
+                    yield _workspace_goal_progress_event(
+                        run=run,
+                        goal=goal,
+                        phase="failed",
+                        turn=0,
+                        step_count=latest_step_count(),
+                        message=str(exc),
+                        started_at=started_at,
+                    )
+                    yield sse(
+                        "error",
+                        {
+                            "kind": "model_auth" if isinstance(exc, ModelAuthError) else "server",
+                            "message": str(exc),
+                            "recoverable": True,
+                            "run_id": run.id,
+                        },
+                    )
+                    return
+        except Exception as exc:
+                if not is_sandbox_runtime_unavailable_error(exc):
+                    raise
+                session.commit()
+                session.refresh(run)
+                if run.status == "CANCELLED":
+                    step_count = latest_step_count()
+                else:
+                    run.status = "FAILED"
+                    run.updated_at = utc_now()
+                    session.commit()
+                    yield _workspace_goal_progress_event(
+                        run=run,
+                        goal=goal,
+                        phase="failed",
+                        turn=0,
+                        step_count=latest_step_count(),
+                        message=sandbox_runtime_unavailable_message,
+                        started_at=started_at,
+                    )
+                    yield sse(
+                        "error",
+                        {
+                            "kind": "server",
+                            "message": sandbox_runtime_unavailable_message,
+                            "recoverable": True,
+                            "run_id": run.id,
+                        },
+                    )
+                    return
+        output_text = goal_output_text or _workspace_goal_status_delta(
+            run=run,
+            step_count=step_count,
+        )
+        ttfb_source = goal_output_first_delta_at if goal_output_first_delta_at else first_byte_at
+        yield sse(
+            "usage",
+            {
+                "input_tokens": int(
+                    goal_output_usage.get("prompt_tokens", 0)
+                    or goal_output_usage.get("input_tokens", 0)
+                    or estimated_input_tokens()
+                ),
+                "output_tokens": int(
+                    goal_output_usage.get("completion_tokens", 0)
+                    or goal_output_usage.get("output_tokens", 0)
+                    or max(1, len(output_text) // 4)
+                ),
+                "cost_usd": None,
+                "cost_unavailable": True,
+                "ttfb_ms": int((ttfb_source - started_at) * 1000),
+                "duration_ms": int((time.monotonic() - started_at) * 1000),
+                "model_call_id": _latest_model_call_id(run.id, session=session),
+            },
+        )
+        done_message = (
+            "Goal pursuit run paused; resume the goal to keep pursuing it."
+            if run.status == "PAUSED"
+            else "Goal pursuit run reached a terminal state."
+        )
+        yield sse(
+            "done",
+            {
+                "run_id": run.id,
+                "active_branch_id": request.active_branch_id,
+                "continue_from_node_id": request.continue_from_node_id,
+                "status": run.status,
+                "step_count": step_count,
+                "message": done_message,
+                "knowledge_grounding": None,
+            },
+        )
 
     def iterator() -> Iterator[str]:
         started_at = time.monotonic()
@@ -436,6 +1370,14 @@ def stream_agent_chat_run(
                     session=session,
                     principal=principal,
                 )
+                if request.mode == "goal":
+                    yield from workspace_goal_pursuit_events(
+                        goal=goal,
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                        existing_run=existing_run,
+                    )
+                    return
                 run = (
                     existing_run
                     if _latest_plan(run_id=existing_run.id, session=session) is None
@@ -454,6 +1396,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                 )
                 if request.mode == "cli_agent":
@@ -522,8 +1469,9 @@ def stream_agent_chat_run(
                         model_name=request.model_name or "default",
                         max_runtime_seconds=1800,
                         max_subagents=5,
-                        enable_sandbox=True,
-                        enable_network=False,
+                        enable_sandbox=request.enable_sandbox,
+                        enable_network=request.enable_network,
+                        client_run_id=request.client_run_id,
                     )
                     yield sse(
                         "think_delta",
@@ -538,6 +1486,13 @@ def stream_agent_chat_run(
                         },
                     )
                     planned = plan_with_agent(request=payload, session=session, principal=principal)
+                elif request.mode == "goal":
+                    yield from workspace_goal_pursuit_events(
+                        goal=goal,
+                        started_at=started_at,
+                        first_byte_at=first_byte_at,
+                    )
+                    return
                 elif request.mode == "cli_agent":
                     run = _create_workspace_chat_run(
                         agent_id=agent_id,
@@ -548,6 +1503,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                     yield from workspace_text_events(
                         run=run,
@@ -575,6 +1535,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                     if request.tool_mentions:
                         yield from tool_events.workspace_tool_only_events(
@@ -609,6 +1574,11 @@ def stream_agent_chat_run(
                         model_provider=request.model_provider,
                         model_name=request.model_name,
                         max_subagents=_workspace_max_subagents(request),
+                        task_id=(
+                            str(request.client_run_id)
+                            if request.client_run_id is not None
+                            else None
+                        ),
                     )
                     if request.tool_mentions:
                         yield from tool_events.workspace_tool_only_events(
@@ -647,6 +1617,16 @@ def stream_agent_chat_run(
             yield sse("error", {"message": str(exc.detail), "recoverable": True})
             return
         except Exception as exc:
+            if is_sandbox_runtime_unavailable_error(exc):
+                yield sse(
+                    "error",
+                    {
+                        "kind": "server",
+                        "message": sandbox_runtime_unavailable_message,
+                        "recoverable": True,
+                    },
+                )
+                return
             yield sse("error", {"message": str(exc), "recoverable": False})
             return
         yield sse(
@@ -708,3 +1688,50 @@ def stream_agent_chat_run(
         )
 
     return StreamingResponse(iterator(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+def _consume_local_bridge_stream_token(
+    *,
+    stream_context: LocalAgentBridgeStreamPrincipal,
+    request: AgentChatStreamRequest,
+    session: Session,
+) -> None:
+    bridge_task_id = str(request.local_bridge_task_id or "").strip()
+    if not bridge_task_id or bridge_task_id != stream_context.bridge_task_id:
+        raise token_error("Local Agent stream target is not valid")
+    bridge_task = session.execute(
+        select(LocalAgentBridgeTask)
+        .where(LocalAgentBridgeTask.id == bridge_task_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if bridge_task is None or bridge_task.status not in {"pending", "leased", "running"}:
+        raise token_error("Local Agent stream target is not valid")
+    payload = bridge_task.payload_json if isinstance(bridge_task.payload_json, dict) else {}
+    if not stream_context.token_jti:
+        raise token_error("Local Agent stream token is not valid")
+    previous_consumed_jtis = payload.get("harness_stream_token_consumed_jtis", [])
+    if not isinstance(previous_consumed_jtis, list):
+        previous_consumed_jtis = []
+    ordered_previous_consumed_jtis = [str(value) for value in previous_consumed_jtis if value]
+    consumed_jtis = set(ordered_previous_consumed_jtis)
+    legacy_consumed_jti = str(payload.get("harness_stream_token_consumed_jti") or "")
+    if legacy_consumed_jti:
+        consumed_jtis.add(legacy_consumed_jti)
+    if stream_context.token_jti in consumed_jtis:
+        raise token_error("Local Agent stream token has already been used")
+    now = utc_now()
+    ordered_consumed_jtis = [
+        *ordered_previous_consumed_jtis,
+        stream_context.token_jti,
+    ]
+    if legacy_consumed_jti and legacy_consumed_jti not in ordered_consumed_jtis:
+        ordered_consumed_jtis.insert(0, legacy_consumed_jti)
+    bridge_task.payload_json = {
+        **payload,
+        "harness_stream_token_consumed_at": now.isoformat(),
+        "harness_stream_token_consumed_jti": stream_context.token_jti,
+        "harness_stream_token_consumed_jtis": ordered_consumed_jtis,
+        "harness_stream_token_last_consumed_at": now.isoformat(),
+    }
+    bridge_task.updated_at = now
+    session.commit()

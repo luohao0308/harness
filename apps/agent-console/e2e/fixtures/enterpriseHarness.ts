@@ -56,6 +56,9 @@ export async function registerEnterpriseApiRoutes(
       });
     }
   });
+  await page.routeWebSocket(/ws:\/\/(?:127\.0\.0\.1|localhost):8000\/ws\/terminal(?:\?.*)?$/, (socket) => {
+    socket.onMessage(() => undefined);
+  });
   await page.route(API_RE, (route) => routeEnterpriseApi(route, options));
   return {
     unhandledApiRequests,
@@ -94,6 +97,16 @@ async function routeEnterpriseApi(
     await fulfillJson(route, authUser);
     return;
   }
+  if (path === "/api/terminal/tokens" && method === "POST") {
+    const payload = request.postDataJSON() as { terminal_id?: string } | null;
+    const terminalId = payload?.terminal_id ?? "terminal";
+    await fulfillJson(route, {
+      token: `terminal-token-${terminalId}`,
+      terminal_id: terminalId,
+      expires_at: "2026-07-12T00:00:30Z",
+    });
+    return;
+  }
   if (path === "/api/onboarding/state") {
     await fulfillJson(route, onboardingState);
     return;
@@ -104,6 +117,18 @@ async function routeEnterpriseApi(
   }
   if (path === "/api/agents" && method === "POST") {
     await fulfillJson(route, agent);
+    return;
+  }
+  if (path === "/api/agents/local-agent/connections") {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+  if (path === `/api/agents/${enterpriseIds.agentId}/triggers`) {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+  if (path === `/api/agents/${enterpriseIds.agentId}/versions`) {
+    await fulfillJson(route, { items: [] });
     return;
   }
   if (path === `/api/agents/${enterpriseIds.agentId}/clone` && method === "POST") {
@@ -571,6 +596,18 @@ async function routeEnterpriseApi(
     await fulfillJson(route, policySettings);
     return;
   }
+  if (path === "/api/secrets") {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+  if (path === "/api/plugins/marketplace") {
+    await fulfillJson(route, { installed_count: 0, items: [] });
+    return;
+  }
+  if (path === "/api/plugins/prompt-templates") {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
   if (path === "/api/users" && method === "POST") {
     await fulfillJson(route, { ...userMember, user_id: "invited-enterprise", email: "invited@dev.local", status: "invited", accepted_at: null });
     return;
@@ -680,6 +717,35 @@ async function routeEnterpriseApi(
 
   if (path === "/api/observability/summary") {
     await fulfillJson(route, observabilitySummary);
+    return;
+  }
+  if (path === "/api/observability/architecture") {
+    await fulfillJson(route, {
+      planner_executor: {
+        enabled: true,
+        planner: "planner",
+        executor: "dag",
+        react_engine: "harness",
+        planner_prompt_version: "planner-v1",
+        plan_total: 7,
+        sync_step_total: 11,
+        async_step_total: 13,
+        langgraph_step_total: 42,
+        status: "active",
+      },
+      event_sourcing: {
+        enabled: true,
+        event_total: 100,
+        snapshot_total: 1,
+        snapshot_frequency_events: 25,
+        replay_enabled: true,
+        resume_enabled: true,
+        audit_log_enabled: true,
+        time_travel_debugging_enabled: true,
+        last_sequence: 99,
+      },
+      notes: ["langgraph_workflow is not a ToolRunner tool"],
+    });
     return;
   }
   if (path === "/api/observability/token-savings") {
@@ -797,6 +863,14 @@ async function routeEnterpriseApi(
   }
   if (path === "/api/evals/runs") {
     await fulfillJson(route, { items: [evalRun], next_cursor: null });
+    return;
+  }
+  if (path === "/api/evals/results/pending-review") {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (path === "/api/evals/experiments") {
+    await fulfillJson(route, { items: [], next_cursor: null });
     return;
   }
   if (path === `/api/evals/runs/${enterpriseIds.evalRunId}/regression`) {
@@ -1585,7 +1659,91 @@ const observabilitySummary = {
   warm_pool: warmPool,
   sandboxes_by_status: [{ name: "running", count: 1 }],
 };
-const tokenSavings = { total_original_tokens: 10000, total_final_tokens: 7000, estimated_saved_tokens: 3000, saved_ratio: 0.3, cache_hits: 3, cache_misses: 1, cache_stale: 0, sources: [{ source: "compression_summary", hits: 2, misses: 1, stale: 0, hit_rate: 0.67 }], items: [], next_cursor: null };
+const tokenSavings = {
+  generated_at: now,
+  summary: {
+    actual_prompt_tokens: 1000,
+    actual_completion_tokens: 500,
+    actual_total_tokens: 1500,
+    estimated_candidate_tokens: 2200,
+    estimated_included_tokens: 1500,
+    estimated_omitted_tokens: 700,
+    estimated_saved_tokens: 700,
+    estimated_savings_percent: 31.82,
+    context_manifest_count: 1,
+    pruning_manifest_count: 1,
+    retrieval_cache_hit_count: 2,
+    retrieval_cache_miss_count: 1,
+    retrieval_cache_stale_count: 0,
+    cache_sources: [
+      {
+        cache_source: "compression_summary",
+        label: "摘要缓存",
+        hit_count: 2,
+        miss_count: 1,
+        stale_count: 0,
+        estimated_saved_tokens: 180,
+        hit_rate: 66.67,
+        reason: "summary_reused",
+      },
+    ],
+    low_cost_route_count: 1,
+    optimizer_capability_version_ids: ["balanced-version-enterprise"],
+    optimizer_labels: ["Balanced"],
+    optimizer_decision_count: 1,
+  },
+  runs: [
+    {
+      run_id: enterpriseIds.runId,
+      agent_id: enterpriseIds.agentId,
+      model_names: ["deepseek-v4-flash"],
+      title: "Balanced optimizer run",
+      status: "COMPLETED",
+      created_at: now,
+      updated_at: now,
+      context_manifest_id: "manifest-enterprise-token-savings",
+      estimated_candidate_tokens: 2200,
+      estimated_included_tokens: 1500,
+      estimated_omitted_tokens: 700,
+      estimated_saved_tokens: 700,
+      estimated_savings_percent: 31.82,
+      actual_prompt_tokens: 1000,
+      actual_completion_tokens: 500,
+      actual_total_tokens: 1500,
+      included_count: 3,
+      omitted_count: 2,
+      pruning_applied: true,
+      retrieval_cache_hit_count: 2,
+      retrieval_cache_miss_count: 1,
+      retrieval_cache_stale_count: 0,
+      cache_sources: [
+        {
+          cache_source: "compression_summary",
+          label: "摘要缓存",
+          hit_count: 2,
+          miss_count: 1,
+          stale_count: 0,
+          estimated_saved_tokens: 180,
+          hit_rate: 66.67,
+          reason: "summary_reused",
+        },
+      ],
+      low_cost_routes: [
+        {
+          model_call_id: "model-call-enterprise",
+          model_name: "deepseek-v4-flash",
+          reason: "balanced route stayed within budget",
+        },
+      ],
+      optimizer_capability_version_ids: ["balanced-version-enterprise"],
+      optimizer_labels: ["Balanced"],
+      optimizer_policy_hash: "policy-enterprise",
+      optimizer_decision_count: 1,
+      omission_reasons: [{ reason: "optimizer_budget", count: 2 }],
+    },
+  ],
+  next_cursor: null,
+};
 export const costRollup = { window: "7d", group_by: "provider", generated_at: now, total_cost_usd: 0.00028, total_tokens: 1500, total_runs: 1, average_run_cost_usd: 0.00028, breakdown: [{ key: "deepseek-flash/deepseek-v4-flash", label: "deepseek-flash/deepseek-v4-flash", cost_usd: 0.00028, tokens_in: 1000, tokens_out: 500, run_count: 1, share: 1, pricing_status: "verified", pricing_blocking: false }, { key: "unknown-provider/unknown-model", label: "unknown-provider/unknown-model", cost_usd: 0, tokens_in: 10, tokens_out: 5, run_count: 1, share: 0, pricing_status: "missing_pricing", pricing_blocking: true }], series: [], pricing_statuses: [{ model: "deepseek-flash/deepseek-v4-flash", status: "verified", blocking: false }, { model: "unknown-provider/unknown-model", status: "missing_pricing", blocking: true }] };
 const groundingQuality = {
   items: [

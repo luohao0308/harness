@@ -12,13 +12,19 @@
  * escapes (React logs error #310 at `console.error` before throwing).
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 
 import { ChatMessageList } from "../components/ChatMessageList";
 import type { ConversationNode } from "../../../stores/workspaceStore";
 import type { ChatMessageListProps } from "../components/ChatMessageList";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  delete window.desktopApi;
+});
 
 function makeNode(partial: Partial<ConversationNode> & Pick<ConversationNode, "id" | "role">): ConversationNode {
   return {
@@ -53,6 +59,14 @@ function buildProps(activePath: ConversationNode[]): ChatMessageListProps {
   };
 }
 
+function renderList(root: Root, activePath: ConversationNode[]): void {
+  root.render(
+    <MemoryRouter>
+      <ChatMessageList {...buildProps(activePath)} />
+    </MemoryRouter>,
+  );
+}
+
 describe("ChatMessageList render regression (React error #310)", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -68,7 +82,7 @@ describe("ChatMessageList render regression (React error #310)", () => {
   it("renders empty → non-empty without hook-order errors", async () => {
     // First render: empty activePath → welcome-state branch.
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([])} />);
+      renderList(root, []);
     });
 
     // Guard: the welcome branch must mount cleanly.
@@ -84,7 +98,7 @@ describe("ChatMessageList render regression (React error #310)", () => {
       content: "hello",
     });
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([firstUserMessage])} />);
+      renderList(root, [firstUserMessage]);
     });
 
     // No react-dom warnings / errors allowed in this transition.
@@ -110,13 +124,13 @@ describe("ChatMessageList render regression (React error #310)", () => {
       content: "hi",
     });
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([firstUserMessage])} />);
+      renderList(root, [firstUserMessage]);
     });
     expect(errorSpy).not.toHaveBeenCalled();
 
     // Drop all messages — flip back to welcome branch.
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([])} />);
+      renderList(root, []);
     });
 
     const errors = errorSpy.mock.calls.map((call) => String(call[0] ?? ""));
@@ -142,17 +156,13 @@ describe("ChatMessageList render regression (React error #310)", () => {
     });
 
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([userNode, assistantNode])} />);
+      renderList(root, [userNode, assistantNode]);
     });
 
     // Simulate streaming delta arrivals.
     for (const next of ["h", "he", "hel", "hell", "hello"]) {
       await act(async () => {
-        root.render(
-          <ChatMessageList
-            {...buildProps([userNode, { ...assistantNode, content: next }])}
-          />,
-        );
+        renderList(root, [userNode, { ...assistantNode, content: next }]);
       });
     }
 
@@ -179,7 +189,7 @@ describe("ChatMessageList render regression (React error #310)", () => {
     });
 
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([userNode, assistantNode])} />);
+      renderList(root, [userNode, assistantNode]);
     });
 
     expect(container.textContent ?? "").toContain("Local knowledge grounded the answer.");
@@ -201,18 +211,289 @@ describe("ChatMessageList render regression (React error #310)", () => {
         output_tokens: 34,
         cost_usd: "0.01",
         duration_ms: 56,
+        ttfb_ms: 123,
       },
     });
 
     await act(async () => {
-      root.render(<ChatMessageList {...buildProps([assistantNode])} />);
+      renderList(root, [assistantNode]);
     });
 
     const text = container.textContent ?? "";
     expect(text).toContain("12 输入");
     expect(text).toContain("34 输出");
+    expect(text).toContain("TTFB: 123ms");
     expect(text).not.toContain("12 in");
     expect(text).not.toContain("34 out");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("does not render the run summary card for completed goal-mode assistant nodes", async () => {
+    const assistantNode = makeNode({
+      id: "a-goal",
+      role: "assistant",
+      content: "目标已达成。",
+      run_id: "run-goal",
+      metadata: {
+        workspace_mode: "goal",
+        goal_status: "completed",
+        goal_text: "持续推进目标",
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <ChatMessageList
+            {...buildProps([assistantNode])}
+            activeRunId="run-goal"
+            runStatus="COMPLETED"
+            runCreatedAt="2026-06-18T07:54:48.000Z"
+          />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(container.textContent ?? "").not.toContain("查看运行详情");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("renders local Agent input and output metadata as a visible I/O panel", async () => {
+    const assistantNode = makeNode({
+      id: "a1",
+      role: "assistant",
+      content: "检查完成。",
+      metadata: {
+        orchestration: {
+          source: "local_agent",
+          local_agent_io: {
+            input: {
+              adapter_kind: "hao",
+              binding_id: "binding-hao-1234567890",
+              agent_session_id: "session-hao-1234567890",
+              model_provider: "deepseek",
+              model_name: "deepseek-v4",
+              message: "请检查本地项目",
+              conversation_context_count: 2,
+              conversation_context: [
+                { role: "user", content: "第一条本地上下文" },
+                { role: "assistant", content: "第二条本地上下文" },
+              ],
+              tool_mentions: [{ name: "read_file" }],
+              attachments: [{ name: "README.md" }],
+            },
+            output: {
+              bridge_task_id: "bridge-task-hao-1234567890",
+              model_call_id: "model-call-hao-1234567890",
+              content_preview: "检查完成。",
+              prompt_tokens: 41,
+              completion_tokens: 9,
+              total_tokens: 50,
+              duration_ms: 12,
+            },
+          },
+        },
+      },
+    });
+
+    await act(async () => {
+      renderList(root, [assistantNode]);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("本地 Agent I/O");
+    expect(text).toContain("hao");
+    expect(text).toContain("deepseek/deepseek-v4");
+    expect(text).toContain("2 条");
+    expect(text).toContain("read_file");
+    expect(text).toContain("README.md");
+    expect(text).toContain("输入 41");
+    expect(text).toContain("输出 9");
+    expect(text).toContain("总计 50");
+    expect(text).toContain("请检查本地项目");
+    expect(text).toContain("上下文明细");
+    expect(text).toContain("第一条本地上下文");
+    expect(text).toContain("第二条本地上下文");
+    expect(text).toContain("检查完成。");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("does not expand local Agent I/O snapshots on user bubbles", async () => {
+    const userNode = makeNode({
+      id: "u1",
+      role: "user",
+      content: "请检查本地项目",
+      metadata: {
+        orchestration: {
+          source: "local_agent",
+          local_agent_io: {
+            input: {
+              adapter_kind: "hao",
+              binding_id: "binding-hao-1234567890",
+              agent_session_id: "session-hao-1234567890",
+              model_provider: "deepseek",
+              model_name: "deepseek-v4",
+              message: "请检查本地项目",
+              conversation_context_count: 1,
+              conversation_context: [
+                {
+                  role: "assistant",
+                  content: "不应该在用户消息气泡里展开的大段上下文",
+                },
+              ],
+            },
+            output: null,
+          },
+        },
+      },
+    });
+
+    await act(async () => {
+      renderList(root, [userNode]);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("请检查本地项目");
+    expect(text).not.toContain("本地 Agent I/O");
+    expect(text).not.toContain("不应该在用户消息气泡里展开的大段上下文");
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("renders a model settings action for model authentication errors", async () => {
+    const assistantNode = makeNode({
+      id: "a1",
+      role: "assistant",
+      state: "error",
+      run_id: "run-model-auth",
+      metadata: {
+        error: {
+          kind: "model_auth",
+          detail:
+            'upstream model gateway returned HTTP 401: {"error":{"message":"Authentication Fails, Your api key: ****9b48 is invalid"}}',
+          happened_at: "2026-06-15T15:41:35.923Z",
+        },
+      },
+    });
+
+    await act(async () => {
+      renderList(root, [assistantNode]);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("模型密钥无效");
+    expect(text).toContain("打开模型设置");
+    const settingsLink = container.querySelector<HTMLAnchorElement>(
+      'a[href="/settings/models"]',
+    );
+    expect(settingsLink).not.toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("routes typed local setup errors to the desktop model category", async () => {
+    vi.stubEnv("VITE_RUNTIME_PROFILE", "local");
+    window.desktopApi = {};
+    const assistantNode = makeNode({
+      id: "a-local-setup",
+      role: "assistant",
+      state: "error",
+      metadata: {
+        error: {
+          kind: "server",
+          detail: "MODEL_SETUP_REQUIRED: configure a model API key",
+          happened_at: "2026-08-07T00:00:00.000Z",
+        },
+      },
+    });
+
+    await act(async () => {
+      renderList(root, [assistantNode]);
+    });
+
+    expect(
+      container.querySelector<HTMLAnchorElement>('a[href="/desktop?section=models"]'),
+    ).not.toBeNull();
+
+    await act(async () => root.unmount());
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("keeps the local Web Extension model action on the read-only model page", async () => {
+    vi.stubEnv("VITE_RUNTIME_PROFILE", "local");
+    const assistantNode = makeNode({
+      id: "a-web-setup",
+      role: "assistant",
+      state: "error",
+      metadata: {
+        error: {
+          kind: "server",
+          detail: "MODEL_SETUP_REQUIRED",
+          happened_at: "2026-08-07T00:00:00.000Z",
+        },
+      },
+    });
+
+    await act(async () => renderList(root, [assistantNode]));
+
+    expect(container.querySelector<HTMLAnchorElement>('a[href="/settings/models"]')).not.toBeNull();
+    expect(container.querySelector<HTMLAnchorElement>('a[href="/desktop?section=models"]')).toBeNull();
+
+    await act(async () => root.unmount());
+    container.remove();
+    errorSpy.mockRestore();
+  });
+
+  it("renders a model settings action for legacy server-wrapped model authentication errors", async () => {
+    const assistantNode = makeNode({
+      id: "a1",
+      role: "assistant",
+      state: "error",
+      run_id: "run-legacy-model-auth",
+      metadata: {
+        error: {
+          kind: "server",
+          detail:
+            'upstream model gateway returned HTTP 401: {"error":{"message":"Authentication Fails, Your api key: ****9b48 is invalid"}}',
+          happened_at: "2026-06-15T15:41:35.923Z",
+        },
+      },
+    });
+
+    await act(async () => {
+      renderList(root, [assistantNode]);
+    });
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("模型密钥无效");
+    expect(text).toContain("打开模型设置");
+    expect(
+      container.querySelector<HTMLAnchorElement>('a[href="/settings/models"]'),
+    ).not.toBeNull();
 
     await act(async () => {
       root.unmount();

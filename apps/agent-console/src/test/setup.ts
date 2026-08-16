@@ -3,6 +3,8 @@
  *
  * - Imports `@testing-library/jest-dom` to extend `expect` with
  *   `toBeInTheDocument`, `toHaveAttribute`, etc.
+ * - Imports `jest-axe` to extend `expect` with `toHaveNoViolations` for
+ *   accessibility testing.
  * - Registers a cleanup hook so React roots from one test don't leak
  *   into the next (react-testing-library normally relies on the
  *   vitest-globals auto-cleanup; we call it explicitly here because our
@@ -14,8 +16,12 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { afterEach } from "vitest";
+import { toHaveNoViolations } from "jest-axe";
+import { afterEach, expect } from "vitest";
 import { cleanup } from "@testing-library/react";
+
+// Extend expect with jest-axe matchers
+expect.extend(toHaveNoViolations);
 
 // React 18 requires this global for `act(...)` to know it's in a test.
 // See https://react.dev/reference/react/act#making-your-tests-async
@@ -51,4 +57,24 @@ if (typeof globalThis.IntersectionObserver === "undefined") {
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).IntersectionObserver = MockIntersectionObserver;
+}
+
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class MockResizeObserver {
+    constructor() {
+      // no-op
+    }
+
+    observe(): void {
+      /* no-op */
+    }
+    unobserve(): void {
+      /* no-op */
+    }
+    disconnect(): void {
+      /* no-op */
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).ResizeObserver = MockResizeObserver;
 }

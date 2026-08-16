@@ -176,6 +176,27 @@ export function applyChatEvents(
         snap = { ...snap, run_id: event.run_id };
         break;
       }
+      case "goal_progress": {
+        snap = {
+          ...snap,
+          run_id: event.run_id || snap.run_id,
+          metadata: {
+            ...snap.metadata,
+            workspace_mode: "goal",
+            goal_status: event.status,
+            goal_text: event.goal,
+            goal_phase: event.phase,
+            goal_turn: event.turn,
+            goal_step_count: event.step_count,
+            goal_message: event.message,
+            goal_started_at: event.started_at,
+            goal_elapsed_ms: event.elapsed_ms,
+            goal_run_id: event.run_id || snap.run_id,
+            goal_cleared: false,
+          },
+        };
+        break;
+      }
       case "orchestration": {
         snap = {
           ...snap,

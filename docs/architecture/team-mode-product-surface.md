@@ -71,8 +71,12 @@ The first viewport must preserve the Team Mode product shape:
 - Each column owns its own header, message stream, `View Steps` foldout, and bottom composer.
 - A column composer sends to that column's slot. It must not expose a generic dashboard-style
   target selector as the primary interaction.
-- Task details live in per-column `View Steps` or a transient compact popover/drawer. A persistent
-  right-side task dashboard is not part of the target first screen.
+- In the web default `多列` view, task details live in per-column `View Steps` or a transient
+  compact popover/drawer. A persistent right-side task dashboard is not part of the web target
+  first screen.
+- Electron may add `协作` and `任务图` presentation modes beside the unchanged `多列` view.
+  Their right-side inspector or task graph is a desktop workspace aid, not a Run/Trace dashboard,
+  and must reuse the same Team session, mailbox, task, goal, and wake semantics.
 - Mobile switches to one active column through tabs/dropdown and must not create document-level
   horizontal overflow at 390px.
 
@@ -103,3 +107,6 @@ Required entities:
 3. Align backend mailbox/wake/status/tool semantics with the Team Mode contracts above.
 4. Remove or demote any Run/Trace/dashboard-centered Team UI.
 5. Verify with backend tests, frontend tests, Playwright desktop/mobile smoke, and screenshots.
+
+Desktop presentation details and visual acceptance are defined in
+`docs/design/desktop/team-mode-workspace.md`.

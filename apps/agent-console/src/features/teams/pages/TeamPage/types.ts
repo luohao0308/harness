@@ -43,11 +43,16 @@ export type PendingSend = {
   files: string[];
   mode: WorkspaceMode;
   recipientSlotIds: string[];
+  anchorUserId?: string;
+  branchAssistantId?: string;
 };
 export type StreamingWake = {
   slotId: string;
   content: string;
   error?: string;
+  happenedAt?: string;
+  anchorUserId?: string;
+  branchAssistantId?: string;
 };
 
 export type SettledWakeCutoffs = Record<string, number>;

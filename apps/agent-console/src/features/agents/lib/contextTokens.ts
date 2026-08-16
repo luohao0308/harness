@@ -7,6 +7,9 @@
  * writes are best-effort via `window.localStorage`.
  */
 
+import { getWorkspaceScopeId, legacyWorkspaceStorageKey, workspaceScopedStorageKey } from "./workspaceScope";
+import { getWorkspacePersistenceStorage } from "../../../lib/workspace-persistence-storage";
+
 export const CONTEXT_MAX_TOKENS_MIN = 16_000;
 export const CONTEXT_MAX_TOKENS_MAX = 1_000_000;
 export const CONTEXT_MAX_TOKENS_STEP = 1_000;
@@ -86,11 +89,19 @@ export function clampAutoCompressionRatio(value: unknown): number {
  * migration is needed.
  */
 export function contextMaxTokensStorageKey(agentId: string): string {
-  return `harness.workspace.v5.${agentId}.contextMaxTokens`;
+  return workspaceScopedStorageKey(getWorkspaceScopeId(), "v5", agentId, "contextMaxTokens");
 }
 
 export function autoCompressionRatioStorageKey(agentId: string): string {
-  return `harness.workspace.v5.${agentId}.autoCompressionRatio`;
+  return workspaceScopedStorageKey(getWorkspaceScopeId(), "v5", agentId, "autoCompressionRatio");
+}
+
+function legacyContextMaxTokensStorageKey(agentId: string): string {
+  return legacyWorkspaceStorageKey("v5", agentId, "contextMaxTokens");
+}
+
+function legacyAutoCompressionRatioStorageKey(agentId: string): string {
+  return legacyWorkspaceStorageKey("v5", agentId, "autoCompressionRatio");
 }
 
 /**
@@ -100,10 +111,6 @@ export function autoCompressionRatioStorageKey(agentId: string): string {
  */
 let skipWrites = false;
 
-function hasLocalStorage(): boolean {
-  return typeof localStorage !== "undefined";
-}
-
 /**
  * Best-effort read. Returns `null` when no value is stored, when storage
  * is unavailable, or when the stored value fails to parse as a finite
@@ -111,10 +118,16 @@ function hasLocalStorage(): boolean {
  * entries surface as defaults rather than crashing the slider.
  */
 export function readContextMaxTokens(agentId: string): number | null {
-  if (!hasLocalStorage()) return null;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return null;
   let raw: string | null;
+  let usedLegacyKey = false;
   try {
-    raw = window.localStorage.getItem(contextMaxTokensStorageKey(agentId));
+    raw = storage.getItem(contextMaxTokensStorageKey(agentId));
+    if (raw === null) {
+      raw = storage.getItem(legacyContextMaxTokensStorageKey(agentId));
+      usedLegacyKey = raw !== null;
+    }
   } catch {
     return null;
   }
@@ -124,6 +137,14 @@ export function readContextMaxTokens(agentId: string): number | null {
   // v4.1 compatibility: previous builds persisted this value in KB on a
   // 16..1024 scale. Treat those values as legacy KB and migrate to tokens.
   const normalized = parsed <= 1024 ? parsed * 1000 : parsed;
+  if (usedLegacyKey) {
+    try {
+      storage.setItem(contextMaxTokensStorageKey(agentId), String(clampContextMaxTokens(normalized)));
+      storage.removeItem(legacyContextMaxTokensStorageKey(agentId));
+    } catch {
+      /* ignore migration failures */
+    }
+  }
   return clampContextMaxTokens(normalized);
 }
 
@@ -134,9 +155,10 @@ export function readContextMaxTokens(agentId: string): number | null {
  */
 export function saveContextMaxTokens(agentId: string, value: number): boolean {
   if (skipWrites) return false;
-  if (!hasLocalStorage()) return false;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return false;
   try {
-    window.localStorage.setItem(
+    storage.setItem(
       contextMaxTokensStorageKey(agentId),
       String(clampContextMaxTokens(value)),
     );
@@ -150,24 +172,39 @@ export function saveContextMaxTokens(agentId: string, value: number): boolean {
 }
 
 export function readAutoCompressionRatio(agentId: string): number | null {
-  if (!hasLocalStorage()) return null;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return null;
   let raw: string | null;
+  let usedLegacyKey = false;
   try {
-    raw = window.localStorage.getItem(autoCompressionRatioStorageKey(agentId));
+    raw = storage.getItem(autoCompressionRatioStorageKey(agentId));
+    if (raw === null) {
+      raw = storage.getItem(legacyAutoCompressionRatioStorageKey(agentId));
+      usedLegacyKey = raw !== null;
+    }
   } catch {
     return null;
   }
   if (raw === null) return null;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return null;
+  if (usedLegacyKey) {
+    try {
+      storage.setItem(autoCompressionRatioStorageKey(agentId), String(clampAutoCompressionRatio(parsed)));
+      storage.removeItem(legacyAutoCompressionRatioStorageKey(agentId));
+    } catch {
+      /* ignore migration failures */
+    }
+  }
   return clampAutoCompressionRatio(parsed);
 }
 
 export function saveAutoCompressionRatio(agentId: string, value: number): boolean {
   if (skipWrites) return false;
-  if (!hasLocalStorage()) return false;
+  const storage = getWorkspacePersistenceStorage();
+  if (!storage) return false;
   try {
-    window.localStorage.setItem(
+    storage.setItem(
       autoCompressionRatioStorageKey(agentId),
       String(clampAutoCompressionRatio(value)),
     );

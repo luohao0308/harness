@@ -28,11 +28,11 @@ The repository includes durable capture targets for product media:
 
 | Demo | Asset target | What it proves |
 |---|---|---|
-| 30 second private deploy | [docs/gifs/docker-compose-up.gif](docs/gifs/README.md) | Compose config, services, health checks |
-| 30 second first Agent Run | [docs/gifs/first-agent-run.gif](docs/gifs/README.md) | Workspace Plan, events, tools, sandbox, Eval evidence |
-| 30 second cost dashboard | [docs/gifs/cost-dashboard.gif](docs/gifs/README.md) | Model calls, token cost, cached rollups |
+| 30 second private deploy | [docs/design/media/gifs/docker-compose-up.gif](docs/design/media/gifs/README.md) | Compose config, services, health checks |
+| 30 second first Agent Run | [docs/design/media/gifs/first-agent-run.gif](docs/design/media/gifs/README.md) | Workspace Plan, events, tools, sandbox, Eval evidence |
+| 30 second cost dashboard | [docs/design/media/gifs/cost-dashboard.gif](docs/design/media/gifs/README.md) | Model calls, token cost, cached rollups |
 
-Screenshot capture targets live in [docs/screenshots/](docs/screenshots/README.md)
+Screenshot capture targets live in [docs/design/media/screenshots/](docs/design/media/screenshots/README.md)
 for Dashboard, onboarding, Agent Studio, Workspace, Run Detail, Eval,
 Observability, Specialist Marketplace, and data management.
 
@@ -62,7 +62,7 @@ Keep `HARNESS_SECRET_ENCRYPTION_KEY` stable as well; it decrypts stored
 business integration secrets and is generated server-side, never in the
 frontend.
 
-See [First-Run Admin Runbook](docs/runbooks/first-run-admin.md) for JWT login,
+See [First-Run Admin Runbook](docs/project-memory/runbooks/first-run-admin.md) for JWT login,
 smoke-test token exports, and the `scripts/create-admin.py` fallback.
 
 Primary Console routes:
@@ -104,7 +104,7 @@ Primary Console routes:
 
 ## For Developers
 
-Read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for contribution flow when
+Read [docs/development/CONTRIBUTING.md](docs/development/CONTRIBUTING.md) for contribution flow when
 available, and use these stable entry points for local work:
 
 ```bash
@@ -118,46 +118,47 @@ python3 scripts/validate-docs.py
 New AI agent sessions use the low-token startup contract:
 
 ```text
-docs/ai/agent-startup-context.md
-docs/ai/task-progress.yaml
+docs/development/ai/agent-startup-context.md
+docs/development/ai/task-progress.yaml
 python3 scripts/agent-context-brief.py --task "<user task>"
 ```
 
-Completion write-back targets are `docs/ai/task-progress.yaml` and a relevant
+Completion write-back targets are `docs/development/ai/task-progress.yaml` and a relevant
 `omx_wiki/` session or handoff page.
 
 Core spec map:
 
 | Area | Document |
 |---|---|
-| Product | [docs/00-product-spec.md](docs/00-product-spec.md) |
-| Architecture | [docs/01-system-architecture.md](docs/01-system-architecture.md) |
-| Data and events | [docs/02-data-model-and-event-spec.md](docs/02-data-model-and-event-spec.md) |
-| API | [docs/03-api-spec.md](docs/03-api-spec.md) |
-| Agent runtime | [docs/04-agent-runtime-spec.md](docs/04-agent-runtime-spec.md) |
-| Tool and MCP runtime | [docs/05-tool-mcp-runtime-spec.md](docs/05-tool-mcp-runtime-spec.md) |
-| Guardrail policy | [docs/06-guardrail-policy-spec.md](docs/06-guardrail-policy-spec.md) |
-| Eval harness | [docs/07-eval-harness-spec.md](docs/07-eval-harness-spec.md) |
-| Console UI | [docs/08-console-ui-spec.md](docs/08-console-ui-spec.md) |
-| Benchmark | [docs/09-benchmark-spec.md](docs/09-benchmark-spec.md) |
-| Portfolio demo | [docs/10-portfolio-demo-spec.md](docs/10-portfolio-demo-spec.md) |
-| Progress | [docs/task-progress.md](docs/task-progress.md) |
+| Product | [docs/design/product-spec.md](docs/design/product-spec.md) |
+| Architecture | [docs/architecture/system-architecture-spec.md](docs/architecture/system-architecture-spec.md) |
+| Data and events | [docs/contracts/data-model-and-event-spec.md](docs/contracts/data-model-and-event-spec.md) |
+| API | [docs/contracts/api/api-spec.md](docs/contracts/api/api-spec.md) |
+| Agent runtime | [docs/architecture/agent-runtime-spec.md](docs/architecture/agent-runtime-spec.md) |
+| Tool and MCP runtime | [docs/contracts/tool-mcp-runtime-spec.md](docs/contracts/tool-mcp-runtime-spec.md) |
+| Guardrail policy | [docs/contracts/guardrail-policy-spec.md](docs/contracts/guardrail-policy-spec.md) |
+| Eval harness | [docs/testing/eval-harness-spec.md](docs/testing/eval-harness-spec.md) |
+| Console UI | [docs/design/console-ui-spec.md](docs/design/console-ui-spec.md) |
+| Benchmark | [docs/testing/benchmark-spec.md](docs/testing/benchmark-spec.md) |
+| Portfolio demo | [docs/design/portfolio-demo-spec.md](docs/design/portfolio-demo-spec.md) |
+| Current tasks | [docs/TASKS.md](docs/TASKS.md) |
+| Machine progress | [docs/development/ai/task-progress.yaml](docs/development/ai/task-progress.yaml) |
 
 Stage docs:
 
 | Stage | Document |
 |---|---|
-| 01 | [docs/ai/stages/01-agent-workspace-console.md](docs/ai/stages/01-agent-workspace-console.md) |
-| 02 | [docs/ai/stages/02-agent-studio-config.md](docs/ai/stages/02-agent-studio-config.md) |
-| 03 | [docs/ai/stages/03-harness-tool-mcp.md](docs/ai/stages/03-harness-tool-mcp.md) |
-| 04 | [docs/ai/stages/04-event-sourcing-replay-ui.md](docs/ai/stages/04-event-sourcing-replay-ui.md) |
-| 05 | [docs/ai/stages/05-eval-regression.md](docs/ai/stages/05-eval-regression.md) |
-| 06 | [docs/ai/stages/06-warmpool-infra.md](docs/ai/stages/06-warmpool-infra.md) |
+| 01 | [docs/development/ai/stages/01-agent-workspace-console.md](docs/development/ai/stages/01-agent-workspace-console.md) |
+| 02 | [docs/development/ai/stages/02-agent-studio-config.md](docs/development/ai/stages/02-agent-studio-config.md) |
+| 03 | [docs/development/ai/stages/03-harness-tool-mcp.md](docs/development/ai/stages/03-harness-tool-mcp.md) |
+| 04 | [docs/development/ai/stages/04-event-sourcing-replay-ui.md](docs/development/ai/stages/04-event-sourcing-replay-ui.md) |
+| 05 | [docs/development/ai/stages/05-eval-regression.md](docs/development/ai/stages/05-eval-regression.md) |
+| 06 | [docs/development/ai/stages/06-warmpool-infra.md](docs/development/ai/stages/06-warmpool-infra.md) |
 
 ## API Reference
 
 FastAPI exposes OpenAPI at `/openapi.json` and interactive docs at `/docs`.
-Generated API reference output lives in [docs/api-reference/](docs/api-reference/).
+Generated API reference output lives in [docs/contracts/api-reference/](docs/contracts/api-reference/).
 
 Regenerate it with:
 
@@ -167,7 +168,7 @@ python3 scripts/generate-api-docs.py
 
 ## Load And Scale
 
-Performance guidance lives in [docs/runbooks/performance.md](docs/runbooks/performance.md).
+Performance guidance lives in [docs/project-memory/runbooks/performance.md](docs/project-memory/runbooks/performance.md).
 The baseline scripts under [tests/load/](tests/load/) cover mixed user traffic,
 spike traffic, and soak traffic through k6. The Console build emits hashed
 `assets/` files with immutable cache headers through the production Nginx asset
@@ -195,7 +196,7 @@ harness/
 
 ## Roadmap And Community
 
-Current roadmap source: [.omx/plans/roadmap-production-readiness.md](.omx/plans/roadmap-production-readiness.md).
+Current roadmap source: [docs/plans/roadmap.md](docs/plans/roadmap.md).
 
 Community links are operator-owned placeholders for the private distribution:
 

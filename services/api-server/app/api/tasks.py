@@ -1,13 +1,18 @@
+import re
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.agents.context_router import RunContextRouter
 from app.agents.executor import Executor
 from app.api.pagination import cursor_paginate
+from app.api.plan_projection import build_plan_response
 from app.api.schemas import (
     ModelCallPage,
     ReplayRequest,
@@ -21,7 +26,6 @@ from app.api.schemas import (
     TaskPlanDiffResponse,
     TaskPlanResponse,
     TaskPlanStepDiff,
-    TaskPlanStepState,
     TaskPlanVersionPage,
     TaskPlanVersionSummary,
     TaskResponse,
@@ -40,6 +44,11 @@ from app.db.models import (
     AgentEvent,
     AgentRun,
     ExecutionPlan,
+    LocalAgentBridgeTask,
+    LocalAgentCommand,
+    LocalAgentConnection,
+    LocalAgentPendingChange,
+    LocalAgentToolRequest,
     ModelCall,
     SandboxInstance,
     Task,
@@ -59,7 +68,7 @@ from app.observability.metrics import (
 )
 from app.sandbox.docker_manager import DockerManager
 from app.security.auth import Principal, require_role
-from app.tools.capabilities import CapabilityRegistry, redact_secrets
+from app.tools.capabilities import CapabilityRegistry, redact_secrets, stable_json_sha256
 from app.tools.runner import ToolRunner
 
 RUN_COMPATIBILITY_DESCRIPTION = (
@@ -73,6 +82,23 @@ router = APIRouter(
 )
 DbSession = Annotated[Session, Depends(get_db_session)]
 SUBAGENT_TERMINAL_STATUSES = {"SUCCESS", "FAILED", "TIMEOUT", "CANCELLED", "BUDGET_EXCEEDED"}
+LOCAL_AGENT_TOOL_ACTIVE_STATUSES = {"approval_required", "approved", "allowed", "running"}
+LOCAL_AGENT_COMMAND_ACTIVE_STATUSES = {"pending", "running"}
+LOCAL_AGENT_PENDING_CHANGE_ACTIVE_STATUSES = {
+    "previewed",
+    "approval_required",
+    "approved",
+    "allowed",
+}
+LOCAL_AGENT_COMMAND_TOOLS = {"run_shell", "run_tests", "git"}
+LOCAL_AGENT_NETWORK_PATTERNS = re.compile(
+    r"\b(curl|wget|ssh|scp|git\s+remote|npm\s+install|pip\s+install|pnpm\s+install|yarn\s+add)\b",
+    re.IGNORECASE,
+)
+LOCAL_AGENT_SECRET_PATTERNS = re.compile(
+    r"\b(secret|token|api[_-]?key|printenv|cat\s+\.env)\b",
+    re.IGNORECASE,
+)
 
 
 def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task:
@@ -82,6 +108,10 @@ def get_owned_task(task_id: str, session: Session, organization_id: str) -> Task
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务未找到")
     return task
+
+
+def _is_sqlite_lock_error(exc: OperationalError) -> bool:
+    return "database is locked" in str(exc).lower() or "database is busy" in str(exc).lower()
 
 
 @router.post(
@@ -201,23 +231,228 @@ def start_task(task_id: str, session: DbSession, principal: Principal) -> Task:
     ),
 )
 def cancel_task(task_id: str, session: DbSession, principal: Principal) -> Task:
-    task = get_owned_task(task_id, session, principal.organization_id)
-    if task.status not in {"CREATED", "PLANNING", "RUNNING", "WAITING_SUBAGENTS", "FAILED"}:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法取消")
+    # A stream can briefly hold a SQLite write transaction while its first
+    # frame is being assembled. Retry only that bounded, transient condition;
+    # all other database errors still surface as server failures.
+    for attempt in range(4):
+        try:
+            task = get_owned_task(task_id, session, principal.organization_id)
+            if task.status not in {
+                "CREATED",
+                "PLANNING",
+                "RUNNING",
+                "WAITING_APPROVAL",
+                "WAITING_SUBAGENTS",
+                "FAILED",
+            }:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="任务无法取消")
 
-    task.status = "CANCELLED"
-    task.updated_at = utc_now()
-    task.completed_at = utc_now()
-    EventStore(session).append(
-        task_id=task.id,
-        event_type=EventType.TASK_CANCELLED,
-        payload_json={"task_id": task.id, "cancelled_by": principal.user_id},
-        actor_type="user",
-        actor_id=principal.user_id,
+            now = utc_now()
+            _cancel_local_agent_state_for_task(
+                task=task,
+                session=session,
+                reason="task cancelled",
+                actor_id=principal.user_id,
+                now=now,
+            )
+            _cancel_active_model_calls_for_task(
+                task=task,
+                session=session,
+                now=now,
+            )
+            task.status = "CANCELLED"
+            task.updated_at = now
+            task.completed_at = now
+            EventStore(session).append(
+                task_id=task.id,
+                event_type=EventType.TASK_CANCELLED,
+                payload_json={"task_id": task.id, "cancelled_by": principal.user_id},
+                actor_type="user",
+                actor_id=principal.user_id,
+            )
+            session.commit()
+            session.refresh(task)
+            return task
+        except OperationalError as exc:
+            session.rollback()
+            if not _is_sqlite_lock_error(exc) or attempt == 3:
+                raise
+            time.sleep(0.05 * (2**attempt))
+
+    raise RuntimeError("unreachable cancellation retry state")
+
+
+def _cancel_active_model_calls_for_task(
+    *,
+    task: Task,
+    session: Session,
+    now: datetime,
+) -> None:
+    active_calls = list(
+        session.execute(
+            select(ModelCall)
+            .where(ModelCall.task_id == task.id, ModelCall.status == "RUNNING")
+            .order_by(ModelCall.created_at.asc(), ModelCall.id.asc())
+        ).scalars()
     )
-    session.commit()
-    session.refresh(task)
-    return task
+    for model_call in active_calls:
+        created_at = model_call.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        model_call.status = "FAILED"
+        model_call.terminal_status = "stream_aborted"
+        model_call.duration_ms = max(
+            int(model_call.duration_ms or 0),
+            max(0, int((now - created_at).total_seconds() * 1000)),
+        )
+        model_call.error_message = "stream closed before completion"
+        EventStore(session).append(
+            task_id=task.id,
+            agent_run_id=model_call.agent_run_id,
+            event_type=EventType.MODEL_CALL_FAILED,
+            payload_json={
+                "model_call_id": model_call.id,
+                "model_provider": model_call.model_provider,
+                "model_name": model_call.model_name,
+                "error": model_call.error_message,
+                "streaming": True,
+                "cancelled": True,
+                "grounding_correlation_id": model_call.grounding_correlation_id,
+                "prompt_manifest_id": model_call.prompt_manifest_id,
+                "context_manifest_id": model_call.context_manifest_id,
+                "attempt_index": model_call.attempt_index,
+                "terminal_status": model_call.terminal_status,
+            },
+        )
+
+
+def _cancel_local_agent_state_for_task(
+    *,
+    task: Task,
+    session: Session,
+    reason: str,
+    actor_id: str | None,
+    now: datetime,
+) -> None:
+    local_requests = list(
+        session.execute(
+            select(LocalAgentToolRequest)
+            .where(
+                LocalAgentToolRequest.task_id == task.id,
+                LocalAgentToolRequest.status.in_(LOCAL_AGENT_TOOL_ACTIVE_STATUSES),
+            )
+            .order_by(LocalAgentToolRequest.created_at.asc(), LocalAgentToolRequest.id.asc())
+        ).scalars()
+    )
+    for local_request in local_requests:
+        local_request.status = "cancelled"
+        local_request.completed_at = local_request.completed_at or now
+        local_request.updated_at = now
+        decision_json = (
+            local_request.decision_json
+            if isinstance(local_request.decision_json, dict)
+            else {}
+        )
+        local_request.decision_json = {
+            **decision_json,
+            "terminal_status": "cancelled",
+            "terminal_reason": reason,
+            "terminalized_at": now.isoformat(),
+            "server_execution": False,
+        }
+        local_request.result_json = {
+            "status": "CANCELLED",
+            "reason": reason,
+            "server_execution": False,
+        }
+        approval = (
+            session.get(ToolApproval, local_request.approval_id)
+            if local_request.approval_id
+            else None
+        )
+        if approval is not None and approval.status == "PENDING":
+            approval.status = "DENIED"
+            approval.decided_by = actor_id
+            approval.decided_at = now
+            approval.decision_json = {
+                "decision": "CANCELLED",
+                "reason": reason,
+                "server_execution": False,
+            }
+        tool_call = session.get(ToolCall, local_request.tool_call_id)
+        if tool_call is not None and tool_call.status not in {
+            "SUCCESS",
+            "FAILED",
+            "TIMEOUT",
+            "DENIED",
+            "CANCELLED",
+        }:
+            tool_call.status = "CANCELLED"
+            tool_call.error_message = reason
+            tool_call.output_json = {
+                "status": "CANCELLED",
+                "reason": reason,
+                "server_execution": False,
+                "tool_request_id": local_request.tool_request_id,
+            }
+        pending_changes = list(
+            session.execute(
+                select(LocalAgentPendingChange).where(
+                    LocalAgentPendingChange.local_agent_tool_request_id == local_request.id,
+                    LocalAgentPendingChange.status.in_(
+                        LOCAL_AGENT_PENDING_CHANGE_ACTIVE_STATUSES
+                    ),
+                )
+            ).scalars()
+        )
+        for change in pending_changes:
+            change.status = "denied"
+            change.denied_at = change.denied_at or now
+            change.error_message = reason
+            change.updated_at = now
+        active_commands = list(
+            session.execute(
+                select(LocalAgentCommand).where(
+                    LocalAgentCommand.local_agent_tool_request_id == local_request.id,
+                    LocalAgentCommand.status.in_(LOCAL_AGENT_COMMAND_ACTIVE_STATUSES),
+                )
+            ).scalars()
+        )
+        for command in active_commands:
+            command.status = "cancelled"
+            command.finished_at = command.finished_at or now
+            command.error_message = reason
+            command.updated_at = now
+        EventStore(session).append(
+            task_id=task.id,
+            event_type=EventType.LOCAL_AGENT_COMMAND_CANCELLED,
+            payload_json={
+                "source": "local_agent_bridge",
+                "connection_id": local_request.connection_id,
+                "bridge_task_id": local_request.bridge_task_id,
+                "tool_request_id": local_request.tool_request_id,
+                "tool_call_id": local_request.tool_call_id,
+                "tool_name": local_request.tool_name,
+                "status": "CANCELLED",
+                "terminal_status": "cancelled",
+                "reason": reason,
+                "server_execution": False,
+            },
+            actor_type="user",
+            actor_id=actor_id,
+        )
+    bridge_tasks = list(
+        session.execute(
+            select(LocalAgentBridgeTask).where(
+                LocalAgentBridgeTask.task_id == task.id,
+                ~LocalAgentBridgeTask.status.in_(("completed", "failed", "cancelled")),
+            )
+        ).scalars()
+    )
+    for bridge_task in bridge_tasks:
+        bridge_task.status = "cancelled"
+        bridge_task.completed_at = bridge_task.completed_at or now
+        bridge_task.updated_at = now
 
 
 @router.post(
@@ -421,68 +656,7 @@ def get_task_plan(task_id: str, session: DbSession, principal: Principal) -> Tas
     plan = _latest_plan(task_id=task_id, session=session)
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="执行计划未找到")
-    step_rows = {
-        step.step_key: step
-        for step in session.execute(
-            select(TaskStep)
-            .where(TaskStep.task_id == task_id, TaskStep.plan_id == plan.id)
-            .order_by(TaskStep.started_at.asc(), TaskStep.completed_at.asc(), TaskStep.id.asc())
-        ).scalars()
-    }
-    step_events = _step_events_by_key(task_id=task_id, session=session)
-    steps = []
-    for raw_step in plan.plan_json.get("steps", []):
-        step_key = str(raw_step.get("key", ""))
-        step_row = step_rows.get(step_key)
-        execution_trace = step_events.get(step_key, [])
-        steps.append(
-            TaskPlanStepState(
-                step_key=step_key,
-                description=str(raw_step.get("description", "")),
-                depends_on=_string_list(raw_step.get("depends_on")),
-                execution_mode=str(raw_step.get("execution_mode", "")),
-                requires_sandbox=bool(raw_step.get("requires_sandbox", False)),
-                can_spawn_subagent=bool(raw_step.get("can_spawn_subagent", False)),
-                recommended_specialist_slug=_optional_string(
-                    raw_step.get("recommended_specialist_slug")
-                ),
-                fanout_specialist_slugs=_string_list(raw_step.get("fanout_specialist_slugs")),
-                fanout_aggregation=str(raw_step.get("fanout_aggregation") or "synthesizer_chain"),
-                tool_hints=_string_list(raw_step.get("tool_hints")),
-                acceptance_criteria=_string_list(raw_step.get("acceptance_criteria")),
-                risk_level=str(raw_step.get("risk_level") or "low"),
-                artifact_expectations=_string_list(raw_step.get("artifact_expectations")),
-                quality_notes=_string_list(raw_step.get("quality_notes")),
-                status=step_row.status if step_row is not None else "PENDING",
-                assigned_agent_id=step_row.assigned_agent_id if step_row is not None else None,
-                error_message=step_row.error_message if step_row is not None else None,
-                trace_summary=_last_trace_summary(execution_trace),
-                last_event_sequence=(
-                    int(execution_trace[-1]["sequence"]) if execution_trace else None
-                ),
-                execution_trace=execution_trace,
-            )
-        )
-    return TaskPlanResponse(
-        id=plan.id,
-        task_id=plan.task_id,
-        version=plan.version,
-        status=plan.status,
-        summary=plan.plan_json.get("summary"),
-        planner_source=str(plan.plan_json.get("planner_source", "deterministic")),
-        planner_attempts=int(plan.plan_json.get("planner_attempts", 1) or 1),
-        planner_prompt_version=str(plan.plan_json.get("planner_prompt_version") or "1.1.0"),
-        quality_score=int(plan.plan_json.get("quality_score", 100) or 100),
-        validation_warnings=_string_list(plan.plan_json.get("validation_warnings")),
-        quality_gates=(
-            plan.plan_json.get("quality_gates")
-            if isinstance(plan.plan_json.get("quality_gates"), dict)
-            else {}
-        ),
-        plan_json=plan.plan_json,
-        steps=steps,
-        created_at=plan.created_at,
-    )
+    return build_plan_response(plan, session=session)
 
 
 @router.get(
@@ -622,7 +796,7 @@ def list_model_calls(task_id: str, session: DbSession, principal: Principal) -> 
         session.execute(
             select(ModelCall)
             .where(ModelCall.task_id == task_id)
-            .order_by(ModelCall.created_at.desc())
+            .order_by(ModelCall.created_at.desc(), ModelCall.id.desc())
         ).scalars()
     )
     trace_ids = _model_call_trace_ids(
@@ -669,7 +843,9 @@ def list_tool_calls(
             return ToolCallPage(items=[])
         statement = statement.where(ToolCall.id.in_(tool_call_ids))
     calls = list(
-        session.execute(statement.order_by(ToolCall.created_at.desc()).limit(limit)).scalars()
+        session.execute(
+            statement.order_by(ToolCall.created_at.desc(), ToolCall.id.desc()).limit(limit)
+        ).scalars()
     )
     trace_ids = _tool_call_trace_ids(
         task_id=task_id,
@@ -884,12 +1060,38 @@ def _decide_tool_approval(
     if tool_call is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工具调用未找到")
 
+    local_tool_request = _local_agent_tool_request_for_approval(
+        approval=approval,
+        tool_call=tool_call,
+        session=session,
+    )
+    if local_tool_request is not None:
+        if task.status == "CANCELLED":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent tool request cannot be approved after task cancellation",
+            )
+        _expire_local_agent_approval_if_needed(
+            task=task,
+            tool_call=tool_call,
+            approval=approval,
+            local_tool_request=local_tool_request,
+            session=session,
+        )
     if modified_input_json is not None:
+        if local_tool_request is not None:
+            _validate_local_agent_approval_modify(
+                approval=approval,
+                local_tool_request=local_tool_request,
+                modified_input_json=modified_input_json,
+                session=session,
+            )
         safe_modified_input_json = redact_secrets(modified_input_json)
         request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
         approval.request_json = {
             **request_json,
             "input_json": safe_modified_input_json,
+            "executable_input_sha256": stable_json_sha256(safe_modified_input_json),
             "modified": True,
         }
         tool_call.input_json = safe_modified_input_json
@@ -901,6 +1103,7 @@ def _decide_tool_approval(
         "reason": request.reason,
         "decision": decision,
         "modified": modified_input_json is not None,
+        "server_execution": False if local_tool_request is not None else True,
     }
     tool_call.status = "APPROVED" if decision == "APPROVED" else "DENIED"
     tool_call.error_message = None if decision == "APPROVED" else request.reason or approval.reason
@@ -919,10 +1122,32 @@ def _decide_tool_approval(
             "decision": decision,
             "reason": request.reason,
             "modified": modified_input_json is not None,
+            "server_execution": False if local_tool_request is not None else True,
         },
         actor_type="user",
         actor_id=principal.user_id,
     )
+    if local_tool_request is not None:
+        _decide_local_agent_tool_request(
+            task=task,
+            tool_call=tool_call,
+            approval=approval,
+            local_tool_request=local_tool_request,
+            decision=decision,
+            reason=request.reason,
+            modified_input_json=modified_input_json,
+            session=session,
+            principal=principal,
+        )
+        session.commit()
+        approvals = list(
+            session.execute(
+                select(ToolApproval)
+                .where(ToolApproval.task_id == task.id)
+                .order_by(ToolApproval.created_at.desc())
+            ).scalars()
+        )
+        return ToolApprovalPage(items=approvals)
     if decision == "APPROVED":
         _execute_approved_tool_call(
             task=task,
@@ -949,6 +1174,549 @@ def _decide_tool_approval(
         ).scalars()
     )
     return ToolApprovalPage(items=approvals)
+
+
+def _local_agent_tool_request_for_approval(
+    *,
+    approval: ToolApproval,
+    tool_call: ToolCall,
+    session: Session,
+) -> LocalAgentToolRequest | None:
+    snapshot = tool_call.capability_snapshot_json
+    if not isinstance(snapshot, dict) or snapshot.get("source") != "local_agent_bridge":
+        return None
+    return session.execute(
+        select(LocalAgentToolRequest).where(
+            LocalAgentToolRequest.tool_call_id == tool_call.id,
+            LocalAgentToolRequest.approval_id == approval.id,
+        )
+    ).scalar_one_or_none()
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _expire_local_agent_approval_if_needed(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    session: Session,
+) -> None:
+    if local_tool_request.decision_expires_at is None:
+        return
+    now = utc_now()
+    if _as_aware_utc(local_tool_request.decision_expires_at) >= _as_aware_utc(now):
+        return
+    reason = "local tool decision expired"
+    local_tool_request.status = "expired"
+    local_tool_request.completed_at = now
+    local_tool_request.updated_at = now
+    decision_json = (
+        local_tool_request.decision_json
+        if isinstance(local_tool_request.decision_json, dict)
+        else {}
+    )
+    local_tool_request.decision_json = {
+        **decision_json,
+        "terminal_status": "expired",
+        "terminal_reason": reason,
+        "terminalized_at": now.isoformat(),
+        "server_execution": False,
+    }
+    local_tool_request.result_json = {
+        "status": "DENIED",
+        "reason": reason,
+        "server_execution": False,
+    }
+    tool_call.status = "DENIED"
+    tool_call.error_message = reason
+    tool_call.output_json = {
+        "status": "DENIED",
+        "reason": reason,
+        "server_execution": False,
+        "tool_request_id": local_tool_request.tool_request_id,
+    }
+    approval.status = "EXPIRED"
+    approval.decided_at = now
+    approval.decision_json = {
+        "decision": "EXPIRED",
+        "reason": reason,
+        "server_execution": False,
+    }
+    pending_changes = list(
+        session.execute(
+            select(LocalAgentPendingChange).where(
+                LocalAgentPendingChange.local_agent_tool_request_id == local_tool_request.id,
+                LocalAgentPendingChange.status.in_(
+                    ("previewed", "approval_required", "approved", "allowed")
+                ),
+            )
+        ).scalars()
+    )
+    for change in pending_changes:
+        change.status = "denied"
+        change.denied_at = now
+        change.error_message = reason
+        change.updated_at = now
+    task.status = "RUNNING"
+    task.completed_at = None
+    task.updated_at = now
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.TOOL_DENIED_BY_POLICY,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_tool_request.tool_request_id,
+            "tool_call_id": tool_call.id,
+            "approval_id": approval.id,
+            "status": "DENIED",
+            "terminal_status": "expired",
+            "reason": reason,
+            "server_execution": False,
+        },
+        actor_type="system",
+        actor_id=None,
+    )
+    session.commit()
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Local Agent tool decision expired",
+    )
+
+
+def _validate_local_agent_approval_modify(
+    *,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    modified_input_json: dict,
+    session: Session,
+) -> None:
+    request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
+    original_input = request_json.get("input_json")
+    if not isinstance(original_input, dict):
+        original_input = local_tool_request.input_json
+    if not isinstance(original_input, dict):
+        original_input = {}
+    modified_keys = {str(key) for key in modified_input_json}
+    original_keys = {str(key) for key in original_input}
+    added_keys = modified_keys - original_keys
+    if added_keys:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approval modify cannot add new input keys",
+        )
+    allow_narrowed_execution = _local_agent_supports_narrowed_modified_execution(
+        local_tool_request=local_tool_request,
+        session=session,
+    )
+    protected_keys = {
+        "args",
+        "capability_id",
+        "capability_type",
+        "capability_version_id",
+        "change_id",
+        "cmd",
+        "command",
+        "cwd",
+        "diff",
+        "diff_hash",
+        "diff_sha256",
+        "execution_target",
+        "patch",
+        "path",
+        "paths",
+        "permission_mode",
+        "requires_network",
+        "requires_secret_read",
+        "risk_level",
+        "target_path",
+        "target_paths",
+        "tool_name",
+        "workspace_root",
+    }
+    mutable_keys = _local_agent_mutable_input_keys(
+        tool_name=local_tool_request.tool_name,
+        allow_narrowed_execution=allow_narrowed_execution,
+    )
+    protected_keys -= mutable_keys
+    pending_change_preview = request_json.get("pending_change_preview")
+    if (
+        isinstance(pending_change_preview, dict)
+        and pending_change_preview
+        and "content" not in mutable_keys
+    ):
+        protected_keys.add("content")
+    for key in protected_keys & modified_keys:
+        if modified_input_json.get(key) != original_input.get(key):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Local Agent approval modify cannot change protected field: {key}",
+            )
+    changed_keys: set[str] = set()
+    for key in modified_keys:
+        original_value = original_input.get(key)
+        modified_value = modified_input_json.get(key)
+        if modified_value == original_value:
+            continue
+        if modified_value == redact_secrets(original_value):
+            continue
+        changed_keys.add(key)
+    if not allow_narrowed_execution:
+        if changed_keys:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify can only redact or preserve existing input",
+            )
+        return
+    unexpected_keys = changed_keys - mutable_keys
+    if unexpected_keys:
+        detail = ", ".join(sorted(unexpected_keys))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Local Agent approval modify cannot change protected field: {detail}",
+        )
+    _validate_narrowed_local_agent_modified_input(
+        approval=approval,
+        local_tool_request=local_tool_request,
+        original_input=original_input,
+        modified_input_json=modified_input_json,
+    )
+
+
+def _local_agent_supports_narrowed_modified_execution(
+    *,
+    local_tool_request: LocalAgentToolRequest,
+    session: Session,
+) -> bool:
+    connection = session.get(LocalAgentConnection, local_tool_request.connection_id)
+    if connection is None or connection.adapter_kind != "claude_code":
+        return False
+    metadata = connection.metadata_json if isinstance(connection.metadata_json, dict) else {}
+    capabilities = (
+        connection.capabilities_json if isinstance(connection.capabilities_json, dict) else {}
+    )
+    return (
+        metadata.get("server_permission_bridge_entitlement") == "sdk"
+        and capabilities.get("enabled_in_v6") is True
+        and capabilities.get("host_tools_authorized") is True
+        and capabilities.get("permission_bridge") == "harness_local_tool_request_v1"
+        and capabilities.get("execution_mode") == "agent_sdk_intent_capture_harness_executor"
+        and capabilities.get("permission_bridge_execution") == "harness_owned_executor"
+        and capabilities.get("sdk_native_tool_execution_enabled") is False
+    )
+
+
+def _local_agent_mutable_input_keys(
+    *,
+    tool_name: str,
+    allow_narrowed_execution: bool,
+) -> set[str]:
+    if not allow_narrowed_execution:
+        return set()
+    if tool_name in LOCAL_AGENT_COMMAND_TOOLS:
+        return {"command", "cmd"}
+    if tool_name == "write_file":
+        return {"path", "content"}
+    if tool_name == "apply_patch":
+        return {"patch"}
+    return set()
+
+
+def _validate_narrowed_local_agent_modified_input(
+    *,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    original_input: dict,
+    modified_input_json: dict,
+) -> None:
+    tool_name = local_tool_request.tool_name
+    policy_decision = (
+        local_tool_request.policy_decision_json
+        if isinstance(local_tool_request.policy_decision_json, dict)
+        else {}
+    )
+    if tool_name in LOCAL_AGENT_COMMAND_TOOLS:
+        command = _normalized_modified_command(tool_name=tool_name, input_json=modified_input_json)
+        if not command:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify command cannot be empty",
+            )
+        if LOCAL_AGENT_NETWORK_PATTERNS.search(command) and not bool(
+            policy_decision.get("requires_network")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify cannot add network scope",
+            )
+        if LOCAL_AGENT_SECRET_PATTERNS.search(command) and not bool(
+            policy_decision.get("requires_secret_read")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify cannot add secret-read scope",
+            )
+        return
+    original_target_paths = _local_agent_original_target_paths(
+        approval=approval,
+        local_tool_request=local_tool_request,
+        original_input=original_input,
+    )
+    modified_target_paths = _local_agent_modified_target_paths(
+        tool_name=tool_name,
+        input_json=modified_input_json,
+    )
+    if tool_name == "write_file":
+        path = str(modified_input_json.get("path") or "").strip()
+        if not path:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify path cannot be empty",
+            )
+        _validate_local_agent_modified_target_scope(
+            original_target_paths=original_target_paths,
+            modified_target_paths=modified_target_paths,
+        )
+        return
+    if tool_name == "apply_patch":
+        patch = str(modified_input_json.get("patch") or "").strip()
+        if not patch:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify patch cannot be empty",
+            )
+        if not modified_target_paths:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Local Agent approval modify patch must keep target paths",
+            )
+        _validate_local_agent_modified_target_scope(
+            original_target_paths=original_target_paths,
+            modified_target_paths=modified_target_paths,
+        )
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Local Agent approval modify is not supported for this tool",
+    )
+
+
+def _local_agent_original_target_paths(
+    *,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    original_input: dict,
+) -> list[str]:
+    request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
+    pending_change_preview = request_json.get("pending_change_preview")
+    if isinstance(pending_change_preview, dict):
+        target_paths = pending_change_preview.get("target_paths")
+        if isinstance(target_paths, list):
+            return [str(path) for path in target_paths if str(path).strip()]
+    policy_decision = (
+        local_tool_request.policy_decision_json
+        if isinstance(local_tool_request.policy_decision_json, dict)
+        else {}
+    )
+    target_paths = policy_decision.get("target_paths")
+    if isinstance(target_paths, list):
+        return [str(path) for path in target_paths if str(path).strip()]
+    return _local_agent_modified_target_paths(
+        tool_name=local_tool_request.tool_name,
+        input_json=original_input,
+    )
+
+
+def _local_agent_modified_target_paths(*, tool_name: str, input_json: dict) -> list[str]:
+    if tool_name == "write_file":
+        path = str(input_json.get("path") or "").strip()
+        return [path] if path else []
+    if tool_name == "apply_patch":
+        patch = str(input_json.get("patch") or "")
+        return _patch_target_paths_from_text(patch)
+    return []
+
+
+def _validate_local_agent_modified_target_scope(
+    *,
+    original_target_paths: list[str],
+    modified_target_paths: list[str],
+) -> None:
+    if not modified_target_paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approval modify must keep target scope",
+        )
+    if original_target_paths and len(modified_target_paths) > len(original_target_paths):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approval modify cannot expand target paths",
+        )
+    original_has_absolute = any(path.startswith(("~", "/")) for path in original_target_paths)
+    modified_has_absolute = any(path.startswith(("~", "/")) for path in modified_target_paths)
+    if modified_has_absolute and not original_has_absolute:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent approval modify cannot expand to absolute or home paths",
+        )
+
+
+def _patch_target_paths_from_text(patch: str) -> list[str]:
+    paths: list[str] = []
+    for line in patch.splitlines():
+        if not line.startswith(("--- ", "+++ ")):
+            continue
+        raw = line[4:].strip()
+        if raw == "/dev/null":
+            continue
+        if raw.startswith(("a/", "b/")):
+            raw = raw[2:]
+        path = raw.split("\t", 1)[0].strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _normalized_modified_command(*, tool_name: str, input_json: dict) -> str:
+    command = str(input_json.get("command") or input_json.get("cmd") or "").strip()
+    if tool_name == "run_tests":
+        return command or "pytest"
+    if tool_name == "git":
+        if not command:
+            args = input_json.get("args") if isinstance(input_json.get("args"), list) else []
+            command = f"git {' '.join(map(str, args))}".strip()
+        elif not command.startswith("git"):
+            command = f"git {command}"
+    return command
+
+
+def _decide_local_agent_tool_request(
+    *,
+    task: Task,
+    tool_call: ToolCall,
+    approval: ToolApproval,
+    local_tool_request: LocalAgentToolRequest,
+    decision: str,
+    reason: str,
+    modified_input_json: dict | None,
+    session: Session,
+    principal,
+) -> None:
+    now = utc_now()
+    if local_tool_request.status not in {"approval_required"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Local Agent tool request is not waiting for approval",
+        )
+    request_json = approval.request_json if isinstance(approval.request_json, dict) else {}
+    original_input = request_json.get("input_json")
+    if not isinstance(original_input, dict):
+        original_input = local_tool_request.input_json
+    executable_input = (
+        redact_secrets(modified_input_json) if modified_input_json is not None else original_input
+    )
+    executable_input_sha256 = stable_json_sha256(
+        executable_input if isinstance(executable_input, dict) else {}
+    )
+    previous_decision_json = (
+        local_tool_request.decision_json
+        if isinstance(local_tool_request.decision_json, dict)
+        else {}
+    )
+    metadata = previous_decision_json.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = (
+            request_json.get("metadata") if isinstance(request_json.get("metadata"), dict) else {}
+        )
+    pending_change_preview = previous_decision_json.get("pending_change_preview")
+    if not isinstance(pending_change_preview, dict):
+        pending_change_preview = (
+            request_json.get("pending_change_preview")
+            if isinstance(request_json.get("pending_change_preview"), dict)
+            else {}
+        )
+    local_status = "approved" if decision == "APPROVED" else "denied"
+    local_tool_request.status = local_status
+    local_tool_request.input_json = executable_input
+    local_tool_request.decision_json = {
+        "decision": "approved" if decision == "APPROVED" else "denied",
+        "reason": reason,
+        "modified": modified_input_json is not None,
+        "server_execution": False,
+        "input_json": executable_input,
+        "executable_input_sha256": executable_input_sha256,
+        "approval_id": approval.id,
+        "metadata": metadata,
+        "pending_change_preview": pending_change_preview,
+        "decided_by": principal.user_id,
+        "decided_at": now.isoformat(),
+        "expires_at": local_tool_request.decision_expires_at.isoformat()
+        if local_tool_request.decision_expires_at is not None
+        else None,
+    }
+    local_tool_request.updated_at = now
+    pending_changes = list(
+        session.execute(
+            select(LocalAgentPendingChange).where(
+                LocalAgentPendingChange.local_agent_tool_request_id == local_tool_request.id,
+                LocalAgentPendingChange.status.in_(("previewed", "approval_required")),
+            )
+        ).scalars()
+    )
+    for change in pending_changes:
+        if decision == "APPROVED":
+            change.status = "approved"
+            change.approval_id = approval.id
+            if (
+                modified_input_json is not None
+                and local_tool_request.tool_name in {"write_file", "apply_patch"}
+            ):
+                target_paths = _local_agent_modified_target_paths(
+                    tool_name=local_tool_request.tool_name,
+                    input_json=executable_input,
+                )
+                change.diff_sha256 = ""
+                change.target_paths_json = target_paths
+                change.preview_json = {
+                    **(
+                        change.preview_json
+                        if isinstance(change.preview_json, dict)
+                        else {}
+                    ),
+                    "change_id": change.change_id,
+                    "target_paths": target_paths,
+                    "diff_sha256": "",
+                    "refresh_required": True,
+                }
+                pending_change_preview = change.preview_json
+        else:
+            change.status = "denied"
+            change.denied_at = now
+        change.updated_at = now
+    task.status = "RUNNING"
+    task.completed_at = None
+    task.updated_at = now
+    EventStore(session).append(
+        task_id=task.id,
+        event_type=EventType.LOCAL_AGENT_TOOL_DECISION_READY,
+        payload_json={
+            "source": "local_agent_bridge",
+            "tool_request_id": local_tool_request.tool_request_id,
+            "tool_call_id": tool_call.id,
+            "approval_id": approval.id,
+            "decision": local_tool_request.status,
+            "server_execution": False,
+            "modified": modified_input_json is not None,
+        },
+        actor_type="user",
+        actor_id=principal.user_id,
+    )
+    session.flush()
 
 
 def _execute_approved_tool_call(
@@ -1382,59 +2150,6 @@ def _optional_int(value: object) -> int | None:
         return value
     if isinstance(value, str) and value.isdigit():
         return int(value)
-    return None
-
-
-def _step_events_by_key(*, task_id: str, session: Session) -> dict[str, list[dict]]:
-    events = session.execute(
-        select(AgentEvent)
-        .where(
-            AgentEvent.task_id == task_id,
-            AgentEvent.event_type.in_(
-                [
-                    EventType.STEP_STARTED.value,
-                    EventType.STEP_COMPLETED.value,
-                    EventType.STEP_FAILED.value,
-                    EventType.STEP_RETRIED.value,
-                    EventType.STEP_SKIPPED.value,
-                    EventType.LANGGRAPH_WORKFLOW_STARTED.value,
-                    EventType.LANGGRAPH_WORKFLOW_COMPLETED.value,
-                    EventType.LANGGRAPH_WORKFLOW_FAILED.value,
-                    EventType.LANGGRAPH_NODE_STARTED.value,
-                    EventType.LANGGRAPH_NODE_COMPLETED.value,
-                    EventType.LANGGRAPH_NODE_FAILED.value,
-                    EventType.LANGGRAPH_TOOL_NODE_REQUESTED.value,
-                    EventType.LANGGRAPH_TOOL_NODE_DENIED.value,
-                    EventType.LANGGRAPH_TOOL_NODE_COMPLETED.value,
-                ]
-            ),
-        )
-        .order_by(AgentEvent.sequence.asc())
-    ).scalars()
-    grouped: dict[str, list[dict]] = {}
-    for event in events:
-        step_key = event.payload_json.get("step_key")
-        if not isinstance(step_key, str) or not step_key:
-            continue
-        grouped.setdefault(step_key, []).append(
-            {
-                "sequence": event.sequence,
-                "event_type": event.event_type,
-                "trace_id": event.trace_id,
-                "summary": event.payload_json.get("trace_summary")
-                or event.payload_json.get("summary"),
-                "payload_json": event.payload_json,
-                "created_at": event.created_at.isoformat(),
-            }
-        )
-    return grouped
-
-
-def _last_trace_summary(execution_trace: list[dict]) -> str | None:
-    for item in reversed(execution_trace):
-        summary = item.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
     return None
 
 

@@ -1,0 +1,31 @@
+# Ralph Context Snapshot: Agent Knowledge Harness Memory/RAG
+
+- Task statement: take over the approved Ralph execution for Agent Knowledge Harness v1 Memory/RAG grounding.
+- Desired outcome: ship a thin, verified knowledge grounding loop with durable sources/documents/chunks/embeddings, retrieval sessions/hits/citations, controlled web fallback, API/UI projection, deterministic tests, and clean verification evidence.
+- Known facts/evidence:
+  - Approved PRD: `.omx/plans/prd-agent-knowledge-harness-memory-rag.md`.
+  - Approved test spec: `.omx/plans/test-spec-agent-knowledge-harness-memory-rag.md`.
+  - Current implementation already added backend models, event types, schemas, knowledge service, agent API integration, frontend Knowledge Harness surfaces, and Alembic migration.
+  - Broader future goals remain explicit follow-up scope: MCP creation, skill creation, agent memory, short-term memory, long-term memory, RAG expansion, hallucination reduction, and token/context optimization.
+- Constraints:
+  - V1 scope is Memory/RAG grounding only, not a full MCP/skill marketplace or full token optimization platform.
+  - Tests must not require live network, paid embedding providers, or a real pgvector installation.
+  - Vector retrieval must be capability-gated with lexical fallback.
+  - Existing org/agent isolation is the security boundary for v1.
+  - Do not revert unrelated worktree changes.
+- Unknowns/open questions:
+  - Exact lint/type/test failures after the partial implementation.
+  - Whether the migration's optional vector extension handling is compatible with the repo's Alembic transaction style.
+  - Whether frontend type/lint/build checks expose UI integration gaps.
+- Likely codebase touchpoints:
+  - `services/api-server/app/knowledge.py`
+  - `services/api-server/app/api/agents.py`
+  - `services/api-server/app/api/schemas.py`
+  - `services/api-server/app/db/models.py`
+  - `services/api-server/app/events/event_types.py`
+  - `services/api-server/alembic/versions/20260514_0011_create_knowledge_rag.py`
+  - `services/api-server/tests/`
+  - `apps/agent-console/src/features/tasks/api.ts`
+  - `apps/agent-console/src/features/agents/pages/AgentListPage.tsx`
+  - `apps/agent-console/src/features/runs/pages/RunDetailPage.tsx`
+  - `omx_wiki/`

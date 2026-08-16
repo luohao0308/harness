@@ -1,11 +1,33 @@
-from fastapi.testclient import TestClient
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+import os
 
-from app.agents.model_gateway import ModelMessage, ModelResponse, ModelStreamChunk
-from app.db.models import AgentMessage, AgentSession, TeamMailboxMessage
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.agents.model_gateway import (
+    DEFAULT_MODEL_SETTINGS,
+    ModelMessage,
+    ModelResponse,
+    ModelStreamChunk,
+)
+from app.db.models import (
+    AgentMessage,
+    AgentSession,
+    Base,
+    TeamAgent,
+    TeamEvent,
+    TeamGoal,
+    TeamMailboxMessage,
+    utc_now,
+)
 from app.main import app
 from app.teams.service import TeamSessionService
+from app.workers.team_runtime_worker import (
+    ProcessPoolTeamWakeExecutionBackend,
+    TeamWakeExecutionRequest,
+    tick_active_team_goals,
+)
 from tests.conftest import AUTH_HEADERS
 
 
@@ -494,7 +516,8 @@ def test_team_agents_mailbox_leader_entrypoint_and_read_flow(db_session: Session
         message.role == "assistant"
         and message.metadata_json.get("event") == "team_agent_model_response"
         and message.metadata_json.get("prompt_kind") == "messages_only"
-        and message.metadata_json.get("model_provider") == "deepseek-flash"
+        and message.metadata_json.get("model_provider")
+        == DEFAULT_MODEL_SETTINGS["default_provider"]
         and "同步当前任务板" in message.content
         for message in teammate_session_messages
     )
@@ -1584,6 +1607,23 @@ class SequencedTeamRuntime:
         )
 
 
+class RecordingWakeBackend:
+    def __init__(self) -> None:
+        self.requests: list[TeamWakeExecutionRequest] = []
+
+    def execute_wakes(self, requests: list[TeamWakeExecutionRequest]) -> list[dict]:
+        self.requests.extend(requests)
+        return [
+            {
+                "team_id": request.team_id,
+                "slot_id": request.slot_id,
+                "status": "queued",
+                "worker_pid": 12345,
+            }
+            for request in requests
+        ]
+
+
 def test_team_wake_executes_model_declared_team_tools(db_session: Session) -> None:
     client = TestClient(app)
     team = _create_team(client)
@@ -1761,6 +1801,16 @@ def test_team_wake_stream_finishes_idle_and_returns_final_message(db_session: Se
         actor_id="test",
         model_runtime=runtime,
     )
+    failed_agent = service.get_agent(team_id, product["slot_id"])
+    failed_agent.status = "failed"
+    failed_agent.metadata_json = {
+        **failed_agent.metadata_json,
+        "wake": {
+            "in_progress": False,
+            "failed_at": "2026-05-23T08:01:00+00:00",
+            "last_error": "The read operation timed out",
+        },
+    }
     service.write_message(
         team_id=team_id,
         target=product["slot_id"],
@@ -1790,6 +1840,8 @@ def test_team_wake_stream_finishes_idle_and_returns_final_message(db_session: Se
     )
     assert product_after_wake["status"] == "idle"
     assert product_after_wake["metadata_json"]["wake"]["in_progress"] is False
+    assert "failed_at" not in product_after_wake["metadata_json"]["wake"]
+    assert "last_error" not in product_after_wake["metadata_json"]["wake"]
     assert product_after_wake["session_messages"][-1]["content"] == "我已完成本轮处理。"
     assert leader_after_wake["metadata_json"]["wake"].get("last_prompt_kind") is None
 
@@ -1995,10 +2047,15 @@ def test_team_wake_runs_assigned_task_without_new_message(db_session: Session) -
         model_runtime=runtime,
     )
     product_agent = service.get_agent(team_id, product["slot_id"])
-    product_agent.status = "idle"
+    product_agent.status = "failed"
     product_agent.metadata_json = {
         **product_agent.metadata_json,
-        "wake": {"has_prompted": True, "in_progress": False},
+        "wake": {
+            "has_prompted": True,
+            "in_progress": False,
+            "crashed_at": "2026-05-23T08:01:00+00:00",
+            "last_error": "process exited",
+        },
     }
     service.create_task(
         team_id=team_id,
@@ -2013,6 +2070,8 @@ def test_team_wake_runs_assigned_task_without_new_message(db_session: Session) -
 
     assert recovered.status == "idle"
     assert recovered.metadata_json["wake"]["last_prompt_kind"] == "full"
+    assert "crashed_at" not in recovered.metadata_json["wake"]
+    assert "last_error" not in recovered.metadata_json["wake"]
     assert "## Your Assigned Tasks" in recovered.metadata_json["wake"]["last_prompt"]
     assert "整理需求" in recovered.metadata_json["wake"]["last_prompt"]
 
@@ -2076,3 +2135,673 @@ def test_team_wake_recovers_stale_in_progress_when_unread_arrives(
     )
     assert product_after_wake["session_messages"][-1]["content"] == "收到新任务，开始处理。"
     assert after_wake["unread_counts"].get(product["slot_id"], 0) == 0
+
+
+def test_team_goal_lifecycle_and_active_projection(db_session: Session) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+
+    create = client.post(
+        f"/api/teams/{team['id']}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "把团队目标推进到可验证完成",
+            "non_goals_json": ["不要加新依赖"],
+            "acceptance_criteria_json": ["必须有测试或证据"],
+            "supervision_policy_json": {"scope_guard": True},
+            "correction_budget_json": {"max_interventions": 3},
+            "start_immediately": True,
+        },
+    )
+    assert create.status_code == 201, create.text
+    goal = create.json()
+    assert goal["status"] == "active"
+    assert goal["objective"] == "把团队目标推进到可验证完成"
+    assert goal["correction_budget_json"]["max_interventions"] == 3
+
+    team_response = client.get(f"/api/teams/{team['id']}", headers=AUTH_HEADERS)
+    assert team_response.status_code == 200
+    assert team_response.json()["active_goal"]["id"] == goal["id"]
+
+    active = client.get(f"/api/teams/{team['id']}/goals/active", headers=AUTH_HEADERS)
+    assert active.status_code == 200
+    assert active.json()["id"] == goal["id"]
+
+    db_goal = db_session.get(TeamGoal, goal["id"])
+    assert db_goal is not None
+    assert db_goal.status == "active"
+
+
+def test_team_goal_conflict_returns_409_when_active_goal_exists() -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+
+    first = client.post(
+        f"/api/teams/{team['id']}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "第一个目标"},
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        f"/api/teams/{team['id']}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "第二个目标"},
+    )
+    assert second.status_code == 409
+    assert second.json()["detail"] == "团队已有进行中的目标"
+
+
+def test_team_goal_database_enforces_single_current_goal(db_session: Session) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    now = utc_now()
+    first = TeamGoal(
+        team_id=team["id"],
+        organization_id=team["organization_id"],
+        status="active",
+        objective="第一个当前目标",
+        non_goals_json=[],
+        acceptance_criteria_json=[],
+        supervision_policy_json={},
+        correction_budget_json={"max_interventions": 3},
+        progress_json={},
+        supervisor_state_json={},
+        version=1,
+        created_at=now,
+        updated_at=now,
+    )
+    second = TeamGoal(
+        team_id=team["id"],
+        organization_id=team["organization_id"],
+        status="paused",
+        objective="第二个当前目标",
+        non_goals_json=[],
+        acceptance_criteria_json=[],
+        supervision_policy_json={},
+        correction_budget_json={"max_interventions": 3},
+        progress_json={},
+        supervisor_state_json={},
+        version=1,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([first, second])
+
+    try:
+        db_session.flush()
+    except IntegrityError:
+        db_session.rollback()
+    else:  # pragma: no cover - this branch documents the invariant under test.
+        raise AssertionError("expected one-current-goal unique index to reject duplicate goals")
+
+
+def test_team_goal_paused_goal_is_visible_but_not_auto_supervised(db_session: Session) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    teammate = client.post(
+        f"/api/teams/{team_id}/agents",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "agent_name": "产品", "role": "teammate"},
+    ).json()
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "暂停后不自动监督", "correction_budget_json": {"max_interventions": 2}},
+    ).json()
+
+    paused = client.patch(
+        f"/api/teams/{team_id}/goals/{goal['id']}",
+        headers=AUTH_HEADERS,
+        json={"status": "paused"},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "paused"
+
+    message = client.post(
+        f"/api/teams/{team_id}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "target": teammate["slot_id"],
+            "from_agent_slot_id": teammate["slot_id"],
+            "content": "我先 npm install 新库然后 deploy",
+        },
+    )
+    assert message.status_code == 201
+
+    active = client.get(f"/api/teams/{team_id}/goals/active", headers=AUTH_HEADERS)
+    assert active.status_code == 200
+    assert active.json()["status"] == "paused"
+    assert active.json()["progress_json"]["drift_count"] == 0
+
+    db_session.expire_all()
+    events = client.get(f"/api/teams/{team_id}/events", headers=AUTH_HEADERS).json()
+    assert not any(event["event_type"] == "TEAM_GOAL_DRIFT_DETECTED" for event in events)
+    assert not any(event["event_type"] == "TEAM_GOAL_INTERVENTION_SENT" for event in events)
+
+
+def test_team_goal_validation_rejects_blank_objective_and_bad_budget() -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+
+    blank_create = client.post(
+        f"/api/teams/{team['id']}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "   "},
+    )
+    assert blank_create.status_code == 422
+
+    bad_budget = client.post(
+        f"/api/teams/{team['id']}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "有效目标", "correction_budget_json": {"max_interventions": "many"}},
+    )
+    assert bad_budget.status_code == 422
+
+    goal = client.post(
+        f"/api/teams/{team['id']}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "有效目标"},
+    ).json()
+    blank_update = client.patch(
+        f"/api/teams/{team['id']}/goals/{goal['id']}",
+        headers=AUTH_HEADERS,
+        json={"objective": "  "},
+    )
+    assert blank_update.status_code == 422
+
+    negative_budget = client.patch(
+        f"/api/teams/{team['id']}/goals/{goal['id']}",
+        headers=AUTH_HEADERS,
+        json={"correction_budget_json": {"max_interventions": -1}},
+    )
+    assert negative_budget.status_code == 422
+
+
+def test_team_goal_supervise_detects_scope_drift_and_is_idempotent(db_session: Session) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    teammate = client.post(
+        f"/api/teams/{team_id}/agents",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "agent_name": "产品", "role": "teammate"},
+    ).json()
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "只完成现有范围内开发",
+            "non_goals_json": ["不要安装依赖", "不要 deploy"],
+            "acceptance_criteria_json": ["保留证据"],
+            "correction_budget_json": {"max_interventions": 3},
+        },
+    ).json()
+
+    message = client.post(
+        f"/api/teams/{team_id}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "target": teammate["slot_id"],
+            "from_agent_slot_id": teammate["slot_id"],
+            "content": "我先 npm install 新库然后 deploy",
+            "mode": "goal",
+        },
+    )
+    assert message.status_code == 201
+    message_id = message.json()["id"]
+
+    manual = client.post(
+        f"/api/teams/{team_id}/goals/{goal['id']}/supervise",
+        headers=AUTH_HEADERS,
+        json={
+            "source_key": f"manual:{message_id}",
+            "tick_id": "tick-1",
+            "slot_id": teammate["slot_id"],
+            "message_id": message_id,
+        },
+    )
+    assert manual.status_code == 200
+    supervised = manual.json()
+    assert supervised["progress_json"]["drift_count"] >= 1
+    assert supervised["progress_json"]["intervention_count"] >= 1
+
+    again = client.post(
+        f"/api/teams/{team_id}/goals/{goal['id']}/supervise",
+        headers=AUTH_HEADERS,
+        json={
+            "source_key": f"manual:{message_id}",
+            "tick_id": "tick-2",
+            "slot_id": teammate["slot_id"],
+            "message_id": message_id,
+        },
+    )
+    assert again.status_code == 200
+    assert (
+        again.json()["progress_json"]["drift_count"]
+        == supervised["progress_json"]["drift_count"]
+    )
+    assert (
+        again.json()["progress_json"]["intervention_count"]
+        == supervised["progress_json"]["intervention_count"]
+    )
+
+
+def test_team_goal_supervise_blocked_state_emits_terminal_event(db_session: Session) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    teammate = client.post(
+        f"/api/teams/{team_id}/agents",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "agent_name": "产品", "role": "teammate"},
+    ).json()
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "只完成现有范围内开发",
+            "correction_budget_json": {"max_interventions": 0},
+        },
+    ).json()
+    message = client.post(
+        f"/api/teams/{team_id}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "target": teammate["slot_id"],
+            "from_agent_slot_id": teammate["slot_id"],
+            "content": "我先 npm install 新库然后 deploy",
+        },
+    ).json()
+
+    supervised = client.post(
+        f"/api/teams/{team_id}/goals/{goal['id']}/supervise",
+        headers=AUTH_HEADERS,
+        json={
+            "source_key": f"terminal:{message['id']}",
+            "tick_id": "terminal-tick",
+            "slot_id": teammate["slot_id"],
+            "message_id": message["id"],
+            "force": True,
+        },
+    )
+    assert supervised.status_code == 200
+    assert supervised.json()["status"] == "blocked"
+
+    db_session.expire_all()
+    events = client.get(f"/api/teams/{team_id}/events", headers=AUTH_HEADERS).json()
+    terminal_events = [
+        event
+        for event in events
+        if event["payload_json"].get("team_goal_id") == goal["id"]
+        and event["event_type"] in {"TEAM_GOAL_BLOCKED", "TEAM_GOAL_PROGRESS"}
+    ]
+    assert terminal_events[-1]["event_type"] == "TEAM_GOAL_BLOCKED"
+
+
+def test_team_goal_quality_drift_marks_task_needs_correction(db_session: Session) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    teammate = client.post(
+        f"/api/teams/{team_id}/agents",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "agent_name": "测试", "role": "teammate"},
+    ).json()
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "交付可验证结果",
+            "acceptance_criteria_json": ["必须有测试 evidence"],
+            "correction_budget_json": {"max_interventions": 4},
+        },
+    ).json()
+
+    task = client.post(
+        f"/api/teams/{team_id}/tasks",
+        headers=AUTH_HEADERS,
+        json={
+            "subject": "补测试",
+            "description": "写完后要给证据",
+            "owner_slot_id": teammate["slot_id"],
+        },
+    ).json()
+
+    updated = client.patch(
+        f"/api/teams/{team_id}/tasks/{task['id']}",
+        headers=AUTH_HEADERS,
+        json={"status": "completed"},
+    )
+    assert updated.status_code == 200
+
+    db_session.expire_all()
+    refreshed_task = db_session.execute(
+        select(TeamGoal).where(TeamGoal.id == goal["id"])
+    ).scalar_one()
+    assert refreshed_task.progress_json["drift_count"] >= 1
+    stored_task = client.get(f"/api/teams/{team_id}", headers=AUTH_HEADERS).json()["tasks"][0]
+    assert stored_task["metadata_json"]["needs_correction"] is True
+
+
+def test_team_runtime_tick_wakes_leader_for_active_goal_without_frontend_trigger(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "让团队自动推进目标",
+            "correction_budget_json": {"max_interventions": 3},
+        },
+    ).json()
+    client.post(
+        f"/api/teams/{team_id}/messages",
+        headers=AUTH_HEADERS,
+        json={
+            "target": "leader",
+            "content": "请拆解目标并启动团队。",
+            "mode": "goal",
+        },
+    )
+    runtime = SequencedTeamRuntime(["我会拆解目标并继续推进。"])
+
+    result = tick_active_team_goals(
+        session=db_session,
+        model_runtime=runtime,
+        actor_id="team-runtime-worker",
+    )
+    db_session.commit()
+
+    assert result["scanned_goal_count"] == 1
+    assert result["woke_agent_count"] == 1
+    assert result["decisions"][0]["team_goal_id"] == goal["id"]
+    assert result["decisions"][0]["actions"][0]["type"] == "wake_agent"
+    assert result["decisions"][0]["actions"][0]["slot_id"] == "leader"
+    assert len(runtime.calls) == 1
+
+    db_session.expire_all()
+    after_tick = client.get(f"/api/teams/{team_id}", headers=AUTH_HEADERS).json()
+    leader = next(agent for agent in after_tick["agents"] if agent["slot_id"] == "leader")
+    assert leader["session_messages"][-1]["content"] == "我会拆解目标并继续推进。"
+
+    events = client.get(f"/api/teams/{team_id}/events", headers=AUTH_HEADERS).json()
+    assert any(event["event_type"] == "TEAM_RUNTIME_TICK" for event in events)
+    assert any(event["event_type"] == "TEAM_RUNTIME_DECISION" for event in events)
+
+
+def test_team_runtime_tick_wakes_assigned_task_owner_without_frontend_trigger(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    product = client.post(
+        f"/api/teams/{team_id}/agents",
+        headers=AUTH_HEADERS,
+        json={"agent_id": "default", "agent_name": "产品", "role": "teammate"},
+    ).json()
+    client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "让任务 owner 自动执行",
+            "correction_budget_json": {"max_interventions": 3},
+        },
+    )
+    client.post(
+        f"/api/teams/{team_id}/tasks",
+        headers=AUTH_HEADERS,
+        json={
+            "subject": "整理需求",
+            "description": "输出需求摘要",
+            "owner_slot_id": product["slot_id"],
+        },
+    )
+    runtime = SequencedTeamRuntime(["我已开始整理需求。"])
+
+    result = tick_active_team_goals(
+        session=db_session,
+        model_runtime=runtime,
+        actor_id="team-runtime-worker",
+    )
+    db_session.commit()
+
+    assert result["scanned_goal_count"] == 1
+    assert result["woke_agent_count"] == 1
+    assert result["decisions"][0]["actions"][0]["slot_id"] == product["slot_id"]
+    assert len(runtime.calls) == 1
+
+    db_session.expire_all()
+    after_tick = client.get(f"/api/teams/{team_id}", headers=AUTH_HEADERS).json()
+    task = next(task for task in after_tick["tasks"] if task["subject"] == "整理需求")
+    product_after_tick = next(
+        agent for agent in after_tick["agents"] if agent["slot_id"] == product["slot_id"]
+    )
+    assert task["status"] == "in_progress"
+    assert product_after_tick["session_messages"][-1]["content"] == "我已开始整理需求。"
+
+
+def test_team_runtime_tick_bootstraps_active_goal_without_user_message(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={
+            "objective": "自主拆解并交付团队目标",
+            "acceptance_criteria_json": ["创建任务并推进"],
+            "non_goals_json": ["不要等待人工继续"],
+            "correction_budget_json": {"max_interventions": 3},
+        },
+    ).json()
+    runtime = SequencedTeamRuntime(["已收到自治目标，我会创建任务并推进。"])
+
+    result = tick_active_team_goals(
+        session=db_session,
+        model_runtime=runtime,
+        actor_id="team-runtime-worker",
+    )
+    db_session.commit()
+
+    assert result["scanned_goal_count"] == 1
+    assert result["woke_agent_count"] == 1
+    assert result["decisions"][0]["actions"] == [
+        {
+            "type": "wake_agent",
+            "slot_id": "leader",
+            "reason": "goal_bootstrap",
+            "status": "completed",
+        }
+    ]
+    assert len(runtime.calls) == 1
+    assert "Autonomous team goal is active" in runtime.calls[0][-1].content
+    assert "自主拆解并交付团队目标" in runtime.calls[0][-1].content
+
+    db_session.expire_all()
+    stored_goal = db_session.get(TeamGoal, goal["id"])
+    assert stored_goal is not None
+    assert stored_goal.supervisor_state_json["runtime_bootstrapped_at"]
+    after_tick = client.get(f"/api/teams/{team_id}", headers=AUTH_HEADERS).json()
+    leader = next(agent for agent in after_tick["agents"] if agent["slot_id"] == "leader")
+    assert leader["session_messages"][-1]["content"] == "已收到自治目标，我会创建任务并推进。"
+
+
+def test_team_runtime_tick_does_not_repeat_goal_bootstrap_message(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "只启动一次目标"},
+    )
+    runtime = SequencedTeamRuntime(["第一次启动。"])
+
+    first = tick_active_team_goals(
+        session=db_session,
+        model_runtime=runtime,
+        actor_id="team-runtime-worker",
+    )
+    second = tick_active_team_goals(
+        session=db_session,
+        model_runtime=runtime,
+        actor_id="team-runtime-worker",
+    )
+    db_session.commit()
+
+    assert first["woke_agent_count"] == 1
+    assert second["woke_agent_count"] == 0
+    assert second["decisions"][0]["actions"] == [{"type": "wait", "reason": "no_runnable_agent"}]
+    assert len(runtime.calls) == 1
+
+    after_ticks = client.get(f"/api/teams/{team_id}", headers=AUTH_HEADERS).json()
+    bootstrap_messages = [
+        message
+        for message in after_ticks["messages"]
+        if message["from_agent_slot_id"] == "team_runtime_worker"
+        and "Autonomous team goal is active" in message["content"]
+    ]
+    assert len(bootstrap_messages) == 1
+
+
+def test_team_runtime_tick_can_delegate_wakes_to_execution_backend(
+    db_session: Session,
+) -> None:
+    client = TestClient(app)
+    team = _create_team(client)
+    team_id = team["id"]
+    goal = client.post(
+        f"/api/teams/{team_id}/goals",
+        headers=AUTH_HEADERS,
+        json={"objective": "通过执行后端唤醒 leader"},
+    ).json()
+    client.post(
+        f"/api/teams/{team_id}/messages",
+        headers=AUTH_HEADERS,
+        json={"target": "leader", "content": "请继续推进。", "mode": "goal"},
+    )
+    backend = RecordingWakeBackend()
+
+    result = tick_active_team_goals(
+        session=db_session,
+        wake_backend=backend,
+        actor_id="team-runtime-worker",
+    )
+    db_session.commit()
+
+    assert result["woke_agent_count"] == 1
+    assert len(backend.requests) == 1
+    delegated = backend.requests[0]
+    assert delegated.organization_id == team["organization_id"]
+    assert delegated.team_id == team_id
+    assert delegated.slot_id == "leader"
+    assert delegated.actor_id == "team-runtime-worker"
+    assert delegated.team_goal_id == goal["id"]
+    assert delegated.reason == "unread_mailbox"
+    action = result["decisions"][0]["actions"][0]
+    assert action["type"] == "wake_agent"
+    assert action["status"] == "queued"
+    assert action["worker_pid"] == 12345
+    assert action["backend"] == "RecordingWakeBackend"
+
+
+def test_process_pool_wake_backend_executes_wake_in_child_process(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from app.db import session as db_session_module
+
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'team-runtime-worker-pool.db'}"
+    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    FileSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    monkeypatch.setattr(db_session_module, "SessionLocal", FileSessionLocal)
+
+    with FileSessionLocal() as setup_session:
+        service = TeamSessionService(
+            setup_session,
+            organization_id="org-dev",
+            actor_id="test",
+        )
+        team = service.create_team(name="Process Pool Team")
+        goal = service.create_goal(
+            team_id=team.id,
+            objective="子进程执行 wake",
+            non_goals=None,
+            acceptance_criteria=None,
+            supervision_policy=None,
+            correction_budget=None,
+        )
+        service.write_message(
+            team_id=team.id,
+            target="leader",
+            content="请在子进程里处理这个消息。",
+            mode="goal",
+            wake_recipient=False,
+        )
+        setup_session.commit()
+        request = TeamWakeExecutionRequest(
+            organization_id=team.organization_id,
+            team_id=team.id,
+            slot_id="leader",
+            actor_id="team-runtime-worker",
+            team_goal_id=goal.id,
+            reason="unread_mailbox",
+            database_url=database_url,
+        )
+
+    backend = ProcessPoolTeamWakeExecutionBackend(max_workers=1, timeout_seconds=10)
+    try:
+        results = backend.execute_wakes([request])
+    finally:
+        backend.shutdown()
+
+    assert len(results) == 1
+    assert results[0]["status"] == "completed"
+    assert results[0]["team_id"] == request.team_id
+    assert results[0]["slot_id"] == "leader"
+    assert results[0]["worker_pid"] != os.getpid()
+
+    with FileSessionLocal() as verify_session:
+        leader = verify_session.execute(
+            select(TeamAgent).where(
+                TeamAgent.team_id == request.team_id,
+                TeamAgent.slot_id == "leader",
+            )
+        ).scalar_one()
+        messages = list(
+            verify_session.execute(
+                select(AgentMessage)
+                .where(AgentMessage.session_id == leader.session_id)
+                .order_by(AgentMessage.created_at.asc(), AgentMessage.id.asc())
+            ).scalars()
+        )
+        assert any(
+            message.role == "assistant"
+            and "请在子进程里处理这个消息" in message.content
+            and message.metadata_json.get("event") == "team_agent_model_response"
+            for message in messages
+        )
+        mailbox = list(
+            verify_session.execute(
+                select(TeamMailboxMessage).where(TeamMailboxMessage.team_id == request.team_id)
+            ).scalars()
+        )
+        assert mailbox and all(message.read for message in mailbox)
+        event_types = [
+            event.event_type
+            for event in verify_session.execute(
+                select(TeamEvent).where(TeamEvent.team_id == request.team_id)
+            ).scalars()
+        ]
+        assert "TEAM_AGENT_WAKE" in event_types

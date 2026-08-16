@@ -3,10 +3,12 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
+  AppWindow,
   Bot,
   GitBranch,
   Loader2,
   MessageSquareText,
+  Monitor,
   Sparkles,
   Wrench,
   X,
@@ -14,15 +16,26 @@ import {
 
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
+import { MenuSelect } from "../../../components/ui/menu-select";
+import { isDesktopRuntime } from "../../../lib/desktop-bridge";
 import { useI18n } from "../../../lib/i18n";
+import { cn } from "../../../lib/utils";
 import { statusLabel } from "../../../lib/labels";
-import type { ToolMetadata } from "../../tasks/api";
+import type { AgentDefinition, LocalAgentConnection, ToolMetadata } from "../../tasks/api";
 import { useOutsideClick } from "../hooks/useOutsideClick";
+import { runDetailPath } from "../lib/runLinks";
 import type { InspectorSection } from "../lib/types";
 import { InspectorMenu } from "./InspectorMenu";
 import type { ModelOption } from "./ModelPicker";
 
 export type WorkspaceShellBarProps = {
+  workspaceId?: string;
+  workspaceOptions?: Array<{
+    value: string;
+    label: string;
+    description?: string;
+  }>;
+  onWorkspaceChange?: (workspaceId: string) => void;
   agentId: string;
   agentName: string;
   activeRunId: string | null;
@@ -38,9 +51,24 @@ export type WorkspaceShellBarProps = {
   onCreateTeamFromConversation?: () => void;
   isCreatingTeam?: boolean;
   summaryManager?: ReactNode;
+  agents?: AgentDefinition[];
+  agentsLoading?: boolean;
+  onAgentChange?: (agentId: string) => void;
+  localAgentEnabled?: boolean;
+  localAgentConnections?: LocalAgentConnection[];
+  selectedLocalConnectionId?: string | null;
+  onLocalAgentTargetChange?: (connectionId: string) => void;
+  localAgentControl?: ReactNode;
+  runReturnTarget?: {
+    agentId: string;
+    conversationId?: string | null;
+  };
 };
 
 export function WorkspaceShellBar({
+  workspaceId,
+  workspaceOptions = [],
+  onWorkspaceChange,
   agentId,
   agentName,
   activeRunId,
@@ -52,48 +80,171 @@ export function WorkspaceShellBar({
   onCreateTeamFromConversation,
   isCreatingTeam = false,
   summaryManager = null,
+  agents = [],
+  agentsLoading = false,
+  onAgentChange,
+  localAgentEnabled = false,
+  localAgentConnections = [],
+  selectedLocalConnectionId = null,
+  onLocalAgentTargetChange,
+  localAgentControl = null,
+  runReturnTarget,
 }: WorkspaceShellBarProps): JSX.Element {
   const { text } = useI18n();
+  const desktop = isDesktopRuntime();
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsPickerRef = useRef<HTMLDivElement | null>(null);
   const runLabel = activeRunId
     ? text("运行详情", "Run Detail")
     : text("运行未创建", "No run yet");
   const runStatusText = runStatus ? statusLabel(runStatus) : text("已创建", "Created");
+  const activeRunPath =
+    activeRunId && runReturnTarget ? runDetailPath(activeRunId, runReturnTarget) : activeRunId ? `/runs/${activeRunId}` : "";
+  const canOpenDesktopRunWindow =
+    Boolean(activeRunId) &&
+    typeof window !== "undefined" &&
+    Boolean(window.desktopApi?.window?.openRun);
   const toolsChipLabel = text(
     `工具/MCP（模型上下文协议）: ${tools.length} 个可用`,
     `Tools/MCP: ${tools.length} available`,
   );
   const toolsPreviewLabel = formatToolsPreview(tools, text);
+  const agentTargetValue =
+    localAgentEnabled && selectedLocalConnectionId !== null
+      ? localAgentTargetValue(selectedLocalConnectionId)
+      : cloudAgentTargetValue(agentId);
+  const workspaceTargetValue = workspaceId ?? agentId;
+  const cloudAgentOptions =
+    agents.length > 0
+      ? agents.map((agent) => ({
+          value: cloudAgentTargetValue(agent.id),
+          label: agent.name,
+          description: `${text("工作台", "Workspace")} · ${agent.id}`,
+          meta: agent.status === "ACTIVE" ? text("可用", "Active") : agent.status,
+          leading: <Bot aria-hidden="true" className="h-3.5 w-3.5" />,
+          group: text("智能体", "Agents"),
+        }))
+      : [
+          {
+            value: cloudAgentTargetValue(agentId),
+            label: agentName,
+            description: `${text("工作台", "Workspace")} · ${agentId}`,
+            meta: agentsLoading ? text("同步中", "Loading") : undefined,
+            leading: <Bot aria-hidden="true" className="h-3.5 w-3.5" />,
+            group: text("智能体", "Agents"),
+          },
+        ];
+  const usableLocalAgentConnections = localAgentConnections.filter(isUsableLocalAgentConnection);
+  const localAgentOptions = usableLocalAgentConnections.map((connection) => ({
+    value: localAgentTargetValue(connection.id),
+    label: connection.display_name,
+    description: localAgentOptionDescription(connection),
+    meta: localAgentStatusLabel(connection.status),
+    leading: (
+      <Monitor
+        aria-hidden="true"
+        className={cn(
+          "h-3.5 w-3.5",
+          connection.status === "online" || connection.status === "busy"
+            ? "text-emerald-600"
+            : connection.status === "offline"
+              ? "text-amber-600"
+              : "text-slate-500",
+        )}
+      />
+    ),
+    group: text("本地 Agent", "Local Agents"),
+  }));
+  const agentOptions = [...cloudAgentOptions, ...localAgentOptions];
 
   useOutsideClick(toolsPickerRef, () => setToolsOpen(false), toolsOpen);
 
   return (
-    <header className="relative z-30 shrink-0 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur sm:px-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex min-w-[220px] flex-1 items-center gap-2">
-          <Link
-            to="/agents"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-            aria-label={text("返回智能体列表", "Back to Agent Studio")}
-            title={text("返回智能体列表", "Back to Agent Studio")}
-          >
-            <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-          </Link>
-          <div className="min-w-0">
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
-              <Bot aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-500" />
-              <span className="truncate">{agentName}</span>
-            </span>
-            <div className="hidden text-[11px] leading-4 text-slate-500 sm:block">
-              {text("模型加运行平台组成智能体", "Model + Harness = Agent")}
-              <span className="mx-1 text-slate-300">·</span>
-              {text("工作台", "Workspace")} · {agentId}
-            </div>
+    <header
+      data-testid={desktop ? "desktop-workspace-header" : undefined}
+      className={cn(
+        "relative z-30 shrink-0 border-b border-slate-200 bg-white/95 backdrop-blur",
+        desktop ? "px-3 py-1.5" : "px-3 py-2 sm:px-4",
+      )}
+    >
+      <div className={cn("flex items-center gap-2", !desktop && "flex-wrap")}>
+        <div
+          className={cn(
+            "flex min-w-0 flex-[1_1_16rem] gap-2 sm:min-w-[260px]",
+            desktop ? "items-center" : "items-start",
+          )}
+        >
+          {!desktop ? (
+            <Link
+              to="/agents"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              aria-label={text("返回智能体列表", "Back to Agent Studio")}
+              title={text("返回智能体列表", "Back to Agent Studio")}
+            >
+              <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+            </Link>
+          ) : null}
+          <div className={cn("min-w-0 flex-1", desktop && "flex items-center gap-2")}>
+            {onAgentChange ? (
+              <MenuSelect
+                ariaLabel={text("切换智能体或本地 Agent", "Switch Agent or Local Agent")}
+                value={agentTargetValue}
+                options={agentOptions}
+                onChange={(value) => {
+                  if (value.startsWith("local:")) {
+                    onLocalAgentTargetChange?.(value.slice("local:".length));
+                    return;
+                  }
+                  if (value.startsWith("agent:")) {
+                    onAgentChange(value.slice("agent:".length));
+                  }
+                }}
+                size="compact"
+                className={cn("w-full min-w-0", desktop ? "max-w-[14rem]" : "max-w-[20rem]")}
+                buttonClassName={cn(
+                  "rounded-lg border-transparent bg-transparent px-1.5 py-1 shadow-none hover:border-slate-200",
+                  desktop ? "h-8" : "h-9",
+                )}
+                menuClassName="left-auto right-0 w-[min(18rem,calc(100vw-3rem))] max-w-[calc(100vw-3rem)]"
+              />
+            ) : (
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-900">
+                <Bot aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-500" />
+                <span className="truncate">{agentName}</span>
+              </span>
+            )}
+            {!desktop && onWorkspaceChange && workspaceOptions.length > 0 ? (
+              <MenuSelect
+                ariaLabel={text("切换工作区", "Switch workspace")}
+                value={workspaceTargetValue}
+                options={workspaceOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                  description: option.description,
+                }))}
+                onChange={onWorkspaceChange}
+                size="compact"
+                className={cn("w-full min-w-0", desktop ? "max-w-[12rem]" : "mt-1 max-w-[20rem]")}
+                buttonClassName={cn(
+                  "h-8 rounded-lg bg-white/90 px-2 shadow-none",
+                  desktop ? "border-transparent hover:border-slate-200" : "border-slate-200",
+                )}
+                menuClassName="left-0 w-[min(18rem,calc(100vw-3rem))] max-w-[calc(100vw-3rem)]"
+              />
+            ) : null}
+            {!desktop ? (
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] leading-4 text-slate-500">
+                <span className="hidden sm:inline">
+                  {text("模型加运行平台组成智能体", "Model + Harness = Agent")}
+                </span>
+                <span className="hidden text-slate-300 sm:inline">·</span>
+                {localAgentControl}
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+        <div className={cn("flex min-w-0 items-center justify-end gap-1.5", !desktop && "flex-wrap")}>
           {summaryManager}
 
           {onCreateTeamFromConversation ? (
@@ -111,7 +262,7 @@ export function WorkspaceShellBar({
               ) : (
                 <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
               )}
-              <span className="hidden lg:inline">{text("团队模式", "Team Mode")}</span>
+              <span className={desktop ? "sr-only" : "hidden lg:inline"}>{text("团队模式", "Team Mode")}</span>
             </Button>
           ) : null}
 
@@ -123,10 +274,13 @@ export function WorkspaceShellBar({
               aria-haspopup="dialog"
               aria-expanded={toolsOpen}
               title={toolsChipLabel}
-              className="inline-flex h-8 max-w-[12rem] items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
+              className={cn(
+                "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+                desktop ? "w-8 px-0" : "max-w-[12rem] px-2",
+              )}
             >
               <Wrench aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-              <span className="min-w-0 truncate">{toolsPreviewLabel}</span>
+              <span className={desktop ? "sr-only" : "min-w-0 truncate"}>{toolsPreviewLabel}</span>
             </button>
 
             {toolsOpen && (
@@ -134,7 +288,7 @@ export function WorkspaceShellBar({
                 role="dialog"
                 aria-modal="false"
                 aria-label={text("工具", "Tools")}
-                className="absolute right-0 top-full z-40 mt-1.5 w-[min(280px,calc(100vw-1rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
+                className="absolute right-0 top-full z-40 mt-1.5 w-[min(280px,calc(100vw-1rem))] rounded-2xl border border-slate-200 bg-white p-2 shadow-none"
               >
                 <div className="mb-2 flex items-start justify-between gap-2 border-b border-slate-100 px-1 pb-2">
                   <div className="min-w-0">
@@ -193,17 +347,38 @@ export function WorkspaceShellBar({
           )}
 
           {activeRunId ? (
-            <Link
-              to={`/runs/${activeRunId}`}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-              aria-label={runLabel}
-              title={runLabel}
-            >
-              <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
-              <span className="hidden text-slate-500 lg:inline">运行</span>
-              <span>{runStatusText}</span>
-            </Link>
-          ) : (
+            <div className="inline-flex items-center gap-1">
+              <Link
+                to={activeRunPath}
+                className={cn(
+                  "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400",
+                  desktop ? "w-8 px-0" : "px-2",
+                )}
+                aria-label={runLabel}
+                title={runLabel}
+              >
+                <GitBranch aria-hidden="true" className="h-3.5 w-3.5" />
+                <span className={desktop ? "sr-only" : "hidden text-slate-500 lg:inline"}>运行</span>
+                <span className={desktop ? "sr-only" : undefined}>{runStatusText}</span>
+              </Link>
+              {desktop ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-8 w-8 px-0"
+                  disabled={!canOpenDesktopRunWindow}
+                  aria-label={text("在独立窗口打开运行", "Open run in separate window")}
+                  title={text("在独立窗口打开运行", "Open run in separate window")}
+                  onClick={() => {
+                    if (!activeRunId) return;
+                    void window.desktopApi?.window?.openRun?.(activeRunId);
+                  }}
+                >
+                  <AppWindow aria-hidden="true" className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
+            </div>
+          ) : !desktop ? (
             <span
               className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-medium text-slate-500"
               aria-label={runLabel}
@@ -213,13 +388,57 @@ export function WorkspaceShellBar({
               <span className="hidden lg:inline">运行</span>
               <span>{text("待创建", "Idle")}</span>
             </span>
-          )}
+          ) : null}
 
           <InspectorMenu onOpenInspector={onOpenInspector} />
         </div>
       </div>
     </header>
   );
+}
+
+function cloudAgentTargetValue(agentId: string): string {
+  return `agent:${agentId}`;
+}
+
+function localAgentTargetValue(connectionId: string): string {
+  return `local:${connectionId}`;
+}
+
+function isUsableLocalAgentConnection(connection: LocalAgentConnection): boolean {
+  return (
+    connection.status !== "revoked" &&
+    connection.status !== "pending_confirmation" &&
+    connection.onboarding_confirmed === true
+  );
+}
+
+function localAgentOptionDescription(connection: LocalAgentConnection): string {
+  if (
+    connection.adapter_kind === "claude_code" &&
+    connection.capabilities_json.permission_bridge === "harness_local_tool_request_v1"
+  ) {
+    return "Claude Code · 权限桥";
+  }
+  if (connection.adapter_kind === "claude_code") {
+    return "Claude Code · 对话模式";
+  }
+  return `本地连接 · ${connection.adapter_kind}`;
+}
+
+function localAgentStatusLabel(status: string): string {
+  switch (status) {
+    case "online":
+      return "在线";
+    case "busy":
+      return "执行中";
+    case "offline":
+      return "离线";
+    case "revoked":
+      return "已撤销";
+    default:
+      return status || "未知";
+  }
 }
 
 function formatToolsPreview(

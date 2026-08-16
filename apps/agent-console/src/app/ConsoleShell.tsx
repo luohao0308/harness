@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  AppWindow,
   ClipboardList,
   Bot,
   Box,
@@ -28,6 +29,7 @@ import {
   Settings2,
   ShieldCheck,
   Store,
+  Terminal,
   UserCircle,
   UserRound,
   Users,
@@ -35,6 +37,7 @@ import {
 
 import { Button } from "../components/ui/button";
 import { FeedbackToastViewport } from "../components/ui/feedback-toast";
+import { DesktopOperationRail } from "../components/desktop/DesktopOperationRail";
 import { QuickActionFAB } from "../components/ui/QuickActionFAB";
 import { WorkspaceSwitcher } from "../components/WorkspaceSwitcher";
 import { prepareAvatarUpload } from "../features/auth/avatarUpload";
@@ -42,11 +45,20 @@ import { useOptionalAuth } from "../features/auth/AuthProvider";
 import { AlertBell } from "../features/observability/components/AlertBell";
 import { useConsoleStore } from "../stores/consoleStore";
 import { environmentLabel } from "../lib/labels";
+import { isDesktopRuntime } from "../lib/desktop-bridge";
 import { cn } from "../lib/utils";
-import { consoleNavEntries } from "./consoleNav";
+import {
+  consoleNavEntries,
+  flattenConsoleNavEntries,
+  isConsoleNavGroup,
+  type ConsoleNavEntry,
+  type ConsoleNavGroup,
+  type ConsoleNavItem,
+} from "./consoleNav";
 
 const navIconByKey = {
   activity: Activity,
+  appWindow: AppWindow,
   audit: ClipboardList,
   bot: Bot,
   box: Box,
@@ -64,11 +76,12 @@ const navIconByKey = {
   settings: Settings2,
   shield: ShieldCheck,
   store: Store,
+  terminal: Terminal,
   tools: PlugZap,
   users: Users,
 } as const;
 
-export const consoleNavItems = consoleNavEntries.map((item) => ({
+const flatConsoleNavItems = flattenConsoleNavEntries().map((item) => ({
   to: item.to,
   label: item.label,
   icon: navIconByKey[item.iconKey],
@@ -84,10 +97,131 @@ function initialsForName(name: string | undefined, email: string | undefined) {
   return source.slice(0, 2).toUpperCase();
 }
 
+function navItemIsActive(pathname: string, to: string) {
+  if (to === "/") return pathname === "/";
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function ConsoleNavEntryView({
+  entry,
+  pathname,
+  openNavGroups,
+  setOpenNavGroups,
+}: {
+  entry: ConsoleNavEntry;
+  pathname: string;
+  openNavGroups: Record<string, boolean>;
+  setOpenNavGroups: Dispatch<SetStateAction<Record<string, boolean>>>;
+}) {
+  if (isConsoleNavGroup(entry)) {
+    return (
+      <ConsoleNavGroupView
+        group={entry}
+        pathname={pathname}
+        openNavGroups={openNavGroups}
+        setOpenNavGroups={setOpenNavGroups}
+      />
+    );
+  }
+  return <ConsoleNavLink item={entry} />;
+}
+
+function ConsoleNavGroupView({
+  group,
+  pathname,
+  openNavGroups,
+  setOpenNavGroups,
+}: {
+  group: ConsoleNavGroup;
+  pathname: string;
+  openNavGroups: Record<string, boolean>;
+  setOpenNavGroups: Dispatch<SetStateAction<Record<string, boolean>>>;
+}) {
+  const Icon = navIconByKey[group.iconKey];
+  const childActive = group.children.some((child) => navItemIsActive(pathname, child.to));
+  const isOpen = openNavGroups[group.id] ?? childActive;
+  const childListId = `console-nav-group-${group.id}`;
+
+  const setOpen = (open: boolean) => {
+    setOpenNavGroups((current) => ({ ...current, [group.id]: open }));
+  };
+
+  return (
+    <div className="mb-1">
+      <button
+        type="button"
+        className={cn(
+          "flex min-h-11 w-full items-center gap-2 rounded-md px-2.5 text-left text-[13px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
+          childActive
+            ? "bg-slate-100 text-slate-900"
+            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+        )}
+        aria-controls={childListId}
+        aria-expanded={isOpen}
+        onClick={() => setOpen(!isOpen)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight") {
+            event.preventDefault();
+            setOpen(true);
+          }
+          if (event.key === "ArrowLeft" || event.key === "Escape") {
+            event.preventDefault();
+            setOpen(false);
+          }
+        }}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{group.label}</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform",
+            isOpen && "rotate-180",
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      {isOpen ? (
+        <div id={childListId} className="mt-1 grid gap-1 pl-3">
+          {group.children.map((child) => (
+            <ConsoleNavLink key={child.to} item={child} child />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ConsoleNavLink({ item, child = false }: { item: ConsoleNavItem; child?: boolean }) {
+  const Icon = navIconByKey[item.iconKey];
+  return (
+    <NavLink
+      to={item.to}
+      title={item.label}
+      className={({ isActive }) =>
+        cn(
+          "mb-1 flex min-h-11 items-center rounded-md text-[13px]",
+          child ? "gap-2 px-2" : "gap-2 px-2.5",
+          child && isActive
+            ? "border-l-2 border-slate-900 bg-slate-100 pl-[10px] font-semibold text-slate-900"
+            : child
+              ? "pl-3 text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+              : isActive
+                ? "bg-slate-100 text-slate-900"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+        )
+      }
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+    </NavLink>
+  );
+}
+
 export function ConsoleShell({ children, title }: { children: ReactNode; title: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const environment = useConsoleStore((state) => state.environment);
+  const setSidebarNavScrollTop = useConsoleStore((state) => state.setSidebarNavScrollTop);
   const auth = useOptionalAuth();
   const isUsingDevToken = auth?.isUsingDevToken ?? true;
   const logoutCurrentUser = auth?.logoutCurrentUser;
@@ -96,13 +230,20 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   const currentOrganization = auth?.currentOrganization ?? null;
   const isWorkspaceRoute = /^\/agents\/[^/]+\/workspace$/.test(location.pathname);
   const isTeamRoute = /^\/teams(?:\/|$)/.test(location.pathname);
+  const isRunRoute = /^\/runs(?:\/|$)/.test(location.pathname);
+  const isTerminalRoute = location.pathname === "/terminal";
+  const isDesktopSettingsRoute = location.pathname === "/desktop" || location.pathname === "/settings/advanced";
+  const desktop = isDesktopRuntime();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(isWorkspaceRoute);
   const [isNarrowShell, setIsNarrowShell] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>({});
   const [avatarUploadPending, setAvatarUploadPending] = useState(false);
   const [avatarUploadError, setAvatarUploadError] = useState<string | null>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
+  const accountMenuButtonRef = useRef<HTMLButtonElement>(null);
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
+  const sidebarNavRef = useRef<HTMLElement>(null);
   const sidebarForceCollapsed = isWorkspaceRoute || isTeamRoute || isNarrowShell;
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarForceCollapsed;
   const canToggleSidebar = !sidebarForceCollapsed;
@@ -132,6 +273,16 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
   }, [location.pathname]);
 
   useEffect(() => {
+    const nav = sidebarNavRef.current;
+    if (!nav) return;
+    const scrollTop = useConsoleStore.getState().sidebarNavScrollTop;
+    const frame = window.requestAnimationFrame(() => {
+      nav.scrollTop = scrollTop;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [effectiveSidebarCollapsed, location.pathname]);
+
+  useEffect(() => {
     if (!accountMenuOpen) return;
     const handlePointer = (event: MouseEvent | TouchEvent) => {
       const element = accountMenuRef.current;
@@ -146,6 +297,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setAccountMenuOpen(false);
+        accountMenuButtonRef.current?.focus();
       }
     };
     document.addEventListener("mousedown", handlePointer);
@@ -188,6 +340,35 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
     }
   }
 
+  if (desktop && isWorkspaceRoute) {
+    return (
+      <div
+        data-testid="desktop-workspace-shell"
+        className="flex h-screen min-h-0 min-w-0 overflow-hidden bg-white text-slate-800"
+        lang="zh-CN"
+        translate="no"
+      >
+        <FeedbackToastViewport />
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
+      </div>
+    );
+  }
+
+  if (desktop && (isTeamRoute || isRunRoute || isTerminalRoute || isDesktopSettingsRoute)) {
+    return (
+      <div
+        data-testid="desktop-operation-shell"
+        className="flex h-screen min-h-0 min-w-0 overflow-hidden bg-white text-slate-800"
+        lang="zh-CN"
+        translate="no"
+      >
+        <FeedbackToastViewport />
+        <DesktopOperationRail />
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex h-screen overflow-hidden bg-page text-slate-800"
@@ -195,10 +376,11 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
       translate="no"
     >
       <FeedbackToastViewport />
-      <QuickActionFAB />
+      {!isWorkspaceRoute && !isTeamRoute ? <QuickActionFAB /> : null}
       <aside
         className={cn(
           "flex h-screen min-h-0 shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-200",
+          isTeamRoute && isNarrowShell && "hidden",
           effectiveSidebarCollapsed ? (isTeamRoute ? "w-[44px]" : "w-[64px]") : "w-[248px]",
         )}
       >
@@ -244,18 +426,30 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             <PanelLeftClose className={cn("h-4 w-4", effectiveSidebarCollapsed && "hidden")} />
           </Button>
         </div>
-        <nav className="min-h-0 flex-1 overflow-y-auto p-2">
-          {consoleNavItems.map((item) => {
+        <nav
+          ref={sidebarNavRef}
+          aria-label="控制台导航"
+          onScroll={(event) => {
+            const scrollTop = event.currentTarget.scrollTop;
+            setSidebarNavScrollTop(scrollTop);
+          }}
+          className={cn(
+            "min-h-0 flex-1 overflow-y-auto",
+            effectiveSidebarCollapsed && isTeamRoute ? "px-0 py-2" : "p-2",
+          )}
+        >
+          {(effectiveSidebarCollapsed ? flatConsoleNavItems : null)?.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink
                 key={item.to}
                 to={item.to}
                 title={item.label}
+                aria-label={item.label}
                 className={({ isActive }) =>
                   cn(
-                    "mb-0.5 flex h-8 items-center rounded-md text-[13px]",
-                    effectiveSidebarCollapsed ? "justify-center px-0" : "gap-2 px-2.5",
+                    "mb-1 flex min-h-11 w-full items-center rounded-md text-[13px]",
+                    "justify-center px-0",
                     isActive
                       ? "bg-slate-100 text-slate-900"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
@@ -263,17 +457,20 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 }
               >
                 <Icon className="h-4 w-4 shrink-0" />
-                <span
-                  className={cn(
-                    "flex-1 truncate transition-opacity",
-                    effectiveSidebarCollapsed && "hidden",
-                  )}
-                >
-                  {item.label}
-                </span>
               </NavLink>
             );
           })}
+          {!effectiveSidebarCollapsed
+            ? consoleNavEntries.map((entry) => (
+                <ConsoleNavEntryView
+                  key={isConsoleNavGroup(entry) ? entry.id : entry.to}
+                  entry={entry}
+                  pathname={location.pathname}
+                  openNavGroups={openNavGroups}
+                  setOpenNavGroups={setOpenNavGroups}
+                />
+              ))
+            : null}
         </nav>
         <div
           className={cn(
@@ -355,12 +552,22 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
             ) : null}
             <div ref={accountMenuRef} className="relative ml-1">
               <button
+                ref={accountMenuButtonRef}
                 type="button"
                 aria-haspopup="menu"
                 aria-expanded={accountMenuOpen}
                 aria-label="账号菜单"
                 title={displayEmail}
                 onClick={() => setAccountMenuOpen((value) => !value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowDown" && event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  setAccountMenuOpen(true);
+                  window.requestAnimationFrame(() => {
+                    const firstItem = accountMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]:not([disabled])');
+                    firstItem?.focus();
+                  });
+                }}
                 className="flex h-8 min-w-8 max-w-44 items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 text-left text-[11px] text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 sm:min-w-36 sm:px-2"
               >
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-900 text-[10px] font-semibold text-white">
@@ -382,7 +589,28 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                 <div
                   role="menu"
                   aria-label="账号菜单"
-                  className="absolute right-0 top-full z-40 mt-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white p-1 text-sm shadow-xl"
+                  onKeyDown={(event) => {
+                    const items = Array.from(
+                      event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'),
+                    );
+                    if (items.length === 0) return;
+                    const currentIndex = items.findIndex((item) => item === document.activeElement);
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      const delta = event.key === "ArrowDown" ? 1 : -1;
+                      const nextIndex = currentIndex < 0 ? 0 : (currentIndex + delta + items.length) % items.length;
+                      items[nextIndex]?.focus();
+                    }
+                    if (event.key === "Home") {
+                      event.preventDefault();
+                      items[0]?.focus();
+                    }
+                    if (event.key === "End") {
+                      event.preventDefault();
+                      items[items.length - 1]?.focus();
+                    }
+                  }}
+                  className="absolute right-0 top-full z-40 mt-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white p-1 text-sm shadow-none"
                 >
                   <div className="border-b border-slate-100 px-3 py-3">
                     <div className="flex items-center gap-2">
@@ -423,6 +651,7 @@ export function ConsoleShell({ children, title }: { children: ReactNode; title: 
                       />
                       <button
                         type="button"
+                        role="menuitem"
                         className="flex w-full items-center gap-2 rounded-md px-0 py-1.5 text-left text-xs font-medium text-slate-700 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                         disabled={avatarUploadPending}
                         onClick={() => avatarFileInputRef.current?.click()}

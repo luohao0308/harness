@@ -35,10 +35,10 @@ export function Walkthrough({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-end bg-slate-950/20 p-4">
+    <div className="fixed bottom-5 right-5 z-50 w-full max-w-sm">
       <section
         aria-label="控制台导览"
-        className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-4 shadow-xl"
+        className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-4 shadow-lg"
       >
         <div className="flex items-start gap-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-semibold text-white">

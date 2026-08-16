@@ -1,6 +1,6 @@
-import { consoleNavEntries } from "./consoleNav";
+import { flattenConsoleNavEntries } from "./consoleNav";
 
-export const sidebarRouteInventory = consoleNavEntries.map((item) => ({
+export const sidebarRouteInventory = flattenConsoleNavEntries().map((item) => ({
   href: item.to,
   label: item.label,
 }));
@@ -11,6 +11,7 @@ export const staticConsoleRoutePaths = [
   "/register",
   "/oauth/callback",
   "/onboarding",
+  "/desktop",
   "/agents",
   "/teams",
   "/runs",
@@ -24,6 +25,7 @@ export const staticConsoleRoutePaths = [
   "/observability/trace",
   "/observability/alerts",
   "/token-savings",
+  "/terminal",
   "/tools",
   "/tools/config",
   "/knowledge",

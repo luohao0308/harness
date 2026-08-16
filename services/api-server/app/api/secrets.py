@@ -12,6 +12,7 @@ from app.api.schemas import (
     StoredSecretResponse,
     StoredSecretUpsertRequest,
 )
+from app.core.config import get_settings
 from app.db.models import AdminAuditEvent, StoredSecret, utc_now
 from app.db.session import get_db_session
 from app.events.event_types import EventType
@@ -24,6 +25,7 @@ from app.security.secrets import (
     SECRET_SOURCE_ORG,
     SECRET_SOURCE_USER,
     SecretEncryptionError,
+    SecretStorageUnavailableError,
     list_secrets,
     upsert_secret,
 )
@@ -65,6 +67,7 @@ def save_stored_secret(
     principal: Principal,
 ) -> StoredSecretResponse:
     require_role(principal, {"admin", "engineer"})
+    _require_persistent_secret_storage()
     if payload.scope == SECRET_SCOPE_ORG:
         require_role(principal, {"admin"})
     try:
@@ -130,6 +133,7 @@ def delete_stored_secret(secret_id: str, session: DbSession, principal: Principa
 )
 def import_env_secrets(session: DbSession, principal: Principal) -> StoredSecretImportResponse:
     require_role(principal, {"admin"})
+    _require_persistent_secret_storage()
     imported: list[StoredSecretResponse] = []
     skipped: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
@@ -185,6 +189,18 @@ def _response(row: StoredSecret) -> StoredSecretResponse:
         updated_at=row.updated_at,
         last_used_at=row.last_used_at,
     )
+
+
+def _require_persistent_secret_storage() -> None:
+    settings = get_settings()
+    if settings.runtime_profile == "local" and not settings.persistent_secret_storage_available:
+        error = SecretStorageUnavailableError(
+            "Persistent secret storage is unavailable for this local runtime session"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": error.code, "message": str(error)},
+        )
 
 
 def _audit(

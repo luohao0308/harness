@@ -12,8 +12,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ConsoleShell } from "../../../../app/ConsoleShell";
 import { Button } from "../../../../components/ui/button";
 import { Card } from "../../../../components/ui/card";
-import { useConfirmDialog } from "../../../../components/ui/confirm-dialog";
 import { feedbackErrorMessage, notifyFeedback } from "../../../../components/ui/feedback-toast";
+import { useConfirmDialog } from "../../../../components/ui/confirm-dialog";
 import { useI18n } from "../../../../lib/i18n";
 import type { ComposerAttachment } from "../../../agents/components/ChatComposer";
 import type { ConversationNode } from "../../../../stores/workspaceStore";
@@ -25,10 +25,11 @@ import {
   getTeam,
   getModelSettings,
   getToolRegistry,
-  listAgents,
+  listAgentsPage,
   listTeams,
   renameTeamAgent,
   removeTeamAgent,
+  updateTeamGoal,
   updateTeamAgent,
   type Team,
   type TeamAgent,
@@ -39,8 +40,10 @@ import { TeamCreateModal } from "../TeamCreateModal";
 
 import { TeamAgentTabs } from "./TeamAgentTabs";
 import { TeamAddMemberModal } from "./TeamAddMemberModal";
-import { TeamColumnList } from "./TeamColumnList";
 import { TeamHeader } from "./TeamHeader";
+import { TeamGoalEditorDialog } from "./TeamGoalEditorDialog";
+import type { TeamWorkspaceView } from "./DesktopTeamViewSwitch";
+import { TeamWorkspaceSurface } from "./TeamWorkspaceSurface";
 import {
   activeAgent,
   deriveTeamModelOptions,
@@ -59,6 +62,7 @@ import type {
   TeamBottomPanel,
   TeamBranchGroupsBySlot,
   TeamContextCompressions,
+  TeamPageEnvelope,
   TeamModelChangeHandler,
 } from "./types";
 import { useTeamComposerActions } from "./useTeamComposerActions";
@@ -67,12 +71,51 @@ import { useTeamEventsAndWake } from "./useTeamEventsAndWake";
 
 export { applyTeamEventToTeam } from "./teamState";
 
+const TEAM_WORKSPACE_VIEWS = new Set<TeamWorkspaceView>(["collaboration", "graph", "columns"]);
+
+function desktopTeamViewStorageKey(teamId: string) {
+  return `harness-desktop-team-view-${teamId}`;
+}
+
+function initialTeamWorkspaceView(teamId: string, desktopEnabled: boolean): TeamWorkspaceView {
+  if (!desktopEnabled || typeof window === "undefined") return "columns";
+  try {
+    const stored = window.localStorage.getItem(desktopTeamViewStorageKey(teamId)) as TeamWorkspaceView | null;
+    return stored && TEAM_WORKSPACE_VIEWS.has(stored) ? stored : "collaboration";
+  } catch {
+    return "collaboration";
+  }
+}
+
 export function TeamPage() {
   const { text } = useI18n();
   const { confirm, confirmDialog } = useConfirmDialog();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { teamId = "" } = useParams();
+  const desktopTeamEnabled = typeof window !== "undefined" && "desktopApi" in window;
+  const workspaceViewStorageKey =
+    desktopTeamEnabled && teamId ? desktopTeamViewStorageKey(teamId) : null;
+  const [workspaceViewState, setWorkspaceViewState] = useState(() => ({
+    storageKey: workspaceViewStorageKey,
+    view: initialTeamWorkspaceView(teamId, desktopTeamEnabled),
+  }));
+  const workspaceView =
+    workspaceViewState.storageKey === workspaceViewStorageKey
+      ? workspaceViewState.view
+      : initialTeamWorkspaceView(teamId, desktopTeamEnabled);
+  const [focusSlotId, setFocusSlotId] = useState<string | null>(null);
+  const [focusPanel, setFocusPanel] = useState<"inspector" | "graph">("inspector");
+  const setWorkspaceView = useCallback(
+    (view: TeamWorkspaceView) => {
+      setWorkspaceViewState({ storageKey: workspaceViewStorageKey, view });
+      if (view !== "collaboration") {
+        setFocusSlotId(null);
+        setFocusPanel("inspector");
+      }
+    },
+    [workspaceViewStorageKey],
+  );
   const [activeSlotId, setActiveSlotId] = useState("leader");
   const [fullscreenSlotId, setFullscreenSlotId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -110,6 +153,27 @@ export function TeamPage() {
   const pendingSendKeysRef = useRef<Set<string>>(new Set());
   const teamFileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
   const [columnOverflow, setColumnOverflow] = useState({ left: false, right: false });
+  const [goalEditorOpen, setGoalEditorOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
+
+  useEffect(() => {
+    setWorkspaceViewState((current) => {
+      if (current.storageKey === workspaceViewStorageKey) return current;
+      return {
+        storageKey: workspaceViewStorageKey,
+        view: initialTeamWorkspaceView(teamId, desktopTeamEnabled),
+      };
+    });
+  }, [desktopTeamEnabled, teamId, workspaceViewStorageKey]);
+
+  useEffect(() => {
+    if (!workspaceViewStorageKey || workspaceViewState.storageKey !== workspaceViewStorageKey) return;
+    try {
+      window.localStorage.setItem(workspaceViewStorageKey, workspaceViewState.view);
+    } catch {
+      // Desktop view persistence is best effort; Team state remains server-backed.
+    }
+  }, [workspaceViewState, workspaceViewStorageKey]);
 
   const teamQuery = useQuery({
     queryKey: ["teams", teamId],
@@ -124,7 +188,7 @@ export function TeamPage() {
   });
   const agentsQuery = useQuery({
     queryKey: ["agents"],
-    queryFn: listAgents,
+    queryFn: () => listAgentsPage({ limit: 100 }),
     enabled: addMemberOpen,
   });
   const streamReadyTeamId = teamQuery.data?.id;
@@ -177,6 +241,17 @@ export function TeamPage() {
     if (!leaderSlotId) return;
     setActiveSlotId((current) => (agents.some((agent) => agent.slot_id === current) ? current : leaderSlotId));
   }, [agents, leaderSlotId]);
+
+  useEffect(() => {
+    if (focusSlotId && !agents.some((agent) => agent.slot_id === focusSlotId)) {
+      setFocusSlotId(null);
+      setFocusPanel("inspector");
+    }
+  }, [agents, focusSlotId]);
+
+  useEffect(() => {
+    setGoalDraft(activeTeam?.active_goal?.objective ?? "");
+  }, [activeTeam?.active_goal?.id, activeTeam?.active_goal?.objective]);
 
   useEffect(() => {
     if (!addMemberOpen || newMemberAgentId || agentDefinitions.length === 0) return;
@@ -241,12 +316,12 @@ export function TeamPage() {
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 767px)");
+    const query = window.matchMedia(desktopTeamEnabled ? "(max-width: 1023px)" : "(max-width: 767px)");
     const apply = (): void => setIsNarrowColumns(query.matches);
     apply();
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
-  }, []);
+  }, [desktopTeamEnabled]);
 
   const updateColumnOverflow = useCallback(() => {
     const node = columnsContainerRef.current;
@@ -260,6 +335,45 @@ export function TeamPage() {
       right: hasOverflow && node.scrollLeft + node.clientWidth < node.scrollWidth - 10,
     });
   }, []);
+
+  const invalidateTeamQueries = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ["teams", teamId] });
+    await queryClient.invalidateQueries({ queryKey: ["teams"] });
+  }, [queryClient, teamId]);
+
+  const patchGoalStatus = useCallback(
+    async (nextStatus: "active" | "paused") => {
+      if (!activeTeam?.active_goal) return;
+      try {
+        await updateTeamGoal(activeTeam.id, activeTeam.active_goal.id, { status: nextStatus });
+        await invalidateTeamQueries();
+      } catch (error) {
+        notifyFeedback({
+          title: text("目标状态更新失败", "Failed to update goal status"),
+          description: feedbackErrorMessage(error, text("请稍后重试。", "Please try again.")),
+          tone: "error",
+        });
+      }
+    },
+    [activeTeam, invalidateTeamQueries, text],
+  );
+
+  const saveGoalObjective = useCallback(async () => {
+    if (!activeTeam?.active_goal) return;
+    const objective = goalDraft.trim();
+    if (!objective) return;
+    try {
+      await updateTeamGoal(activeTeam.id, activeTeam.active_goal.id, { objective });
+      setGoalEditorOpen(false);
+      await invalidateTeamQueries();
+    } catch (error) {
+      notifyFeedback({
+        title: text("目标编辑失败", "Failed to edit goal"),
+        description: feedbackErrorMessage(error, text("请稍后重试。", "Please try again.")),
+        tone: "error",
+        });
+      }
+  }, [activeTeam, goalDraft, invalidateTeamQueries, text]);
 
   useEffect(() => {
     const node = columnsContainerRef.current;
@@ -398,6 +512,21 @@ export function TeamPage() {
       setNewMemberName("");
       setNewMemberAgentId(null);
       setActiveSlotId(agent.slot_id);
+      queryClient.setQueryData<Team>(["teams", teamId], (current) =>
+        current ? { ...current, agents: mergeTeamAgent(current.agents, agent) } : current,
+      );
+      queryClient.setQueryData<TeamPageEnvelope>(["teams"], (current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((item) =>
+                item.id === teamId
+                  ? { ...item, agents: mergeTeamAgent(item.agents, agent) }
+                  : item,
+              ),
+            }
+          : current,
+      );
       notifyFeedback({
         tone: "success",
         title: "团队成员已添加",
@@ -455,6 +584,7 @@ export function TeamPage() {
     teamFileInputsRef,
     setComposerState,
     setPendingSends,
+    setStreamingWakes,
     setAttachmentsBySlotId,
     setBottomPanelBySlotId,
     setBranchGroupsBySlotId,
@@ -612,83 +742,103 @@ export function TeamPage() {
             onAddMember={() => setAddMemberOpen(true)}
             onToggleTaskBoard={() => setTaskBoardOpen((open) => !open)}
             onCloseTaskBoard={() => setTaskBoardOpen(false)}
+            onPauseGoal={() => void patchGoalStatus("paused")}
+            onResumeGoal={() => void patchGoalStatus("active")}
+            onEditGoal={() => setGoalEditorOpen(true)}
+            workspaceView={desktopTeamEnabled ? workspaceView : undefined}
+            onWorkspaceViewChange={desktopTeamEnabled ? setWorkspaceView : undefined}
           />
 
-          <TeamAgentTabs
-            activeTeam={activeTeam}
-            orderedAgents={orderedAgents}
-            tasks={tasks}
+          {!desktopTeamEnabled || workspaceView === "columns" || focusSlotId !== null ? (
+            <TeamAgentTabs
+              activeTeam={activeTeam}
+              orderedAgents={orderedAgents}
+              tasks={tasks}
+              activeSlotId={activeSlotId}
+              editingSlotId={editingSlotId}
+              editingAgentName={editingAgentName}
+              dragSourceSlotId={dragSourceSlotId}
+              dragOverSlotId={dragOverSlotId}
+              pendingWakeSlotIds={pendingWakeSlotIds}
+              streamingWakes={streamingWakes}
+              settledWakeCutoffs={settledWakeCutoffs}
+              text={text}
+              onActiveSlotChange={setActiveSlotId}
+              onStartEditingAgent={startEditingAgent}
+              onEditingAgentNameChange={setEditingAgentName}
+              onCommitEditingAgent={commitEditingAgent}
+              onCancelEditingAgent={() => {
+                setEditingSlotId(null);
+                setEditingAgentName("");
+              }}
+              onDragSourceChange={setDragSourceSlotId}
+              onDragOverChange={setDragOverSlotId}
+              onDropAgentTab={dropAgentTab}
+            />
+          ) : null}
+
+          <TeamWorkspaceSurface
+            desktopEnabled={desktopTeamEnabled}
+            view={workspaceView}
             activeSlotId={activeSlotId}
-            editingSlotId={editingSlotId}
-            editingAgentName={editingAgentName}
-            dragSourceSlotId={dragSourceSlotId}
-            dragOverSlotId={dragOverSlotId}
-            pendingWakeSlotIds={pendingWakeSlotIds}
-            streamingWakes={streamingWakes}
-            settledWakeCutoffs={settledWakeCutoffs}
-            text={text}
-            onActiveSlotChange={setActiveSlotId}
-            onStartEditingAgent={startEditingAgent}
-            onEditingAgentNameChange={setEditingAgentName}
-            onCommitEditingAgent={commitEditingAgent}
-            onCancelEditingAgent={() => {
-              setEditingSlotId(null);
-              setEditingAgentName("");
+            focusSlotId={focusSlotId}
+            onSelectAgent={setActiveSlotId}
+            onEnterFocus={setFocusSlotId}
+            onExitFocus={() => {
+              setFocusSlotId(null);
+              setFocusPanel("inspector");
             }}
-            onDragSourceChange={setDragSourceSlotId}
-            onDragOverChange={setDragOverSlotId}
-            onDropAgentTab={dropAgentTab}
-          />
-
-          <TeamColumnList
-            activeTeam={activeTeam}
-            orderedAgents={orderedAgents}
-            selectedAgent={selectedAgent}
-            selectedComposer={selectedComposer}
-            tasks={tasks}
-            messages={messages}
-            pendingSends={pendingSends}
-            pendingWakeSlotIds={pendingWakeSlotIds}
-            streamingWakes={streamingWakes}
-            settledWakeCutoffs={settledWakeCutoffs}
-            composerState={composerState}
-            attachmentsBySlotId={attachmentsBySlotId}
-            bottomPanelBySlotId={bottomPanelBySlotId}
-            toolsByAgentId={toolsByAgentId}
-            editingMessageId={editingMessageId}
-            pinnedMessageIds={pinnedMessageIds}
-            branchGroupsBySlotId={branchGroupsBySlotId}
-            contextCompressionsBySlotId={contextCompressionsBySlotId}
-            fullscreenSlotId={fullscreenSlotId}
-            isNarrowColumns={isNarrowColumns}
-            columnOverflow={columnOverflow}
-            flashingSlotId={flashingSlotId}
-            columnsContainerRef={columnsContainerRef}
-            scrollRefs={scrollRefs}
-            teamFileInputsRef={teamFileInputsRef}
-            composerSharedProps={composerSharedProps}
-            text={text}
-            onCompressContext={compressTeamContext}
-            onComposerChange={updateComposer}
-            onSendFromComposer={sendFromComposer}
-            onMessageActionSend={sendFromMessageAction}
-            onBranchMessage={branchFromAssistant}
-            onSwitchBranch={switchTeamBranch}
-            onStartMessageEdit={setEditingMessageId}
-            onCancelMessageEdit={() => setEditingMessageId(null)}
-            onTogglePin={togglePinnedMessage}
-            onOpenMessageInspector={(section, node) => setTeamInspector({ section, node })}
-            onStopWake={stopWake}
-            onToggleFullscreen={(slotId) =>
-              setFullscreenSlotId((current) => (current === slotId ? null : slotId))
-            }
-            onRemoveAgent={async (agent) => {
-              if (agent.role === "leader") return;
-              if (!(await confirmRemoveAgent(agent.agent_name, agent.status))) return;
-              removeAgentMutation.mutate(agent.slot_id);
+            focusPanel={focusPanel}
+            onFocusPanelChange={setFocusPanel}
+            columnListProps={{
+              activeTeam,
+              orderedAgents,
+              selectedAgent,
+              selectedComposer,
+              tasks,
+              messages,
+              pendingSends,
+              pendingWakeSlotIds,
+              streamingWakes,
+              settledWakeCutoffs,
+              composerState,
+              attachmentsBySlotId,
+              bottomPanelBySlotId,
+              toolsByAgentId,
+              editingMessageId,
+              pinnedMessageIds,
+              branchGroupsBySlotId,
+              contextCompressionsBySlotId,
+              fullscreenSlotId,
+              isNarrowColumns,
+              columnOverflow,
+              flashingSlotId,
+              columnsContainerRef,
+              scrollRefs,
+              teamFileInputsRef,
+              composerSharedProps,
+              text,
+              onCompressContext: compressTeamContext,
+              onComposerChange: updateComposer,
+              onSendFromComposer: sendFromComposer,
+              onMessageActionSend: sendFromMessageAction,
+              onBranchMessage: branchFromAssistant,
+              onSwitchBranch: switchTeamBranch,
+              onStartMessageEdit: setEditingMessageId,
+              onCancelMessageEdit: () => setEditingMessageId(null),
+              onTogglePin: togglePinnedMessage,
+              onOpenMessageInspector: (section, node) => setTeamInspector({ section, node }),
+              onStopWake: stopWake,
+              onToggleFullscreen: (slotId) =>
+                setFullscreenSlotId((current) => (current === slotId ? null : slotId)),
+              onRemoveAgent: async (agent) => {
+                if (agent.role === "leader") return;
+                if (!(await confirmRemoveAgent(agent.agent_name, agent.status))) return;
+                removeAgentMutation.mutate(agent.slot_id);
+              },
+              onFocusAgent: setActiveSlotId,
+              onScrollColumns: scrollColumns,
             }}
-            onFocusAgent={setActiveSlotId}
-            onScrollColumns={scrollColumns}
           />
         </main>
       </div>
@@ -723,6 +873,16 @@ export function TeamPage() {
         onClose={() => setTeamInspector(null)}
       />
       {confirmDialog}
+      {activeTeam?.active_goal ? (
+        <TeamGoalEditorDialog
+          open={goalEditorOpen}
+          objective={goalDraft}
+          text={text}
+          onClose={() => setGoalEditorOpen(false)}
+          onObjectiveChange={setGoalDraft}
+          onSave={() => void saveGoalObjective()}
+        />
+      ) : null}
     </ConsoleShell>
   );
 }

@@ -215,7 +215,7 @@ Remaining gaps:
 
 - **Docker/private deployment compatibility for the new migration was not proven** in this environment because Docker was unavailable.
 - **Audit immutability is still primarily ORM-level.** Ordinary SQLAlchemy update/delete paths are guarded, but DB triggers, RLS, or tamper-evident hashes remain a future hardening lane if verified baseline requires stronger append-only guarantees.
-- **Task-progress promotion is not done.** `docs/ai/task-progress.yaml` and `docs/task-progress.md` should only be updated after the private deployment gate is rechecked.
+- **Task-progress promotion is not done.** `docs/development/ai/task-progress.yaml` and `docs/工作日志/archive/task-progress-legacy.md` should only be updated after the private deployment gate is rechecked.
 
 ## Frontend Acceptance Path
 

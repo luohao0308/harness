@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Play, RotateCcw, Search, Shield, Wrench, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { Bot, BrainCircuit, Check, Database, FlaskConical, Gauge, GitBranch, Pencil, Play, RotateCcw, Search, Shield, Wrench, X } from "lucide-react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { ConsoleShell } from "../../../app/ConsoleShell";
 import { Badge, statusTone } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card, CardHeader } from "../../../components/ui/card";
+import { ConfigDialog } from "../../../components/ui/config-dialog";
 import { feedbackErrorMessage, notifyFeedback } from "../../../components/ui/feedback-toast";
-import { Input } from "../../../components/ui/input";
+import { Input, Textarea } from "../../../components/ui/input";
 import { MenuSelect } from "../../../components/ui/menu-select";
 import { Table, Td, Th } from "../../../components/ui/table";
 import { TermHint } from "../../../components/ui/term";
@@ -16,17 +17,26 @@ import { useI18n } from "../../../lib/i18n";
 import { eventLabel, executionModeLabel, riskLabel, statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import {
+  readWorkspaceReturnTarget,
+  saveWorkspaceReturnTarget,
+  workspaceReturnPath,
+} from "../../agents/lib/runLinks";
+import {
   approveToolApproval,
   createEvalDataset,
   createEvalCaseFromRun,
   executeAgentRun,
+  executeAgentOrchestration,
   getAgentRunWorkspace,
   listEvalDatasets,
+  modifyToolApproval,
   orchestrateAgentRun,
   rejectToolApproval,
   replayTask,
   type AgentRunWorkspace,
   type AgentEvent,
+  type AgentAssignment,
+  type AgentHandoff,
   type ReplayResult,
   type Subagent,
   type ToolApproval,
@@ -35,17 +45,31 @@ import {
 
 const DEFAULT_EVAL_DATASET_ID = "__create_default_eval_dataset__";
 
+type OrchestrationFeedback = {
+  description: string;
+  at: string;
+};
+
+type ModifyApprovalDialogState = {
+  approval: ToolApproval;
+  jsonText: string;
+};
+
 export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const { text } = useI18n();
   const { runId } = useParams();
   const [searchParams] = useSearchParams();
   const retrievalSessionId = searchParams.get("retrieval_session_id") ?? undefined;
   const promptManifestId = searchParams.get("prompt_manifest_id") ?? undefined;
+  const requestedReturnTo = searchParams.get("return_to");
+  const requestedConversationId = searchParams.get("conversation_id");
   const queryClient = useQueryClient();
   const [replaySequence, setReplaySequence] = useState("");
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+  const [orchestrationFeedback, setOrchestrationFeedback] = useState<OrchestrationFeedback | null>(null);
   const [saveEvalSuccess, setSaveEvalSuccess] = useState(false);
   const [selectedEvalDatasetId, setSelectedEvalDatasetId] = useState("");
+  const [modifyApprovalDialog, setModifyApprovalDialog] = useState<ModifyApprovalDialogState | null>(null);
   const workspaceQueryKey = useMemo(
     () => ["agent-run-workspace", runId, retrievalSessionId, promptManifestId] as const,
     [promptManifestId, retrievalSessionId, runId],
@@ -67,6 +91,14 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   const tokenOptimization = data?.token_optimization ?? {};
   const langGraphEvents = useMemo(
     () => (data?.events ?? []).filter((event) => isLangGraphEvent(event.event_type)),
+    [data?.events],
+  );
+  const failedStepEvents = useMemo(
+    () => (data?.events ?? []).filter((event) => event.event_type === "STEP_FAILED"),
+    [data?.events],
+  );
+  const assignmentEvents = useMemo(
+    () => (data?.events ?? []).filter((event) => event.event_type.startsWith("AGENT_")),
     [data?.events],
   );
   const specialistEvidence = useMemo(() => collectSpecialistEvidence(data?.subagents ?? []), [data?.subagents]);
@@ -91,19 +123,45 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
   });
   const orchestrate = useMutation({
     mutationFn: () => orchestrateAgentRun(runId!),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      const description = orchestrationResultDescription(result.message, result.assignments, result.handoffs);
+      setOrchestrationFeedback({ description, at: new Date().toISOString() });
       notifyFeedback({
         tone: "success",
-        title: text("多智能体编排已启动", "Orchestration started"),
-        description: text("团队与事件状态会继续同步到当前页面。", "Team and event updates will keep streaming into this page."),
+        title: assignments.length > 0
+          ? text("编排已同步", "Orchestration synced")
+          : text("多智能体编排已创建", "Orchestration created"),
+        description,
       });
-      await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+      await refreshWorkspaceQuery(queryClient, workspaceQueryKey);
     },
     onError: (error) => {
       notifyFeedback({
         tone: "error",
         title: text("多智能体编排失败", "Orchestration failed"),
         description: feedbackErrorMessage(error, text("请检查运行状态、模型设置或稍后重试。", "Check the run state, model settings, or retry.")),
+      });
+    },
+  });
+  const executeOrchestration = useMutation({
+    mutationFn: () => executeAgentOrchestration(runId!),
+    onSuccess: async (result) => {
+      const description = orchestrationResultDescription(result.message, result.assignments, result.handoffs);
+      setOrchestrationFeedback({ description, at: new Date().toISOString() });
+      notifyFeedback({
+        tone: result.assignments.length > 0 && allAssignmentsSuccessful(result.assignments) ? "info" : "success",
+        title: result.assignments.length > 0 && allAssignmentsSuccessful(result.assignments)
+          ? text("多智能体已完成", "Orchestration already complete")
+          : text("多智能体已执行", "Orchestration executed"),
+        description,
+      });
+      await refreshWorkspaceQuery(queryClient, workspaceQueryKey);
+    },
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("多智能体执行失败", "Orchestration execution failed"),
+        description: feedbackErrorMessage(error, text("请检查 Agent 能力挂载、模型设置或稍后重试。", "Check Agent capability attachments, model settings, or retry.")),
       });
     },
   });
@@ -195,6 +253,47 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
       void queryClient.refetchQueries({ queryKey: workspaceQueryKey, type: "active" });
     },
   });
+  const modify = useMutation({
+    mutationFn: ({
+      approvalId,
+      modifiedInputJson,
+    }: {
+      approvalId: string;
+      modifiedInputJson: Record<string, unknown>;
+    }) =>
+      modifyToolApproval(
+        runId!,
+        approvalId,
+        modifiedInputJson,
+        "Modified and approved from Agent Run Detail",
+      ),
+    onError: (error) => {
+      notifyFeedback({
+        tone: "error",
+        title: text("修改审批失败", "Modify approval failed"),
+        description: feedbackErrorMessage(error, text("请检查 JSON 后重试。", "Check the JSON and retry.")),
+      });
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData<AgentRunWorkspace>(
+        workspaceQueryKey,
+        mergeApprovalPage(queryClient.getQueryData<AgentRunWorkspace>(workspaceQueryKey), result.items),
+      );
+      setModifyApprovalDialog(null);
+      notifyFeedback({
+        tone: "success",
+        title: text("审批已修改并批准", "Approval modified and accepted"),
+        description: text("工具将使用修改后的 JSON 参数执行。", "The tool will run with the modified JSON payload."),
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: workspaceQueryKey, refetchType: "active" });
+      void queryClient.refetchQueries({ queryKey: workspaceQueryKey, type: "active" });
+    },
+  });
+  const handleSubmitModifyApproval = (approvalId: string, modifiedInputJson: Record<string, unknown>) => {
+    modify.mutate({ approvalId, modifiedInputJson });
+  };
   const saveEvalCase = useMutation({
     mutationFn: async () => {
       let datasetId = selectedEvalDatasetId;
@@ -285,6 +384,11 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
     if (selectedEvalDatasetId || !datasetsQuery.data?.items.length) return;
     setSelectedEvalDatasetId(datasetsQuery.data.items[0].id);
   }, [datasetsQuery.data?.items, selectedEvalDatasetId]);
+  useEffect(() => {
+    const target = workspaceReturnTargetFromPath(requestedReturnTo, requestedConversationId);
+    if (target === null) return;
+    saveWorkspaceReturnTarget(target, runId);
+  }, [requestedConversationId, requestedReturnTo, runId]);
   const evalDatasetOptions =
     datasetsQuery.data?.items.length
       ? datasetsQuery.data.items
@@ -296,6 +400,18 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
         ];
   const selectedEvalDatasetValue =
     selectedEvalDatasetId || (!datasetsQuery.data?.items.length ? DEFAULT_EVAL_DATASET_ID : "");
+  const assignments = data?.assignments ?? [];
+  const handoffs = data?.handoffs ?? [];
+  const hasAssignments = assignments.length > 0;
+  const reduceCompleted = assignmentEvents.some((event) => event.event_type === "AGENT_REDUCE_COMPLETED");
+  const orchestrationSummary = orchestrationStateSummary(assignments, handoffs, reduceCompleted);
+  const backToWorkspacePath = resolveWorkspaceReturnPath({
+    requestedReturnTo,
+    requestedConversationId,
+    runId,
+    agentId: run?.agent_id ?? null,
+  });
+  const subagentMetric = run ? `${data?.subagents.length ?? 0}/${run.max_subagents}` : "0/0";
 
   return (
     <ConsoleShell title={text("智能体运行", "Agent Run")}>
@@ -319,7 +435,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             {run && (
               <div className="mt-4 grid grid-cols-4 gap-2 text-xs">
                 <Metric label={text("模型", "Model")} value={`${run.model_provider}/${run.model_name}`} />
-                <Metric label="子代理" value={String(run.max_subagents)} />
+                <Metric label="子代理" value={subagentMetric} />
                 <Metric label="沙箱" value={run.enable_sandbox ? "开启" : "关闭"} />
                 <Metric label={text("更新", "Updated")} value={formatShortDate(run.updated_at)} />
               </div>
@@ -334,8 +450,32 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 {text("执行计划", "Execute Plan")}
               </Button>
               <Button disabled={!run || orchestrate.isPending} onClick={() => orchestrate.mutate()}>
-                <GitBranch className="h-3.5 w-3.5" />
-                {text("编排多智能体", "Orchestrate Agents")}
+                {orchestrate.isPending ? (
+                  <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <GitBranch className="h-3.5 w-3.5" />
+                )}
+                {orchestrate.isPending
+                  ? text("正在刷新编排", "Refreshing")
+                  : hasAssignments
+                    ? text("刷新编排", "Refresh Orchestration")
+                    : text("创建多智能体编排", "Create Orchestration")}
+              </Button>
+              <Button
+                disabled={!run || executeOrchestration.isPending}
+                onClick={() => executeOrchestration.mutate()}
+                title={hasAssignments ? orchestrationSummary.message : undefined}
+              >
+                {executeOrchestration.isPending ? (
+                  <RotateCcw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                {executeOrchestration.isPending
+                  ? text("正在执行多智能体", "Executing Agents")
+                  : hasAssignments && orchestrationSummary.allSuccessful
+                  ? text("多智能体已完成", "Agents Complete")
+                  : text("执行多智能体", "Execute Agents")}
               </Button>
               {run && (run.status === "COMPLETED" || run.status === "FAILED") && (
                 <div className="flex items-center gap-2">
@@ -371,7 +511,7 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                   </Button>
                 </div>
               )}
-              <Link to="/agents/default/workspace">
+              <Link to={backToWorkspacePath}>
                 <Button>
                   <Bot className="h-3.5 w-3.5" />
                   {text("回到工作台", "Back to Workspace")}
@@ -385,7 +525,26 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
                 </Link>
               ) : null}
             </div>
+            {(orchestrationFeedback || orchestrate.isPending || executeOrchestration.isPending) ? (
+              <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-800">
+                {orchestrate.isPending
+                  ? text("正在请求后端刷新编排，完成后这里会显示 assignments / handoffs 证据。", "Refreshing orchestration; assignment and handoff evidence will appear here.")
+                  : orchestrationFeedback?.description ??
+                    (executeOrchestration.isPending
+                      ? text("正在执行多智能体 assignments，完成后这里会显示执行结果。", "Executing assignments; results will appear here.")
+                      : "")}
+                {orchestrationFeedback ? (
+                  <span className="ml-2 font-mono text-[11px] text-emerald-700">
+                    {formatShortDate(orchestrationFeedback.at)}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </Card>
+
+          {run?.status === "FAILED" && failedStepEvents.length > 0 ? (
+            <FailureDiagnosisCard events={failedStepEvents} />
+          ) : null}
 
           {grounding && (
             <Card id="knowledge-grounding">
@@ -726,6 +885,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             onReplay={() => replay.mutate()}
           />
           <LangGraphEvidencePanel events={langGraphEvents} />
+          <MultiAgentEvidencePanel
+            assignments={assignments}
+            handoffs={handoffs}
+            events={assignmentEvents}
+            summary={orchestrationSummary}
+          />
           <Card>
             <CardHeader>
               <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -790,6 +955,12 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
             approvals={data?.approvals ?? []}
             onApprove={(id) => approve.mutate(id)}
             onReject={(id) => reject.mutate(id)}
+            onModify={(approval) =>
+              setModifyApprovalDialog({
+                approval,
+                jsonText: JSON.stringify(approvalInputJson(approval), null, 2),
+              })
+            }
           />
           </div>
           <Card>
@@ -863,6 +1034,19 @@ export function RunDetailPage({ focus }: { focus?: "events" | "subagents" }) {
           </Card>
         </aside>
       </div>
+      <ModifyToolApprovalDialog
+        state={modifyApprovalDialog}
+        isSubmitting={modify.isPending}
+        onChange={(jsonText) => {
+          setModifyApprovalDialog((current) => (
+            current ? { ...current, jsonText } : current
+          ));
+        }}
+        onClose={() => {
+          if (!modify.isPending) setModifyApprovalDialog(null);
+        }}
+        onSubmit={handleSubmitModifyApproval}
+      />
     </ConsoleShell>
   );
 }
@@ -966,14 +1150,131 @@ function LangGraphEvidencePanel({ events }: { events: AgentEvent[] }) {
   );
 }
 
+function FailureDiagnosisCard({ events }: { events: AgentEvent[] }) {
+  const latest = events[events.length - 1];
+  const payload = latest?.payload_json ?? {};
+  const summary = stringField(payload, "summary") ?? "未提供失败摘要";
+  const stepKey = stringField(payload, "step_key") ?? stringField(payload, "failed_step") ?? "unknown";
+  const toolCallId = stringField(payload, "tool_call_id");
+  const permissionBoundary = stringField(payload, "permission_boundary");
+  return (
+    <Card className="border-red-200 bg-red-50/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-red-950">失败原因</div>
+          <div className="mt-1 text-sm leading-6 text-red-900">{summary}</div>
+          <div className="mt-2 flex flex-wrap gap-1 text-xs">
+            <Badge tone="failed">步骤 {stepKey}</Badge>
+            {toolCallId ? <Badge tone="warning">工具调用 {toolCallId.slice(0, 8)}</Badge> : null}
+            {permissionBoundary ? <Badge tone="warning">{permissionBoundary}</Badge> : null}
+          </div>
+        </div>
+        <Badge tone="failed">FAILED</Badge>
+      </div>
+      <div className="mt-3 rounded-md border border-red-200 bg-white/70 p-2 text-xs leading-5 text-red-800">
+        如果失败原因是 capability attachment，需要给当前 Agent 挂载对应工具能力，或使用带该能力的具名 Agent 执行多智能体分支。
+      </div>
+    </Card>
+  );
+}
+
+function MultiAgentEvidencePanel({
+  assignments,
+  handoffs,
+  events,
+  summary,
+}: {
+  assignments: AgentRunWorkspace["assignments"];
+  handoffs: AgentRunWorkspace["handoffs"];
+  events: AgentEvent[];
+  summary: OrchestrationStateSummary;
+}) {
+  const statusCounts = countBy(assignments, (assignment) => assignment.status);
+  return (
+    <Card>
+      <CardHeader>
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <GitBranch className="h-4 w-4" />
+          多智能体编排
+        </div>
+        <Badge tone={assignments.length ? "info" : "neutral"}>{assignments.length}</Badge>
+      </CardHeader>
+      <div className="space-y-3 p-3 text-xs">
+        <div className="grid grid-cols-3 gap-2">
+          <Metric label="Assignments" value={String(assignments.length)} />
+          <Metric label="Handoffs" value={String(handoffs.length)} />
+          <Metric label="Events" value={String(events.length)} />
+        </div>
+        {Object.keys(statusCounts).length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {Object.entries(statusCounts).map(([status, count]) => (
+              <Badge key={status} tone={statusTone(status)}>
+                {statusLabel(status)} {count}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+        <div className="rounded-md border border-slate-100 bg-slate-50 p-2 leading-5 text-slate-600">
+          {summary.message}
+        </div>
+        {assignments.length > 0 ? (
+          <div className="space-y-2">
+            {assignments.map((assignment) => (
+              <div key={assignment.id} className="rounded border border-slate-100 bg-white p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-slate-900">{assignment.agent_id}</span>
+                  <Badge tone={statusTone(assignment.status)}>{statusLabel(assignment.status)}</Badge>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-slate-500">
+                  <span>{assignment.role}</span>
+                  <span>{assignment.step_key ?? "run-level"}</span>
+                </div>
+                {assignment.output_json.summary ? (
+                  <div className="mt-1 text-[11px] leading-5 text-slate-600">
+                    {String(assignment.output_json.summary)}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-slate-500">
+            尚未创建具名 Agent assignment。点击“创建多智能体编排”后会显示 selected Agent、assignment 和 handoff。
+          </div>
+        )}
+        {handoffs.length > 0 ? (
+          <div className="space-y-1">
+            <div className="font-medium text-slate-700">交接</div>
+            {handoffs.map((handoff) => (
+              <div
+                key={handoff.id}
+                className="flex items-center justify-between gap-2 rounded border border-slate-100 bg-slate-50 px-2 py-1 text-[11px] text-slate-600"
+              >
+                <span className="min-w-0 truncate">
+                  {handoff.handoff_type}: {handoff.from_assignment_id?.slice(0, 8) ?? "entry"} → {handoff.to_assignment_id.slice(0, 8)}
+                </span>
+                <Badge tone={statusTone(handoff.status)} className="shrink-0">
+                  {statusLabel(handoff.status)}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
 function ApprovalsPanel({
   approvals,
   onApprove,
   onReject,
+  onModify,
 }: {
   approvals: ToolApproval[];
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onModify: (approval: ToolApproval) => void;
 }) {
   return (
     <Card>
@@ -993,10 +1294,14 @@ function ApprovalsPanel({
             </div>
             <div className="mt-2 text-xs text-slate-600">{approval.reason}</div>
             {approval.status === "PENDING" && (
-              <div className="mt-2 flex gap-1">
+              <div className="mt-2 flex flex-wrap gap-1">
                 <Button onClick={() => onApprove(approval.id)}>
                   <Check className="h-3.5 w-3.5" />
                   批准
+                </Button>
+                <Button variant="secondary" onClick={() => onModify(approval)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  修改
                 </Button>
                 <Button onClick={() => onReject(approval.id)}>
                   <X className="h-3.5 w-3.5" />
@@ -1009,6 +1314,79 @@ function ApprovalsPanel({
         {approvals.length === 0 && <div className="text-xs text-slate-500">暂无审批请求。</div>}
       </div>
     </Card>
+  );
+}
+
+function ModifyToolApprovalDialog({
+  state,
+  isSubmitting,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  state: ModifyApprovalDialogState | null;
+  isSubmitting: boolean;
+  onChange: (jsonText: string) => void;
+  onClose: () => void;
+  onSubmit: (approvalId: string, modifiedInputJson: Record<string, unknown>) => void;
+}) {
+  const { text } = useI18n();
+  const parsed = state ? parseApprovalJson(state.jsonText) : { value: null, error: null };
+  const errorId = state ? `modify-approval-json-error-${state.approval.id}` : undefined;
+  if (!state) return null;
+
+  const submitDisabled = isSubmitting || parsed.value === null;
+
+  return (
+    <ConfigDialog
+      open
+      title={text("修改工具审批参数", "Modify tool approval payload")}
+      description={text(
+        "编辑 JSON 参数后将立即按修改后的内容批准此工具调用。",
+        "Edit the JSON payload before approving this tool call with the modified input.",
+      )}
+      onClose={onClose}
+      className="max-w-2xl"
+    >
+      <div className="space-y-4">
+        <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-xs text-slate-600">
+          <div className="font-mono text-slate-900">{state.approval.tool_call_id}</div>
+          <div className="mt-1">{state.approval.reason}</div>
+        </div>
+        <label className="block text-xs font-medium text-slate-700" htmlFor="modify-approval-json">
+          {text("JSON 参数", "JSON payload")}
+        </label>
+        <Textarea
+          id="modify-approval-json"
+          value={state.jsonText}
+          onChange={(event) => onChange(event.target.value)}
+          spellCheck={false}
+          disabled={isSubmitting}
+          aria-invalid={parsed.error ? true : undefined}
+          aria-describedby={parsed.error ? errorId : undefined}
+          className="min-h-72 font-mono text-xs leading-5"
+        />
+        {parsed.error ? (
+          <div id={errorId} className="text-xs text-rose-600">
+            {text(`JSON 无效：${parsed.error}`, `Invalid JSON: ${parsed.error}`)}
+          </div>
+        ) : null}
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>
+            {text("取消", "Cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              if (parsed.value) onSubmit(state.approval.id, parsed.value);
+            }}
+            disabled={submitDisabled}
+          >
+            {isSubmitting ? text("提交中...", "Submitting...") : text("修改并批准", "Modify and approve")}
+          </Button>
+        </div>
+      </div>
+    </ConfigDialog>
   );
 }
 
@@ -1201,6 +1579,37 @@ export function mergeApprovalPage(
   };
 }
 
+function approvalInputJson(approval: ToolApproval): Record<string, unknown> {
+  const requestInput = approval.request_json.input_json;
+  if (isJsonRecord(requestInput)) return requestInput;
+  return {};
+}
+
+function parseApprovalJson(jsonText: string): {
+  value: Record<string, unknown> | null;
+  error: string | null;
+} {
+  if (jsonText.trim().length === 0) {
+    return { value: null, error: "JSON payload is required" };
+  }
+  try {
+    const value = JSON.parse(jsonText) as unknown;
+    if (!isJsonRecord(value)) {
+      return { value: null, error: "payload must be a JSON object" };
+    }
+    return { value, error: null };
+  } catch (error) {
+    return {
+      value: null,
+      error: error instanceof Error ? error.message : "parse failed",
+    };
+  }
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function EventRow({ event }: { event: AgentEvent }) {
   return (
     <div className="rounded-md border border-slate-100 bg-white p-2">
@@ -1336,6 +1745,165 @@ function numberField(value: Record<string, unknown>, key: string): number | null
 
 function boolField(value: Record<string, unknown>, key: string): boolean {
   return value[key] === true;
+}
+
+function countBy<T>(items: T[], keyFn: (item: T) => string) {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    const key = keyFn(item);
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+type OrchestrationStateSummary = {
+  totalAssignments: number;
+  activeOrPendingCount: number;
+  failedCount: number;
+  successCount: number;
+  allSuccessful: boolean;
+  reduceCompleted: boolean;
+  message: string;
+};
+
+const ACTIVE_OR_PENDING_ASSIGNMENT_STATUSES = new Set(["PENDING", "QUEUED", "RUNNING"]);
+
+export function allAssignmentsSuccessful(assignments: AgentAssignment[]): boolean {
+  return assignments.length > 0 && assignments.every((assignment) => assignment.status === "SUCCESS");
+}
+
+export function orchestrationStateSummary(
+  assignments: AgentAssignment[],
+  handoffs: AgentHandoff[],
+  reduceCompleted: boolean,
+): OrchestrationStateSummary {
+  const activeOrPendingCount = assignments.filter((assignment) =>
+    ACTIVE_OR_PENDING_ASSIGNMENT_STATUSES.has(assignment.status),
+  ).length;
+  const failedCount = assignments.filter((assignment) => assignment.status === "FAILED").length;
+  const successCount = assignments.filter((assignment) => assignment.status === "SUCCESS").length;
+  const totalAssignments = assignments.length;
+  const allSuccessful = totalAssignments > 0 && successCount === totalAssignments;
+  const handoffText = handoffs.length ? `，${handoffs.length} 条交接` : "";
+  const reduceText = reduceCompleted ? "，Reduce 已完成" : "";
+  let message = "尚未创建多智能体 assignment，点击“创建多智能体编排”会先生成分支。";
+  if (totalAssignments > 0) {
+    if (activeOrPendingCount > 0) {
+      message = `${activeOrPendingCount} 个分支待执行，${successCount} 个已成功${failedCount ? `，${failedCount} 个失败` : ""}${handoffText}。`;
+    } else if (allSuccessful) {
+      message = `无待执行分支，${successCount} 个 assignment 已成功${handoffText}${reduceText || "，Reduce 可保持幂等"}。`;
+    } else if (failedCount > 0) {
+      message = `无待执行分支，${failedCount} 个 assignment 失败，${successCount} 个已成功${handoffText}。`;
+    } else {
+      message = `${totalAssignments} 个 assignment 当前没有待执行状态${handoffText}。`;
+    }
+  }
+  return {
+    totalAssignments,
+    activeOrPendingCount,
+    failedCount,
+    successCount,
+    allSuccessful,
+    reduceCompleted,
+    message,
+  };
+}
+
+export function orchestrationResultDescription(
+  message: string,
+  assignments: AgentAssignment[],
+  handoffs: AgentHandoff[],
+): string {
+  const statusCounts = countBy(assignments, (assignment) => assignment.status);
+  const statusText = Object.entries(statusCounts)
+    .map(([status, count]) => `${statusLabel(status)} ${count}`)
+    .join("，");
+  const prefix = message.trim() || "多智能体编排状态已更新。";
+  const evidence = [
+    `${assignments.length} 个 assignment`,
+    `${handoffs.length} 条交接`,
+    statusText,
+  ].filter(Boolean);
+  return `${prefix}${evidence.length ? ` 当前证据：${evidence.join("，")}。` : ""}`;
+}
+
+async function refreshWorkspaceQuery(
+  queryClient: QueryClient,
+  queryKey: readonly unknown[],
+) {
+  await queryClient.invalidateQueries({ queryKey, refetchType: "active" });
+  await queryClient.refetchQueries({ queryKey, type: "active" });
+}
+
+export function resolveWorkspaceReturnPath({
+  requestedReturnTo,
+  requestedConversationId,
+  runId,
+  agentId,
+}: {
+  requestedReturnTo: string | null;
+  requestedConversationId: string | null;
+  runId?: string | null;
+  agentId: string | null;
+}): string {
+  if (requestedReturnTo) {
+    const decoded = safeDecodeURIComponent(requestedReturnTo);
+    if (isSafeWorkspaceReturnPath(decoded)) return decoded;
+  }
+  const saved = readWorkspaceReturnTarget(runId);
+  if (
+    saved !== null &&
+    (!agentId || saved.agentId === agentId)
+  ) {
+    return workspaceReturnPath(saved);
+  }
+  return workspaceReturnPath({
+    agentId: agentId ?? "default",
+    conversationId: requestedConversationId,
+  });
+}
+
+export function workspaceReturnTargetFromPath(
+  requestedReturnTo: string | null,
+  requestedConversationId: string | null,
+) {
+  if (!requestedReturnTo) return null;
+  const decoded = safeDecodeURIComponent(requestedReturnTo);
+  if (!isSafeWorkspaceReturnPath(decoded)) return null;
+  try {
+    const url = new URL(decoded, "http://harness.local");
+    const agentId = decodeURIComponent(
+      url.pathname.slice("/agents/".length).replace(/\/workspace$/, ""),
+    );
+    if (!agentId) return null;
+    return {
+      agentId,
+      conversationId: url.searchParams.get("conversation_id") ?? requestedConversationId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function isSafeWorkspaceReturnPath(value: string): boolean {
+  if (!value.startsWith("/agents/")) return false;
+  if (value.startsWith("//")) return false;
+  try {
+    const url = new URL(value, "http://harness.local");
+    return (
+      url.origin === "http://harness.local" &&
+      /^\/agents\/[^/]+\/workspace$/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function formatTokenMetric(value: number | null): string {

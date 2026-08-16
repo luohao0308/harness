@@ -140,6 +140,64 @@ def test_event_store_creates_snapshot_every_100_events(db_session: Session) -> N
     assert snapshot.state_json["last_sequence"] == 100
 
 
+def test_replay_keeps_cancelled_status_after_cancelled_model_failure(
+    db_session: Session,
+) -> None:
+    task = Task(
+        title="Cancelled model replay",
+        goal="Keep cancellation terminal",
+        status="CANCELLED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=0,
+        enable_sandbox=False,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    store = EventStore(db_session)
+    store.append(task_id=task.id, event_type=EventType.TASK_CREATED, payload_json={})
+    store.append(task_id=task.id, event_type=EventType.TASK_CANCELLED, payload_json={})
+    store.append(
+        task_id=task.id,
+        event_type=EventType.MODEL_CALL_FAILED,
+        payload_json={"model_call_id": "cancelled-call", "cancelled": True},
+    )
+
+    replay = EventReplay(db_session).replay_state_json(task_id=task.id)
+
+    assert replay["status"] == "CANCELLED"
+    assert replay["failure_point"] is None
+
+
+def test_replay_projects_paused_status(db_session: Session) -> None:
+    task = Task(
+        title="Paused replay",
+        goal="Keep pause terminal",
+        status="PAUSED",
+        model_provider="openai-compatible",
+        model_name="default",
+        max_runtime_seconds=1800,
+        max_subagents=0,
+        enable_sandbox=False,
+        enable_network=False,
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    db_session.add(task)
+    db_session.flush()
+    store = EventStore(db_session)
+    store.append(task_id=task.id, event_type=EventType.TASK_CREATED, payload_json={})
+    store.append(task_id=task.id, event_type=EventType.TASK_PAUSED, payload_json={})
+
+    replay = EventReplay(db_session).replay_state_json(task_id=task.id)
+
+    assert replay["status"] == "PAUSED"
+
+
 def test_replay_tracks_multi_agent_assignments_handoffs_and_reduce(
     db_session: Session,
 ) -> None:

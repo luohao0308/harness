@@ -133,7 +133,7 @@ class ToolRegistry(BaseModel):
                 description="通过 MCP Adapter 写入任务 Artifact 记录。",
                 category="mcp",
                 source="mcp",
-                risk_level="high",
+                risk_level="low",
                 requires_sandbox=False,
                 network_policy="none",
                 timeout_seconds=30,
@@ -144,6 +144,13 @@ class ToolRegistry(BaseModel):
                     "properties": {
                         "name": {"type": "string"},
                         "content": {"type": "string"},
+                        "artifact_type": {
+                            "type": "string",
+                            "enum": ["text", "json", "code", "diff", "chart"],
+                        },
+                        "data": {
+                            "type": ["object", "array", "string", "number", "boolean", "null"],
+                        },
                         "idempotency_key": {"type": "string"},
                     },
                     "required": ["name", "content", "idempotency_key"],

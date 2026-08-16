@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: harness
           POSTGRES_PASSWORD: harness
@@ -41,12 +41,29 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build frontend renderer for harnessd integration
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/agent-console/package-lock.json
+
+      - name: Build frontend renderer
+        working-directory: apps/agent-console
+        run: |
+          npm ci
+          npm run build
+
+      - name: Generate ephemeral SAML test credentials
+        run: bash scripts/generate-test-saml-certs.sh services/api-server/certs
+
       - name: Install API dependencies
         if: ${{ hashFiles('services/api-server/pyproject.toml') != '' }}
         working-directory: services/api-server
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --frozen --extra dev --extra sidecar
 
       - name: Run Alembic migrations
         if: ${{ hashFiles('services/api-server/alembic.ini') != '' }}
@@ -54,7 +71,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://harness:harness@localhost:5432/harness
           REDIS_URL: redis://localhost:6379/0
-        run: alembic upgrade head
+        run: uv run --frozen alembic upgrade head
 
       - name: Run pytest
         if: ${{ hashFiles('services/api-server/pyproject.toml') != '' }}
@@ -62,4 +79,4 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://harness:harness@localhost:5432/harness
           REDIS_URL: redis://localhost:6379/0
-        run: pytest
+        run: uv run --frozen pytest

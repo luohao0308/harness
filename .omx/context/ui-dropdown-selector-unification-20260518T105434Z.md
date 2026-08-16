@@ -1,0 +1,27 @@
+# Context Snapshot: UI Dropdown Selector Unification
+
+- Task statement: continue polishing the visible dropdown/select controls in `apps/agent-console`, not just the first knowledge-scope selector.
+- Desired outcome: all similar user-facing dropdowns share the same cleaner Chinese-first visual language, while any required English term stays accompanied by a small Chinese explanation.
+- Known facts / evidence:
+  - A reusable `MenuSelect` component already exists at `apps/agent-console/src/components/ui/menu-select.tsx`.
+  - The knowledge source scope and document reingest selectors were already migrated to `MenuSelect`.
+  - Other visible selector-like controls still use their own custom listbox/dropdown rendering, especially:
+    - `apps/agent-console/src/features/agents/pages/AgentListPage.tsx`
+    - `apps/agent-console/src/features/agents/components/ModelPicker.tsx`
+    - `apps/agent-console/src/features/agents/components/ChatSurface.tsx`
+  - `apps/agent-console/src/features/agents/components/ComposerOptionsPopover.tsx` already routes through `ModelPicker`.
+- Constraints:
+  - Keep the UI Chinese-first.
+  - Preserve behavior and backend contracts.
+  - Keep diffs small and localized.
+  - Do not revert unrelated work in this dirty tree.
+- Unknowns / open questions:
+  - Whether the bottom model chooser in `ChatSurface` should be restyled in place or delegated to the shared selector component.
+  - Whether the agent switcher should keep its current icon/badge treatment or be simplified to match `MenuSelect`.
+- Likely code touchpoints:
+  - `apps/agent-console/src/components/ui/menu-select.tsx`
+  - `apps/agent-console/src/features/agents/pages/AgentListPage.tsx`
+  - `apps/agent-console/src/features/agents/components/ModelPicker.tsx`
+  - `apps/agent-console/src/features/agents/components/ChatSurface.tsx`
+  - `apps/agent-console/src/features/agents/__tests__/ChatSurface.shell.test.tsx`
+  - `apps/agent-console/src/features/agents/__tests__/KnowledgeManagementPanel.render.test.tsx`

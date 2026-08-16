@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { Clock3, MessageSquare, Network, Plus, Users } from "lucide-react";
@@ -8,6 +8,7 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Card } from "../../../components/ui/card";
 import { useI18n } from "../../../lib/i18n";
+import { isDesktopRuntime } from "../../../lib/desktop-bridge";
 import { statusLabel } from "../../../lib/labels";
 import { formatShortDate } from "../../../lib/utils";
 import { listTeams } from "../../tasks/api";
@@ -23,6 +24,11 @@ export function TeamListPage() {
   const teams = teamsQuery.data?.items ?? [];
 
   const activeTeams = teams.filter((team) => team.status !== "ARCHIVED");
+
+  useEffect(() => {
+    if (!isDesktopRuntime() || teamsQuery.isLoading || activeTeams.length === 0) return;
+    navigate(`/teams/${activeTeams[0].id}`, { replace: true });
+  }, [activeTeams, navigate, teamsQuery.isLoading]);
 
   return (
     <ConsoleShell title={text("团队", "Teams")}>
