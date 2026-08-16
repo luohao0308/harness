@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createBrowserRouter, createHashRouter, Navigate, useLocation } from "react-router-dom";
+import { createBrowserRouter, createHashRouter, Navigate, useLocation, useParams } from "react-router-dom";
 
 import { RouteErrorBoundary } from "../components/RouteErrorBoundary";
 import { RouteSkeleton } from "../components/ui/RouteSkeleton";
@@ -73,6 +73,8 @@ export const router = createConsoleRouter([
       { path: "runs/:runId/subagents", element: protectedElement(<RunDetailPage focus="subagents" />) },
       { path: "tasks", element: <Navigate to="/runs" replace /> },
       { path: "subagents", element: protectedElement(<SubagentsPage />) },
+      { path: "subagents/specialists", element: <LegacyPathRedirect to="/subagent-specialists" /> },
+      { path: "subagents/specialists/:specialistId", element: <LegacySpecialistDetailRedirect /> },
       { path: "subagents/:subagentId", element: protectedElement(<SubagentDetailPage />) },
       { path: "subagent-specialists", element: protectedElement(<SubagentSpecialistsPage />) },
       { path: "subagent-specialists/:specialistId", element: protectedElement(<SubagentSpecialistDetailPage />) },
@@ -98,6 +100,7 @@ export const router = createConsoleRouter([
       { path: "settings/users", element: protectedElement(<UserManagementPage />) },
       { path: "settings/api-keys", element: protectedElement(<ApiKeysPage />) },
       { path: "settings/audit", element: protectedElement(<AuditLogPage />) },
+      { path: "settings/data", element: <LegacyPathRedirect to="/settings/data-management" /> },
       { path: "settings/data-management", element: protectedElement(<DataManagementPage />) },
       { path: "settings/frontend-errors", element: protectedElement(<FrontendErrorsPage />) },
       { path: "terminal", element: protectedElement(<TerminalWorkspace />) },
@@ -111,6 +114,20 @@ function routeElement(element: ReactNode) {
 
 export function LegacyModelSetupRedirect() {
   return <Navigate to="/desktop?section=models" replace />;
+}
+
+export function LegacyPathRedirect({ to }: { to: string }) {
+  const location = useLocation();
+  return <Navigate to={`${to}${location.search}${location.hash}`} replace />;
+}
+
+export function LegacySpecialistDetailRedirect() {
+  const location = useLocation();
+  const { specialistId } = useParams();
+  const target = specialistId
+    ? `/subagent-specialists/${encodeURIComponent(specialistId)}`
+    : "/subagent-specialists";
+  return <Navigate to={`${target}${location.search}${location.hash}`} replace />;
 }
 
 function protectedElement(element: ReactNode) {

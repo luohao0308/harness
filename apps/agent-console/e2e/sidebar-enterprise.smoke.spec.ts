@@ -51,6 +51,7 @@ const dynamicAssertions: Record<string, RegExp> = {
   [`/runs/${enterpriseIds.runId}/events`]: /PLAN_CREATED|计划已创建|事件/,
   [`/runs/${enterpriseIds.runId}/subagents`]: /subagent-enterprise|code-reviewer|Team bridge output/,
   [`/subagents/${enterpriseIds.subagentId}`]: /Team release reviewer|Team bridge output|fanout-enterprise/,
+  [`/subagents/specialists/${enterpriseIds.specialistId}`]: /代码审查专家|code-reviewer|调用/,
   [`/subagent-specialists/${enterpriseIds.specialistId}`]: /代码审查专家|code-reviewer|调用/,
   [`/subagent-marketplace/${enterpriseIds.listingId}`]: /Enterprise Reviewer|verified|Harness/i,
 };

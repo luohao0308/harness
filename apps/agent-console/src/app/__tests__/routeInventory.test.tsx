@@ -15,12 +15,19 @@ const requiredDynamicSamples = [
   "/runs/run-enterprise/events",
   "/runs/run-enterprise/subagents",
   "/subagents/subagent-enterprise",
+  "/subagents/specialists/specialist-enterprise",
   "/subagent-specialists/specialist-enterprise",
   "/subagent-marketplace/listing-enterprise",
   "/observability/cost",
   "/observability/trace",
   "/observability/alerts",
   "/settings/frontend-errors",
+];
+
+const requiredCompatibilityPaths = [
+  "/settings/data",
+  "/subagents/specialists",
+  "/subagents/specialists/:specialistId",
 ];
 
 describe("enterprise route inventory", () => {
@@ -53,6 +60,14 @@ describe("enterprise route inventory", () => {
       expect(routerPaths).toContain(item.pattern);
       expect(item.sample).not.toMatch(/:[A-Za-z]/);
       expect(item.sample.startsWith("/")).toBe(true);
+    }
+  });
+
+  it("keeps audited legacy URLs routed instead of falling into error or ID routes", () => {
+    const routerPaths = routePathsFromRouter();
+
+    for (const path of requiredCompatibilityPaths) {
+      expect(routerPaths).toContain(path);
     }
   });
 });
