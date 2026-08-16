@@ -81,10 +81,16 @@ def test_bootstrap_builds_explicit_local_settings_without_model_key(tmp_path: Pa
         == bootstrap.vault_encryption_secret.get_secret_value()
     )
     assert settings.ai_provider_api_key == ""
-    assert settings.ai_provider_base_url == "https://chybenzun.top/v1"
-    assert str(settings.model_gateway_base_url) == "https://chybenzun.top/v1"
-    assert settings.ai_provider_model == "deepseek-v4-flash"
-    assert settings.ai_provider_models == ("deepseek-v4-flash",)
+    assert settings.ai_provider_base_url == "https://ai.112102.xyz/v1"
+    assert str(settings.model_gateway_base_url) == "https://ai.112102.xyz/v1"
+    assert settings.ai_provider_model == "minimax-m3"
+    assert settings.ai_provider_models == (
+        "deepseek-v4-flash",
+        "gpt-oss-120b",
+        "mimo-v2.5",
+        "minimax-m3",
+        "nvidia-gpt-oss",
+    )
     assert "session-signing-secret" not in repr(bootstrap)
     assert "vault-encryption-secret" not in repr(bootstrap)
     assert "session-signing-secret" not in repr(settings)
@@ -528,8 +534,8 @@ def test_local_model_state_returns_metadata_without_secret(local_settings) -> No
     assert setup.json() == {
         "state": "setup_required",
         "provider": "chybenzun-openai-compatible",
-        "model": "deepseek-v4-flash",
-        "base_url": "https://chybenzun.top/v1",
+        "model": "minimax-m3",
+        "base_url": "https://ai.112102.xyz/v1",
         "secret_storage": "persistent",
         "message": "A model provider API key is required",
     }

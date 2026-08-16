@@ -2,6 +2,8 @@
 
 ## 2026-08-16
 
+- Added [[session-2026-08-16-desktop-verified-model-catalog]] and refreshed `docs/development/ai/task-progress.yaml`. Desktop and platform model settings now default to `https://ai.112102.xyz/v1` / `minimax-m3`, retain a five-model verified allowlist with singleton fallback for custom or unknown IDs, and remove the previous unverified platform entries. Live discovery/calls, restart persistence, backend `62 + 60` tests, frontend model settings `13` tests, and diff checks passed; the API key remains only in Electron secure storage.
+
 - Added [[session-2026-08-16-large-plan-decomposition-gate]] and a `large-plan-decomposition` context route. Large plans now stop before implementation, present 2-6 ordered slices for user approval, run exactly one approved slice at a time, auto-continue after slice validation, and re-confirm only for material scope, ordering, interface, migration, or risk drift; docs validation locks the contract across AGENTS, execution protocol, plan sources, and context routing.
 - Merged PR #34 with merge commit `fbc29c5` after final head `982f4ae` passed 14/14 checks, preserving the curated commit graph. With explicit authorization, replaced `codex/desktop-team-ai-provider` from `6796bfe` to `982f4ae` through an exact `--force-with-lease`; the archive remains at `6796bfe`, `main` was not rewritten, and no branch was deleted.
 - Closed the initial PR #34 implementation gate on head `78f96a9`: all 14 checks passed after backend workflows were switched to the frozen `uv.lock` dependency graph, preventing FastAPI version drift while retaining compatibility coverage for the newer router representation. Merge remained a separate decision until it was explicitly authorized and completed later in the delivery sequence.

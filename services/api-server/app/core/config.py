@@ -62,15 +62,14 @@ class Settings(BaseSettings):
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     ai_provider_protocol: str = Field(default="chat_completions", alias="AI_PROVIDER_PROTOCOL")
     ai_provider_base_url: str = Field(
-        default="https://chybenzun.top/v1",
+        default="https://ai.112102.xyz/v1",
         alias="AI_PROVIDER_BASE_URL",
     )
-    ai_provider_model: str = Field(default="deepseek-v4-flash", alias="AI_PROVIDER_MODEL")
+    ai_provider_model: str = Field(default="minimax-m3", alias="AI_PROVIDER_MODEL")
     ai_provider_models: Annotated[tuple[str, ...], NoDecode] = Field(
         default=(
-            "deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "kimi-k2.7-code",
-            "kimi-k2.6", "doubao-seed-2-1-turbo", "doubao-seed-2-1-pro", "qwen3.7-max",
-            "qwen3.7-plus", "minimax-m3", "step-3.7-flash", "mimo-v2.5",
+            "deepseek-v4-flash", "gpt-oss-120b", "mimo-v2.5", "minimax-m3",
+            "nvidia-gpt-oss",
         ),
         alias="AI_PROVIDER_MODELS",
     )

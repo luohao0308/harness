@@ -12,9 +12,23 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 from app.core.config import Settings, install_runtime_settings
 
 MAX_BOOTSTRAP_BYTES = 64 * 1024
-DEFAULT_MODEL_BASE_URL = "https://chybenzun.top/v1"
-DEFAULT_MODEL_NAME = "deepseek-v4-flash"
+DEFAULT_MODEL_BASE_URL = "https://ai.112102.xyz/v1"
+DEFAULT_MODEL_NAME = "minimax-m3"
+DEFAULT_MODEL_IDS = (
+    "deepseek-v4-flash",
+    "gpt-oss-120b",
+    "mimo-v2.5",
+    "minimax-m3",
+    "nvidia-gpt-oss",
+)
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
+
+
+def model_allowlist_for(*, base_url: str, model: str) -> tuple[str, ...]:
+    """Keep the verified Desktop catalog while rejecting unknown manual IDs."""
+    if base_url == DEFAULT_MODEL_BASE_URL and model in DEFAULT_MODEL_IDS:
+        return DEFAULT_MODEL_IDS
+    return (model,)
 
 
 def validate_model_base_url(value: str) -> str:
@@ -96,7 +110,10 @@ class LocalRuntimeBootstrap(BaseModel):
             MODEL_GATEWAY_BASE_URL=self.model_base_url,
             MODEL_GATEWAY_API_KEY=model_key,
             AI_PROVIDER_MODEL=self.model_name,
-            AI_PROVIDER_MODELS=(self.model_name,),
+            AI_PROVIDER_MODELS=model_allowlist_for(
+                base_url=self.model_base_url,
+                model=self.model_name,
+            ),
             AUTH_PUBLIC_REGISTRATION_ENABLED=False,
             PERSISTENT_SECRET_STORAGE_AVAILABLE=self.persistent_secret_storage,
         )

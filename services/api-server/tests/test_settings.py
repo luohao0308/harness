@@ -29,7 +29,7 @@ def test_settings_read_allowed_for_engineer_and_write_requires_admin() -> None:
     assert admin.status_code == 200
     assert blocked_update.status_code == 403
     assert admin.json()["default_provider"] == "chybenzun-openai-compatible"
-    assert admin.json()["default_model"] == "deepseek-v4-flash"
+    assert admin.json()["default_model"] == "minimax-m3"
 
 
 def test_default_model_settings_include_platform_managed_models() -> None:
@@ -42,21 +42,21 @@ def test_default_model_settings_include_platform_managed_models() -> None:
     flash = next(
         provider for provider in payload["providers"] if provider["model"] == "deepseek-v4-flash"
     )
-    pro = next(
-        provider for provider in payload["providers"] if provider["model"] == "deepseek-v4-pro"
+    gpt_oss = next(
+        provider for provider in payload["providers"] if provider["model"] == "gpt-oss-120b"
     )
     assert flash["api_format"] == "openai"
     assert flash["model"] == "deepseek-v4-flash"
     assert flash["name"] == "chybenzun-openai-compatible"
-    assert flash["base_url"] == "https://chybenzun.top/v1"
+    assert flash["base_url"] == "https://ai.112102.xyz/v1"
     assert flash["api_key_env"] == "AI_PROVIDER_API_KEY"
     assert flash["managed_by_platform"] is True
     assert flash["temperature"] == 0.2
     assert flash["include_stream_usage"] is False
     assert flash["timeout_seconds"] == 90
     assert "mimo-v2.5" in flash["allowed_models"]
-    assert pro["model"] == "deepseek-v4-pro"
-    assert pro["api_key_env"] == "AI_PROVIDER_API_KEY"
+    assert gpt_oss["model"] == "gpt-oss-120b"
+    assert gpt_oss["api_key_env"] == "AI_PROVIDER_API_KEY"
 
 
 @pytest.mark.parametrize(
@@ -142,7 +142,7 @@ def test_model_settings_normalizes_legacy_defaults_to_platform_provider(
     assert response.status_code == 200
     payload = response.json()
     assert payload["default_provider"] == "chybenzun-openai-compatible"
-    assert payload["default_model"] == "deepseek-v4-flash"
+    assert payload["default_model"] == "minimax-m3"
     assert all(provider["name"] != "minimax" for provider in payload["providers"])
     assert all(provider["name"] != "deepseek" for provider in payload["providers"])
     flash = next(
@@ -224,7 +224,7 @@ def test_model_settings_drops_models_that_reuse_the_reserved_platform_name(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["default_model"] == "deepseek-v4-flash"
+    assert payload["default_model"] == "minimax-m3"
     assert all(provider["model"] != "unlisted-model" for provider in payload["providers"])
 
 

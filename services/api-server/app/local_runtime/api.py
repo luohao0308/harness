@@ -16,7 +16,11 @@ from app.bootstrap.local_owner import resolve_local_principal
 from app.core.config import get_settings, install_runtime_settings
 from app.db.models import User
 from app.db.session import get_db_session
-from app.local_runtime.bootstrap import validate_model_base_url, validate_model_id
+from app.local_runtime.bootstrap import (
+    model_allowlist_for,
+    validate_model_base_url,
+    validate_model_id,
+)
 from app.local_runtime.web_bootstrap import WEB_BOOTSTRAP_STORE
 from app.security.jwt_utils import issue_access_token
 
@@ -162,7 +166,10 @@ def apply_model_config(
                 "INVALID_MODEL_ID",
                 "The model ID is invalid",
             )
-        updates.update(ai_provider_model=model, ai_provider_models=(model,))
+        updates.update(
+            ai_provider_model=model,
+            ai_provider_models=model_allowlist_for(base_url=base_url, model=model),
+        )
     if payload.api_key is not None:
         updates.update(
             ai_provider_api_key=payload.api_key,

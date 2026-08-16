@@ -32,17 +32,17 @@ function requestPath(input: RequestInfo | URL) {
 function modelSettingsPayload(apiKeyConfigured = true) {
   return {
     default_provider: managedProvider,
-    default_model: "deepseek-v4-flash",
+    default_model: "minimax-m3",
     providers: [
       {
         name: managedProvider,
-        label: "DeepSeek V4 Flash",
+        label: "MiniMax M3",
         provider_id: managedProvider,
         catalog_provider: managedProvider,
         secret_provider: managedProvider,
-        model: "deepseek-v4-flash",
+        model: "minimax-m3",
         api_format: "openai",
-        base_url: "https://chybenzun.top/v1",
+        base_url: "https://ai.112102.xyz/v1",
         api_key_env: "AI_PROVIDER_API_KEY",
         api_key_configured: apiKeyConfigured,
         api_key_source: apiKeyConfigured ? "env_platform" : "missing",
@@ -136,15 +136,13 @@ describe("ModelSettingsPage", () => {
     const [platform, ollama, custom] = modelCatalog;
     expect(platform).toMatchObject({
       providerId: managedProvider,
-      baseUrl: "https://chybenzun.top/v1",
+      baseUrl: "https://ai.112102.xyz/v1",
       apiFormat: "openai",
       apiKeyEnv: "AI_PROVIDER_API_KEY",
       managedByPlatform: true,
     });
     expect(platform.models.map((model) => model.model)).toEqual([
-      "deepseek-v4-flash", "deepseek-v4-pro", "glm-5.2", "kimi-k2.7-code", "kimi-k2.6",
-      "doubao-seed-2-1-turbo", "doubao-seed-2-1-pro", "qwen3.7-max", "qwen3.7-plus",
-      "minimax-m3", "step-3.7-flash", "mimo-v2.5",
+      "deepseek-v4-flash", "gpt-oss-120b", "mimo-v2.5", "minimax-m3", "nvidia-gpt-oss",
     ]);
     expect(ollama.providerId).toBe("ollama");
     expect(custom.providerId).toBe("custom");
@@ -154,7 +152,7 @@ describe("ModelSettingsPage", () => {
     renderPage(fetchForSettings(modelSettingsPayload(false)));
 
     expect(await screen.findByRole("button", { name: /平台托管模型.*1 个模型/ })).toBeInTheDocument();
-    const unavailable = await screen.findByRole("button", { name: /deepseek-v4-flash 服务端未配置/ });
+    const unavailable = await screen.findByRole("button", { name: /minimax-m3 服务端未配置/ });
     expect(unavailable).toBeDisabled();
     expect(screen.getAllByText("服务端托管").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(/接口访问密钥/)).not.toBeInTheDocument();
@@ -164,14 +162,14 @@ describe("ModelSettingsPage", () => {
     const settings = modelSettingsPayload(true);
     settings.providers.push({
       ...settings.providers[0],
-      label: "DeepSeek V4 Pro",
-      model: "deepseek-v4-pro",
+      label: "GPT OSS 120B",
+      model: "gpt-oss-120b",
     });
     const fetchMock = fetchForSettings(settings);
     const user = userEvent.setup();
     renderPage(fetchMock);
 
-    await user.click(await screen.findByRole("button", { name: /deepseek-v4-pro 切换/ }));
+    await user.click(await screen.findByRole("button", { name: /gpt-oss-120b 切换/ }));
     await waitFor(() => {
       const saveCall = fetchMock.mock.calls.find(
         ([input, init]) => requestPath(input) === "/api/settings/models" && init?.method === "PUT",
@@ -179,11 +177,11 @@ describe("ModelSettingsPage", () => {
       expect(saveCall).toBeDefined();
       expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({
         default_provider: managedProvider,
-        default_model: "deepseek-v4-pro",
+        default_model: "gpt-oss-120b",
         providers: expect.arrayContaining([
           expect.objectContaining({
             name: managedProvider,
-            model: "deepseek-v4-pro",
+            model: "gpt-oss-120b",
             managed_by_platform: true,
           }),
         ]),
@@ -196,9 +194,9 @@ describe("ModelSettingsPage", () => {
     renderPage(fetchForSettings(modelSettingsPayload(true)));
 
     expect(await screen.findByRole("button", { name: /平台托管模型.*1 个模型/ })).toBeInTheDocument();
-    expect(screen.getAllByText("deepseek-v4-flash").length).toBeGreaterThan(0);
-    expect(screen.queryByText("deepseek-v4-pro")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /deepseek-v4-pro 切换/ })).not.toBeInTheDocument();
+    expect(screen.getAllByText("minimax-m3").length).toBeGreaterThan(0);
+    expect(screen.queryByText("gpt-oss-120b")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /gpt-oss-120b 切换/ })).not.toBeInTheDocument();
   });
 
   it("does not advertise platform models before the backend allowlist loads", () => {
@@ -213,7 +211,7 @@ describe("ModelSettingsPage", () => {
 
     expect(screen.getByRole("button", { name: /平台托管模型.*0 个模型/ })).toBeInTheDocument();
     expect(screen.queryByText("deepseek-v4-flash")).not.toBeInTheDocument();
-    expect(screen.queryByText("deepseek-v4-pro")).not.toBeInTheDocument();
+    expect(screen.queryByText("gpt-oss-120b")).not.toBeInTheDocument();
   });
 
   it("keeps the platform catalog empty when the backend allowlist fails", async () => {
@@ -266,8 +264,8 @@ describe("ModelSettingsPage", () => {
     const settings = modelSettingsPayload(true);
     settings.providers.push({
       ...settings.providers[0],
-      label: "DeepSeek V4 Pro",
-      model: "deepseek-v4-pro",
+      label: "GPT OSS 120B",
+      model: "gpt-oss-120b",
     });
     renderPage(fetchForSettings(settings));
 
@@ -278,8 +276,8 @@ describe("ModelSettingsPage", () => {
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).queryByText("env_platform")).not.toBeInTheDocument();
     expect(within(row as HTMLElement).getByText("服务端托管")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getAllByText("deepseek-v4-flash")).toHaveLength(2);
-    expect(within(row as HTMLElement).getAllByText("deepseek-v4-pro")).toHaveLength(2);
+    expect(within(row as HTMLElement).getAllByText("minimax-m3")).toHaveLength(2);
+    expect(within(row as HTMLElement).getAllByText("gpt-oss-120b")).toHaveLength(2);
   });
 
   it("lets the Ollama local provider switch without requiring an API key", async () => {

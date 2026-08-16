@@ -1,6 +1,6 @@
 current_stage: 07-private-deployable-harness-chain
 current_status: completed
-last_updated_at: 2026-08-16T01:47:50+08:00
+last_updated_at: 2026-08-16T21:16:00+08:00
 last_updated_by: codex-agent
 execution_mode: spec_first_stage_gated_vertical_slice
 machine_progress_source: docs/development/ai/task-progress.yaml
@@ -4999,6 +4999,25 @@ post_stage_hardening:
       - "The user can approve, merge, split further, reorder, add, or remove slices; after approval, execution auto-continues without per-slice confirmation."
       - "Exactly one slice may be in_progress, and material scope/order/interface/migration/risk changes require a revised decomposition and another confirmation."
       - "The lightweight OPC default remains one branch and one PR for the whole plan; multiple PRs are reserved for independently shippable or risk-isolated slices."
+
+  - id: desktop-verified-model-catalog-2026-08-16
+    date: 2026-08-16
+    status: completed
+    demo: "Desktop and platform model settings now use the verified ai.112102.xyz provider catalog, default to minimax-m3, and expose only the five models confirmed by live calls for the configured key."
+    verification_result: "backend_local_runtime_settings_frontend_catalog_and_live_desktop_model_smoke_passed"
+    verification_commands:
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_settings.py tests/test_local_runtime_bootstrap.py -q -> 62 passed"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_model_gateway.py tests/test_team_model_runtime.py -q -> 60 passed"
+      - "cd apps/agent-console && npx vitest run src/features/settings/pages/__tests__/ModelSettingsPage.test.tsx --reporter=dot -> 13 passed"
+      - "live Desktop discovery -> 5 models returned; each model produced HTTP 200, Run COMPLETED, and a successful ModelCall"
+      - "live Desktop restart smoke -> minimax-m3 restored with persistent secure storage and base URL https://ai.112102.xyz/v1"
+      - "live Desktop random-message smoke -> minimax-m3 returned a non-empty Chinese response; Run COMPLETED and ModelCall SUCCESS"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "Verified model IDs are deepseek-v4-flash, gpt-oss-120b, mimo-v2.5, minimax-m3, and nvidia-gpt-oss."
+      - "The local runtime keeps the verified five-model allowlist for the provider URL; custom URLs and unknown manual IDs remain singleton allowlists, so the change does not widen arbitrary providers."
+      - "The frontend catalog removes the previous seven unverified platform entries and continues to intersect with the backend allowlist before rendering."
+      - "The API key remains outside the repository and is read only from the existing Electron secure-storage profile."
 
 stage_completion_rule:
   - run_backend_tests
