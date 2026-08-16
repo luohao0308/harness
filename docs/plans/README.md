@@ -1,6 +1,6 @@
 # 实施计划导航
 
-_状态：当前计划索引 | 更新：2026-08-10_
+_状态：当前计划索引 | 更新：2026-08-17_
 
 `docs/plans/` 保存多步骤、高风险或跨模块变更的当前实施计划。它不是任务状态板；任务状态仍以 `docs/TASKS.md` 为准。
 
@@ -31,6 +31,7 @@ _状态：当前计划索引 | 更新：2026-08-10_
 
 | 计划 | 状态 | 关联任务/设计 | 当前阶段 | 更新时间 |
 |---|---|---|---|---|
+| [desktop-reliability-closeout-2026-08-16.md](desktop-reliability-closeout-2026-08-16.md) | active | `APP-001`、`APP-002`、`DESK-001`、`REL-001` | S2 Desktop 类型检查 | 2026-08-16 |
 | [desktop-local-session-renewal-2026-08-11.md](desktop-local-session-renewal-2026-08-11.md) | active | Desktop 本地会话续期 | 实施与验证 | 2026-08-11 |
 | [documentation-reorganization-2026-08-10.md](documentation-reorganization-2026-08-10.md) | completed | `DW-002`、[Task Board](../TASKS.md) | 已完成并验证 | 2026-08-10 |
 | [roadmap.md](roadmap.md) | active | 生产就绪路线 | 持续维护 | 2026-08-10 |
