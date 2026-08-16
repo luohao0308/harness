@@ -27,7 +27,7 @@ import {
   loadVerifiedRuntimeInAllWindows,
   registerDesktopWindowHandlers,
 } from './services/window-manager'
-import { LocalRuntimeManager, shouldStartManagedLocalRuntime } from './services/local-runtime'
+import { LocalRuntimeManager, shouldStartManagedLocalRuntime, type LocalRuntimeStartupDiagnostic } from './services/local-runtime'
 import {
   registerLocalRuntimeSecretHandlers,
   setTrustedRuntimeSecretOrigin,
@@ -95,8 +95,14 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
         setTrustedRuntimeSecretOrigin(endpoint.origin)
         if (!mainWindow || mainWindow.isDestroyed()) return
         await localRuntimeManager?.installDesktopSession(mainWindow.webContents.session)
+        startupTracker.markDiagnostic('desktop_session_installed')
+        startupTracker.markDiagnostic('renderer_load_started')
         await loadVerifiedRuntimeInAllWindows()
+        startupTracker.markDiagnostic('renderer_load_completed')
         runtimeAttachedToWindow = true
+      },
+      onStartupDiagnostic: (milestone: LocalRuntimeStartupDiagnostic) => {
+        startupTracker.markDiagnostic(milestone)
       },
       onUnavailable: (error) => {
         console.error(`Harness local runtime unavailable: ${error.message}`)
@@ -146,7 +152,9 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
   })
 
   startupTracker.mark('services_ready')
+  if (!managedLocalRuntime) startupTracker.markDiagnostic('renderer_load_started')
   await createMainWindow({ deferInitialLoad: managedLocalRuntime })
+  if (!managedLocalRuntime) startupTracker.markDiagnostic('renderer_load_completed')
   registerLocalRuntimeSecretHandlers({
     getModelStatus: () => localRuntimeManager
       ? localRuntimeManager.getModelStatus()
@@ -177,7 +185,10 @@ if (ownsSingleInstance) app.whenReady().then(async () => {
       await loadRecoveryRendererInAllWindows()
     } else if (!runtimeAttachedToWindow && localRuntimeManager && mainWindow && !mainWindow.isDestroyed()) {
       await localRuntimeManager.installDesktopSession(mainWindow.webContents.session)
+      startupTracker.markDiagnostic('desktop_session_installed')
+      startupTracker.markDiagnostic('renderer_load_started')
       await loadVerifiedRuntimeInAllWindows()
+      startupTracker.markDiagnostic('renderer_load_completed')
     }
   }
   startupTracker.mark('renderer_loaded')

@@ -5029,6 +5029,32 @@ post_stage_hardening:
       - "The local unsigned macOS 14.4.1 x64 preflight produced two reproducible failing five-sample aggregates despite one passing 4095 ms sample, so the gate is detecting startup variance rather than accepting a cherry-picked launch."
       - "REL-001 remains open for startup-variance diagnosis and real five-sample P95 values from a future signed/tagged macOS/Windows/Linux GitHub Release runner; no local result is presented as that external evidence."
 
+  - id: desktop-startup-p95-optimization-2026-08-17
+    date: 2026-08-17
+    status: completed_with_cold_run_residual_and_external_runner_evidence_pending
+    demo: "Desktop startup now exposes optional critical-path diagnostics, installs a verified pre-migrated SQLite template only for pristine profiles, and avoids preloading the non-initial subagents feature chunk in Desktop builds."
+    verification_result: "startup_instrumentation_sqlite_template_desktop_preload_and_packaged_rerun_verified_first_cold_run_still_over_budget"
+    verification_commands:
+      - "cd apps/desktop-app && npx vitest run src/services/__tests__/startup-performance.test.ts src/services/__tests__/local-runtime.test.ts src/services/__tests__/local-runtime-native.integration.test.ts --reporter=dot -> passed; native integration executed"
+      - "cd apps/desktop-app && npm run test:startup-budget -> passed"
+      - "cd apps/agent-console && npm run build with HARNESS_DESKTOP_BUILD=1 -> passed; feature-subagents chunk retained but absent from index.html modulepreload"
+      - "cd apps/agent-console && npm run build without HARNESS_DESKTOP_BUILD=1 -> passed; browser index.html retains feature-subagents modulepreload"
+      - "cd services/api-server && .venv/bin/python -m pytest tests/test_build_harnessd.py tests/test_harnessd.py tests/test_sqlite_runtime_storage.py -q -> 35 passed"
+      - "cd services/api-server && .venv/bin/python -m ruff check app/cli/harnessd.py app/db/sqlite_candidate_migration.py scripts/build-harnessd.py tests/test_build_harnessd.py tests/test_sqlite_runtime_storage.py -> passed"
+      - "cd apps/desktop-app && npm run package -- --config.directories.output=release-reliability-closeout-optimized -> unsigned macOS x64 directory package built"
+      - "optimized package first five-sample gate -> P95 total 6297 ms and renderer phase 4358 ms; failed against 6000/3500 ms budgets"
+      - "optimized package second five-sample gate -> P95 total 4286 ms and renderer phase 3145 ms; passed"
+      - "optimized package final rebuild five-sample gate -> P95 total 3868 ms and renderer phase 2960 ms; passed"
+      - "optimized runtime manifest -> pre-migrated SQLite template revision 20260807_0050 included in hashed files"
+      - "python3 scripts/validate-docs.py -> passed"
+      - "python3 scripts/check-markdown-links.py -> passed"
+      - "git diff --check -> passed"
+    acceptance_notes:
+      - "Startup diagnostics are optional and do not alter schema v1 required fields, budget values, P50/P95 aggregation, or passed/violation semantics."
+      - "The SQLite template is empty of users, organizations, tasks, and stored secrets; existing databases never take the template path."
+      - "The first cold-cache local sample remains a real residual; the second passing aggregate is recorded as repeatability evidence, not as proof that formal Release runners will pass."
+      - "REL-001 remains open until signed/tagged macOS/Windows/Linux Release runners produce their own five-sample evidence."
+
 stage_completion_rule:
   - run_backend_tests
   - run_frontend_build

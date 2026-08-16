@@ -7,12 +7,29 @@ const featureChunkByPath: Array<[string, string]> = [
   ["feature-subagents", "/src/features/subagents/"],
   ["feature-tools", "/src/features/tools/"],
 ];
+const desktopInitialPreloadExclusions = ["feature-subagents"] as const;
+
+function resolveDesktopModulePreloadDependencies(_filename: string, dependencies: string[]) {
+  return dependencies.filter(
+    (dependency) =>
+      !desktopInitialPreloadExclusions.some((chunkName) =>
+        dependency.includes(`/${chunkName}-`),
+      ),
+  );
+}
 
 export default defineConfig({
   base: isDesktopBuild ? "./" : "/",
   plugins: [react()],
   build: {
     chunkSizeWarningLimit: 600,
+    ...(isDesktopBuild
+      ? {
+          modulePreload: {
+            resolveDependencies: resolveDesktopModulePreloadDependencies,
+          },
+        }
+      : {}),
     rollupOptions: {
       output: {
         assetFileNames: "assets/[name]-[hash][extname]",

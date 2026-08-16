@@ -16,7 +16,7 @@ const budgets = {
   total_ms: 6_000,
 }
 
-function sample(totalMs) {
+function sample(totalMs, diagnostics = undefined) {
   const timings = {
     process_to_app_ready_ms: 500,
     app_ready_to_services_ready_ms: 300,
@@ -36,6 +36,7 @@ function sample(totalMs) {
     budgets_ms: budgets,
     passed: violations.length === 0,
     violations,
+    ...(diagnostics ? { diagnostics_ms: diagnostics } : {}),
   }
 }
 
@@ -65,6 +66,27 @@ test('aggregates multiple samples and fails an exceeded P95 budget', () => {
       budget_ms: 6_000,
     },
   ])
+})
+
+test('retains per-sample diagnostics without including them in P95 budget calculations', () => {
+  const firstDiagnostics = {
+    sidecar_spawned_at_ms: 40,
+    sidecar_ready_at_ms: 420,
+    sidecar_startup_ms: 380,
+  }
+  const report = aggregateStartupSamples({
+    executablePath: '/workspace/release/mac/Harness Desktop',
+    appRoot: '/workspace',
+    samples: [sample(2_000, firstDiagnostics), sample(2_500, { renderer_load_ms: 2_200 })],
+    generatedAt: new Date('2026-07-31T00:00:00.000Z'),
+    expectedPlatform: 'darwin',
+    expectedArch: 'arm64',
+  })
+
+  assert.deepEqual(report.samples[0].diagnostics_ms, firstDiagnostics)
+  assert.deepEqual(report.samples[1].diagnostics_ms, { renderer_load_ms: 2_200 })
+  assert.equal(report.passed, true)
+  assert.equal(report.p95_timings_ms.total_ms, 2_500)
 })
 
 test('selects the host architecture before fallback package directories', () => {

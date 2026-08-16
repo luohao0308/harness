@@ -24,7 +24,10 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import Settings, get_settings, install_runtime_settings
-from app.db.sqlite_candidate_migration import migrate_sqlite_candidate
+from app.db.sqlite_candidate_migration import (
+    install_fresh_sqlite_template,
+    migrate_sqlite_candidate,
+)
 from app.db.sqlite_runtime_directory import SQLiteRuntimePaths
 from app.db.sqlite_runtime_lock import SQLiteRuntimeLock
 from app.local_runtime.bootstrap import LocalRuntimeBootstrap, read_bootstrap_from_fd
@@ -233,6 +236,34 @@ def run_migrations(paths: SQLiteRuntimePaths, runtime_lock: SQLiteRuntimeLock) -
     try:
         os.chdir(resource_root)
         with redirect_stderr(io.StringIO()):
+            template_path = resource_root / "runtime-template" / "harness.sqlite3"
+            template_attempted = (
+                template_path.is_file()
+                and not paths.manifest_path.exists()
+                and not paths.default_database_path.exists()
+            )
+            template = install_fresh_sqlite_template(
+                paths,
+                template_path=template_path,
+                alembic_ini=resource_root / "alembic.ini",
+                runtime_lock=runtime_lock,
+            )
+            if template is not None:
+                logging.getLogger(__name__).info(
+                    "installed pre-migrated SQLite runtime template",
+                    extra={
+                        "service": "harnessd",
+                        "event_type": "runtime.sqlite_template.installed",
+                    },
+                )
+            elif template_attempted:
+                logging.getLogger(__name__).warning(
+                    "SQLite runtime template unavailable; using canonical migration path",
+                    extra={
+                        "service": "harnessd",
+                        "event_type": "runtime.sqlite_template.fallback",
+                    },
+                )
             return migrate_sqlite_candidate(
                 paths,
                 alembic_ini=resource_root / "alembic.ini",

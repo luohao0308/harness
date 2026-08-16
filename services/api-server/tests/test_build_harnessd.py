@@ -31,6 +31,18 @@ def test_build_uses_audited_local_allowlist_and_server_exclusions(tmp_path: Path
         if sys.platform != "win32"
         else f"--add-data={build.MODEL_PRICING_SOURCES};app/settings" in options
     )
+    assert (
+        f"--add-data={build.SQLITE_TEMPLATE_BUILD_PATH}:runtime-template" in options
+        if sys.platform != "win32"
+        else f"--add-data={build.SQLITE_TEMPLATE_BUILD_PATH};runtime-template" in options
+    )
+    if build.SOURCE_METADATA.is_dir():
+        assert any(
+            option.startswith(f"--add-data={build.SOURCE_METADATA}")
+            for option in options
+        )
+    else:
+        assert "--copy-metadata=agent-harness-api-server" in options
     hidden_imports = {
         option.removeprefix("--hidden-import=")
         for option in options

@@ -15,7 +15,7 @@ _last-updated: 2026-08-17_
 
 | ID | 任务 | 范围/仓库 | 上下文 | 阻塞 |
 |---|---|---|---|---|
-| REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [可靠性交付记录](../omx_wiki/session-2026-08-17-desktop-reliability-closeout.md) | 2026-08-17 本地 unsigned macOS x64 两轮五样本 P95 均超限；需先定位波动并由正式三平台 runner 复核 |
+| REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [启动 P95 优化记录](../omx_wiki/session-2026-08-17-desktop-startup-p95-optimization.md) | 优化包最终本地门禁通过；正式三平台 runner 复核仍待完成，历史冷缓存超限样本保留为风险 |
 
 ## 待办 (Todo)
 
@@ -44,7 +44,7 @@ _last-updated: 2026-08-17_
 
 | 项目 | 风险 | 说明 |
 |---|---|---|
-| REL-001 | 高 | 本地 unsigned macOS x64 两轮五样本总启动 P95 为 `7314ms`、`6480ms`（预算 `6000ms`），服务就绪到渲染完成 P95 为 `4999ms`、`4828ms`（预算 `3500ms`）；需定位连续启动波动，并由正式 macOS/Windows/Linux runner 生成最终证据。 |
+| REL-001 | 高 | 优化包首轮冷缓存五样本 P95 为总计 `6297ms`、renderer 阶段 `4358ms`，仍超 `6000/3500ms`；同一包第二轮 P95 为 `4286/3145ms` 并通过。正式 macOS/Windows/Linux runner 仍需生成最终证据。 |
 
 ---
 

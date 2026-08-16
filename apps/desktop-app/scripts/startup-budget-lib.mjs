@@ -106,6 +106,7 @@ export function validatePackagedStartupSample(sample, { expectedPlatform, expect
   if (!sample.timings_ms || !sample.budgets_ms) {
     throw new Error('Startup report must include timings_ms and budgets_ms')
   }
+  if (sample.diagnostics_ms !== undefined) validateStartupDiagnostics(sample.diagnostics_ms)
   for (const phase of STARTUP_TIMING_PHASES) {
     if (!Number.isSafeInteger(sample.timings_ms[phase]) || sample.timings_ms[phase] < 0) {
       throw new Error(`Startup timing ${phase} must be a non-negative safe integer`)
@@ -138,6 +139,17 @@ export function validatePackagedStartupSample(sample, { expectedPlatform, expect
     }))
   if (JSON.stringify(sample.violations) !== JSON.stringify(expectedViolations)) {
     throw new Error('Startup report violations do not match its timings and budgets')
+  }
+}
+
+function validateStartupDiagnostics(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== 'object' || Array.isArray(diagnostics)) {
+    throw new Error('Startup diagnostics must be an object')
+  }
+  for (const [name, value] of Object.entries(diagnostics)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`Startup diagnostic ${name} must be a non-negative safe integer`)
+    }
   }
 }
 

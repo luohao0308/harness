@@ -38,6 +38,7 @@ _状态：当前计划索引 | 更新：2026-08-17_
 | [roadmap-acceptance.md](roadmap-acceptance.md) | reference | 阶段交付与验收 | 历史/参考 | 2026-08-10 |
 | [workspace-pro-gap-register.md](workspace-pro-gap-register.md) | verified register | Workspace Pro | 已关闭项核验 | 2026-08-10 |
 | [desktop-team-overview-focus-2026-08-13.md](desktop-team-overview-focus-2026-08-13.md) | completed | Desktop Team 概览 / 专注融合 | 阶段 1-3 已实现 | 2026-08-13 |
+| [desktop-startup-p95-optimization-2026-08-17.md](desktop-startup-p95-optimization-2026-08-17.md) | completed_with_cold-run-residual | `REL-001` | 模板、启动诊断、桌面首屏预加载已交付；正式 runner 复核待完成 | 2026-08-17 |
 
 ## 维护规则
 

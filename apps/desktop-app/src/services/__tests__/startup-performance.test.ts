@@ -89,6 +89,60 @@ describe('Desktop startup performance', () => {
     ])
   })
 
+  it('keeps optional startup diagnostics separate from budget calculations', () => {
+    let now = 0
+    const tracker = new DesktopStartupTracker({ now: () => now, startedAtMs: 0 })
+
+    now = 100
+    tracker.mark('app_ready')
+    now = 200
+    tracker.mark('services_ready')
+    now = 240
+    tracker.markDiagnostic('sidecar_spawned')
+    now = 500
+    tracker.markDiagnostic('sidecar_ready')
+    now = 650
+    tracker.markDiagnostic('desktop_session_installed')
+    now = 700
+    tracker.markDiagnostic('renderer_load_started')
+    now = 1_200
+    tracker.markDiagnostic('renderer_load_completed')
+    now = 1_300
+    tracker.mark('renderer_loaded')
+
+    expect(tracker.report({ appVersion: '0.1.0', packaged: true })).toMatchObject({
+      passed: true,
+      diagnostics_ms: {
+        sidecar_spawned_at_ms: 240,
+        sidecar_ready_at_ms: 500,
+        desktop_session_installed_at_ms: 650,
+        renderer_load_started_at_ms: 700,
+        renderer_load_completed_at_ms: 1_200,
+        sidecar_startup_ms: 260,
+        desktop_session_bootstrap_ms: 150,
+        renderer_load_ms: 500,
+      },
+    })
+  })
+
+  it('does not let a repeated diagnostic milestone change its first timestamp', () => {
+    let now = 0
+    const tracker = new DesktopStartupTracker({ now: () => now, startedAtMs: 0 })
+
+    now = 100
+    tracker.markDiagnostic('sidecar_spawned')
+    now = 900
+    tracker.markDiagnostic('sidecar_spawned')
+    now = 1_000
+    tracker.mark('app_ready')
+    tracker.mark('services_ready')
+    tracker.mark('renderer_loaded')
+
+    expect(tracker.report({ appVersion: '0.1.0', packaged: true }).diagnostics_ms).toMatchObject({
+      sidecar_spawned_at_ms: 100,
+    })
+  })
+
   it('loads positive integer budget overrides and ignores malformed values', () => {
     const budgets = readDesktopStartupBudgets({
       HARNESS_DESKTOP_STARTUP_APP_READY_BUDGET_MS: '900',

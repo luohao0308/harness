@@ -1,10 +1,12 @@
 # Wiki Index
 
-> 63 pages | Last updated: 2026-08-17T00:43:43+08:00
+> 64 pages | Last updated: 2026-08-17T02:10:00+08:00
 
 ## session-log
 
 - [Desktop 可靠性交付收口](session-2026-08-17-desktop-reliability-closeout.md) — 关闭旧 Console 路由缺陷，拆分 Desktop 严格 type-check 边界，并在 Release 前独立校验三平台五样本启动证据；真实 runner P95 仍保留为 REL-001 外部证据项。
+
+- [Desktop 启动 P95 优化](session-2026-08-17-desktop-startup-p95-optimization.md) — 增加启动阶段诊断、packaged SQLite 预迁移模板和桌面首屏预加载收敛；同一优化包第二轮门禁通过，首轮冷缓存波动仍保留为 REL-001 风险。
 
 - [大型计划自动拆分与用户确认门](session-2026-08-16-large-plan-decomposition-gate.md) — 大型计划在实现前自动拆成 2–6 个可验证切片并等待用户确认，确认后单切片连续执行，范围或风险实质变化时重新确认。
 

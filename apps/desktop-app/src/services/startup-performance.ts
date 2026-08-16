@@ -4,6 +4,24 @@ export const STARTUP_BUDGET_REPORT_PREFIX = 'HARNESS_DESKTOP_STARTUP_REPORT '
 
 export type DesktopStartupMilestone = 'app_ready' | 'services_ready' | 'renderer_loaded'
 
+export type DesktopStartupDiagnosticMilestone =
+  | 'sidecar_spawned'
+  | 'sidecar_ready'
+  | 'desktop_session_installed'
+  | 'renderer_load_started'
+  | 'renderer_load_completed'
+
+export type DesktopStartupDiagnostics = {
+  sidecar_spawned_at_ms?: number
+  sidecar_ready_at_ms?: number
+  desktop_session_installed_at_ms?: number
+  renderer_load_started_at_ms?: number
+  renderer_load_completed_at_ms?: number
+  sidecar_startup_ms?: number
+  desktop_session_bootstrap_ms?: number
+  renderer_load_ms?: number
+}
+
 export type DesktopStartupTimings = {
   process_to_app_ready_ms: number
   app_ready_to_services_ready_ms: number
@@ -29,6 +47,7 @@ export type DesktopStartupReport = {
   budgets_ms: DesktopStartupBudgets
   passed: boolean
   violations: DesktopStartupBudgetViolation[]
+  diagnostics_ms?: DesktopStartupDiagnostics
 }
 
 export const DEFAULT_DESKTOP_STARTUP_BUDGETS: DesktopStartupBudgets = Object.freeze({
@@ -56,6 +75,7 @@ export class DesktopStartupTracker {
   private readonly startedAtMs: number
   private readonly budgets: DesktopStartupBudgets
   private readonly milestones: Partial<Record<DesktopStartupMilestone, number>> = {}
+  private readonly diagnosticMilestones: Partial<Record<DesktopStartupDiagnosticMilestone, number>> = {}
 
   constructor(options: StartupTrackerOptions = {}) {
     this.now = options.now ?? (() => performance.now())
@@ -72,6 +92,11 @@ export class DesktopStartupTracker {
       throw new Error(`desktop startup milestone ${milestone} was already recorded`)
     }
     this.milestones[milestone] = this.now()
+  }
+
+  markDiagnostic(milestone: DesktopStartupDiagnosticMilestone): void {
+    if (this.diagnosticMilestones[milestone] !== undefined) return
+    this.diagnosticMilestones[milestone] = this.now()
   }
 
   report(input: { appVersion: string; packaged: boolean }): DesktopStartupReport {
@@ -92,6 +117,7 @@ export class DesktopStartupTracker {
         budget_ms: this.budgets[phase],
       }))
 
+    const diagnostics = buildDiagnostics(this.diagnosticMilestones)
     return {
       schema_version: 1,
       app_version: input.appVersion,
@@ -102,6 +128,7 @@ export class DesktopStartupTracker {
       budgets_ms: { ...this.budgets },
       passed: violations.length === 0,
       violations,
+      ...(diagnostics ? { diagnostics_ms: diagnostics } : {}),
     }
   }
 
@@ -112,6 +139,30 @@ export class DesktopStartupTracker {
     }
     return value
   }
+}
+
+function buildDiagnostics(
+  milestones: Partial<Record<DesktopStartupDiagnosticMilestone, number>>,
+): DesktopStartupDiagnostics | undefined {
+  const values = Object.fromEntries(Object.entries(milestones).map(([milestone, timestamp]) => [
+    `${milestone}_at_ms`, Math.max(0, Math.round(timestamp as number)),
+  ])) as DesktopStartupDiagnostics
+  const duration = (start: DesktopStartupDiagnosticMilestone, end: DesktopStartupDiagnosticMilestone) => {
+    const startedAt = milestones[start]
+    const finishedAt = milestones[end]
+    return startedAt === undefined || finishedAt === undefined
+      ? undefined
+      : Math.max(0, Math.round(finishedAt - startedAt))
+  }
+  const durations: DesktopStartupDiagnostics = {
+    sidecar_startup_ms: duration('sidecar_spawned', 'sidecar_ready'),
+    desktop_session_bootstrap_ms: duration('sidecar_ready', 'desktop_session_installed'),
+    renderer_load_ms: duration('renderer_load_started', 'renderer_load_completed'),
+  }
+  const diagnostics = { ...values, ...Object.fromEntries(
+    Object.entries(durations).filter(([, value]) => value !== undefined),
+  ) } as DesktopStartupDiagnostics
+  return Object.keys(diagnostics).length > 0 ? diagnostics : undefined
 }
 
 export function readDesktopStartupBudgets(

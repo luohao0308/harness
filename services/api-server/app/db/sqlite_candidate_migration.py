@@ -20,6 +20,77 @@ from app.db.sqlite_runtime_lock import SQLiteRuntimeLock
 FaultInjector = Callable[[str], None]
 
 
+def install_fresh_sqlite_template(
+    paths: SQLiteRuntimePaths,
+    *,
+    template_path: str | Path,
+    alembic_ini: str | Path,
+    runtime_lock: SQLiteRuntimeLock | None = None,
+) -> Path | None:
+    """Install a verified packaged schema for a pristine runtime directory.
+
+    This is a best-effort cold-start optimization. Existing databases and any
+    runtime artifacts always stay on the canonical migration path.
+    """
+    if runtime_lock is not None:
+        if not runtime_lock.acquired:
+            raise RuntimeError("the supplied SQLite runtime lock is not acquired")
+        if runtime_lock.lock_path.resolve() != paths.lock_path.resolve():
+            raise ValueError("the supplied SQLite runtime lock belongs to a different runtime")
+    if paths.manifest_path.exists() or _has_managed_database_artifacts(paths):
+        return None
+
+    template = Path(template_path).resolve()
+    if not template.is_file():
+        return None
+
+    lock_context = (
+        nullcontext(runtime_lock)
+        if runtime_lock is not None
+        else SQLiteRuntimeLock(paths.lock_path)
+    )
+    with lock_context:
+        if paths.manifest_path.exists() or _has_managed_database_artifacts(paths):
+            return None
+
+        candidate = paths.runtime_dir / f"harness-template-{uuid4().hex}.sqlite3"
+        installed = False
+        switched = False
+        try:
+            revision = _alembic_head(alembic_ini)
+            check_sqlite_integrity(template)
+            _verify_revision(template, revision)
+            shutil.copyfile(template, candidate)
+            candidate.chmod(0o600)
+            _checkpoint_and_fsync(candidate)
+            check_sqlite_integrity(candidate)
+            _verify_revision(candidate, revision)
+
+            os.replace(candidate, paths.default_database_path)
+            installed = True
+            _checkpoint_and_fsync(paths.default_database_path)
+            switched = True
+            paths.switch_active_database(
+                paths.default_database_path,
+                previous_database=None,
+                alembic_revision=revision,
+            )
+            check_sqlite_integrity(paths.default_database_path)
+            return paths.default_database_path
+        except Exception:
+            if switched:
+                with suppress(OSError):
+                    paths.remove_manifest()
+            if installed:
+                paths.default_database_path.unlink(missing_ok=True)
+                for suffix in ("-wal", "-shm"):
+                    Path(f"{paths.default_database_path}{suffix}").unlink(missing_ok=True)
+            candidate.unlink(missing_ok=True)
+            for suffix in ("-wal", "-shm"):
+                Path(f"{candidate}{suffix}").unlink(missing_ok=True)
+            return None
+
+
 def migrate_sqlite_candidate(
     paths: SQLiteRuntimePaths,
     *,
@@ -164,11 +235,7 @@ def _verify_revision(database_path: Path, expected_revision: str) -> None:
 
 
 def _database_is_at_head(database_path: Path, alembic_ini: str | Path) -> bool:
-    config = Config(str(alembic_ini))
-    script = ScriptDirectory.from_config(config)
-    heads = script.get_heads()
-    if len(heads) != 1:
-        raise RuntimeError(f"candidate migration requires one Alembic head, found {heads!r}")
+    head = _alembic_head(alembic_ini)
     connection = sqlite3.connect(database_path)
     try:
         revisions = tuple(
@@ -178,7 +245,28 @@ def _database_is_at_head(database_path: Path, alembic_ini: str | Path) -> bool:
         return False
     finally:
         connection.close()
-    return revisions == (heads[0],)
+    return revisions == (head,)
+
+
+def _alembic_head(alembic_ini: str | Path) -> str:
+    config = Config(str(alembic_ini))
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    if len(heads) != 1:
+        raise RuntimeError(f"candidate migration requires one Alembic head, found {heads!r}")
+    return heads[0]
+
+
+def _has_managed_database_artifacts(paths: SQLiteRuntimePaths) -> bool:
+    patterns = (
+        paths.default_database_path,
+        *paths.runtime_dir.glob("harness-candidate-*.sqlite3"),
+        *paths.runtime_dir.glob("harness-import-*.sqlite3"),
+    )
+    return any(
+        path.exists() or Path(f"{path}-wal").exists() or Path(f"{path}-shm").exists()
+        for path in patterns
+    )
 
 
 def _prune_obsolete_databases(

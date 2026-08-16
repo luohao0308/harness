@@ -101,6 +101,7 @@ describe('managed local harnessd runtime', () => {
       persistent_secret_storage: true,
     }
     const { LocalRuntimeManager } = await import('../local-runtime')
+    const onStartupDiagnostic = vi.fn()
     const manager = new LocalRuntimeManager({
       userDataPath: root,
       resourcesPath: root,
@@ -112,12 +113,17 @@ describe('managed local harnessd runtime', () => {
       startupTimeoutMs: 1_000,
       healthPollMs: 1,
       shutdownTimeoutMs: 5,
+      onStartupDiagnostic,
     })
     let stdin = ''
     child.stdin.on('data', (chunk) => { stdin += chunk.toString() })
     setTimeout(() => child.stdout.write(`${JSON.stringify(readyHandshake())}\n`), 0)
 
     const endpoint = await manager.start()
+    expect(onStartupDiagnostic.mock.calls.map(([milestone]) => milestone)).toEqual([
+      'sidecar_spawned',
+      'sidecar_ready',
+    ])
     const cookieSet = vi.fn(() => Promise.resolve())
     await manager.installDesktopSession({ cookies: { set: cookieSet } } as never)
     await expect(manager.applyModelApiKey('replacement-key')).resolves.toEqual(modelStatus('configured'))
