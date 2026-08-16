@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { Task } from '../../../preload-api'
 import { TaskQueue } from '../task-queue'
 
 /**
@@ -30,7 +31,7 @@ const mockDesktopApi = {
     listConnections: vi.fn(),
   },
   events: {
-    onTaskStatusChange: vi.fn(() => vi.fn()), // Return unsubscribe function
+    onTaskStatusChange: vi.fn<(callback: (task: Task) => void) => () => void>(() => vi.fn()),
     onMessageStream: vi.fn(() => vi.fn()),
     onConnectionStatus: vi.fn(() => vi.fn()),
   },
@@ -223,17 +224,17 @@ describe('Task Adapter - Single Task Operations', () => {
 
     const { getTask } = await import('../task-adapter')
 
-    let caughtError: Error | null = null
-    const promise = getTask('nonexistent-task').catch(e => {
-      caughtError = e as Error
-    })
+    const errorPromise = getTask('nonexistent-task').then(
+      () => null,
+      (error: unknown) => error,
+    )
 
     // Advance through retry delays: 1s, 2s, 4s = 7s total
     await vi.advanceTimersByTimeAsync(7100)
-    await promise
+    const caughtError = await errorPromise
 
-    expect(caughtError).not.toBeNull()
-    expect(caughtError?.message).toBe('Task not found')
+    expect(caughtError).toBeInstanceOf(Error)
+    expect((caughtError as Error).message).toBe('Task not found')
 
     vi.useRealTimers()
   })
@@ -265,17 +266,17 @@ describe('Task Adapter - Task Cancellation', () => {
 
     const { cancelTask } = await import('../task-adapter')
 
-    let caughtError: Error | null = null
-    const promise = cancelTask('task-001').catch(e => {
-      caughtError = e as Error
-    })
+    const errorPromise = cancelTask('task-001').then(
+      () => null,
+      (error: unknown) => error,
+    )
 
     // Advance through retry delays: 1s, 2s, 4s = 7s total
     await vi.advanceTimersByTimeAsync(7100)
-    await promise
+    const caughtError = await errorPromise
 
-    expect(caughtError).not.toBeNull()
-    expect(caughtError?.message).toBe('Task cannot be cancelled')
+    expect(caughtError).toBeInstanceOf(Error)
+    expect((caughtError as Error).message).toBe('Task cannot be cancelled')
 
     vi.useRealTimers()
   })
@@ -287,17 +288,17 @@ describe('Task Adapter - Task Cancellation', () => {
 
     const { cancelTask } = await import('../task-adapter')
 
-    let caughtError: Error | null = null
-    const promise = cancelTask('task-001').catch(e => {
-      caughtError = e as Error
-    })
+    const errorPromise = cancelTask('task-001').then(
+      () => null,
+      (error: unknown) => error,
+    )
 
     // Advance through retry delays: 1s, 2s, 4s = 7s total
     await vi.advanceTimersByTimeAsync(7100)
-    await promise
+    const caughtError = await errorPromise
 
-    expect(caughtError).not.toBeNull()
-    expect(caughtError?.message).toBe('Task already completed')
+    expect(caughtError).toBeInstanceOf(Error)
+    expect((caughtError as Error).message).toBe('Task already completed')
 
     vi.useRealTimers()
   })
@@ -388,7 +389,7 @@ describe('Task Adapter - Workspace Data Fetching', () => {
       handoffs: [],
     }
 
-    const selectors = { include_events: true }
+    const selectors = { retrieval_session_id: 'retrieval-session-001' }
     mockDesktopApi.agent.getWorkspace.mockResolvedValue(mockWorkspace)
 
     const { getAgentRunWorkspace } = await import('../task-adapter')
@@ -406,17 +407,17 @@ describe('Task Adapter - Workspace Data Fetching', () => {
 
     const { getAgentRunWorkspace } = await import('../task-adapter')
 
-    let caughtError: Error | null = null
-    const promise = getAgentRunWorkspace('task-001').catch(e => {
-      caughtError = e as Error
-    })
+    const errorPromise = getAgentRunWorkspace('task-001').then(
+      () => null,
+      (error: unknown) => error,
+    )
 
     // Advance through retry delays: 1s, 2s, 4s = 7s total
     await vi.advanceTimersByTimeAsync(7100)
-    await promise
+    const caughtError = await errorPromise
 
-    expect(caughtError).not.toBeNull()
-    expect(caughtError?.message).toBe('Workspace not found')
+    expect(caughtError).toBeInstanceOf(Error)
+    expect((caughtError as Error).message).toBe('Workspace not found')
 
     vi.useRealTimers()
   })
@@ -696,21 +697,7 @@ describe('Task Adapter - Event-Based Status Updates', () => {
 
     // Simulate IPC event
     const listener = mockDesktopApi.events.onTaskStatusChange.mock.calls[0][0]
-    const mockTask = {
-      id: 'task-001',
-      title: 'Test Task',
-      goal: 'Test goal',
-      status: 'COMPLETED' as const,
-      model_provider: 'anthropic',
-      model_name: 'claude-opus-4-6',
-      max_runtime_seconds: 3600,
-      max_subagents: 5,
-      enable_sandbox: true,
-      enable_network: true,
-      created_at: '2026-06-25T10:00:00Z',
-      updated_at: '2026-06-25T10:10:00Z',
-      completed_at: '2026-06-25T10:10:00Z',
-    }
+    const mockTask = taskFixture('task-001')
     listener(mockTask)
 
     expect(onStatusChange).toHaveBeenCalledWith(mockTask)
@@ -727,13 +714,31 @@ describe('Task Adapter - Event-Based Status Updates', () => {
     const listener = mockDesktopApi.events.onTaskStatusChange.mock.calls[0][0]
 
     // Event for matching task
-    listener({ id: 'task-001', status: 'COMPLETED' })
+    listener(taskFixture('task-001'))
     expect(onStatusChange).toHaveBeenCalledTimes(1)
 
     // Event for different task - should be filtered
-    listener({ id: 'task-002', status: 'COMPLETED' })
+    listener(taskFixture('task-002'))
     expect(onStatusChange).toHaveBeenCalledTimes(1) // Still 1
 
     unsubscribe()
   })
 })
+
+function taskFixture(id: string): Task {
+  return {
+    id,
+    title: 'Test Task',
+    goal: 'Test goal',
+    status: 'COMPLETED',
+    model_provider: 'anthropic',
+    model_name: 'claude-opus-4-6',
+    max_runtime_seconds: 3600,
+    max_subagents: 5,
+    enable_sandbox: true,
+    enable_network: true,
+    created_at: '2026-06-25T10:00:00Z',
+    updated_at: '2026-06-25T10:10:00Z',
+    completed_at: '2026-06-25T10:10:00Z',
+  }
+}

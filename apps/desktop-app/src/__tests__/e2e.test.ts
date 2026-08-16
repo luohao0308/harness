@@ -1,5 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll, vi } from 'vitest'
-import { spawn, type ChildProcess } from 'child_process'
+import { describe, test, expect, vi } from 'vitest'
 import path from 'path'
 
 // Mock desktop-telemetry to prevent real API calls
@@ -65,21 +64,6 @@ vi.mock('electron', () => ({
 }))
 
 describe('Desktop E2E Test Framework', () => {
-  let electronProcess: ChildProcess | null = null
-
-  beforeAll(async () => {
-    // Skip in CI or if tests would require actual Electron binary
-    if (process.env.CI) {
-      return
-    }
-  }, 10000)
-
-  afterAll(() => {
-    if (electronProcess) {
-      electronProcess.kill()
-    }
-  })
-
   test('should support launching Electron app programmatically', async () => {
     // Verify the main entry point exists
     const mainPath = path.resolve(__dirname, '../main.ts')

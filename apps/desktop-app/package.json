@@ -22,7 +22,7 @@
     "test:startup-budget": "node --test scripts/startup-budget-lib.test.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.browser.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "package": "npm run build:main && npm run build:renderer && npm run build:runtime && electron-builder --dir",
     "start": "NO_PROXY=localhost,127.0.0.1 ELECTRON_RUN_AS_NODE= electron ."
   },

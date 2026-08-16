@@ -176,7 +176,7 @@ export function startTaskPolling(
   } = options
 
   let currentInterval = intervalMs
-  let intervalId: NodeJS.Timeout | null = null
+  let intervalId: ReturnType<typeof setInterval> | null = null
   let stopped = false
 
   const poll = async () => {

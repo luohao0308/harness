@@ -137,7 +137,11 @@ describe('managed local harnessd runtime', () => {
     expect(await manager.openWebExtension()).toBeUndefined()
 
     expect(endpoint.origin).toBe('http://127.0.0.1:43117')
-    const [, args, spawnOptions] = spawnRuntime.mock.calls[0]
+    const [, args, spawnOptions] = spawnRuntime.mock.calls[0] as unknown as [
+      string,
+      string[],
+      { env?: NodeJS.ProcessEnv },
+    ]
     expect(args).toEqual(['--port', '0', '--static-dir', path.join(root, 'renderer')])
     expect(JSON.stringify(args)).not.toContain('secret-value')
     expect(JSON.stringify(spawnOptions.env)).not.toContain('secret-value')

@@ -1,6 +1,6 @@
 # Desktop 可靠性交付收口实施计划
 
-_状态：in_progress | 更新：2026-08-16 | 关联任务：APP-001、APP-002、DESK-001、REL-001 | 关联证据：[Desktop 功能截图审计](../../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)_
+_状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002、DESK-001、REL-001 | 关联证据：[Desktop 功能截图审计](../../omx_wiki/session-2026-08-07-desktop-functional-screenshot-audit.md)_
 
 ## 1. 目标、成功标准与停止条件
 
@@ -42,8 +42,8 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：APP-001、APP-002�
 | 切片 | 目标结果 | 修改范围 | 依赖 | 验收方式 | 回退点 | 状态 |
 |---|---|---|---|---|---|---|
 | S1 | 兼容路由恢复 | Console routes、inventory、tests | 无 | 路由单测、Console build | 回退路由与测试差异 | completed |
-| S2 | Desktop type-check 通过 | Desktop tsconfig、package、最小类型修复 | S1 | type-check、build:main、Vitest | 回退类型项目配置 | in_progress |
-| S3 | Release P95 工件校验闭环 | release workflow、startup scripts/tests | S2 | Node tests、YAML、workflow contract | 回退 CI/脚本差异 | pending |
+| S2 | Desktop type-check 通过 | Desktop tsconfig、package、最小类型修复 | S1 | type-check、build:main、Vitest | 回退类型项目配置 | completed |
+| S3 | Release P95 工件校验闭环 | release workflow、startup scripts/tests | S2 | Node tests、YAML、workflow contract | 回退 CI/脚本差异 | in_progress |
 | S4 | 全量验证与证据回写 | Task Board、progress、Wiki | S1-S3 | Console/Desktop/docs/diff gates | 回退文档状态更新 | pending |
 
 ## 5. 原则与决策
@@ -66,15 +66,16 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：APP-001、APP-002�
 
 ### S2：Desktop 类型检查
 
-- 状态：in_progress
+- 状态：completed
 - 修改范围：`apps/desktop-app/tsconfig*.json`、`package.json` 与暴露出的最小类型修复。
 - 步骤：建立明确的主进程、浏览器适配器和测试类型环境；修复真实 fixture/mock 类型漂移；保留严格模式。
 - 切片验收：`npm run type-check`、`npm run build:main`、`npm test` 通过。
+- 验证证据：三段式严格 `npm run type-check` 通过；`npm run build:main` 通过；Desktop 全量 `38 files / 324 tests` 通过。
 - 回退点：恢复原脚本与 tsconfig，保留已有生产构建路径。
 
 ### S3：Release P95 校验
 
-- 状态：pending
+- 状态：in_progress
 - 修改范围：`.github/workflows/release.yml`、Desktop 启动报告库与测试。
 - 步骤：增加报告文件身份/平台/架构/样本数校验，确保上传工件唯一且发布依赖全部 Desktop job 成功。
 - 切片验收：启动契约测试、脚本语法、YAML 解析和 workflow 静态契约通过。
@@ -90,7 +91,7 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：APP-001、APP-002�
 
 ## 7. 偏移控制
 
-- 当前允许修改的切片范围：S2 Desktop TypeScript 配置、类型契约与测试 fixture。
+- 当前允许修改的切片范围：S3 Release workflow、启动报告校验脚本与契约测试。
 - 跨切片共享前置修改：本计划文件。
 - 需要重新确认的变化：新增 API/数据库契约、改变 Release 发布语义、扩大为新 Desktop 功能。
 - 不需要重新确认的变化：切片内部的测试夹具、类型定义和校验脚本细节。

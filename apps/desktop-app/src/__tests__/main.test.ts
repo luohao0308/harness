@@ -237,7 +237,11 @@ describe('Electron App Startup', () => {
 
     await import('../main')
     await vi.waitFor(() => expect(runtimeModule.LocalRuntimeManager).toHaveBeenCalled())
-    const resume = vi.mocked(powerMonitor.on).mock.calls.find((call) => call[0] === 'resume')?.[1]
+    const powerMonitorCalls = vi.mocked(powerMonitor.on).mock.calls as unknown as Array<[
+      string,
+      () => void,
+    ]>
+    const resume = powerMonitorCalls.find((call) => call[0] === 'resume')?.[1]
     const runtime = vi.mocked(runtimeModule.LocalRuntimeManager).mock.results[0]?.value
 
     resume?.()
@@ -254,7 +258,11 @@ describe('Electron App Startup', () => {
     await import('../main')
     await vi.waitFor(() => expect(runtimeModule.LocalRuntimeManager).toHaveBeenCalled())
     await vi.waitFor(() => expect(BrowserWindow).toHaveBeenCalled())
-    const beforeQuit = vi.mocked(app.on).mock.calls.find((call) => call[0] === 'before-quit')?.[1] as ((event: { preventDefault: () => void }) => void) | undefined
+    const appOnCalls = vi.mocked(app.on).mock.calls as unknown as Array<[
+      string,
+      (event: { preventDefault: () => void }) => void,
+    ]>
+    const beforeQuit = appOnCalls.find((call) => call[0] === 'before-quit')?.[1]
     const runtime = vi.mocked(runtimeModule.LocalRuntimeManager).mock.results[0]?.value
     const preventDefault = vi.fn()
 

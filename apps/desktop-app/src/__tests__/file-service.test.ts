@@ -255,7 +255,9 @@ describe('file bridge', () => {
       } catch (caught) {
         error = caught as Error
       }
-      expect(error).not.toBeNull()
+      if (!(error instanceof Error)) {
+        throw new Error('expected file operation to throw')
+      }
       expect(error.message).not.toContain(workspaceRoot)
       expect(error.message).not.toContain(outsideRoot)
     }
