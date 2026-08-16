@@ -19,7 +19,7 @@
     "build:linux": "npm run dist:linux",
     "check:startup-budget": "node scripts/check-startup-budget.mjs",
     "test": "vitest run",
-    "test:startup-budget": "node --test scripts/startup-budget-lib.test.mjs",
+    "test:startup-budget": "node --test scripts/startup-budget-lib.test.mjs scripts/startup-evidence-lib.test.mjs scripts/release-workflow-contract.test.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "type-check": "tsc -p tsconfig.build.json --noEmit && tsc -p tsconfig.browser.json --noEmit && tsc -p tsconfig.test.json --noEmit",

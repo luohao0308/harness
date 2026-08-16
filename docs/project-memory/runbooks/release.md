@@ -56,9 +56,13 @@ The generated GitHub Release assets include:
   `latest-linux.yml`, and matching blockmaps
 - measured startup evidence:
   `startup-budget-report-<platform>-<arch>.json` with raw samples and P50/P95
+- independently validated cross-platform summary:
+  `desktop-startup-evidence.json`
 
 The GitHub Release is blocked when a packaged report is malformed, comes from a
-different platform/architecture, or exceeds any phase or total P95 budget.
+different platform/architecture, does not contain exactly five samples, is
+missing or duplicated across artifacts, disagrees with its aggregate fields,
+uses a different app version, or exceeds any phase or total P95 budget.
 
 Use `docs/development/desktop/README.md` as the desktop production release checklist. It
 defines the local release-candidate gate, external signing/notarization gate,

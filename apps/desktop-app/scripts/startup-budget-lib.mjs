@@ -141,6 +141,70 @@ export function validatePackagedStartupSample(sample, { expectedPlatform, expect
   }
 }
 
+export function validateStartupAggregateReport(report, {
+  expectedPlatform,
+  expectedArch,
+  expectedSampleCount,
+  requirePassed = false,
+} = {}) {
+  if (!report || typeof report !== 'object') {
+    throw new Error('Startup aggregate report must be an object')
+  }
+  if (report.schema_version !== 1) {
+    throw new Error(`Unsupported startup aggregate schema: ${String(report.schema_version)}`)
+  }
+  if (typeof report.generated_at !== 'string' || Number.isNaN(Date.parse(report.generated_at))) {
+    throw new Error('Startup aggregate generated_at must be an ISO timestamp')
+  }
+  if (typeof report.executable !== 'string' || report.executable.length === 0) {
+    throw new Error('Startup aggregate executable must be a non-empty string')
+  }
+  if (!Array.isArray(report.samples) || report.samples.length === 0) {
+    throw new Error('Startup aggregate samples must be a non-empty array')
+  }
+  if (report.sample_count !== report.samples.length) {
+    throw new Error('Startup aggregate sample_count does not match samples')
+  }
+  if (expectedSampleCount !== undefined && report.sample_count !== expectedSampleCount) {
+    throw new Error(
+      `Startup aggregate requires ${expectedSampleCount} samples, received ${String(report.sample_count)}`,
+    )
+  }
+
+  const expected = aggregateStartupSamples({
+    executablePath: report.executable,
+    appRoot: '.',
+    samples: report.samples,
+    generatedAt: new Date(report.generated_at),
+    expectedPlatform,
+    expectedArch,
+  })
+  for (const field of [
+    'p50_timings_ms',
+    'p95_timings_ms',
+    'budgets_ms',
+    'passed',
+    'violations',
+  ]) {
+    if (JSON.stringify(report[field]) !== JSON.stringify(expected[field])) {
+      throw new Error(`Startup aggregate ${field} does not match its samples`)
+    }
+  }
+  if (requirePassed && report.passed !== true) {
+    throw new Error('Startup aggregate exceeds its P95 budget')
+  }
+
+  const appVersions = new Set(report.samples.map((sample) => sample.app_version))
+  if (appVersions.size !== 1) {
+    throw new Error('Startup aggregate samples must use one app_version')
+  }
+  return {
+    appVersion: report.samples[0].app_version,
+    platform: report.samples[0].platform,
+    arch: report.samples[0].arch,
+  }
+}
+
 export function percentile(values, ratio) {
   if (values.length === 0) throw new Error('At least one percentile value is required')
   const sorted = [...values].sort((left, right) => left - right)

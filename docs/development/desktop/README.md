@@ -176,7 +176,12 @@ report came from a packaged executable matching the host platform and
 architecture, and fails when any phase P95 exceeds its budget. It writes
 `dist/startup-budget-report-<platform>-<arch>.json` with raw samples, P50/P95,
 budgets, and violations. Release CI uploads all three host reports alongside the
-installers and does not create the GitHub Release when a gate fails.
+installers, downloads each artifact into an isolated directory, and independently
+validates exact platform/architecture identity, one report per artifact, five
+samples, aggregate integrity, P95 pass state, and a shared app version. The
+resulting `desktop-startup-evidence.json` is retained with the GitHub Release;
+the release is not created when either the platform job or the independent
+evidence job fails.
 
 Controlled overrides are available for performance-lab or slower dedicated
 runners:
@@ -218,7 +223,8 @@ Before publishing a stable desktop release, CI must prove:
 - Windows `nsis` installers are Authenticode signed.
 - Linux `AppImage`, `deb`, and `rpm` launch on supported architectures.
 - macOS, Windows, and Linux startup reports are present and each packaged P95
-  gate passed on the release runner.
+  gate passed on the release runner; the independent evidence summary contains
+  exactly those three x64 identities with five samples each.
 - `latest*.yml` metadata and blockmaps match the GitHub Release assets.
 - Stable clients ignore beta metadata; beta clients can opt into prerelease
   updates.

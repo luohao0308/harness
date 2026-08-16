@@ -43,8 +43,8 @@ _状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002�
 |---|---|---|---|---|---|---|
 | S1 | 兼容路由恢复 | Console routes、inventory、tests | 无 | 路由单测、Console build | 回退路由与测试差异 | completed |
 | S2 | Desktop type-check 通过 | Desktop tsconfig、package、最小类型修复 | S1 | type-check、build:main、Vitest | 回退类型项目配置 | completed |
-| S3 | Release P95 工件校验闭环 | release workflow、startup scripts/tests | S2 | Node tests、YAML、workflow contract | 回退 CI/脚本差异 | in_progress |
-| S4 | 全量验证与证据回写 | Task Board、progress、Wiki | S1-S3 | Console/Desktop/docs/diff gates | 回退文档状态更新 | pending |
+| S3 | Release P95 工件校验闭环 | release workflow、startup scripts/tests | S2 | Node tests、YAML、workflow contract | 回退 CI/脚本差异 | completed |
+| S4 | 全量验证与证据回写 | Task Board、progress、Wiki | S1-S3 | Console/Desktop/docs/diff gates | 回退文档状态更新 | in_progress |
 
 ## 5. 原则与决策
 
@@ -75,15 +75,16 @@ _状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002�
 
 ### S3：Release P95 校验
 
-- 状态：in_progress
+- 状态：completed
 - 修改范围：`.github/workflows/release.yml`、Desktop 启动报告库与测试。
 - 步骤：增加报告文件身份/平台/架构/样本数校验，确保上传工件唯一且发布依赖全部 Desktop job 成功。
 - 切片验收：启动契约测试、脚本语法、YAML 解析和 workflow 静态契约通过。
+- 验证证据：启动预算、跨工件证据和 Release workflow 契约 `10/10` 通过；全部新增 Node 脚本语法检查通过；系统 Ruby YAML 解析通过。
 - 回退点：恢复现有启动 budget job；不影响安装包构建。
 
 ### S4：验证与回写
 
-- 状态：pending
+- 状态：in_progress
 - 修改范围：`docs/TASKS.md`、`docs/development/ai/task-progress.yaml`、相关 `omx_wiki/` 页面和日志。
 - 步骤：运行目标验证与综合门禁；关闭已证明任务；对正式 runner 才能证明的证据保持准确状态。
 - 切片验收：文档校验、Markdown 链接、`git diff --check` 通过，证据与实际命令一致。
@@ -91,7 +92,7 @@ _状态：in_progress | 更新：2026-08-17 | 关联任务：APP-001、APP-002�
 
 ## 7. 偏移控制
 
-- 当前允许修改的切片范围：S3 Release workflow、启动报告校验脚本与契约测试。
+- 当前允许修改的切片范围：S4 全量验证、任务状态、机器进度、Wiki 与 Git 交付。
 - 跨切片共享前置修改：本计划文件。
 - 需要重新确认的变化：新增 API/数据库契约、改变 Release 发布语义、扩大为新 Desktop 功能。
 - 不需要重新确认的变化：切片内部的测试夹具、类型定义和校验脚本细节。

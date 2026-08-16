@@ -206,6 +206,33 @@ jobs:
             apps/desktop-app/dist/startup-budget-report-*.json
           if-no-files-found: error
 
+  desktop-startup-evidence:
+    name: Validate Desktop startup evidence
+    runs-on: ubuntu-latest
+    needs: desktop-build
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: harness-desktop-*
+          path: dist/desktop-evidence
+          merge-multiple: false
+      - name: Validate cross-platform startup reports
+        run: >-
+          node apps/desktop-app/scripts/validate-startup-budget-artifacts.mjs
+          dist/desktop-evidence
+          dist/desktop-startup-evidence.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-startup-evidence
+          path: dist/desktop-startup-evidence.json
+          if-no-files-found: error
+
   github-release:
     runs-on: ubuntu-latest
     needs:
@@ -213,6 +240,7 @@ jobs:
       - build-image-tagged
       - helm-publish
       - desktop-build
+      - desktop-startup-evidence
     permissions:
       contents: write
     steps:
@@ -228,6 +256,10 @@ jobs:
           pattern: harness-desktop-*
           path: dist/desktop
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-startup-evidence
+          path: dist/desktop
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
