@@ -43,8 +43,8 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 | 切片 | 目标结果 | 修改范围 | 依赖 | 验收方式 | 回退点 | 状态 |
 |---|---|---|---|---|---|---|
 | S1 | 模型目录随 Desktop 配置安全持久化并进入 bootstrap | preload、IPC、secure profile | 无 | Desktop 单元测试与主进程构建 | 移除新增目录字段，旧 profile 仍兼容 | completed |
-| S2 | 后端使用动态目录作为 allowlist | local runtime API、bootstrap、settings | S1 | 后端定向测试与 Ruff | 缺失目录时保留单模型 fail-closed | in_progress |
-| S3 | 设置页保存并展示动态目录 | Desktop settings、Model Settings | S2 | Vitest、lint、build | 保留原保存路径，目录字段可省略 | pending |
+| S2 | 后端使用动态目录作为 allowlist | local runtime API、bootstrap、settings | S1 | 后端定向测试与 Ruff | 缺失目录时保留单模型 fail-closed | completed |
+| S3 | 设置页保存并展示动态目录 | Desktop settings、Model Settings | S2 | Vitest、lint、build | 保留原保存路径，目录字段可省略 | in_progress |
 | S4 | 完整回归、桌面冒烟与交付 | tests、docs、Desktop package、Git | S1-S3 | 检测/保存/重启/随机消息和交付门禁 | 回退本计划提交，不迁移用户数据 | pending |
 
 ## 5. 原则与决策
@@ -69,15 +69,16 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 
 ### S2：后端动态 allowlist
 
-- 状态：in_progress
+- 状态：completed
 - 修改范围：`services/api-server/app/local_runtime/`、Settings 和测试。
 - 步骤：接收/验证目录，bootstrap 注入，移除供应商 URL 特判；省略时退化为当前模型。
 - 切片验收：有效、重复、缺失、选中模型不在目录和重启场景均有测试。
+- 验证证据：`cd services/api-server && .venv/bin/python -m pytest tests/test_local_runtime_bootstrap.py -q` -> 46 passed；`.venv/bin/ruff check app/local_runtime/bootstrap.py app/local_runtime/api.py tests/test_local_runtime_bootstrap.py` -> passed。
 - 回退点：恢复单模型配置，不影响密钥与 Base URL。
 
 ### S3：动态设置页
 
-- 状态：pending
+- 状态：in_progress
 - 修改范围：Desktop 设置页、模型设置页、目录工具和测试。
 - 步骤：绑定检测结果与规范化 Base URL；Save 发送可信目录；后端行驱动可用模型展示。
 - 切片验收：Base URL 变化清空旧目录；新模型可选；不可用旧模型不显示。
@@ -93,7 +94,7 @@ _状态：in_progress | 更新：2026-08-16 | 关联任务：DESK-002 | 关联�
 
 ## 7. 偏移控制
 
-- 当前允许修改的切片范围：S2 后端动态 allowlist。
+- 当前允许修改的切片范围：S3 动态设置页。
 - 跨切片共享前置修改：仅新增可选字段和测试夹具。
 - 需要重新确认的变化：引入自动联网、额外数据存储、公共 API 破坏性变化或新的密钥处理方式。
 - 不需要重新确认的变化：字段命名、校验帮助函数和测试组织等切片内部细节。

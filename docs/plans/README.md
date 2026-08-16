@@ -31,7 +31,7 @@ _状态：当前计划索引 | 更新：2026-08-10_
 
 | 计划 | 状态 | 关联任务/设计 | 当前阶段 | 更新时间 |
 |---|---|---|---|---|
-| [desktop-dynamic-model-catalog-2026-08-16.md](desktop-dynamic-model-catalog-2026-08-16.md) | in_progress | DESK-002、Desktop 动态模型目录 | S2 后端 allowlist | 2026-08-16 |
+| [desktop-dynamic-model-catalog-2026-08-16.md](desktop-dynamic-model-catalog-2026-08-16.md) | in_progress | DESK-002、Desktop 动态模型目录 | S3 动态设置页 | 2026-08-16 |
 | [desktop-local-session-renewal-2026-08-11.md](desktop-local-session-renewal-2026-08-11.md) | active | Desktop 本地会话续期 | 实施与验证 | 2026-08-11 |
 | [documentation-reorganization-2026-08-10.md](documentation-reorganization-2026-08-10.md) | completed | `DW-002`、[Task Board](../TASKS.md) | 已完成并验证 | 2026-08-10 |
 | [roadmap.md](roadmap.md) | active | 生产就绪路线 | 持续维护 | 2026-08-10 |

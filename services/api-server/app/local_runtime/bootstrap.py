@@ -7,28 +7,37 @@ from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.core.config import Settings, install_runtime_settings
 
 MAX_BOOTSTRAP_BYTES = 64 * 1024
 DEFAULT_MODEL_BASE_URL = "https://ai.112102.xyz/v1"
 DEFAULT_MODEL_NAME = "minimax-m3"
-DEFAULT_MODEL_IDS = (
-    "deepseek-v4-flash",
-    "gpt-oss-120b",
-    "mimo-v2.5",
-    "minimax-m3",
-    "nvidia-gpt-oss",
-)
+MAX_MODEL_CATALOG_SIZE = 300
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$")
 
 
-def model_allowlist_for(*, base_url: str, model: str) -> tuple[str, ...]:
-    """Keep the verified Desktop catalog while rejecting unknown manual IDs."""
-    if base_url == DEFAULT_MODEL_BASE_URL and model in DEFAULT_MODEL_IDS:
-        return DEFAULT_MODEL_IDS
-    return (model,)
+def validate_model_catalog(
+    value: tuple[str, ...] | list[str] | None,
+    *,
+    selected_model: str,
+) -> tuple[str, ...]:
+    selected = validate_model_id(selected_model)
+    if value is None:
+        return (selected,)
+    if not value or len(value) > MAX_MODEL_CATALOG_SIZE:
+        raise ValueError(f"model catalog must contain 1-{MAX_MODEL_CATALOG_SIZE} models")
+    models: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str):
+            raise ValueError("model catalog entries must be strings")
+        model = validate_model_id(entry)
+        if model not in models:
+            models.append(model)
+    if selected not in models:
+        raise ValueError("model catalog must include the selected model")
+    return tuple(models)
 
 
 def validate_model_base_url(value: str) -> str:
@@ -71,6 +80,7 @@ class LocalRuntimeBootstrap(BaseModel):
     model_api_key: SecretStr = Field(default=SecretStr(""))
     model_base_url: str = DEFAULT_MODEL_BASE_URL
     model_name: str = DEFAULT_MODEL_NAME
+    model_ids: tuple[str, ...] | None = None
     persistent_secret_storage: bool = True
 
     @field_validator("runtime_data_dir")
@@ -91,6 +101,11 @@ class LocalRuntimeBootstrap(BaseModel):
     def validate_bootstrap_model_name(cls, value: str) -> str:
         return validate_model_id(value)
 
+    @model_validator(mode="after")
+    def validate_bootstrap_model_catalog(self) -> LocalRuntimeBootstrap:
+        validate_model_catalog(self.model_ids, selected_model=self.model_name)
+        return self
+
     def to_settings(self) -> Settings:
         database_path = self.runtime_data_dir / "harness.sqlite3"
         model_key = self.model_api_key.get_secret_value()
@@ -110,9 +125,9 @@ class LocalRuntimeBootstrap(BaseModel):
             MODEL_GATEWAY_BASE_URL=self.model_base_url,
             MODEL_GATEWAY_API_KEY=model_key,
             AI_PROVIDER_MODEL=self.model_name,
-            AI_PROVIDER_MODELS=model_allowlist_for(
-                base_url=self.model_base_url,
-                model=self.model_name,
+            AI_PROVIDER_MODELS=validate_model_catalog(
+                self.model_ids,
+                selected_model=self.model_name,
             ),
             AUTH_PUBLIC_REGISTRATION_ENABLED=False,
             PERSISTENT_SECRET_STORAGE_AVAILABLE=self.persistent_secret_storage,

@@ -84,13 +84,7 @@ def test_bootstrap_builds_explicit_local_settings_without_model_key(tmp_path: Pa
     assert settings.ai_provider_base_url == "https://ai.112102.xyz/v1"
     assert str(settings.model_gateway_base_url) == "https://ai.112102.xyz/v1"
     assert settings.ai_provider_model == "minimax-m3"
-    assert settings.ai_provider_models == (
-        "deepseek-v4-flash",
-        "gpt-oss-120b",
-        "mimo-v2.5",
-        "minimax-m3",
-        "nvidia-gpt-oss",
-    )
+    assert settings.ai_provider_models == ("minimax-m3",)
     assert "session-signing-secret" not in repr(bootstrap)
     assert "vault-encryption-secret" not in repr(bootstrap)
     assert "session-signing-secret" not in repr(settings)
@@ -102,13 +96,14 @@ def test_bootstrap_propagates_custom_model_configuration(tmp_path: Path) -> None
         tmp_path,
         model_base_url="http://127.0.0.1:11434/v1/",
         model_name="vendor/model:preview",
+        model_ids=("vendor/model:preview", "vendor/model:fast", "vendor/model:preview"),
         model_api_key="bootstrap-model-key",
     ).to_settings()
 
     assert settings.ai_provider_base_url == "http://127.0.0.1:11434/v1"
     assert str(settings.model_gateway_base_url) == "http://127.0.0.1:11434/v1"
     assert settings.ai_provider_model == "vendor/model:preview"
-    assert settings.ai_provider_models == ("vendor/model:preview",)
+    assert settings.ai_provider_models == ("vendor/model:preview", "vendor/model:fast")
     assert settings.ai_provider_api_key == "bootstrap-model-key"
     assert settings.model_gateway_api_key == "bootstrap-model-key"
     assert "bootstrap-model-key" not in repr(settings)
@@ -130,6 +125,23 @@ def test_bootstrap_rejects_invalid_model_configuration(
 ) -> None:
     with pytest.raises(ValueError):
         _bootstrap(tmp_path, **{field: value})
+
+
+@pytest.mark.parametrize(
+    "model_ids",
+    [
+        (),
+        ("other-model",),
+        ("minimax-m3", "invalid model"),
+        tuple(f"model-{index}" for index in range(301)),
+    ],
+)
+def test_bootstrap_rejects_invalid_model_catalog(
+    tmp_path: Path,
+    model_ids: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValueError):
+        _bootstrap(tmp_path, model_ids=model_ids)
 
 
 def test_bootstrap_can_be_read_from_inherited_fd(tmp_path: Path) -> None:
@@ -301,6 +313,7 @@ def test_model_config_atomically_updates_url_model_and_optional_key(local_settin
         json={
             "base_url": "http://localhost:11434/v1/",
             "model": "local/model:latest",
+            "models": ["local/model:latest", "local/model:fast", "local/model:latest"],
             "api_key": "model-config-canary-key",
         },
     )
@@ -315,11 +328,48 @@ def test_model_config_atomically_updates_url_model_and_optional_key(local_settin
     assert settings.ai_provider_base_url == "http://localhost:11434/v1"
     assert str(settings.model_gateway_base_url) == "http://localhost:11434/v1"
     assert settings.ai_provider_model == "local/model:latest"
-    assert settings.ai_provider_models == ("local/model:latest",)
+    assert settings.ai_provider_models == ("local/model:latest", "local/model:fast")
     assert settings.ai_provider_api_key == "model-config-canary-key"
     assert settings.model_gateway_api_key == "model-config-canary-key"
     assert "model-config-canary-key" not in response.text
     assert "model-config-canary-key" not in repr(settings)
+
+
+def test_model_config_rejects_catalog_without_selected_model(local_settings) -> None:
+    client = TestClient(app, base_url="http://127.0.0.1:8000")
+    headers = {"X-Harness-Desktop-Bootstrap": local_settings.local_desktop_bootstrap_token}
+    original = get_settings()
+
+    response = client.put(
+        "/api/local-runtime/model-config",
+        headers=headers,
+        json={
+            "base_url": "https://models.example.test/v1",
+            "model": "selected-model",
+            "models": ["other-model"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_MODEL_CATALOG"
+    assert get_settings() is original
+
+
+def test_model_config_preserves_catalog_for_key_only_update(local_settings) -> None:
+    installed = local_settings.model_copy(
+        update={"ai_provider_models": ("minimax-m3", "minimax-m3-fast")}
+    )
+    install_runtime_settings(installed)
+    client = TestClient(app, base_url="http://127.0.0.1:8000")
+
+    response = client.put(
+        "/api/local-runtime/model-config",
+        headers={"X-Harness-Desktop-Bootstrap": installed.local_desktop_bootstrap_token},
+        json={"api_key": "replacement-key"},
+    )
+
+    assert response.status_code == 200
+    assert get_settings().ai_provider_models == ("minimax-m3", "minimax-m3-fast")
 
 
 def _install_discovery_transport(monkeypatch, handler):

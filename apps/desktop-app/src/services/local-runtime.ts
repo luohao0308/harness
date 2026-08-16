@@ -14,6 +14,7 @@ import type {
 export type LocalRuntimeModelErrorCode =
   | 'INVALID_MODEL_BASE_URL'
   | 'INVALID_MODEL_ID'
+  | 'INVALID_MODEL_CATALOG'
   | 'MODEL_API_KEY_REQUIRED'
   | 'MODEL_DISCOVERY_AUTH_ERROR'
   | 'MODEL_DISCOVERY_TIMEOUT'
@@ -591,6 +592,7 @@ function isModelErrorCode(value: unknown): value is LocalRuntimeModelErrorCode {
 const MODEL_ERROR_CODES = new Set<LocalRuntimeModelErrorCode>([
   'INVALID_MODEL_BASE_URL',
   'INVALID_MODEL_ID',
+  'INVALID_MODEL_CATALOG',
   'MODEL_API_KEY_REQUIRED',
   'MODEL_DISCOVERY_AUTH_ERROR',
   'MODEL_DISCOVERY_TIMEOUT',

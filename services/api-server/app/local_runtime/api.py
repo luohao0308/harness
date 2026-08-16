@@ -17,8 +17,9 @@ from app.core.config import get_settings, install_runtime_settings
 from app.db.models import User
 from app.db.session import get_db_session
 from app.local_runtime.bootstrap import (
-    model_allowlist_for,
+    MAX_MODEL_CATALOG_SIZE,
     validate_model_base_url,
+    validate_model_catalog,
     validate_model_id,
 )
 from app.local_runtime.web_bootstrap import WEB_BOOTSTRAP_STORE
@@ -40,6 +41,7 @@ class ModelKeyRequest(BaseModel):
 class ModelConfigRequest(BaseModel):
     base_url: str | None = None
     model: str | None = None
+    models: list[str] | None = None
     api_key: str | None = Field(default=None, max_length=8192)
 
 
@@ -157,6 +159,7 @@ def apply_model_config(
             ai_provider_base_url=base_url,
             model_gateway_base_url=base_url,
         )
+    identity_changed = payload.base_url is not None or payload.model is not None
     if payload.model is not None:
         try:
             model = validate_model_id(payload.model)
@@ -168,8 +171,19 @@ def apply_model_config(
             )
         updates.update(
             ai_provider_model=model,
-            ai_provider_models=model_allowlist_for(base_url=base_url, model=model),
         )
+    if payload.models is not None:
+        try:
+            models = validate_model_catalog(payload.models, selected_model=model)
+        except ValueError:
+            _raise_typed_error(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "INVALID_MODEL_CATALOG",
+                "The model catalog is invalid or does not include the selected model",
+            )
+        updates["ai_provider_models"] = models
+    elif identity_changed:
+        updates["ai_provider_models"] = (model,)
     if payload.api_key is not None:
         updates.update(
             ai_provider_api_key=payload.api_key,
@@ -378,6 +392,8 @@ def _parse_discovery_models(body: bytes) -> list[str]:
         except ValueError:
             _raise_invalid_discovery_response()
         if model not in models:
+            if len(models) >= MAX_MODEL_CATALOG_SIZE:
+                _raise_invalid_discovery_response()
             models.append(model)
     return models
 
