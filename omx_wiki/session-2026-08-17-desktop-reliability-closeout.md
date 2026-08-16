@@ -34,3 +34,13 @@ Desktop 可靠性交付四阶段已完成：旧 Console URL 可兼容跳转，De
 ## Remaining Risk
 
 `REL-001` 仍保留为外部证据项：真实 macOS、Windows、Linux Release runner 的五样本 P95 数值必须由未来正式 tag 运行产生。本地 Node/Chromium/类型检查只能证明契约和门禁逻辑，不能替代真实跨平台打包测量。生产签名、公证和 Release tag 也未在本次任务中触发。
+
+## macOS Local Preflight
+
+2026-08-17 在 macOS 14.4.1 x64 上重新生成 unsigned x64 目录包，并以不同临时 `userData` 运行两轮五样本检查。门禁两次都正确失败：
+
+- 第一轮总启动 P95 `7314ms`（预算 `6000ms`），服务就绪到渲染完成 P95 `4999ms`（预算 `3500ms`）。
+- 第二轮总启动 P95 `6480ms`，服务就绪到渲染完成 P95 `4828ms`，仍超出相同预算。
+- 独立手工样本总启动 `4095ms` 并通过，说明应用可以在预算内启动，但连续样本存在显著波动，不能选取单次绿色结果替代 P95。
+
+本地报告保留在未跟踪的 `apps/desktop-app/dist/startup-budget-report-darwin-x64.json` 和 `startup-budget-report-darwin-x64-rerun.json`，独立打包产物保留在忽略目录 `apps/desktop-app/release-reliability-closeout/`。当前下一步是先定位 macOS 连续启动波动，再由正式三平台 Release runner 生成最终可发布证据；不通过放宽预算关闭门禁。

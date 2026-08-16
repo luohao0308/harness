@@ -5002,9 +5002,9 @@ post_stage_hardening:
 
   - id: desktop-reliability-closeout-2026-08-17
     date: 2026-08-17
-    status: completed_with_external_release_evidence_pending
+    status: completed_with_external_release_evidence_pending_and_local_macos_budget_failure
     demo: "Desktop reliability closeout restores legacy Console route compatibility, makes strict Desktop type-checking environment-aware, and independently validates the three-platform startup evidence set before GitHub Release creation."
-    verification_result: "routes_types_release_evidence_full_regression_and_documentation_gates_passed_external_runner_p95_pending"
+    verification_result: "routes_types_release_evidence_full_regression_and_documentation_gates_passed_local_macos_x64_gate_failed_external_runner_p95_pending"
     verification_commands:
       - "cd apps/agent-console && npx vitest run src/app/__tests__/routeInventory.test.tsx src/app/__tests__/routes.auth.test.tsx --reporter=dot -> 2 files / 13 tests passed"
       - "cd apps/agent-console && npx playwright test --project=chromium e2e/sidebar-enterprise.smoke.spec.ts -> 44 passed"
@@ -5013,6 +5013,10 @@ post_stage_hardening:
       - "cd apps/desktop-app && npm run build:main -> passed"
       - "cd apps/desktop-app && npm test -- --run -> 38 files / 324 tests passed"
       - "cd apps/desktop-app && npm run test:startup-budget -> 10 passed"
+      - "cd apps/desktop-app && npm run package -- --config.directories.output=release-reliability-closeout -> unsigned macOS x64 directory package built"
+      - "cd apps/desktop-app && HARNESS_DESKTOP_EXECUTABLE=<packaged-x64-executable> HARNESS_DESKTOP_STARTUP_REPORT_PATH=<darwin-x64-report> npm run check:startup-budget -> five samples; P95 total 7314 ms and renderer phase 4999 ms; failed against 6000/3500 ms budgets"
+      - "cd apps/desktop-app && HARNESS_DESKTOP_EXECUTABLE=<packaged-x64-executable> HARNESS_DESKTOP_STARTUP_REPORT_PATH=<darwin-x64-rerun-report> npm run check:startup-budget -> five samples; P95 total 6480 ms and renderer phase 4828 ms; failed against 6000/3500 ms budgets"
+      - "direct packaged macOS x64 startup smoke with isolated userData -> one sample total 4095 ms; passed"
       - "cd apps/desktop-app && node --check scripts/startup-budget-lib.mjs scripts/startup-evidence-lib.mjs scripts/validate-startup-budget-artifacts.mjs scripts/release-workflow-contract.test.mjs -> passed"
       - "ruby -e 'require \"yaml\"; YAML.load_file(\".github/workflows/release.yml\")' -> passed"
       - "python3 scripts/validate-docs.py -> passed"
@@ -5022,7 +5026,8 @@ post_stage_hardening:
       - "APP-001 and APP-002 are closed with replace redirects that preserve query/hash state; legacy specialist paths are registered before the dynamic subagent ID route."
       - "DESK-001 is closed with explicit main-process, browser-adapter, and test TypeScript boundaries while retaining strict mode and checking test fixtures."
       - "Release CI now validates exactly one five-sample passing report for each expected macOS/Windows/Linux x64 artifact, recomputes aggregate fields, enforces shared app version, and publishes desktop-startup-evidence.json before github-release."
-      - "REL-001 remains open only for real five-sample P95 values from a future signed/tagged GitHub Release runner; no local result is presented as that external evidence."
+      - "The local unsigned macOS 14.4.1 x64 preflight produced two reproducible failing five-sample aggregates despite one passing 4095 ms sample, so the gate is detecting startup variance rather than accepting a cherry-picked launch."
+      - "REL-001 remains open for startup-variance diagnosis and real five-sample P95 values from a future signed/tagged macOS/Windows/Linux GitHub Release runner; no local result is presented as that external evidence."
 
 stage_completion_rule:
   - run_backend_tests

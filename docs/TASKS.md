@@ -15,7 +15,7 @@ _last-updated: 2026-08-17_
 
 | ID | 任务 | 范围/仓库 | 上下文 | 阻塞 |
 |---|---|---|---|---|
-| REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [启动性能记录](../omx_wiki/session-2026-07-31-desktop-startup-performance-budget.md) | 本地 native ABI/审批服务不能替代正式 Release CI 证据 |
+| REL-001 | [~] 在正式 Release CI 获得 macOS/Windows/Linux 真实打包 Desktop 启动五样本 P95 证据 | Desktop packaging、release workflow | [可靠性交付记录](../omx_wiki/session-2026-08-17-desktop-reliability-closeout.md) | 2026-08-17 本地 unsigned macOS x64 两轮五样本 P95 均超限；需先定位波动并由正式三平台 runner 复核 |
 
 ## 待办 (Todo)
 
@@ -44,7 +44,7 @@ _last-updated: 2026-08-17_
 
 | 项目 | 风险 | 说明 |
 |---|---|---|
-| REL-001 | 中 | 需要后续正式 Release tag 在 macOS/Windows/Linux runner 生成真实五样本 P95 数值；本地契约与独立汇总 gate 已完成，但不能替代外部 runner 证据。 |
+| REL-001 | 高 | 本地 unsigned macOS x64 两轮五样本总启动 P95 为 `7314ms`、`6480ms`（预算 `6000ms`），服务就绪到渲染完成 P95 为 `4999ms`、`4828ms`（预算 `3500ms`）；需定位连续启动波动，并由正式 macOS/Windows/Linux runner 生成最终证据。 |
 
 ---
 

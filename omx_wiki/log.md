@@ -2,6 +2,7 @@
 
 ## 2026-08-17
 
+- Refreshed [[session-2026-08-17-desktop-reliability-closeout]], [[project-handoff-current-state]], `docs/TASKS.md`, the reliability plan, and `docs/development/ai/task-progress.yaml` with the first real local macOS x64 packaged startup evidence. Two unsigned five-sample runs were correctly blocked at total P95 `7314ms` / `6480ms` and renderer-phase P95 `4999ms` / `4828ms`, while one isolated sample passed at `4095ms`; REL-001 remains open for variance diagnosis and formal macOS/Windows/Linux Release runner evidence.
 - Added [[session-2026-08-17-desktop-reliability-closeout]] and refreshed [[project-handoff-current-state]], [[index]], `docs/TASKS.md`, `docs/development/ai/task-progress.yaml`, and the reliability plan. Closed APP-001/APP-002/DESK-001, added independent Release startup evidence validation, and left REL-001 open only for future signed/tagged GitHub runner P95 evidence.
 
 ## 2026-08-16
